@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(5);
+    expect(KERNEL_MIGRATIONS).toHaveLength(6);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -51,6 +51,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[4]).toMatchObject({
       id: 5,
       name: "add_adapter_status_owner",
+    });
+    expect(KERNEL_MIGRATIONS[5]).toMatchObject({
+      id: 6,
+      name: "add_ipc_delivery_state",
     });
   });
 
@@ -129,6 +133,18 @@ describe("kernel schema migrations", () => {
     expect(createTableStatement("adapter_status")).not.toContain("owner_uid");
   });
 
+  it("adds run correlation and retires legacy IPC calls", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "ALTER TABLE ipc_calls ADD COLUMN source_run_id TEXT",
+    );
+    expect(statements).toContain(
+      "ALTER TABLE ipc_calls ADD COLUMN delivery_started_at INTEGER",
+    );
+    expect(statements).toContain("DELETE FROM ipc_calls");
+    expect(createTableStatement("ipc_calls")).not.toContain("source_run_id");
+  });
+
   it("includes current indexes owned by the kernel stores", () => {
     expect(createdIndexes()).toEqual(expect.arrayContaining([
       "idx_auth_tokens_uid",
@@ -139,6 +155,7 @@ describe("kernel schema migrations", () => {
       "idx_oauth_accounts_identity",
       "idx_user_mcp_servers_uid",
       "idx_adapter_status_owner",
+      "idx_ipc_calls_source_run",
     ]));
   });
 });

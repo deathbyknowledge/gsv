@@ -1,6 +1,7 @@
 # WebSocket Protocol Reference
 
-All live gateway traffic uses JSON text frames over `GET /ws`.
+Gateway control requests, responses, and signals use JSON text frames over
+`GET /ws`; transfer payloads may use binary frames.
 
 The current protocol is syscall-based:
 
@@ -11,7 +12,7 @@ The current protocol is syscall-based:
 The source of truth is:
 
 - `gateway/src/protocol/frames.ts`
-- `shared/protocol/src/syscalls/system.ts`
+- `packages/gsv/src/protocol/syscalls/system.ts`
 - `gateway/src/kernel/connect.ts`
 - `gateway/src/kernel/dispatch.ts`
 
@@ -79,7 +80,7 @@ Error:
 ```json
 {
   "type": "sig",
-  "signal": "chat.complete",
+  "signal": "proc.run.finished",
   "payload": {},
   "seq": 1
 }
@@ -197,7 +198,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
       "capabilities": ["fs.*", "proc.*"]
     },
     "syscalls": ["fs.read", "proc.send"],
-    "signals": ["chat.text", "chat.complete"]
+    "signals": ["proc.run.output", "proc.run.finished"]
   }
 }
 ```
@@ -239,17 +240,22 @@ Current role defaults from `buildSignalList()`:
 
 ### User connections
 
-- `process.message`
-- `process.context`
-- `chat.text`
-- `chat.tool_call`
-- `chat.tool_result`
-- `chat.hil`
-- `chat.complete`
+- `proc.changed`
+- `proc.run.started`
+- `proc.run.stream`
+- `proc.run.retrying`
+- `proc.run.output`
+- `proc.run.tool.started`
+- `proc.run.hil.requested`
+- `proc.run.finished`
 - `process.exit`
 - `device.status`
 - `adapter.status`
 - `pkg.changed`
+- `mcp.changed`
+- `notification.created`
+- `notification.updated`
+- `notification.dismissed`
 
 ### Driver connections
 
@@ -259,22 +265,24 @@ Current role defaults from `buildSignalList()`:
 
 Service connections receive no ambient signals. Adapter workers report state through the gateway service binding.
 
-`chat.*` signals are emitted by Process DOs and relayed through run-route tracking. In the current kernel:
+`proc.run.*` signals are emitted by Process DOs and relayed through run-route tracking. In the current kernel:
 
-- user connections receive routed `chat.*` signals for their own runs
-- adapter surfaces only use `chat.hil` and `chat.complete`
+- user connections receive routed process signals for their own runs
+- adapter surfaces consume HIL and terminal run signals through their run route
 
 ---
 
 ## Binary Frames
 
-Binary-frame helpers still exist in the CLI protocol module, using this format:
+Binary transfers use this format:
 
 ```text
-[4 bytes little-endian transfer id][raw chunk bytes]
+[4 bytes little-endian stream id][1 byte flags][raw chunk bytes]
 ```
 
-That code is marked legacy/future-use in `cli/src/protocol.rs`. The current gateway syscall surface in this repo does not expose a public transfer syscall, so ordinary runtime traffic is JSON text frames only.
+Flags identify data, end, and error frames. `fs.transfer.send` and
+`fs.transfer.receive` establish public binary streams; ordinary request,
+response, and signal traffic remains JSON text frames.
 
 ## See also
 

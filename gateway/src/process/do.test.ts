@@ -7,6 +7,9 @@ import { Kernel } from "../kernel/do";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/frames";
 import { getProcessByPid, getKernelPtr } from "../shared/utils";
+import { TOOL_TO_SYSCALL } from "../syscalls/constants";
+import { PROCESS_V001_INITIAL_SCHEMA } from "./schema/v001_initial";
+import { PROCESS_V004_PENDING_TOOL_DISPATCH_ID } from "./schema/v004_pending_tool_dispatch_id";
 
 const ROOT_IDENTITY: ProcessIdentity = {
   uid: 0,
@@ -20,6 +23,27 @@ const DEFAULT_PROFILE = "task" as const;
 
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
+}
+
+function registerToolBlock(
+  process: any,
+  runId: string,
+  toolCalls: Array<{ id: string; name: string; arguments: unknown }>,
+): void {
+  for (const toolCall of toolCalls) {
+    const syscall = TOOL_TO_SYSCALL[toolCall.name];
+    const args = syscall
+      ? process.prepareToolArgs(syscall, toolCall.arguments).args
+      : toolCall.arguments;
+    process.store.register(
+      `dispatch-${toolCall.id}`,
+      toolCall.id,
+      runId,
+      syscall ?? toolCall.name,
+      args,
+      "default",
+    );
+  }
 }
 
 function isTransientProviderFailure(content: string): boolean {
@@ -126,6 +150,24 @@ async function waitForRunComplete(
   throw new Error("Timed out waiting for run to complete");
 }
 
+async function waitForStoredMessage(
+  stub: DurableObjectStub<Process>,
+  predicate: (message: any) => boolean,
+  timeoutMs = 2_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const message = await runInDurableObject(stub, (instance: Process) => (
+      (instance as any).store.getMessages().find(predicate)
+    ));
+    if (message) {
+      return message;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for process message");
+}
+
 async function driveProcessUntilIdle(
   stub: DurableObjectStub<Process>,
   timeoutMs = 50_000,
@@ -168,7 +210,12 @@ describe("Process DO — mechanical", () => {
 
     const state = await runInDurableObject(kernel, async (instance: Kernel) => {
       const k = instance as any;
-      await k.handleProcessSignal(pid, {
+      const project = (frame: any) => k.updateProcessRuntimeFromSignal(
+        pid,
+        frame,
+        frame.payload?.runId ?? null,
+      );
+      await project({
         type: "sig",
         signal: "proc.run.started",
         payload: {
@@ -181,7 +228,7 @@ describe("Process DO — mechanical", () => {
       });
       const running = k.procs.get(pid);
 
-      await k.handleProcessSignal(pid, {
+      await project({
         type: "sig",
         signal: "proc.run.retrying",
         payload: {
@@ -194,7 +241,34 @@ describe("Process DO — mechanical", () => {
       });
       const retrying = k.procs.get(pid);
 
-      await k.handleProcessSignal(pid, {
+      await project({
+        type: "sig",
+        signal: "proc.run.tool.started",
+        payload: {
+          pid,
+          runId: "run-activity",
+          conversationId: "thread",
+          queuedCount: 1,
+          timestamp: 1075,
+        },
+      });
+      const waitingTool = k.procs.get(pid);
+
+      await project({
+        type: "sig",
+        signal: "proc.changed",
+        payload: {
+          pid,
+          runId: "run-activity",
+          conversationId: "thread",
+          changes: ["messages"],
+          queuedCount: 1,
+          timestamp: 1080,
+        },
+      });
+      const resumed = k.procs.get(pid);
+
+      await project({
         type: "sig",
         signal: "proc.run.hil.requested",
         payload: {
@@ -207,7 +281,7 @@ describe("Process DO — mechanical", () => {
       });
       const waiting = k.procs.get(pid);
 
-      await k.handleProcessSignal(pid, {
+      await project({
         type: "sig",
         signal: "proc.run.finished",
         payload: {
@@ -220,7 +294,7 @@ describe("Process DO — mechanical", () => {
       });
       const idle = k.procs.get(pid);
 
-      return { running, retrying, waiting, idle };
+      return { running, retrying, waitingTool, resumed, waiting, idle };
     });
 
     expect(state.running).toMatchObject({
@@ -236,6 +310,16 @@ describe("Process DO — mechanical", () => {
       activeConversationId: "thread",
       queuedCount: 1,
       lastActiveAt: 1050,
+    });
+    expect(state.waitingTool).toMatchObject({
+      state: "waiting_tool",
+      activeRunId: "run-activity",
+      lastActiveAt: 1075,
+    });
+    expect(state.resumed).toMatchObject({
+      state: "running",
+      activeRunId: "run-activity",
+      lastActiveAt: 1080,
     });
     expect(state.waiting).toMatchObject({
       state: "waiting_hil",
@@ -599,6 +683,56 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("wakes a busy conversation for a scheduled runtime event", async () => {
+      const stub = await initProcess("mech-schedule-busy-wake", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
+        process.scheduleTick = vi.fn(async () => {});
+        process.currentRun = { runId: "run-busy", conversationId: "default" };
+
+        await instance.recvFrame({
+          type: "sig",
+          signal: "schedule.event",
+          payload: { scheduleId: "sched-busy", message: "check now" },
+        } as any);
+        expect(process.currentRun).toMatchObject({
+          runId: "run-busy",
+          pendingRuntimeEvents: 1,
+        });
+
+        await process.finishRun("run-busy", { status: "ok", text: "done" });
+        expect(process.currentRun).toMatchObject({ conversationId: "default" });
+        expect(process.currentRun.runId).not.toBe("run-busy");
+      });
+    });
+
+    it("terminalizes a scheduled runtime event when its first tick cannot be scheduled", async () => {
+      const stub = await initProcess("mech-schedule-failure", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
+        process.scheduleTick = vi.fn(async () => {
+          throw new Error("scheduler unavailable");
+        });
+
+        await instance.recvFrame({
+          type: "sig",
+          signal: "schedule.event",
+          payload: { scheduleId: "sched-failure", message: "check now" },
+        } as any);
+        await vi.waitFor(() => {
+          expect(process.currentRun).toBeNull();
+          expect(process.sendSignal).toHaveBeenCalledWith(
+            "proc.run.finished",
+            expect.objectContaining({ reason: "schedule.error", status: "error" }),
+          );
+        });
+      });
+    });
+
     it("emits and persists context pressure for a completed model turn", async () => {
       const pid = "mech-context-pressure";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -661,7 +795,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-context-pressure");
+        await process.runTick("run-context-pressure");
         return emitted;
       });
 
@@ -790,7 +924,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-origin-context");
+        await process.runTick("run-origin-context");
 
         const messages = process.store.getMessages();
         expect(messages.map((message: any) => message.content)).toEqual([
@@ -855,7 +989,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-text-thinking");
+        await process.runTick("run-chat-text-thinking");
         return emitted;
       });
 
@@ -957,7 +1091,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-thinking-only");
+        await process.runTick("run-chat-thinking-only");
         return {
           calls,
           emitted,
@@ -1046,7 +1180,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-thinking-only-exhausted");
+        await process.runTick("run-chat-thinking-only-exhausted");
         return {
           calls,
           emitted,
@@ -1120,7 +1254,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-empty-final-throw");
+        await process.runTick("run-chat-empty-final-throw");
         return {
           calls,
           emitted,
@@ -1213,7 +1347,7 @@ describe("Process DO — mechanical", () => {
             rules: [{ match: "shell.exec", action: "ask" }],
           },
         };
-        await process.tick("run-chat-tool-markup-text");
+        await process.runTick("run-chat-tool-markup-text");
         return {
           calls,
           emitted,
@@ -1296,7 +1430,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-provider-error-response");
+        await process.runTick("run-chat-provider-error-response");
         return {
           calls,
           emitted,
@@ -1401,7 +1535,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-provider-error-fallback");
+        await process.runTick("run-chat-provider-error-fallback");
         return {
           calls,
           emitted,
@@ -1541,7 +1675,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-fallback-auto-compact");
+        await process.runTick("run-chat-fallback-auto-compact");
         return {
           calls,
           compactionConfigs,
@@ -1660,7 +1794,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-provider-error-account-fallback");
+        await process.runTick("run-chat-provider-error-account-fallback");
         return {
           calls,
           messages: process.store.getMessages(),
@@ -1727,7 +1861,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-provider-context-overflow-throw");
+        await process.runTick("run-chat-provider-context-overflow-throw");
         return {
           emitted,
           currentRun: process.currentRun,
@@ -1795,7 +1929,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-provider-context-overflow-nested");
+        await process.runTick("run-chat-provider-context-overflow-nested");
         return {
           currentRun: process.currentRun,
           messages: process.store.getMessages(),
@@ -1868,7 +2002,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-provider-context-overflow-response");
+        await process.runTick("run-chat-provider-context-overflow-response");
         return {
           emitted,
           contextState: process.store.getContextState("default"),
@@ -1991,7 +2125,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-stream");
+        await process.runTick("run-chat-stream");
         return emitted;
       });
 
@@ -2106,7 +2240,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-stream-retry");
+        await process.runTick("run-chat-stream-retry");
         return {
           calls,
           emitted,
@@ -2240,7 +2374,7 @@ describe("Process DO — mechanical", () => {
             rules: [{ match: "fs.read", action: "ask" }],
           },
         };
-        await process.tick("run-chat-stream-retry-tool-only");
+        await process.runTick("run-chat-stream-retry-tool-only");
         return {
           calls,
           emitted,
@@ -2344,7 +2478,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-stream-off");
+        await process.runTick("run-chat-stream-off");
         return emitted;
       });
 
@@ -2446,7 +2580,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-kernel-executor");
+        await process.runTick("run-chat-kernel-executor");
         return {
           kernelCalls,
           messages: process.store.getMessages(),
@@ -2643,7 +2777,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-chat-custom-provider-transport-target");
+        await process.runTick("run-chat-custom-provider-transport-target");
         return {
           deviceRequests,
           messages: process.store.getMessages(),
@@ -2691,7 +2825,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("queues message, finishRun dequeues and processes it", async () => {
+    it("queues process messages and preserves their run ids", async () => {
       const pid = "mech-send-queued";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -2703,7 +2837,10 @@ describe("Process DO — mechanical", () => {
 
       // Send second message while run is active — should be queued
       const res2 = (await stub.recvFrame(
-        makeReq("proc.send", { message: "Second message" }),
+        makeReq("proc.send", {
+          message: "Second message",
+          origin: { kind: "process", sourcePid: "child" },
+        }),
       )) as ResponseOkFrame;
       expect((res2.data as any).queued).toBe(true);
 
@@ -2723,8 +2860,430 @@ describe("Process DO — mechanical", () => {
         expect(userMsgs).toHaveLength(2);
         expect(userMsgs[0].content).toBe("First message");
         expect(userMsgs[1].content).toBe("Second message");
+        expect(userMsgs[0].runId).toBe((res1.data as any).runId);
+        expect(userMsgs[1].runId).toBe((res2.data as any).runId);
         expect(store.queueSize()).toBe(0);
         expect(store.getValue("currentRun")).toBeNull();
+      });
+    });
+
+    it("coalesces overlapping ticks onto the next durable generation", async () => {
+      const stub = await initProcess("mech-single-active-tick", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let releaseTick!: () => void;
+        let markTickStarted!: () => void;
+        let markTickCompleted!: () => void;
+        const blocked = new Promise<void>((resolve) => {
+          releaseTick = resolve;
+        });
+        const started = new Promise<void>((resolve) => {
+          markTickStarted = resolve;
+        });
+        const completed = new Promise<void>((resolve) => {
+          markTickCompleted = resolve;
+        });
+        process.runTick = vi.fn(async () => {
+          markTickStarted();
+          await blocked;
+          markTickCompleted();
+        });
+        process.schedule = vi.fn(async () => ({ id: "next-tick" }));
+        process.currentRun = { runId: "run-once", conversationId: "default" };
+
+        const first = process.tick({ runId: "run-once", generation: 0 });
+        await started;
+        await first;
+        await process.tick({ runId: "run-once", generation: 0 });
+        await process.tick({ runId: "run-once", generation: 1 });
+        expect(process.runTick).toHaveBeenCalledTimes(1);
+
+        releaseTick();
+        await completed;
+        await vi.waitFor(() => expect(process.schedule).toHaveBeenCalledWith(
+          expect.any(Date),
+          "tick",
+          { runId: "run-once", generation: 2 },
+          { idempotent: true },
+        ));
+        process.currentRun = null;
+      });
+    });
+
+    it("terminalizes an uncaught background tick failure", async () => {
+      const stub = await initProcess("mech-tick-failure", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
+        process.currentRun = { runId: "run-failure", conversationId: "default" };
+        process.runTick = vi.fn(async () => {
+          throw new Error("kernel unavailable");
+        });
+
+        await process.tick({ runId: "run-failure", generation: 0 });
+        await vi.waitFor(() => {
+          expect(process.currentRun).toBeNull();
+          expect(process.sendSignal).toHaveBeenCalledWith(
+            "proc.run.finished",
+            expect.objectContaining({
+              runId: "run-failure",
+              status: "error",
+              reason: "tick.error",
+            }),
+          );
+        });
+      });
+    });
+
+    it("keeps user takeover authoritative when successor scheduling fails", async () => {
+      const pid = "mech-send-takeover-schedule-failure";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn();
+        process.scheduleTick = vi.fn(async () => {
+          throw new Error("scheduler unavailable");
+        });
+        process.store.appendMessage("assistant", "", {
+          runId: "run-old",
+          toolCalls: JSON.stringify([
+            { type: "toolCall", id: "call-old", name: "Read", arguments: { path: "/slow" } },
+          ]),
+        });
+        process.store.register("dispatch-old", "call-old", "run-old", "fs.read", { path: "/slow" });
+        process.currentRun = { runId: "run-old", conversationId: "default" };
+
+        const result = await process.handleProcSend({
+          message: "new direction",
+          origin: { kind: "client", connectionId: "client-1" },
+        });
+        expect(result).toMatchObject({ ok: true, status: "started" });
+        await vi.waitFor(() => expect(process.currentRun).toBeNull());
+
+        expect(process.store.getMessages()).toEqual(expect.arrayContaining([
+          expect.objectContaining({ role: "toolResult", toolCallId: "call-old" }),
+          expect.objectContaining({ role: "user", content: "new direction", runId: result.runId }),
+          expect.objectContaining({
+            role: "system",
+            runId: result.runId,
+            content: expect.stringContaining("scheduler unavailable"),
+          }),
+        ]));
+      });
+    });
+
+    it("does not resurrect a process when kill wins send admission", async () => {
+      const stub = await initProcess("mech-send-after-kill", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const releaseLifecycle = await process.acquireLifecycleTransition();
+        const sending = process.handleProcSend({
+          message: "too late",
+          origin: { kind: "client", connectionId: "client-1" },
+        });
+        await Promise.resolve();
+
+        process.store.deleteValue("pid");
+        process.store.deleteValue("identity");
+        releaseLifecycle();
+
+        await expect(sending).resolves.toEqual({
+          ok: false,
+          error: "Process no longer exists",
+        });
+        expect(process.currentRun).toBeNull();
+      });
+    });
+
+    it("terminalizes a generated tool block and ignores its late result", async () => {
+      const pid = "mech-send-live-tool-takeover";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let releaseDispatch!: () => void;
+        let markDispatchStarted!: () => void;
+        const dispatchBlocked = new Promise<void>((resolve) => {
+          releaseDispatch = resolve;
+        });
+        const dispatchStarted = new Promise<void>((resolve) => {
+          markDispatchStarted = resolve;
+        });
+        let oldDispatchId = "";
+
+        process.sendSignal = vi.fn();
+        process.schedule = vi.fn();
+        process.scheduleTick = vi.fn(async () => {});
+        process.dispatchSyscall = vi.fn(async (
+          _runId: string,
+          dispatchId: string,
+        ) => {
+          oldDispatchId = dispatchId;
+          markDispatchStarted();
+          await dispatchBlocked;
+        });
+        process.generation = {
+          async generate() {
+            return {
+              role: "assistant",
+              content: [
+                { type: "toolCall", id: "call-live-1", name: "Read", arguments: { path: "/one" } },
+                { type: "toolCall", id: "call-live-2", name: "Read", arguments: { path: "/two" } },
+              ],
+              api: "test",
+              provider: "test",
+              model: "test",
+              usage: testUsage(),
+              stopReason: "toolUse",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "";
+          },
+        };
+        process.store.appendMessage("user", "read both files", { runId: "run-live-tools" });
+        process.currentRun = {
+          runId: "run-live-tools",
+          conversationId: "default",
+          config: {
+            executor: { kind: "process", pid },
+            profile: "task",
+            provider: "test",
+            model: "test",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 128000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            generationStreaming: "off",
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        const ticking = process.runTick("run-live-tools");
+        await dispatchStarted;
+        const liveToolResults = process.store.getResults("run-live-tools");
+        expect(oldDispatchId).not.toBe("call-live-1");
+        expect(liveToolResults.map((result: any) => ({
+          id: result.id,
+          status: result.status,
+        }))).toEqual([
+          { id: "call-live-1", status: "pending" },
+          { id: "call-live-2", status: "registered" },
+        ]);
+
+        const takeover = await process.handleProcSend({
+          message: "stop and do this instead",
+          origin: { kind: "client", connectionId: "client-1" },
+        });
+        const nextRunId = takeover.runId;
+        expect(process.store.getMessages()
+          .filter((message: any) => message.role === "toolResult")
+          .map((message: any) => message.toolCallId)).toEqual([
+            "call-live-1",
+            "call-live-2",
+          ]);
+
+        releaseDispatch();
+        await ticking;
+        await process.handleRes({
+          type: "res",
+          id: oldDispatchId,
+          ok: true,
+          data: { content: "late" },
+        });
+
+        expect(process.store.getResults("run-live-tools")).toEqual([]);
+        expect(process.dispatchSyscall).toHaveBeenCalledTimes(1);
+        expect(process.currentRun).toMatchObject({ runId: nextRunId });
+        expect(process.scheduleTick).toHaveBeenCalledTimes(1);
+        expect(process.scheduleTick).toHaveBeenCalledWith(nextRunId);
+        process.currentRun = null;
+      });
+    });
+
+    it("serializes back-to-back user takeovers", async () => {
+      const pid = "mech-send-serialized-takeovers";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const finishedRuns: string[] = [];
+        process.sendSignal = vi.fn();
+        process.scheduleTick = vi.fn(async () => {});
+        process.emitRunFinished = vi.fn((run: { runId: string }) => {
+          finishedRuns.push(run.runId);
+        });
+        process.currentRun = { runId: "run-original", conversationId: "default" };
+
+        const first = process.handleProcSend({
+          message: "first takeover",
+          origin: { kind: "client", connectionId: "client-1" },
+        });
+        const second = process.handleProcSend({
+          message: "second takeover",
+          origin: { kind: "client", connectionId: "client-1" },
+        });
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+        expect(finishedRuns).toEqual(["run-original", firstResult.runId]);
+        expect(process.currentRun.runId).toBe(secondResult.runId);
+        process.currentRun = null;
+      });
+    });
+
+    it.each([false, true])(
+      "keeps a newer user run authoritative when earlier media fails=%s",
+      async (fails) => {
+        const stub = await initProcess(`mech-send-media-race-${fails}`, ROOT_IDENTITY);
+
+        await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          let releaseMedia!: () => void;
+          let markMediaStarted!: () => void;
+          const mediaBlocked = new Promise<void>((resolve) => {
+            releaseMedia = resolve;
+          });
+          const mediaStarted = new Promise<void>((resolve) => {
+            markMediaStarted = resolve;
+          });
+          process.sendSignal = vi.fn();
+          process.scheduleTick = vi.fn(async () => {});
+          const prepareMedia = vi.spyOn(process, "prepareRunMedia");
+          process.resolveMediaProcessingOptions = vi.fn(async () => {
+            markMediaStarted();
+            await mediaBlocked;
+            if (fails) {
+              throw new Error("media config failed");
+            }
+            return { ai: process.env.AI };
+          });
+
+          const first = await process.handleProcSend({
+            message: "first with media",
+            media: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+            origin: { kind: "client", connectionId: "client-1" },
+          });
+          await mediaStarted;
+          expect(process.currentRun).toMatchObject({
+            runId: first.runId,
+            pendingMediaMessageId: expect.any(Number),
+          });
+
+          const second = await process.handleProcSend({
+            message: "new user direction",
+            origin: { kind: "client", connectionId: "client-1" },
+          });
+          releaseMedia();
+          await (prepareMedia.mock.results[0]?.value as Promise<void>);
+
+          const userMessages = process.store.getMessages()
+            .filter((message: any) => message.role === "user");
+          expect(userMessages[0]).toMatchObject({
+            runId: first.runId,
+            media: fails ? null : expect.any(String),
+          });
+          expect(process.currentRun).toMatchObject({ runId: second.runId });
+          expect(process.store.getMessages().some((message: any) => (
+            message.role === "system" && message.content.includes("media config failed")
+          ))).toBe(false);
+          expect(process.scheduleTick).toHaveBeenCalledTimes(1);
+          expect(process.scheduleTick).toHaveBeenCalledWith(second.runId);
+          process.currentRun = null;
+        });
+      },
+    );
+
+    it("finishes a media run when its generation tick cannot be scheduled", async () => {
+      const pid = "mech-send-media-schedule-failure";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn();
+        process.scheduleTick = vi.fn(async () => {
+          throw new Error("scheduler unavailable");
+        });
+        process.resolveMediaProcessingOptions = vi.fn(async () => ({ ai: process.env.AI }));
+        const prepareMedia = vi.spyOn(process, "prepareRunMedia");
+
+        const result = await process.handleProcSend({
+          message: "attachment",
+          media: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+          origin: { kind: "client", connectionId: "client-1" },
+        });
+        await (prepareMedia.mock.results[0]?.value as Promise<void>);
+
+        expect(process.currentRun).toBeNull();
+        expect(process.store.getMessages()).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            role: "system",
+            runId: result.runId,
+            content: expect.stringContaining("scheduler unavailable"),
+          }),
+        ]));
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.run.finished",
+          expect.objectContaining({
+            runId: result.runId,
+            status: "error",
+            reason: "schedule.error",
+          }),
+        );
+      });
+    });
+
+    it("keeps process-origin media sends in admission order", async () => {
+      const pid = "mech-send-process-media-fifo";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let releaseMedia!: () => void;
+        let markMediaStarted!: () => void;
+        const mediaBlocked = new Promise<void>((resolve) => {
+          releaseMedia = resolve;
+        });
+        const mediaStarted = new Promise<void>((resolve) => {
+          markMediaStarted = resolve;
+        });
+        process.sendSignal = vi.fn();
+        process.resolveMediaProcessingOptions = vi.fn(async (media: unknown[] | undefined) => {
+          if (media?.length) {
+            markMediaStarted();
+            await mediaBlocked;
+          }
+          return { ai: process.env.AI };
+        });
+        process.currentRun = { runId: "run-busy", conversationId: "default" };
+
+        const first = process.handleProcSend({
+          message: "first process message",
+          media: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+          origin: { kind: "process", sourcePid: "child-1" },
+        });
+        await mediaStarted;
+        const second = process.handleProcSend({
+          message: "second process message",
+          origin: { kind: "process", sourcePid: "child-2" },
+        });
+
+        releaseMedia();
+        await Promise.all([first, second]);
+
+        expect(process.store.drainQueue("default").map((entry: any) => entry.message)).toEqual([
+          "first process message",
+          "second process message",
+        ]);
+        process.currentRun = null;
       });
     });
 
@@ -2748,6 +3307,13 @@ describe("Process DO — mechanical", () => {
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
+
+      await vi.waitFor(async () => {
+        const media = await runInDurableObject(stub, (instance: Process) => {
+          return (instance as any).store.getMessages()[0]?.media;
+        });
+        expect(media).toBeTruthy();
+      });
 
       await runInDurableObject(stub, async (instance: Process) => {
         const store = (instance as any).store;
@@ -2939,7 +3505,7 @@ describe("Process DO — mechanical", () => {
       const source = await initProcess(sourcePid, identity);
       const target = await initProcess(targetPid, identity);
       await runInDurableObject(source, (instance: Process) => {
-        (instance as any).scheduleTick = () => {};
+        (instance as any).scheduleTick = async () => {};
       });
       await runInDurableObject(target, (instance: Process) => {
         (instance as any).currentRun = {
@@ -2998,6 +3564,10 @@ describe("Process DO — mechanical", () => {
         });
       });
 
+      await waitForStoredMessage(source, (message) => (
+        message.content.includes(`Task id: \`${data.callId}\``)
+      ));
+
       await runInDurableObject(source, (instance: Process) => {
         const process = instance as any;
         const store = process.store;
@@ -3014,13 +3584,13 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("awaits IPC reply delivery before returning from process signal recvFrame", async () => {
-      const sourcePid = "mech-ipc-await-source";
-      const targetPid = "mech-ipc-await-target";
+    it("returns aborted target runs to IPC callers as errors", async () => {
+      const sourcePid = "mech-ipc-abort-source";
+      const targetPid = "mech-ipc-abort-target";
       const source = await initProcess(sourcePid, ROOT_IDENTITY);
       await initProcess(targetPid, ROOT_IDENTITY);
       await runInDurableObject(source, (instance: Process) => {
-        (instance as any).scheduleTick = () => {};
+        (instance as any).scheduleTick = vi.fn(async () => {});
       });
 
       const kernel = await getKernelPtr();
@@ -3029,46 +3599,287 @@ describe("Process DO — mechanical", () => {
           sourcePid,
           makeReq("proc.ipc.call", {
             pid: targetPid,
-            message: "Return the status.",
+            message: "Start a delegated task.",
             timeoutMs: 30_000,
           }),
         ),
       ) as ResponseOkFrame;
-
       const data = response.data as any;
-      expect(data.ok).toBe(true);
 
-      await runInDurableObject(kernel, async (instance: Kernel) => {
-        const k = instance as any;
-        const original = k.deliverIpcCallSignal;
-        k.deliverIpcCallSignal = async (...args: unknown[]) => {
-          await new Promise((resolve) => setTimeout(resolve, 25));
-          return original.apply(k, args);
-        };
-        try {
-          await instance.recvFrame(targetPid, {
-            type: "sig",
-            signal: "proc.run.finished",
-            payload: {
-              pid: targetPid,
-              runId: data.runId,
-              text: "worker completed",
-            },
-          });
-        } finally {
-          k.deliverIpcCallSignal = original;
-        }
-      });
+      await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(targetPid, {
+          type: "sig",
+          signal: "proc.run.finished",
+          payload: {
+            pid: targetPid,
+            runId: data.runId,
+            status: "aborted",
+            reason: "user.superseded",
+            text: null,
+          },
+        }),
+      );
+
+      await waitForStoredMessage(source, (message) => (
+        message.content.includes(`Task id: \`${data.callId}\``)
+      ));
 
       await runInDurableObject(source, (instance: Process) => {
-        const messages = (instance as any).store.getMessages();
-        const reply = messages.find((message: any) =>
+        const process = instance as any;
+        const reply = process.store.getMessages().find((message: any) =>
           message.role === "system"
           && message.content.includes(`Task id: \`${data.callId}\``)
         );
-        expect(reply).toBeTruthy();
-        expect(reply.content).toContain("worker completed");
-        (instance as any).currentRun = null;
+        expect(reply?.content).toContain("Error:");
+        expect(reply?.content).toContain("Target run was aborted: user.superseded");
+        process.currentRun = null;
+      });
+    });
+
+    it("cancels delegated IPC when its source run is superseded", async () => {
+      const sourcePid = "mech-ipc-cancelled-source-run";
+      const targetPid = "mech-ipc-cancelled-target-run";
+      const source = await initProcess(sourcePid, ROOT_IDENTITY);
+      const target = await initProcess(targetPid, ROOT_IDENTITY);
+
+      await runInDurableObject(source, (instance: Process) => {
+        (instance as any).scheduleTick = vi.fn(async () => {});
+      });
+      await runInDurableObject(target, (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = { runId: "target-busy-run", conversationId: "default" };
+      });
+
+      const firstSend = (await source.recvFrame(makeReq("proc.send", {
+        message: "delegate a slow task",
+        origin: { kind: "client", connectionId: "client-1" },
+      }))) as ResponseOkFrame;
+      const sourceRunId = (firstSend.data as any).runId as string;
+
+      const kernel = await getKernelPtr();
+      const ipcResponse = await runInDurableObject(kernel, (instance: Kernel) =>
+        instance.recvFrame(sourcePid, {
+          ...makeReq("proc.ipc.call", {
+            pid: targetPid,
+            message: "wait for the slow task",
+            timeoutMs: 30_000,
+          }),
+          runId: sourceRunId,
+        }),
+      ) as ResponseOkFrame;
+      const ipc = ipcResponse.data as any;
+      expect(ipc).toMatchObject({ ok: true, queued: true });
+
+      const secondSend = (await source.recvFrame(makeReq("proc.send", {
+        message: "stop waiting and do this instead",
+        origin: { kind: "client", connectionId: "client-1" },
+      }))) as ResponseOkFrame;
+      const successorRunId = (secondSend.data as any).runId as string;
+
+      await vi.waitFor(async () => {
+        expect(await runInDurableObject(kernel, (instance: Kernel) => (
+          (instance as any).ipcCalls.get(ipc.callId)
+        ))).toBeNull();
+      });
+      await runInDurableObject(kernel, async (instance: Kernel) => {
+        await instance.recvFrame(targetPid, {
+          type: "sig",
+          signal: "proc.run.finished",
+          payload: {
+            pid: targetPid,
+            runId: ipc.runId,
+            status: "ok",
+            text: "late delegated result",
+          },
+        });
+        expect((instance as any).ipcCalls.get(ipc.callId)).toBeNull();
+      });
+
+      await runInDurableObject(source, (instance: Process) => {
+        const process = instance as any;
+        expect(process.currentRun).toMatchObject({ runId: successorRunId });
+        expect(process.store.getMessages().some((message: any) => (
+          message.role === "system"
+          && (message.content.includes(`Task id: \`${ipc.callId}\``)
+            || message.content.includes("late delegated result"))
+        ))).toBe(false);
+        process.currentRun = null;
+      });
+      await runInDurableObject(target, (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = null;
+        process.store.clearQueue();
+      });
+    });
+
+    it("drops IPC replies for a source run that was already aborted", async () => {
+      const pid = "mech-ipc-aborted-source-run";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn();
+        process.scheduleTick = vi.fn(async () => {});
+        process.rememberAbortedRun("run-aborted");
+        process.currentRun = { runId: "run-successor", conversationId: "default" };
+
+        await instance.recvFrame({
+          type: "sig",
+          signal: "ipc.reply",
+          payload: {
+            callId: "call-aborted",
+            sourcePid: pid,
+            sourceRunId: "run-aborted",
+            targetPid: "target-process",
+            runId: "target-run",
+            deadlineAt: Date.now() + 30_000,
+            status: "completed",
+            response: { text: "late delegated result", usage: null },
+          },
+        } as any);
+
+        expect(process.store.getMessages()).toEqual([]);
+        expect(process.store.queueSize("default")).toBe(0);
+        expect(process.currentRun).toMatchObject({ runId: "run-successor" });
+        expect(process.sendSignal).not.toHaveBeenCalled();
+        expect(process.scheduleTick).not.toHaveBeenCalled();
+        process.currentRun = null;
+      });
+    });
+
+    it("drops IPC terminal events created before a process reset", async () => {
+      const pid = "mech-ipc-reset-source";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const createdAt = Date.now() - 1_000;
+
+      await stub.recvFrame(makeReq("proc.reset", {}));
+      await stub.recvFrame({
+        type: "sig",
+        signal: "ipc.reply",
+        payload: {
+          callId: "call-before-reset",
+          sourcePid: pid,
+          targetPid: "target-process",
+          runId: "target-run",
+          createdAt,
+          deadlineAt: Date.now() + 30_000,
+          status: "completed",
+          response: { text: "stale result", usage: null },
+        },
+      });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        expect(process.store.getMessages()).toEqual([]);
+        expect(process.currentRun).toBeNull();
+      });
+    });
+
+    it("does not recreate a killed process for a late IPC event", async () => {
+      const stub = await initProcess("mech-ipc-killed-source", ROOT_IDENTITY);
+
+      await stub.recvFrame(makeReq("proc.kill", { archive: false }));
+      await stub.recvFrame({
+        type: "sig",
+        signal: "ipc.timeout",
+        payload: {
+          callId: "call-after-kill",
+          sourcePid: "mech-ipc-killed-source",
+          targetPid: "target-process",
+          runId: "target-run",
+          createdAt: Date.now() - 1_000,
+          deadlineAt: Date.now(),
+          status: "timed_out",
+          error: "IPC call timed out",
+        },
+      });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        expect(process.store.getMessages()).toEqual([]);
+        expect(process.currentRun).toBeNull();
+        expect(process.store.getValue("pid")).toBeNull();
+      });
+    });
+
+    it("deduplicates retried IPC terminal delivery by call id", async () => {
+      const pid = "mech-ipc-deduplicated-reply";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn();
+        process.scheduleTick = vi.fn(async () => {});
+        const frame = {
+          type: "sig",
+          signal: "ipc.reply",
+          payload: {
+            callId: "call-retried",
+            sourcePid: pid,
+            targetPid: "target-process",
+            runId: "target-run",
+            deadlineAt: Date.now() + 30_000,
+            status: "completed",
+            response: { text: "delivered once", usage: null },
+          },
+        } as const;
+
+        await instance.recvFrame(frame as any);
+        await instance.recvFrame(frame as any);
+
+        expect(process.store.getMessages().filter((message: any) => (
+          message.content.includes("delivered once")
+        ))).toHaveLength(1);
+        expect(process.scheduleTick).toHaveBeenCalledTimes(1);
+        process.currentRun = null;
+      });
+    });
+
+    it("queues an IPC reply for its source run instead of mutating a different active run", async () => {
+      const pid = "mech-ipc-other-source-run";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn();
+        process.scheduleTick = vi.fn(async () => {});
+        process.currentRun = { runId: "run-active", conversationId: "default" };
+
+        await instance.recvFrame({
+          type: "sig",
+          signal: "ipc.reply",
+          payload: {
+            callId: "call-other-run",
+            sourcePid: pid,
+            sourceRunId: "run-waiting",
+            targetPid: "target-process",
+            runId: "target-run",
+            deadlineAt: Date.now() + 30_000,
+            status: "completed",
+            response: { text: "delegated result for an older run", usage: null },
+          },
+        } as any);
+
+        expect(process.store.getMessages()).toEqual([
+          expect.objectContaining({
+            role: "system",
+            content: expect.stringContaining("delegated result for an older run"),
+          }),
+        ]);
+        expect(process.currentRun).toMatchObject({
+          runId: "run-active",
+          conversationId: "default",
+        });
+        expect(process.currentRun).not.toHaveProperty("pendingRuntimeEvents");
+        const queued = process.store.drainQueue("default");
+        expect(queued).toHaveLength(1);
+        expect(queued[0].message).toContain("Review the process event above");
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.changed",
+          expect.objectContaining({ changes: ["queue"] }),
+        );
+        expect(process.scheduleTick).not.toHaveBeenCalled();
+        process.currentRun = null;
       });
     });
 
@@ -3079,7 +3890,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(source, (instance: Process) => {
         const process = instance as any;
-        process.scheduleTick = vi.fn();
+        process.scheduleTick = vi.fn(async () => {});
         process.currentRun = {
           runId: "active-source-run",
           conversationId: "default",
@@ -3117,7 +3928,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(source, async (instance: Process) => {
         const process = instance as any;
-        await process.finishRun({
+        await process.finishRun("active-source-run", {
           reason: "turn.complete",
           status: "ok",
           text: "parent finished before reading the event",
@@ -3128,7 +3939,7 @@ describe("Process DO — mechanical", () => {
         const process = instance as any;
         const userMessages = process.store.getMessages()
           .filter((message: any) => message.role === "user");
-        expect(userMessages.at(-1)?.content).toContain("A delegated task event arrived while you were busy.");
+        expect(userMessages.at(-1)?.content).toContain("A runtime event arrived while you were busy.");
         expect(process.store.queueSize("default")).toBe(0);
         expect(process.currentRun?.runId).not.toBe("active-source-run");
         expect(process.currentRun).toMatchObject({ conversationId: "default" });
@@ -3178,11 +3989,11 @@ describe("Process DO — mechanical", () => {
             ],
           }),
         });
-        process.store.register("call_shell", "active-source-turn", "shell.exec", {
+        process.store.register("dispatch_shell", "call_shell", "active-source-turn", "shell.exec", {
           input: "sleep 10",
           target: "gsv",
         });
-        process.store.resolve("call_shell", { ok: true, stdout: "done" });
+        process.store.resolve("dispatch_shell", { ok: true, stdout: "done" });
         process.currentRun = {
           runId: "active-source-turn",
           conversationId: "default",
@@ -3222,7 +4033,7 @@ describe("Process DO — mechanical", () => {
         });
         expect(process.store.queueSize("default")).toBe(0);
 
-        await process.tick("active-source-turn");
+        await process.runTick("active-source-turn");
 
         return {
           generatedInputs,
@@ -3323,7 +4134,7 @@ describe("Process DO — mechanical", () => {
       const source = await initProcess(sourcePid, ROOT_IDENTITY);
       await initProcess(targetPid, ROOT_IDENTITY);
       await runInDurableObject(source, (instance: Process) => {
-        (instance as any).scheduleTick = () => {};
+        (instance as any).scheduleTick = async () => {};
       });
 
       const kernel = await getKernelPtr();
@@ -3345,9 +4156,7 @@ describe("Process DO — mechanical", () => {
         const k = instance as any;
         const timedOut = k.ipcCalls.timeout(data.callId, data.deadlineAt + 1);
         expect(timedOut).toBeTruthy();
-        await k.deliverIpcCallSignal("ipc.timeout", timedOut, {
-          error: timedOut.error,
-        });
+        await k.deliverIpcCall(data.callId);
       });
 
       await runInDurableObject(source, (instance: Process) => {
@@ -3361,13 +4170,118 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("does not announce IPC work superseded while its tick is scheduled", async () => {
+      const pid = "mech-ipc-stale-start";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let releaseSchedule!: () => void;
+        let markScheduleStarted!: () => void;
+        const scheduleBlocked = new Promise<void>((resolve) => {
+          releaseSchedule = resolve;
+        });
+        const scheduleStarted = new Promise<void>((resolve) => {
+          markScheduleStarted = resolve;
+        });
+        process.sendSignal = vi.fn();
+        process.scheduleTick = vi.fn(async (runId: string) => {
+          if (runId === "ipc-run") {
+            markScheduleStarted();
+            await scheduleBlocked;
+          }
+        });
+
+        const delivering = process.handleProcIpcDeliver({
+          runId: "ipc-run",
+          sourcePid: "source-process",
+          source: ROOT_IDENTITY,
+          message: "slow IPC admission",
+          sentAt: Date.now(),
+        });
+        await scheduleStarted;
+
+        const successor = await process.handleProcSend({
+          message: "new user direction",
+          origin: { kind: "client", connectionId: "client-1" },
+        });
+        releaseSchedule();
+        await delivering;
+
+        const startedRunIds = process.sendSignal.mock.calls
+          .filter(([signal]: [string]) => signal === "proc.run.started")
+          .map(([, payload]: [string, { runId: string }]) => payload.runId);
+        expect(startedRunIds).toEqual([successor.runId]);
+        expect(process.currentRun).toMatchObject({ runId: successor.runId });
+        process.currentRun = null;
+      });
+    });
+
+    it("keeps IPC admission behind earlier background sends", async () => {
+      const stub = await initProcess("mech-ipc-admission-order", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.scheduleTick = vi.fn(async () => {});
+        process.sendSignal = vi.fn(async () => {});
+        const releaseAdmission = await process.acquireQueuedSendAdmission();
+        const delivering = process.handleProcIpcDeliver({
+          runId: "ipc-ordered-run",
+          sourcePid: "source-process",
+          source: ROOT_IDENTITY,
+          message: "ordered IPC",
+          sentAt: Date.now(),
+        });
+        await Promise.resolve();
+        expect(process.currentRun).toBeNull();
+
+        releaseAdmission();
+        await expect(delivering).resolves.toMatchObject({
+          ok: true,
+          runId: "ipc-ordered-run",
+        });
+        expect(process.currentRun).toMatchObject({ runId: "ipc-ordered-run" });
+        process.currentRun = null;
+      });
+    });
+
+    it("terminalizes IPC work when its first tick cannot be scheduled", async () => {
+      const stub = await initProcess("mech-ipc-schedule-failure", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.scheduleTick = vi.fn(async () => {
+          throw new Error("scheduler unavailable");
+        });
+        process.sendSignal = vi.fn(async () => {});
+
+        await expect(process.handleProcIpcDeliver({
+          runId: "ipc-unscheduled-run",
+          sourcePid: "source-process",
+          source: ROOT_IDENTITY,
+          message: "must not strand",
+          sentAt: Date.now(),
+        })).resolves.toMatchObject({ ok: true, runId: "ipc-unscheduled-run" });
+
+        await vi.waitFor(() => expect(process.currentRun).toBeNull());
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.run.finished",
+          expect.objectContaining({
+            runId: "ipc-unscheduled-run",
+            status: "error",
+            reason: "schedule.error",
+          }),
+        );
+      });
+    });
+
     it("queues delivered IPC when the target process is already running", async () => {
       const pid = "mech-ipc-queued";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
-        process.scheduleTick = () => {};
+        process.scheduleTick = async () => {};
         process.currentRun = {
           runId: "active-run",
           conversationId: "default",
@@ -3375,6 +4289,7 @@ describe("Process DO — mechanical", () => {
       });
 
       const response = await stub.recvFrame(makeReq("proc.ipc.deliver", {
+        runId: "queued-ipc-run",
         sourcePid: "source-process",
         source: ROOT_IDENTITY,
         conversationId: "side",
@@ -3390,6 +4305,7 @@ describe("Process DO — mechanical", () => {
         pid,
         sourcePid: "source-process",
         conversationId: "side",
+        runId: "queued-ipc-run",
         queued: true,
       });
 
@@ -3592,10 +4508,10 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
         const store = process.store;
-        process.scheduleTick = () => {};
+        process.scheduleTick = async () => {};
         store.openConversation({ conversationId: "side" });
         store.appendMessage("user", "side before reset", { conversationId: "side" });
-        store.register("call-side", "run-side", "fs.read", { path: "/tmp/side.txt" }, "side");
+        store.register("dispatch-side", "call-side", "run-side", "fs.read", { path: "/tmp/side.txt" }, "side");
         store.enqueue("run-side-next", "side queued", undefined, "side");
         store.enqueue("run-default-next", "default queued");
         process.currentRun = {
@@ -3615,7 +4531,7 @@ describe("Process DO — mechanical", () => {
         pid,
         conversationId: "side",
         generation: 2,
-        archivedMessages: 1,
+        archivedMessages: 2,
       });
       expect((resetRes.data as any).archivedTo).toBeUndefined();
 
@@ -4249,7 +5165,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-auto-compact");
+        await process.runTick("run-auto-compact");
         return {
           emitted,
           messages: process.store.getMessages(),
@@ -4326,7 +5242,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-auto-compact-provider-billing");
+        await process.runTick("run-auto-compact-provider-billing");
         return {
           emitted,
           currentRun: process.currentRun,
@@ -4374,7 +5290,7 @@ describe("Process DO — mechanical", () => {
           },
           async generateText(request: any) {
             expect(request.options).toMatchObject({ maxTokens: 768, reasoning: "off" });
-            await process.handleProcAbort();
+            await process.handleProcAbort({});
             return "Summary that should not be applied.";
           },
         };
@@ -4409,7 +5325,7 @@ describe("Process DO — mechanical", () => {
           systemPrompt: "Test system prompt.",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        await process.tick("run-auto-compact-abort");
+        await process.runTick("run-auto-compact-abort");
         return {
           emitted,
           currentRun: process.currentRun,
@@ -4459,6 +5375,92 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("does not let a stale abort cancel a successor run", async () => {
+      const pid = "mech-abort-stale-run";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        (instance as any).currentRun = { runId: "run-new", conversationId: "default" };
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.abort", { runId: "run-old" }),
+      )) as ResponseOkFrame;
+
+      expect(res.data).toMatchObject({ ok: true, pid, aborted: false });
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        expect(process.currentRun).toMatchObject({ runId: "run-new" });
+        process.currentRun = null;
+      });
+    });
+
+    it("promotes a queued successor without waiting for finish delivery", async () => {
+      const pid = "mech-finish-claims-successor";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.emitRunFinished = vi.fn(() => new Promise<void>(() => {}));
+        process.sendSignal = vi.fn();
+        process.scheduleTick = vi.fn(async () => {});
+        process.currentRun = { runId: "run-old", conversationId: "default" };
+        process.store.enqueue("run-next", "next message");
+
+        await process.finishRun("run-old", {
+          reason: "turn.complete",
+          status: "ok",
+        });
+        expect(process.currentRun).toMatchObject({ runId: "run-next" });
+        expect(process.store.queueSize()).toBe(0);
+        expect(process.scheduleTick).toHaveBeenCalledWith("run-next");
+
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.run.started",
+          expect.objectContaining({
+            pid,
+            runId: "run-next",
+            conversationId: "default",
+            reason: "queue.promote",
+            queuedCount: 0,
+            timestamp: expect.any(Number),
+          }),
+        );
+        process.currentRun = null;
+      });
+    });
+
+    it("keeps failed run-finish delivery in the durable outbox", async () => {
+      const stub = await initProcess("mech-finish-outbox", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {
+          throw new Error("kernel unavailable");
+        });
+        process.schedule = vi.fn(async () => ({ id: "finish-retry" }));
+
+        process.emitRunFinished(
+          { runId: "run-finish-outbox", conversationId: "default" },
+          { reason: "turn.complete", status: "ok", text: "done" },
+        );
+        await vi.waitFor(() => expect(process.schedule).toHaveBeenCalledWith(
+          5,
+          "onRunFinishDelivery",
+          "run-finish-outbox",
+          {
+            idempotent: false,
+            retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
+          },
+        ));
+        expect(JSON.parse(process.store.getValue("pendingRunFinishes"))).toHaveLength(1);
+
+        process.sendSignal = vi.fn(async () => {});
+        await process.onRunFinishDelivery("run-finish-outbox");
+        expect(process.store.getValue("pendingRunFinishes")).toBeNull();
+      });
+    });
+
     it("synthesizes interrupted tool results and continues the next queued run", async () => {
       const pid = "mech-abort-active";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -4466,11 +5468,15 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
         process.store.appendMessage("assistant", "", {
+          runId: "run-1",
           toolCalls: JSON.stringify([
             { type: "toolCall", id: "call-1", name: "Read", arguments: { path: "/root/test.txt" } },
+            { type: "toolCall", id: "call-2", name: "Read", arguments: { path: "/root/other.txt" } },
           ]),
         });
-        process.store.register("call-1", "run-1", "fs.read", { path: "/root/test.txt" });
+        process.store.register("dispatch-1", "call-1", "run-1", "fs.read", { path: "/root/test.txt" });
+        process.store.markDispatched("dispatch-1");
+        process.store.register("dispatch-2", "call-2", "run-1", "fs.read", { path: "/root/other.txt" });
         process.store.enqueue("run-2", "follow-up after abort");
         process.currentRun = { runId: "run-1" };
       });
@@ -4485,7 +5491,7 @@ describe("Process DO — mechanical", () => {
         pid,
         aborted: true,
         runId: "run-1",
-        interruptedToolCalls: 1,
+        interruptedToolCalls: 2,
         continuedQueuedRunId: "run-2",
       });
 
@@ -4493,11 +5499,15 @@ describe("Process DO — mechanical", () => {
         const process = instance as any;
         const store = process.store;
         const messages = store.getMessages();
-        const lastTwo = messages.slice(-2);
-        expect(lastTwo[0].role).toBe("toolResult");
-        expect(lastTwo[0].content).toContain("User interrupted tool execution");
-        expect(lastTwo[1].role).toBe("user");
-        expect(lastTwo[1].content).toBe("follow-up after abort");
+        const lastThree = messages.slice(-3);
+        expect(lastThree.slice(0, 2).map((message: any) => message.role)).toEqual([
+          "toolResult",
+          "toolResult",
+        ]);
+        expect(lastThree[0].content).toContain("User interrupted tool execution");
+        expect(lastThree[1].content).toContain("User interrupted tool execution");
+        expect(lastThree[2].role).toBe("user");
+        expect(lastThree[2].content).toBe("follow-up after abort");
         expect(store.queueSize()).toBe(0);
         expect(process.currentRun).toMatchObject({ runId: "run-2" });
       });
@@ -4563,9 +5573,10 @@ describe("Process DO — mechanical", () => {
             rules: [{ match: "fs.read", action: "ask" }],
           },
         };
-        await process.processToolCalls("run-hil-1", [
+        registerToolBlock(process, "run-hil-1", [
           { type: "toolCall", id: "call-hil-1", name: "Read", arguments: { path: "/root/secret.txt" } },
         ]);
+        await process.processToolCalls("run-hil-1");
       });
 
       const history = (await stub.recvFrame(
@@ -4601,9 +5612,10 @@ describe("Process DO — mechanical", () => {
             rules: [{ match: "fs.read", action: "ask" }],
           },
         };
-        await process.processToolCalls("run-hil-2", [
+        registerToolBlock(process, "run-hil-2", [
           { type: "toolCall", id: "call-hil-2", name: "Read", arguments: { path: "/root/secret.txt" } },
         ]);
+        await process.processToolCalls("run-hil-2");
         return process.store.getPendingHilForRun("run-hil-2").requestId;
       });
 
@@ -4623,11 +5635,12 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
-        const messages = process.store.getMessages();
-        const last = messages[messages.length - 1];
         expect(process.store.getPendingHil()).toBeNull();
-        expect(last.role).toBe("toolResult");
-        expect(last.content).toContain("Tool execution denied by user");
+        expect(process.store.getResults("run-hil-2")).toMatchObject([{
+          id: "call-hil-2",
+          status: "error",
+          error: "Tool execution denied by user",
+        }]);
       });
     });
 
@@ -4644,10 +5657,11 @@ describe("Process DO — mechanical", () => {
             rules: [{ match: "fs.read", action: "ask" }],
           },
         };
-        await process.processToolCalls("run-hil-remember", [
+        registerToolBlock(process, "run-hil-remember", [
           { type: "toolCall", id: "call-hil-remember-1", name: "Read", arguments: { path: "/root/one.txt" } },
           { type: "toolCall", id: "call-hil-remember-2", name: "Read", arguments: { path: "/root/two.txt" } },
         ]);
+        await process.processToolCalls("run-hil-remember");
         return process.store.getPendingHilForRun("run-hil-remember").requestId;
       });
 
@@ -4675,6 +5689,59 @@ describe("Process DO — mechanical", () => {
             action: "auto",
           },
         ]);
+      });
+    });
+
+    it("terminalizes CodeMode approval state whose continuation was lost", async () => {
+      const stub = await initProcess("mech-hil-codemode-recovery", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const runId = "run-hil-codemode-recovery";
+        process.currentRun = {
+          runId,
+          conversationId: "default",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        registerToolBlock(process, runId, [{
+          id: "call-codemode-outer",
+          name: "CodeMode",
+          arguments: { code: "return await fs.read({ path: '/lost' });" },
+        }]);
+        process.store.markDispatched("dispatch-call-codemode-outer");
+        process.store.setPendingHil({
+          requestId: "approval-lost",
+          runId,
+          conversationId: "default",
+          generation: 1,
+          toolCallId: "codemode-nested-call",
+          toolName: "Read",
+          syscall: "fs.read",
+          args: { path: "/lost" },
+          createdAt: Date.now(),
+        });
+        process.schedule = vi.fn(async () => ({ id: "recovery-tick" }));
+
+        await expect(process.handleProcHil({
+          requestId: "approval-lost",
+          decision: "approve",
+        })).resolves.toEqual({
+          ok: false,
+          error: "CodeMode execution was interrupted while waiting for tool approval",
+        });
+
+        expect(process.store.getPendingHil()).toBeNull();
+        expect(process.store.getResults(runId)).toMatchObject([{
+          id: "call-codemode-outer",
+          status: "error",
+          error: "CodeMode execution was interrupted while waiting for tool approval",
+        }]);
+        expect(process.schedule).toHaveBeenCalledWith(
+          expect.any(Date),
+          "tick",
+          { runId, generation: 0 },
+          { idempotent: true },
+        );
       });
     });
   });
@@ -5214,13 +6281,12 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("does not emit CodeMode fetch results after the run stops", async () => {
+    it("does not emit nested CodeMode events after the run stops", async () => {
       const pid = "mech-codemode-fetch-stopped-after-fetch";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        const signals: Array<{ type: string; payload: Record<string, unknown> }> = [];
         let stopChecks = 0;
 
         process.currentRun = {
@@ -5232,10 +6298,7 @@ describe("Process DO — mechanical", () => {
             rules: [],
           },
         };
-        process.sendSignal = async (type: string, payload: Record<string, unknown>) => {
-          signals.push({ type, payload });
-        };
-        process.handleRunStopped = async () => {
+        process.handleRunStopped = () => {
           stopChecks += 1;
           return stopChecks >= 3;
         };
@@ -5251,8 +6314,6 @@ describe("Process DO — mechanical", () => {
           process.currentRun.approvalPolicy,
           "default",
         )).rejects.toThrow("Run stopped before CodeMode fetch completed");
-
-        expect(signals.map((signal) => signal.type)).toEqual(["proc.run.tool.started"]);
       });
     });
 
@@ -5307,20 +6368,19 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = async () => {};
         process.executeCodeModeTool = async (
           runId: string,
-          toolCallId: string,
+          dispatchId: string,
           args: { code: string },
         ) => {
           expect(runId).toBe("run-codemode-basic");
-          expect(toolCallId).toBe("call-codemode-1");
+          expect(dispatchId).toBe("dispatch-call-codemode-1");
           expect(args.code).toContain("fs.read");
-          process.store.register(toolCallId, runId, "codemode.exec", args);
-          process.store.resolve(toolCallId, {
+          process.store.resolve(dispatchId, {
             status: "completed",
             result: "from codemode",
           });
         };
 
-        await process.processToolCalls("run-codemode-basic", [
+        registerToolBlock(process, "run-codemode-basic", [
           {
             type: "toolCall",
             id: "call-codemode-1",
@@ -5333,6 +6393,7 @@ describe("Process DO — mechanical", () => {
             },
           },
         ]);
+        await process.processToolCalls("run-codemode-basic");
 
         expect(process.store.getResults("run-codemode-basic")).toEqual([
           expect.objectContaining({
@@ -5448,7 +6509,7 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         store.setValue("currentRun", JSON.stringify({ runId }));
-        store.register("call-reset-1", runId, "fs.read", { path: "/tmp/test.txt" });
+        store.register("dispatch-reset-1", "call-reset-1", runId, "fs.read", { path: "/tmp/test.txt" });
         store.enqueue(runId, "queued after reset");
         store.appendMessage("user", "hello before reset");
       });
@@ -5471,6 +6532,97 @@ describe("Process DO — mechanical", () => {
       const sendData = sendRes.data as { queued?: boolean };
       expect(sendData.queued).toBeUndefined();
     });
+
+    it("fences an in-flight generation before archiving reset history", async () => {
+      const pid = "mech-reset-fences-generation";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let releaseGeneration!: () => void;
+        let markGenerationStarted!: () => void;
+        let releaseArchive!: () => void;
+        let markArchiveStarted!: () => void;
+        const generationBlocked = new Promise<void>((resolve) => {
+          releaseGeneration = resolve;
+        });
+        const generationStarted = new Promise<void>((resolve) => {
+          markGenerationStarted = resolve;
+        });
+        const archiveBlocked = new Promise<void>((resolve) => {
+          releaseArchive = resolve;
+        });
+        const archiveStarted = new Promise<void>((resolve) => {
+          markArchiveStarted = resolve;
+        });
+        process.sendSignal = vi.fn();
+        process.generation = {
+          async generate() {
+            markGenerationStarted();
+            await generationBlocked;
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "late reset response" }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              usage: testUsage(),
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "";
+          },
+        };
+        process.archiveAllConversationMessages = vi.fn(async () => {
+          markArchiveStarted();
+          await archiveBlocked;
+          return { archivedMessages: 1, archivedTo: "/archive/", archives: [] };
+        });
+        process.store.appendMessage("user", "reset while generating", {
+          runId: "run-reset-fence",
+        });
+        process.currentRun = {
+          runId: "run-reset-fence",
+          conversationId: "default",
+          config: {
+            executor: { kind: "process", pid },
+            profile: "task",
+            provider: "test",
+            model: "test",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 128000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            generationStreaming: "off",
+          },
+          tools: [],
+          devices: [],
+          mcpServers: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        const ticking = process.runTick("run-reset-fence");
+        await generationStarted;
+        const resetting = process.handleProcReset();
+        await archiveStarted;
+        expect(process.currentRun).toBeNull();
+
+        releaseGeneration();
+        await ticking;
+        expect(process.store.getMessages().some((message: any) => (
+          message.content === "late reset response"
+        ))).toBe(false);
+
+        releaseArchive();
+        await resetting;
+        expect(process.store.getMessages()).toEqual([]);
+      });
+    });
   });
 
   describe("proc.kill", () => {
@@ -5482,7 +6634,7 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         store.setValue("currentRun", JSON.stringify({ runId }));
-        store.register("call-kill-1", runId, "fs.read", { path: "/tmp/test.txt" });
+        store.register("dispatch-kill-1", "call-kill-1", runId, "fs.read", { path: "/tmp/test.txt" });
         store.enqueue(runId, "queued before kill");
         store.appendMessage("user", "hello before kill");
       });
@@ -5567,6 +6719,102 @@ describe("Process DO — mechanical", () => {
     });
   });
 
+  describe("schema upgrades", () => {
+    it("terminalizes provider HIL calls without inventing nested CodeMode results", async () => {
+      const stub = await initProcess("mech-upgrade-v3-hil", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const sql = (instance as any).ctx.storage.sql as SqlStorage;
+        const legacyToolTable = PROCESS_V001_INITIAL_SCHEMA.statements.find((statement) => (
+          statement.includes("CREATE TABLE IF NOT EXISTS pending_tool_calls")
+        ));
+        const legacyHilTable = PROCESS_V001_INITIAL_SCHEMA.statements.find((statement) => (
+          statement.includes("CREATE TABLE IF NOT EXISTS pending_hil")
+        ));
+        expect(legacyToolTable).toBeTruthy();
+        expect(legacyHilTable).toBeTruthy();
+
+        sql.exec("DROP TABLE pending_tool_calls");
+        sql.exec("DROP TABLE pending_hil");
+        sql.exec(legacyToolTable!);
+        sql.exec(legacyHilTable!);
+        sql.exec(
+          `INSERT INTO pending_hil (
+            request_id, run_id, conversation_id, generation, tool_call_id, tool_name,
+            syscall, args_json, remaining_tool_calls_json, created_at
+          ) VALUES (?, ?, 'default', 1, ?, 'Read', 'fs.read', ?, ?, 100)`,
+          "request-upgrade",
+          "run-upgrade",
+          "call-current",
+          JSON.stringify({ path: "/current" }),
+          JSON.stringify([
+            { type: "toolCall", id: "call-next", name: "Read", arguments: { path: "/next" } },
+          ]),
+        );
+        sql.exec(
+          `INSERT INTO pending_tool_calls (
+            id, run_id, conversation_id, generation, call, args_json, status, created_at
+          ) VALUES (?, ?, 'default', 1, 'codemode.exec', '{}', 'pending', 200)`,
+          "call-codemode-outer",
+          "run-codemode-upgrade",
+        );
+        sql.exec(
+          `INSERT INTO pending_hil (
+            request_id, run_id, conversation_id, generation, tool_call_id, tool_name,
+            syscall, args_json, remaining_tool_calls_json, created_at
+          ) VALUES (?, ?, 'default', 1, ?, 'Read', 'fs.read', ?, '[]', 201)`,
+          "request-codemode-upgrade",
+          "run-codemode-upgrade",
+          "codemode-nested-call",
+          JSON.stringify({ path: "/nested" }),
+        );
+
+        for (const statement of PROCESS_V004_PENDING_TOOL_DISPATCH_ID.statements) {
+          sql.exec(statement);
+        }
+
+        const tools = sql.exec<{
+          id: string;
+          call: string;
+          args_json: string;
+          status: string;
+          error: string;
+        }>(
+          `SELECT id, call, args_json, status, error
+             FROM pending_tool_calls
+            ORDER BY created_at ASC`,
+        ).toArray();
+        expect(tools).toEqual([
+          {
+            id: "call-current",
+            call: "fs.read",
+            args_json: JSON.stringify({ path: "/current" }),
+            status: "error",
+            error: "Tool approval interrupted by the 0.4 upgrade",
+          },
+          {
+            id: "call-next",
+            call: "Read",
+            args_json: JSON.stringify({ path: "/next" }),
+            status: "error",
+            error: "Tool approval interrupted by the 0.4 upgrade",
+          },
+          {
+            id: "call-codemode-outer",
+            call: "codemode.exec",
+            args_json: "{}",
+            status: "error",
+            error: "Tool execution interrupted by the 0.4 upgrade",
+          },
+        ]);
+        expect(sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM pending_hil")
+          .toArray()[0]?.count).toBe(0);
+        expect(sql.exec<{ name: string }>("PRAGMA table_info(pending_hil)").toArray()
+          .map((column) => column.name)).not.toContain("remaining_tool_calls_json");
+      });
+    });
+  });
+
   describe("unknown command", () => {
     it("returns error for unknown call", async () => {
       const pid = "mech-unknown";
@@ -5610,6 +6858,384 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("response handling", () => {
+    it("fails a dispatched tool when its durable deadline expires", async () => {
+      const pid = "mech-res-tool-timeout";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.scheduleTick = vi.fn(async () => {});
+        process.store.register(
+          "dispatch-timeout",
+          "call-timeout",
+          "run-timeout",
+          "fs.read",
+          { path: "/slow" },
+          "default",
+        );
+        process.store.markDispatched("dispatch-timeout");
+        process.currentRun = { runId: "run-timeout", conversationId: "default" };
+
+        await process.onToolDispatchTimeout({
+          runId: "run-timeout",
+          dispatchId: "dispatch-timeout",
+        });
+
+        expect(process.store.getResults("run-timeout")).toMatchObject([{
+          id: "call-timeout",
+          status: "error",
+          error: expect.stringContaining("Tool execution timed out"),
+        }]);
+        expect(process.scheduleTick).toHaveBeenCalledWith("run-timeout");
+        process.store.clearPendingToolCalls();
+        process.currentRun = null;
+      });
+    });
+
+    it("fails a run whose media preparation watchdog expires", async () => {
+      const pid = "mech-res-media-timeout";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn();
+        const messageId = process.store.appendMessage("user", "slow attachment", {
+          runId: "run-media-timeout",
+        });
+        process.currentRun = {
+          runId: "run-media-timeout",
+          conversationId: "default",
+          pendingMediaMessageId: messageId,
+        };
+
+        await process.onMediaPreparationTimeout("run-media-timeout");
+
+        expect(process.currentRun).toBeNull();
+        expect(process.store.getMessages()).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            role: "system",
+            runId: "run-media-timeout",
+            content: expect.stringContaining("media preparation timed out"),
+          }),
+        ]));
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.run.finished",
+          expect.objectContaining({
+            runId: "run-media-timeout",
+            status: "error",
+            reason: "media.timeout",
+          }),
+        );
+      });
+    });
+
+    it("coalesces simultaneous tool timeouts into one continuation tick", async () => {
+      const pid = "mech-res-coalesced-tool-timeouts";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.schedule = vi.fn();
+        process.currentRun = { runId: "run-timeouts", conversationId: "default" };
+        for (const dispatchId of ["dispatch-a", "dispatch-b"]) {
+          process.store.register(dispatchId, dispatchId, "run-timeouts", "fs.read", {});
+          process.store.markDispatched(dispatchId);
+        }
+
+        await Promise.all([
+          process.onToolDispatchTimeout({ runId: "run-timeouts", dispatchId: "dispatch-a" }),
+          process.onToolDispatchTimeout({ runId: "run-timeouts", dispatchId: "dispatch-b" }),
+        ]);
+
+        expect(process.store.getResults("run-timeouts").map((result: any) => result.status))
+          .toEqual(["error", "error"]);
+        expect(process.schedule).toHaveBeenCalledTimes(1);
+        expect(process.schedule).toHaveBeenCalledWith(
+          expect.any(Date),
+          "tick",
+          { runId: "run-timeouts", generation: 0 },
+          { idempotent: true },
+        );
+        process.store.clearPendingToolCalls();
+        process.currentRun = null;
+      });
+    });
+
+    it("fails a tool without dispatching when its watchdog cannot be scheduled", async () => {
+      const pid = "mech-res-tool-timeout-schedule-failure";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn();
+        process.schedule = vi.fn(async () => {
+          throw new Error("scheduler unavailable");
+        });
+        process.dispatchSyscall = vi.fn();
+        process.currentRun = {
+          runId: "run-timeout-schedule-failure",
+          conversationId: "default",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        registerToolBlock(process, "run-timeout-schedule-failure", [
+          { id: "call-timeout-schedule-failure", name: "Read", arguments: { path: "/slow" } },
+        ]);
+
+        await process.processToolCalls("run-timeout-schedule-failure");
+
+        expect(process.dispatchSyscall).not.toHaveBeenCalled();
+        expect(process.store.getResults("run-timeout-schedule-failure")).toMatchObject([{
+          id: "call-timeout-schedule-failure",
+          status: "error",
+          error: "Failed to schedule tool timeout: scheduler unavailable",
+        }]);
+        process.store.clearPendingToolCalls();
+        process.currentRun = null;
+      });
+    });
+
+    it("admits public user takeover while a shell syscall is still running", async () => {
+      const pid = "mech-res-direct-after-takeover";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const originalRecvFrame = Kernel.prototype.recvFrame;
+      let releaseResponse: (() => void) | undefined;
+      let markRequestStarted!: () => void;
+      let oldDispatchId = "";
+      const responseBlocked = new Promise<void>((resolve) => {
+        releaseResponse = resolve;
+      });
+      const requestStarted = new Promise<void>((resolve) => {
+        markRequestStarted = resolve;
+      });
+      const recvSpy = vi.spyOn(Kernel.prototype as any, "recvFrame").mockImplementation(
+        async function (this: Kernel, processId: string, frame: any) {
+          if (
+            frame?.type === "req"
+            && frame.call === "shell.exec"
+            && frame.args?.input === "sleep 300"
+          ) {
+            oldDispatchId = frame.id;
+            markRequestStarted();
+            await responseBlocked;
+            return {
+              type: "res",
+              id: frame.id,
+              ok: true,
+              data: { status: "running", output: "", sessionId: "sh_late" },
+            } as ResponseFrame;
+          }
+          return originalRecvFrame.call(this, processId, frame);
+        },
+      );
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          process.sendSignal = vi.fn();
+          process.generation = {
+            async generate() {
+              return {
+                role: "assistant",
+                content: [{
+                  type: "toolCall",
+                  id: "call-direct-old",
+                  name: "Shell",
+                  arguments: { input: "sleep 300", target: "gsv" },
+                }],
+                api: "test",
+                provider: "test",
+                model: "test",
+                usage: testUsage(),
+                stopReason: "toolUse",
+                timestamp: Date.now(),
+              };
+            },
+            async generateText() {
+              return "";
+            },
+          };
+          process.store.appendMessage("user", "run the long command", {
+            runId: "run-direct-old",
+          });
+          process.currentRun = {
+            runId: "run-direct-old",
+            conversationId: "default",
+            config: {
+              executor: { kind: "process", pid },
+              profile: "task",
+              provider: "test",
+              model: "test",
+              apiKey: "",
+              reasoning: "off",
+              maxTokens: 8192,
+              contextWindowTokens: 128000,
+              contextWindowSource: "config",
+              maxContextBytes: 32768,
+              generationStreaming: "off",
+            },
+            tools: [],
+            devices: [],
+            mcpServers: [],
+            systemPrompt: "Test system prompt.",
+            approvalPolicy: { default: "auto", rules: [] },
+          };
+
+          const ticking = process.tick({ runId: "run-direct-old", generation: 0 });
+          await requestStarted;
+          const response = await Promise.race([
+            instance.recvFrame(makeReq("proc.send", {
+              message: "stop waiting",
+              origin: { kind: "client", connectionId: "client-1" },
+            })),
+            new Promise<never>((_resolve, reject) => {
+              setTimeout(() => reject(new Error("proc.send was blocked by the shell syscall")), 250);
+            }),
+          ]) as ResponseOkFrame;
+          const takeoverRunId = (response.data as any).runId;
+          expect(process.currentRun).toMatchObject({ runId: takeoverRunId });
+
+          let markSuccessorStarted!: () => void;
+          const successorStarted = new Promise<void>((resolve) => {
+            markSuccessorStarted = resolve;
+          });
+          process.runTick = vi.fn(async (runId: string) => {
+            if (runId === takeoverRunId) {
+              markSuccessorStarted();
+            }
+          });
+          await process.tick({ runId: takeoverRunId, generation: 0 });
+          await Promise.race([
+            successorStarted,
+            new Promise<never>((_resolve, reject) => {
+              setTimeout(() => reject(new Error("successor tick was blocked by the shell syscall")), 250);
+            }),
+          ]);
+
+          releaseResponse?.();
+          releaseResponse = undefined;
+          await ticking;
+
+          expect(oldDispatchId).not.toBe("");
+          expect(process.store.getResults("run-direct-old")).toEqual([]);
+          expect(process.store.getValue("shellSessionTarget:sh_late")).toBeNull();
+          expect(process.currentRun).toMatchObject({ runId: takeoverRunId });
+          process.currentRun = null;
+        });
+      } finally {
+        releaseResponse?.();
+        recvSpy.mockRestore();
+      }
+    });
+
+    it("ignores a late direct CodeMode response after user takeover", async () => {
+      const pid = "mech-res-codemode-direct-late";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const originalRecvFrame = Kernel.prototype.recvFrame;
+      let releaseResponse!: () => void;
+      let markRequestStarted!: () => void;
+      const responseBlocked = new Promise<void>((resolve) => {
+        releaseResponse = resolve;
+      });
+      const requestStarted = new Promise<void>((resolve) => {
+        markRequestStarted = resolve;
+      });
+      const recvSpy = vi.spyOn(Kernel.prototype as any, "recvFrame").mockImplementation(
+        async function (this: Kernel, processId: string, frame: any) {
+          if (frame?.type === "req" && frame.id === "codemode-direct-old") {
+            markRequestStarted();
+            await responseBlocked;
+            return {
+              type: "res",
+              id: frame.id,
+              ok: true,
+              data: { status: "running", output: "", sessionId: "sh_codemode_late" },
+            } as ResponseFrame;
+          }
+          return originalRecvFrame.call(this, processId, frame);
+        },
+      );
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          process.sendSignal = vi.fn();
+          process.scheduleTick = vi.fn(async () => {});
+          process.currentRun = { runId: "run-codemode-old", conversationId: "default" };
+
+          const dispatching = process.dispatchCodeModeSyscall(
+            "run-codemode-old",
+            "codemode-direct-old",
+            "shell.exec",
+            { input: "sleep 300", target: "gsv" },
+          );
+          await requestStarted;
+
+          const takeover = await process.handleProcSend({
+            message: "stop waiting",
+            origin: { kind: "client", connectionId: "client-1" },
+          });
+          releaseResponse();
+
+          await expect(dispatching).rejects.toThrow("Run stopped before shell.exec completed");
+          expect(process.store.getValue("shellSessionTarget:sh_codemode_late")).toBeNull();
+          expect(process.currentRun).toMatchObject({ runId: takeover.runId });
+          process.currentRun = null;
+        });
+      } finally {
+        releaseResponse();
+        recvSpy.mockRestore();
+      }
+    });
+
+    it("claims a recovered tool once while the original dispatcher unwinds", async () => {
+      const pid = "mech-res-tool-recovery-claim";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let releaseFirst!: () => void;
+        let markFirstStarted!: () => void;
+        const firstBlocked = new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        const firstStarted = new Promise<void>((resolve) => {
+          markFirstStarted = resolve;
+        });
+        const dispatches: string[] = [];
+        process.sendSignal = vi.fn();
+        process.schedule = vi.fn();
+        process.dispatchSyscall = vi.fn(async (_runId: string, dispatchId: string) => {
+          dispatches.push(dispatchId);
+          if (dispatchId === "dispatch-call-1") {
+            markFirstStarted();
+            await firstBlocked;
+          }
+        });
+        process.currentRun = {
+          runId: "run-recovery-claim",
+          conversationId: "default",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        registerToolBlock(process, "run-recovery-claim", [
+          { id: "call-1", name: "Read", arguments: { path: "/one" } },
+          { id: "call-2", name: "Read", arguments: { path: "/two" } },
+        ]);
+
+        const original = process.processToolCalls("run-recovery-claim");
+        await firstStarted;
+        await original;
+        expect(dispatches).toEqual(["dispatch-call-1", "dispatch-call-2"]);
+        process.store.fail("dispatch-call-1", "simulated lost dispatch");
+        await process.runTick("run-recovery-claim");
+        expect(dispatches).toEqual(["dispatch-call-1", "dispatch-call-2"]);
+
+        releaseFirst();
+        expect(dispatches).toEqual(["dispatch-call-1", "dispatch-call-2"]);
+        process.store.clearPendingToolCalls();
+        process.currentRun = null;
+      });
+    });
+
     it("ignores response for unknown tool call", async () => {
       const pid = "mech-res-unknown";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -5630,6 +7256,11 @@ describe("Process DO — mechanical", () => {
         const process = instance as any;
         const continuedRunIds: string[] = [];
         const scheduledRunIds: string[] = [];
+        let dispatched = 0;
+        let markAllDispatched!: () => void;
+        const allDispatched = new Promise<void>((resolve) => {
+          markAllDispatched = resolve;
+        });
 
         process.currentRun = {
           runId: "run-multi-tool-batch",
@@ -5640,33 +7271,37 @@ describe("Process DO — mechanical", () => {
         process.tick = async (runId: string) => {
           continuedRunIds.push(runId);
         };
-        process.scheduleTick = (runId: string) => {
+        process.scheduleTick = async (runId: string) => {
           scheduledRunIds.push(runId);
         };
         process.dispatchSyscall = async (
-          dispatchRunId: string,
-          id: string,
-          call: string,
-          args: unknown,
+          _dispatchRunId: string,
+          dispatchId: string,
         ) => {
-          process.store.register(id, dispatchRunId, call, args);
-
-          if (id === "call-1") {
+          if (dispatchId === "dispatch-call-1") {
             await process.handleRes({
               type: "res",
-              id,
+              id: dispatchId,
               ok: true,
               data: { path: "/tmp/one.txt", content: "first" },
             });
           }
+          dispatched += 1;
+          if (dispatched === 2) {
+            markAllDispatched();
+          }
         };
 
-        await process.processToolCalls("run-multi-tool-batch", [
+        registerToolBlock(process, "run-multi-tool-batch", [
           { type: "toolCall", id: "call-1", name: "Read", arguments: { path: "/tmp/one.txt" } },
           { type: "toolCall", id: "call-2", name: "Read", arguments: { path: "/tmp/two.txt" } },
         ]);
+        await process.processToolCalls("run-multi-tool-batch");
+        await allDispatched;
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(continuedRunIds).toEqual([]);
+        expect(scheduledRunIds).toEqual([]);
         expect(process.store.getResults("run-multi-tool-batch")).toEqual([
           expect.objectContaining({
             id: "call-1",
@@ -5680,7 +7315,7 @@ describe("Process DO — mechanical", () => {
 
         await process.handleRes({
           type: "res",
-          id: "call-2",
+          id: "dispatch-call-2",
           ok: true,
           data: { path: "/tmp/two.txt", content: "second" },
         });
@@ -5698,7 +7333,7 @@ describe("Process DO — mechanical", () => {
         const process = instance as any;
         const dispatched: unknown[] = [];
         process.sendSignal = async () => {};
-        process.scheduleTick = () => {};
+        process.scheduleTick = async () => {};
         process.dispatchSyscall = async (
           _runId: string,
           _id: string,
@@ -5709,6 +7344,7 @@ describe("Process DO — mechanical", () => {
         };
 
         process.store.register(
+          "dispatch-shell-start",
           "call-shell-start",
           "run-shell-start",
           "shell.exec",
@@ -5716,7 +7352,7 @@ describe("Process DO — mechanical", () => {
         );
         await process.handleRes({
           type: "res",
-          id: "call-shell-start",
+          id: "dispatch-shell-start",
           ok: true,
           data: { status: "running", output: "", sessionId: "sh_macbook" },
         });
@@ -5732,13 +7368,17 @@ describe("Process DO — mechanical", () => {
           },
         };
 
-        await process.processToolCalls("run-shell-continuation", [
+        registerToolBlock(process, "run-shell-continuation", [
           { type: "toolCall", id: "call-shell-poll", name: "Shell", arguments: { input: "", sessionId: "sh_macbook" } },
         ]);
+        await process.processToolCalls("run-shell-continuation");
 
         expect(dispatched).toEqual([]);
-        const messages = process.store.getMessages();
-        expect(messages[messages.length - 1].content).toContain("Tool execution denied by policy");
+        expect(process.store.getResults("run-shell-continuation")).toMatchObject([{
+          id: "call-shell-poll",
+          status: "error",
+          error: "Tool execution denied by policy",
+        }]);
       });
     });
 
@@ -5748,29 +7388,69 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        const dispatched: unknown[] = [];
-        process.sendSignal = async () => {};
-        process.dispatchSyscall = async (_runId: string, _id: string, _call: string, args: unknown) => {
-          dispatched.push(args);
+        process.sendSignal = vi.fn();
+        process.scheduleTick = vi.fn(async () => {});
+        process.dispatchSyscall = vi.fn();
+        process.generation = {
+          async generate() {
+            return {
+              role: "assistant",
+              content: [{
+                type: "toolCall",
+                id: "call-shell-unknown-poll",
+                name: "Shell",
+                arguments: { input: "", sessionId: "sh_unknown" },
+              }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              usage: testUsage(),
+              stopReason: "toolUse",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "";
+          },
         };
+        process.store.appendMessage("user", "poll an unknown shell", {
+          runId: "run-shell-unknown-continuation",
+        });
         process.currentRun = {
           runId: "run-shell-unknown-continuation",
           conversationId: "default",
+          config: {
+            executor: { kind: "process", pid },
+            profile: "task",
+            provider: "test",
+            model: "test",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 128000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+            generationStreaming: "off",
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
           approvalPolicy: {
             default: "auto",
             rules: [{ match: "shell.exec", target: "macbook", action: "deny" }],
           },
         };
 
-        await process.processToolCalls("run-shell-unknown-continuation", [
-          { type: "toolCall", id: "call-shell-unknown-poll", name: "Shell", arguments: { input: "", sessionId: "sh_unknown" } },
-        ]);
+        await process.runTick("run-shell-unknown-continuation");
 
-        expect(dispatched).toEqual([]);
-        const messages = process.store.getMessages();
-        expect(messages[messages.length - 1].content).toContain(
-          "Shell session continuation requires an explicit target",
-        );
+        expect(process.dispatchSyscall).not.toHaveBeenCalled();
+        expect(process.store.getResults("run-shell-unknown-continuation")).toMatchObject([{
+          id: "call-shell-unknown-poll",
+          status: "error",
+          error: expect.stringContaining("Shell session continuation requires an explicit target"),
+        }]);
+        process.store.clearPendingToolCalls();
+        process.currentRun = null;
       });
     });
   });
@@ -5872,55 +7552,6 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
       expect(toolResultMsg).toBeDefined();
 
       expect(visibleAssistantText(msgs).toLowerCase()).toContain("banana");
-    });
-  }, 60_000);
-
-  it("message queue injection at tool-result boundary", async () => {
-    const pid = "llm-queue-1";
-    await registerInKernel(pid, ROOT_IDENTITY);
-    const stub = await initProcess(pid, ROOT_IDENTITY, { register: false });
-
-    await env.STORAGE.put("root/queue-test.txt", "file-content-alpha", {
-      customMetadata: { uid: "0", gid: "0", mode: "644" },
-    });
-
-    const res1 = (await stub.recvFrame(
-      makeReq("proc.send", {
-        message: "Read ~/queue-test.txt and tell me what it says.",
-      }),
-    )) as ResponseOkFrame;
-    expect(res1.ok).toBe(true);
-
-    const res2 = (await stub.recvFrame(
-      makeReq("proc.send", { message: "Also, what is 1 + 1?" }),
-    )) as ResponseOkFrame;
-    expect((res2.data as any).queued).toBe(true);
-
-    let maxTicks = 10;
-    while (maxTicks-- > 0) {
-      await runDurableObjectAlarm(stub);
-      const done = await runInDurableObject(stub, (instance: Process) => {
-        return (instance as any).store.getValue("currentRun") === null
-          && (instance as any).store.queueSize() === 0;
-      });
-      if (done) break;
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    await waitForRunComplete(stub, 50_000);
-
-    await runInDurableObject(stub, (instance: Process) => {
-      const store = (instance as any).store;
-      const msgs = store.getMessages();
-      if (skipTransientProviderFailure(msgs)) return;
-      expect(store.queueSize()).toBe(0);
-      const userMsgs = msgs.filter((m: any) => m.role === "user");
-      expect(userMsgs.length).toBeGreaterThanOrEqual(2);
-      const queuedMsg = userMsgs.find((m: any) =>
-        m.content.includes("1 + 1"),
-      );
-      expect(queuedMsg).toBeDefined();
-      expect(queuedMsg.runId).toBe((res1.data as any).runId);
-      expect(queuedMsg.runId).not.toBe((res2.data as any).runId);
     });
   }, 60_000);
 

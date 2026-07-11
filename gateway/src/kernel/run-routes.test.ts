@@ -104,6 +104,23 @@ function createMockSql() {
       return mockSqlRows<T>();
     }
 
+    if (q.startsWith("DELETE FROM run_routes") && q.includes("route_kind = 'adapter'")) {
+      const [adapter, accountId, surfaceKind, surfaceId, threadId] = bindings;
+      for (const [runId, row] of table.entries()) {
+        if (
+          row.route_kind === "adapter"
+          && row.adapter === adapter
+          && row.account_id === accountId
+          && row.surface_kind === surfaceKind
+          && row.surface_id === surfaceId
+          && row.thread_id === threadId
+        ) {
+          table.delete(runId);
+        }
+      }
+      return mockSqlRows<T>();
+    }
+
     return mockSqlRows<T>();
   }
 
@@ -160,6 +177,17 @@ describe("RunRouteStore", () => {
       expect(route.threadId).toBe("thread-1");
       expect(route.expiresAt).toBe(3_000);
     }
+    store.setAdapterRoute(
+      "run-3",
+      1001,
+      "whatsapp",
+      "default",
+      "thread",
+      "surface-a",
+      "thread-1",
+    );
+    expect(store.get("run-2")).toBeNull();
+    expect(store.get("run-3")).not.toBeNull();
   });
 
   it("prunes expired routes", () => {

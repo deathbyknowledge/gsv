@@ -71,7 +71,7 @@ The inbound path looks like this:
 4. The Kernel resolves the adapter account and external actor.
 5. The Kernel checks identity links and routing state.
 6. The message is delivered to a durable process, usually `init:{uid}` or a routed process.
-7. The process runs the normal agent loop and emits `chat.*` signals.
+7. The process runs the normal agent loop and emits `proc.run.*` signals.
 
 The important point is that inbound adapter traffic does not create a special
 kind of bot runtime. It feeds the same durable process model that the CLI and

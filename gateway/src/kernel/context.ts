@@ -55,12 +55,14 @@ export type KernelContext = {
   connection: Connection | null;
   identity?: ConnectionIdentity;
   processId?: string;
+  processRunId?: string;
   callerOwnerUid?: number;
   appFrame?: AppFrameContext;
   serverVersion: string;
   broadcastToUserUid: (uid: number, signal: string, payload?: unknown) => void;
   getAppRunner: (uid: number, packageId: string) => unknown;
-  scheduleIpcCallTimeout: (callId: string, delayMs: number) => Promise<string>;
+  scheduleIpcCallTimeout: (callId: string, deadlineAt: number) => Promise<string>;
+  failIpcCallsByTarget: (uid: number, targetPid: string, error: string) => void;
   scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
   cancelScheduleWake: (wakeScheduleId: string) => Promise<void>;
   runSchedules: (

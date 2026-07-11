@@ -119,6 +119,7 @@ function makeContext(options?: {
   getAppRunner?: KernelContext["getAppRunner"];
   scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
+  processRunId?: string;
   identity?: ProcessIdentity;
   aiRun?: (model: string, input: Record<string, unknown>) => Promise<unknown>;
   ripgit?: Fetcher;
@@ -268,6 +269,7 @@ function makeContext(options?: {
       capabilities: options?.capabilities ?? ["pkg.list", "repo.refs", "repo.log"],
     },
     processId: "task:pkg",
+    processRunId: options?.processRunId,
     serverVersion: "0.3.3",
     getAppRunner: options?.getAppRunner,
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
@@ -815,6 +817,7 @@ describe("proc native command", () => {
       cwd: IDENTITY.cwd,
       profile: "task",
       state: "running",
+      activeRunId: "parent-run",
       contextFiles: [],
       createdAt: 1,
     };
@@ -823,8 +826,8 @@ describe("proc native command", () => {
     });
     const ipcCalls = {
       create: vi.fn(),
+      get: vi.fn(() => ({ status: "pending", error: null })),
       remove: vi.fn(),
-      attachRun: vi.fn(),
     };
     const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
 
@@ -839,7 +842,6 @@ describe("proc native command", () => {
         expect(req.args.metadata).toBeUndefined();
         expect(req.args.call).toEqual(expect.objectContaining({
           callId: expect.any(String),
-          replyToPid: "task:pkg",
           deadlineAt: expect.any(Number),
         }));
         return {
@@ -852,7 +854,7 @@ describe("proc native command", () => {
             pid,
             sourcePid: "task:pkg",
             conversationId: "default",
-            runId: "child-run",
+            runId: req.args.runId,
           },
         };
       }
@@ -882,12 +884,14 @@ describe("proc native command", () => {
         } as unknown as KernelContext["procs"],
         ipcCalls: ipcCalls as unknown as KernelContext["ipcCalls"],
         scheduleIpcCallTimeout,
+        processRunId: "parent-run",
       }),
     );
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("status=in_progress");
-    expect(result.stdout).toContain("run_id=child-run");
+    const createdCall = ipcCalls.create.mock.calls[0]?.[0];
+    expect(result.stdout).toContain(`run_id=${createdCall.targetRunId}`);
     expect(result.stdout).toContain("queued=false");
     expect(result.stdout).toContain('label="planning"');
     expect(spawn).toHaveBeenCalledWith(
@@ -901,12 +905,13 @@ describe("proc native command", () => {
     );
     expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
       sourcePid: "task:pkg",
+      sourceRunId: "parent-run",
       targetPid: spawnedPids[0],
+      targetRunId: expect.any(String),
       uid: IDENTITY.uid,
     }));
-    const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
-    expect(ipcCalls.attachRun).toHaveBeenCalledWith(callId, "child-run");
-    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(callId, 600_000);
+    const callId = createdCall.callId;
+    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(callId, createdCall.deadlineAt);
   });
 
   it("rejects legacy profile selection in proc spawn", async () => {

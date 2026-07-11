@@ -721,12 +721,12 @@ describe("ProcessStore", () => {
       const stub = await getProcessByPid("tc-resolve");
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.register("call_1", "run_1", "fs.read", { path: "/etc/hostname" });
-        expect(store.getPending("call_1")).not.toBeNull();
+        store.register("dispatch_1", "call_1", "run_1", "fs.read", { path: "/etc/hostname" });
+        expect(store.getPending("dispatch_1")).not.toBeNull();
         expect(store.isRunResolved("run_1")).toBe(false);
 
-        store.resolve("call_1", { content: "gsv" });
-        expect(store.getPending("call_1")).toBeNull();
+        store.resolve("dispatch_1", { content: "gsv" });
+        expect(store.getPending("dispatch_1")).toBeNull();
         expect(store.isRunResolved("run_1")).toBe(true);
 
         const results = store.getResults("run_1");
@@ -736,12 +736,25 @@ describe("ProcessStore", () => {
       });
     });
 
+    it("distinguishes registered calls from dispatched calls", async () => {
+      const stub = await getProcessByPid("tc-dispatch-state");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.register("dispatch_1", "call_1", "run_1", "fs.read", { path: "/tmp/input" });
+        expect(store.getResults("run_1")[0].status).toBe("registered");
+
+        expect(store.markDispatched("dispatch_1")).toBe(true);
+        expect(store.markDispatched("dispatch_1")).toBe(false);
+        expect(store.getResults("run_1")[0].status).toBe("pending");
+      });
+    });
+
     it("register and fail", async () => {
       const stub = await getProcessByPid("tc-fail");
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.register("call_2", "run_2", "fs.write", { path: "/root/x" });
-        store.fail("call_2", "EPERM");
+        store.register("dispatch_2", "call_2", "run_2", "fs.write", { path: "/root/x" });
+        store.fail("dispatch_2", "EPERM");
         expect(store.isRunResolved("run_2")).toBe(true);
         const results = store.getResults("run_2");
         expect(results[0].status).toBe("error");
@@ -749,18 +762,66 @@ describe("ProcessStore", () => {
       });
     });
 
+    it("ignores late dispatch results when a provider tool id is reused", async () => {
+      const stub = await getProcessByPid("tc-reused-provider-id");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.register(
+          "dispatch_old",
+          "call_reused",
+          "run_old",
+          "fs.read",
+          { path: "/old" },
+          "default",
+        );
+        expect(store.getPending("dispatch_old")).toMatchObject({
+          runId: "run_old",
+        });
+
+        store.register(
+          "dispatch_new",
+          "call_reused",
+          "run_new",
+          "fs.read",
+          { path: "/new" },
+          "default",
+        );
+        expect(store.getPending("dispatch_old")).not.toBeNull();
+        expect(store.getPending("dispatch_new")).toMatchObject({
+          runId: "run_new",
+        });
+
+        store.resolve("dispatch_old", { content: "stale" });
+        store.fail("dispatch_old", "stale failure");
+        expect(store.getPending("dispatch_new")).not.toBeNull();
+
+        store.resolve("dispatch_new", { content: "fresh" });
+        expect(store.getResults("run_old")).toMatchObject([{
+          id: "call_reused",
+          dispatchId: "dispatch_old",
+          status: "completed",
+          result: { content: "stale" },
+        }]);
+        expect(store.getResults("run_new")).toMatchObject([{
+          id: "call_reused",
+          status: "completed",
+          result: { content: "fresh" },
+        }]);
+      });
+    });
+
     it("isRunResolved waits for all calls", async () => {
       const stub = await getProcessByPid("tc-multi");
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.register("c1", "run_3", "fs.read", {});
-        store.register("c2", "run_3", "shell.exec", {});
+        store.register("dispatch_c1", "c1", "run_3", "fs.read", {});
+        store.register("dispatch_c2", "c2", "run_3", "shell.exec", {});
         expect(store.isRunResolved("run_3")).toBe(false);
 
-        store.resolve("c1", "ok");
+        store.resolve("dispatch_c1", "ok");
         expect(store.isRunResolved("run_3")).toBe(false);
 
-        store.resolve("c2", "ok");
+        store.resolve("dispatch_c2", "ok");
         expect(store.isRunResolved("run_3")).toBe(true);
       });
     });
@@ -769,10 +830,10 @@ describe("ProcessStore", () => {
       const stub = await getProcessByPid("tc-clear");
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.register("c1", "run_4", "fs.read", {});
-        store.register("c2", "run_4", "fs.write", {});
-        store.resolve("c1", "ok");
-        store.resolve("c2", "ok");
+        store.register("dispatch_c1", "c1", "run_4", "fs.read", {});
+        store.register("dispatch_c2", "c2", "run_4", "fs.write", {});
+        store.resolve("dispatch_c1", "ok");
+        store.resolve("dispatch_c2", "ok");
         store.clearRun("run_4");
         expect(store.getResults("run_4")).toHaveLength(0);
       });

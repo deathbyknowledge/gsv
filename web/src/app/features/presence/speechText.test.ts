@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { chunkSpeechText, normalizeInterimSpeechText, selectSpeechPrefix } from "./speechText";
+import { chunkSpeechText, selectSpeechPrefix } from "./speechText";
 
 describe("presence speech text helpers", () => {
-  it("normalizes short interim status text", () => {
-    expect(normalizeInterimSpeechText("  Using fs.read  ")).toBe("Using fs.read.");
-    expect(normalizeInterimSpeechText("Already done.")).toBe("Already done.");
-    expect(normalizeInterimSpeechText("```ts\ncode\n```")).toBe("");
-  });
-
   it("waits for enough text before selecting a non-final prefix", () => {
     expect(selectSpeechPrefix("short unfinished thought", false, true)).toBeNull();
 

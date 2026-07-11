@@ -75,9 +75,3 @@ export type VoiceTimingChunk = {
   model?: string;
   gapMs?: number;
 };
-
-export type PendingInterimSpeech = {
-  timer: ReturnType<typeof setTimeout>;
-  text: string;
-  key: string;
-};

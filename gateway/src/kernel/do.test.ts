@@ -1,5 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../shared/utils", () => ({
+  sendFrameToProcess: vi.fn(),
+}));
+
+import { sendFrameToProcess } from "../shared/utils";
 import { Kernel } from "./do";
+
+const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
 describe("Kernel device connection cleanup", () => {
   it("closes live driver connections when a machine is forgotten", () => {
@@ -430,5 +438,204 @@ describe("Kernel process device requests", () => {
       { url: "https://example.com", timeoutMs: 180000 },
       180000,
     );
+  });
+});
+
+describe("Kernel process runtime projection", () => {
+  it("accepts a newer successor start and rejects an older reordered start", () => {
+    const record = { activeRunId: "run-old", lastActiveAt: 100 };
+    const updateRuntimeState = vi.fn((_pid: string, patch: Record<string, unknown>) => {
+      Object.assign(record, patch);
+    });
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.procs = {
+      get: vi.fn(() => record),
+      updateRuntimeState,
+    };
+
+    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+      type: "sig",
+      signal: "proc.run.started",
+      payload: { runId: "run-new", conversationId: "default", timestamp: 200 },
+    }, "run-new")).toBe(true);
+    expect(record).toMatchObject({ activeRunId: "run-new", lastActiveAt: 200 });
+
+    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+      type: "sig",
+      signal: "proc.run.started",
+      payload: { runId: "run-old", conversationId: "default", timestamp: 150 },
+    }, "run-old")).toBe(false);
+
+    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: { runId: "run-old", conversationId: "default", timestamp: 250 },
+    }, "run-old")).toBe(true);
+    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+      type: "sig",
+      signal: "proc.run.output",
+      payload: { runId: "run-old", conversationId: "default", timestamp: 300 },
+    }, "run-old")).toBe(false);
+
+    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: { runId: "run-new", conversationId: "default", timestamp: 400 },
+    }, "run-new")).toBe(true);
+    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+      type: "sig",
+      signal: "proc.run.started",
+      payload: { runId: "run-old", conversationId: "default", timestamp: 350 },
+    }, "run-old")).toBe(false);
+
+    expect(updateRuntimeState).toHaveBeenCalledTimes(2);
+    expect(record).toMatchObject({ activeRunId: null, lastActiveAt: 400 });
+  });
+});
+
+describe("Kernel IPC completion", () => {
+  beforeEach(() => {
+    sendFrameToProcessMock.mockReset();
+  });
+
+  it("schedules timeout callbacks no earlier than their deadline", async () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.schedule = vi.fn(async () => ({ id: "ipc-timeout" }));
+    const deadlineAt = Date.now() + 1_250;
+
+    await kernel.scheduleIpcCallTimeout("call-timeout", deadlineAt);
+
+    const scheduledAt = kernel.schedule.mock.calls[0]?.[0];
+    expect(scheduledAt).toBeInstanceOf(Date);
+    expect(scheduledAt.getTime()).toBeGreaterThanOrEqual(deadlineAt);
+    expect(kernel.schedule).toHaveBeenCalledWith(
+      scheduledAt,
+      "onIpcCallTimeout",
+      "call-timeout",
+    );
+  });
+
+  it("cancels pending calls owned by an aborted source run", async () => {
+    const cancelBySourceRun = vi.fn();
+    const completeByRun = vi.fn(() => []);
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
+    kernel.ipcCalls = { cancelBySourceRun, completeByRun };
+
+    await kernel.completeIpcCallsForProcessSignal("proc-source", {
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: {
+        runId: "run-source",
+        status: "aborted",
+        reason: "user.superseded",
+      },
+    });
+
+    expect(cancelBySourceRun).toHaveBeenCalledWith({
+      uid: 1000,
+      sourcePid: "proc-source",
+      sourceRunId: "run-source",
+    });
+    expect(cancelBySourceRun.mock.invocationCallOrder[0]).toBeLessThan(
+      completeByRun.mock.invocationCallOrder[0],
+    );
+  });
+
+  it.each(["ipc.reply", "ipc.timeout"] as const)(
+    "includes source-run correlation in %s payloads",
+    async (signal) => {
+      sendFrameToProcessMock.mockResolvedValue(null);
+      const kernel = Object.create(Kernel.prototype) as any;
+      const call = {
+        callId: "call-1",
+        sourcePid: "proc-source",
+        sourceRunId: "run-source",
+        targetPid: "proc-target",
+        targetRunId: "run-target",
+        status: signal === "ipc.reply" ? "completed" : "timed_out",
+        deadlineAt: 1234,
+        createdAt: 1000,
+        response: signal === "ipc.reply" ? { text: "done" } : null,
+        error: signal === "ipc.timeout" ? "IPC call timed out" : null,
+      };
+
+      await kernel.deliverIpcCallSignal(call);
+
+      expect(sendFrameToProcessMock).toHaveBeenCalledWith("proc-source", {
+        type: "sig",
+        signal,
+        payload: {
+          callId: "call-1",
+          sourcePid: "proc-source",
+          sourceRunId: "run-source",
+          targetPid: "proc-target",
+          runId: "run-target",
+          deadlineAt: 1234,
+          createdAt: 1000,
+          status: call.status,
+          ...(signal === "ipc.reply" ? { response: call.response } : {}),
+          ...(call.error ? { error: call.error } : {}),
+        },
+      });
+    },
+  );
+
+  it("releases failed outbox deliveries and durably requeues them", async () => {
+    const call = {
+      callId: "call-retry",
+      sourcePid: "proc-source",
+      sourceRunId: "run-source",
+      targetPid: "proc-target",
+      targetRunId: "run-target",
+      status: "completed",
+      deadlineAt: 1234,
+      createdAt: 1000,
+      response: { text: "done" },
+      error: null,
+    };
+    const releaseDelivery = vi.fn();
+    const remove = vi.fn();
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.ipcCalls = {
+      claimDelivery: vi.fn(() => call),
+      releaseDelivery,
+      remove,
+    };
+    kernel.schedule = vi.fn(async () => ({ id: "ipc-delivery-retry" }));
+    sendFrameToProcessMock.mockRejectedValue(new Error("source unavailable"));
+
+    await kernel.deliverIpcCall(call.callId);
+
+    expect(releaseDelivery).toHaveBeenCalledWith(call.callId);
+    expect(remove).not.toHaveBeenCalled();
+    expect(kernel.schedule).toHaveBeenCalledWith(
+      5,
+      "onIpcCallDelivery",
+      call.callId,
+      {
+        idempotent: false,
+        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
+      },
+    );
+  });
+
+  it("queues terminal IPC delivery as an idempotent retrying job", () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.ctx = { waitUntil: vi.fn() };
+    kernel.schedule = vi.fn(async () => ({ id: "ipc-delivery" }));
+
+    kernel.queueIpcCallDelivery("call-queued");
+
+    expect(kernel.schedule).toHaveBeenCalledWith(
+      expect.any(Date),
+      "onIpcCallDelivery",
+      "call-queued",
+      {
+        idempotent: true,
+        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
+      },
+    );
+    expect(kernel.ctx.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
   });
 });

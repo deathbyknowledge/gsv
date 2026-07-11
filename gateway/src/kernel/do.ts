@@ -278,6 +278,9 @@ export class Kernel extends Host<Env> {
     });
 
     this.rehydrateConnections();
+    for (const callId of this.ipcCalls.recoverDeliveryIds()) {
+      this.queueIpcCallDelivery(callId);
+    }
   }
 
   createMcpOAuthProvider(callbackUrl: string): AgentMcpOAuthProvider {
@@ -470,8 +473,15 @@ export class Kernel extends Host<Env> {
     }
 
     if (frame.type === "sig") {
-      await this.completeIpcCallsForProcessSignal(processId, frame);
+      const runId = this.extractRunId(frame.payload);
+      if (!this.updateProcessRuntimeFromSignal(processId, frame, runId)) {
+        if (frame.signal === "proc.run.finished" && runId) {
+          this.runRoutes.delete(runId);
+        }
+        return null;
+      }
       this.enqueueProcessSignal(processId, frame);
+      this.completeIpcCallsForProcessSignal(processId, frame);
       return null;
     }
 
@@ -727,7 +737,6 @@ export class Kernel extends Host<Env> {
     }
 
     const runId = this.extractRunId(frame.payload);
-    this.updateProcessRuntimeFromSignal(processId, frame, runId);
 
     // Signal watches are scoped to the process owner, not the run-as account.
     // App runtimes register watches under the owning human uid, while the
@@ -772,7 +781,7 @@ export class Kernel extends Host<Env> {
     processId: string,
     frame: SignalFrame,
     runId: string | null,
-  ): void {
+  ): boolean {
     const payload = frame.payload && typeof frame.payload === "object"
       ? frame.payload as Record<string, unknown>
       : {};
@@ -785,6 +794,25 @@ export class Kernel extends Host<Env> {
     const timestamp = typeof payload.timestamp === "number" && Number.isFinite(payload.timestamp)
       ? payload.timestamp
       : Date.now();
+    const current = this.procs.get(processId);
+    if (!current) {
+      return false;
+    }
+    const runtimeSignal = frame.signal === "proc.changed" || frame.signal.startsWith("proc.run.");
+    if (
+      runtimeSignal
+      && runId
+      && frame.signal !== "proc.changed"
+      && current.activeRunId !== runId
+    ) {
+      if (frame.signal === "proc.run.started") {
+        if (timestamp < (current.lastActiveAt ?? Number.NEGATIVE_INFINITY)) {
+          return false;
+        }
+      } else {
+        return frame.signal === "proc.run.finished";
+      }
+    }
 
     const patchForActive = (state: ProcessState) => {
       this.procs.updateRuntimeState(processId, {
@@ -801,15 +829,14 @@ export class Kernel extends Host<Env> {
       case "proc.run.stream":
       case "proc.run.retrying":
       case "proc.run.output":
-      case "proc.run.tool.finished":
         patchForActive("running");
-        return;
+        return true;
       case "proc.run.tool.started":
         patchForActive("waiting_tool");
-        return;
+        return true;
       case "proc.run.hil.requested":
         patchForActive("waiting_hil");
-        return;
+        return true;
       case "proc.run.finished":
         this.procs.updateRuntimeState(processId, {
           state: queuedCount && queuedCount > 0 ? "queued" : "idle",
@@ -818,17 +845,26 @@ export class Kernel extends Host<Env> {
           ...(queuedCount !== undefined ? { queuedCount } : {}),
           lastActiveAt: timestamp,
         });
-        return;
+        return true;
       case "proc.changed":
+        if (
+          runId
+          && current.activeRunId === runId
+          && Array.isArray(payload.changes)
+          && payload.changes.includes("messages")
+        ) {
+          patchForActive("running");
+          return true;
+        }
         if (queuedCount !== undefined) {
           this.procs.updateRuntimeState(processId, {
             queuedCount,
             lastActiveAt: timestamp,
           });
         }
-        return;
+        return true;
       default:
-        return;
+        return true;
     }
   }
 
@@ -848,7 +884,7 @@ export class Kernel extends Host<Env> {
     this.pendingProcessSignals.set(processId, queued);
   }
 
-  private async completeIpcCallsForProcessSignal(processId: string, frame: SignalFrame): Promise<void> {
+  private completeIpcCallsForProcessSignal(processId: string, frame: SignalFrame): void {
     if (frame.signal !== "proc.run.finished") {
       return;
     }
@@ -868,7 +904,22 @@ export class Kernel extends Host<Env> {
       text: typeof payload.text === "string" ? payload.text : null,
       usage: payload.usage ?? null,
     };
-    const error = typeof payload.error === "string" ? payload.error : null;
+    const status = typeof payload.status === "string" ? payload.status : "ok";
+    const reason = typeof payload.reason === "string" ? payload.reason : null;
+    const error = typeof payload.error === "string"
+      ? payload.error
+      : status === "aborted"
+        ? `Target run was aborted${reason ? `: ${reason}` : ""}`
+        : status === "error"
+          ? "Target run failed"
+          : null;
+    if (status === "aborted") {
+      this.ipcCalls.cancelBySourceRun({
+        uid: ownerUid,
+        sourcePid: processId,
+        sourceRunId: runId,
+      });
+    }
     const completed = this.ipcCalls.completeByRun({
       uid: ownerUid,
       targetPid: processId,
@@ -877,31 +928,56 @@ export class Kernel extends Host<Env> {
       error,
     });
 
-    for (const call of completed) {
-      await this.deliverIpcCallSignal("ipc.reply", call, {
-        response,
-        error,
+    for (const callId of completed) {
+      this.queueIpcCallDelivery(callId);
+    }
+  }
+
+  private queueIpcCallDelivery(callId: string): void {
+    this.ctx.waitUntil(this.schedule(
+      new Date(Date.now() + 10),
+      "onIpcCallDelivery",
+      callId,
+      {
+        idempotent: true,
+        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
+      },
+    ).catch(() => this.deliverIpcCall(callId)));
+  }
+
+  private async deliverIpcCall(callId: string): Promise<void> {
+    const call = this.ipcCalls.claimDelivery(callId);
+    if (!call) {
+      return;
+    }
+    try {
+      await this.deliverIpcCallSignal(call);
+      this.ipcCalls.remove(callId);
+    } catch (error) {
+      this.ipcCalls.releaseDelivery(callId);
+      console.warn(`[Kernel] Failed to deliver IPC call ${callId}:`, error);
+      await this.schedule(5, "onIpcCallDelivery", callId, {
+        idempotent: false,
+        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
       });
     }
   }
 
-  private async deliverIpcCallSignal(
-    signal: "ipc.reply" | "ipc.timeout",
-    call: IpcCallRecord,
-    extra?: { response?: unknown; error?: string | null },
-  ): Promise<void> {
+  private async deliverIpcCallSignal(call: IpcCallRecord): Promise<void> {
     await sendFrameToProcess(call.sourcePid, {
       type: "sig",
-      signal,
+      signal: call.status === "timed_out" ? "ipc.timeout" : "ipc.reply",
       payload: {
         callId: call.callId,
         sourcePid: call.sourcePid,
+        ...(call.sourceRunId ? { sourceRunId: call.sourceRunId } : {}),
         targetPid: call.targetPid,
-        ...(call.targetRunId ? { runId: call.targetRunId } : {}),
+        runId: call.targetRunId,
         deadlineAt: call.deadlineAt,
+        createdAt: call.createdAt,
         status: call.status,
-        ...(extra?.response !== undefined ? { response: extra.response } : {}),
-        ...(extra?.error ? { error: extra.error } : {}),
+        ...(call.status === "completed" ? { response: call.response } : {}),
+        ...(call.error ? { error: call.error } : {}),
       },
     });
   }
@@ -1007,7 +1083,7 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {
-    const ctx = this.buildProcessContext(processId);
+    const ctx = this.buildProcessContext(processId, frame.runId);
     if (!ctx) {
       return errFrame(frame.id, 404, "Unknown process");
     }
@@ -1030,7 +1106,7 @@ export class Kernel extends Host<Env> {
     return null;
   }
 
-  private buildProcessContext(processId: string): KernelContext | null {
+  private buildProcessContext(processId: string, processRunId?: string): KernelContext | null {
     const identity = this.procs.getIdentity(processId);
     if (!identity) {
       return null;
@@ -1045,6 +1121,7 @@ export class Kernel extends Host<Env> {
     return this.buildKernelContext({
       identity: connIdentity,
       processId,
+      processRunId,
     });
   }
 
@@ -1090,6 +1167,7 @@ export class Kernel extends Host<Env> {
     connection?: Connection | null;
     identity?: ConnectionIdentity;
     processId?: string;
+    processRunId?: string;
     callerOwnerUid?: number;
     appFrame?: AppFrameContext;
   }): KernelContext {
@@ -1116,12 +1194,14 @@ export class Kernel extends Host<Env> {
       connection: options.connection ?? null,
       identity: options.identity,
       processId: options.processId,
+      processRunId: options.processRunId,
       callerOwnerUid: options.callerOwnerUid,
       appFrame: options.appFrame,
       serverVersion: SERVER_VERSION,
       broadcastToUserUid: this.broadcastToUserUid.bind(this),
       getAppRunner: this.getAppRunner.bind(this),
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
+      failIpcCallsByTarget: this.failIpcCallsByTarget.bind(this),
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
       cancelScheduleWake: async (wakeScheduleId) => {
         await this.cancelSchedule(wakeScheduleId);
@@ -1536,13 +1616,19 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private async scheduleIpcCallTimeout(callId: string, delayMs: number): Promise<string> {
+  private async scheduleIpcCallTimeout(callId: string, deadlineAt: number): Promise<string> {
     const sched = await this.schedule(
-      Math.max(1, delayMs / 1000),
+      new Date(Math.ceil(Math.max(Date.now() + 1_000, deadlineAt) / 1_000) * 1_000),
       "onIpcCallTimeout",
       callId,
     );
     return sched.id;
+  }
+
+  private failIpcCallsByTarget(uid: number, targetPid: string, error: string): void {
+    for (const callId of this.ipcCalls.failByTargetPid({ uid, targetPid, error })) {
+      this.queueIpcCallDelivery(callId);
+    }
   }
 
   private async scheduleScheduleWake(scheduleId: string, dueAtMs: number): Promise<string> {
@@ -2208,10 +2294,11 @@ export class Kernel extends Host<Env> {
   async onIpcCallTimeout(callId: string): Promise<void> {
     const timedOut = this.ipcCalls.timeout(callId);
     if (!timedOut) return;
+    this.queueIpcCallDelivery(callId);
+  }
 
-    await this.deliverIpcCallSignal("ipc.timeout", timedOut, {
-      error: timedOut.error,
-    });
+  async onIpcCallDelivery(callId: string): Promise<void> {
+    await this.deliverIpcCall(callId);
   }
 
   async onScheduleDue(scheduleId: string, wake?: { id?: unknown }): Promise<void> {

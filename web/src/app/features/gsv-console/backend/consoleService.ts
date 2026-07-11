@@ -151,6 +151,7 @@ export type ConsoleProcessAction = "abort" | "reset" | "kill";
 
 export type RunConsoleProcessActionInput = {
   pid: string;
+  runId?: string;
   action: ConsoleProcessAction;
 };
 
@@ -412,7 +413,7 @@ export async function runConsoleProcessAction(
   }
 
   const result = input.action === "abort"
-    ? await client.proc.abort({ pid })
+    ? await client.proc.abort({ pid, ...(input.runId ? { runId: input.runId } : {}) })
     : input.action === "reset"
       ? await client.proc.reset({ pid })
       : input.action === "kill"

@@ -965,7 +965,11 @@ describe("console agent service", () => {
       proc: { abort, reset, kill },
     };
 
-    await expect(runConsoleProcessAction(client as any, { pid: " proc-1 ", action: "abort" })).resolves.toEqual({
+    await expect(runConsoleProcessAction(client as any, {
+      pid: " proc-1 ",
+      runId: "run-1",
+      action: "abort",
+    })).resolves.toEqual({
       ok: true,
       action: "abort",
       pid: "proc-1",
@@ -981,7 +985,7 @@ describe("console agent service", () => {
       pid: "proc-1",
     });
 
-    expect(abort).toHaveBeenCalledWith({ pid: "proc-1" });
+    expect(abort).toHaveBeenCalledWith({ pid: "proc-1", runId: "run-1" });
     expect(reset).toHaveBeenCalledWith({ pid: "proc-1" });
     expect(kill).toHaveBeenCalledWith({ pid: "proc-1", archive: true });
   });

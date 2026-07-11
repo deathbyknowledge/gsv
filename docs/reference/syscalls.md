@@ -6,7 +6,7 @@ Source of truth:
 
 - `gateway/src/syscalls/index.ts`
 - `gateway/src/kernel/dispatch.ts`
-- `shared/protocol/src/syscalls/*.ts`
+- `packages/gsv/src/protocol/syscalls/*.ts`
 
 ## Calling Convention
 
@@ -483,12 +483,12 @@ Runtime behavior:
 | `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
 | `proc.profile.list` | `handleProcProfileList` | Returns system AI profiles plus enabled package-backed profiles visible to the caller. Package entries are sorted by package name and display name. |
 | `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. A default interactive top-level spawn reuses the caller's default conversation executor; custom spawns get UUID pids. |
-| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. Stores media, appends a user message, starts a run if idle, or queues the message if a run is active. Touches workspace activity before forwarding. |
-| `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target uids match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
+| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media-bearing user messages are admitted immediately and generation starts after background media preparation. Touches workspace activity before forwarding. |
+| `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
-| `proc.abort` | Process DO | Logical cancellation of the active run. Clears pending HIL and current run, emits `chat.complete` with `aborted: true`, and may promote the next queued run. In-flight external work can still resolve later but stale handling guards state. |
+| `proc.abort` | Process DO | Logical cancellation of the active run. Converts outstanding tool calls to error results, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. In-flight external work can still resolve later but stale handling guards state. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
-| `proc.kill` | Process DO | Checkpoints workspace, optionally archives every non-empty conversation under one archive directory, clears active run, tool state, HIL, queue, media, and all conversation messages, then increments conversation generations. Does not remove the kernel process registry entry in normal syscall use. |
+| `proc.kill` | Process DO | Optionally archives every non-empty conversation under the run-as agent's home, clears process media, and wipes Process DO state. After success the Kernel removes the process registry entry and detaches its conversation executor. |
 | `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, cursor flags, truncation status, timestamps, pending HIL, and the latest context-pressure state when available. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content. |
 | `proc.conversation.open` | Process DO | Creates or reopens a process-local conversation. If `conversationId` is omitted, the Process DO generates one. Optional `title` is trimmed and stored. |
 | `proc.conversation.list` | Process DO | Lists open conversations by default. `includeClosed: true` includes closed conversations. Each record includes generation, status, title, message count, and timestamps. |
@@ -501,7 +501,7 @@ Runtime behavior:
 | `proc.conversation.fork` | Process DO | Branches a live conversation through `throughMessageId`, or restores a compacted `segmentId` into a new process-local conversation. Segment restore includes the live suffix that existed at the compaction boundary unless `includeLiveSuffix: false`. |
 | `proc.conversation.segment.read` | Process DO | Reads paged messages from a compacted segment archive without restoring those messages into the live conversation. |
 | `proc.conversation.segments` | Process DO | Lists recorded lifecycle segments for `conversationId` or `default`, including archive paths and summary marker ids. |
-| `proc.reset` | Process DO | Checkpoints workspace, archives every non-empty conversation under `/var/sessions/<username>/<pid>/<archiveId>/`, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
+| `proc.reset` | Process DO | Archives every non-empty conversation under the run-as agent's home, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
 | `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers the validated IPC envelope from the kernel into the target conversation. |
 | `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, assignment context, and conversation hydration pointers; `assignment.autoStart` can create a run immediately. |
 
@@ -557,6 +557,7 @@ type ProcIpcSendArgs = {
 };
 
 type ProcIpcDeliverArgs = {
+  runId: string;
   sourcePid: string;
   source: ProcessIdentity;
   conversationId?: string;
@@ -565,7 +566,6 @@ type ProcIpcDeliverArgs = {
   sentAt: number;
   call?: {
     callId: string;
-    replyToPid: string;
     deadlineAt: number;
   };
 };
@@ -619,7 +619,7 @@ type ProcessSyscalls = {
   };
 
   "proc.abort": {
-    args: { pid?: string };
+    args: { pid?: string; runId?: string };
     result: { ok: true; pid: string; aborted: boolean; runId?: string; interruptedToolCalls?: number; continuedQueuedRunId?: string } | OperationError;
   };
 

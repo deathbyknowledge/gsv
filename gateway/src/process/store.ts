@@ -8,7 +8,6 @@
  *   - process_kv: key-value metadata (processId, archiveId, etc.)
  */
 
-import type { SyscallName } from "../syscalls";
 import { SYSCALL_TOOL_NAMES } from "../syscalls/constants";
 import type {
   ProcAiConfigSnapshot,
@@ -52,23 +51,22 @@ import {
 
 const DEFAULT_MESSAGE_READ_LIMIT = 200;
 
-export type ToolCallStatus = "pending" | "completed" | "error";
+export type ToolCallStatus = "registered" | "pending" | "completed" | "error";
 
 export type ToolCallRecord = {
   id: string;
-  runId: string;
+  dispatchId: string;
   conversationId: string;
-  generation: number;
   call: string;
+  args: unknown;
   status: ToolCallStatus;
   result: unknown;
   error: string | null;
 };
 
 export type PendingToolCallRecord = {
-  id: string;
   runId: string;
-  call: SyscallName;
+  call: string;
   args: unknown;
 };
 
@@ -126,12 +124,10 @@ export type PendingHilRecord = {
   requestId: string;
   runId: string;
   conversationId: string;
-  generation: number;
   toolCallId: string;
   toolName: string;
   syscall: string;
   args: Record<string, unknown>;
-  remainingToolCalls: ToolCall[];
   createdAt: number;
 };
 
@@ -599,57 +595,71 @@ export class ProcessStore {
   // --- Tool calls ---
 
   register(
+    dispatchId: string,
     id: string,
     runId: string,
-    call: SyscallName,
+    call: string,
     args: unknown,
     conversationId: string = DEFAULT_CONVERSATION_ID,
   ): void {
     const normalizedConversationId = normalizeConversationId(conversationId);
-    const generation = this.getConversationGeneration(normalizedConversationId);
     this.sql.exec(
-      `INSERT OR REPLACE INTO pending_tool_calls (
-        id, run_id, conversation_id, generation, call, args_json, status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      `INSERT INTO pending_tool_calls (
+        dispatch_id, id, run_id, conversation_id, call, args_json, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'registered', ?)`,
+      dispatchId,
       id,
       runId,
       normalizedConversationId,
-      generation,
       call,
       JSON.stringify(args),
       Date.now(),
     );
   }
 
-  resolve(id: string, result: unknown): void {
+  resolve(dispatchId: string, result: unknown): void {
     this.sql.exec(
-      "UPDATE pending_tool_calls SET status = 'completed', result_json = ? WHERE id = ?",
+      `UPDATE pending_tool_calls
+          SET status = 'completed', result_json = ?
+        WHERE dispatch_id = ? AND status IN ('registered', 'pending')`,
       JSON.stringify(result ?? null),
-      id,
+      dispatchId,
     );
   }
 
-  fail(id: string, error: string): void {
+  fail(dispatchId: string, error: string): void {
     this.sql.exec(
-      "UPDATE pending_tool_calls SET status = 'error', error = ? WHERE id = ?",
+      `UPDATE pending_tool_calls
+          SET status = 'error', error = ?
+        WHERE dispatch_id = ? AND status IN ('registered', 'pending')`,
       error,
-      id,
+      dispatchId,
     );
   }
 
-  getPending(id: string): PendingToolCallRecord | null {
+  markDispatched(dispatchId: string): boolean {
+    const cursor = this.sql.exec(
+      `UPDATE pending_tool_calls
+          SET status = 'pending'
+        WHERE dispatch_id = ? AND status = 'registered'`,
+      dispatchId,
+    );
+    return cursor.rowsWritten > 0;
+  }
+
+  getPending(dispatchId: string): PendingToolCallRecord | null {
     const rows = [...this.sql.exec<{
-      id: string;
       run_id: string;
-      call: SyscallName;
+      call: string;
       args_json: string | null;
     }>(
-      "SELECT id, run_id, call, args_json FROM pending_tool_calls WHERE id = ? AND status = 'pending'",
-      id,
+      `SELECT run_id, call, args_json
+         FROM pending_tool_calls
+        WHERE dispatch_id = ? AND status IN ('registered', 'pending')`,
+      dispatchId,
     )];
     if (rows.length === 0) return null;
     return {
-      id: rows[0].id,
       runId: rows[0].run_id,
       call: rows[0].call,
       args: rows[0].args_json ? JSON.parse(rows[0].args_json) : null,
@@ -658,7 +668,9 @@ export class ProcessStore {
 
   isRunResolved(runId: string): boolean {
     const rows = [...this.sql.exec<{ cnt: number }>(
-      "SELECT COUNT(*) as cnt FROM pending_tool_calls WHERE run_id = ? AND status = 'pending'",
+      `SELECT COUNT(*) as cnt
+         FROM pending_tool_calls
+        WHERE run_id = ? AND status IN ('registered', 'pending')`,
       runId,
     )];
     return (rows[0]?.cnt ?? 0) === 0;
@@ -667,24 +679,25 @@ export class ProcessStore {
   getResults(runId: string): ToolCallRecord[] {
     return [...this.sql.exec<{
       id: string;
-      run_id: string;
+      dispatch_id: string;
       conversation_id: string;
-      generation: number;
       call: string;
+      args_json: string;
       status: string;
       result_json: string | null;
       error: string | null;
     }>(
-      `SELECT id, run_id, conversation_id, generation, call, status, result_json, error
+      `SELECT id, dispatch_id, conversation_id, call, args_json, status, result_json, error
          FROM pending_tool_calls
-        WHERE run_id = ?`,
+        WHERE run_id = ?
+        ORDER BY created_at ASC, rowid ASC`,
       runId,
     )].map((row) => ({
       id: row.id,
-      runId: row.run_id,
+      dispatchId: row.dispatch_id,
       conversationId: row.conversation_id,
-      generation: row.generation,
       call: row.call,
+      args: JSON.parse(row.args_json),
       status: row.status as ToolCallStatus,
       result: row.result_json ? JSON.parse(row.result_json) : null,
       error: row.error,
@@ -710,18 +723,16 @@ export class ProcessStore {
     this.clearPendingHil();
     this.sql.exec(
       `INSERT INTO pending_hil (
-        request_id, run_id, conversation_id, generation, tool_call_id, tool_name, syscall,
-        args_json, remaining_tool_calls_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        request_id, run_id, conversation_id, tool_call_id, tool_name, syscall,
+        args_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       record.requestId,
       record.runId,
       normalizeConversationId(record.conversationId),
-      record.generation,
       record.toolCallId,
       record.toolName,
       record.syscall,
       JSON.stringify(record.args),
-      JSON.stringify(record.remainingToolCalls),
       record.createdAt,
     );
   }
@@ -732,12 +743,10 @@ export class ProcessStore {
         request_id: string;
         run_id: string;
         conversation_id: string;
-        generation: number;
         tool_call_id: string;
         tool_name: string;
         syscall: string;
         args_json: string;
-        remaining_tool_calls_json: string;
         created_at: number;
       }>(
         requestId
@@ -752,12 +761,10 @@ export class ProcessStore {
       requestId: row.request_id,
       runId: row.run_id,
       conversationId: row.conversation_id,
-      generation: row.generation,
       toolCallId: row.tool_call_id,
       toolName: row.tool_name,
       syscall: row.syscall,
       args: JSON.parse(row.args_json) as Record<string, unknown>,
-      remainingToolCalls: JSON.parse(row.remaining_tool_calls_json) as ToolCall[],
       createdAt: row.created_at,
     };
   }
@@ -827,6 +834,25 @@ export class ProcessStore {
     }
 
     return messageId;
+  }
+
+  updateMessageMedia(messageId: number, runId: string, media: string): void {
+    this.sql.exec(
+      "UPDATE messages SET media_json = ? WHERE id = ? AND run_id = ?",
+      media,
+      messageId,
+      runId,
+    );
+  }
+
+  hasMessageMedia(messageId: number, runId: string): boolean {
+    return this.sql.exec<{ present: number }>(
+      `SELECT media_json IS NOT NULL AS present
+         FROM messages
+        WHERE id = ? AND run_id = ?`,
+      messageId,
+      runId,
+    ).toArray()[0]?.present === 1;
   }
 
   getMessages(opts?: {

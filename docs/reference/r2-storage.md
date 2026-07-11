@@ -45,11 +45,11 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 | `devices`, `device_access` | Registered devices and group access. |
 | `routing_table` | In-flight device-routed syscalls. |
 | `processes` | Process registry, identity, cwd, workspace, state. |
-| `workspaces` | Workspace metadata. Actual workspace files live in ripgit. |
 | `packages` | Installed package manifests, scopes, grants, and artifact hashes. |
 | `identity_links`, `surface_routes`, `link_challenges` | Adapter actor links and inbound surface routing. |
-| `run_routes` | Routes process chat signals back to clients or adapter surfaces. |
-| `notifications`, `signal_watches`, `app_client_sessions` | Notifications, watches, and package UI sessions. |
+| `run_routes` | Routes process run signals back to clients or adapter surfaces. |
+| `ipc_calls` | Durable same-owner IPC call deadlines, terminal results, and delivery outbox state. |
+| `notifications`, `signal_watches`, `app_sessions`, `app_session_clients` | Notifications, watches, and package UI sessions. |
 
 ## Process SQLite
 
@@ -58,12 +58,13 @@ Each Process DO owns its own SQLite database. This keeps active agent-loop state
 | Table | Purpose |
 |---|---|
 | `messages` | Current conversation history for the process. |
-| `pending_tool_calls` | Syscalls waiting on Kernel or device responses. |
-| `message_queue` | FIFO queue for messages received while a run is active. |
+| `pending_tool_calls` | Durable tool dispatch ledger from registration through terminal result ingestion. |
+| `message_queue` | FIFO process- and scheduler-origin work received while a run is active. |
 | `pending_hil` | Human-in-the-loop approval state. |
 | `process_kv` | Process metadata such as identity, profile, current run, and archive id. |
 
-On `proc.reset` or `proc.kill`, process messages can be checkpointed into a workspace repo and archived to R2.
+`proc.reset`, `proc.kill`, and conversation compaction archive exact process
+messages to R2 under the run-as agent's home.
 
 ## R2 Object Layout
 
@@ -73,7 +74,7 @@ R2 remains the byte store. The current runtime uses these key families:
 |---|---|---|
 | Any normal filesystem key, for example `home/alice/file.txt` | `R2MountBackend` | Default virtual filesystem storage. |
 | `var/media/{uid}/{pid}/{uuid}.{ext}` | Process media handling | Uploaded or adapter-provided media attached to process messages. |
-| `var/sessions/{username}/{pid}/{archiveId}.jsonl.gz` | Process reset/kill archive | Gzipped JSONL transcript archive. |
+| `home/{agent}/conversations/{conversationId}/*.jsonl.gz` | Process reset, kill, and compaction | Gzipped JSONL transcript archives addressed independently of executor pid. |
 | `runtime/package-artifacts/{hash}.json` | Package install/sync | Package worker artifact loaded by AppRunner. |
 | `public/gsv/downloads/cli/{channel}/{asset}` | `sys.bootstrap`, `sys.update`, Kernel version refresh | Downloadable CLI binaries served through `/public/*`. |
 | `public/gsv/downloads/cli/{channel}/{asset}.sha256` | `sys.bootstrap`, `sys.update`, Kernel version refresh | CLI checksums served through `/public/*`. |
@@ -98,15 +99,8 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 The `root/gsv` repository may contain a top-level `skills/` directory. Bootstrap
 copies those files into user home repos under `skills.d/` when they are missing.
 
-Workspace repos contain platform metadata under `.gsv/`:
-
-```text
-.gsv/workspace.json
-.gsv/summary.md
-.gsv/context.d/*.md
-.gsv/skills.d/*
-.gsv/processes/{pid}/chat.jsonl
-```
+Workspace repos contain normal versioned task files. Process transcript
+archives live under the run-as agent's home rather than in workspace metadata.
 
 Generic visible repos are available under `/src/repos/{owner}/{repo}`. Repos writable by the process identity accept `fs.write`, `fs.edit`, and `fs.delete`, but those writes stage into a process-local R2 overlay. Use `rgit status`, `rgit diff`, `rgit commit`, and `rgit discard` to inspect, commit, or discard staged repo edits. Read-only visible repos still support read and search. `pkg source <package>` reports the package's source repo path; package lifecycle stays under `pkg`, while repository history and source edits stay under `rgit`. Wiki-specific behavior uses the higher-level Wiki app and CLI on top of the same repo storage.
 

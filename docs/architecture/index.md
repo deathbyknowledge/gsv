@@ -66,9 +66,10 @@ human-in-the-loop state, and process-local metadata. The Kernel registry stores
 the process metadata needed for routing and permissions.
 
 The agent loop belongs to the Process DO. It assembles context, calls the model,
-receives tool calls, issues syscalls, waits for results, and emits `chat.*`
-signals back through the Kernel. `gsv chat` is therefore just one client for a
-process; browser apps and adapters can target the same process model.
+receives tool calls, issues syscalls, waits for results, and emits `proc.run.*`
+and `proc.changed` signals through the Kernel. `gsv chat` is therefore just one
+client for a process; browser apps and adapters can target the same process
+model.
 
 ### Filesystem and Storage
 
@@ -166,7 +167,7 @@ CLI, browser, or adapter
   -> native handler, Process DO, AppRunner, or device driver
   -> response
   -> Process DO continues the run
-  -> chat.* signals return through Kernel run routing
+  -> proc.run.* signals return through Kernel run routing
   -> original client or adapter surface
 ```
 

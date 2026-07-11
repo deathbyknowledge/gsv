@@ -363,12 +363,14 @@ export async function handleProcIpcSend(
 ): Promise<ProcIpcSendResult> {
   const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.send");
   if (!resolved.ok) return resolved;
+  const runId = crypto.randomUUID();
 
   const response = await sendFrameToProcess(resolved.args.pid, {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.ipc.deliver",
     args: {
+      runId,
       sourcePid: resolved.sourcePid,
       source: ctx.identity!.process,
       conversationId: resolved.args.conversationId,
@@ -382,7 +384,11 @@ export async function handleProcIpcSend(
   if (response && response.type === "res") {
     const res = response as ResponseFrame;
     if (res.ok) {
-      return (res as { data: ProcIpcSendResult }).data;
+      const delivered = (res as { data: ProcIpcSendResult }).data;
+      if (delivered.ok && delivered.runId !== runId) {
+        return { ok: false, error: "proc.ipc.deliver returned an unexpected runId" };
+      }
+      return delivered;
     }
     return { ok: false, error: (res as { error: { message: string } }).error.message };
   }
@@ -399,14 +405,24 @@ export async function handleProcIpcCall(
   const timeoutMs = clampIpcCallTimeout(args.timeoutMs);
   const deadlineAt = Date.now() + timeoutMs;
   const callId = crypto.randomUUID();
+  const runId = crypto.randomUUID();
 
   ctx.ipcCalls.create({
     callId,
     uid: resolved.source.ownerUid,
     sourcePid: resolved.sourcePid,
+    sourceRunId: ctx.processRunId ?? null,
     targetPid: resolved.args.pid,
+    targetRunId: runId,
     deadlineAt,
   });
+
+  try {
+    await ctx.scheduleIpcCallTimeout(callId, deadlineAt);
+  } catch (error) {
+    ctx.ipcCalls.remove(callId);
+    return { ok: false, error: formatError(error) };
+  }
 
   let response: ResponseFrame | null;
   try {
@@ -415,6 +431,7 @@ export async function handleProcIpcCall(
       id: crypto.randomUUID(),
       call: "proc.ipc.deliver",
       args: {
+        runId,
         sourcePid: resolved.sourcePid,
         source: ctx.identity!.process,
         conversationId: resolved.args.conversationId,
@@ -424,7 +441,6 @@ export async function handleProcIpcCall(
         sentAt: Date.now(),
         call: {
           callId,
-          replyToPid: resolved.sourcePid,
           deadlineAt,
         },
       },
@@ -448,9 +464,18 @@ export async function handleProcIpcCall(
     ctx.ipcCalls.remove(callId);
     return delivered;
   }
+  if (delivered.runId !== runId) {
+    ctx.ipcCalls.remove(callId);
+    return { ok: false, error: "proc.ipc.deliver returned an unexpected runId" };
+  }
 
-  ctx.ipcCalls.attachRun(callId, delivered.runId);
-  await ctx.scheduleIpcCallTimeout(callId, timeoutMs);
+  const call = ctx.ipcCalls.get(callId);
+  if (Date.now() >= deadlineAt || call?.status === "timed_out") {
+    return {
+      ok: false,
+      error: call?.error ?? "IPC call timed out",
+    };
+  }
 
   return {
     ok: true,
@@ -459,7 +484,7 @@ export async function handleProcIpcCall(
     pid: delivered.pid,
     sourcePid: resolved.sourcePid,
     conversationId: delivered.conversationId,
-    runId: delivered.runId,
+    runId,
     deadlineAt,
     ...(delivered.queued ? { queued: true } : {}),
   };
@@ -508,7 +533,15 @@ export async function forwardToProcess(
     const res = response as ResponseFrame;
     if (res.ok) {
       const conversation = ctx.conversations.getByActivePid(pid);
+      if (frame.call === "proc.reset" || frame.call === "proc.kill") {
+        ctx.ipcCalls.cancelBySourcePid({ uid: proc.ownerUid, sourcePid: pid });
+      }
       if (frame.call === "proc.reset") {
+        ctx.failIpcCallsByTarget(
+          proc.ownerUid,
+          pid,
+          "Target process was reset",
+        );
         clearLatestArchiveForConversation(ctx, conversation);
       } else if (frame.call === "proc.conversation.reset") {
         const data = (res as { data?: { conversationId?: string } }).data;
@@ -516,6 +549,14 @@ export async function forwardToProcess(
           clearLatestArchiveForConversation(ctx, conversation);
         }
       } else if (frame.call === "proc.kill") {
+        if (proc.activeRunId) {
+          ctx.runRoutes.delete(proc.activeRunId);
+        }
+        ctx.failIpcCallsByTarget(
+          proc.ownerUid,
+          pid,
+          "Target process was killed",
+        );
         ctx.procs.kill(pid);
         // The executor is gone. Record where its conversation's transcript was
         // archived (so a future executor hydrates from it), then detach so the

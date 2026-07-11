@@ -82,9 +82,12 @@ codemode.run
 
 When no PID is supplied, process syscalls default to the caller's `init:{uid}` process. Non-root callers cannot access another user's process.
 
-## Chat Signal Routing
+## Process Signal Routing
 
-Process DOs emit chat signals such as `chat.delta`, `chat.tool_result`, `chat.hil`, and `chat.complete`. The Kernel routes those signals using `run_routes`.
+Process DOs emit lifecycle and output signals such as `proc.run.started`,
+`proc.run.stream`, `proc.run.output`, `proc.run.hil.requested`, and
+`proc.run.finished`. The Kernel routes user-visible process signals using
+`run_routes`; `proc.changed` invalidates persisted process state.
 
 For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it maps `runId` to the adapter, account id, surface kind, surface id, and optional thread id. Routes expire after 30 minutes.
 
@@ -147,7 +150,7 @@ Device routing does not rename syscalls. Agents and clients always see the same 
 |---|---|
 | `routing_table` | In-flight device-routed syscalls. |
 | `shell_sessions` | Device ownership and lifecycle for resumable shell sessions. |
-| `run_routes` | Routes process chat signals back to connections or adapter surfaces. |
+| `run_routes` | Routes process run signals back to connections or adapter surfaces. |
 | `processes` | Kernel process registry and process ownership. |
 | `devices`, `device_access` | Device catalog and group ACLs. |
 | `identity_links` | External adapter actor to local uid mapping. |
