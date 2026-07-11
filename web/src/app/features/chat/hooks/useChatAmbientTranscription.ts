@@ -90,7 +90,7 @@ function dictationTitle(state: PresenceState, note: string): string {
   if (state === "error") {
     return note || "Dictation needs attention";
   }
-  return "Dictate one message";
+  return "Dictate message";
 }
 
 function isLiveState(state: PresenceState): boolean {

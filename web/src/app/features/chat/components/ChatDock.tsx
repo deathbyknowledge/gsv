@@ -4,8 +4,10 @@ import { AgentImage } from "../../../components/ui/AgentImage";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { Counter } from "../../../components/ui/Counter";
 import { Icon } from "../../../components/ui/Icon";
+import { IconButton } from "../../../components/ui/IconButton";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
 import type { StatusTone } from "../../../components/ui/StatusDot";
+import { Hint } from "../../../components/ui/Tooltip";
 import type { JSX } from "preact";
 import {
   buildChatAgentViewModel,
@@ -24,6 +26,7 @@ import {
   useAbortChatProcess,
   useCompactChatConversation,
   useChatConversations,
+  useChatConversationSegments,
   useChatProcessAiConfig,
   useForkChatConversation,
   useDecideChatHil,
@@ -37,7 +40,6 @@ import {
 import { ActiveAgentPanel } from "./ActiveAgentPanel";
 import { ChatApprovalBanner } from "./ChatApprovalBanner";
 import { ChatArchivePanel } from "./ChatArchivePanel";
-import { ChatConversationBar } from "./ChatConversationBar";
 import { ChatDockHeader } from "./ChatDockHeader";
 import type { ChatPopoverId } from "./ChatDockPopovers";
 import { ChatTranscript, type ChatDockMessage } from "./ChatTranscript";
@@ -134,8 +136,6 @@ function formatConversationCostTooltip(context: ProcContextState | null | undefi
   const details = [
     `Conversation cost ${total}`,
     tokens,
-    `input ${formatCount(usage.inputTokens)}`,
-    `output ${formatCount(usage.outputTokens)}`,
   ];
   if (usage.cacheReadTokens > 0) {
     details.push(`cache read ${formatCount(usage.cacheReadTokens)}`);
@@ -253,6 +253,7 @@ export function ChatDock({
   const [compactKeepLastDraft, setCompactKeepLastDraft] = useState(1);
   const [newTaskFocusKey, setNewTaskFocusKey] = useState(0);
   const [composerDraft, setComposerDraft] = useState("");
+  const [branchNotice, setBranchNotice] = useState("");
   const draftAttachmentsRef = useRef<DraftAttachment[]>([]);
   const activeProcessId = agent?.processId?.trim() ?? "";
   const startRunAs = agent?.runAs?.trim() ?? "";
@@ -310,11 +311,21 @@ export function ChatDock({
     setAttachmentError("");
     setArchiveOpen(false);
     setSelectedArchiveSegmentId("");
+    setBranchNotice("");
   }, [activeProcessId]);
 
   useEffect(() => {
     setSelectedArchiveSegmentId("");
   }, [activeProcessId, activeConversationId]);
+
+  // Auto-dismiss the branch success notice after a few seconds.
+  useEffect(() => {
+    if (!branchNotice) {
+      return;
+    }
+    const timer = setTimeout(() => setBranchNotice(""), 4000);
+    return () => clearTimeout(timer);
+  }, [branchNotice]);
 
   useEffect(() => {
     draftAttachmentsRef.current = draftAttachments;
@@ -347,10 +358,37 @@ export function ChatDock({
     processId: activeProcessId,
     rows: runtime.rows,
   });
+  const conversationSegments = useChatConversationSegments({
+    enabled: open && hasActiveProcess,
+    args: hasActiveProcess ? { pid: activeProcessId, conversationId: selectedConversationId } : {},
+  });
+  const hasArchivedMessages = (conversationSegments.data?.length ?? 0) > 0;
   const contextPercent = contextPressurePercent(context?.pressure);
-  const contextTitle = contextPercent === null
-    ? contextLabel
-    : `${contextPercent}% context pressure`;
+  // Severity tone for the context control: pressure level drives it when we have
+  // context data; a load failure with no pressure shows as an error. Everything
+  // else (idle / not attached / loading / unknown) stays neutral.
+  const contextTone: "default" | "attention" | "error" =
+    context?.level === "critical" || context?.level === "full"
+      ? "error"
+      : context?.level === "warn"
+        ? "attention"
+        : contextPercent === null && processHistory.isError
+          ? "error"
+          : "default";
+  // No pressure reading — name the specific reason in the tooltip so the empty
+  // "CONTEXT" label isn't ambiguous (not attached / load error / loading /
+  // unknown / idle).
+  const contextTitle = contextPercent !== null
+    ? `${contextPercent}% context pressure`
+    : !hasActiveProcess
+      ? "Context — no process attached"
+      : processHistory.isError
+        ? "Context — history failed to load"
+        : processHistory.isLoading
+          ? "Context — loading…"
+          : context
+            ? "Context — pressure unknown"
+            : "Context — process idle";
   const conversationCost = formatConversationCostTooltip(context);
   const hasVisibleMessages = transcriptMessages.length > 0;
   const processLookupLoading = !hasActiveProcess && effectiveStatusLabel === "loading";
@@ -596,6 +634,7 @@ export function ChatDock({
     }, {
       onSuccess: (result) => {
         onSelectConversation?.(result.targetConversation.id);
+        setBranchNotice("Successfully branched conversation");
       },
     });
   };
@@ -792,11 +831,31 @@ export function ChatDock({
         activeAgent={activeAgent}
         activeProcessId={activeProcessId}
         agentPanelOpen={agentPanelOpen}
+        archiveOpen={archiveOpen}
         atMax={atMax}
         canAbortRun={canAbortRun}
+        canFreeContext={canFreeContext}
+        compactKeepLast={compactKeepLast}
+        compactPending={compactConversation.isPending}
+        hasArchivedMessages={hasArchivedMessages}
+        onFreeContext={() => {
+          setOpenPopover(null);
+          requestFreeContext();
+        }}
+        onToggleArchive={() => {
+          setOpenPopover(null);
+          setArchiveOpen((value) => !value);
+        }}
+        conversations={conversations.data ?? []}
+        activeConversationId={selectedConversationId}
+        onSelectConversation={(conversationId) => {
+          setOpenPopover(null);
+          setArchiveOpen(false);
+          onSelectConversation?.(conversationId);
+        }}
         context={context}
-        contextLabel={contextLabel}
         contextLevel={contextLevel}
+        contextTone={contextTone}
         contextModel={contextModel}
         contextPercent={contextPercent}
         contextTitle={contextTitle}
@@ -837,38 +896,6 @@ export function ChatDock({
         onTogglePopover={togglePopover}
       />
 
-      <ChatConversationBar
-        activeConversationId={selectedConversationId}
-        conversations={conversations.data ?? []}
-        onSelect={(conversationId) => {
-          setArchiveOpen(false);
-          onSelectConversation?.(conversationId);
-        }}
-      />
-
-      {hasActiveProcess ? (
-        <div class="gsv-chat-thread-tools">
-          <button
-            type="button"
-            disabled={!canFreeContext}
-            title={canAbortRun ? "Context can be compacted after the active run finishes" : "Archive older messages and keep the latest context live"}
-            onClick={requestFreeContext}
-          >
-            <Icon name="stars" size={12} />
-            <span>{compactConversation.isPending ? "FREEING" : "FREE CONTEXT"}</span>
-            <small>KEEP {compactKeepLast}</small>
-          </button>
-          <button
-            type="button"
-            aria-expanded={archiveOpen}
-            onClick={() => setArchiveOpen((value) => !value)}
-          >
-            <Icon name="folder" family="doticons" size={12} />
-            <span>{archiveOpen ? "CLOSE ARCHIVE" : "ARCHIVE"}</span>
-          </button>
-        </div>
-      ) : null}
-
       {archiveOpen && hasActiveProcess ? (
         <ChatArchivePanel
           conversationId={selectedConversationId}
@@ -882,6 +909,12 @@ export function ChatDock({
       {controlError ? (
         <div class="gsv-chat-control-error" role="status">
           {controlError}
+        </div>
+      ) : null}
+
+      {branchNotice ? (
+        <div class="gsv-chat-control-success" role="status">
+          {branchNotice}
         </div>
       ) : null}
 
@@ -937,17 +970,17 @@ export function ChatDock({
         user={userLabel}
         voiceActive={ambientTranscription.dictationActive || ambientTranscription.liveActive}
         voiceAction={(
-          <button
-            type="button"
-            class={`gsv-chat-live-icon${ambientTranscription.liveActive ? " is-active" : ""}`}
-            disabled={ambientTranscription.liveUnavailable}
-            title={ambientTranscription.liveTitle}
-            aria-label={ambientTranscription.liveActive ? "Stop live voice chat" : "Start live voice chat"}
-            aria-pressed={ambientTranscription.liveActive ? "true" : "false"}
-            onClick={ambientTranscription.toggleLive}
-          >
-            <Icon name="wifi" family="doticons" size={13} />
-          </button>
+          <Hint position="top-end" text={ambientTranscription.liveTitle}>
+            <IconButton
+              variant="floating"
+              glyph="transcribe"
+              size={26}
+              className={`gsv-chat-live-icon${ambientTranscription.liveActive ? " is-active" : ""}`}
+              ariaLabel={ambientTranscription.liveActive ? "Stop live voice chat" : "Start live voice chat"}
+              disabled={ambientTranscription.liveUnavailable}
+              onClick={ambientTranscription.toggleLive}
+            />
+          </Hint>
         )}
         voiceAvailableWhenBusy={ambientTranscription.active}
         voiceDisabled={ambientTranscription.liveActive

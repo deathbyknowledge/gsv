@@ -1,16 +1,32 @@
 import { Icon } from "../../../components/ui/Icon";
+import { ArchiveFolderGlyph, FreeContextGlyph } from "../../../components/ui/lineGlyphs";
 import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
-import type { ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
+import type { ChatConversation, ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
 import { formatCount, shortId } from "./chatUiFormat";
 
-export type ChatPopoverId = "model" | "tasks" | "context";
+export type ChatPopoverId = "model" | "tasks" | "context" | "conversations";
+
+function conversationLabel(conversation: ChatConversation): string {
+  return conversation.title
+    || (conversation.id === "default" ? "Default" : shortId(conversation.id));
+}
 
 type ChatDockPopoversProps = {
   activeAgent: ChatAgentViewModel;
   activeProcessId: string;
+  archiveOpen: boolean;
+  canFreeContext: boolean;
+  compactKeepLast: number;
+  compactPending: boolean;
+  hasArchivedMessages: boolean;
+  onFreeContext: () => void;
+  onToggleArchive: () => void;
+  conversations: readonly ChatConversation[];
+  activeConversationId: string;
+  onSelectConversation: (conversationId: string) => void;
   context: ChatHistory["context"] | null;
   contextLevel: string;
   contextModel: string;
@@ -76,6 +92,16 @@ function modelProfileIsActive(
 export function ChatDockPopovers({
   activeAgent,
   activeProcessId,
+  archiveOpen,
+  canFreeContext,
+  compactKeepLast,
+  compactPending,
+  hasArchivedMessages,
+  onFreeContext,
+  onToggleArchive,
+  conversations,
+  activeConversationId,
+  onSelectConversation,
   context,
   contextLevel,
   contextModel,
@@ -107,6 +133,37 @@ export function ChatDockPopovers({
 
   return (
     <>
+      {openPopover === "conversations" ? (
+        <div class="gsv-chat-popover gsv-chat-conversations-popover" role="menu" aria-label="Conversation branches">
+          <header>
+            <span>BRANCHES</span>
+            <small>{conversations.length}</small>
+          </header>
+          <div class="gsv-chat-model-options" role="list">
+            {conversations.map((conversation) => {
+              const active = conversation.id === activeConversationId;
+              return (
+                <button
+                  type="button"
+                  class={`gsv-chat-model-row${active ? " is-current" : ""}`}
+                  role="listitem"
+                  aria-current={active ? "true" : undefined}
+                  key={conversation.id}
+                  onClick={() => onSelectConversation(conversation.id)}
+                >
+                  <span class="gsv-chat-model-current" aria-hidden="true" />
+                  <span class="gsv-chat-model-label">
+                    <strong>{conversationLabel(conversation)}</strong>
+                    {conversation.messageCount > 0 ? <em>{formatCount(conversation.messageCount)} messages</em> : null}
+                  </span>
+                  {active ? <small>CURRENT</small> : null}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
       {openPopover === "model" ? (
         <div class="gsv-chat-popover gsv-chat-model-popover" role="menu" aria-label="Model state">
           <header>
@@ -274,6 +331,29 @@ export function ChatDockPopovers({
             <span>MESSAGES</span>
             <strong>{formatCount(context?.messageCount ?? messageCount)}</strong>
           </div>
+          {hasActiveProcess ? (
+            <>
+              <button
+                type="button"
+                class="gsv-chat-popover-action"
+                disabled={!canFreeContext}
+                onClick={onFreeContext}
+              >
+                <FreeContextGlyph size={13} />
+                <span>{compactPending ? "FREEING CONTEXT" : `FREE CONTEXT · KEEP ${compactKeepLast}`}</span>
+              </button>
+              <button
+                type="button"
+                class="gsv-chat-popover-action"
+                aria-expanded={archiveOpen}
+                disabled={!hasArchivedMessages && !archiveOpen}
+                onClick={onToggleArchive}
+              >
+                <ArchiveFolderGlyph size={13} />
+                <span>{archiveOpen ? "HIDE ARCHIVED" : "ARCHIVED"}</span>
+              </button>
+            </>
+          ) : null}
         </div>
       ) : null}
     </>

@@ -31,6 +31,17 @@
   border-bottom: 0;
   max-width: 100%;
 }
+/* Hint wrapper — passthrough around an existing control so the bubble anchors to
+   it without disturbing the control's own box (it stays the trigger). */
+.gsv-hint {
+  align-items: center;
+  justify-content: center;
+  /* Passthrough wrappers must shrink with the control they wrap — without this
+     the wrapper's default min-width:auto keeps its max-content width and defeats
+     an inner control's min-width:0/ellipsis truncation, overflowing the row. */
+  min-width: 0;
+  max-width: 100%;
+}
 .gsv-tt-bub {
   position: absolute;
   z-index: 50;
@@ -49,7 +60,7 @@
   transition: opacity 0.12s ease, transform 0.12s ease;
 }
 .gsv-tt:hover .gsv-tt-bub,
-.gsv-tt:focus-within .gsv-tt-bub {
+.gsv-tt:has(:focus-visible) .gsv-tt-bub {
   opacity: 1;
 }
 .gsv-tt-arrow {
@@ -67,7 +78,7 @@
   transform: translateX(-50%) translateY(4px);
 }
 .gsv-tt-top:hover .gsv-tt-bub,
-.gsv-tt-top:focus-within .gsv-tt-bub {
+.gsv-tt-top:has(:focus-visible) .gsv-tt-bub {
   transform: translateX(-50%) translateY(0);
 }
 .gsv-tt-top .gsv-tt-arrow {
@@ -84,7 +95,7 @@
   transform: translateX(-50%) translateY(-4px);
 }
 .gsv-tt-bottom:hover .gsv-tt-bub,
-.gsv-tt-bottom:focus-within .gsv-tt-bub {
+.gsv-tt-bottom:has(:focus-visible) .gsv-tt-bub {
   transform: translateX(-50%) translateY(0);
 }
 .gsv-tt-bottom .gsv-tt-arrow {
@@ -94,6 +105,59 @@
   border-bottom: none;
   border-right: none;
 }
+/* Start/end aligned top & bottom bubbles — anchor the bubble edge to the trigger
+   edge (instead of centering) so controls near a container edge open inward and
+   don't overflow/clip. -start hugs the left edge; -end hugs the right edge. */
+.gsv-tt-top-start .gsv-tt-bub,
+.gsv-tt-top-end .gsv-tt-bub {
+  bottom: 100%;
+  margin-bottom: 9px;
+  transform: translateY(4px);
+}
+.gsv-tt-bottom-start .gsv-tt-bub,
+.gsv-tt-bottom-end .gsv-tt-bub {
+  top: 100%;
+  margin-top: 9px;
+  transform: translateY(-4px);
+}
+.gsv-tt-top-start .gsv-tt-bub,
+.gsv-tt-bottom-start .gsv-tt-bub {
+  left: 0;
+}
+.gsv-tt-top-end .gsv-tt-bub,
+.gsv-tt-bottom-end .gsv-tt-bub {
+  right: 0;
+}
+.gsv-tt-top-start:hover .gsv-tt-bub,
+.gsv-tt-top-start:has(:focus-visible) .gsv-tt-bub,
+.gsv-tt-top-end:hover .gsv-tt-bub,
+.gsv-tt-top-end:has(:focus-visible) .gsv-tt-bub,
+.gsv-tt-bottom-start:hover .gsv-tt-bub,
+.gsv-tt-bottom-start:has(:focus-visible) .gsv-tt-bub,
+.gsv-tt-bottom-end:hover .gsv-tt-bub,
+.gsv-tt-bottom-end:has(:focus-visible) .gsv-tt-bub {
+  transform: translateY(0);
+}
+.gsv-tt-top-start .gsv-tt-arrow,
+.gsv-tt-top-end .gsv-tt-arrow {
+  bottom: -4px;
+  border-top: none;
+  border-left: none;
+}
+.gsv-tt-bottom-start .gsv-tt-arrow,
+.gsv-tt-bottom-end .gsv-tt-arrow {
+  top: -4px;
+  border-bottom: none;
+  border-right: none;
+}
+.gsv-tt-top-start .gsv-tt-arrow,
+.gsv-tt-bottom-start .gsv-tt-arrow {
+  left: 14px;
+}
+.gsv-tt-top-end .gsv-tt-arrow,
+.gsv-tt-bottom-end .gsv-tt-arrow {
+  right: 14px;
+}
 .gsv-tt-left .gsv-tt-bub {
   right: 100%;
   top: 50%;
@@ -101,7 +165,7 @@
   transform: translateY(-50%) translateX(4px);
 }
 .gsv-tt-left:hover .gsv-tt-bub,
-.gsv-tt-left:focus-within .gsv-tt-bub {
+.gsv-tt-left:has(:focus-visible) .gsv-tt-bub {
   transform: translateY(-50%) translateX(0);
 }
 .gsv-tt-left .gsv-tt-arrow {
@@ -118,7 +182,7 @@
   transform: translateY(-50%) translateX(-4px);
 }
 .gsv-tt-right:hover .gsv-tt-bub,
-.gsv-tt-right:focus-within .gsv-tt-bub {
+.gsv-tt-right:has(:focus-visible) .gsv-tt-bub {
   transform: translateY(-50%) translateX(0);
 }
 .gsv-tt-right .gsv-tt-arrow {

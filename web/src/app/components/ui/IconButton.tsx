@@ -1,16 +1,26 @@
 import type { ComponentChildren } from "preact";
 import "./IconButton.css";
 
-export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab";
+export type IconButtonGlyph = "back" | "arrowBack" | "menu" | "max" | "min" | "close" | "plus" | "help" | "attention" | "refresh" | "newTab" | "attach" | "transcribe" | "mic" | "send" | "stop" | "sidepanel";
 export type IconButtonSize = "small" | "medium" | "large" | number;
+/** Visual treatment. "default" = filled box with border; "floating" = borderless
+ *  and transparent, glyph-only, with a color-shift on hover (for use inside bars
+ *  like the message composer). "ghost" is kept as a legacy alias via the `ghost`
+ *  prop for the inline info hint. */
+export type IconButtonVariant = "default" | "floating";
 
 export interface IconButtonProps {
   glyph?: IconButtonGlyph;
   size?: IconButtonSize;
   disabled?: boolean;
+  /** Visual treatment (see IconButtonVariant). Ignored when `ghost` is set. */
+  variant?: IconButtonVariant;
   /** Borderless rendering (no background/border) — for inline affordances such
-   *  as the label info hint. */
+   *  as the label info hint. Legacy; prefer `variant="floating"` for new uses. */
   ghost?: boolean;
+  /** Extra class(es) appended to the button — lets callers layer state tones
+   *  (e.g. a send/stop or active colour) over the base variant. */
+  className?: string;
   /** Native browser tooltip text. Also used as the accessible name unless
    *  ariaLabel is given. Omit when a custom tooltip already labels the control
    *  (e.g. InfoTip) to avoid a duplicate native tooltip. */
@@ -18,8 +28,11 @@ export interface IconButtonProps {
   /** Accessible name without rendering a native title tooltip. Takes precedence
    *  over title for aria-label. */
   ariaLabel?: string;
-  /** id of an element that describes this control (e.g. a tooltip bubble). */
+  /** id of an element that describes this control (e.g. a tooltip bubble).
+   *  Accepts either camelCase or the DOM-style `aria-describedby` (the latter is
+   *  what Tooltip/Hint injects via cloneElement). */
   ariaDescribedBy?: string;
+  "aria-describedby"?: string;
   onClick?: () => void;
 }
 
@@ -127,21 +140,67 @@ const GLYPHS: Record<IconButtonGlyph, ComponentChildren> = {
       <path d="M9.5 3 L13 3 L13 6.5" />
     </svg>
   ),
+  attach: (
+    <svg width="58%" height="58%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  ),
+  transcribe: (
+    <svg width="60%" height="60%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6.5 3.5 h11 a3.5 3.5 0 0 1 3.5 3.5 v5.5 a3.5 3.5 0 0 1-3.5 3.5 h-5.5 l-4 3 v-3 h-1 a3.5 3.5 0 0 1-3.5-3.5 v-5.5 a3.5 3.5 0 0 1 3.5-3.5 z" />
+      <path d="M9.6 12.2 L12 6.8 L14.4 12.2 M10.6 10.2 H13.4" />
+    </svg>
+  ),
+  mic: (
+    <svg width="56%" height="56%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="2.5" width="6" height="11" rx="3" />
+      <path d="M5.5 11 v0.5 a6.5 6.5 0 0 0 13 0 V11" />
+      <path d="M12 18 V21 M8.5 21 H15.5" />
+    </svg>
+  ),
+  send: (
+    <svg width="56%" height="56%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21.5 2.5 L2.5 9.6 L11 13 L14.4 21.5 Z" />
+      <path d="M21.5 2.5 L11 13" />
+    </svg>
+  ),
+  stop: (
+    <svg width="50%" height="50%" viewBox="0 0 24 24">
+      <rect x="4.5" y="4.5" width="15" height="15" rx="3.5" fill="currentColor" />
+    </svg>
+  ),
+  sidepanel: (
+    <svg width="46%" height="46%" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2.5 8 H9.5" />
+      <path d="M7 5.5 L9.5 8 L7 10.5" />
+      <path d="M13 3 V13" />
+    </svg>
+  ),
+};
+
+const VARIANT_BASE: Record<IconButtonVariant, string> = {
+  default: "gsv-ibtn",
+  floating: "gsv-ibtn-floating",
 };
 
 /** IconButton — ported from IconButton.dc.html. Square icon button with inline
- *  SVG glyphs, named or numeric size, disabled + title + onClick. */
-export function IconButton({ glyph = "back", size = "medium", disabled = false, ghost = false, title = "", ariaLabel, ariaDescribedBy, onClick }: IconButtonProps) {
+ *  SVG glyphs, named or numeric size, disabled + title + onClick. `variant`
+ *  selects the visual treatment (default filled / floating borderless). */
+export function IconButton({ glyph = "back", size = "medium", disabled = false, variant = "default", ghost = false, className, title = "", ariaLabel, ariaDescribedBy, onClick, ...rest }: IconButtonProps) {
   const px = typeof size === "number" ? size : SIZE_MAP[size] ?? Number(size) ?? 30;
-  const base = ghost ? "gsv-ibtn-ghost" : "gsv-ibtn";
-  const cls = disabled ? (ghost ? "gsv-ibtn-ghost is-disabled" : "gsv-ibtn-disabled") : base;
+  const base = ghost ? "gsv-ibtn-ghost" : VARIANT_BASE[variant];
+  // Disabled state reuses the base class plus is-disabled, except the legacy
+  // default variant which has its own dedicated disabled class.
+  const disabledCls = ghost || variant === "floating" ? `${base} is-disabled` : "gsv-ibtn-disabled";
+  const cls = [disabled ? disabledCls : base, className].filter(Boolean).join(" ");
+  const describedBy = ariaDescribedBy ?? rest["aria-describedby"];
   return (
     <button
       type="button"
       class={cls}
       title={title || undefined}
       aria-label={ariaLabel || title || undefined}
-      aria-describedby={ariaDescribedBy}
+      aria-describedby={describedBy}
       disabled={disabled}
       onClick={disabled ? undefined : onClick}
       style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", width: `${px}px`, height: `${px}px` }}

@@ -4,13 +4,40 @@
    inline width/height matching the old border-box div). */
 .gsv-ibtn,
 .gsv-ibtn-disabled,
-.gsv-ibtn-ghost {
+.gsv-ibtn-ghost,
+.gsv-ibtn-floating {
   margin: 0;
   padding: 0;
   font: inherit;
   box-sizing: border-box;
   -webkit-appearance: none;
   appearance: none;
+}
+
+/* Floating — borderless, transparent, glyph-only. Reads as a bare icon at rest
+   and brightens on hover/active (no background or border ever). For use inside
+   bars such as the message composer. Works at every size. */
+.gsv-ibtn-floating {
+  background: transparent;
+  border: 0;
+  color: #7d78b8;
+  transition: color 0.12s;
+}
+.gsv-ibtn-floating:hover {
+  color: #b6b1ff;
+}
+.gsv-ibtn-floating:active {
+  color: #e6e4ff;
+}
+.gsv-ibtn-floating:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+.gsv-ibtn-floating.is-disabled {
+  color: #565178;
+  pointer-events: none;
+  cursor: not-allowed;
 }
 
 /* Ghost — borderless inline affordance (e.g. the label info hint). No box; the

@@ -39,6 +39,7 @@ import tile from "./stories/Tile.story";
 import objectCard from "./stories/ObjectCard.story";
 import surface from "./stories/Surface.story";
 import iconButton from "./stories/IconButton.story";
+import lineGlyphs from "./stories/LineGlyphs.story";
 import sectionHeader from "./stories/SectionHeader.story";
 import addAction from "./stories/AddAction.story";
 import settingsDashboard from "./stories/SettingsDashboard.story";
@@ -103,6 +104,7 @@ const STORIES: Story[] = [
   avatar,
   // Chrome
   iconButton,
+  lineGlyphs,
   sectionHeader,
   addAction,
   iconMenu,
