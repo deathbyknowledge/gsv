@@ -61,6 +61,7 @@ type PendingRequest = {
   reject: (error: Error) => void;
   timeoutId: TimerHandle;
   call: string;
+  bodyAbort?: AbortController;
 };
 
 type PendingBinaryStream = {
@@ -68,11 +69,6 @@ type PendingBinaryStream = {
   timeoutId: TimerHandle;
   expectedBytes?: number;
   receivedBytes: number;
-};
-
-type QueuedBinaryFrame = {
-  frame: BinaryFrame;
-  size: number;
 };
 
 type UnionToIntersection<U> = (U extends unknown ? (value: U) => void : never) extends (
@@ -85,7 +81,12 @@ type SyscallArgsTuple<S extends SyscallName> = {} extends ArgsOf<S>
   ? [args?: ArgsOf<S>]
   : [args: ArgsOf<S>];
 
-type NamespaceEntry<Full extends SyscallName, Path extends string> = Path extends `${infer Head}.${infer Tail}`
+type NamespaceSyscall = Exclude<
+  SyscallName,
+  "fs.transfer.send" | "fs.transfer.receive"
+>;
+
+type NamespaceEntry<Full extends NamespaceSyscall, Path extends string> = Path extends `${infer Head}.${infer Tail}`
   ? { [Key in Head]: NamespaceEntry<Full, Tail> }
   : { [Key in Path]: GsvSyscallMethod<Full> };
 
@@ -94,8 +95,8 @@ export type GsvSyscallMethod<S extends SyscallName> = (
 ) => Promise<ResultOf<S>>;
 
 export type GsvClientNamespaces = UnionToIntersection<{
-  [S in SyscallName]: NamespaceEntry<S, S>;
-}[SyscallName]>;
+  [S in NamespaceSyscall]: NamespaceEntry<S, S>;
+}[NamespaceSyscall]>;
 
 export type GsvClientCall = {
   <S extends SyscallName>(call: S, ...args: SyscallArgsTuple<S>): Promise<ResultOf<S>>;
@@ -120,7 +121,6 @@ export type GsvResponse<T = unknown> = {
 
 export type GsvBodyOptions = {
   receiveTimeoutMs?: number;
-  maxBufferedBytes?: number;
   chunkSize?: number;
 };
 
@@ -215,11 +215,11 @@ export type GsvSignalNamespace = GsvClientNamespaces["signal"];
 export type GsvSysNamespace = GsvClientNamespaces["sys"];
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 8_000;
+const PROTOCOL_VERSION = 2;
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const LONG_RUNNING_REQUEST_TIMEOUT_MS = 120_000;
 const AI_TEXT_GENERATION_REQUEST_TIMEOUT_MS = 180_000;
 const DEFAULT_BINARY_RECEIVE_TIMEOUT_MS = 120_000;
-const DEFAULT_BINARY_MAX_BUFFERED_BYTES = 32 * 1024 * 1024;
 const DEFAULT_BINARY_CHUNK_SIZE = 1024 * 1024;
 const DEFAULT_DRIVER_KEEPALIVE_MS = 240_000;
 const WEBSOCKET_CONNECTING = 0;
@@ -243,7 +243,7 @@ const DEFAULT_REQUEST_TIMEOUTS_MS: Record<string, number> = {
 
 const DEFAULT_CLIENT_INFO: GsvClientInfo = {
   id: "gsv-js",
-  version: "0.0.1",
+  version: "0.0.6",
   platform: "javascript",
   role: "user",
 };
@@ -256,8 +256,6 @@ const SYSCALL_NAMES = [
   "fs.search",
   "fs.copy",
   "fs.transfer.stat",
-  "fs.transfer.send",
-  "fs.transfer.receive",
   "shell.exec",
   "net.fetch",
   "app.open",
@@ -376,9 +374,9 @@ const SYSCALL_NAMES = [
   "notification.dismiss",
   "signal.watch",
   "signal.unwatch",
-] as const satisfies readonly SyscallName[];
+] as const satisfies readonly NamespaceSyscall[];
 
-type MissingSyscalls = Exclude<SyscallName, typeof SYSCALL_NAMES[number]>;
+type MissingSyscalls = Exclude<NamespaceSyscall, typeof SYSCALL_NAMES[number]>;
 const allSyscallsCovered: MissingSyscalls extends never ? true : never = true;
 void allSyscallsCovered;
 
@@ -419,14 +417,11 @@ export class GSVClient {
   private readonly defaultRequestTimeoutMs: number;
   private readonly requestTimeoutsMs: Record<string, number>;
   private readonly defaultBinaryReceiveTimeoutMs: number;
-  private readonly binaryMaxBufferedBytes: number;
   private readonly binaryChunkSize: number;
   private socket: WebSocket | null = null;
   private socketEpoch = 0;
   private pending = new Map<string, PendingRequest>();
   private pendingBinaryStreams = new Map<number, PendingBinaryStream>();
-  private queuedBinaryFrames = new Map<number, QueuedBinaryFrame[]>();
-  private queuedBinaryBytes = 0;
   private nextBinaryStreamId = 1;
   private inboundRequestHandler: GsvInboundRequestHandler | null = null;
   private signalListeners = new Set<(signal: string, payload: unknown) => void>();
@@ -458,7 +453,6 @@ export class GSVClient {
       ...requestTimeoutsMs,
     };
     this.defaultBinaryReceiveTimeoutMs = body?.receiveTimeoutMs ?? DEFAULT_BINARY_RECEIVE_TIMEOUT_MS;
-    this.binaryMaxBufferedBytes = body?.maxBufferedBytes ?? DEFAULT_BINARY_MAX_BUFFERED_BYTES;
     this.binaryChunkSize = body?.chunkSize ?? DEFAULT_BINARY_CHUNK_SIZE;
     if (!Number.isSafeInteger(this.binaryChunkSize) || this.binaryChunkSize <= 0) {
       throw new Error("body.chunkSize must be a positive integer");
@@ -466,7 +460,7 @@ export class GSVClient {
     this.call = (async (call: string, args: unknown = {}) => {
       const response = await this.request(call, args);
       if (response.body) {
-        void response.body.stream.cancel();
+        await response.body.stream.cancel().catch(() => {});
         throw new Error(`${call} returned a body; use client.request()`);
       }
       return response.data;
@@ -580,7 +574,7 @@ export class GSVClient {
     let connectResult: ConnectResult;
     try {
       connectResult = (await this.request("sys.connect", {
-        protocol: 2,
+        protocol: PROTOCOL_VERSION,
         client: merged.client,
         ...(merged.driver ? { driver: merged.driver } : {}),
         auth: {
@@ -588,6 +582,11 @@ export class GSVClient {
           ...(token ? { token } : { password }),
         },
       })).data as ConnectResult;
+      if (connectResult.protocol !== PROTOCOL_VERSION) {
+        throw new Error(
+          `Gateway selected protocol ${connectResult.protocol}, expected ${PROTOCOL_VERSION}`,
+        );
+      }
     } catch (error) {
       if (this.socketEpoch === socketEpoch) {
         this.disconnect();
@@ -622,7 +621,6 @@ export class GSVClient {
 
     this.rejectAllPending(new Error("Disconnected"));
     this.rejectAllBinaryStreams(new Error("Disconnected"));
-    this.clearQueuedBinaryFrames();
     this.setStatus({
       state: "disconnected",
       url: null,
@@ -710,7 +708,6 @@ export class GSVClient {
       this.socket = null;
       this.rejectAllPending(new Error("Connection closed"));
       this.rejectAllBinaryStreams(new Error("Connection closed"));
-      this.clearQueuedBinaryFrames();
       this.setStatus({
         state: "disconnected",
         url: this.status.url,
@@ -806,10 +803,12 @@ export class GSVClient {
         : {}),
     };
     const timeoutMs = this.requestTimeoutMs(call);
+    const bodyAbort = body ? new AbortController() : undefined;
 
     return new Promise((resolve, reject) => {
       const timeoutId = globalThis.setTimeout(() => {
         this.pending.delete(id);
+        bodyAbort?.abort(new Error(`Request timed out: ${call}`));
         reject(new Error(`Request timed out after ${timeoutMs}ms: ${call}`));
       }, timeoutMs);
 
@@ -818,24 +817,28 @@ export class GSVClient {
         reject,
         timeoutId,
         call,
+        bodyAbort,
       });
 
       try {
         socket.send(JSON.stringify(frame));
         if (body && streamId) {
-          void this.sendBinaryStream(streamId, body.stream).catch((error) => {
+          void this.sendBinaryStream(streamId, body.stream, bodyAbort?.signal).catch((error) => {
             const pending = this.pending.get(id);
             if (!pending) {
               return;
             }
             this.pending.delete(id);
             globalThis.clearTimeout(pending.timeoutId);
+            pending.bodyAbort?.abort(error);
             pending.reject(error instanceof Error ? error : new Error("Failed to send request body"));
           });
         }
       } catch (error) {
         this.pending.delete(id);
         globalThis.clearTimeout(timeoutId);
+        bodyAbort?.abort(error);
+        void body?.stream.cancel(error).catch(() => {});
         reject(error instanceof Error ? error : new Error("Failed to send request"));
       }
     });
@@ -887,6 +890,10 @@ export class GSVClient {
         cleanup();
 
         if (parsed.ok) {
+          if (parsed.body !== undefined) {
+            reject(new Error(`${call} returned a body; requestOnce() only supports JSON responses`));
+            return;
+          }
           resolve((parsed.data ?? {}) as T);
           return;
         }
@@ -942,12 +949,13 @@ export class GSVClient {
 
     this.pending.delete(parsed.id);
     globalThis.clearTimeout(pending.timeoutId);
+    pending.bodyAbort?.abort(new Error(`Request completed: ${pending.call}`));
 
     if (parsed.ok) {
       try {
         pending.resolve({
           data: parsed.data ?? {},
-          ...(parsed.body ? { body: this.receiveFrameBody(parsed.body) } : {}),
+          ...(parsed.body !== undefined ? { body: this.receiveFrameBody(parsed.body) } : {}),
         });
       } catch (error) {
         pending.reject(error instanceof Error ? error : new Error("Invalid response body"));
@@ -962,7 +970,7 @@ export class GSVClient {
     const handler = this.inboundRequestHandler;
     let body: GsvBody | undefined;
     try {
-      body = frame.body ? this.receiveFrameBody(frame.body) : undefined;
+      body = frame.body !== undefined ? this.receiveFrameBody(frame.body) : undefined;
     } catch (error) {
       this.sendJson(errorFrame(frame.id, 400, errorMessage(error, "Invalid request body")));
       return;
@@ -1030,9 +1038,22 @@ export class GSVClient {
   private async sendBinaryStream(
     streamId: number,
     stream: ReadableStream<Uint8Array>,
+    signal?: AbortSignal,
   ): Promise<void> {
-    const reader = stream.getReader();
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    const abort = () => {
+      const cancelled = reader?.cancel(signal?.reason);
+      if (cancelled) {
+        void cancelled.catch(() => {});
+      }
+    };
     try {
+      reader = stream.getReader();
+      if (signal?.aborted) {
+        await reader.cancel(signal.reason);
+        return;
+      }
+      signal?.addEventListener("abort", abort, { once: true });
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
@@ -1046,8 +1067,19 @@ export class GSVClient {
           );
         }
       }
+      if (signal?.aborted) {
+        return;
+      }
       this.sendBinaryFrame(streamId, BINARY_FRAME_END);
     } catch (error) {
+      if (reader) {
+        await reader.cancel(error).catch(() => {});
+      } else {
+        await stream.cancel(error).catch(() => {});
+      }
+      if (signal?.aborted) {
+        return;
+      }
       try {
         this.sendBinaryError(streamId, error instanceof Error ? error : String(error));
       } catch {
@@ -1055,7 +1087,8 @@ export class GSVClient {
       }
       throw error;
     } finally {
-      reader.releaseLock();
+      signal?.removeEventListener("abort", abort);
+      reader?.releaseLock();
     }
   }
 
@@ -1079,7 +1112,6 @@ export class GSVClient {
           expectedBytes,
           receivedBytes: 0,
         });
-        this.flushQueuedBinaryFrames(streamId);
       },
       cancel: () => {
         this.clearBinaryStream(streamId);
@@ -1108,7 +1140,6 @@ export class GSVClient {
       return;
     }
     if (!this.pendingBinaryStreams.has(frame.streamId)) {
-      this.queueBinaryFrame(frame);
       return;
     }
     this.deliverBinaryFrame(frame);
@@ -1156,53 +1187,6 @@ export class GSVClient {
     }
   }
 
-  private queueBinaryFrame(frame: BinaryFrame): void {
-    const size = frame.payload.byteLength;
-    const queue = this.queuedBinaryFrames.get(frame.streamId) ?? [];
-    queue.push({ frame, size });
-    this.queuedBinaryFrames.set(frame.streamId, queue);
-    this.queuedBinaryBytes += size;
-    this.trimQueuedBinaryFrames();
-  }
-
-  private flushQueuedBinaryFrames(streamId: number): void {
-    const queue = this.queuedBinaryFrames.get(streamId);
-    if (!queue) {
-      return;
-    }
-    this.queuedBinaryFrames.delete(streamId);
-    for (const queued of queue) {
-      this.queuedBinaryBytes -= queued.size;
-      this.deliverBinaryFrame(queued.frame);
-      if (!this.pendingBinaryStreams.has(streamId)) {
-        break;
-      }
-    }
-  }
-
-  private trimQueuedBinaryFrames(): void {
-    while (this.queuedBinaryBytes > this.binaryMaxBufferedBytes) {
-      const oldest = this.queuedBinaryFrames.entries().next();
-      if (oldest.done) {
-        this.queuedBinaryBytes = 0;
-        return;
-      }
-      const [streamId, queue] = oldest.value;
-      const dropped = queue.shift();
-      if (dropped) {
-        this.queuedBinaryBytes -= dropped.size;
-      }
-      if (queue.length === 0) {
-        this.queuedBinaryFrames.delete(streamId);
-      }
-    }
-  }
-
-  private clearQueuedBinaryFrames(): void {
-    this.queuedBinaryFrames.clear();
-    this.queuedBinaryBytes = 0;
-  }
-
   private clearBinaryStream(streamId: number): PendingBinaryStream | null {
     const pending = this.pendingBinaryStreams.get(streamId);
     if (!pending) {
@@ -1233,6 +1217,7 @@ export class GSVClient {
   private rejectAllPending(error: Error): void {
     for (const pending of this.pending.values()) {
       globalThis.clearTimeout(pending.timeoutId);
+      pending.bodyAbort?.abort(error);
       pending.reject(error);
     }
     this.pending.clear();
