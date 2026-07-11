@@ -237,18 +237,19 @@ export async function handleFsTransferReceive(
   const fs = createNativeFileSystem(ctx);
   const rawPath = typeof args.path === "string" ? args.path.trim() : "";
   if (!rawPath) {
+    await body?.stream.cancel().catch(() => {});
     return { ok: false, error: "fs.transfer.receive requires path" };
   }
   if (!body) {
     return { ok: false, error: "fs.transfer.receive requires a request body" };
   }
   if (body.length === undefined) {
-    void body.stream.cancel();
+    await body.stream.cancel().catch(() => {});
     return { ok: false, error: "fs.transfer.receive requires a request body length" };
   }
 
-  const path = resolve(rawPath, ctx);
   try {
+    const path = resolve(rawPath, ctx);
     const result = await fs.writeFileStream(path, body.stream, {
       expectedSize: body.length,
       contentType: args.contentType,
@@ -260,6 +261,7 @@ export async function handleFsTransferReceive(
       contentType: args.contentType,
     };
   } catch (error) {
+    await body.stream.cancel(error).catch(() => {});
     return {
       ok: false,
       error: error instanceof Error ? error.message : String(error),
@@ -453,6 +455,11 @@ async function copyGsvToDevice(
   if (!result.ok) {
     throw new Error(result.error);
   }
+  if (result.bytesWritten !== opened.size) {
+    throw new Error(
+      `Transfer size mismatch for ${destination.path}: expected ${opened.size}, got ${result.bytesWritten}`,
+    );
+  }
 
   return {
     ok: true,
@@ -469,30 +476,11 @@ async function copyDeviceToGsv(
   ctx: KernelContext,
   transport: FsCopyDeviceTransport,
 ): Promise<FsCopyResult> {
-  const sourceStat = await statDeviceSource(transport, source);
+  const { stat: sourceStat, body } = await openDeviceSource(transport, source);
   const contentType = sourceStat.contentType ?? inferContentType(source.path);
-  const response = await transport.requestDevice(
-    source.target,
-    "fs.transfer.send",
-    { path: source.path },
-    { ttlMs: 120_000 },
-  );
-  const transfer = response.data as FsTransferSendResult;
-  if (!transfer.ok) {
-    throw new Error(transfer.error);
-  }
-  if (!response.body) {
-    throw new Error("fs.transfer.send returned no response body");
-  }
-  if (response.body.length !== sourceStat.size) {
-    void response.body.stream.cancel();
-    throw new Error(
-      `Transfer size mismatch for ${source.path}: expected ${sourceStat.size}, got ${response.body.length ?? "unknown"}`,
-    );
-  }
 
   const fs = createNativeFileSystem(ctx);
-  const writeResult = await fs.writeFileStream(destination.path, response.body.stream, {
+  const writeResult = await fs.writeFileStream(destination.path, body.stream, {
     expectedSize: sourceStat.size,
     contentType,
   });
@@ -516,37 +504,23 @@ async function copyDeviceToDevice(
   destination: Required<FsCopyEndpoint>,
   transport: FsCopyDeviceTransport,
 ): Promise<FsCopyResult> {
-  const sourceStat = await statDeviceSource(transport, source);
+  const { stat: sourceStat, body } = await openDeviceSource(transport, source);
   const contentType = sourceStat.contentType ?? inferContentType(source.path);
-  const send = await transport.requestDevice(
-    source.target,
-    "fs.transfer.send",
-    { path: source.path },
-    { ttlMs: 120_000 },
-  );
-  const sent = send.data as FsTransferSendResult;
-  if (!sent.ok) {
-    throw new Error(sent.error);
-  }
-  if (!send.body) {
-    throw new Error("fs.transfer.send returned no response body");
-  }
-  if (send.body.length !== sourceStat.size) {
-    void send.body.stream.cancel();
-    throw new Error(
-      `Transfer size mismatch for ${source.path}: expected ${sourceStat.size}, got ${send.body.length ?? "unknown"}`,
-    );
-  }
 
   const received = await requestDeviceResult<FsTransferReceiveResult>(
     transport,
     destination.target,
     "fs.transfer.receive",
     { path: destination.path, contentType },
-    { ttlMs: 120_000, body: send.body },
+    { ttlMs: 120_000, body },
   );
   if (!received.ok) {
     throw new Error(received.error);
+  }
+  if (received.bytesWritten !== sourceStat.size) {
+    throw new Error(
+      `Transfer size mismatch for ${destination.path}: expected ${sourceStat.size}, got ${received.bytesWritten}`,
+    );
   }
 
   return {
@@ -605,10 +579,13 @@ async function resolveDeviceDestinationDirectory(
   return destination;
 }
 
-async function statDeviceSource(
+async function openDeviceSource(
   transport: FsCopyDeviceTransport,
   source: Required<FsCopyEndpoint>,
-): Promise<Extract<FsTransferStatResult, { ok: true }>> {
+): Promise<{
+  stat: Extract<FsTransferStatResult, { ok: true }>;
+  body: FrameBody;
+}> {
   const stat = await requestDeviceResult<FsTransferStatResult>(
     transport,
     source.target,
@@ -625,7 +602,26 @@ async function statDeviceSource(
       `fs.copy source is not a file: ${source.target}:${source.path}`,
     );
   }
-  return stat;
+  const response = await transport.requestDevice(
+    source.target,
+    "fs.transfer.send",
+    { path: source.path },
+    { ttlMs: 120_000 },
+  );
+  const result = response.data as FsTransferSendResult;
+  if (!result.ok) {
+    throw new Error(result.error);
+  }
+  if (!response.body) {
+    throw new Error("fs.transfer.send returned no response body");
+  }
+  if (response.body.length !== stat.size) {
+    void response.body.stream.cancel();
+    throw new Error(
+      `Transfer size mismatch for ${source.path}: expected ${stat.size}, got ${response.body.length ?? "unknown"}`,
+    );
+  }
+  return { stat, body: response.body };
 }
 
 async function requestDeviceResult<T>(
