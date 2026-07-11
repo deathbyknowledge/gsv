@@ -114,7 +114,7 @@ import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 
-const SERVER_VERSION = "0.4.0";
+const SERVER_VERSION = "0.5.0";
 const FRAME_BODY_CHUNK_BYTES = 1024 * 1024;
 const FRAME_BODY_TTL_MS = 120_000;
 const CLI_DOWNLOADS_REFRESHED_VERSION_KEY = "config/downloads/cli/refreshed_for_version";
