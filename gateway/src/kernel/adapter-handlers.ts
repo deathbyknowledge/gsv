@@ -70,11 +70,12 @@ export async function handleAdapterConnect(
   args: AdapterConnectArgs,
   ctx: KernelContext,
 ): Promise<AdapterConnectSyscallResult> {
-  const adapter = args.adapter.trim();
+  const adapter = normalizeAdapterName(args.adapter);
   const accountId = args.accountId.trim();
 
   if (!adapter) return { ok: false, error: "adapter is required" };
   if (!accountId) return { ok: false, error: "accountId is required" };
+  const ownerUid = requireAdapterControlOwnerUid(ctx, "adapter.connect");
 
   const service = resolveAdapterService(ctx.env, adapter);
   if (!service) {
@@ -84,46 +85,70 @@ export async function handleAdapterConnect(
     return { ok: false, error: `Adapter service does not implement connect: ${adapter}` };
   }
 
-  let connectResult;
+  const needsOwnerClaim = adapterAccountNeedsOwnerClaim(ctx, adapter, accountId, ownerUid);
+  ctx.adapters.status.beginLifecycle(adapter, accountId);
   try {
-    connectResult = await service.adapterConnect(accountId, args.config);
-  } catch (error) {
-    console.error(`[adapter.connect] failed adapter=${adapter} accountId=${accountId}`, error);
-    throw error;
-  }
-  if (!connectResult.ok) {
+    if (needsOwnerClaim) {
+      ctx.adapters.status.setOwner(adapter, accountId, ownerUid);
+    }
+    let connectResult;
+    try {
+      connectResult = await service.adapterConnect(accountId, args.config);
+    } catch (error) {
+      console.error(`[adapter.connect] failed adapter=${adapter} accountId=${accountId}`, error);
+      throw error;
+    }
+    if (!connectResult.ok) {
+      return {
+        ok: false,
+        error: connectResult.error,
+        challenge: connectResult.challenge,
+      };
+    }
+
+    const previous = ctx.adapters.status.get(adapter, accountId);
+    ctx.adapters.status.upsert(adapter, accountId, {
+      accountId,
+      connected: connectResult.connected ?? true,
+      authenticated: connectResult.authenticated ?? !connectResult.challenge,
+      mode: previous?.mode,
+      lastActivity: previous?.lastActivity,
+      error: undefined,
+      extra: previous?.extra,
+    });
+    const status = await refreshAdapterStatus(service, ctx, adapter, accountId);
+    const connected = status?.connected ?? connectResult.connected ?? true;
+    const authenticated =
+      status?.authenticated ?? connectResult.authenticated ?? !connectResult.challenge;
+
     return {
-      ok: false,
-      error: connectResult.error,
+      ok: true,
+      adapter,
+      accountId,
+      connected,
+      authenticated,
+      message: connectResult.message,
       challenge: connectResult.challenge,
     };
+  } finally {
+    ctx.adapters.status.endLifecycle(adapter, accountId);
   }
-
-  const status = await refreshAdapterStatus(service, ctx, adapter, accountId);
-  const connected = status?.connected ?? connectResult.connected ?? true;
-  const authenticated =
-    status?.authenticated ?? connectResult.authenticated ?? !connectResult.challenge;
-
-  return {
-    ok: true,
-    adapter,
-    accountId,
-    connected,
-    authenticated,
-    message: connectResult.message,
-    challenge: connectResult.challenge,
-  };
 }
 
 export async function handleAdapterDisconnect(
   args: AdapterDisconnectArgs,
   ctx: KernelContext,
 ): Promise<AdapterDisconnectSyscallResult> {
-  const adapter = args.adapter.trim();
+  const adapter = normalizeAdapterName(args.adapter);
   const accountId = args.accountId.trim();
 
   if (!adapter) return { ok: false, error: "adapter is required" };
   if (!accountId) return { ok: false, error: "accountId is required" };
+
+  const ownerUid = requireAdapterControlOwnerUid(ctx, "adapter.disconnect");
+  if (ownerUid !== 0 && ctx.adapters.status.get(adapter, accountId)?.ownerUid !== ownerUid) {
+    throw new Error(`Permission denied: adapter account ${adapter}/${accountId}`);
+  }
 
   const service = resolveAdapterService(ctx.env, adapter);
   if (!service) {
@@ -133,27 +158,68 @@ export async function handleAdapterDisconnect(
     return { ok: false, error: `Adapter service does not implement disconnect: ${adapter}` };
   }
 
-  const result = await service.adapterDisconnect(accountId);
-  if (!result.ok) {
-    return { ok: false, error: result.error };
+  ctx.adapters.status.beginLifecycle(adapter, accountId);
+  try {
+    const result = await service.adapterDisconnect(accountId);
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
+
+    // Keep local status store conservative even if adapter status polling fails.
+    ctx.adapters.status.upsert(adapter, accountId, {
+      accountId,
+      connected: false,
+      authenticated: false,
+      mode: "disconnected",
+      lastActivity: Date.now(),
+    });
+    await refreshAdapterStatus(service, ctx, adapter, accountId);
+
+    return {
+      ok: true,
+      adapter,
+      accountId,
+      message: result.message,
+    };
+  } finally {
+    ctx.adapters.status.endLifecycle(adapter, accountId);
   }
+}
 
-  // Keep local status store conservative even if adapter status polling fails.
-  ctx.adapters.status.upsert(adapter, accountId, {
-    accountId,
-    connected: false,
-    authenticated: false,
-    mode: "disconnected",
-    lastActivity: Date.now(),
-  });
-  await refreshAdapterStatus(service, ctx, adapter, accountId);
+function adapterAccountNeedsOwnerClaim(
+  ctx: KernelContext,
+  adapter: string,
+  accountId: string,
+  ownerUid: number,
+): boolean {
+  const account = ctx.adapters.status.get(adapter, accountId);
+  if (account?.ownerUid != null) {
+    if (ownerUid !== 0 && account.ownerUid !== ownerUid) {
+      throw new Error(`Permission denied: adapter account ${adapter}/${accountId}`);
+    }
+    return false;
+  }
+  if (ownerUid === 0) {
+    return true;
+  }
+  const linkedUids = new Set(
+    ctx.adapters.identityLinks.listByAccount(adapter, accountId).map((link) => link.uid),
+  );
+  if (!account && linkedUids.size === 0) {
+    return true;
+  }
+  if (linkedUids.size !== 1 || !linkedUids.has(ownerUid)) {
+    throw new Error(`Permission denied: adapter account ${adapter}/${accountId}`);
+  }
+  return true;
+}
 
-  return {
-    ok: true,
-    adapter,
-    accountId,
-    message: result.message,
-  };
+function requireAdapterControlOwnerUid(ctx: KernelContext, syscall: string): number {
+  const identity = ctx.identity;
+  if (!identity || identity.role !== "user") {
+    throw new Error(`${syscall} requires a user identity`);
+  }
+  return resolveCallerOwnerUid(ctx);
 }
 
 export async function handleAdapterSend(
@@ -414,27 +480,28 @@ function visibleAdapterAccounts(
     return [];
   }
 
-  const links = ctx.adapters.identityLinks.list(resolveCallerOwnerUid(ctx));
+  const ownerUid = resolveCallerOwnerUid(ctx);
   const seen = new Set<string>();
   const accounts: Array<{ adapter: string; accountId: string }> = [];
-  for (const link of links) {
-    const linkAdapter = normalizeAdapterName(link.adapter);
-    const linkAccountId = link.accountId.trim();
-    if (!linkAdapter || !linkAccountId) {
-      continue;
-    }
-    if (adapter && linkAdapter !== adapter) {
-      continue;
-    }
-    if (accountId && linkAccountId !== accountId) {
-      continue;
-    }
-    const key = `${linkAdapter}\0${linkAccountId}`;
-    if (seen.has(key)) {
-      continue;
+  const add = (candidateAdapter: string, candidateAccountId: string): void => {
+    const normalizedAdapter = normalizeAdapterName(candidateAdapter);
+    const normalizedAccountId = candidateAccountId.trim();
+    const key = `${normalizedAdapter}\0${normalizedAccountId}`;
+    if (
+      !normalizedAdapter || !normalizedAccountId || seen.has(key)
+      || (adapter && normalizedAdapter !== adapter)
+      || (accountId && normalizedAccountId !== accountId)
+    ) {
+      return;
     }
     seen.add(key);
-    accounts.push({ adapter: linkAdapter, accountId: linkAccountId });
+    accounts.push({ adapter: normalizedAdapter, accountId: normalizedAccountId });
+  };
+  for (const status of ctx.adapters.status.listByOwner(ownerUid)) {
+    add(status.adapter, status.accountId);
+  }
+  for (const link of ctx.adapters.identityLinks.list(ownerUid)) {
+    add(link.adapter, link.accountId);
   }
   return accounts.sort((left, right) =>
     left.adapter.localeCompare(right.adapter) || left.accountId.localeCompare(right.accountId)
@@ -663,11 +730,14 @@ export function handleAdapterStateUpdate(
     throw new Error("accountId is required");
   }
 
-  ctx.adapters.status.upsert(adapter, accountId, {
+  const status = ctx.adapters.status.upsert(adapter, accountId, {
     ...args.status,
     accountId,
   });
   const uids = new Set([0]);
+  if (status.ownerUid !== null) {
+    uids.add(status.ownerUid);
+  }
   for (const link of ctx.adapters.identityLinks.listByAccount(adapter, accountId)) {
     uids.add(link.uid);
   }

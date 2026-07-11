@@ -3,6 +3,7 @@ import { KERNEL_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { KERNEL_V002_REMOVE_DEVICE_LIFECYCLE } from "./v002_remove_device_lifecycle";
 import { KERNEL_V003_REMOVE_PROCESS_MOUNTS } from "./v003_remove_process_mounts";
 import { KERNEL_V004_REMOVE_LEGACY_SIGNAL_WATCHES } from "./v004_remove_legacy_signal_watches";
+import { KERNEL_V005_ADD_ADAPTER_STATUS_OWNER } from "./v005_add_adapter_status_owner";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -12,6 +13,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V002_REMOVE_DEVICE_LIFECYCLE,
   KERNEL_V003_REMOVE_PROCESS_MOUNTS,
   KERNEL_V004_REMOVE_LEGACY_SIGNAL_WATCHES,
+  KERNEL_V005_ADD_ADAPTER_STATUS_OWNER,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

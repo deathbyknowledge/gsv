@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(4);
+    expect(KERNEL_MIGRATIONS).toHaveLength(5);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -47,6 +47,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[3]).toMatchObject({
       id: 4,
       name: "remove_legacy_signal_watches",
+    });
+    expect(KERNEL_MIGRATIONS[4]).toMatchObject({
+      id: 5,
+      name: "add_adapter_status_owner",
     });
   });
 
@@ -107,6 +111,24 @@ describe("kernel schema migrations", () => {
     );
   });
 
+  it("adds adapter account ownership without rewriting the baseline", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "ALTER TABLE adapter_status ADD COLUMN owner_uid INTEGER",
+    );
+    expect(statements).toContain(
+      "UPDATE adapter_status SET adapter = LOWER(TRIM(adapter))",
+    );
+    expect(statements.some((statement) => (
+      statement.startsWith("DELETE FROM adapter_status AS candidate WHERE EXISTS")
+      && statement.includes("winner.updated_at = candidate.updated_at AND winner.rowid > candidate.rowid")
+    ))).toBe(true);
+    expect(statements).toContain(
+      "UPDATE adapter_status SET owner_uid = COALESCE( ( SELECT CASE WHEN COUNT(DISTINCT identity_links.uid) = 1 THEN MIN(identity_links.uid) END FROM identity_links WHERE identity_links.adapter = adapter_status.adapter AND identity_links.account_id = adapter_status.account_id ), 0 )",
+    );
+    expect(createTableStatement("adapter_status")).not.toContain("owner_uid");
+  });
+
   it("includes current indexes owned by the kernel stores", () => {
     expect(createdIndexes()).toEqual(expect.arrayContaining([
       "idx_auth_tokens_uid",
@@ -116,6 +138,7 @@ describe("kernel schema migrations", () => {
       "idx_packages_scope_name_runtime",
       "idx_oauth_accounts_identity",
       "idx_user_mcp_servers_uid",
+      "idx_adapter_status_owner",
     ]));
   });
 });
