@@ -108,7 +108,7 @@ import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 
-const SERVER_VERSION = "0.3.3";
+const SERVER_VERSION = "0.4.0";
 const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
 const CLI_DOWNLOADS_REFRESHED_VERSION_KEY = "config/downloads/cli/refreshed_for_version";
 const CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY = "config/downloads/cli/refresh_attempt_at";
