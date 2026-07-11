@@ -45,8 +45,6 @@ describe("Kernel frame bodies", () => {
     const sends: Array<string | ArrayBuffer> = [];
     const pending: Promise<unknown>[] = [];
     const kernel = Object.create(Kernel.prototype) as any;
-    kernel.binaryRoutes = new Map();
-    kernel.pendingBinaryStreams = new Map();
     kernel.nextFrameBodyStreamId = 1;
     kernel.ctx = { waitUntil: (promise: Promise<unknown>) => pending.push(promise) };
     const connection = { send: (message: string | ArrayBuffer) => sends.push(message) };
@@ -73,6 +71,24 @@ describe("Kernel frame bodies", () => {
     expect(data).toMatchObject({ streamId: descriptor.body.streamId, flags: BINARY_FRAME_DATA });
     expect(data?.payload).toEqual(new Uint8Array([4, 5, 6]));
     expect(end).toMatchObject({ flags: BINARY_FRAME_END });
+  });
+
+  it("rejects bodies that do not match their declared length", async () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.pendingFrameBodies = new Map();
+    const connection = { id: "conn-1" };
+    const body = kernel.receiveFrameBody(connection, { streamId: 8, length: 3 });
+
+    kernel.handleBinaryMessage(
+      connection,
+      buildBinaryFrame(8, BINARY_FRAME_DATA, new Uint8Array([1, 2])),
+    );
+    kernel.handleBinaryMessage(connection, buildBinaryFrame(8, BINARY_FRAME_END));
+
+    await expect(new Response(body.stream).arrayBuffer()).rejects.toThrow(
+      "Body length 2 did not match 3",
+    );
+    expect(kernel.pendingFrameBodies.size).toBe(0);
   });
 });
 
@@ -410,14 +426,19 @@ describe("Kernel process device requests", () => {
       disconnected_at: null,
     };
     const requestDevice = vi.fn(async () => ({
-      ok: true,
-      url: "https://example.com",
-      status: 204,
-      statusText: "No Content",
-      headers: {},
-      redirected: false,
-      bodyBase64: "",
-      bodyBytes: 0,
+      type: "res" as const,
+      id: "req-1",
+      ok: true as const,
+      data: {
+        ok: true,
+        url: "https://example.com",
+        status: 204,
+        statusText: "No Content",
+        headers: {},
+        redirected: false,
+        bodyBase64: "",
+        bodyBytes: 0,
+      },
     }));
     const kernel = Object.create(Kernel.prototype) as {
       env: Record<string, never>;
@@ -472,7 +493,7 @@ describe("Kernel process device requests", () => {
       "linux-machine",
       "net.fetch",
       { url: "https://example.com", timeoutMs: 180000 },
-      180000,
+      { ttlMs: 180000 },
     );
   });
 
@@ -504,7 +525,7 @@ describe("Kernel process device requests", () => {
       "linux-machine",
       "net.fetch",
       { url: "https://example.com", timeoutMs: 180000 },
-      180000,
+      { ttlMs: 180000 },
     );
   });
 });

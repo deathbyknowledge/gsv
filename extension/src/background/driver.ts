@@ -1,4 +1,9 @@
-import type { GsvDriverContext, GsvDriverHandler, GsvDriverRequest } from "@humansandmachines/gsv/client";
+import type {
+  GsvDriverContext,
+  GsvDriverHandler,
+  GsvDriverRequest,
+  GsvResponse,
+} from "@humansandmachines/gsv/client";
 import type { ActivityEntry, ActivityKind, ActivityStatus } from "../shared/ui-state";
 import { createBrowserCommands } from "../target/commands";
 import { BrowserFsDriver, BrowserTargetFileSystem } from "../target/fs";
@@ -20,32 +25,35 @@ export function createBrowserTargetDriver(
   const shell = new BrowserTargetShell(fs, createBrowserCommands());
 
   return {
-    async handle(request, context): Promise<{ data: unknown }> {
+    async handle(request, context): Promise<GsvResponse> {
       const startedAt = Date.now();
       const baseActivity = activityForFrame(request);
       try {
-        let result: unknown;
+        let response: GsvResponse;
         if (request.call === "shell.exec") {
-          result = await shell.exec(request.args, {
-            currentTargetId: currentTargetId(context),
-            abortSignal: context.abortSignal,
-            copyTargetFile: async (source, destination) => await context.client.call("fs.copy", {
-              source,
-              destination,
+          response = {
+            data: await shell.exec(request.args, {
+              currentTargetId: currentTargetId(context),
+              abortSignal: context.abortSignal,
+              copyTargetFile: async (source, destination) => await context.client.call("fs.copy", {
+                source,
+                destination,
+              }),
             }),
-          });
+          };
         } else if (request.call.startsWith("fs.")) {
-          result = await fsDriver.handle(request.call, request.args, context.binary);
+          response = await fsDriver.handle(request.call, request.args, request.body);
         } else {
           throw new Error(`Unsupported browser target syscall: ${request.call}`);
         }
+        const result = response.data;
         observeActivity?.({
           ...baseActivity,
           detail: detailWithResultPath(baseActivity.detail, result),
           status: statusForResult(result),
           durationMs: Date.now() - startedAt,
         });
-        return { data: result };
+        return response;
       } catch (error) {
         observeActivity?.({
           kind: "error",

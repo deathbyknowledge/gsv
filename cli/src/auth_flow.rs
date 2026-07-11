@@ -51,7 +51,7 @@ async fn gateway_is_in_setup_mode(url: &str) -> Result<bool, Box<dyn std::error:
         .request(
             "sys.connect",
             Some(json!({
-                "protocol": 1,
+                "protocol": 2,
                 "client": {
                     "id": format!("gsv-setup-probe-{}", uuid::Uuid::new_v4()),
                     "version": gsv::build_info::BUILD_VERSION,

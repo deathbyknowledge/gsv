@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { handleShellExec } from "./shell";
 import { handleFsCopy, handleFsRead, handleFsTransferReceive, handleFsTransferSend, handleFsWrite } from "./fs";
-import { parseBinaryFrame } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
@@ -1054,30 +1053,19 @@ describe("fs copy", () => {
       customMetadata: { uid: "1000", gid: "1000", mode: "644" },
     });
 
-    const sent: unknown[] = [];
     const ctx = makeContext();
-    ctx.connection = {
-      send(message: unknown) {
-        sent.push(message);
-      },
-    } as never;
 
-    const result = await handleFsTransferSend({
+    const response = await handleFsTransferSend({
       path: "/home/sam/copy-test/stream-source.txt",
-      streamId: 123,
-    }, ctx);
+    }, ctx, "transfer-1");
 
-    expect(result).toMatchObject({
+    expect(response.data).toMatchObject({
       ok: true,
       path: "/home/sam/copy-test/stream-source.txt",
       size: "stream source".length,
-      bytesSent: "stream source".length,
     });
-    expect(sent).toHaveLength(2);
-    const frame = parseBinaryFrame(sent[0] as ArrayBuffer);
-    expect(frame).toMatchObject({ streamId: 123 });
-    expect(new TextDecoder().decode(frame?.payload)).toBe("stream source");
-    expect(parseBinaryFrame(sent[1] as ArrayBuffer)?.flags).toBe(2);
+    expect(response.body?.length).toBe("stream source".length);
+    expect(await new Response(response.body?.stream).text()).toBe("stream source");
   });
 
   it("receives native transfer streams", async () => {
@@ -1093,9 +1081,7 @@ describe("fs copy", () => {
 
     const result = await handleFsTransferReceive({
       path: "/home/sam/copy-test/native-transfer-receive.txt",
-      expectedSize: 11,
-      streamId: 123,
-    }, makeContext(), stream);
+    }, makeContext(), { stream, length: 11 });
 
     expect(result).toMatchObject({
       ok: true,
@@ -1160,42 +1146,33 @@ describe("fs copy", () => {
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     } as never;
-    const frames: Array<{ flags: number; payload?: Uint8Array }> = [];
+    let received = "";
 
     const result = await handleFsCopy({
       source: { target: "gsv", path: "/home/sam/copy-test/device-source.txt" },
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call, args) {
+      async requestDevice(deviceId, call, args, options) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
           throw new Error("No such file or directory: /tmp/device-destination.txt");
         }
+        if (call === "fs.transfer.receive") {
+          expect(args).toMatchObject({ path: "/tmp/device-destination.txt" });
+          expect(options?.body?.length).toBe("to device".length);
+          received = await new Response(options?.body?.stream).text();
+          return {
+            type: "res",
+            id: "receive-1",
+            ok: true,
+            data: {
+              ok: true,
+              path: "/tmp/device-destination.txt",
+              bytesWritten: received.length,
+            },
+          };
+        }
         throw new Error(`unexpected call ${call}`);
-      },
-      allocateBinaryStreamId() {
-        return 99;
-      },
-      async startDeviceRequest(deviceId, call, args) {
-        expect(deviceId).toBe("rearden");
-        expect(call).toBe("fs.transfer.receive");
-        expect(args).toMatchObject({
-          path: "/tmp/device-destination.txt",
-          streamId: 99,
-          expectedSize: "to device".length,
-        });
-        return {
-          requestId: "receive-1",
-          promise: Promise.resolve({ ok: true, path: "/tmp/device-destination.txt", bytesWritten: "to device".length }),
-          cancel: vi.fn(),
-        };
-      },
-      registerBinaryRelay: vi.fn(),
-      receiveDeviceBinaryStream: vi.fn(),
-      sendDeviceBinaryFrame(deviceId, streamId, flags, payload) {
-        expect(deviceId).toBe("rearden");
-        expect(streamId).toBe(99);
-        frames.push({ flags, payload });
       },
     });
 
@@ -1204,15 +1181,10 @@ describe("fs copy", () => {
       size: "to device".length,
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
     });
-    const payload = frames
-      .filter((frame) => (frame.flags & 1) !== 0)
-      .map((frame) => new TextDecoder().decode(frame.payload))
-      .join("");
-    expect(payload).toBe("to device");
-    expect(frames.at(-1)?.flags).toBe(2);
+    expect(received).toBe("to device");
   });
 
-  it("cleans up device receives when gsv-to-device send fails", async () => {
+  it("returns device receive failures when copying from gsv", async () => {
     const sourceKey = "home/sam/copy-test/device-send-fail.txt";
     await env.STORAGE.delete(sourceKey);
     await env.STORAGE.put(sourceKey, "to failing device", {
@@ -1224,11 +1196,6 @@ describe("fs copy", () => {
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     } as never;
-    const cancelReceive = vi.fn();
-    const sendDeviceBinaryFrame = vi.fn(() => {
-      throw new Error("destination disconnected");
-    });
-
     const result = await handleFsCopy({
       source: { target: "gsv", path: "/home/sam/copy-test/device-send-fail.txt" },
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
@@ -1236,30 +1203,21 @@ describe("fs copy", () => {
       async requestDevice(deviceId, call) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
-          return { ok: false, error: "not found" };
+          return {
+            type: "res",
+            id: "stat-1",
+            ok: true,
+            data: { ok: false, error: "not found" },
+          };
+        }
+        if (call === "fs.transfer.receive") {
+          throw new Error("destination disconnected");
         }
         throw new Error(`unexpected call ${call}`);
       },
-      allocateBinaryStreamId() {
-        return 103;
-      },
-      async startDeviceRequest(deviceId, call) {
-        expect(deviceId).toBe("rearden");
-        expect(call).toBe("fs.transfer.receive");
-        return {
-          requestId: "receive-send-fail",
-          promise: new Promise(() => {}),
-          cancel: cancelReceive,
-        };
-      },
-      registerBinaryRelay: vi.fn(),
-      receiveDeviceBinaryStream: vi.fn(),
-      sendDeviceBinaryFrame,
     });
 
     expect(result).toMatchObject({ ok: false, error: "destination disconnected" });
-    expect(sendDeviceBinaryFrame).toHaveBeenCalledTimes(2);
-    expect(cancelReceive).toHaveBeenCalledOnce();
   });
 
   it("streams device files to gsv", async () => {
@@ -1275,43 +1233,36 @@ describe("fs copy", () => {
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "gsv", path: "/home/sam/copy-test/from-device.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call) {
+      async requestDevice(deviceId, call, args) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
-          return { ok: true, path: "/tmp/source.txt", size: 11, isFile: true, isDirectory: false, contentType: "text/plain" };
+          return {
+            type: "res",
+            id: "stat-1",
+            ok: true,
+            data: { ok: true, path: "/tmp/source.txt", size: 11, isFile: true, isDirectory: false, contentType: "text/plain" },
+          };
+        }
+        if (call === "fs.transfer.send") {
+          expect(args).toMatchObject({ path: "/tmp/source.txt" });
+          return {
+            type: "res",
+            id: "send-1",
+            ok: true,
+            data: { ok: true, path: "/tmp/source.txt", size: 11 },
+            body: {
+              length: 11,
+              stream: new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("hello world"));
+                  controller.close();
+                },
+              }),
+            },
+          };
         }
         throw new Error(`unexpected call ${call}`);
       },
-      allocateBinaryStreamId() {
-        return 100;
-      },
-      async startDeviceRequest(deviceId, call, args) {
-        expect(deviceId).toBe("rearden");
-        expect(call).toBe("fs.transfer.send");
-        expect(args).toMatchObject({ path: "/tmp/source.txt", streamId: 100 });
-        return {
-          requestId: "send-1",
-          promise: Promise.resolve({ ok: true, path: "/tmp/source.txt", size: 11, bytesSent: 11 }),
-          cancel: vi.fn(),
-        };
-      },
-      registerBinaryRelay: vi.fn(),
-      receiveDeviceBinaryStream(route) {
-        expect(route).toMatchObject({
-          streamId: 100,
-          sourceDeviceId: "rearden",
-        });
-        return {
-          stream: new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode("hello world"));
-              controller.close();
-            },
-          }),
-          cancel: vi.fn(),
-        };
-      },
-      sendDeviceBinaryFrame: vi.fn(),
     });
 
     expect(result).toMatchObject({
@@ -1322,14 +1273,12 @@ describe("fs copy", () => {
     expect(await (await env.STORAGE.get(destinationKey))?.text()).toBe("hello world");
   });
 
-  it("cleans up native receive streams when device send setup fails", async () => {
+  it("returns device send failures when copying to gsv", async () => {
     const ctx = makeContext() as KernelContext;
     ctx.devices = {
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     } as never;
-    const cancelReceive = vi.fn();
-
     const result = await handleFsCopy({
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "gsv", path: "/home/sam/copy-test/from-device-fail.txt" },
@@ -1337,78 +1286,84 @@ describe("fs copy", () => {
       async requestDevice(deviceId, call) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
-          return { ok: true, path: "/tmp/source.txt", size: 11, isFile: true, isDirectory: false, contentType: "text/plain" };
+          return {
+            type: "res",
+            id: "stat-1",
+            ok: true,
+            data: { ok: true, path: "/tmp/source.txt", size: 11, isFile: true, isDirectory: false, contentType: "text/plain" },
+          };
+        }
+        if (call === "fs.transfer.send") {
+          throw new Error("source disconnected");
         }
         throw new Error(`unexpected call ${call}`);
       },
-      allocateBinaryStreamId() {
-        return 101;
-      },
-      async startDeviceRequest() {
-        throw new Error("source disconnected");
-      },
-      registerBinaryRelay: vi.fn(),
-      receiveDeviceBinaryStream: vi.fn(() => ({
-        stream: new ReadableStream<Uint8Array>(),
-        cancel: cancelReceive,
-      })),
-      sendDeviceBinaryFrame: vi.fn(),
     });
 
     expect(result).toMatchObject({ ok: false, error: "source disconnected" });
-    expect(cancelReceive).toHaveBeenCalledOnce();
   });
 
-  it("cleans up device relay state when source send setup fails", async () => {
+  it("streams device files directly to another device", async () => {
     const ctx = makeContext() as KernelContext;
     ctx.devices = {
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     } as never;
-    const cancelReceive = vi.fn();
-    const cancelRelay = vi.fn();
-    const sendErrorFrame = vi.fn();
+    let received = "";
 
     const result = await handleFsCopy({
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "browser", path: "/tmp/destination.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call) {
+      async requestDevice(deviceId, call, _args, options) {
         if (call === "fs.transfer.stat" && deviceId === "browser") {
-          return { ok: false, error: "not found" };
+          return {
+            type: "res",
+            id: "destination-stat",
+            ok: true,
+            data: { ok: false, error: "not found" },
+          };
         }
         if (call === "fs.transfer.stat" && deviceId === "rearden") {
-          return { ok: true, path: "/tmp/source.txt", size: 11, isFile: true, isDirectory: false, contentType: "text/plain" };
+          return {
+            type: "res",
+            id: "source-stat",
+            ok: true,
+            data: { ok: true, path: "/tmp/source.txt", size: 11, isFile: true, isDirectory: false, contentType: "text/plain" },
+          };
+        }
+        if (call === "fs.transfer.send" && deviceId === "rearden") {
+          return {
+            type: "res",
+            id: "source-send",
+            ok: true,
+            data: { ok: true, path: "/tmp/source.txt", size: 11 },
+            body: {
+              length: 11,
+              stream: new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("hello world"));
+                  controller.close();
+                },
+              }),
+            },
+          };
+        }
+        if (call === "fs.transfer.receive" && deviceId === "browser") {
+          received = await new Response(options?.body?.stream).text();
+          return {
+            type: "res",
+            id: "destination-receive",
+            ok: true,
+            data: { ok: true, path: "/tmp/destination.txt", bytesWritten: received.length },
+          };
         }
         throw new Error(`unexpected call ${call}`);
       },
-      allocateBinaryStreamId() {
-        return 102;
-      },
-      async startDeviceRequest(deviceId, call) {
-        if (deviceId === "browser" && call === "fs.transfer.receive") {
-          return {
-            requestId: "receive-2",
-            promise: new Promise(() => {}),
-            cancel: cancelReceive,
-          };
-        }
-        throw new Error("source route failed");
-      },
-      registerBinaryRelay: vi.fn(() => ({ cancel: cancelRelay })),
-      receiveDeviceBinaryStream: vi.fn(),
-      sendDeviceBinaryFrame: sendErrorFrame,
     });
 
-    expect(result).toMatchObject({ ok: false, error: "source route failed" });
-    expect(cancelRelay).toHaveBeenCalledOnce();
-    expect(cancelReceive).toHaveBeenCalledOnce();
-    expect(sendErrorFrame).toHaveBeenCalledWith(
-      "browser",
-      102,
-      6,
-      expect.any(Uint8Array),
-    );
+    expect(result).toMatchObject({ ok: true, size: 11 });
+    expect(received).toBe("hello world");
   });
 
 });

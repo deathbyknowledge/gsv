@@ -100,8 +100,6 @@ export type FsTransferStatResult =
 
 export type FsTransferSendArgs = {
   path: string;
-  streamId?: number;
-  chunkSize?: number;
 };
 
 export type FsTransferSendResult =
@@ -109,16 +107,13 @@ export type FsTransferSendResult =
       ok: true;
       path: string;
       size: number;
-      bytesSent: number;
       contentType?: string;
     }
   | { ok: false; error: string };
 
 export type FsTransferReceiveArgs = {
   path: string;
-  expectedSize: number;
   contentType?: string;
-  streamId?: number;
 };
 
 export type FsTransferReceiveResult =

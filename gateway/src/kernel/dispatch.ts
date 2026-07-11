@@ -11,7 +11,12 @@
  */
 
 import type { Connection } from "agents";
-import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import type {
+  FrameBody,
+  RequestFrame,
+  ResponseFrame,
+  ResponseOkFrame,
+} from "../protocol/frames";
 import type {
   SysUpdateArgs,
   SysUpdateResult,
@@ -156,47 +161,12 @@ export type DispatchDeps = {
     deviceId: string;
     ttlMs: number;
   }) => Promise<{ cancel: () => void }>;
-  registerBinaryRoute: (route: {
-    requestId: string;
-    streamId: number;
-    origin: RouteOrigin;
-    deviceId: string;
-    ttlMs: number;
-    kind?: "relay" | "native-stream";
-  }) => { cancel: () => void };
-  requestDevice: (deviceId: string, call: string, args: unknown, ttlMs?: number) => Promise<unknown>;
-  allocateBinaryStreamId: () => number;
-  startDeviceRequest: (
+  requestDevice: (
     deviceId: string,
     call: string,
     args: unknown,
-    ttlMs?: number,
-  ) => Promise<{ requestId: string; promise: Promise<unknown>; cancel: () => void }>;
-  registerBinaryRelay: (route: {
-    requestId: string;
-    streamId: number;
-    sourceDeviceId: string;
-    destinationDeviceId: string;
-    ttlMs?: number;
-  }) => { cancel: () => void };
-  receiveDeviceBinaryStream: (route: {
-    requestId: string;
-    streamId: number;
-    sourceDeviceId: string;
-    ttlMs?: number;
-  }) => { stream: ReadableStream<Uint8Array>; cancel: () => void };
-  receiveBinaryStream: (route: {
-    requestId: string;
-    streamId: number;
-    origin: RouteOrigin;
-    ttlMs: number;
-  }) => { stream: ReadableStream<Uint8Array>; cancel: () => void };
-  sendDeviceBinaryFrame: (
-    deviceId: string,
-    streamId: number,
-    flags: number,
-    payload?: Uint8Array,
-  ) => void;
+    options?: { ttlMs?: number; body?: FrameBody },
+  ) => Promise<ResponseOkFrame>;
   handleSysUpdate: (args: SysUpdateArgs | undefined, ctx: KernelContext) => Promise<SysUpdateResult>;
 };
 
@@ -313,10 +283,9 @@ async function dispatchNative(
         data = await handleFsTransferStat(frame.args, ctx);
         break;
       case "fs.transfer.send":
-        data = await handleFsTransferSend(frame.args, ctx);
-        break;
+        return await handleFsTransferSend(frame.args, ctx, frame.id);
       case "fs.transfer.receive":
-        data = await handleNativeFsTransferReceive(frame, origin, ctx, deps);
+        data = await handleFsTransferReceive(frame.args, ctx, frame.body);
         break;
 
       case "shell.exec":
@@ -660,39 +629,6 @@ async function dispatchNative(
   }
 }
 
-async function handleNativeFsTransferReceive(
-  frame: RequestFrame<"fs.transfer.receive">,
-  origin: RouteOrigin,
-  ctx: KernelContext,
-  deps: DispatchDeps,
-): Promise<unknown> {
-  const streamId = transferStreamId(frame.call, frame.args);
-  if (streamId === null) {
-    return { ok: false, error: "fs.transfer.receive requires streamId" };
-  }
-
-  let pending: { stream: ReadableStream<Uint8Array>; cancel: () => void };
-  try {
-    pending = deps.receiveBinaryStream({
-      requestId: frame.id,
-      streamId,
-      origin,
-      ttlMs: DEFAULT_DEVICE_TTL_MS,
-    });
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-
-  try {
-    return await handleFsTransferReceive(frame.args, ctx, pending.stream);
-  } finally {
-    pending.cancel();
-  }
-}
-
 async function routeToTarget(
   frame: RequestFrame,
   target: TargetDescriptor,
@@ -727,7 +663,6 @@ async function routeToTarget(
   }
 
   let route: { cancel: () => void } | null = null;
-  let binaryRoute: { cancel: () => void } | null = null;
   const ttlMs = routedFrameTtlMs(frame);
   try {
     route = await deps.registerRoute({
@@ -737,16 +672,6 @@ async function routeToTarget(
       deviceId: target.targetId,
       ttlMs,
     });
-    const streamId = transferStreamId(frame.call, frame.args);
-    if (streamId !== null) {
-      binaryRoute = deps.registerBinaryRoute({
-        requestId: frame.id,
-        streamId,
-        origin,
-        deviceId: target.targetId,
-        ttlMs,
-      });
-    }
   } catch (error) {
     route?.cancel();
     const message = error instanceof Error ? error.message : String(error);
@@ -766,7 +691,6 @@ async function routeToTarget(
     } as RequestFrame);
   } catch (error) {
     route.cancel();
-    binaryRoute?.cancel();
     const message = error instanceof Error ? error.message : String(error);
     return {
       handled: true,
@@ -789,20 +713,6 @@ function routedFrameTtlMs(frame: RequestFrame): number {
     return DEFAULT_DEVICE_TTL_MS;
   }
   return Math.max(1, Math.floor(timeoutMs));
-}
-
-function transferStreamId(call: string, args: unknown): number | null {
-  if (call !== "fs.transfer.send" && call !== "fs.transfer.receive") {
-    return null;
-  }
-  if (!args || typeof args !== "object") {
-    return null;
-  }
-  const value = (args as { streamId?: unknown }).streamId;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > 0xffffffff) {
-    return null;
-  }
-  return value;
 }
 
 async function routeToAdapterShell(

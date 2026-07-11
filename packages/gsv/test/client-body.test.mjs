@@ -118,3 +118,25 @@ test("exposes a response body as a stream", async () => {
   );
   client.close();
 });
+
+test("rejects a body that does not match its declared length", async () => {
+  const { client, socket } = await connectedClient();
+  const pending = client.request("test.echo");
+  const request = JSON.parse(socket.sent.at(-1));
+
+  socket.receive(JSON.stringify({
+    type: "res",
+    id: request.id,
+    ok: true,
+    body: { streamId: 43, length: 3 },
+  }));
+  socket.receive(buildBinaryFrame(43, BINARY_FRAME_DATA, new Uint8Array([1, 2])));
+  socket.receive(buildBinaryFrame(43, BINARY_FRAME_END));
+
+  const response = await pending;
+  await assert.rejects(
+    new Response(response.body.stream).arrayBuffer(),
+    /Body length 2 did not match 3/,
+  );
+  client.close();
+});

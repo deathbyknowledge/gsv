@@ -95,6 +95,7 @@ async fn fail_all_pending_requests(pending: &PendingRequests, code: i32, message
                 details: None,
                 retryable: Some(true),
             }),
+            body: None,
         });
     }
 }
@@ -291,7 +292,7 @@ impl Connection {
         };
 
         let connect_args = ConnectArgs {
-            protocol: 1,
+            protocol: 2,
             client: ClientInfo {
                 id,
                 version: build_info::BUILD_VERSION.to_string(),

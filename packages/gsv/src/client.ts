@@ -66,7 +66,7 @@ type PendingRequest = {
 type PendingBinaryStream = {
   controller: ReadableStreamDefaultController<Uint8Array>;
   timeoutId: TimerHandle;
-  maxBytes?: number;
+  expectedBytes?: number;
   receivedBytes: number;
 };
 
@@ -104,27 +104,6 @@ export type GsvClientCall = {
 
 export type GsvClientInfo = ConnectArgs["client"];
 
-export type GsvBinarySendOptions = {
-  chunkSize?: number;
-};
-
-export type GsvBinaryReceiveOptions = {
-  timeoutMs?: number;
-  maxBytes?: number;
-};
-
-export type GsvBinaryReceive = {
-  stream: ReadableStream<Uint8Array>;
-  cancel(reason?: string): void;
-};
-
-export type GsvBinarySource =
-  | Uint8Array
-  | ArrayBuffer
-  | ArrayBufferView
-  | ReadableStream<Uint8Array>
-  | AsyncIterable<Uint8Array | ArrayBuffer | ArrayBufferView>;
-
 export type GsvBody = {
   stream: ReadableStream<Uint8Array>;
   length?: number;
@@ -139,15 +118,8 @@ export type GsvResponse<T = unknown> = {
   body?: GsvBody;
 };
 
-export type GsvBinaryTransport = {
-  sendFrame(streamId: number, flags: number, payload?: Uint8Array): void;
-  sendError(streamId: number, error: string | Error): void;
-  sendStream(streamId: number, source: GsvBinarySource, options?: GsvBinarySendOptions): Promise<number>;
-  receive(streamId: number, options?: GsvBinaryReceiveOptions): GsvBinaryReceive;
-};
-
-export type GsvBinaryClientOptions = {
-  defaultReceiveTimeoutMs?: number;
+export type GsvBodyOptions = {
+  receiveTimeoutMs?: number;
   maxBufferedBytes?: number;
   chunkSize?: number;
 };
@@ -170,7 +142,6 @@ export type GsvDriverRequest<S extends string = string> = {
 export type GsvDriverContext = {
   client: GSVClient;
   connection: ConnectResult;
-  binary: GsvBinaryTransport;
   abortSignal: AbortSignal;
   sendSignal(signal: string, payload?: unknown, seq?: number): void;
 };
@@ -224,7 +195,7 @@ export type GsvClientOptions = GsvConnectOptions & {
   connectTimeoutMs?: number;
   defaultRequestTimeoutMs?: number;
   requestTimeoutsMs?: Record<string, number>;
-  binary?: GsvBinaryClientOptions;
+  body?: GsvBodyOptions;
 };
 
 export type GsvAccountNamespace = GsvClientNamespaces["account"];
@@ -441,7 +412,6 @@ export class GsvRequestError extends Error {
 
 export class GSVClient {
   readonly call: GsvClientCall;
-  readonly binary: GsvBinaryTransport;
 
   private readonly WebSocketCtor: GsvWebSocketConstructor | null;
   private readonly connectDefaults: GsvConnectOptions;
@@ -475,7 +445,7 @@ export class GSVClient {
       connectTimeoutMs,
       defaultRequestTimeoutMs,
       requestTimeoutsMs,
-      binary,
+      body,
       ...connectDefaults
     } = options;
 
@@ -487,9 +457,12 @@ export class GSVClient {
       ...DEFAULT_REQUEST_TIMEOUTS_MS,
       ...requestTimeoutsMs,
     };
-    this.defaultBinaryReceiveTimeoutMs = binary?.defaultReceiveTimeoutMs ?? DEFAULT_BINARY_RECEIVE_TIMEOUT_MS;
-    this.binaryMaxBufferedBytes = binary?.maxBufferedBytes ?? DEFAULT_BINARY_MAX_BUFFERED_BYTES;
-    this.binaryChunkSize = binary?.chunkSize ?? DEFAULT_BINARY_CHUNK_SIZE;
+    this.defaultBinaryReceiveTimeoutMs = body?.receiveTimeoutMs ?? DEFAULT_BINARY_RECEIVE_TIMEOUT_MS;
+    this.binaryMaxBufferedBytes = body?.maxBufferedBytes ?? DEFAULT_BINARY_MAX_BUFFERED_BYTES;
+    this.binaryChunkSize = body?.chunkSize ?? DEFAULT_BINARY_CHUNK_SIZE;
+    if (!Number.isSafeInteger(this.binaryChunkSize) || this.binaryChunkSize <= 0) {
+      throw new Error("body.chunkSize must be a positive integer");
+    }
     this.call = (async (call: string, args: unknown = {}) => {
       const response = await this.request(call, args);
       if (response.body) {
@@ -498,13 +471,6 @@ export class GSVClient {
       }
       return response.data;
     }) as GsvClientCall;
-    this.binary = {
-      sendFrame: (streamId, flags, payload) => this.sendBinaryFrame(streamId, flags, payload),
-      sendError: (streamId, error) => this.sendBinaryError(streamId, error),
-      sendStream: async (streamId, source, sendOptions) => await this.sendBinaryStream(streamId, source, sendOptions),
-      receive: (streamId, receiveOptions) => this.receiveBinaryStream(streamId, receiveOptions),
-    };
-
     assignNamespaces(this as unknown as Record<string, unknown>, this.call);
   }
 
@@ -614,7 +580,7 @@ export class GSVClient {
     let connectResult: ConnectResult;
     try {
       connectResult = (await this.request("sys.connect", {
-        protocol: 1,
+        protocol: 2,
         client: merged.client,
         ...(merged.driver ? { driver: merged.driver } : {}),
         auth: {
@@ -1063,21 +1029,24 @@ export class GSVClient {
 
   private async sendBinaryStream(
     streamId: number,
-    source: GsvBinarySource,
-    options: GsvBinarySendOptions = {},
-  ): Promise<number> {
-    const chunkSize = options.chunkSize ?? this.binaryChunkSize;
-    let bytesSent = 0;
+    stream: ReadableStream<Uint8Array>,
+  ): Promise<void> {
+    const reader = stream.getReader();
     try {
-      for await (const value of binaryChunks(source, chunkSize)) {
-        if (value.byteLength === 0) {
-          continue;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
         }
-        this.sendBinaryFrame(streamId, BINARY_FRAME_DATA, value);
-        bytesSent += value.byteLength;
+        for (let offset = 0; offset < value.byteLength; offset += this.binaryChunkSize) {
+          this.sendBinaryFrame(
+            streamId,
+            BINARY_FRAME_DATA,
+            value.subarray(offset, offset + this.binaryChunkSize),
+          );
+        }
       }
       this.sendBinaryFrame(streamId, BINARY_FRAME_END);
-      return bytesSent;
     } catch (error) {
       try {
         this.sendBinaryError(streamId, error instanceof Error ? error : String(error));
@@ -1085,28 +1054,29 @@ export class GSVClient {
         // Preserve the original transfer failure.
       }
       throw error;
+    } finally {
+      reader.releaseLock();
     }
   }
 
   private receiveBinaryStream(
     streamId: number,
-    options: GsvBinaryReceiveOptions = {},
-  ): GsvBinaryReceive {
+    expectedBytes?: number,
+  ): ReadableStream<Uint8Array> {
     assertBinaryStreamId(streamId);
     if (this.pendingBinaryStreams.has(streamId)) {
       throw new Error(`Binary stream already pending: ${streamId}`);
     }
 
-    const timeoutMs = options.timeoutMs ?? this.defaultBinaryReceiveTimeoutMs;
-    const stream = new ReadableStream<Uint8Array>({
+    return new ReadableStream<Uint8Array>({
       start: (controller) => {
         const timeoutId = globalThis.setTimeout(() => {
           this.rejectBinaryStream(streamId, new Error(`Binary transfer timed out: ${streamId}`));
-        }, timeoutMs);
+        }, this.defaultBinaryReceiveTimeoutMs);
         this.pendingBinaryStreams.set(streamId, {
           controller,
           timeoutId,
-          maxBytes: options.maxBytes,
+          expectedBytes,
           receivedBytes: 0,
         });
         this.flushQueuedBinaryFrames(streamId);
@@ -1115,22 +1085,13 @@ export class GSVClient {
         this.clearBinaryStream(streamId);
       },
     });
-
-    return {
-      stream,
-      cancel: (reason?: string) => {
-        this.rejectBinaryStream(streamId, new Error(reason ?? "Binary transfer cancelled"));
-      },
-    };
   }
 
   private receiveFrameBody(descriptor: BinaryFrameDescriptor): GsvBody {
     assertBinaryStreamId(descriptor.streamId);
     assertBodyLength(descriptor.length);
     return {
-      stream: this.receiveBinaryStream(descriptor.streamId, {
-        maxBytes: descriptor.length,
-      }).stream,
+      stream: this.receiveBinaryStream(descriptor.streamId, descriptor.length),
       ...(descriptor.length === undefined ? {} : { length: descriptor.length }),
     };
   }
@@ -1167,10 +1128,10 @@ export class GSVClient {
 
     if ((frame.flags & BINARY_FRAME_DATA) !== 0 && frame.payload.byteLength > 0) {
       pending.receivedBytes += frame.payload.byteLength;
-      if (pending.maxBytes !== undefined && pending.receivedBytes > pending.maxBytes) {
+      if (pending.expectedBytes !== undefined && pending.receivedBytes > pending.expectedBytes) {
         this.rejectBinaryStream(
           frame.streamId,
-          new Error(`Binary transfer exceeded ${pending.maxBytes} bytes`),
+          new Error(`Body exceeded declared length ${pending.expectedBytes}`),
         );
         return;
       }
@@ -1178,6 +1139,18 @@ export class GSVClient {
     }
 
     if ((frame.flags & BINARY_FRAME_END) !== 0) {
+      if (
+        pending.expectedBytes !== undefined
+        && pending.receivedBytes !== pending.expectedBytes
+      ) {
+        this.rejectBinaryStream(
+          frame.streamId,
+          new Error(
+            `Body length ${pending.receivedBytes} did not match ${pending.expectedBytes}`,
+          ),
+        );
+        return;
+      }
       const stream = this.clearBinaryStream(frame.streamId);
       stream?.controller.close();
     }
@@ -1398,7 +1371,6 @@ export class GSVDriver {
     const context: GsvDriverContext = {
       client: this.client,
       connection,
-      binary: this.client.binary,
       abortSignal: this.abortController.signal,
       sendSignal: (signal, payload, seq) => this.client.sendSignal(signal, payload, seq),
     };
@@ -1581,69 +1553,9 @@ async function normalizeBinaryMessage(raw: unknown): Promise<ArrayBuffer | null>
   return null;
 }
 
-async function* binaryChunks(source: GsvBinarySource, chunkSize: number): AsyncIterable<Uint8Array> {
-  assertPositiveInteger(chunkSize, "chunkSize");
-  if (isBinaryBuffer(source)) {
-    yield* chunkBuffer(toUint8Array(source), chunkSize);
-    return;
-  }
-
-  if (isReadableStream(source)) {
-    const reader = source.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        if (value) {
-          yield* chunkBuffer(value, chunkSize);
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    return;
-  }
-
-  for await (const chunk of source) {
-    yield* chunkBuffer(toUint8Array(chunk), chunkSize);
-  }
-}
-
-function* chunkBuffer(bytes: Uint8Array, chunkSize: number): Iterable<Uint8Array> {
-  for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
-    yield bytes.subarray(offset, Math.min(offset + chunkSize, bytes.byteLength));
-  }
-}
-
-function isBinaryBuffer(value: unknown): value is Uint8Array | ArrayBuffer | ArrayBufferView {
-  return value instanceof Uint8Array || value instanceof ArrayBuffer || ArrayBuffer.isView(value);
-}
-
-function isReadableStream(value: unknown): value is ReadableStream<Uint8Array> {
-  return Boolean(value && typeof value === "object" && "getReader" in value);
-}
-
-function toUint8Array(value: Uint8Array | ArrayBuffer | ArrayBufferView): Uint8Array {
-  if (value instanceof Uint8Array) {
-    return value;
-  }
-  if (value instanceof ArrayBuffer) {
-    return new Uint8Array(value);
-  }
-  return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-}
-
 function assertBinaryStreamId(streamId: number): void {
   if (!Number.isSafeInteger(streamId) || streamId <= 0 || streamId > 0xffffffff) {
     throw new Error(`Invalid binary stream id: ${streamId}`);
-  }
-}
-
-function assertPositiveInteger(value: number, label: string): void {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`${label} must be a positive integer`);
   }
 }
 

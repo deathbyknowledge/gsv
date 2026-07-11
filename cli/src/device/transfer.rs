@@ -1,11 +1,13 @@
 use gsv::connection::Connection;
 use gsv::protocol::{
-    build_binary_frame, parse_binary_frame, BINARY_FRAME_DATA, BINARY_FRAME_END, BINARY_FRAME_ERROR,
+    build_binary_frame, parse_binary_frame, FrameBodyDescriptor, BINARY_FRAME_DATA,
+    BINARY_FRAME_END, BINARY_FRAME_ERROR,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -18,6 +20,7 @@ const BINARY_TRANSFER_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct BinaryFrameInbox {
     frames: Arc<Mutex<HashMap<u32, VecDeque<QueuedBinaryFrame>>>>,
     notify: Arc<Notify>,
+    next_outgoing_stream_id: Arc<AtomicU32>,
 }
 
 #[derive(Clone)]
@@ -31,6 +34,16 @@ impl BinaryFrameInbox {
         Self {
             frames: Arc::new(Mutex::new(HashMap::new())),
             notify: Arc::new(Notify::new()),
+            next_outgoing_stream_id: Arc::new(AtomicU32::new(1)),
+        }
+    }
+
+    fn allocate_outgoing_stream_id(&self) -> u32 {
+        loop {
+            let stream_id = self.next_outgoing_stream_id.fetch_add(1, Ordering::Relaxed);
+            if stream_id != 0 {
+                return stream_id;
+            }
         }
     }
 
@@ -76,19 +89,112 @@ impl BinaryFrameInbox {
         }
         frame
     }
+
+    fn discard(&self, stream_id: u32) {
+        let mut frames = self.frames.lock().unwrap();
+        frames.remove(&stream_id);
+    }
+}
+
+pub(super) struct OutgoingTransferBody {
+    stream_id: u32,
+    length: u64,
+    file: tokio::fs::File,
+    path: PathBuf,
+}
+
+impl OutgoingTransferBody {
+    pub(super) fn descriptor(&self) -> FrameBodyDescriptor {
+        FrameBodyDescriptor {
+            stream_id: self.stream_id,
+            length: Some(self.length),
+        }
+    }
+
+    pub(super) async fn send(mut self, conn: &Connection) -> Result<(), String> {
+        let stream_id = self.stream_id;
+        let result = self.send_inner(conn).await;
+        if let Err(error) = &result {
+            let _ = conn
+                .send_binary(build_binary_frame(
+                    stream_id,
+                    BINARY_FRAME_ERROR | BINARY_FRAME_END,
+                    error.as_bytes(),
+                ))
+                .await;
+        }
+        result
+    }
+
+    async fn send_inner(&mut self, conn: &Connection) -> Result<(), String> {
+        let mut bytes_sent = 0u64;
+        let mut buffer = vec![0u8; MAX_TRANSFER_CHUNK_BYTES];
+
+        loop {
+            let bytes_read = self
+                .file
+                .read(&mut buffer)
+                .await
+                .map_err(|e| format!("Failed to read '{}': {}", self.path.display(), e))?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            let next_bytes_sent = bytes_sent
+                .checked_add(bytes_read as u64)
+                .ok_or_else(|| format!("Transfer size overflow for '{}'", self.path.display()))?;
+            if next_bytes_sent > self.length {
+                return Err(format!(
+                    "Transfer size changed for '{}': expected {}, got more than {}",
+                    self.path.display(),
+                    self.length,
+                    next_bytes_sent
+                ));
+            }
+
+            conn.send_binary(build_binary_frame(
+                self.stream_id,
+                BINARY_FRAME_DATA,
+                &buffer[..bytes_read],
+            ))
+            .await
+            .map_err(|e| format!("Failed to send binary transfer data: {}", e))?;
+            bytes_sent = next_bytes_sent;
+        }
+
+        if bytes_sent != self.length {
+            return Err(format!(
+                "Transfer size changed for '{}': expected {}, got {}",
+                self.path.display(),
+                self.length,
+                bytes_sent
+            ));
+        }
+
+        conn.send_binary(build_binary_frame(self.stream_id, BINARY_FRAME_END, &[]))
+            .await
+            .map_err(|e| format!("Failed to finish binary transfer: {}", e))?;
+        Ok(())
+    }
 }
 
 pub async fn handle_transfer_syscall(
     call: &str,
     args: Value,
+    request_body: Option<FrameBodyDescriptor>,
     workspace: &Path,
-    conn: &Connection,
     binary_inbox: &BinaryFrameInbox,
-) -> Option<Result<Value, String>> {
+) -> Option<Result<(Value, Option<OutgoingTransferBody>), String>> {
     match call {
-        "fs.transfer.stat" => Some(handle_stat(args, workspace).await),
-        "fs.transfer.send" => Some(handle_send(args, workspace, conn).await),
-        "fs.transfer.receive" => Some(handle_receive(args, workspace, binary_inbox).await),
+        "fs.transfer.stat" => Some(handle_stat(args, workspace).await.map(|data| (data, None))),
+        "fs.transfer.send" => {
+            Some(handle_send(args, workspace, binary_inbox.allocate_outgoing_stream_id()).await)
+        }
+        "fs.transfer.receive" => Some(
+            handle_receive(args, request_body, workspace, binary_inbox)
+                .await
+                .map(|data| (data, None)),
+        ),
         _ => None,
     }
 }
@@ -99,18 +205,14 @@ struct TransferStatArgs {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct TransferSendArgs {
     path: String,
-    stream_id: u32,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TransferReceiveArgs {
     path: String,
-    stream_id: u32,
-    expected_size: u64,
     #[serde(default)]
     content_type: Option<String>,
 }
@@ -140,80 +242,63 @@ async fn handle_stat(args: Value, workspace: &Path) -> Result<Value, String> {
     }))
 }
 
-async fn handle_send(args: Value, workspace: &Path, conn: &Connection) -> Result<Value, String> {
+async fn handle_send(
+    args: Value,
+    workspace: &Path,
+    stream_id: u32,
+) -> Result<(Value, Option<OutgoingTransferBody>), String> {
     let args: TransferSendArgs =
         serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
+    let path = resolve_path(&args.path, workspace);
+    let file = tokio::fs::File::open(&path)
+        .await
+        .map_err(|e| format!("Failed to open '{}': {}", path.display(), e))?;
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(|e| format!("Failed to stat '{}': {}", path.display(), e))?;
+    if !metadata.is_file() {
+        return Err(format!("Not a file: '{}'", path.display()));
+    }
 
-    let result = async {
-        let path = resolve_path(&args.path, workspace);
-        let mut file = tokio::fs::File::open(&path)
-            .await
-            .map_err(|e| format!("Failed to open '{}': {}", path.display(), e))?;
-        let metadata = file
-            .metadata()
-            .await
-            .map_err(|e| format!("Failed to stat '{}': {}", path.display(), e))?;
-        if !metadata.is_file() {
-            return Err(format!("Not a file: '{}'", path.display()));
-        }
+    let content_type = mime_guess::from_path(&path)
+        .first()
+        .map(|mime| mime.essence_str().to_string());
+    let length = metadata.len();
 
-        let mut bytes_sent: u64 = 0;
-        let mut buffer = vec![0u8; MAX_TRANSFER_CHUNK_BYTES];
-        loop {
-            let bytes_read = file
-                .read(&mut buffer)
-                .await
-                .map_err(|e| format!("Failed to read '{}': {}", path.display(), e))?;
-            if bytes_read == 0 {
-                break;
-            }
-            conn.send_binary(build_binary_frame(
-                args.stream_id,
-                BINARY_FRAME_DATA,
-                &buffer[..bytes_read],
-            ))
-            .await
-            .map_err(|e| format!("Failed to send binary transfer data: {}", e))?;
-            bytes_sent += bytes_read as u64;
-        }
-        conn.send_binary(build_binary_frame(args.stream_id, BINARY_FRAME_END, &[]))
-            .await
-            .map_err(|e| format!("Failed to finish binary transfer: {}", e))?;
-
-        let content_type = mime_guess::from_path(&path)
-            .first()
-            .map(|mime| mime.essence_str().to_string());
-
-        Ok(json!({
+    Ok((
+        json!({
             "ok": true,
             "path": path.display().to_string(),
-            "size": metadata.len(),
-            "bytesSent": bytes_sent,
+            "size": length,
             "contentType": content_type
-        }))
-    }
-    .await;
-
-    if let Err(error) = &result {
-        let _ = conn
-            .send_binary(build_binary_frame(
-                args.stream_id,
-                BINARY_FRAME_ERROR | BINARY_FRAME_END,
-                error.as_bytes(),
-            ))
-            .await;
-    }
-
-    result
+        }),
+        Some(OutgoingTransferBody {
+            stream_id,
+            length,
+            file,
+            path,
+        }),
+    ))
 }
 
 async fn handle_receive(
     args: Value,
+    request_body: Option<FrameBodyDescriptor>,
     workspace: &Path,
     binary_inbox: &BinaryFrameInbox,
 ) -> Result<Value, String> {
     let args: TransferReceiveArgs =
         serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
+    let body =
+        request_body.ok_or_else(|| "fs.transfer.receive requires a request body".to_string())?;
+    if body.stream_id == 0 {
+        return Err("fs.transfer.receive body requires a non-zero streamId".to_string());
+    }
+    let expected_length = body
+        .length
+        .ok_or_else(|| "fs.transfer.receive requires a request body length".to_string())?;
+
     let path = resolve_path(&args.path, workspace);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -226,7 +311,7 @@ async fn handle_receive(
         }
     }
 
-    let temp_path = transfer_temp_path(&path, args.stream_id);
+    let temp_path = transfer_temp_path(&path, body.stream_id);
     let mut file = tokio::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -237,18 +322,20 @@ async fn handle_receive(
     let mut bytes_written: u64 = 0;
     let receive_result: Result<(), String> = async {
         loop {
-            let frame = binary_inbox.take(args.stream_id).await?;
+            let frame = binary_inbox.take(body.stream_id).await?;
             if frame.flags & BINARY_FRAME_ERROR != 0 {
                 return Err(String::from_utf8(frame.payload)
                     .unwrap_or_else(|_| "Binary transfer failed".to_string()));
             }
             if frame.flags & BINARY_FRAME_DATA != 0 {
-                bytes_written += frame.payload.len() as u64;
-                if bytes_written > args.expected_size {
+                bytes_written = bytes_written
+                    .checked_add(frame.payload.len() as u64)
+                    .ok_or_else(|| format!("Transfer size overflow for '{}'", path.display()))?;
+                if bytes_written > expected_length {
                     return Err(format!(
                         "Transfer size mismatch for '{}': expected {}, got more than {}",
                         path.display(),
-                        args.expected_size,
+                        expected_length,
                         bytes_written
                     ));
                 }
@@ -264,11 +351,11 @@ async fn handle_receive(
         file.flush()
             .await
             .map_err(|e| format!("Failed to flush '{}': {}", temp_path.display(), e))?;
-        if bytes_written != args.expected_size {
+        if bytes_written != expected_length {
             return Err(format!(
                 "Transfer size mismatch for '{}': expected {}, got {}",
                 path.display(),
-                args.expected_size,
+                expected_length,
                 bytes_written
             ));
         }
@@ -278,6 +365,7 @@ async fn handle_receive(
 
     drop(file);
     if let Err(error) = receive_result {
+        binary_inbox.discard(body.stream_id);
         let _ = tokio::fs::remove_file(&temp_path).await;
         return Err(error);
     }
@@ -318,25 +406,165 @@ fn transfer_temp_path(path: &Path, stream_id: u32) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{TransferReceiveArgs, TransferSendArgs};
+    use super::{
+        build_binary_frame, handle_receive, handle_send, BinaryFrameInbox, FrameBodyDescriptor,
+        TransferReceiveArgs, TransferSendArgs, BINARY_FRAME_DATA, BINARY_FRAME_END,
+    };
     use serde_json::json;
+    use std::path::PathBuf;
+
+    fn test_workspace(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "gsv-cli-transfer-{}-{}",
+            label,
+            uuid::Uuid::new_v4()
+        ))
+    }
 
     #[test]
-    fn deserializes_transfer_stream_ids_from_camel_case_json() {
+    fn transfer_args_no_longer_require_stream_fields() {
         let send: TransferSendArgs = serde_json::from_value(json!({
-            "path": "source.txt",
-            "streamId": 123
+            "path": "source.txt"
         }))
         .unwrap();
-        assert_eq!(send.stream_id, 123);
+        assert_eq!(send.path, "source.txt");
 
         let receive: TransferReceiveArgs = serde_json::from_value(json!({
             "path": "dest.txt",
-            "streamId": 456,
-            "expectedSize": 10
+            "contentType": "application/octet-stream"
         }))
         .unwrap();
-        assert_eq!(receive.stream_id, 456);
-        assert_eq!(receive.expected_size, 10);
+        assert_eq!(receive.path, "dest.txt");
+        assert_eq!(
+            receive.content_type.as_deref(),
+            Some("application/octet-stream")
+        );
+    }
+
+    #[test]
+    fn outgoing_stream_ids_are_monotonic_per_inbox() {
+        let inbox = BinaryFrameInbox::new();
+
+        assert_eq!(inbox.allocate_outgoing_stream_id(), 1);
+        assert_eq!(inbox.allocate_outgoing_stream_id(), 2);
+
+        let next_connection = BinaryFrameInbox::new();
+        assert_eq!(next_connection.allocate_outgoing_stream_id(), 1);
+    }
+
+    #[tokio::test]
+    async fn send_prepares_response_body_with_file_length() {
+        let workspace = test_workspace("send");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        tokio::fs::write(workspace.join("source.bin"), [0, 1, 0xff])
+            .await
+            .unwrap();
+
+        let (data, body) = handle_send(json!({ "path": "source.bin" }), &workspace, 17)
+            .await
+            .unwrap();
+        let descriptor = body.as_ref().unwrap().descriptor();
+
+        assert_eq!(descriptor.stream_id, 17);
+        assert_eq!(descriptor.length, Some(3));
+        assert_eq!(data["size"], 3);
+        assert!(data.get("bytesSent").is_none());
+
+        drop(body);
+        tokio::fs::remove_dir_all(workspace).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn receive_consumes_request_body_descriptor() {
+        let workspace = test_workspace("receive");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        let inbox = BinaryFrameInbox::new();
+        inbox.push(build_binary_frame(23, BINARY_FRAME_DATA, &[0, 0xff]));
+        inbox.push(build_binary_frame(
+            23,
+            BINARY_FRAME_DATA | BINARY_FRAME_END,
+            &[1, 2],
+        ));
+
+        let result = handle_receive(
+            json!({
+                "path": "nested/destination.bin",
+                "contentType": "application/octet-stream"
+            }),
+            Some(FrameBodyDescriptor {
+                stream_id: 23,
+                length: Some(4),
+            }),
+            &workspace,
+            &inbox,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["bytesWritten"], 4);
+        assert_eq!(result["contentType"], "application/octet-stream");
+        assert_eq!(
+            tokio::fs::read(workspace.join("nested/destination.bin"))
+                .await
+                .unwrap(),
+            vec![0, 0xff, 1, 2]
+        );
+
+        tokio::fs::remove_dir_all(workspace).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn receive_rejects_body_length_mismatch_and_removes_temp_file() {
+        let workspace = test_workspace("mismatch");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        let inbox = BinaryFrameInbox::new();
+        inbox.push(build_binary_frame(
+            29,
+            BINARY_FRAME_DATA | BINARY_FRAME_END,
+            &[1, 2, 3],
+        ));
+
+        let error = handle_receive(
+            json!({ "path": "destination.bin" }),
+            Some(FrameBodyDescriptor {
+                stream_id: 29,
+                length: Some(4),
+            }),
+            &workspace,
+            &inbox,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.contains("expected 4, got 3"));
+        assert!(!workspace.join("destination.bin").exists());
+        assert!(tokio::fs::read_dir(&workspace)
+            .await
+            .unwrap()
+            .next_entry()
+            .await
+            .unwrap()
+            .is_none());
+
+        tokio::fs::remove_dir_all(workspace).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn receive_requires_length_on_request_body() {
+        let workspace = test_workspace("missing-length");
+        let error = handle_receive(
+            json!({ "path": "destination.bin" }),
+            Some(FrameBodyDescriptor {
+                stream_id: 31,
+                length: None,
+            }),
+            &workspace,
+            &BinaryFrameInbox::new(),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error, "fs.transfer.receive requires a request body length");
+        assert!(!workspace.exists());
     }
 }

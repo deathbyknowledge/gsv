@@ -1,14 +1,15 @@
 import type { KernelContext } from "./context";
 import { getVisibleTarget } from "./targets";
 import type { NetFetchArgs, NetFetchResult } from "@humansandmachines/gsv/protocol";
+import type { ResponseOkFrame } from "../protocol/frames";
 
 export type NetFetchDeviceTransport = {
   requestDevice: (
     deviceId: string,
     call: string,
     args: unknown,
-    ttlMs?: number,
-  ) => Promise<unknown>;
+    options?: { ttlMs?: number },
+  ) => Promise<ResponseOkFrame>;
 };
 
 export type RoutedFetch = typeof fetch;
@@ -75,11 +76,11 @@ export function createRoutedFetch(
     const args = await requestToNetFetchArgs(request, requestedRedirect);
     const timeoutMs = normalizeNetFetchTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
     args.timeoutMs = timeoutMs;
-    const result = await withAbortSignal(
-      transport.requestDevice(normalizedTarget, NET_FETCH_CALL, args, timeoutMs),
+    const response = await withAbortSignal(
+      transport.requestDevice(normalizedTarget, NET_FETCH_CALL, args, { ttlMs: timeoutMs }),
       request.signal,
     );
-    return responseFromNetFetchResult(result);
+    return responseFromNetFetchResult(response.data);
   };
 }
 

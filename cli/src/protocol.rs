@@ -24,6 +24,8 @@ pub struct RequestFrame {
     pub call: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub args: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<FrameBodyDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +36,16 @@ pub struct ResponseFrame {
     pub data: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorShape>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<FrameBodyDescriptor>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameBodyDescriptor {
+    pub stream_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub length: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +172,7 @@ impl RequestFrame {
             id: uuid::Uuid::new_v4().to_string(),
             call: call.to_string(),
             args,
+            body: None,
         }
     }
 }
@@ -185,4 +198,58 @@ pub fn parse_binary_frame(data: &[u8]) -> Option<(u32, u8, Vec<u8>)> {
         data[4],
         data[BINARY_FRAME_HEADER_BYTES..].to_vec(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Frame, FrameBodyDescriptor, RequestFrame, ResponseFrame};
+    use serde_json::json;
+
+    #[test]
+    fn request_body_descriptor_deserializes_from_wire_shape() {
+        let frame: Frame = serde_json::from_value(json!({
+            "type": "req",
+            "id": "req-1",
+            "call": "fs.transfer.receive",
+            "args": { "path": "destination.bin" },
+            "body": { "streamId": 41, "length": 3 }
+        }))
+        .expect("request frame should deserialize");
+
+        let Frame::Req(request) = frame else {
+            panic!("expected request frame");
+        };
+        assert_eq!(
+            request.body,
+            Some(FrameBodyDescriptor {
+                stream_id: 41,
+                length: Some(3),
+            })
+        );
+    }
+
+    #[test]
+    fn response_body_descriptor_serializes_to_wire_shape() {
+        let frame = Frame::Res(ResponseFrame {
+            id: "req-1".to_string(),
+            ok: true,
+            data: Some(json!({ "ok": true })),
+            error: None,
+            body: Some(FrameBodyDescriptor {
+                stream_id: 42,
+                length: None,
+            }),
+        });
+
+        let value = serde_json::to_value(frame).expect("response frame should serialize");
+        assert_eq!(value["body"], json!({ "streamId": 42 }));
+    }
+
+    #[test]
+    fn request_without_body_omits_descriptor() {
+        let request = RequestFrame::new("fs.transfer.stat", Some(json!({ "path": "a" })));
+        let value = serde_json::to_value(request).expect("request frame should serialize");
+
+        assert!(value.get("body").is_none());
+    }
 }

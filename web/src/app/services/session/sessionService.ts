@@ -222,7 +222,7 @@ async function revokeSessionToken(client: GSVClient, tokenId: string, reason: st
 async function probeSetupMode(client: GSVClient, url: string): Promise<boolean> {
   try {
     await client.requestOnce(url, "sys.connect", {
-      protocol: 1,
+      protocol: 2,
       client: {
         id: "gsv-ui-setup-probe",
         version: "0.4.0",

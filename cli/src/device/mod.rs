@@ -375,17 +375,21 @@ async fn handle_driver_request(
     }
 
     let result = if let Some(transfer_result) =
-        transfer::handle_transfer_syscall(call, args.clone(), workspace, conn, binary_inbox).await
+        transfer::handle_transfer_syscall(call, args.clone(), req.body, workspace, binary_inbox)
+            .await
     {
         transfer_result
     } else if let Some(tool_name) = syscall_to_tool_name(call) {
-        execute_tool_by_name(tools, tool_name, args).await
+        execute_tool_by_name(tools, tool_name, args)
+            .await
+            .map(|data| (data, None))
     } else {
         Err(format!("unknown syscall: {}", call))
     };
 
+    let mut outgoing_body = None;
     let response = match result {
-        Ok(data) => {
+        Ok((data, body)) => {
             if call == "net.fetch" {
                 info!(
                     event = "net.fetch.ok",
@@ -395,11 +399,14 @@ async fn handle_driver_request(
                     body_bytes = ?data.get("bodyBytes").and_then(|value| value.as_u64()),
                 );
             }
+            let body_descriptor = body.as_ref().map(|body| body.descriptor());
+            outgoing_body = body;
             Frame::Res(ResponseFrame {
                 id: req.id.clone(),
                 ok: true,
                 data: Some(data),
                 error: None,
+                body: body_descriptor,
             })
         }
         Err(message) => {
@@ -419,6 +426,7 @@ async fn handle_driver_request(
                         "error": message,
                     })),
                     error: None,
+                    body: None,
                 })
             } else {
                 Frame::Res(ResponseFrame {
@@ -431,6 +439,7 @@ async fn handle_driver_request(
                         details: None,
                         retryable: None,
                     }),
+                    body: None,
                 })
             }
         }
@@ -445,6 +454,17 @@ async fn handle_driver_request(
                     call = %req.call,
                     error = %e,
                 );
+                return;
+            }
+            if let Some(body) = outgoing_body {
+                if let Err(e) = body.send(conn).await {
+                    error!(
+                        event = "driver.response.body_send_failed",
+                        request_id = %req.id,
+                        call = %req.call,
+                        error = %e,
+                    );
+                }
             }
         }
         Err(e) => {

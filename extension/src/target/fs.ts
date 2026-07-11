@@ -1,4 +1,4 @@
-import type { GsvBinaryTransport } from "@humansandmachines/gsv/client";
+import type { GsvBody, GsvResponse } from "@humansandmachines/gsv/client";
 import { basename, dirname, joinPath, normalizePath } from "../shared/paths";
 import {
   bytesFromStoredContent,
@@ -53,15 +53,12 @@ type FsCopyArgs = {
 
 type TransferArgs = {
   path?: unknown;
-  streamId?: unknown;
-  expectedSize?: unknown;
   contentType?: unknown;
 };
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const MAX_TEXT_READ_BYTES = 2 * 1024 * 1024;
-const MAX_TRANSFER_CHUNK_BYTES = 1024 * 1024;
 const MAX_SEARCH_MATCHES = 200;
 const DEFAULT_DIRECTORIES = [
   "/",
@@ -446,26 +443,26 @@ function copyBytes(bytes: Uint8Array): Uint8Array {
 export class BrowserFsDriver {
   constructor(private readonly fs: TargetFileSystem) {}
 
-  async handle(call: string, args: unknown, binary: GsvBinaryTransport): Promise<unknown> {
+  async handle(call: string, args: unknown, body?: GsvBody): Promise<GsvResponse> {
     switch (call) {
       case "fs.read":
-        return await this.read(args);
+        return { data: await this.read(args) };
       case "fs.write":
-        return await this.write(args);
+        return { data: await this.write(args) };
       case "fs.edit":
-        return await this.edit(args);
+        return { data: await this.edit(args) };
       case "fs.delete":
-        return await this.delete(args);
+        return { data: await this.delete(args) };
       case "fs.search":
-        return await this.search(args);
+        return { data: await this.search(args) };
       case "fs.copy":
-        return await this.copy(args);
+        return { data: await this.copy(args) };
       case "fs.transfer.stat":
-        return await this.transferStat(args);
+        return { data: await this.transferStat(args) };
       case "fs.transfer.send":
-        return await this.transferSend(args, binary);
+        return await this.transferSend(args);
       case "fs.transfer.receive":
-        return await this.transferReceive(args, binary);
+        return await this.transferReceive(args, body);
       default:
         throw new Error(`Unsupported filesystem syscall: ${call}`);
     }
@@ -596,55 +593,56 @@ export class BrowserFsDriver {
     }
   }
 
-  private async transferSend(raw: unknown, binary: GsvBinaryTransport): Promise<unknown> {
+  private async transferSend(raw: unknown): Promise<GsvResponse> {
     const args = asRecord(raw) as TransferArgs;
     const path = parsePath(args.path, "fs.transfer.send");
-    const streamId = parseStreamId(args.streamId);
-    if (streamId === null) {
-      return { ok: false, error: "fs.transfer.send requires streamId" };
-    }
     const bytes = await this.fs.read(path);
     const stat = await this.fs.stat(path);
-    try {
-      const bytesSent = await binary.sendStream(streamId, bytes, { chunkSize: MAX_TRANSFER_CHUNK_BYTES });
-      return {
+    return {
+      data: {
         ok: true,
         path,
         size: bytes.byteLength,
-        bytesSent,
         contentType: stat.contentType ?? inferContentType(path),
-      };
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
+      },
+      body: {
+        stream: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        }),
+        length: bytes.byteLength,
+      },
+    };
   }
 
-  private async transferReceive(raw: unknown, binary: GsvBinaryTransport): Promise<unknown> {
+  private async transferReceive(raw: unknown, body?: GsvBody): Promise<GsvResponse> {
     const args = asRecord(raw) as TransferArgs;
     const path = parsePath(args.path, "fs.transfer.receive");
-    const expectedSize = parseNonNegativeInteger(args.expectedSize);
-    if (expectedSize === null) {
-      return { ok: false, error: "fs.transfer.receive requires expectedSize" };
+    if (!body) {
+      return { data: { ok: false, error: "fs.transfer.receive requires a request body" } };
     }
-    const streamId = parseStreamId(args.streamId);
-    if (streamId === null) {
-      return { ok: false, error: "fs.transfer.receive requires streamId" };
+    if (body.length === undefined) {
+      void body.stream.cancel();
+      return { data: { ok: false, error: "fs.transfer.receive requires a request body length" } };
     }
 
-    const receive = binary.receive(streamId, { timeoutMs: 120_000, maxBytes: expectedSize });
     try {
-      const bytes = await readStream(receive.stream, expectedSize);
+      const bytes = await readStream(body.stream, body.length);
       const contentType = typeof args.contentType === "string" ? args.contentType : inferContentType(path);
       await this.fs.write(path, bytes, contentType);
       return {
-        ok: true,
-        path,
-        bytesWritten: bytes.byteLength,
-        contentType,
+        data: {
+          ok: true,
+          path,
+          bytesWritten: bytes.byteLength,
+          contentType,
+        },
       };
     } catch (error) {
-      receive.cancel(error instanceof Error ? error.message : "Binary transfer failed");
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      void body.stream.cancel(error instanceof Error ? error.message : "Binary transfer failed");
+      return { data: { ok: false, error: error instanceof Error ? error.message : String(error) } };
     }
   }
 }
@@ -672,10 +670,6 @@ function parseNonNegativeInteger(value: unknown): number | null {
     return null;
   }
   return value;
-}
-
-function parseStreamId(value: unknown): number | null {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= 0xffffffff ? value : null;
 }
 
 async function readStream(stream: ReadableStream<Uint8Array>, expectedSize: number): Promise<Uint8Array> {

@@ -287,31 +287,25 @@ describe("dispatch", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("fails routed transfer syscalls before sending when binary route registration fails", async () => {
-    const send = vi.fn();
-    const cancelRoute = vi.fn();
-    const registerRoute = vi.fn(async () => ({ cancel: cancelRoute }));
-    const registerBinaryRoute = vi.fn(() => {
-      throw new Error("Binary stream id already active: 123");
-    });
+  it("forwards request bodies to device targets", async () => {
+    const connection = {
+      state: {
+        identity: {
+          role: "driver",
+          process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
+          capabilities: ["*"],
+          device: "browser:conn_1",
+          implements: ["fs.*", "shell.*"],
+        },
+      },
+      send: vi.fn(),
+    };
+    const forwarded = vi.fn();
+    const registerRoute = vi.fn(async () => ({ cancel: vi.fn() }));
     const deps = {
-      sendFrame,
-      connections: new Map([
-        ["conn_1", {
-          state: {
-            identity: {
-              role: "driver",
-              process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
-              capabilities: ["*"],
-              device: "browser:conn_1",
-              implements: ["fs.*", "shell.*"],
-            },
-          },
-          send,
-        }],
-      ]),
+      sendFrame: forwarded,
+      connections: new Map([["conn_1", connection]]),
       registerRoute,
-      registerBinaryRoute,
       shellSessions: {
         get: vi.fn(),
       },
@@ -323,6 +317,10 @@ describe("dispatch", () => {
         get: vi.fn(() => deviceRecord("browser:conn_1", true)),
       },
     } as unknown as KernelContext;
+    const body = {
+      stream: new ReadableStream<Uint8Array>(),
+      length: 0,
+    };
     const frame = {
       type: "req",
       id: "req_1",
@@ -330,9 +328,8 @@ describe("dispatch", () => {
       args: {
         target: "browser:conn_1",
         path: "/tmp/file.txt",
-        streamId: 123,
-        expectedSize: 4,
       },
+      body,
     } as RequestFrame<"fs.transfer.receive">;
 
     const result = await dispatch(
@@ -342,28 +339,15 @@ describe("dispatch", () => {
       deps,
     );
 
-    expect(result).toEqual({
-      handled: true,
-      response: {
-        type: "res",
-        id: "req_1",
-        ok: false,
-        error: {
-          code: 500,
-          message: "Failed to register route for fs.transfer.receive: Binary stream id already active: 123",
-        },
-      },
-    });
+    expect(result).toEqual({ handled: false });
     expect(registerRoute).toHaveBeenCalledOnce();
-    expect(registerBinaryRoute).toHaveBeenCalledWith({
-      requestId: "req_1",
-      streamId: 123,
-      origin: { type: "process", id: "proc_1" },
-      deviceId: "browser:conn_1",
-      ttlMs: 60_000,
+    expect(forwarded).toHaveBeenCalledWith(connection, {
+      type: "req",
+      id: "req_1",
+      call: "fs.transfer.receive",
+      args: { path: "/tmp/file.txt" },
+      body,
     });
-    expect(cancelRoute).toHaveBeenCalledOnce();
-    expect(send).not.toHaveBeenCalled();
   });
 
   it("cancels registered routes when sending to the target fails", async () => {
