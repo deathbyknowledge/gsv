@@ -667,6 +667,13 @@ export function handleAdapterStateUpdate(
     ...args.status,
     accountId,
   });
+  const uids = new Set([0]);
+  for (const link of ctx.adapters.identityLinks.listByAccount(adapter, accountId)) {
+    uids.add(link.uid);
+  }
+  for (const uid of uids) {
+    ctx.broadcastToUserUid(uid, "adapter.status", { adapter, accountId });
+  }
 
   return { ok: true };
 }

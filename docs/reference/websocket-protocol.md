@@ -257,7 +257,7 @@ Current role defaults from `buildSignalList()`:
 
 ### Service connections
 
-- `adapter.status`
+Service connections receive no ambient signals. Adapter workers report state through the gateway service binding.
 
 `chat.*` signals are emitted by Process DOs and relayed through run-route tracking. In the current kernel:
 

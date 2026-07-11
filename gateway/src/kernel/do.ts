@@ -1705,27 +1705,6 @@ export class Kernel extends Host<Env> {
         this.broadcastToUserUid(scope.uid, "pkg.changed");
       }
     }
-
-    if (frame.call === "adapter.state.update") {
-      const args = frame.args as {
-        adapter?: unknown;
-        accountId?: unknown;
-        status?: unknown;
-      };
-
-      if (
-        typeof args.adapter === "string" &&
-        typeof args.accountId === "string" &&
-        args.status &&
-        typeof args.status === "object"
-      ) {
-        this.broadcastToRole("service", "adapter.status", {
-          adapter: args.adapter,
-          accountId: args.accountId,
-          status: args.status,
-        });
-      }
-    }
   }
 
   private async dispatchSignalWatches(

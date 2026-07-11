@@ -1116,7 +1116,7 @@ Runtime behavior:
 | `adapter.connect` | `handleAdapterConnect` | Calls service binding `CHANNEL_<ADAPTER>.adapterConnect(accountId, config)`, then best-effort refreshes live status. Requires non-empty adapter and account id. Missing service or method returns operation error. |
 | `adapter.disconnect` | `handleAdapterDisconnect` | Calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
 | `adapter.inbound` | `handleAdapterInbound` | Service-role only. Lowercases adapter, resolves linked user, drops unlinked non-DM messages, issues link challenges for unlinked DMs, ensures the user init process exists, handles pending HIL confirmations, and otherwise forwards rendered text/media to `proc.send`. |
-| `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Upserts local adapter status and broadcasts `adapter.status` to service-role connections after successful dispatch. |
+| `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Upserts local adapter status and broadcasts a minimal `adapter.status` invalidation to authorized user connections. |
 | `adapter.send` | `handleAdapterSend` | Validates adapter/account/surface and forwards outbound text, media, and reply id to the adapter service. Returns adapter message id when available. |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
 

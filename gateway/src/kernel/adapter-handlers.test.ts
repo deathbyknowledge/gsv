@@ -6,6 +6,7 @@ import {
   handleAdapterInbound,
   handleAdapterList,
   handleAdapterSend,
+  handleAdapterStateUpdate,
   handleAdapterStatus,
 } from "./adapter-handlers";
 import { sendFrameToProcess } from "../shared/utils";
@@ -161,6 +162,7 @@ function makeContext(
       status,
       identityLinks: {
         resolveUid: vi.fn(() => 1000),
+        listByAccount: vi.fn(() => []),
         list: vi.fn(() => []),
         ...options.identityLinks,
       },
@@ -180,6 +182,7 @@ function makeContext(
     runRoutes: {
       setAdapterRoute: vi.fn(),
     },
+    broadcastToUserUid: vi.fn(),
     identity: options.identity ?? {
       role: "service",
       service: "test",
@@ -194,6 +197,41 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 describe("adapter lifecycle handlers", () => {
   beforeEach(() => {
     sendFrameToProcessMock.mockReset();
+  });
+
+  it("notifies root and linked users when adapter state changes", () => {
+    const status = { upsert: vi.fn() };
+    const ctx = makeContext({}, status, {
+      identityLinks: {
+        listByAccount: vi.fn(() => [
+          { adapter: "whatsapp", accountId: "primary", uid: 1000 },
+          { adapter: "whatsapp", accountId: "primary", uid: 1000 },
+        ]),
+      },
+    });
+
+    handleAdapterStateUpdate({
+      adapter: "WhatsApp",
+      accountId: "primary",
+      status: {
+        accountId: "primary",
+        connected: true,
+        authenticated: true,
+        extra: { selfE164: "+31612345678" },
+      },
+    }, ctx);
+
+    expect(status.upsert).toHaveBeenCalledWith("whatsapp", "primary", expect.anything());
+    expect(ctx.adapters.identityLinks.listByAccount).toHaveBeenCalledWith("whatsapp", "primary");
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledTimes(2);
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(0, "adapter.status", {
+      adapter: "whatsapp",
+      accountId: "primary",
+    });
+    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(1000, "adapter.status", {
+      adapter: "whatsapp",
+      accountId: "primary",
+    });
   });
 
   it("adapter.list discovers deployed adapter bindings and cached accounts", () => {

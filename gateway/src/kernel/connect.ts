@@ -284,8 +284,6 @@ function buildSignalList(role: string): string[] {
       return [...USER_CONNECTION_SIGNALS];
     case "driver":
       return ["device.status"];
-    case "service":
-      return ["adapter.status"];
     default:
       return [];
   }

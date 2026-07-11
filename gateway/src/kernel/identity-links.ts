@@ -85,6 +85,17 @@ export class IdentityLinkStore {
     return toRecord(rows[0]);
   }
 
+  listByAccount(adapter: string, accountId: string): IdentityLinkRecord[] {
+    return this.sql.exec<RowShape>(
+      `SELECT adapter, account_id, actor_id, uid, created_at, linked_by_uid, metadata_json
+       FROM identity_links
+       WHERE adapter = ? AND account_id = ?
+       ORDER BY created_at DESC`,
+      adapter,
+      accountId,
+    ).toArray().map(toRecord);
+  }
+
   list(uid?: number): IdentityLinkRecord[] {
     if (typeof uid === "number") {
       return this.sql.exec<RowShape>(
