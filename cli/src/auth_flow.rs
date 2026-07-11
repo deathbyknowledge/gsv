@@ -3,6 +3,7 @@ use cliclack::{confirm, input, password, select};
 use gsv::config::CliConfig;
 use gsv::connection::{Connection, GatewayRpcError};
 use gsv::kernel_client::{GatewayAuth, KernelClient};
+use gsv::protocol::PROTOCOL_VERSION;
 use serde::Deserialize;
 use serde_json::json;
 use std::future::Future;
@@ -51,7 +52,7 @@ async fn gateway_is_in_setup_mode(url: &str) -> Result<bool, Box<dyn std::error:
         .request(
             "sys.connect",
             Some(json!({
-                "protocol": 2,
+                "protocol": PROTOCOL_VERSION,
                 "client": {
                     "id": format!("gsv-setup-probe-{}", uuid::Uuid::new_v4()),
                     "version": gsv::build_info::BUILD_VERSION,

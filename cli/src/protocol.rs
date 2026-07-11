@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const BINARY_FRAME_HEADER_BYTES: usize = 5;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const BINARY_FRAME_DATA: u8 = 1 << 0;
 pub const BINARY_FRAME_END: u8 = 1 << 1;
 pub const BINARY_FRAME_ERROR: u8 = 1 << 2;
