@@ -718,6 +718,11 @@ pub(crate) async fn run_device(
             // In the new OS architecture, the kernel sends req frames directly to
             // the driver. We dispatch based on `call` and respond with a res frame.
             conn.set_frame_handler(move |frame| {
+                if let Frame::Req(request) = &frame {
+                    if request.call == "fs.transfer.receive" {
+                        binary_inbox_clone.register(request.body);
+                    }
+                }
                 let conn = conn_clone.clone();
                 let tools = tools_clone.clone();
                 let workspace = workspace_clone.clone();

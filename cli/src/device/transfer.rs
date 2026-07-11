@@ -5,7 +5,7 @@ use gsv::protocol::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,13 +14,23 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 
 const MAX_TRANSFER_CHUNK_BYTES: usize = 1024 * 1024;
+const MAX_BUFFERED_BINARY_BYTES: usize = 32 * 1024 * 1024;
+const MAX_BUFFERED_BINARY_FRAMES: usize = 1024;
 const BINARY_TRANSFER_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub struct BinaryFrameInbox {
-    frames: Arc<Mutex<HashMap<u32, VecDeque<QueuedBinaryFrame>>>>,
+    state: Arc<Mutex<BinaryInboxState>>,
     notify: Arc<Notify>,
     next_outgoing_stream_id: Arc<AtomicU32>,
+}
+
+#[derive(Default)]
+struct BinaryInboxState {
+    frames: HashMap<u32, VecDeque<QueuedBinaryFrame>>,
+    active: HashSet<u32>,
+    buffered_bytes: usize,
+    buffered_frames: usize,
 }
 
 #[derive(Clone)]
@@ -32,7 +42,7 @@ struct QueuedBinaryFrame {
 impl BinaryFrameInbox {
     pub fn new() -> Self {
         Self {
-            frames: Arc::new(Mutex::new(HashMap::new())),
+            state: Arc::new(Mutex::new(BinaryInboxState::default())),
             notify: Arc::new(Notify::new()),
             next_outgoing_stream_id: Arc::new(AtomicU32::new(1)),
         }
@@ -47,16 +57,61 @@ impl BinaryFrameInbox {
         }
     }
 
+    pub fn register(&self, body: Option<FrameBodyDescriptor>) {
+        if let Some(body) = body.filter(|body| body.stream_id != 0) {
+            self.state.lock().unwrap().active.insert(body.stream_id);
+        }
+    }
+
     pub fn push(&self, data: Vec<u8>) {
         let Some((stream_id, flags, payload)) = parse_binary_frame(&data) else {
             return;
         };
+        if stream_id == 0 {
+            return;
+        }
         {
-            let mut frames = self.frames.lock().unwrap();
-            frames
+            let mut state = self.state.lock().unwrap();
+            if !state.active.contains(&stream_id) {
+                return;
+            }
+            if state.buffered_bytes.saturating_add(payload.len()) > MAX_BUFFERED_BINARY_BYTES
+                || state.buffered_frames >= MAX_BUFFERED_BINARY_FRAMES
+            {
+                if let Some(queued) = state.frames.remove(&stream_id) {
+                    state.buffered_bytes = state
+                        .buffered_bytes
+                        .saturating_sub(queued.iter().map(|frame| frame.payload.len()).sum());
+                    state.buffered_frames = state.buffered_frames.saturating_sub(queued.len());
+                }
+                state.active.remove(&stream_id);
+                if state.buffered_frames >= MAX_BUFFERED_BINARY_FRAMES {
+                    return;
+                }
+                let payload = b"Binary transfer buffer limit exceeded".to_vec();
+                state.buffered_bytes += payload.len();
+                state.buffered_frames += 1;
+                state
+                    .frames
+                    .entry(stream_id)
+                    .or_default()
+                    .push_back(QueuedBinaryFrame {
+                        flags: BINARY_FRAME_ERROR | BINARY_FRAME_END,
+                        payload,
+                    });
+                self.notify.notify_waiters();
+                return;
+            }
+            state.buffered_bytes += payload.len();
+            state.buffered_frames += 1;
+            state
+                .frames
                 .entry(stream_id)
                 .or_default()
                 .push_back(QueuedBinaryFrame { flags, payload });
+            if flags & BINARY_FRAME_END != 0 {
+                state.active.remove(&stream_id);
+            }
         }
         self.notify.notify_waiters();
     }
@@ -81,18 +136,56 @@ impl BinaryFrameInbox {
     }
 
     fn pop(&self, stream_id: u32) -> Option<QueuedBinaryFrame> {
-        let mut frames = self.frames.lock().unwrap();
-        let queue = frames.get_mut(&stream_id)?;
+        let mut state = self.state.lock().unwrap();
+        let queue = state.frames.get_mut(&stream_id)?;
         let frame = queue.pop_front();
         if queue.is_empty() {
-            frames.remove(&stream_id);
+            state.frames.remove(&stream_id);
+        }
+        if let Some(frame) = &frame {
+            state.buffered_bytes = state.buffered_bytes.saturating_sub(frame.payload.len());
+            state.buffered_frames = state.buffered_frames.saturating_sub(1);
         }
         frame
     }
 
     fn discard(&self, stream_id: u32) {
-        let mut frames = self.frames.lock().unwrap();
-        frames.remove(&stream_id);
+        let mut state = self.state.lock().unwrap();
+        if let Some(queued) = state.frames.remove(&stream_id) {
+            state.buffered_bytes = state
+                .buffered_bytes
+                .saturating_sub(queued.iter().map(|frame| frame.payload.len()).sum());
+            state.buffered_frames = state.buffered_frames.saturating_sub(queued.len());
+        }
+        state.active.remove(&stream_id);
+    }
+}
+
+struct IncomingStreamGuard<'a> {
+    inbox: &'a BinaryFrameInbox,
+    stream_id: u32,
+    complete: bool,
+}
+
+impl<'a> IncomingStreamGuard<'a> {
+    fn new(inbox: &'a BinaryFrameInbox, stream_id: u32) -> Self {
+        Self {
+            inbox,
+            stream_id,
+            complete: false,
+        }
+    }
+
+    fn complete(mut self) {
+        self.complete = true;
+    }
+}
+
+impl Drop for IncomingStreamGuard<'_> {
+    fn drop(&mut self) {
+        if !self.complete {
+            self.inbox.discard(self.stream_id);
+        }
     }
 }
 
@@ -288,16 +381,17 @@ async fn handle_receive(
     workspace: &Path,
     binary_inbox: &BinaryFrameInbox,
 ) -> Result<Value, String> {
-    let args: TransferReceiveArgs =
-        serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
     let body =
         request_body.ok_or_else(|| "fs.transfer.receive requires a request body".to_string())?;
     if body.stream_id == 0 {
         return Err("fs.transfer.receive body requires a non-zero streamId".to_string());
     }
+    let stream_guard = IncomingStreamGuard::new(binary_inbox, body.stream_id);
     let expected_length = body
         .length
         .ok_or_else(|| "fs.transfer.receive requires a request body length".to_string())?;
+    let args: TransferReceiveArgs =
+        serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
     let path = resolve_path(&args.path, workspace);
     if let Some(parent) = path.parent() {
@@ -365,7 +459,6 @@ async fn handle_receive(
 
     drop(file);
     if let Err(error) = receive_result {
-        binary_inbox.discard(body.stream_id);
         let _ = tokio::fs::remove_file(&temp_path).await;
         return Err(error);
     }
@@ -373,6 +466,7 @@ async fn handle_receive(
         let _ = tokio::fs::remove_file(&temp_path).await;
         return Err(format!("Failed to replace '{}': {}", path.display(), error));
     }
+    stream_guard.complete();
 
     Ok(json!({
         "ok": true,
@@ -479,6 +573,11 @@ mod tests {
         let workspace = test_workspace("receive");
         tokio::fs::create_dir_all(&workspace).await.unwrap();
         let inbox = BinaryFrameInbox::new();
+        let body = FrameBodyDescriptor {
+            stream_id: 23,
+            length: Some(4),
+        };
+        inbox.register(Some(body));
         inbox.push(build_binary_frame(23, BINARY_FRAME_DATA, &[0, 0xff]));
         inbox.push(build_binary_frame(
             23,
@@ -491,10 +590,7 @@ mod tests {
                 "path": "nested/destination.bin",
                 "contentType": "application/octet-stream"
             }),
-            Some(FrameBodyDescriptor {
-                stream_id: 23,
-                length: Some(4),
-            }),
+            Some(body),
             &workspace,
             &inbox,
         )
@@ -518,6 +614,11 @@ mod tests {
         let workspace = test_workspace("mismatch");
         tokio::fs::create_dir_all(&workspace).await.unwrap();
         let inbox = BinaryFrameInbox::new();
+        let body = FrameBodyDescriptor {
+            stream_id: 29,
+            length: Some(4),
+        };
+        inbox.register(Some(body));
         inbox.push(build_binary_frame(
             29,
             BINARY_FRAME_DATA | BINARY_FRAME_END,
@@ -526,10 +627,7 @@ mod tests {
 
         let error = handle_receive(
             json!({ "path": "destination.bin" }),
-            Some(FrameBodyDescriptor {
-                stream_id: 29,
-                length: Some(4),
-            }),
+            Some(body),
             &workspace,
             &inbox,
         )
@@ -566,5 +664,22 @@ mod tests {
 
         assert_eq!(error, "fs.transfer.receive requires a request body length");
         assert!(!workspace.exists());
+    }
+
+    #[test]
+    fn rejected_streams_drop_late_frames() {
+        let inbox = BinaryFrameInbox::new();
+        inbox.register(Some(FrameBodyDescriptor {
+            stream_id: 37,
+            length: Some(3),
+        }));
+        inbox.discard(37);
+
+        inbox.push(build_binary_frame(37, BINARY_FRAME_DATA, &[1, 2, 3]));
+        assert!(inbox.state.lock().unwrap().frames.is_empty());
+
+        inbox.push(build_binary_frame(37, BINARY_FRAME_END, &[]));
+        let state = inbox.state.lock().unwrap();
+        assert!(!state.active.contains(&37));
     }
 }
