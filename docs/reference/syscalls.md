@@ -375,11 +375,12 @@ shell tools, plus generated async functions for connected MCP tools:
 ```ts
 const res = await shell("npm test", { target: "macbook", cwd: "~/projects/gsv" });
 const file = await fs.read({ target: "macbook", path: "package.json" });
+const response = await fetch("https://example.com", { target: "macbook" });
 const toolResult = await lookup_record({ query: "gsv" });
 ```
 
 Nested tool calls are dispatched back through the Process DO and Kernel as
-ordinary `shell.exec`, `fs.*`, and `sys.mcp.*` request frames. They keep the
+ordinary `shell.exec`, `fs.*`, `net.fetch`, and `sys.mcp.*` request frames. They keep the
 same capability, approval, target routing, async device response, and shell
 session behavior as direct model tool calls.
 
@@ -388,7 +389,7 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `codemode.exec` | Process DO `executeCodeModeTool`; `executeCodeMode` | Runs code in an isolated Worker Loader worker with outbound network disabled. Provides `shell(input, options)`, `fs.read/write/edit/delete/search`, `mcpTools` metadata, and connected MCP tools as generated async functions. Returns a structured `completed` or `failed` CodeMode result. |
-| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, and `sys.mcp.*` syscalls. |
+| `codemode.run` | Kernel `forwardToProcess`; Process DO `handleCodeModeRun`; `executeCodeMode` | Manual CodeMode execution for shell/CLI surfaces. Accepts code plus optional wrapper defaults and script arguments. Nested tools route through normal `shell.exec`, `fs.*`, `net.fetch`, and `sys.mcp.*` syscalls. |
 
 ```ts
 type CodeModeSyscalls = {

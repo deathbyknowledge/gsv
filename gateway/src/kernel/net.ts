@@ -13,6 +13,7 @@ export type NetFetchDeviceTransport = {
 
 export type RoutedFetch = typeof fetch;
 type RoutedFetchInit = RequestInit & { timeoutMs?: number };
+type NetFetchRedirect = NonNullable<NetFetchArgs["redirect"]>;
 
 const NET_FETCH_CALL = "net.fetch";
 const DEFAULT_NET_FETCH_TIMEOUT_MS = 60_000;
@@ -29,12 +30,17 @@ export async function handleNetFetch(
   }, request.timeoutMs);
 
   try {
+    const redirect = request.redirect === "error" ? "manual" : request.redirect;
     const response = await fetch(request.url, {
       method: request.method,
       headers: request.headers,
       body: request.body,
+      redirect,
       signal: controller.signal,
     });
+    if (request.redirect === "error" && isRedirectStatus(response.status)) {
+      throw new TypeError("net.fetch encountered a redirect with redirect mode error");
+    }
     return netFetchResultFromResponse(response);
   } finally {
     clearTimeout(timeout);
@@ -60,8 +66,13 @@ export function createRoutedFetch(
   }
 
   return async (input, init) => {
-    const request = new Request(input, init);
-    const args = await requestToNetFetchArgs(request);
+    const requestedRedirect = normalizeRedirect(
+      init?.redirect ?? (input instanceof Request ? input.redirect : undefined),
+    );
+    const request = new Request(input, requestedRedirect === "error"
+      ? { ...init, redirect: "manual" }
+      : init);
+    const args = await requestToNetFetchArgs(request, requestedRedirect);
     const timeoutMs = normalizeNetFetchTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
     args.timeoutMs = timeoutMs;
     const result = await withAbortSignal(
@@ -82,6 +93,7 @@ async function normalizeNetFetchRequest(args: NetFetchArgs): Promise<{
   method: string;
   headers: Headers;
   body?: Uint8Array | string;
+  redirect: NetFetchRedirect;
   timeoutMs: number;
 }> {
   const input = args && typeof args === "object" ? args : ({} as NetFetchArgs);
@@ -106,11 +118,15 @@ async function normalizeNetFetchRequest(args: NetFetchArgs): Promise<{
     method,
     headers,
     ...(body !== undefined ? { body } : {}),
+    redirect: normalizeRedirect(input.redirect),
     timeoutMs: normalizeNetFetchTimeoutMs(input.timeoutMs),
   };
 }
 
-export async function requestToNetFetchArgs(request: Request): Promise<NetFetchArgs> {
+export async function requestToNetFetchArgs(
+  request: Request,
+  redirect: NetFetchArgs["redirect"] = normalizeRedirect(request.redirect),
+): Promise<NetFetchArgs> {
   const headers: Record<string, string> = {};
   request.headers.forEach((value, key) => {
     headers[key] = value;
@@ -129,6 +145,7 @@ export async function requestToNetFetchArgs(request: Request): Promise<NetFetchA
     method: request.method,
     headers,
     ...(bodyBase64 ? { bodyBase64 } : {}),
+    redirect,
   };
 }
 
@@ -145,6 +162,7 @@ async function netFetchResultFromResponse(response: Response): Promise<NetFetchR
     status: response.status,
     statusText: response.statusText,
     headers,
+    redirected: response.redirected,
     bodyBase64: bytesToBase64(bodyBytes),
     ...(bodyText !== null ? { bodyText } : {}),
     bodyBytes: bodyBytes.byteLength,
@@ -249,6 +267,7 @@ export function responseFromNetFetchResult(raw: unknown): Response {
   if (typeof result.url === "string" && result.url.length > 0) {
     try {
       Object.defineProperty(response, "url", { value: result.url });
+      Object.defineProperty(response, "redirected", { value: result.redirected === true });
     } catch {}
   }
   return response;
@@ -280,6 +299,16 @@ function normalizeMethod(value: unknown): string {
   return method;
 }
 
+function normalizeRedirect(value: unknown): NetFetchRedirect {
+  if (value === undefined) {
+    return "follow";
+  }
+  if (value === "follow" || value === "error" || value === "manual") {
+    return value;
+  }
+  throw new Error("net.fetch redirect must be follow, error, or manual");
+}
+
 export function normalizeNetFetchTimeoutMs(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? Math.floor(value)
@@ -288,6 +317,10 @@ export function normalizeNetFetchTimeoutMs(value: unknown): number {
 
 function isNullBodyStatus(status: number): boolean {
   return status === 204 || status === 205 || status === 304;
+}
+
+function isRedirectStatus(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
 
 function parseContentLength(value: string | null): number | null {

@@ -162,7 +162,6 @@ import {
 } from "../shared/utils";
 import { encodeBase64Bytes } from "../shared/base64";
 import {
-  NET_FETCH,
   CODEMODE_EXEC,
   TOOL_TO_SYSCALL,
   SYSCALL_TOOL_NAMES,
@@ -171,8 +170,6 @@ import { RipgitClient } from "../fs/ripgit/client";
 import {
   buildCodeModeMcpToolBindings,
   executeCodeMode,
-  performCodeModeFetch,
-  type CodeModeHostCall,
 } from "./codemode";
 import {
   DEFAULT_CONVERSATION_ID,
@@ -3943,8 +3940,16 @@ export class Process extends Host<Env> {
       return undefined;
     }
     return async (input, init) => {
-      const request = new Request(input, init);
-      const args = await requestToNetFetchArgs(request);
+      const requestedRedirect = init?.redirect ?? (input instanceof Request ? input.redirect : undefined);
+      const redirect = requestedRedirect === "follow"
+        || requestedRedirect === "error"
+        || requestedRedirect === "manual"
+        ? requestedRedirect
+        : undefined;
+      const request = new Request(input, redirect === "error"
+        ? { ...init, redirect: "manual" }
+        : init);
+      const args = await requestToNetFetchArgs(request, redirect);
       const timeoutMs = normalizeNetFetchTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
       const result = await withAbortSignal(
         this.requestKernelNetFetch(
@@ -4715,7 +4720,7 @@ export class Process extends Host<Env> {
       return await executeCodeMode(
         this.env,
         args.code,
-        (call, toolArgs) => this.executeCodeModeCommandHostCall(call, toolArgs),
+        (call, toolArgs) => this.executeCodeModeSyscall(null, call, toolArgs),
         {
           defaultTarget: normalizeOptionalString(args.target),
           defaultCwd: normalizeOptionalString(args.cwd),
@@ -4757,11 +4762,14 @@ export class Process extends Host<Env> {
       const result = await executeCodeMode(
         this.env,
         args.code,
-        (call, toolArgs) => this.executeCodeModeHostCall(
-          runId,
+        (call, toolArgs) => this.executeCodeModeSyscall(
+          {
+            runId,
+            approvalPolicy,
+            capabilities: this.currentRun?.config?.capabilities ?? [],
+          },
           call,
           toolArgs,
-          approvalPolicy,
         ),
         {
           mcpToolBindings: await this.getCodeModeMcpToolBindings(),
@@ -4785,177 +4793,67 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async executeCodeModeHostCall(
-    runId: string,
-    call: CodeModeHostCall,
-    args: Record<string, unknown>,
-    approvalPolicy: ToolApprovalPolicy,
-  ): Promise<unknown> {
-    if (call === NET_FETCH) {
-      return this.executeCodeModeFetch(runId, args, approvalPolicy);
-    }
-    return this.executeCodeModeSyscall(runId, call, args, approvalPolicy);
-  }
-
-  private async executeCodeModeCommandHostCall(
-    call: CodeModeHostCall,
-    args: Record<string, unknown>,
-  ): Promise<unknown> {
-    if (call === NET_FETCH) {
-      await this.requireCodeModeCapability(null, NET_FETCH);
-      return this.performCodeModeFetch(args);
-    }
-    return this.executeCodeModeCommandSyscall(call, args);
-  }
-
-  private async executeCodeModeFetch(
-    runId: string,
-    args: Record<string, unknown>,
-    approvalPolicy: ToolApprovalPolicy,
-  ): Promise<unknown> {
-    if (this.handleRunStopped(runId)) {
-      throw new Error("Run stopped before CodeMode fetch completed");
-    }
-    await this.requireCodeModeCapability(runId, NET_FETCH);
-
-    const approval = resolveToolApproval(approvalPolicy, NET_FETCH, args);
-
-    if (approval.action === "deny") {
-      throw new Error(`Tool execution denied by policy: ${NET_FETCH}`);
-    }
-
-    if (approval.action === "ask") {
-      if (!this.interactive) {
-        throw new Error(
-          `Tool execution requires interactive approval, which is unavailable for this process: ${NET_FETCH}`,
-        );
-      }
-      const approved = await this.waitForCodeModeApproval(
-        runId,
-        `codemode-${crypto.randomUUID()}`,
-        "Fetch",
-        NET_FETCH,
-        args,
-      );
-      if (!approved) {
-        throw new Error(`Tool execution was not approved: ${NET_FETCH}`);
-      }
-    }
-
-    if (this.handleRunStopped(runId)) {
-      throw new Error("Run stopped before CodeMode fetch completed");
-    }
-
-    const output = await this.performCodeModeFetch(args);
-
-    if (this.handleRunStopped(runId)) {
-      throw new Error("Run stopped before CodeMode fetch completed");
-    }
-    return output;
-  }
-
-  private async performCodeModeFetch(args: Record<string, unknown>): Promise<unknown> {
-    return performCodeModeFetch(args);
-  }
-
-  private async requireCodeModeCapability(runId: string | null, capability: string): Promise<void> {
-    const capabilities = await this.resolveCodeModeCapabilities(runId);
-    if (!hasCapability(capabilities, capability)) {
-      throw new Error(`Permission denied: ${capability}`);
-    }
-  }
-
-  private async resolveCodeModeCapabilities(runId: string | null): Promise<string[]> {
-    const run = runId !== null && this.currentRun?.runId === runId
-      ? this.currentRun
-      : null;
-    if (run?.config?.capabilities) {
-      return run.config.capabilities;
-    }
-
-    const config = await this.resolveAiConfig();
-    return config.capabilities;
-  }
-
   private async executeCodeModeSyscall(
-    runId: string,
+    context: {
+      runId: string;
+      approvalPolicy: ToolApprovalPolicy;
+      capabilities: string[];
+    } | null,
     call: SyscallName,
     args: Record<string, unknown>,
-    approvalPolicy: ToolApprovalPolicy,
   ): Promise<unknown> {
-    if (this.handleRunStopped(runId)) {
+    if (context && this.handleRunStopped(context.runId)) {
       throw new Error("Run stopped before CodeMode tool execution completed");
     }
 
     const toolCallId = `codemode-${crypto.randomUUID()}`;
-    const toolName = SYSCALL_TOOL_NAMES[call] ?? call;
     const prepared = this.prepareToolArgs(call, args);
     if (prepared.missingShellSessionTarget) {
       throw new Error(UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);
     }
     const toolArgs = asPlainRecord(prepared.args) ?? args;
-    const approval = resolveToolApproval(approvalPolicy, call, toolArgs);
 
-    if (approval.action === "deny") {
-      throw new Error(`Tool execution denied by policy: ${call}`);
-    }
-
-    if (approval.action === "ask") {
-      if (!this.interactive) {
-        throw new Error(
-          `Tool execution requires interactive approval, which is unavailable for this process: ${call}`,
+    if (context) {
+      const approval = resolveToolApproval(context.approvalPolicy, call, toolArgs);
+      if (approval.action === "deny") {
+        throw new Error(`Tool execution denied by policy: ${call}`);
+      }
+      if (approval.action === "ask") {
+        if (!hasCapability(context.capabilities, call)) {
+          throw new Error(`Permission denied: ${call}`);
+        }
+        if (!this.interactive) {
+          throw new Error(
+            `Tool execution requires interactive approval, which is unavailable for this process: ${call}`,
+          );
+        }
+        const approved = await this.waitForCodeModeApproval(
+          context.runId,
+          toolCallId,
+          SYSCALL_TOOL_NAMES[call] ?? call,
+          call,
+          toolArgs,
         );
-      }
-      const approved = await this.waitForCodeModeApproval(
-        runId,
-        toolCallId,
-        toolName,
-        call,
-        toolArgs,
-      );
-      if (!approved) {
-        throw new Error(`Tool execution was not approved: ${call}`);
+        if (!approved) {
+          throw new Error(`Tool execution was not approved: ${call}`);
+        }
       }
     }
 
-    if (this.handleRunStopped(runId)) {
+    if (context && this.handleRunStopped(context.runId)) {
       throw new Error("Run stopped before CodeMode tool execution completed");
     }
 
     const response = await this.dispatchCodeModeSyscall(
-      runId,
+      context?.runId ?? null,
       toolCallId,
       call,
       toolArgs,
     );
 
-    if (this.handleRunStopped(runId)) {
+    if (context && this.handleRunStopped(context.runId)) {
       throw new Error("Run stopped before CodeMode tool execution completed");
     }
-
-    if (response.ok) {
-      return response.data ?? null;
-    }
-
-    throw new Error(response.error.message);
-  }
-
-  private async executeCodeModeCommandSyscall(
-    call: SyscallName,
-    args: Record<string, unknown>,
-  ): Promise<unknown> {
-    const id = `codemode-${crypto.randomUUID()}`;
-    const prepared = this.prepareToolArgs(call, args);
-    if (prepared.missingShellSessionTarget) {
-      throw new Error(UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);
-    }
-    const toolArgs = asPlainRecord(prepared.args) ?? args;
-    const response = await this.dispatchCodeModeSyscall(
-      null,
-      id,
-      call,
-      toolArgs,
-    );
 
     if (response.ok) {
       return response.data ?? null;

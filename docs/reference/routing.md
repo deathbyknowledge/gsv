@@ -27,7 +27,7 @@ All requests use the same frame shape:
 
 The dispatcher first checks `args.target`. If `target` is omitted or set to `gsv`, the syscall is handled natively by the Kernel. If `target` names a connected device and the syscall is routable, the Kernel forwards it to that device.
 
-Only `fs.*` and `shell.exec` support device routing. Other domains such as `sys.*`, `proc.*`, `pkg.*`, `repo.*`, `adapter.*`, and `notification.*` are kernel-internal.
+The `fs.*`, `shell.*`, and `net.*` domains support device routing. Other domains such as `sys.*`, `proc.*`, `pkg.*`, `repo.*`, `adapter.*`, and `notification.*` are kernel-internal.
 
 ```json
 { "path": "/etc/passwd", "target": "gsv" }
@@ -56,11 +56,11 @@ preventing long-running commands from depending on one in-flight route.
 Process DO executes it locally with the Worker Loader instead of routing it
 through the Kernel dispatcher. The manual `codemode.run` syscall is public and
 kernel-forwarded to a Process DO, which uses the same executor. CodeMode's
-in-block `shell(...)` and `fs.*(...)` helpers call back into the Process, which
-then dispatches normal `shell.exec` and `fs.*` request frames through the
-Kernel. That means nested CodeMode calls still use the same device routing,
-approval policy for agent tool calls, async response, and shell session behavior
-as direct model tool calls.
+in-block `shell(...)`, `fs.*(...)`, and `fetch(...)` helpers call back into the
+Process, which dispatches normal `shell.exec`, `fs.*`, and `net.fetch` request
+frames through the Kernel. Nested calls therefore use the same capabilities,
+device routing, async responses, shell sessions, and agent approval policy as
+direct tool calls.
 
 ## Process Routing
 

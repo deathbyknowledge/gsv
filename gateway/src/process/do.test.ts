@@ -2745,6 +2745,7 @@ describe("Process DO — mechanical", () => {
             status: 200,
             statusText: "OK",
             headers: { "content-type": "text/event-stream" },
+            redirected: false,
             bodyBase64: btoa(body),
             bodyText: body,
             bodyBytes: body.length,
@@ -6186,7 +6187,7 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         const approvals: Array<{ call: string; args: Record<string, unknown> }> = [];
-        let performedFetch = false;
+        let dispatched = false;
 
         process.currentRun = {
           runId: "run-codemode-fetch-approval",
@@ -6206,21 +6207,24 @@ describe("Process DO — mechanical", () => {
           approvals.push({ call, args });
           return false;
         };
-        process.performCodeModeFetch = async () => {
-          performedFetch = true;
-          return { status: 200 };
+        process.dispatchCodeModeSyscall = async () => {
+          dispatched = true;
+          throw new Error("unexpected dispatch");
         };
 
-        await expect(process.executeCodeModeFetch(
-          "run-codemode-fetch-approval",
+        await expect(process.executeCodeModeSyscall(
+          {
+            runId: "run-codemode-fetch-approval",
+            approvalPolicy: process.currentRun.approvalPolicy,
+            capabilities: ["net.fetch"],
+          },
+          "net.fetch",
           {
             url: "https://example.com/upload",
             method: "POST",
-            headers: [],
+            headers: {},
             bodyBase64: btoa("secret"),
           },
-          process.currentRun.approvalPolicy,
-          "default",
         )).rejects.toThrow("Tool execution was not approved: net.fetch");
 
         expect(approvals).toEqual([
@@ -6229,59 +6233,53 @@ describe("Process DO — mechanical", () => {
             args: {
               url: "https://example.com/upload",
               method: "POST",
-              headers: [],
+              headers: {},
               bodyBase64: btoa("secret"),
             },
           },
         ]);
-        expect(performedFetch).toBe(false);
+        expect(dispatched).toBe(false);
       });
     });
 
-    it("rejects CodeMode fetches without net.fetch capability", async () => {
-      const pid = "mech-codemode-fetch-capability";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
+    it("rejects unavailable CodeMode syscalls before approval", async () => {
+      const stub = await initProcess("mech-codemode-fetch-capability", ROOT_IDENTITY);
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         let requestedApproval = false;
-        let performedFetch = false;
-
+        let dispatched = false;
         process.currentRun = {
           runId: "run-codemode-fetch-capability",
           conversationId: "default",
-          config: { capabilities: ["codemode.*"] },
-          approvalPolicy: {
-            default: "auto",
-            rules: [],
-          },
         };
         process.waitForCodeModeApproval = async () => {
           requestedApproval = true;
           return true;
         };
-        process.performCodeModeFetch = async () => {
-          performedFetch = true;
-          return { status: 200 };
+        process.dispatchCodeModeSyscall = async () => {
+          dispatched = true;
         };
 
-        await expect(process.executeCodeModeFetch(
-          "run-codemode-fetch-capability",
+        await expect(process.executeCodeModeSyscall(
           {
-            url: "https://example.com/",
-            method: "GET",
-            headers: [],
+            runId: "run-codemode-fetch-capability",
+            approvalPolicy: {
+              default: "ask",
+              rules: [],
+            },
+            capabilities: ["codemode.*"],
           },
-          process.currentRun.approvalPolicy,
-          "default",
+          "net.fetch",
+          { url: "https://example.com/" },
         )).rejects.toThrow("Permission denied: net.fetch");
 
         expect(requestedApproval).toBe(false);
-        expect(performedFetch).toBe(false);
+        expect(dispatched).toBe(false);
       });
     });
 
-    it("does not emit nested CodeMode events after the run stops", async () => {
+    it("ignores a nested CodeMode result after the run stops", async () => {
       const pid = "mech-codemode-fetch-stopped-after-fetch";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -6302,18 +6300,26 @@ describe("Process DO — mechanical", () => {
           stopChecks += 1;
           return stopChecks >= 3;
         };
-        process.performCodeModeFetch = async () => ({ status: 200 });
+        process.dispatchCodeModeSyscall = async () => ({
+          type: "res",
+          id: "codemode-result",
+          ok: true,
+          data: { status: 200 },
+        });
 
-        await expect(process.executeCodeModeFetch(
-          "run-codemode-fetch-stopped-after-fetch",
+        await expect(process.executeCodeModeSyscall(
+          {
+            runId: "run-codemode-fetch-stopped-after-fetch",
+            approvalPolicy: process.currentRun.approvalPolicy,
+            capabilities: ["net.fetch"],
+          },
+          "net.fetch",
           {
             url: "https://example.com/",
             method: "GET",
-            headers: [],
+            headers: {},
           },
-          process.currentRun.approvalPolicy,
-          "default",
-        )).rejects.toThrow("Run stopped before CodeMode fetch completed");
+        )).rejects.toThrow("Run stopped before CodeMode tool execution completed");
       });
     });
 
@@ -6336,12 +6342,6 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        let performedFetch = false;
-        process.performCodeModeFetch = async () => {
-          performedFetch = true;
-          return { status: 200 };
-        };
-
         const result = await process.handleCodeModeRun({
           code: "const response = await fetch('https://example.com/'); return response.status;",
         });
@@ -6350,7 +6350,6 @@ describe("Process DO — mechanical", () => {
           status: "failed",
           error: expect.stringContaining("Permission denied: net.fetch"),
         });
-        expect(performedFetch).toBe(false);
       });
     });
 

@@ -3,10 +3,14 @@ use crate::tools::Tool;
 use async_trait::async_trait;
 use base64::Engine;
 use futures_util::StreamExt;
-use reqwest::{Method, StatusCode};
+use reqwest::{redirect::Policy, Method, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
@@ -33,7 +37,17 @@ struct NetFetchArgs {
     #[serde(default)]
     body_base64: Option<String>,
     #[serde(default)]
+    redirect: Option<NetFetchRedirect>,
+    #[serde(default)]
     timeout_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum NetFetchRedirect {
+    Follow,
+    Error,
+    Manual,
 }
 
 #[async_trait]
@@ -53,6 +67,10 @@ impl Tool for NetFetchTool {
                     },
                     "body": { "type": "string" },
                     "bodyBase64": { "type": "string" },
+                    "redirect": {
+                        "type": "string",
+                        "enum": ["follow", "error", "manual"]
+                    },
                     "timeoutMs": { "type": "number" }
                 },
                 "required": ["url"]
@@ -77,8 +95,25 @@ impl Tool for NetFetchTool {
             .map_err(|e| format!("Invalid method: {}", e))?;
         let should_read_body = method != Method::HEAD;
         let timeout_ms = args.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).max(1);
+        let redirect = args.redirect.unwrap_or(NetFetchRedirect::Follow);
+        let redirected = Arc::new(AtomicBool::new(false));
+        let redirect_policy = match redirect {
+            NetFetchRedirect::Follow => {
+                let redirected = Arc::clone(&redirected);
+                Policy::custom(move |attempt| {
+                    redirected.store(true, Ordering::Relaxed);
+                    if attempt.previous().len() > 20 {
+                        attempt.error("too many redirects")
+                    } else {
+                        attempt.follow()
+                    }
+                })
+            }
+            NetFetchRedirect::Error | NetFetchRedirect::Manual => Policy::none(),
+        };
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(timeout_ms))
+            .redirect(redirect_policy)
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
@@ -101,6 +136,9 @@ impl Tool for NetFetchTool {
             .await
             .map_err(|e| format!("HTTP request failed: {}", e))?;
         let status = response.status();
+        if matches!(redirect, NetFetchRedirect::Error) && is_redirect_status(status) {
+            return Err("net.fetch encountered a redirect with redirect mode error".to_string());
+        }
         let final_url = response.url().to_string();
         let mut headers = serde_json::Map::new();
         for (key, value) in response.headers().iter() {
@@ -120,6 +158,7 @@ impl Tool for NetFetchTool {
             "status": status.as_u16(),
             "statusText": status.canonical_reason().unwrap_or(""),
             "headers": headers,
+            "redirected": redirected.load(Ordering::Relaxed),
             "bodyBase64": body_base64,
             "bodyText": body_text,
             "bodyBytes": body.len(),
@@ -166,6 +205,10 @@ fn is_null_body_status(status: StatusCode) -> bool {
         || status == StatusCode::NOT_MODIFIED
 }
 
+fn is_redirect_status(status: StatusCode) -> bool {
+    matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
+}
+
 fn format_response_size_error(actual_bytes: u64, max_bytes: usize) -> String {
     format!(
         "Response body exceeds limit ({} bytes, max {})",
@@ -179,6 +222,9 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+
+    const REDIRECT_RESPONSE: &[u8] =
+        b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
     #[tokio::test]
     async fn allows_head_response_with_large_content_length() {
@@ -244,6 +290,56 @@ mod tests {
         assert_eq!(error, "Response body exceeds limit (4 bytes, max 3)");
     }
 
+    #[tokio::test]
+    async fn returns_redirect_responses_in_manual_mode() {
+        let (url, server) = serve_once(REDIRECT_RESPONSE.to_vec());
+
+        let result = NetFetchTool::new()
+            .execute(json!({ "url": url, "redirect": "manual" }))
+            .await
+            .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(result.get("status").and_then(Value::as_u64), Some(302));
+        assert_eq!(
+            result.get("redirected").and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn follows_redirects_and_marks_the_response() {
+        let (url, server) = serve_redirect();
+
+        let result = NetFetchTool::new()
+            .execute(json!({ "url": url }))
+            .await
+            .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(result.get("status").and_then(Value::as_u64), Some(200));
+        assert_eq!(
+            result.get("redirected").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_redirect_responses_in_error_mode() {
+        let (url, server) = serve_once(REDIRECT_RESPONSE.to_vec());
+
+        let error = NetFetchTool::new()
+            .execute(json!({ "url": url, "redirect": "error" }))
+            .await
+            .unwrap_err();
+        server.join().unwrap();
+
+        assert_eq!(
+            error,
+            "net.fetch encountered a redirect with redirect mode error"
+        );
+    }
+
     fn serve_once(response: Vec<u8>) -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -252,6 +348,23 @@ mod tests {
             let mut request = [0_u8; 4096];
             let _ = stream.read(&mut request);
             stream.write_all(&response).unwrap();
+        });
+        (format!("http://{}", addr), handle)
+    }
+
+    fn serve_redirect() -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            for response in [
+                REDIRECT_RESPONSE,
+                b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 4096];
+                let _ = stream.read(&mut request);
+                stream.write_all(response).unwrap();
+            }
         });
         (format!("http://{}", addr), handle)
     }

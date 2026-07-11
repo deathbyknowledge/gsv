@@ -348,6 +348,7 @@ describe("Kernel process device requests", () => {
       status: 204,
       statusText: "No Content",
       headers: {},
+      redirected: false,
       bodyBase64: "",
       bodyBytes: 0,
     }));
