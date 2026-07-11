@@ -12,6 +12,7 @@ import {
   buildBinaryFrame,
   parseBinaryFrame,
   type BinaryFrame,
+  type BinaryFrameDescriptor,
 } from "./protocol/binary-frame";
 
 type TimerHandle = ReturnType<typeof globalThis.setTimeout>;
@@ -28,6 +29,7 @@ export type GsvRequestFrame<S extends string = string> = {
   id: string;
   call: S;
   args?: unknown;
+  body?: BinaryFrameDescriptor;
 };
 
 export type GsvResponseFrame<T = unknown> =
@@ -36,6 +38,7 @@ export type GsvResponseFrame<T = unknown> =
       id: string;
       ok: true;
       data?: T;
+      body?: BinaryFrameDescriptor;
     }
   | {
       type: "res";
@@ -54,7 +57,7 @@ export type GsvSignalFrame = {
 export type GsvFrame = GsvRequestFrame | GsvResponseFrame | GsvSignalFrame;
 
 type PendingRequest = {
-  resolve: (value: unknown) => void;
+  resolve: (value: GsvResponse<unknown>) => void;
   reject: (error: Error) => void;
   timeoutId: TimerHandle;
   call: string;
@@ -122,6 +125,20 @@ export type GsvBinarySource =
   | ReadableStream<Uint8Array>
   | AsyncIterable<Uint8Array | ArrayBuffer | ArrayBufferView>;
 
+export type GsvBody = {
+  stream: ReadableStream<Uint8Array>;
+  length?: number;
+};
+
+export type GsvRequestOptions = {
+  body?: GsvBody;
+};
+
+export type GsvResponse<T = unknown> = {
+  data: T;
+  body?: GsvBody;
+};
+
 export type GsvBinaryTransport = {
   sendFrame(streamId: number, flags: number, payload?: Uint8Array): void;
   sendError(streamId: number, error: string | Error): void;
@@ -137,7 +154,8 @@ export type GsvBinaryClientOptions = {
 
 export type GsvInboundRequestHandler = (
   frame: GsvRequestFrame,
-) => Promise<unknown> | unknown;
+  body?: GsvBody,
+) => Promise<GsvResponse> | GsvResponse;
 
 export type GsvDriverPattern = SyscallName | `${string}.*`;
 
@@ -145,6 +163,7 @@ export type GsvDriverRequest<S extends string = string> = {
   id: string;
   call: S;
   args: S extends SyscallName ? ArgsOf<S> : unknown;
+  body?: GsvBody;
   raw: GsvRequestFrame<S>;
 };
 
@@ -159,7 +178,8 @@ export type GsvDriverContext = {
 export type GsvDriverHandler<S extends string = string> = (
   request: GsvDriverRequest<S>,
   context: GsvDriverContext,
-) => Promise<S extends SyscallName ? ResultOf<S> : unknown> | (S extends SyscallName ? ResultOf<S> : unknown);
+) => Promise<GsvResponse<S extends SyscallName ? ResultOf<S> : unknown>>
+  | GsvResponse<S extends SyscallName ? ResultOf<S> : unknown>;
 
 export type GsvDriverOptions = {
   deviceId?: string;
@@ -437,6 +457,7 @@ export class GSVClient {
   private pendingBinaryStreams = new Map<number, PendingBinaryStream>();
   private queuedBinaryFrames = new Map<number, QueuedBinaryFrame[]>();
   private queuedBinaryBytes = 0;
+  private nextBinaryStreamId = 1;
   private inboundRequestHandler: GsvInboundRequestHandler | null = null;
   private signalListeners = new Set<(signal: string, payload: unknown) => void>();
   private statusListeners = new Set<(status: GsvClientStatus) => void>();
@@ -470,7 +491,12 @@ export class GSVClient {
     this.binaryMaxBufferedBytes = binary?.maxBufferedBytes ?? DEFAULT_BINARY_MAX_BUFFERED_BYTES;
     this.binaryChunkSize = binary?.chunkSize ?? DEFAULT_BINARY_CHUNK_SIZE;
     this.call = (async (call: string, args: unknown = {}) => {
-      return await this.request(call, args);
+      const response = await this.request(call, args);
+      if (response.body) {
+        void response.body.stream.cancel();
+        throw new Error(`${call} returned a body; use client.request()`);
+      }
+      return response.data;
     }) as GsvClientCall;
     this.binary = {
       sendFrame: (streamId, flags, payload) => this.sendBinaryFrame(streamId, flags, payload),
@@ -587,7 +613,7 @@ export class GSVClient {
 
     let connectResult: ConnectResult;
     try {
-      connectResult = await this.request("sys.connect", {
+      connectResult = (await this.request("sys.connect", {
         protocol: 1,
         client: merged.client,
         ...(merged.driver ? { driver: merged.driver } : {}),
@@ -595,7 +621,7 @@ export class GSVClient {
           username,
           ...(token ? { token } : { password }),
         },
-      }) as ConnectResult;
+      })).data as ConnectResult;
     } catch (error) {
       if (this.socketEpoch === socketEpoch) {
         this.disconnect();
@@ -642,6 +668,28 @@ export class GSVClient {
 
   close(): void {
     this.disconnect();
+  }
+
+  async request<S extends SyscallName>(
+    call: S,
+    args: ArgsOf<S>,
+    options?: GsvRequestOptions,
+  ): Promise<GsvResponse<ResultOf<S>>>;
+  async request<T = unknown>(
+    call: string,
+    args?: unknown,
+    options?: GsvRequestOptions,
+  ): Promise<GsvResponse<T>>;
+  async request<T = unknown>(
+    call: string,
+    args: unknown = {},
+    options: GsvRequestOptions = {},
+  ): Promise<GsvResponse<T>> {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WEBSOCKET_OPEN) {
+      throw new Error("Not connected");
+    }
+    return await this.requestFrame(socket, call, args, options) as GsvResponse<T>;
   }
 
   async requestOnce<S extends SyscallName>(
@@ -772,14 +820,25 @@ export class GSVClient {
     return socket;
   }
 
-  private request(call: string, args: unknown): Promise<unknown> {
-    const socket = this.socket;
-    if (!socket || socket.readyState !== WEBSOCKET_OPEN) {
-      throw new Error("Not connected");
-    }
-
+  private requestFrame(
+    socket: WebSocket,
+    call: string,
+    args: unknown,
+    options: GsvRequestOptions = {},
+  ): Promise<GsvResponse<unknown>> {
     const id = makeId();
-    const frame: GsvRequestFrame = { type: "req", id, call, args };
+    const body = options.body;
+    assertBodyLength(body?.length);
+    const streamId = body ? this.allocateBinaryStreamId() : undefined;
+    const frame: GsvRequestFrame = {
+      type: "req",
+      id,
+      call,
+      args,
+      ...(body && streamId
+        ? { body: { streamId, ...(body.length === undefined ? {} : { length: body.length }) } }
+        : {}),
+    };
     const timeoutMs = this.requestTimeoutMs(call);
 
     return new Promise((resolve, reject) => {
@@ -797,6 +856,17 @@ export class GSVClient {
 
       try {
         socket.send(JSON.stringify(frame));
+        if (body && streamId) {
+          void this.sendBinaryStream(streamId, body.stream).catch((error) => {
+            const pending = this.pending.get(id);
+            if (!pending) {
+              return;
+            }
+            this.pending.delete(id);
+            globalThis.clearTimeout(pending.timeoutId);
+            pending.reject(error instanceof Error ? error : new Error("Failed to send request body"));
+          });
+        }
       } catch (error) {
         this.pending.delete(id);
         globalThis.clearTimeout(timeoutId);
@@ -908,7 +978,14 @@ export class GSVClient {
     globalThis.clearTimeout(pending.timeoutId);
 
     if (parsed.ok) {
-      pending.resolve(parsed.data ?? {});
+      try {
+        pending.resolve({
+          data: parsed.data ?? {},
+          ...(parsed.body ? { body: this.receiveFrameBody(parsed.body) } : {}),
+        });
+      } catch (error) {
+        pending.reject(error instanceof Error ? error : new Error("Invalid response body"));
+      }
       return;
     }
 
@@ -917,15 +994,47 @@ export class GSVClient {
 
   private async handleInboundRequest(frame: GsvRequestFrame): Promise<void> {
     const handler = this.inboundRequestHandler;
+    let body: GsvBody | undefined;
+    try {
+      body = frame.body ? this.receiveFrameBody(frame.body) : undefined;
+    } catch (error) {
+      this.sendJson(errorFrame(frame.id, 400, errorMessage(error, "Invalid request body")));
+      return;
+    }
     if (!handler) {
+      void body?.stream.cancel();
       this.sendJson(errorFrame(frame.id, 503, "No GSV request handler registered"));
       return;
     }
 
+    let responseStarted = false;
     try {
-      const data = await handler(frame);
-      this.sendJson({ type: "res", id: frame.id, ok: true, data });
+      const response = await handler(frame, body);
+      assertBodyLength(response.body?.length);
+      const streamId = response.body ? this.allocateBinaryStreamId() : undefined;
+      this.sendJson({
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: response.data,
+        ...(response.body && streamId
+          ? {
+              body: {
+                streamId,
+                ...(response.body.length === undefined ? {} : { length: response.body.length }),
+              },
+            }
+          : {}),
+      });
+      responseStarted = true;
+      if (response.body && streamId) {
+        await this.sendBinaryStream(streamId, response.body.stream);
+      }
     } catch (error) {
+      void body?.stream.cancel();
+      if (responseStarted) {
+        return;
+      }
       this.sendJson(errorFrame(
         frame.id,
         errorCode(error),
@@ -1013,6 +1122,23 @@ export class GSVClient {
         this.rejectBinaryStream(streamId, new Error(reason ?? "Binary transfer cancelled"));
       },
     };
+  }
+
+  private receiveFrameBody(descriptor: BinaryFrameDescriptor): GsvBody {
+    assertBinaryStreamId(descriptor.streamId);
+    assertBodyLength(descriptor.length);
+    return {
+      stream: this.receiveBinaryStream(descriptor.streamId, {
+        maxBytes: descriptor.length,
+      }).stream,
+      ...(descriptor.length === undefined ? {} : { length: descriptor.length }),
+    };
+  }
+
+  private allocateBinaryStreamId(): number {
+    const streamId = this.nextBinaryStreamId;
+    this.nextBinaryStreamId = streamId === 0xffffffff ? 1 : streamId + 1;
+    return streamId;
   }
 
   private handleBinaryMessage(data: ArrayBuffer): void {
@@ -1243,7 +1369,9 @@ export class GSVDriver {
 
   private ensureClientHandlers(): void {
     if (!this.unregisterRequestHandler) {
-      this.unregisterRequestHandler = this.client.onRequest(async (frame) => await this.handleRequest(frame));
+      this.unregisterRequestHandler = this.client.onRequest(
+        async (frame, body) => await this.handleRequest(frame, body),
+      );
     }
     if (!this.unregisterStatusHandler) {
       this.unregisterStatusHandler = this.client.onStatus((status) => {
@@ -1257,7 +1385,7 @@ export class GSVDriver {
     }
   }
 
-  private async handleRequest(frame: GsvRequestFrame): Promise<unknown> {
+  private async handleRequest(frame: GsvRequestFrame, body?: GsvBody): Promise<GsvResponse> {
     const handler = this.findHandler(frame.call);
     if (!handler) {
       throw new GsvRequestError(404, `Driver does not implement ${frame.call}`);
@@ -1279,6 +1407,7 @@ export class GSVDriver {
       id: frame.id,
       call: frame.call,
       args: (frame.args ?? {}) as never,
+      body,
       raw: frame,
     }, context);
   }
@@ -1515,6 +1644,12 @@ function assertBinaryStreamId(streamId: number): void {
 function assertPositiveInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${label} must be a positive integer`);
+  }
+}
+
+function assertBodyLength(length: number | undefined): void {
+  if (length !== undefined && (!Number.isSafeInteger(length) || length < 0)) {
+    throw new Error(`Invalid body length: ${length}`);
   }
 }
 

@@ -10,6 +10,11 @@ export type BinaryFrame = {
   payload: Uint8Array;
 };
 
+export type BinaryFrameDescriptor = {
+  streamId: number;
+  length?: number;
+};
+
 export function buildBinaryFrame(
   streamId: number,
   flags: number,

@@ -13,6 +13,7 @@
     "build:types": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build",
+    "test": "npm run build && node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "exports": {

@@ -20,7 +20,7 @@ export function createBrowserTargetDriver(
   const shell = new BrowserTargetShell(fs, createBrowserCommands());
 
   return {
-    async handle(request, context): Promise<unknown> {
+    async handle(request, context): Promise<{ data: unknown }> {
       const startedAt = Date.now();
       const baseActivity = activityForFrame(request);
       try {
@@ -45,7 +45,7 @@ export function createBrowserTargetDriver(
           status: statusForResult(result),
           durationMs: Date.now() - startedAt,
         });
-        return result;
+        return { data: result };
       } catch (error) {
         observeActivity?.({
           kind: "error",
