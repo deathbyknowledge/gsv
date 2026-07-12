@@ -3089,6 +3089,7 @@ export class Process extends Host<Env> {
     let nextRunId: string | null = null;
     let wakeRunId: string | null = null;
     const releaseLifecycle = await this.acquireLifecycleTransition();
+    const timestamp = Date.now();
     try {
       if (!this.store.getValue("pid") || !this.store.getValue("identity")) {
         return;
@@ -3117,6 +3118,7 @@ export class Process extends Host<Env> {
         }
         messageId = this.store.appendMessage("system", content, {
           conversationId: DEFAULT_CONVERSATION_ID,
+          createdAt: timestamp,
           ...(nextRunId ? { runId: nextRunId } : {}),
         });
 
@@ -3150,6 +3152,7 @@ export class Process extends Host<Env> {
       messageId,
       role: "system",
       content,
+      timestamp,
     }).catch((error) => {
       console.warn(`[Process] Failed to emit IPC message change for ${this.pid}:`, error);
     }));
@@ -3208,6 +3211,7 @@ export class Process extends Host<Env> {
     let nextRunId: string | null = null;
     let wakeRunId: string | null = null;
     const releaseLifecycle = await this.acquireLifecycleTransition();
+    const timestamp = Date.now();
     try {
       if (!this.isInitialized()) {
         return;
@@ -3217,6 +3221,7 @@ export class Process extends Host<Env> {
       this.ctx.storage.transactionSync(() => {
         messageId = this.store.appendMessage("system", content, {
           conversationId,
+          createdAt: timestamp,
           ...(nextRunId ? { runId: nextRunId } : {}),
         });
         if (!currentRun) {
@@ -3243,6 +3248,7 @@ export class Process extends Host<Env> {
       messageId,
       role: "system",
       content,
+      timestamp,
     }));
     if (wakeRunId) {
       this.ctx.waitUntil(this.emitProcChanged(["queue"], {
