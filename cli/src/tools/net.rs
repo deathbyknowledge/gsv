@@ -426,6 +426,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dropping_fetch_closes_the_in_flight_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (request_started, started) = tokio::sync::oneshot::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            while !request.ends_with(b"\r\n\r\n") {
+                let count = stream.read(&mut chunk).unwrap();
+                request.extend_from_slice(&chunk[..count]);
+            }
+            request_started.send(()).unwrap();
+            assert_eq!(stream.read(&mut chunk).unwrap(), 0);
+        });
+        let request = tokio::spawn(async move {
+            NetFetchTool::new()
+                .execute(json!({ "url": format!("http://{}", addr) }))
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(2), started)
+            .await
+            .expect("request did not reach server")
+            .unwrap();
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
     async fn omits_bodies_for_null_body_statuses() {
         for (status, reason) in [
             (204, "No Content"),

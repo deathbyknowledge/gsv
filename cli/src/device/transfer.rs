@@ -237,20 +237,22 @@ impl BinaryFrameInbox {
         frame
     }
 
-    pub(super) fn discard(&self, stream_id: u32) {
+    pub(super) fn discard(&self, stream_id: u32) -> bool {
         let mut state = self.lock_state();
-        if let Some(queued) = state.frames.remove(&stream_id) {
+        let queued = state.frames.remove(&stream_id);
+        if let Some(queued) = &queued {
             state.buffered_bytes = state
                 .buffered_bytes
                 .saturating_sub(queued.iter().map(|frame| frame.payload.len()).sum());
             state.buffered_frames = state.buffered_frames.saturating_sub(queued.len());
         }
-        state.active.remove(&stream_id);
+        state.active.remove(&stream_id) || queued.is_some()
     }
 
     pub(super) fn cancel_incoming(&self, stream_id: u32, reason: &str) {
-        self.discard(stream_id);
-        self.send_cancel(stream_id, reason);
+        if self.discard(stream_id) {
+            self.send_cancel(stream_id, reason);
+        }
     }
 
     fn send_cancel(&self, stream_id: u32, reason: &str) {
@@ -261,6 +263,19 @@ impl BinaryFrameInbox {
             send_frame(build_binary_frame(
                 stream_id,
                 BINARY_FRAME_CANCEL | BINARY_FRAME_END,
+                reason.as_bytes(),
+            ));
+        }
+    }
+
+    fn send_error(&self, stream_id: u32, reason: &str) {
+        if stream_id == 0 {
+            return;
+        }
+        if let Some(send_frame) = &self.send_frame {
+            send_frame(build_binary_frame(
+                stream_id,
+                BINARY_FRAME_ERROR | BINARY_FRAME_END,
                 reason.as_bytes(),
             ));
         }
@@ -309,6 +324,7 @@ pub(super) struct OutgoingBody {
     reader: Box<dyn AsyncRead + Send + Unpin>,
     source: String,
     cancellation: watch::Receiver<bool>,
+    finished: bool,
 }
 
 impl OutgoingBody {
@@ -329,6 +345,7 @@ impl OutgoingBody {
             reader: Box::new(reader),
             source,
             cancellation,
+            finished: false,
         }
     }
 
@@ -343,6 +360,7 @@ impl OutgoingBody {
             reader: body.reader,
             source: body.source,
             cancellation,
+            finished: false,
         }
     }
 
@@ -368,6 +386,7 @@ impl OutgoingBody {
                 _ = conn.send_binary(frame) => {}
             }
         }
+        self.finished = true;
         result
     }
 
@@ -460,6 +479,9 @@ impl OutgoingBody {
 impl Drop for OutgoingBody {
     fn drop(&mut self) {
         self.inbox.unregister_outgoing(self.stream_id);
+        if !self.finished {
+            self.inbox.send_error(self.stream_id, "Request cancelled");
+        }
     }
 }
 
@@ -610,6 +632,7 @@ async fn handle_receive(
     }
 
     let temp_path = transfer_temp_path(&path, body.stream_id);
+    let _temp_file = TempFileGuard(temp_path.clone());
     let mut file = tokio::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -664,12 +687,8 @@ async fn handle_receive(
     .await;
 
     drop(file);
-    if let Err(error) = receive_result {
-        let _ = tokio::fs::remove_file(&temp_path).await;
-        return Err(error);
-    }
+    receive_result?;
     if let Err(error) = tokio::fs::rename(&temp_path, &path).await {
-        let _ = tokio::fs::remove_file(&temp_path).await;
         return Err(format!("Failed to replace '{}': {}", path.display(), error));
     }
     stream_guard.complete();
@@ -704,12 +723,20 @@ fn transfer_temp_path(path: &Path, stream_id: u32) -> PathBuf {
     parent.join(format!(".{}.gsv-transfer-{}-{}", file_name, stream_id, now))
 }
 
+struct TempFileGuard(PathBuf);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         build_binary_frame, handle_receive, handle_send, parse_binary_frame, BinaryFrameInbox,
         FrameBodyDescriptor, OutgoingBody, TransferReceiveArgs, TransferSendArgs,
-        BINARY_FRAME_CANCEL, BINARY_FRAME_DATA, BINARY_FRAME_END,
+        BINARY_FRAME_CANCEL, BINARY_FRAME_DATA, BINARY_FRAME_END, BINARY_FRAME_ERROR,
     };
     use serde_json::json;
     use std::io::Cursor;
@@ -766,6 +793,27 @@ mod tests {
         assert_eq!(next_connection.allocate_outgoing_stream_id(), 1);
     }
 
+    #[test]
+    fn dropping_outgoing_body_errors_its_stream() {
+        let (inbox, sent) = recording_inbox();
+        let body = OutgoingBody::new(
+            &inbox,
+            Some(1),
+            None,
+            Cursor::new(vec![1]),
+            "response".to_string(),
+        );
+        let stream_id = body.stream_id;
+
+        drop(body);
+
+        let sent = sent.lock().unwrap();
+        let (actual_stream_id, flags, payload) = parse_binary_frame(&sent[0]).unwrap();
+        assert_eq!(actual_stream_id, stream_id);
+        assert_eq!(flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
+        assert_eq!(payload, b"Request cancelled");
+    }
+
     #[tokio::test]
     async fn read_body_collects_registered_frames() {
         let inbox = BinaryFrameInbox::new();
@@ -815,7 +863,7 @@ mod tests {
             "Request body exceeds limit (max 4 bytes)"
         );
 
-        assert_eq!(sent.lock().unwrap().len(), 2);
+        assert_eq!(sent.lock().unwrap().len(), 1);
 
         let body = FrameBodyDescriptor {
             stream_id: 18,
@@ -827,7 +875,7 @@ mod tests {
             .expect_err("read unexpectedly completed");
 
         let sent = sent.lock().unwrap();
-        assert_eq!(sent.len(), 3);
+        assert_eq!(sent.len(), 2);
         for frame in &*sent {
             assert_eq!(
                 parse_binary_frame(frame).unwrap().1,
@@ -1029,10 +1077,7 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("expected 4, got 3"));
-        assert_eq!(
-            parse_binary_frame(&sent.lock().unwrap()[0]).unwrap().1,
-            BINARY_FRAME_CANCEL | BINARY_FRAME_END
-        );
+        assert!(sent.lock().unwrap().is_empty());
         assert!(!workspace.join("destination.bin").exists());
         assert!(tokio::fs::read_dir(&workspace)
             .await
@@ -1042,6 +1087,57 @@ mod tests {
             .unwrap()
             .is_none());
 
+        tokio::fs::remove_dir_all(workspace).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelled_receive_removes_temp_file() {
+        let workspace = test_workspace("cancelled");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        let inbox = BinaryFrameInbox::new();
+        let body = FrameBodyDescriptor {
+            stream_id: 30,
+            length: Some(1),
+        };
+        inbox.register(Some(body));
+        let receive_workspace = workspace.clone();
+        let receive_inbox = inbox.clone();
+        let receive = tokio::spawn(async move {
+            handle_receive(
+                json!({ "path": "destination.bin" }),
+                Some(body),
+                &receive_workspace,
+                &receive_inbox,
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if tokio::fs::read_dir(&workspace)
+                    .await
+                    .unwrap()
+                    .next_entry()
+                    .await
+                    .unwrap()
+                    .is_some()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("transfer temp file was not created");
+
+        receive.abort();
+        assert!(receive.await.unwrap_err().is_cancelled());
+        assert!(tokio::fs::read_dir(&workspace)
+            .await
+            .unwrap()
+            .next_entry()
+            .await
+            .unwrap()
+            .is_none());
         tokio::fs::remove_dir_all(workspace).await.unwrap();
     }
 
@@ -1072,10 +1168,14 @@ mod tests {
             length: Some(3),
         }));
         inbox.cancel_incoming(37, "body ignored");
+        inbox.cancel_incoming(37, "duplicate cancellation");
 
-        let cancel = parse_binary_frame(&sent.lock().unwrap()[0]).unwrap();
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        let cancel = parse_binary_frame(&sent[0]).unwrap();
         assert_eq!(cancel.0, 37);
         assert_eq!(cancel.1, BINARY_FRAME_CANCEL | BINARY_FRAME_END);
+        drop(sent);
 
         inbox.push(build_binary_frame(37, BINARY_FRAME_DATA, &[1, 2, 3]));
         assert!(inbox.state.lock().unwrap().frames.is_empty());

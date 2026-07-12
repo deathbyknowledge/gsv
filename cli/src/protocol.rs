@@ -3,6 +3,7 @@ use serde_json::Value;
 
 pub const BINARY_FRAME_HEADER_BYTES: usize = 5;
 pub const PROTOCOL_VERSION: u32 = 2;
+pub const REQUEST_CANCEL_SIGNAL: &str = "request.cancel";
 pub const BINARY_FRAME_DATA: u8 = 1 << 0;
 pub const BINARY_FRAME_END: u8 = 1 << 1;
 pub const BINARY_FRAME_ERROR: u8 = 1 << 2;

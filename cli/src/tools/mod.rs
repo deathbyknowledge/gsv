@@ -24,6 +24,7 @@ use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::AsyncRead;
+use tokio_util::sync::CancellationToken;
 
 pub struct ToolBody {
     pub length: Option<u64>,
@@ -119,6 +120,15 @@ pub trait Tool: Send + Sync {
             ));
         }
         self.execute(args).await
+    }
+
+    async fn execute_with_body_cancellable(
+        &self,
+        args: Value,
+        body: Option<Vec<u8>>,
+        _cancellation: &CancellationToken,
+    ) -> Result<ToolOutput, String> {
+        self.execute_with_body(args, body).await
     }
 }
 
