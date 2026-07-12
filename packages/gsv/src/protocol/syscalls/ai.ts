@@ -146,6 +146,8 @@ export type AiThinkingContent = {
 
 export type AiImageContent = {
   type: "image";
+  // Model context may contain multiple images, so each block deliberately keeps
+  // its own base64 payload instead of using the single top-level frame body.
   data: string;
   mimeType: string;
 };
@@ -261,10 +263,8 @@ export type AiTextGenerateResult = {
 
 export type AiTranscriptionCreateArgs = {
   audio: {
-    data: string;
     mimeType: string;
     filename?: string;
-    size?: number;
   };
   language?: string;
   prompt?: string;
@@ -282,10 +282,8 @@ export type AiTranscriptionCreateResult = {
 
 export type AiImageReadArgs = {
   image: {
-    data: string;
     mimeType: string;
     filename?: string;
-    size?: number;
   };
   prompt?: string;
   model?: string;
@@ -310,7 +308,6 @@ export type AiImageGenerateArgs = {
 
 export type AiImageGenerateResult = {
   image: {
-    data: string;
     mimeType: string;
     size: number;
   };
@@ -334,7 +331,6 @@ export type AiSpeechCreateArgs = {
 
 export type AiSpeechCreateResult = {
   audio: {
-    data: string;
     mimeType: string;
     size: number;
   };

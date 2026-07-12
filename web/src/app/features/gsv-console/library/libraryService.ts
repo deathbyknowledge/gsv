@@ -29,8 +29,9 @@ import type {
   LibrarySavePageInput,
   LibraryWorkspaceState,
 } from "./libraryTypes";
+import { requestFsRead } from "../../../services/gateway/fsRead";
 
-type LibraryClient = Pick<GSVClient, "call">;
+type LibraryClient = Pick<GSVClient, "call" | "request">;
 
 type RepoNode =
   | { kind: "missing" }
@@ -316,19 +317,12 @@ export async function previewLibraryContent(
       };
     }
 
-    const source = await client.call("fs.read", { path }) as {
-      ok?: boolean;
-      error?: string;
-      path?: string;
-      content?: unknown;
-      files?: unknown;
-      directories?: unknown;
-    };
-    if (source.ok === false) {
+    const source = await requestFsRead(client, { path });
+    if (!source.ok) {
       return { ok: false, error: source.error || `Failed to read ${path}` };
     }
-    const sourcePath = typeof source.path === "string" ? source.path : path;
-    if (Array.isArray(source.files) || Array.isArray(source.directories)) {
+    const sourcePath = source.path;
+    if ("files" in source) {
       return {
         ok: true,
         kind: "source",
@@ -336,26 +330,21 @@ export async function previewLibraryContent(
         path: sourcePath,
         title,
         mode: "directory",
-        files: Array.isArray(source.files) ? source.files.filter(isString) : [],
-        directories: Array.isArray(source.directories) ? source.directories.filter(isString) : [],
+        files: source.files,
+        directories: source.directories,
       };
     }
-    if (Array.isArray(source.content)) {
-      const textItem = source.content.find((item): item is { type: "text"; text: string } => (
-        Boolean(item) && typeof item === "object" && (item as { type?: unknown }).type === "text"
-      ));
-      const imageItem = source.content.find((item): item is { type: "image"; data: string; mimeType: string } => (
-        Boolean(item) && typeof item === "object" && (item as { type?: unknown }).type === "image"
-      ));
+    if (source.kind === "image") {
+      const [description, image] = source.content;
       return {
         ok: true,
         kind: "source",
         target,
         path: sourcePath,
         title,
-        mode: imageItem ? "image" : "text",
-        text: textItem?.text ?? "",
-        image: imageItem ?? null,
+        mode: "image",
+        text: description.text,
+        image,
       };
     }
 
@@ -639,12 +628,8 @@ function inferPreviewMode(path: string, text: string): "markdown" | "text" {
   return "text";
 }
 
-function isString(value: unknown): value is string {
-  return typeof value === "string";
-}
-
-function stripReadLineNumbers(value: unknown): string {
-  return String(value ?? "")
+function stripReadLineNumbers(value: string): string {
+  return value
     .split("\n")
     .map((line) => line.replace(/^\s*\d+\t/, ""))
     .join("\n");

@@ -4,7 +4,13 @@ import { runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Process } from "./do";
 import { Kernel } from "../kernel/do";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import {
+  bodyFromBytes,
+  bodyFromText,
+  bodyToBytes,
+  bodyToText,
+  type ProcessIdentity,
+} from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/frames";
 import { getProcessByPid, getKernelPtr } from "../shared/utils";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
@@ -2712,9 +2718,14 @@ describe("Process DO — mechanical", () => {
         process.kernelRpc = async (call: string, args: any) => {
           throw new Error(`unexpected synchronous kernel syscall: ${call}`);
         };
-        process.requestKernelNetFetch = async (target: string, args: any, ttlMs?: number) => {
+        process.requestKernelNetFetch = async (
+          target: string,
+          args: any,
+          ttlMs?: number,
+          requestBody?: any,
+        ) => {
           deviceRequests.push({ target, call: "net.fetch", args, ttlMs });
-          const requestBody = atob(String(args.bodyBase64 ?? ""));
+          const requestText = requestBody ? await bodyToText(requestBody) : "";
           expect(target).toBe("linux-machine");
           expect(ttlMs).toBe(180000);
           expect(args).toMatchObject({
@@ -2722,7 +2733,7 @@ describe("Process DO — mechanical", () => {
             method: "POST",
             timeoutMs: 180000,
           });
-          expect(JSON.parse(requestBody)).toMatchObject({
+          expect(JSON.parse(requestText)).toMatchObject({
             model: "local-chat",
             stream: true,
           });
@@ -2740,15 +2751,18 @@ describe("Process DO — mechanical", () => {
             "data: [DONE]\n\n",
           ].join("");
           return {
+            type: "res",
+            id: "device-fetch",
             ok: true,
-            url: args.url,
-            status: 200,
-            statusText: "OK",
-            headers: { "content-type": "text/event-stream" },
-            redirected: false,
-            bodyBase64: btoa(body),
-            bodyText: body,
-            bodyBytes: body.length,
+            data: {
+              ok: true,
+              url: args.url,
+              status: 200,
+              statusText: "OK",
+              headers: { "content-type": "text/event-stream" },
+              redirected: false,
+            },
+            body: bodyFromText(body),
           };
         };
 
@@ -3096,13 +3110,23 @@ describe("Process DO — mechanical", () => {
 
         releaseDispatch();
         await ticking;
+        let lateBodyCancelled = false;
         await process.handleRes({
           type: "res",
           id: oldDispatchId,
           ok: true,
           data: { content: "late" },
+          body: {
+            stream: new ReadableStream({
+              cancel() {
+                lateBodyCancelled = true;
+              },
+            }),
+            length: 4,
+          },
         });
 
+        expect(lateBodyCancelled).toBe(true);
         expect(process.store.getResults("run-live-tools")).toEqual([]);
         expect(process.dispatchSyscall).toHaveBeenCalledTimes(1);
         expect(process.currentRun).toMatchObject({ runId: nextRunId });
@@ -3144,7 +3168,8 @@ describe("Process DO — mechanical", () => {
     it.each([false, true])(
       "keeps a newer user run authoritative when earlier media fails=%s",
       async (fails) => {
-        const stub = await initProcess(`mech-send-media-race-${fails}`, ROOT_IDENTITY);
+        const pid = `mech-send-media-race-${fails}`;
+        const stub = await initProcess(pid, ROOT_IDENTITY);
 
         await runInDurableObject(stub, async (instance: Process) => {
           const process = instance as any;
@@ -3167,10 +3192,14 @@ describe("Process DO — mechanical", () => {
             }
             return { ai: process.env.AI };
           });
+          const mediaKey = `var/media/0/${pid}/race.png`;
+          await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
+            httpMetadata: { contentType: "image/png" },
+          });
 
           const first = await process.handleProcSend({
             message: "first with media",
-            media: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+            media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
             origin: { kind: "client", connectionId: "client-1" },
           });
           await mediaStarted;
@@ -3215,10 +3244,14 @@ describe("Process DO — mechanical", () => {
         });
         process.resolveMediaProcessingOptions = vi.fn(async () => ({ ai: process.env.AI }));
         const prepareMedia = vi.spyOn(process, "prepareRunMedia");
+        const mediaKey = `var/media/0/${pid}/schedule.png`;
+        await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
+          httpMetadata: { contentType: "image/png" },
+        });
 
         const result = await process.handleProcSend({
           message: "attachment",
-          media: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+          media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
           origin: { kind: "client", connectionId: "client-1" },
         });
         await (prepareMedia.mock.results[0]?.value as Promise<void>);
@@ -3265,10 +3298,14 @@ describe("Process DO — mechanical", () => {
           return { ai: process.env.AI };
         });
         process.currentRun = { runId: "run-busy", conversationId: "default" };
+        const mediaKey = `var/media/0/${pid}/fifo.png`;
+        await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
+          httpMetadata: { contentType: "image/png" },
+        });
 
         const first = process.handleProcSend({
           message: "first process message",
-          media: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+          media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
           origin: { kind: "process", sourcePid: "child-1" },
         });
         await mediaStarted;
@@ -3293,17 +3330,25 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess(pid, ROOT_IDENTITY);
       let mediaKey = "";
 
+      const upload = (await stub.recvFrame({
+        ...makeReq("proc.media.write", {
+          type: "image",
+          mimeType: "image/png",
+          filename: "proof.png",
+        }),
+        body: bodyFromBytes(new Uint8Array([1, 2, 3])),
+      })) as ResponseFrame<"proc.media.write">;
+      if (!upload.ok) {
+        throw new Error(upload.error.message);
+      }
+      expect(upload.data).toMatchObject({ ok: true, media: { size: 3 } });
+      const uploadedMedia = upload.data?.ok ? upload.data.media : null;
+      expect(uploadedMedia).not.toBeNull();
+
       const res = (await stub.recvFrame(
         makeReq("proc.send", {
           message: "Describe this image.",
-          media: [
-            {
-              type: "image",
-              mimeType: "image/png",
-              data: "AQID",
-              filename: "proof.png",
-            },
-          ],
+          media: [uploadedMedia],
         }),
       )) as ResponseOkFrame;
 
@@ -3340,14 +3385,138 @@ describe("Process DO — mechanical", () => {
       });
 
       const read = (await stub.recvFrame(
-        makeReq("proc.media.read", { key: mediaKey, mimeType: "image/png" }),
+        makeReq("proc.media.read", { key: mediaKey }),
       )) as ResponseOkFrame;
       expect(read.ok).toBe(true);
       expect(read.data).toMatchObject({
         ok: true,
         key: mediaKey,
         mimeType: "image/png",
-        dataUrl: "data:image/png;base64,AQID",
+      });
+      expect(read.body && [...await bodyToBytes(read.body)]).toEqual([1, 2, 3]);
+
+      const referenced = (await stub.recvFrame(
+        makeReq("proc.media.delete", { key: mediaKey }),
+      )) as ResponseOkFrame;
+      expect(referenced.data).toEqual({
+        ok: false,
+        error: "media is referenced by process history",
+      });
+      expect(await env.STORAGE.head(mediaKey)).not.toBeNull();
+
+      const unusedUpload = (await stub.recvFrame({
+        ...makeReq("proc.media.write", {
+          type: "document",
+          mimeType: "application/octet-stream",
+        }),
+        body: bodyFromBytes(new Uint8Array([4, 5, 6])),
+      })) as ResponseOkFrame<"proc.media.write">;
+      const unusedKey = unusedUpload.data?.ok ? unusedUpload.data.media.key : "";
+      expect(unusedKey).toBeTruthy();
+      const deleted = (await stub.recvFrame(
+        makeReq("proc.media.delete", { key: unusedKey }),
+      )) as ResponseOkFrame;
+      expect(deleted.data).toEqual({ ok: true, key: unusedKey });
+      const deletedAgain = (await stub.recvFrame(
+        makeReq("proc.media.delete", { key: unusedKey }),
+      )) as ResponseOkFrame;
+      expect(deletedAgain.data).toEqual({ ok: true, key: unusedKey });
+      expect(await env.STORAGE.head(unusedKey)).toBeNull();
+
+      const outside = (await stub.recvFrame(
+        makeReq("proc.media.delete", { key: "var/media/0/another-process/file" }),
+      )) as ResponseOkFrame;
+      expect(outside.data).toEqual({ ok: false, error: "media key is outside this process" });
+      const withBody = (await stub.recvFrame({
+        ...makeReq("proc.media.delete", { key: unusedKey }),
+        body: bodyFromBytes(new Uint8Array()),
+      })) as ResponseOkFrame;
+      expect(withBody.data).toEqual({ ok: false, error: "proc.media.delete does not accept a body" });
+    });
+
+    it("requires the media body descriptor length", async () => {
+      const stub = await initProcess("mech-media-length", ROOT_IDENTITY);
+      const response = (await stub.recvFrame({
+        ...makeReq("proc.media.write", {
+          type: "image",
+          mimeType: "image/png",
+        }),
+        body: {
+          stream: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array([1, 2, 3]));
+              controller.close();
+            },
+          }),
+        },
+      })) as ResponseOkFrame;
+
+      expect(response.data).toEqual({
+        ok: false,
+        error: "proc.media.write requires an exact body length",
+      });
+    });
+
+    it("deletes an upload that finishes after a process reset", async () => {
+      const pid = "mech-media-reset-race";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        const objects = new Map<string, Uint8Array>();
+        let releasePut!: () => void;
+        let markPutStarted!: () => void;
+        const putBlocked = new Promise<void>((resolve) => {
+          releasePut = resolve;
+        });
+        const putStarted = new Promise<void>((resolve) => {
+          markPutStarted = resolve;
+        });
+        const deleteObject = vi.fn(async (key: string | string[]) => {
+          for (const item of Array.isArray(key) ? key : [key]) {
+            objects.delete(item);
+          }
+        });
+        process.env = {
+          ...originalEnv,
+          STORAGE: {
+            put: vi.fn(async (key: string, stream: ReadableStream<Uint8Array>) => {
+              markPutStarted();
+              await putBlocked;
+              const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+              objects.set(key, bytes);
+              return { key, size: bytes.byteLength };
+            }),
+            list: vi.fn(async ({ prefix }: { prefix: string }) => ({
+              objects: [...objects.entries()]
+                .filter(([key]) => key.startsWith(prefix))
+                .map(([key, bytes]) => ({ key, size: bytes.byteLength })),
+              truncated: false,
+            })),
+            delete: deleteObject,
+          },
+        };
+
+        try {
+          const writing = process.handleProcMediaWrite(
+            { type: "image", mimeType: "image/png" },
+            bodyFromBytes(new Uint8Array([1, 2, 3])),
+          );
+          await putStarted;
+          await process.handleProcReset();
+          releasePut();
+
+          await expect(writing).resolves.toEqual({
+            ok: false,
+            error: "Process reset during media upload",
+          });
+          expect(objects.size).toBe(0);
+          expect(deleteObject).toHaveBeenCalledWith(expect.stringContaining(`/0/${pid}/`));
+        } finally {
+          process.env = originalEnv;
+          releasePut();
+        }
       });
     });
 
@@ -7245,6 +7414,62 @@ describe("Process DO — mechanical", () => {
         ok: true,
         data: { content: "hello" },
       } as any);
+    });
+
+    it("materializes synchronous filesystem response bodies", async () => {
+      const pid = "mech-res-sync-body";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const originalRecvFrame = Kernel.prototype.recvFrame;
+      const recvSpy = vi.spyOn(Kernel.prototype as any, "recvFrame").mockImplementation(
+        async function (this: Kernel, processId: string, frame: any) {
+          if (frame?.type === "req" && frame.id === "dispatch-sync-body") {
+            return {
+              type: "res",
+              id: frame.id,
+              ok: true,
+              data: {
+                ok: true,
+                path: "/tmp/note.txt",
+                kind: "text",
+                contentType: "text/plain",
+                size: 5,
+                lines: 1,
+              },
+              body: bodyFromText("     1\thello"),
+            } as ResponseFrame;
+          }
+          return originalRecvFrame.call(this, processId, frame);
+        },
+      );
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          process.currentRun = { runId: "run-sync-body", conversationId: "default" };
+          process.store.register(
+            "dispatch-sync-body",
+            "call-sync-body",
+            "run-sync-body",
+            "fs.read",
+            { path: "/tmp/note.txt" },
+          );
+
+          await process.dispatchSyscall(
+            "run-sync-body",
+            "dispatch-sync-body",
+            "fs.read",
+            { path: "/tmp/note.txt" },
+          );
+
+          expect(process.store.getResults("run-sync-body")).toMatchObject([{
+            status: "completed",
+            result: { content: "     1\thello" },
+          }]);
+          process.currentRun = null;
+        });
+      } finally {
+        recvSpy.mockRestore();
+      }
     });
 
     it("does not continue the run until all tool calls in a batch are dispatched", async () => {

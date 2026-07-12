@@ -1,6 +1,7 @@
 import { getAgentByName } from "agents";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type {
+  BinaryBody,
   PackageAssemblerInterface,
   PackageAssemblyAnalysis,
   PackageAssemblyResponse,
@@ -173,12 +174,26 @@ export class KernelBinding extends WorkerEntrypoint<Env, KernelBindingProps> {
   }
 
   async request<S extends SyscallName>(call: S, args: ArgsOf<S>): Promise<ResultOf<S>> {
+    const response = await this.requestFrame(call, args);
+    if (response.body) {
+      await response.body.stream.cancel(`${call} returned a body`).catch(() => {});
+      throw new Error(`${call} returned a body; use requestFrame()`);
+    }
+    return response.data;
+  }
+
+  async requestFrame<S extends SyscallName>(
+    call: S,
+    args: ArgsOf<S>,
+    options: { body?: BinaryBody } = {},
+  ): Promise<{ data: ResultOf<S>; body?: BinaryBody }> {
     const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
     const frame: RequestFrame<S> = {
       type: "req",
       id: crypto.randomUUID(),
       call,
       args,
+      ...(options.body ? { body: options.body } : {}),
     };
 
     const response = await kernel.appRequest(this.getAppFrame(), frame as RequestFrame);
@@ -186,7 +201,10 @@ export class KernelBinding extends WorkerEntrypoint<Env, KernelBindingProps> {
       throw new Error(response.error.message);
     }
 
-    return response.data as ResultOf<S>;
+    return {
+      data: response.data as ResultOf<S>,
+      ...(response.body ? { body: response.body } : {}),
+    };
   }
 }
 

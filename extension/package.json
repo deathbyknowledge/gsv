@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test:run": "vitest run"
   },
   "dependencies": {
     "@humansandmachines/gsv": "file:../packages/gsv",
@@ -15,6 +16,7 @@
   "devDependencies": {
     "@types/chrome": "^0.1.34",
     "typescript": "^5.9.3",
-    "vite": "^8.0.0"
+    "vite": "^8.0.0",
+    "vitest": "^4.1.9"
   }
 }

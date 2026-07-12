@@ -10,9 +10,10 @@ use gsv::device_service;
 use gsv::kernel_client::{GatewayAuth, KernelClient};
 use gsv::logger;
 use gsv::protocol::{
-    DeviceExecEventParams, ErrorShape, Frame, RequestFrame, ResponseFrame, SignalFrame,
+    DeviceExecEventParams, ErrorShape, Frame, FrameBodyDescriptor, RequestFrame, ResponseFrame,
+    SignalFrame,
 };
-use gsv::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool};
+use gsv::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool, ToolOutput};
 use serde_json::json;
 use tracing::{error, info, info_span, warn, Instrument};
 
@@ -380,26 +381,34 @@ async fn handle_driver_request(
     {
         transfer_result
     } else if let Some(tool_name) = syscall_to_tool_name(call) {
-        execute_tool_by_name(tools, tool_name, args)
+        execute_tool_by_name(tools, call, tool_name, args, req.body, binary_inbox)
             .await
-            .map(|data| (data, None))
+            .map(|output| {
+                let body = output
+                    .body
+                    .map(|body| transfer::OutgoingBody::tool_body(binary_inbox, body));
+                (output.data, body)
+            })
     } else {
+        if let Some(body) = req.body {
+            binary_inbox.cancel_incoming(body.stream_id, "Unknown syscall");
+        }
         Err(format!("unknown syscall: {}", call))
     };
 
     let mut outgoing_body = None;
     let response = match result {
         Ok((data, body)) => {
+            let body_descriptor = body.as_ref().map(|body| body.descriptor());
             if call == "net.fetch" {
                 info!(
                     event = "net.fetch.ok",
                     request_id = %req.id,
                     status = ?data.get("status").and_then(|value| value.as_u64()),
                     ok = ?data.get("ok").and_then(|value| value.as_bool()),
-                    body_bytes = ?data.get("bodyBytes").and_then(|value| value.as_u64()),
+                    body_bytes = ?body_descriptor.and_then(|body| body.length),
                 );
             }
-            let body_descriptor = body.as_ref().map(|body| body.descriptor());
             outgoing_body = body;
             Frame::Res(ResponseFrame {
                 id: req.id.clone(),
@@ -491,15 +500,47 @@ fn redact_url_for_log(raw_url: &str) -> String {
 
 async fn execute_tool_by_name(
     tools: &[Box<dyn Tool>],
+    call: &str,
     name: &str,
     args: serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    for tool in tools {
-        if tool.definition().name == name {
-            return tool.execute(args).await;
+    body: Option<FrameBodyDescriptor>,
+    binary_inbox: &transfer::BinaryFrameInbox,
+) -> Result<ToolOutput, String> {
+    let Some(tool) = tools.iter().find(|tool| tool.definition().name == name) else {
+        if let Some(body) = body {
+            binary_inbox.cancel_incoming(body.stream_id, "Tool not found");
         }
+        return Err(format!("tool not found: {}", name));
+    };
+
+    let timeout = tool.timeout(&args);
+    let deadline = timeout.map(|duration| tokio::time::Instant::now() + duration);
+    let execution = async {
+        let body = match body {
+            Some(body) => {
+                let limit = match tool.request_body_limit(&args) {
+                    Ok(limit) => limit,
+                    Err(error) => {
+                        binary_inbox.cancel_incoming(body.stream_id, &error);
+                        return Err(error);
+                    }
+                };
+                Some(binary_inbox.read_body(body, limit).await?)
+            }
+            None => None,
+        };
+        tool.execute_with_body(args, body).await
+    };
+    let mut output = match (timeout, deadline) {
+        (Some(timeout), Some(deadline)) => tokio::time::timeout_at(deadline, execution)
+            .await
+            .map_err(|_elapsed| format!("{} timed out after {}ms", call, timeout.as_millis()))?,
+        _ => execution.await,
+    }?;
+    if let Some(body) = output.body.as_mut() {
+        body.deadline = deadline;
     }
-    Err(format!("tool not found: {}", name))
+    Ok(output)
 }
 
 pub(crate) async fn run_shell(
@@ -702,7 +743,14 @@ pub(crate) async fn run_device(
             info!(event = "connect.ok", implements = ?DEVICE_DRIVER_IMPLEMENTS);
 
             let conn = Arc::new(conn);
-            let binary_inbox = transfer::BinaryFrameInbox::new();
+            let weak_conn = Arc::downgrade(&conn);
+            let binary_inbox = transfer::BinaryFrameInbox::with_sender(move |frame| {
+                if let Some(conn) = weak_conn.upgrade() {
+                    tokio::spawn(async move {
+                        let _ = conn.send_binary(frame).await;
+                    });
+                }
+            });
             let binary_inbox_for_handler = binary_inbox.clone();
             conn.set_binary_handler(move |data| {
                 binary_inbox_for_handler.push(data);
@@ -719,9 +767,7 @@ pub(crate) async fn run_device(
             // the driver. We dispatch based on `call` and respond with a res frame.
             conn.set_frame_handler(move |frame| {
                 if let Frame::Req(request) = &frame {
-                    if request.call == "fs.transfer.receive" {
-                        binary_inbox_clone.register(request.body);
-                    }
+                    binary_inbox_clone.register(request.body);
                 }
                 let conn = conn_clone.clone();
                 let tools = tools_clone.clone();
@@ -849,6 +895,26 @@ mod tests {
         }
     }
 
+    async fn pending_body_error(call: &str, args: serde_json::Value) -> String {
+        let inbox = transfer::BinaryFrameInbox::new();
+        let body = FrameBodyDescriptor {
+            stream_id: 41,
+            length: Some(1),
+        };
+        inbox.register(Some(body));
+        let tools =
+            all_tools_with_workspace_for_device(std::env::temp_dir(), "test-device".to_string());
+        let tool_name = syscall_to_tool_name(call).unwrap();
+
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            execute_tool_by_name(&tools, call, tool_name, args, Some(body), &inbox),
+        )
+        .await
+        .expect("request did not finish promptly")
+        .unwrap_err()
+    }
+
     #[test]
     fn test_queue_exec_event_for_retry_drops_oldest_when_full() {
         let outbox: Arc<Mutex<VecDeque<DeviceExecEventParams>>> =
@@ -889,5 +955,42 @@ mod tests {
             queue.front().map(|event| event.event_id.as_str()),
             Some("event-1")
         );
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_request_bodies_before_waiting_for_frames() {
+        assert_eq!(
+            pending_body_error("fs.read", json!({ "path": "missing.txt" })).await,
+            "Read does not accept a request body"
+        );
+        assert!(pending_body_error(
+            "net.fetch",
+            json!({ "url": "https://example.test/", "body": "text" }),
+        )
+        .await
+        .contains("unknown field `body`"));
+        assert_eq!(
+            pending_body_error(
+                "net.fetch",
+                json!({ "url": "https://example.test/", "method": "GET" }),
+            )
+            .await,
+            "GET requests cannot include a body"
+        );
+    }
+
+    #[tokio::test]
+    async fn net_fetch_timeout_includes_request_body_receipt() {
+        let result = pending_body_error(
+            "net.fetch",
+            json!({
+                "url": "https://example.test/",
+                "method": "POST",
+                "timeoutMs": 5,
+            }),
+        )
+        .await;
+
+        assert_eq!(result, "net.fetch timed out after 5ms");
     }
 }

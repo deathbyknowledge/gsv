@@ -13,9 +13,11 @@
 import { Agent as Host } from "agents";
 import type {
   Frame,
+  FrameBody,
   RequestFrame,
   ResponseFrame,
   ResponseErrFrame,
+  ResponseOkFrame,
   SignalFrame,
 } from "../protocol/frames";
 import type { ArgsOf, ResultOf, SyscallName, ToolDefinition } from "../syscalls";
@@ -28,7 +30,6 @@ import type {
   AiToolsDevice,
   InteractionOrigin,
   NetFetchArgs,
-  NetFetchResult,
   ProcessIdentity,
   ProcSendArgs,
   ProcSendResult,
@@ -46,8 +47,12 @@ import type {
   ProcHistoryArgs,
   ProcHistoryResult,
   ProcHistoryMessage,
+  ProcMediaDeleteArgs,
+  ProcMediaDeleteResult,
   ProcMediaReadArgs,
   ProcMediaReadResult,
+  ProcMediaWriteArgs,
+  ProcMediaWriteResult,
   ProcConversation,
   ProcConversationOpenArgs,
   ProcConversationOpenResult,
@@ -91,6 +96,7 @@ import type {
   ProcKillResult,
   ProcSpawnAssignment,
 } from "@humansandmachines/gsv/protocol";
+import { bodyFromBytes, bodyToBytes, bodyToText } from "@humansandmachines/gsv/protocol";
 import type { AdapterSurface } from "../adapter-interface";
 import type {
   AssistantMessage,
@@ -145,6 +151,7 @@ import {
   parseStoredProcessMedia,
   processMediaPrefix,
   storeIncomingProcessMedia,
+  stringifyStoredProcessMedia,
   type StoreIncomingProcessMediaOptions,
 } from "./media";
 import {
@@ -157,10 +164,12 @@ import {
 } from "../inference/workers-ai";
 import { assembleSystemPrompt } from "./context";
 import {
+  cancelProcessNetFetch,
   requestProcessNetFetch,
   sendFrameToKernel,
 } from "../shared/utils";
-import { encodeBase64Bytes } from "../shared/base64";
+import { decodeBase64Bytes, encodeBase64Bytes } from "../shared/base64";
+import { formatSize } from "../fs";
 import {
   CODEMODE_EXEC,
   TOOL_TO_SYSCALL,
@@ -186,6 +195,7 @@ import { hasCapability } from "../kernel/capabilities";
 import {
   normalizeNetFetchTimeoutMs,
   normalizeTarget,
+  requestNetFetchWithSignal,
   requestToNetFetchArgs,
   responseFromNetFetchResult,
 } from "../kernel/net";
@@ -295,6 +305,88 @@ function asPlainRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function codeModeRequest(
+  call: SyscallName,
+  args: Record<string, unknown>,
+): { args: Record<string, unknown>; body?: FrameBody } {
+  if (call !== "net.fetch" || typeof args.bodyBase64 !== "string") {
+    return { args };
+  }
+  const encoded = args.bodyBase64;
+  const next = { ...args };
+  delete next.bodyBase64;
+  if (!encoded) {
+    return { args: next };
+  }
+  return { args: next, body: bodyFromBytes(decodeBase64Bytes(encoded)) };
+}
+
+async function materializeResponseBody(
+  call: string,
+  data: unknown,
+  body?: FrameBody,
+): Promise<unknown> {
+  const record = asPlainRecord(data);
+  if (call === "net.fetch") {
+    const bytes = body ? await bodyToBytes(body) : new Uint8Array();
+    const text = decodeUtf8(bytes);
+    return {
+      ...(record ?? {}),
+      bodyBase64: encodeBase64Bytes(bytes),
+      ...(text === null ? {} : { bodyText: text }),
+      bodyBytes: bytes.byteLength,
+    };
+  }
+  if (
+    call === "fs.read"
+    && record?.ok === true
+    && !("files" in record)
+    && !("directories" in record)
+    && !body
+  ) {
+    throw new Error("fs.read file response did not include a body");
+  }
+  if (!body) {
+    return data;
+  }
+  if (call === "fs.read" && record?.ok === true) {
+    if (record.kind === "text") {
+      return { ...record, content: await bodyToText(body) };
+    }
+    if (record.kind === "image") {
+      const bytes = await bodyToBytes(body, MAX_PROCESS_MEDIA_READ_BYTES);
+      const mimeType = typeof record.contentType === "string"
+        ? record.contentType
+        : "application/octet-stream";
+      const path = typeof record.path === "string" ? record.path : "image";
+      const size = typeof record.size === "number" ? record.size : bytes.byteLength;
+      return {
+        ...record,
+        content: [
+          { type: "text", text: `Read image ${path} [${mimeType}, ${formatSize(size)}]` },
+          { type: "image", data: encodeBase64Bytes(bytes), mimeType },
+        ],
+      };
+    }
+  }
+  await body.stream.cancel().catch(() => {});
+  throw new Error(`Unexpected response body for ${call}`);
+}
+
+async function cancelResponseBody(frame: ResponseFrame, reason: string): Promise<void> {
+  if (frame.ok && frame.body) {
+    await frame.body.stream.cancel(reason).catch(() => {});
+  }
+}
+
+function decodeUtf8(bytes: Uint8Array): string | null {
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
+  } catch {
+    return null;
+  }
 }
 
 function buildAssistantMessageMetadata(
@@ -716,6 +808,7 @@ export class Process extends Host<Env> {
   private readonly activeTickRunIds = new Set<string>();
   private readonly deferredTickRunIds = new Set<string>();
   private lifecycleTransition: Promise<void> = Promise.resolve();
+  private lifecycleEpoch = 0;
   private queuedSendAdmission: Promise<void> = Promise.resolve();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -848,12 +941,25 @@ export class Process extends Host<Env> {
 
     const pending = this.store.getPending(frame.id);
     if (!pending) {
+      await cancelResponseBody(frame, "Response is no longer pending");
       return;
     }
 
     if (frame.ok) {
-      this.rememberShellSessionTargetFromResult(pending.call, pending.args, frame.data ?? null);
-      this.store.resolve(frame.id, frame.data ?? null);
+      try {
+        const result = await materializeResponseBody(
+          pending.call,
+          frame.data ?? null,
+          frame.body,
+        );
+        this.rememberShellSessionTargetFromResult(pending.call, pending.args, result);
+        this.store.resolve(frame.id, result);
+      } catch (error) {
+        this.store.fail(
+          frame.id,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     } else {
       this.store.fail(frame.id, frame.error.message);
     }
@@ -943,8 +1049,22 @@ export class Process extends Host<Env> {
           );
           break;
         case "proc.media.read":
-          data = await this.handleProcMediaRead(
-            frame.args as ProcMediaReadArgs,
+          return {
+            type: "res",
+            id: frame.id,
+            ok: true,
+            ...await this.handleProcMediaRead(frame.args as ProcMediaReadArgs),
+          };
+        case "proc.media.write":
+          data = await this.handleProcMediaWrite(
+            frame.args as ProcMediaWriteArgs,
+            frame.body,
+          );
+          break;
+        case "proc.media.delete":
+          data = await this.handleProcMediaDelete(
+            frame.args as ProcMediaDeleteArgs,
+            frame.body,
           );
           break;
         case "proc.conversation.open":
@@ -1053,6 +1173,9 @@ export class Process extends Host<Env> {
     if (!this.isInitialized()) {
       return { ok: false, error: "Process no longer exists" };
     }
+    if (args.media?.some((item) => "data" in item)) {
+      return { ok: false, error: "proc.send media.data was removed; use proc.media.write" };
+    }
     const runId = crypto.randomUUID();
     const conversationId = normalizeConversationId(args.conversationId);
     const conversation = this.store.ensureConversation(conversationId);
@@ -1137,6 +1260,7 @@ export class Process extends Host<Env> {
       const messageId = this.store.appendMessage("user", args.message, {
         conversationId,
         runId,
+        media: hasMedia ? stringifyStoredProcessMedia(args.media!) ?? undefined : undefined,
         origin: origin ?? undefined,
       });
       this.currentRun = {
@@ -1258,6 +1382,18 @@ export class Process extends Host<Env> {
         });
       }
     } catch (error) {
+      const keys = input.flatMap((item) => typeof item.key === "string" ? [item.key] : []);
+      const releaseLifecycle = await this.acquireLifecycleTransition();
+      let unreferenced: string[];
+      try {
+        this.store.clearMessageMedia(messageId, runId);
+        unreferenced = keys.filter((key) => !this.store.referencesMediaKey(key));
+      } finally {
+        releaseLifecycle();
+      }
+      if (unreferenced.length > 0) {
+        await this.env.STORAGE.delete(unreferenced);
+      }
       await this.failPendingMedia(
         runId,
         messageId,
@@ -1800,36 +1936,147 @@ export class Process extends Host<Env> {
     };
   }
 
-  private async handleProcMediaRead(args: ProcMediaReadArgs): Promise<ProcMediaReadResult> {
+  private async handleProcMediaRead(
+    args: ProcMediaReadArgs,
+  ): Promise<{ data: ProcMediaReadResult; body?: FrameBody }> {
     const key = typeof args.key === "string" ? args.key.trim() : "";
     if (!key) {
-      return { ok: false, error: "proc.media.read requires key" };
+      return { data: { ok: false, error: "proc.media.read requires key" } };
     }
 
     const prefix = processMediaPrefix(this.identity.uid, this.pid);
     if (!key.startsWith(prefix)) {
-      return { ok: false, error: "media key is outside this process" };
+      return { data: { ok: false, error: "media key is outside this process" } };
     }
 
     const object = await this.env.STORAGE.get(key);
     if (!object) {
-      return { ok: false, error: "media not found" };
-    }
-    if (object.size > MAX_PROCESS_MEDIA_READ_BYTES) {
-      return { ok: false, error: "media is too large to read inline" };
+      return { data: { ok: false, error: "media not found" } };
     }
 
-    const mimeType = object.httpMetadata?.contentType
-      || (typeof args.mimeType === "string" && args.mimeType.trim() ? args.mimeType.trim() : "application/octet-stream");
-    const data = encodeBase64Bytes(await object.arrayBuffer());
+    const mimeType = object.httpMetadata?.contentType || "application/octet-stream";
+    return {
+      data: {
+        ok: true,
+        key,
+        mimeType,
+        size: object.size,
+      },
+      body: {
+        stream: object.body,
+        length: object.size,
+      },
+    };
+  }
+
+  private async handleProcMediaWrite(
+    args: ProcMediaWriteArgs,
+    body?: FrameBody,
+  ): Promise<ProcMediaWriteResult> {
+    if (!this.isInitialized()) {
+      await body?.stream.cancel("Process no longer exists").catch(() => {});
+      return { ok: false, error: "Process no longer exists" };
+    }
+    if (!body) {
+      return { ok: false, error: "proc.media.write requires a body" };
+    }
+    const length = body.length;
+    if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0) {
+      await body.stream.cancel("Missing media body length").catch(() => {});
+      return { ok: false, error: "proc.media.write requires an exact body length" };
+    }
+    if (!["image", "audio", "video", "document"].includes(args.type)) {
+      await body.stream.cancel("Invalid media type").catch(() => {});
+      return { ok: false, error: "proc.media.write requires a valid media type" };
+    }
+    const mimeType = typeof args.mimeType === "string" ? args.mimeType.trim() : "";
+    if (!mimeType) {
+      await body.stream.cancel("Missing media MIME type").catch(() => {});
+      return { ok: false, error: "proc.media.write requires mimeType" };
+    }
+    const pid = this.pid;
+    const uid = this.identity.uid;
+    const lifecycleEpoch = this.lifecycleEpoch;
+    const key = `${processMediaPrefix(uid, pid)}${crypto.randomUUID()}`;
+    const fixed = new FixedLengthStream(length);
+    const [stored, piped] = await Promise.allSettled([
+      this.env.STORAGE.put(key, fixed.readable, {
+        httpMetadata: { contentType: mimeType },
+      }),
+      body.stream.pipeTo(fixed.writable),
+    ]);
+    if (stored.status === "rejected") {
+      await this.env.STORAGE.delete(key);
+      return {
+        ok: false,
+        error: `proc.media.write failed: ${stored.reason instanceof Error ? stored.reason.message : String(stored.reason)}`,
+      };
+    }
+    if (piped.status === "rejected") {
+      await this.env.STORAGE.delete(key);
+      return {
+        ok: false,
+        error: `proc.media.write failed: ${piped.reason instanceof Error ? piped.reason.message : String(piped.reason)}`,
+      };
+    }
+    const object = stored.value;
+    if (object.size !== length) {
+      await this.env.STORAGE.delete(key);
+      return { ok: false, error: `proc.media.write received ${object.size} bytes, expected ${length}` };
+    }
+
+    const releaseLifecycle = await this.acquireLifecycleTransition();
+    try {
+      if (
+        !this.isInitialized()
+        || this.pid !== pid
+        || this.identity.uid !== uid
+        || this.lifecycleEpoch !== lifecycleEpoch
+      ) {
+        await this.env.STORAGE.delete(key);
+        return { ok: false, error: "Process reset during media upload" };
+      }
+    } finally {
+      releaseLifecycle();
+    }
 
     return {
       ok: true,
-      key,
-      mimeType,
-      size: object.size,
-      dataUrl: `data:${mimeType};base64,${data}`,
+      media: {
+        type: args.type,
+        mimeType,
+        key,
+        size: object.size,
+        ...(args.filename ? { filename: args.filename } : {}),
+        ...(args.duration !== undefined ? { duration: args.duration } : {}),
+        ...(args.transcription ? { transcription: args.transcription } : {}),
+      },
     };
+  }
+
+  private async handleProcMediaDelete(
+    args: ProcMediaDeleteArgs,
+    body?: FrameBody,
+  ): Promise<ProcMediaDeleteResult> {
+    if (body) {
+      await body.stream.cancel("proc.media.delete does not accept a body").catch(() => {});
+      return { ok: false, error: "proc.media.delete does not accept a body" };
+    }
+    if (!this.isInitialized()) {
+      return { ok: false, error: "Process no longer exists" };
+    }
+    const key = typeof args.key === "string" ? args.key.trim() : "";
+    if (!key) {
+      return { ok: false, error: "proc.media.delete requires key" };
+    }
+    if (!key.startsWith(processMediaPrefix(this.identity.uid, this.pid))) {
+      return { ok: false, error: "media key is outside this process" };
+    }
+    if (this.store.referencesMediaKey(key)) {
+      return { ok: false, error: "media is referenced by process history" };
+    }
+    await this.env.STORAGE.delete(key);
+    return { ok: true, key };
   }
 
   private getContextStateForHistory(conversationId: string): ProcContextState | null {
@@ -2697,6 +2944,7 @@ export class Process extends Host<Env> {
   }
 
   private async resetExecutionState(reason: string, emitFinish = true): Promise<void> {
+    this.lifecycleEpoch += 1;
     this.store.setValue(PROCESS_RESET_AT_KEY, String(Date.now()));
     const activeRun = this.currentRun;
     this.rejectCodeModeWaiters(null, "Process execution state was reset");
@@ -3949,20 +4197,31 @@ export class Process extends Host<Env> {
       const request = new Request(input, redirect === "error"
         ? { ...init, redirect: "manual" }
         : init);
-      const args = await requestToNetFetchArgs(request, redirect);
+      const outbound = requestToNetFetchArgs(request, redirect);
       const timeoutMs = normalizeNetFetchTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
-      const result = await withAbortSignal(
-        this.requestKernelNetFetch(
+      const requestId = crypto.randomUUID();
+      const response = await requestNetFetchWithSignal(
+        () => this.requestKernelNetFetch(
           target,
           {
-            ...args,
+            ...outbound.args,
             timeoutMs,
           },
           timeoutMs,
+          outbound.body,
+          requestId,
         ),
         request.signal,
+        outbound.body,
+        (reason) => {
+          this.ctx.waitUntil(cancelProcessNetFetch(
+            this.pid,
+            requestId,
+            reason instanceof Error ? reason.message : undefined,
+          ));
+        },
       );
-      return responseFromNetFetchResult(result);
+      return responseFromNetFetchResult(response.data, response.body, request.signal);
     };
   }
 
@@ -3970,12 +4229,19 @@ export class Process extends Host<Env> {
     target: string,
     args: NetFetchArgs,
     ttlMs?: number,
-  ): Promise<NetFetchResult> {
+    body?: FrameBody,
+    requestId?: string,
+  ): Promise<ResponseOkFrame<"net.fetch">> {
     return await requestProcessNetFetch(
       this.pid,
       target,
       args,
-      { ttlMs, internalPurpose: "model-transport" },
+      {
+        ttlMs,
+        internalPurpose: "model-transport",
+        ...(body ? { body } : {}),
+        ...(requestId ? { requestId } : {}),
+      },
     );
   }
 
@@ -4375,13 +4641,21 @@ export class Process extends Host<Env> {
 
     if (response && response.type === "res") {
       if (!this.store.getPending(dispatchId)) {
+        await cancelResponseBody(response, "Tool call is no longer pending");
         return;
       }
       const res = response;
       if (res.ok) {
-        const data = (res as { data?: unknown }).data;
-        this.rememberShellSessionTargetFromResult(call, args, data ?? null);
-        this.store.resolve(dispatchId, data);
+        try {
+          const result = await materializeResponseBody(call, res.data ?? null, res.body);
+          this.rememberShellSessionTargetFromResult(call, args, result);
+          this.store.resolve(dispatchId, result);
+        } catch (error) {
+          this.store.fail(
+            dispatchId,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
       } else {
         this.store.fail(
           dispatchId,
@@ -4852,11 +5126,12 @@ export class Process extends Host<Env> {
     );
 
     if (context && this.handleRunStopped(context.runId)) {
+      await cancelResponseBody(response, "Run stopped before CodeMode tool execution completed");
       throw new Error("Run stopped before CodeMode tool execution completed");
     }
 
     if (response.ok) {
-      return response.data ?? null;
+      return await materializeResponseBody(call, response.data ?? null, response.body);
     }
 
     throw new Error(response.error.message);
@@ -4907,12 +5182,14 @@ export class Process extends Host<Env> {
     call: SyscallName,
     args: Record<string, unknown>,
   ): Promise<ResponseFrame> {
+    const request = codeModeRequest(call, args);
     const reqFrame: RequestFrame = {
       type: "req",
       id,
       call,
-      args,
+      args: request.args,
       ...(runId ? { runId } : {}),
+      ...(request.body ? { body: request.body } : {}),
     } as RequestFrame;
 
     const pending = new Promise<ResponseFrame>((resolve, reject) => {
@@ -4929,6 +5206,7 @@ export class Process extends Host<Env> {
       if (response && response.type === "res") {
         const waiter = this.codeModeResponses.get(id);
         if (!waiter || (runId !== null && this.handleRunStopped(runId))) {
+          await cancelResponseBody(response, `Run stopped before ${call} completed`);
           throw new Error(`Run stopped before ${call} completed`);
         }
         this.codeModeResponses.delete(id);
@@ -5650,30 +5928,6 @@ function isSameAiRuntimeModelStack(left: AiConfigResult, right: AiConfigResult):
 
 function formatAiModelStackLabel(config: Pick<AiConfigResult, "provider" | "model">): string {
   return `${config.provider}/${config.model}`;
-}
-
-async function withAbortSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) {
-    throw abortError(signal.reason);
-  }
-  return await new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(abortError(signal.reason));
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (error) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(error);
-      },
-    );
-  });
-}
-
-function abortError(reason: unknown): Error {
-  return reason instanceof Error ? reason : new Error("The operation was aborted");
 }
 
 function formatGenerationFailure(

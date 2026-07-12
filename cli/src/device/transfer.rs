@@ -1,17 +1,20 @@
 use gsv::connection::Connection;
 use gsv::protocol::{
-    build_binary_frame, parse_binary_frame, FrameBodyDescriptor, BINARY_FRAME_DATA,
-    BINARY_FRAME_END, BINARY_FRAME_ERROR,
+    build_binary_frame, parse_binary_frame, FrameBodyDescriptor, BINARY_FRAME_CANCEL,
+    BINARY_FRAME_DATA, BINARY_FRAME_END, BINARY_FRAME_ERROR,
 };
+use gsv::tools::ToolBody;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Display;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::Notify;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::sync::{watch, Notify};
 
 const MAX_TRANSFER_CHUNK_BYTES: usize = 1024 * 1024;
 const MAX_BUFFERED_BINARY_BYTES: usize = 32 * 1024 * 1024;
@@ -23,12 +26,14 @@ pub struct BinaryFrameInbox {
     state: Arc<Mutex<BinaryInboxState>>,
     notify: Arc<Notify>,
     next_outgoing_stream_id: Arc<AtomicU32>,
+    send_frame: Option<Arc<dyn Fn(Vec<u8>) + Send + Sync>>,
 }
 
 #[derive(Default)]
 struct BinaryInboxState {
     frames: HashMap<u32, VecDeque<QueuedBinaryFrame>>,
     active: HashSet<u32>,
+    outgoing: HashMap<u32, watch::Sender<bool>>,
     buffered_bytes: usize,
     buffered_frames: usize,
 }
@@ -45,6 +50,14 @@ impl BinaryFrameInbox {
             state: Arc::new(Mutex::new(BinaryInboxState::default())),
             notify: Arc::new(Notify::new()),
             next_outgoing_stream_id: Arc::new(AtomicU32::new(1)),
+            send_frame: None,
+        }
+    }
+
+    pub fn with_sender(send_frame: impl Fn(Vec<u8>) + Send + Sync + 'static) -> Self {
+        Self {
+            send_frame: Some(Arc::new(send_frame)),
+            ..Self::new()
         }
     }
 
@@ -57,9 +70,22 @@ impl BinaryFrameInbox {
         }
     }
 
+    fn register_outgoing(&self) -> (u32, watch::Receiver<bool>) {
+        let stream_id = self.allocate_outgoing_stream_id();
+        let (sender, receiver) = watch::channel(false);
+        self.lock_state().outgoing.insert(stream_id, sender);
+        (stream_id, receiver)
+    }
+
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, BinaryInboxState> {
+        self.state
+            .lock()
+            .expect("binary frame inbox mutex poisoned")
+    }
+
     pub fn register(&self, body: Option<FrameBodyDescriptor>) {
         if let Some(body) = body.filter(|body| body.stream_id != 0) {
-            self.state.lock().unwrap().active.insert(body.stream_id);
+            self.lock_state().active.insert(body.stream_id);
         }
     }
 
@@ -70,8 +96,14 @@ impl BinaryFrameInbox {
         if stream_id == 0 {
             return;
         }
+        if flags & BINARY_FRAME_CANCEL != 0 {
+            if let Some(sender) = self.lock_state().outgoing.remove(&stream_id) {
+                let _ = sender.send(true);
+            }
+            return;
+        }
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.lock_state();
             if !state.active.contains(&stream_id) {
                 return;
             }
@@ -85,6 +117,7 @@ impl BinaryFrameInbox {
                     state.buffered_frames = state.buffered_frames.saturating_sub(queued.len());
                 }
                 state.active.remove(&stream_id);
+                self.send_cancel(stream_id, "Binary transfer buffer limit exceeded");
                 if state.buffered_frames >= MAX_BUFFERED_BINARY_FRAMES {
                     return;
                 }
@@ -129,14 +162,69 @@ impl BinaryFrameInbox {
 
             tokio::time::timeout_at(deadline, notified.as_mut())
                 .await
-                .map_err(|_| {
+                .map_err(|_elapsed| {
                     format!("Timed out waiting for binary transfer stream {}", stream_id)
                 })?;
         }
     }
 
+    pub(super) async fn read_body(
+        &self,
+        body: FrameBodyDescriptor,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, String> {
+        if body.stream_id == 0 {
+            return Err("Request body requires a non-zero streamId".to_string());
+        }
+        let mut guard = IncomingStreamGuard::new(self, body.stream_id);
+        let expected_length = body.length;
+        if expected_length.is_some_and(|length| length > max_bytes as u64) {
+            return Err(format!(
+                "Request body exceeds limit (max {} bytes)",
+                max_bytes
+            ));
+        }
+
+        let mut bytes = Vec::with_capacity(expected_length.unwrap_or(0) as usize);
+        loop {
+            let frame = self.take(body.stream_id).await?;
+            if frame.flags & BINARY_FRAME_ERROR != 0 {
+                self.discard(body.stream_id);
+                guard.complete();
+                return Err(String::from_utf8(frame.payload)
+                    .unwrap_or_else(|_| "Binary transfer failed".to_string()));
+            }
+            if frame.flags & BINARY_FRAME_DATA != 0 {
+                let next_len = bytes.len() + frame.payload.len();
+                if next_len > max_bytes {
+                    return Err(format!(
+                        "Request body exceeds limit (max {} bytes)",
+                        max_bytes
+                    ));
+                }
+                if let Some(length) = expected_length.filter(|length| next_len as u64 > *length) {
+                    return Err(format!("Request body exceeded declared length {}", length));
+                }
+                bytes.extend_from_slice(&frame.payload);
+            }
+            if frame.flags & BINARY_FRAME_END != 0 {
+                break;
+            }
+        }
+
+        if let Some(length) = expected_length.filter(|length| bytes.len() as u64 != *length) {
+            return Err(format!(
+                "Request body length {} did not match declared length {}",
+                bytes.len(),
+                length
+            ));
+        }
+        guard.complete();
+        Ok(bytes)
+    }
+
     fn pop(&self, stream_id: u32) -> Option<QueuedBinaryFrame> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.lock_state();
         let queue = state.frames.get_mut(&stream_id)?;
         let frame = queue.pop_front();
         if queue.is_empty() {
@@ -149,8 +237,8 @@ impl BinaryFrameInbox {
         frame
     }
 
-    fn discard(&self, stream_id: u32) {
-        let mut state = self.state.lock().unwrap();
+    pub(super) fn discard(&self, stream_id: u32) {
+        let mut state = self.lock_state();
         if let Some(queued) = state.frames.remove(&stream_id) {
             state.buffered_bytes = state
                 .buffered_bytes
@@ -158,6 +246,28 @@ impl BinaryFrameInbox {
             state.buffered_frames = state.buffered_frames.saturating_sub(queued.len());
         }
         state.active.remove(&stream_id);
+    }
+
+    pub(super) fn cancel_incoming(&self, stream_id: u32, reason: &str) {
+        self.discard(stream_id);
+        self.send_cancel(stream_id, reason);
+    }
+
+    fn send_cancel(&self, stream_id: u32, reason: &str) {
+        if stream_id == 0 {
+            return;
+        }
+        if let Some(send_frame) = &self.send_frame {
+            send_frame(build_binary_frame(
+                stream_id,
+                BINARY_FRAME_CANCEL | BINARY_FRAME_END,
+                reason.as_bytes(),
+            ));
+        }
+    }
+
+    fn unregister_outgoing(&self, stream_id: u32) {
+        self.lock_state().outgoing.remove(&stream_id);
     }
 }
 
@@ -176,7 +286,7 @@ impl<'a> IncomingStreamGuard<'a> {
         }
     }
 
-    fn complete(mut self) {
+    fn complete(&mut self) {
         self.complete = true;
     }
 }
@@ -184,90 +294,178 @@ impl<'a> IncomingStreamGuard<'a> {
 impl Drop for IncomingStreamGuard<'_> {
     fn drop(&mut self) {
         if !self.complete {
-            self.inbox.discard(self.stream_id);
+            self.inbox
+                .cancel_incoming(self.stream_id, "Binary body cancelled");
         }
     }
 }
 
-pub(super) struct OutgoingTransferBody {
+pub(super) struct OutgoingBody {
+    inbox: BinaryFrameInbox,
     stream_id: u32,
-    length: u64,
-    file: tokio::fs::File,
-    path: PathBuf,
+    length: Option<u64>,
+    max_length: Option<u64>,
+    deadline: Option<tokio::time::Instant>,
+    reader: Box<dyn AsyncRead + Send + Unpin>,
+    source: String,
+    cancellation: watch::Receiver<bool>,
 }
 
-impl OutgoingTransferBody {
+impl OutgoingBody {
+    fn new(
+        binary_inbox: &BinaryFrameInbox,
+        length: Option<u64>,
+        max_length: Option<u64>,
+        reader: impl AsyncRead + Send + Unpin + 'static,
+        source: String,
+    ) -> Self {
+        let (stream_id, cancellation) = binary_inbox.register_outgoing();
+        Self {
+            inbox: binary_inbox.clone(),
+            stream_id,
+            length,
+            max_length,
+            deadline: None,
+            reader: Box::new(reader),
+            source,
+            cancellation,
+        }
+    }
+
+    pub(super) fn tool_body(binary_inbox: &BinaryFrameInbox, body: ToolBody) -> Self {
+        let (stream_id, cancellation) = binary_inbox.register_outgoing();
+        Self {
+            inbox: binary_inbox.clone(),
+            stream_id,
+            length: body.length,
+            max_length: body.max_length,
+            deadline: body.deadline,
+            reader: body.reader,
+            source: body.source,
+            cancellation,
+        }
+    }
+
     pub(super) fn descriptor(&self) -> FrameBodyDescriptor {
         FrameBodyDescriptor {
             stream_id: self.stream_id,
-            length: Some(self.length),
+            length: self.length,
         }
     }
 
     pub(super) async fn send(mut self, conn: &Connection) -> Result<(), String> {
         let stream_id = self.stream_id;
-        let result = self.send_inner(conn).await;
+        let result = self.send_frames(|frame| conn.send_binary(frame)).await;
         if let Err(error) = &result {
-            let _ = conn
-                .send_binary(build_binary_frame(
-                    stream_id,
-                    BINARY_FRAME_ERROR | BINARY_FRAME_END,
-                    error.as_bytes(),
-                ))
-                .await;
+            let frame = build_binary_frame(
+                stream_id,
+                BINARY_FRAME_ERROR | BINARY_FRAME_END,
+                error.as_bytes(),
+            );
+            tokio::select! {
+                biased;
+                _ = wait_for_cancel(&mut self.cancellation) => {}
+                _ = conn.send_binary(frame) => {}
+            }
         }
         result
     }
 
-    async fn send_inner(&mut self, conn: &Connection) -> Result<(), String> {
+    async fn send_frames<F, Fut, E>(&mut self, send_frame: F) -> Result<(), String>
+    where
+        F: FnMut(Vec<u8>) -> Fut,
+        Fut: Future<Output = Result<(), E>>,
+        E: Display,
+    {
+        let source = self.source.clone();
+        match self.deadline {
+            Some(deadline) => tokio::time::timeout_at(deadline, self.send_inner(send_frame))
+                .await
+                .unwrap_or_else(|_| Err(format!("Timed out sending '{}'", source))),
+            None => self.send_inner(send_frame).await,
+        }
+    }
+
+    async fn send_inner<F, Fut, E>(&mut self, mut send_frame: F) -> Result<(), String>
+    where
+        F: FnMut(Vec<u8>) -> Fut,
+        Fut: Future<Output = Result<(), E>>,
+        E: Display,
+    {
         let mut bytes_sent = 0u64;
         let mut buffer = vec![0u8; MAX_TRANSFER_CHUNK_BYTES];
 
         loop {
-            let bytes_read = self
-                .file
-                .read(&mut buffer)
-                .await
-                .map_err(|e| format!("Failed to read '{}': {}", self.path.display(), e))?;
+            let bytes_read = tokio::select! {
+                biased;
+                _ = wait_for_cancel(&mut self.cancellation) => return Ok(()),
+                result = self.reader.read(&mut buffer) => result
+                    .map_err(|e| format!("Failed to read '{}': {}", self.source, e))?,
+            };
             if bytes_read == 0 {
                 break;
             }
 
             let next_bytes_sent = bytes_sent
                 .checked_add(bytes_read as u64)
-                .ok_or_else(|| format!("Transfer size overflow for '{}'", self.path.display()))?;
-            if next_bytes_sent > self.length {
+                .ok_or_else(|| format!("Transfer size overflow for '{}'", self.source))?;
+            if let Some(max_length) = self
+                .max_length
+                .filter(|max_length| next_bytes_sent > *max_length)
+            {
+                return Err(format!(
+                    "Body from '{}' exceeds limit ({} bytes, max {})",
+                    self.source, next_bytes_sent, max_length
+                ));
+            }
+            if let Some(length) = self.length.filter(|length| next_bytes_sent > *length) {
                 return Err(format!(
                     "Transfer size changed for '{}': expected {}, got more than {}",
-                    self.path.display(),
-                    self.length,
-                    next_bytes_sent
+                    self.source, length, next_bytes_sent
                 ));
             }
 
-            conn.send_binary(build_binary_frame(
-                self.stream_id,
-                BINARY_FRAME_DATA,
-                &buffer[..bytes_read],
-            ))
-            .await
-            .map_err(|e| format!("Failed to send binary transfer data: {}", e))?;
+            let frame =
+                build_binary_frame(self.stream_id, BINARY_FRAME_DATA, &buffer[..bytes_read]);
+            tokio::select! {
+                biased;
+                _ = wait_for_cancel(&mut self.cancellation) => return Ok(()),
+                result = send_frame(frame) => result
+                    .map_err(|e| format!("Failed to send binary transfer data: {}", e))?,
+            }
             bytes_sent = next_bytes_sent;
         }
 
-        if bytes_sent != self.length {
+        if *self.cancellation.borrow() {
+            return Ok(());
+        }
+        if let Some(length) = self.length.filter(|length| bytes_sent != *length) {
             return Err(format!(
                 "Transfer size changed for '{}': expected {}, got {}",
-                self.path.display(),
-                self.length,
-                bytes_sent
+                self.source, length, bytes_sent
             ));
         }
 
-        conn.send_binary(build_binary_frame(self.stream_id, BINARY_FRAME_END, &[]))
-            .await
-            .map_err(|e| format!("Failed to finish binary transfer: {}", e))?;
+        let frame = build_binary_frame(self.stream_id, BINARY_FRAME_END, &[]);
+        tokio::select! {
+            biased;
+            _ = wait_for_cancel(&mut self.cancellation) => {}
+            result = send_frame(frame) => result
+                .map_err(|e| format!("Failed to finish binary transfer: {}", e))?,
+        }
         Ok(())
+    }
+}
+
+impl Drop for OutgoingBody {
+    fn drop(&mut self) {
+        self.inbox.unregister_outgoing(self.stream_id);
+    }
+}
+
+async fn wait_for_cancel(cancellation: &mut watch::Receiver<bool>) {
+    if !*cancellation.borrow() {
+        let _ = cancellation.changed().await;
     }
 }
 
@@ -277,12 +475,17 @@ pub async fn handle_transfer_syscall(
     request_body: Option<FrameBodyDescriptor>,
     workspace: &Path,
     binary_inbox: &BinaryFrameInbox,
-) -> Option<Result<(Value, Option<OutgoingTransferBody>), String>> {
+) -> Option<Result<(Value, Option<OutgoingBody>), String>> {
+    if matches!(call, "fs.transfer.stat" | "fs.transfer.send") {
+        if let Some(body) = request_body {
+            binary_inbox.cancel_incoming(body.stream_id, "Request body not accepted");
+            return Some(Err(format!("{} does not accept a request body", call)));
+        }
+    }
+
     match call {
         "fs.transfer.stat" => Some(handle_stat(args, workspace).await.map(|data| (data, None))),
-        "fs.transfer.send" => {
-            Some(handle_send(args, workspace, binary_inbox.allocate_outgoing_stream_id()).await)
-        }
+        "fs.transfer.send" => Some(handle_send(args, workspace, binary_inbox).await),
         "fs.transfer.receive" => Some(
             handle_receive(args, request_body, workspace, binary_inbox)
                 .await
@@ -338,8 +541,8 @@ async fn handle_stat(args: Value, workspace: &Path) -> Result<Value, String> {
 async fn handle_send(
     args: Value,
     workspace: &Path,
-    stream_id: u32,
-) -> Result<(Value, Option<OutgoingTransferBody>), String> {
+    binary_inbox: &BinaryFrameInbox,
+) -> Result<(Value, Option<OutgoingBody>), String> {
     let args: TransferSendArgs =
         serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
     let path = resolve_path(&args.path, workspace);
@@ -366,12 +569,13 @@ async fn handle_send(
             "size": length,
             "contentType": content_type
         }),
-        Some(OutgoingTransferBody {
-            stream_id,
-            length,
+        Some(OutgoingBody::new(
+            binary_inbox,
+            Some(length),
+            None,
             file,
-            path,
-        }),
+            path.display().to_string(),
+        )),
     ))
 }
 
@@ -386,7 +590,7 @@ async fn handle_receive(
     if body.stream_id == 0 {
         return Err("fs.transfer.receive body requires a non-zero streamId".to_string());
     }
-    let stream_guard = IncomingStreamGuard::new(binary_inbox, body.stream_id);
+    let mut stream_guard = IncomingStreamGuard::new(binary_inbox, body.stream_id);
     let expected_length = body
         .length
         .ok_or_else(|| "fs.transfer.receive requires a request body length".to_string())?;
@@ -418,6 +622,8 @@ async fn handle_receive(
         loop {
             let frame = binary_inbox.take(body.stream_id).await?;
             if frame.flags & BINARY_FRAME_ERROR != 0 {
+                binary_inbox.discard(body.stream_id);
+                stream_guard.complete();
                 return Err(String::from_utf8(frame.payload)
                     .unwrap_or_else(|_| "Binary transfer failed".to_string()));
             }
@@ -501,11 +707,16 @@ fn transfer_temp_path(path: &Path, stream_id: u32) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_binary_frame, handle_receive, handle_send, BinaryFrameInbox, FrameBodyDescriptor,
-        TransferReceiveArgs, TransferSendArgs, BINARY_FRAME_DATA, BINARY_FRAME_END,
+        build_binary_frame, handle_receive, handle_send, parse_binary_frame, BinaryFrameInbox,
+        FrameBodyDescriptor, OutgoingBody, TransferReceiveArgs, TransferSendArgs,
+        BINARY_FRAME_CANCEL, BINARY_FRAME_DATA, BINARY_FRAME_END,
     };
     use serde_json::json;
+    use std::io::Cursor;
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
 
     fn test_workspace(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -513,6 +724,15 @@ mod tests {
             label,
             uuid::Uuid::new_v4()
         ))
+    }
+
+    fn recording_inbox() -> (BinaryFrameInbox, Arc<Mutex<Vec<Vec<u8>>>>) {
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let sent = Arc::clone(&frames);
+        (
+            BinaryFrameInbox::with_sender(move |frame| sent.lock().unwrap().push(frame)),
+            frames,
+        )
     }
 
     #[test]
@@ -547,6 +767,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_body_collects_registered_frames() {
+        let inbox = BinaryFrameInbox::new();
+        let body = FrameBodyDescriptor {
+            stream_id: 13,
+            length: Some(4),
+        };
+        inbox.register(Some(body));
+        inbox.push(build_binary_frame(13, BINARY_FRAME_DATA, &[0, 1]));
+        inbox.push(build_binary_frame(
+            13,
+            BINARY_FRAME_DATA | BINARY_FRAME_END,
+            &[2, 3],
+        ));
+
+        assert_eq!(inbox.read_body(body, 4).await.unwrap(), vec![0, 1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn read_body_cancels_sender_on_error_or_timeout() {
+        let (inbox, sent) = recording_inbox();
+        let body = FrameBodyDescriptor {
+            stream_id: 15,
+            length: Some(4),
+        };
+        inbox.register(Some(body));
+        inbox.push(build_binary_frame(
+            15,
+            BINARY_FRAME_DATA | BINARY_FRAME_END,
+            &[1, 2, 3],
+        ));
+
+        let error = inbox.read_body(body, 4).await.unwrap_err();
+
+        assert_eq!(
+            error,
+            "Request body length 3 did not match declared length 4"
+        );
+
+        let body = FrameBodyDescriptor {
+            stream_id: 16,
+            length: Some(5),
+        };
+        inbox.register(Some(body));
+        assert_eq!(
+            inbox.read_body(body, 4).await.unwrap_err(),
+            "Request body exceeds limit (max 4 bytes)"
+        );
+
+        assert_eq!(sent.lock().unwrap().len(), 2);
+
+        let body = FrameBodyDescriptor {
+            stream_id: 18,
+            length: Some(1),
+        };
+        inbox.register(Some(body));
+        tokio::time::timeout(Duration::from_millis(1), inbox.read_body(body, 1))
+            .await
+            .expect_err("read unexpectedly completed");
+
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 3);
+        for frame in &*sent {
+            assert_eq!(
+                parse_binary_frame(frame).unwrap().1,
+                BINARY_FRAME_CANCEL | BINARY_FRAME_END
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn send_prepares_response_body_with_file_length() {
         let workspace = test_workspace("send");
         tokio::fs::create_dir_all(&workspace).await.unwrap();
@@ -554,18 +844,122 @@ mod tests {
             .await
             .unwrap();
 
-        let (data, body) = handle_send(json!({ "path": "source.bin" }), &workspace, 17)
+        let inbox = BinaryFrameInbox::new();
+        let (data, body) = handle_send(json!({ "path": "source.bin" }), &workspace, &inbox)
             .await
             .unwrap();
         let descriptor = body.as_ref().unwrap().descriptor();
 
-        assert_eq!(descriptor.stream_id, 17);
+        assert_eq!(descriptor.stream_id, 1);
         assert_eq!(descriptor.length, Some(3));
         assert_eq!(data["size"], 3);
         assert!(data.get("bytesSent").is_none());
 
         drop(body);
         tokio::fs::remove_dir_all(workspace).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn outgoing_pump_stops_on_cancel_without_an_end_frame() {
+        let inbox = BinaryFrameInbox::new();
+        let (reader, mut writer) = tokio::io::duplex(1);
+        writer.write_all(&[1]).await.unwrap();
+        let mut body = OutgoingBody::new(&inbox, Some(2), None, reader, "test body".to_string());
+        let stream_id = body.stream_id;
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&sent);
+        let data_sent = Arc::new(tokio::sync::Notify::new());
+        let notify_data_sent = Arc::clone(&data_sent);
+
+        let pump = body.send_inner(move |frame| {
+            recorded.lock().unwrap().push(frame);
+            notify_data_sent.notify_one();
+            std::future::ready(Ok::<(), std::io::Error>(()))
+        });
+        let cancel = async {
+            data_sent.notified().await;
+            inbox.push(build_binary_frame(
+                stream_id,
+                BINARY_FRAME_CANCEL | BINARY_FRAME_END,
+                &[],
+            ));
+        };
+
+        let (result, ()) = tokio::time::timeout(Duration::from_millis(100), async {
+            tokio::join!(pump, cancel)
+        })
+        .await
+        .expect("outgoing pump did not stop");
+        result.unwrap();
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(parse_binary_frame(&sent[0]).unwrap().1, BINARY_FRAME_DATA);
+    }
+
+    #[tokio::test]
+    async fn outgoing_pump_supports_unknown_lengths_and_enforces_limits() {
+        let inbox = BinaryFrameInbox::new();
+        let mut body = OutgoingBody::new(
+            &inbox,
+            None,
+            Some(3),
+            Cursor::new(vec![1, 2, 3]),
+            "stream".to_string(),
+        );
+        assert_eq!(body.descriptor().length, None);
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&sent);
+        body.send_inner(move |frame| {
+            recorded.lock().unwrap().push(frame);
+            std::future::ready(Ok::<(), std::io::Error>(()))
+        })
+        .await
+        .unwrap();
+        assert_eq!(sent.lock().unwrap().len(), 2);
+
+        let mut oversized = OutgoingBody::new(
+            &inbox,
+            None,
+            Some(3),
+            Cursor::new(vec![1, 2, 3, 4]),
+            "stream".to_string(),
+        );
+        let error = oversized
+            .send_inner(|_frame| std::future::ready(Ok::<(), std::io::Error>(())))
+            .await
+            .unwrap_err();
+        assert_eq!(error, "Body from 'stream' exceeds limit (4 bytes, max 3)");
+
+        let mut truncated = OutgoingBody::new(
+            &inbox,
+            Some(4),
+            None,
+            Cursor::new(vec![1, 2, 3]),
+            "stream".to_string(),
+        );
+        let error = truncated
+            .send_inner(|_frame| std::future::ready(Ok::<(), std::io::Error>(())))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "Transfer size changed for 'stream': expected 4, got 3"
+        );
+    }
+
+    #[tokio::test]
+    async fn outgoing_pump_honors_the_original_tool_deadline() {
+        let inbox = BinaryFrameInbox::new();
+        let (reader, _writer) = tokio::io::duplex(1);
+        let mut body = OutgoingBody::new(&inbox, None, None, reader, "net.fetch".to_string());
+        body.deadline = Some(tokio::time::Instant::now() + Duration::from_millis(5));
+
+        let error = body
+            .send_frames(|_frame| std::future::ready(Ok::<(), std::io::Error>(())))
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, "Timed out sending 'net.fetch'");
     }
 
     #[tokio::test]
@@ -613,7 +1007,7 @@ mod tests {
     async fn receive_rejects_body_length_mismatch_and_removes_temp_file() {
         let workspace = test_workspace("mismatch");
         tokio::fs::create_dir_all(&workspace).await.unwrap();
-        let inbox = BinaryFrameInbox::new();
+        let (inbox, sent) = recording_inbox();
         let body = FrameBodyDescriptor {
             stream_id: 29,
             length: Some(4),
@@ -635,6 +1029,10 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("expected 4, got 3"));
+        assert_eq!(
+            parse_binary_frame(&sent.lock().unwrap()[0]).unwrap().1,
+            BINARY_FRAME_CANCEL | BINARY_FRAME_END
+        );
         assert!(!workspace.join("destination.bin").exists());
         assert!(tokio::fs::read_dir(&workspace)
             .await
@@ -667,13 +1065,17 @@ mod tests {
     }
 
     #[test]
-    fn rejected_streams_drop_late_frames() {
-        let inbox = BinaryFrameInbox::new();
+    fn cancelled_streams_notify_peer_and_drop_late_frames() {
+        let (inbox, sent) = recording_inbox();
         inbox.register(Some(FrameBodyDescriptor {
             stream_id: 37,
             length: Some(3),
         }));
-        inbox.discard(37);
+        inbox.cancel_incoming(37, "body ignored");
+
+        let cancel = parse_binary_frame(&sent.lock().unwrap()[0]).unwrap();
+        assert_eq!(cancel.0, 37);
+        assert_eq!(cancel.1, BINARY_FRAME_CANCEL | BINARY_FRAME_END);
 
         inbox.push(build_binary_frame(37, BINARY_FRAME_DATA, &[1, 2, 3]));
         assert!(inbox.state.lock().unwrap().frames.is_empty());

@@ -227,7 +227,8 @@ The websocket protocol is uniform: every operation is a `req` frame with a sysca
 | `proc.*` | Kernel and Process DO control plane |
 | `pkg.*`, `repo.*`, `sys.*`, `sched.*`, `notification.*`, `signal.*` | Kernel-handled |
 | `adapter.*` | Service-binding / adapter control path |
-| `ai.*` | Kernel-internal process bootstrap path |
+| `ai.tools`, `ai.config` | Kernel-internal process bootstrap path |
+| Other `ai.*` | Capability-gated inference and media operations |
 
 For routed `fs.*` and initial `shell.exec` requests, the gateway strips `args.target` before forwarding the request frame to the driver. Shell continuations use `args.sessionId`; the gateway looks up the session owner and forwards the same `shell.exec` frame to that device.
 
@@ -307,18 +308,44 @@ end, and error frames:
 |---|---:|---|
 | `DATA` | `1` | The payload contains body bytes |
 | `END` | `2` | This is the final frame for the stream |
-| `ERROR` | `4` | The payload contains a UTF-8 error message |
+| `ERROR` | `4` | The sender terminated its own stream; the payload contains a UTF-8 error message |
+| `CANCEL` | `8` | The receiver no longer wants the sender's stream; the payload may contain a UTF-8 reason |
 
 Flags may be combined; failures normally use `ERROR | END` (`6`). The sender
 emits the JSON descriptor first, then zero or more data frames, and finally an
 end or error frame. Stream IDs are scoped to the WebSocket connection; a sender
 must not reuse an ID until that stream has ended.
 
-`fs.transfer.receive` uses a request body and `fs.transfer.send` returns a
-response body. The same primitive is available to other syscalls without
-adding syscall-specific stream IDs. In the JavaScript SDK, body-bearing calls
-use `client.request()`; they are intentionally omitted from the data-only
-generated namespace methods.
+Receiver cancellation uses `CANCEL | END` (`10`). The original sender stops its
+matching outgoing pump without treating the cancellation as a frame for an
+unrelated incoming stream that happens to use the same numeric ID.
+
+Body cancellation stops the byte pump, not a bodyless syscall that has already
+started on a remote device. Those requests remain bounded by their syscall
+timeout; `net.fetch` timeouts are capped at 10 minutes. Generic remote request
+preemption requires a separate control frame.
+
+The current body-bearing syscalls are:
+
+| Syscall | Request body | Response body |
+|---|---|---|
+| `fs.read` | No | Always for a successful file read; UTF-8 numbered text or raw image bytes. Directory listings and operation errors remain JSON-only. |
+| `fs.transfer.receive` | Required file bytes | No |
+| `fs.transfer.send` | No | Successful file bytes |
+| `net.fetch` | Optional HTTP request bytes | HTTP response bytes when the response has a body |
+| `proc.media.read` | No | Successful stored media bytes |
+| `proc.media.write` | Required media bytes with an exact descriptor length | No |
+| `ai.transcription.create` | Required audio bytes | No |
+| `ai.image.read` | Required image bytes | No |
+| `ai.image.generate` | No | Generated image bytes when returned inline |
+| `ai.speech.create` | No | Synthesized audio bytes unless the result is skipped or empty |
+
+The JSON `args` and `data` carry metadata; the top-level body carries bytes.
+This avoids syscall-specific stream identifiers and JSON/base64 expansion. In
+the JavaScript SDK, use `client.request()` for these calls and consume or cancel
+the returned body. `client.call()` and generated namespace methods are
+data-only, and body-bearing calls are intentionally omitted from those
+namespaces.
 
 ## See also
 

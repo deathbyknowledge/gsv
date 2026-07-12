@@ -53,32 +53,7 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function isTextContentType(contentType: string): boolean {
-  const base = contentType.split(";")[0].trim().toLowerCase();
-  return (
-    base.startsWith("text/") ||
-    base === "application/json" ||
-    base === "application/yaml" ||
-    base === "application/xml" ||
-    base === "application/javascript" ||
-    base === "application/typescript" ||
-    base === "application/toml"
-  );
-}
-
-export function inferContentType(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase();
-  const map: Record<string, string> = {
-    md: "text/markdown", json: "application/json", yaml: "application/yaml",
-    yml: "application/yaml", xml: "application/xml", toml: "application/toml",
-    js: "application/javascript", ts: "application/typescript",
-    cjs: "application/javascript", mjs: "application/javascript",
-    html: "text/html", css: "text/css", txt: "text/plain", csv: "text/csv",
-    sh: "text/x-shellscript", py: "text/x-python",
-    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
-    gif: "image/gif", webp: "image/webp", svg: "image/svg+xml",
-    wasm: "application/wasm", data: "application/octet-stream", map: "application/json",
-    mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg",
-  };
-  return (ext && map[ext]) || "text/plain";
-}
+export {
+  inferFsContentType as inferContentType,
+  isTextContentType,
+} from "@humansandmachines/gsv/protocol";

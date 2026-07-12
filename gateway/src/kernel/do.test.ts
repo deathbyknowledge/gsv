@@ -7,6 +7,7 @@ vi.mock("../shared/utils", () => ({
 import { sendFrameToProcess } from "../shared/utils";
 import { Kernel } from "./do";
 import {
+  BINARY_FRAME_CANCEL,
   BINARY_FRAME_DATA,
   BINARY_FRAME_END,
   buildBinaryFrame,
@@ -18,8 +19,8 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 describe("Kernel frame bodies", () => {
   it("decodes WebSocket body frames into a byte stream", async () => {
     const kernel = Object.create(Kernel.prototype) as any;
-    kernel.pendingFrameBodies = new Map();
-    const connection = { id: "conn-1" };
+    kernel.frameBodyChannels = new Map();
+    const connection = { id: "conn-1", send: vi.fn() };
 
     const frame = kernel.decodeWebSocketFrame(connection, {
       type: "req",
@@ -38,15 +39,14 @@ describe("Kernel frame bodies", () => {
     expect(
       new Uint8Array(await new Response(frame.body.stream).arrayBuffer()),
     ).toEqual(new Uint8Array([1, 2, 3]));
-    expect(kernel.pendingFrameBodies.size).toBe(0);
+    expect(kernel.frameBodyChannels.get(connection.id).pending.size).toBe(0);
   });
 
   it("announces a response body before sending its chunks", async () => {
     const sends: Array<string | ArrayBuffer> = [];
     const pending: Promise<unknown>[] = [];
     const kernel = Object.create(Kernel.prototype) as any;
-    kernel.nextFrameBodyStreamId = 1;
-    kernel.outgoingFrameBodyReaders = new Map();
+    kernel.frameBodyChannels = new Map();
     kernel.ctx = { waitUntil: (promise: Promise<unknown>) => pending.push(promise) };
     const connection = {
       id: "connection-1",
@@ -77,10 +77,95 @@ describe("Kernel frame bodies", () => {
     expect(end).toMatchObject({ flags: BINARY_FRAME_END });
   });
 
+  it("cancels an unfinished request body when a device responds early", async () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.pendingAppResponses = new Map();
+    kernel.devices = {
+      get: () => ({ online: true }),
+      canHandle: () => true,
+    };
+    kernel.findDeviceConnection = () => ({ id: "device-connection" });
+    kernel.registerRouteWithExpiry = vi.fn(async () => ({ cancel: vi.fn() }));
+    const outgoing = { cancel: vi.fn(async () => {}) };
+    kernel.sendWebSocketFrame = vi.fn((_connection: unknown, frame: { id: string }) => {
+      queueMicrotask(() => kernel.pendingAppResponses.get(frame.id)?.({
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: { ok: true },
+      }));
+      return outgoing;
+    });
+
+    await kernel.requestDevice("device-1", "net.fetch", {}, {
+      body: { stream: new ReadableStream(), length: 1 },
+    });
+
+    expect(outgoing.cancel).toHaveBeenCalledWith("Device request completed");
+  });
+
+  it("cancels the route and upload when a device request is aborted", async () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.pendingAppResponses = new Map();
+    kernel.devices = {
+      get: () => ({ online: true }),
+      canHandle: () => true,
+    };
+    kernel.findDeviceConnection = () => ({ id: "device-connection" });
+    const cancelRoute = vi.fn();
+    kernel.registerRouteWithExpiry = vi.fn(async () => ({ cancel: cancelRoute }));
+    const outgoing = { cancel: vi.fn(async () => {}) };
+    kernel.sendWebSocketFrame = vi.fn(() => outgoing);
+    const controller = new AbortController();
+    const reason = new Error("caller stopped");
+
+    const request = kernel.requestDevice("device-1", "net.fetch", {}, {
+      body: { stream: new ReadableStream(), length: 1 },
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(kernel.sendWebSocketFrame).toHaveBeenCalledOnce());
+    controller.abort(reason);
+
+    await expect(request).rejects.toBe(reason);
+    expect(cancelRoute).toHaveBeenCalledOnce();
+    expect(outgoing.cancel).toHaveBeenCalledWith(reason);
+  });
+
+  it("cancels announced bodies on requests rejected before dispatch", async () => {
+    const sends: Array<string | ArrayBuffer> = [];
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.frameBodyChannels = new Map();
+    kernel.auth = { isSetupMode: () => false };
+    const connection = {
+      id: "pending-connection",
+      state: { step: "pending" },
+      send: (message: string | ArrayBuffer) => sends.push(message),
+    };
+
+    await kernel.handleReq(connection, {
+      type: "req",
+      id: "denied-request",
+      call: "fs.transfer.receive",
+      args: { path: "/tmp/file" },
+      body: { streamId: 12, length: 1 },
+    });
+
+    expect(JSON.parse(sends[0] as string)).toMatchObject({
+      type: "res",
+      id: "denied-request",
+      ok: false,
+      error: { code: 403 },
+    });
+    expect(parseBinaryFrame(sends[1] as ArrayBuffer)).toMatchObject({
+      streamId: 12,
+      flags: BINARY_FRAME_CANCEL | BINARY_FRAME_END,
+    });
+  });
+
   it("rejects bodies that do not match their declared length", async () => {
     const kernel = Object.create(Kernel.prototype) as any;
-    kernel.pendingFrameBodies = new Map();
-    const connection = { id: "conn-1" };
+    kernel.frameBodyChannels = new Map();
+    const connection = { id: "conn-1", send: vi.fn() };
     const body = kernel.receiveFrameBody(connection, { streamId: 8, length: 3 });
 
     kernel.handleBinaryMessage(
@@ -92,12 +177,12 @@ describe("Kernel frame bodies", () => {
     await expect(new Response(body.stream).arrayBuffer()).rejects.toThrow(
       "Body length 2 did not match 3",
     );
-    expect(kernel.pendingFrameBodies.size).toBe(0);
+    expect(kernel.frameBodyChannels.get(connection.id).pending.size).toBe(0);
   });
 
   it("does not register bodies from an invalid response route", () => {
     const kernel = Object.create(Kernel.prototype) as any;
-    kernel.pendingFrameBodies = new Map();
+    kernel.frameBodyChannels = new Map();
     kernel.routes = { get: () => ({ deviceId: "expected-device" }) };
     kernel.isConnectionForDevice = vi.fn(() => false);
 
@@ -108,7 +193,113 @@ describe("Kernel frame bodies", () => {
       body: { streamId: 9, length: 3 },
     });
 
-    expect(kernel.pendingFrameBodies.size).toBe(0);
+    expect(kernel.frameBodyChannels.size).toBe(0);
+  });
+
+  it("cancels a response body that arrives after its route is gone", async () => {
+    const sends: ArrayBuffer[] = [];
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.frameBodyChannels = new Map();
+    kernel.routes = { get: () => null };
+    const connection = {
+      id: "conn-late",
+      send: (message: ArrayBuffer) => sends.push(message),
+    };
+
+    kernel.handleRes(connection, {
+      type: "res",
+      id: "late-response",
+      ok: true,
+      body: { streamId: 9, length: 3 },
+    });
+
+    await vi.waitFor(() => expect(sends).toHaveLength(1));
+    expect(parseBinaryFrame(sends[0])).toMatchObject({
+      streamId: 9,
+      flags: BINARY_FRAME_CANCEL | BINARY_FRAME_END,
+    });
+  });
+
+  it("stops a routed upload when the device response arrives", async () => {
+    const cancel = vi.fn(async () => {});
+    const route = {
+      deviceId: "device-1",
+      origin: { type: "app", id: "req-1" },
+      call: "net.fetch",
+      scheduleId: null,
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.routes = {
+      get: () => route,
+      remove: () => route,
+    };
+    kernel.routedBodies = new Map([["req-1", { cancel }]]);
+    kernel.isConnectionForDevice = () => true;
+    kernel.decodeWebSocketFrame = (_connection: unknown, frame: unknown) => frame;
+    kernel.deliverToOrigin = vi.fn();
+
+    kernel.handleRes({}, {
+      type: "res",
+      id: "req-1",
+      ok: true,
+      data: { ok: true },
+    });
+
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith("Device response received"));
+    expect(kernel.routedBodies.size).toBe(0);
+  });
+
+  it("sends a cancellation frame when an inbound body is discarded", async () => {
+    const sends: ArrayBuffer[] = [];
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.frameBodyChannels = new Map();
+    const connection = {
+      id: "conn-1",
+      send: (message: ArrayBuffer) => sends.push(message),
+    };
+    const body = kernel.receiveFrameBody(connection, { streamId: 10 });
+
+    await body.stream.cancel("body ignored");
+
+    expect(parseBinaryFrame(sends[0])).toMatchObject({
+      streamId: 10,
+      flags: BINARY_FRAME_CANCEL | BINARY_FRAME_END,
+    });
+  });
+
+  it("cancels an outgoing body pump when the receiver sends cancellation", async () => {
+    const sends: Array<string | ArrayBuffer> = [];
+    const pending: Promise<unknown>[] = [];
+    let cancelled = false;
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.frameBodyChannels = new Map();
+    kernel.ctx = { waitUntil: (promise: Promise<unknown>) => pending.push(promise) };
+    const connection = {
+      id: "connection-1",
+      send: (message: string | ArrayBuffer) => sends.push(message),
+    };
+    const stream = new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => {}),
+      cancel: () => {
+        cancelled = true;
+      },
+    });
+
+    kernel.sendWebSocketFrame(connection, {
+      type: "res",
+      id: "req-1",
+      ok: true,
+      body: { stream },
+    });
+    const descriptor = JSON.parse(sends[0] as string);
+    kernel.handleBinaryMessage(
+      connection,
+      buildBinaryFrame(descriptor.body.streamId, BINARY_FRAME_CANCEL | BINARY_FRAME_END),
+    );
+    await Promise.all(pending);
+
+    expect(cancelled).toBe(true);
+    expect(sends).toHaveLength(1);
   });
 });
 
@@ -456,8 +647,6 @@ describe("Kernel process device requests", () => {
         statusText: "No Content",
         headers: {},
         redirected: false,
-        bodyBase64: "",
-        bodyBytes: 0,
       },
     }));
     const kernel = Object.create(Kernel.prototype) as {
@@ -470,11 +659,22 @@ describe("Kernel process device requests", () => {
         get: ReturnType<typeof vi.fn>;
       };
       requestDevice: typeof requestDevice;
+      cancelProcessNetFetch(processId: string, requestId: string, reason?: string): boolean;
+      processNetFetchRequests: Map<string, { processId: string; controller: AbortController }>;
+      cancelledProcessNetFetchRequests: Map<
+        string,
+        { expiresAt: number; reason: string }
+      >;
       requestProcessNetFetch(
         processId: string,
         target: string,
         args: { url: string; timeoutMs: number },
-        options?: { ttlMs?: number; internalPurpose?: "model-transport" },
+        options?: {
+          ttlMs?: number;
+          internalPurpose?: "model-transport";
+          body?: { stream: ReadableStream<Uint8Array>; length?: number };
+          requestId?: string;
+        },
       ): Promise<unknown>;
     };
     kernel.env = {};
@@ -493,6 +693,8 @@ describe("Kernel process device requests", () => {
       get: vi.fn(() => device),
     };
     kernel.requestDevice = requestDevice;
+    kernel.processNetFetchRequests = new Map();
+    kernel.cancelledProcessNetFetchRequests = new Map();
     return { kernel, requestDevice };
   }
 
@@ -506,7 +708,7 @@ describe("Kernel process device requests", () => {
       { ttlMs: 180000 },
     );
 
-    expect(result).toMatchObject({ ok: true, status: 204 });
+    expect(result).toMatchObject({ ok: true, data: { status: 204 } });
     expect(kernel.procs.getIdentity).toHaveBeenCalledWith("proc_1");
     expect(kernel.devices.canAccess).toHaveBeenCalledWith("linux-machine", 0, [0]);
     expect(requestDevice).toHaveBeenCalledWith(
@@ -519,14 +721,26 @@ describe("Kernel process device requests", () => {
 
   it("requires net.fetch capability for default process net fetches", async () => {
     const { kernel, requestDevice } = buildKernelForDeviceRequest({ capabilities: [] });
+    let bodyCancelled = false;
 
     await expect(kernel.requestProcessNetFetch(
       "proc_1",
       "linux-machine",
       { url: "https://example.com", timeoutMs: 180000 },
-      { ttlMs: 180000 },
+      {
+        ttlMs: 180000,
+        body: {
+          stream: new ReadableStream({
+            cancel() {
+              bodyCancelled = true;
+            },
+          }),
+          length: 3,
+        },
+      },
     )).rejects.toThrow("Permission denied: net.fetch");
 
+    expect(bodyCancelled).toBe(true);
     expect(requestDevice).not.toHaveBeenCalled();
   });
 
@@ -540,13 +754,64 @@ describe("Kernel process device requests", () => {
       { ttlMs: 180000, internalPurpose: "model-transport" },
     );
 
-    expect(result).toMatchObject({ ok: true, status: 204 });
+    expect(result).toMatchObject({ ok: true, data: { status: 204 } });
     expect(requestDevice).toHaveBeenCalledWith(
       "linux-machine",
       "net.fetch",
       { url: "https://example.com", timeoutMs: 180000 },
       { ttlMs: 180000 },
     );
+  });
+
+  it("registers cancellable process net.fetch requests", async () => {
+    const { kernel, requestDevice } = buildKernelForDeviceRequest();
+
+    await kernel.requestProcessNetFetch(
+      "proc_1",
+      "linux-machine",
+      { url: "https://example.com", timeoutMs: 180000 },
+      { ttlMs: 180000, requestId: "fetch-1" },
+    );
+
+    expect(requestDevice).toHaveBeenCalledWith(
+      "linux-machine",
+      "net.fetch",
+      { url: "https://example.com", timeoutMs: 180000 },
+      expect.objectContaining({
+        ttlMs: 180000,
+        id: "fetch-1",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(kernel.processNetFetchRequests.size).toBe(0);
+  });
+
+  it("only lets the owning process cancel a routed fetch", () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    const controller = new AbortController();
+    kernel.processNetFetchRequests = new Map([
+      ["fetch-1", { processId: "proc_1", controller }],
+    ]);
+
+    expect(kernel.cancelProcessNetFetch("proc_2", "fetch-1")).toBe(false);
+    expect(controller.signal.aborted).toBe(false);
+    expect(kernel.cancelProcessNetFetch("proc_1", "fetch-1", "stopped")).toBe(true);
+    expect(controller.signal.reason).toEqual(new Error("stopped"));
+  });
+
+  it("honors cancellation that arrives before process fetch registration", async () => {
+    const { kernel, requestDevice } = buildKernelForDeviceRequest();
+
+    expect(kernel.cancelProcessNetFetch("proc_1", "fetch-early", "superseded")).toBe(true);
+    await expect(kernel.requestProcessNetFetch(
+      "proc_1",
+      "linux-machine",
+      { url: "https://example.com", timeoutMs: 180000 },
+      { requestId: "fetch-early" },
+    )).rejects.toThrow("superseded");
+
+    expect(requestDevice).not.toHaveBeenCalled();
+    expect(kernel.cancelledProcessNetFetchRequests.size).toBe(0);
   });
 });
 

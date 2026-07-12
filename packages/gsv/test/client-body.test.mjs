@@ -2,11 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GSVClient } from "../dist/client.js";
 import {
+  BINARY_FRAME_CANCEL,
   BINARY_FRAME_DATA,
   BINARY_FRAME_END,
+  BINARY_FRAME_ERROR,
   buildBinaryFrame,
   parseBinaryFrame,
 } from "../dist/protocol/binary-frame.js";
+import { BinaryBodyChannel } from "../dist/protocol/binary-body-channel.js";
+import { bodyFromBytes } from "../dist/protocol/body.js";
+import {
+  inferFsContentType,
+  isTextContentType,
+} from "../dist/protocol/file-content.js";
 
 class FakeWebSocket extends EventTarget {
   static instance;
@@ -78,9 +86,53 @@ async function connectedClient() {
 test("keeps body-bearing syscalls off the data-only namespaces", () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
 
+  assert.equal(client.fs.read, undefined);
   assert.equal(client.fs.transfer.send, undefined);
   assert.equal(client.fs.transfer.receive, undefined);
+  assert.equal(client.net, undefined);
+  assert.equal(client.proc.media.read, undefined);
+  assert.equal(client.proc.media.write, undefined);
+  assert.equal(typeof client.proc.media.delete, "function");
+  assert.equal(client.ai.transcription, undefined);
+  assert.equal(client.ai.image, undefined);
+  assert.equal(client.ai.speech, undefined);
   assert.equal(typeof client.fs.transfer.stat, "function");
+});
+
+test("bodyFromBytes preserves its input buffer", async () => {
+  const bytes = new Uint8Array([1, 2, 3]);
+  const framed = bodyFromBytes(bytes);
+
+  assert.deepEqual(
+    [...new Uint8Array(await new Response(framed.stream).arrayBuffer())],
+    [1, 2, 3],
+  );
+  assert.equal(bytes.byteLength, 3);
+  assert.deepEqual([...bytes], [1, 2, 3]);
+});
+
+test("bodyFromBytes supports an empty body", async () => {
+  const framed = bodyFromBytes(new Uint8Array());
+
+  assert.equal(framed.length, 0);
+  assert.equal((await new Response(framed.stream).arrayBuffer()).byteLength, 0);
+});
+
+test("parses binary frame payloads without copying them", () => {
+  const encoded = buildBinaryFrame(7, BINARY_FRAME_DATA, new Uint8Array([1, 2, 3]));
+  const parsed = parseBinaryFrame(encoded);
+
+  assert.equal(parsed.payload.buffer, encoded);
+  assert.equal(parsed.payload.byteOffset, 5);
+  assert.deepEqual([...parsed.payload], [1, 2, 3]);
+});
+
+test("shares the filesystem content contract", () => {
+  assert.equal(inferFsContentType("notes.unknown"), "text/plain");
+  assert.equal(inferFsContentType("recording.webm"), "audio/webm");
+  assert.equal(inferFsContentType("app.tsx"), "application/typescript");
+  assert.equal(isTextContentType("application/problem+json; charset=utf-8"), true);
+  assert.equal(isTextContentType("application/pdf"), false);
 });
 
 test("sends a request body after its JSON descriptor", async () => {
@@ -150,6 +202,39 @@ test("rejects a body that does not match its declared length", async () => {
   client.close();
 });
 
+test("treats response body timeouts as idle timeouts", async () => {
+  const client = new GSVClient({
+    WebSocket: FakeWebSocket,
+    body: { receiveTimeoutMs: 100 },
+  });
+  await client.connect({
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  const socket = FakeWebSocket.instance;
+  const pending = client.request("test.echo");
+  const request = JSON.parse(socket.sent.at(-1));
+
+  socket.receive(JSON.stringify({
+    type: "res",
+    id: request.id,
+    ok: true,
+    body: { streamId: 45, length: 1 },
+  }));
+  const response = await pending;
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  socket.receive(buildBinaryFrame(45, BINARY_FRAME_DATA, new Uint8Array([7])));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  socket.receive(buildBinaryFrame(45, BINARY_FRAME_END));
+
+  assert.deepEqual(
+    [...new Uint8Array(await new Response(response.body.stream).arrayBuffer())],
+    [7],
+  );
+  client.close();
+});
+
 test("drops chunks for a cancelled response body", async () => {
   const { client, socket } = await connectedClient();
   const pending = client.call("fs.transfer.send", { path: "file.bin" });
@@ -163,6 +248,9 @@ test("drops chunks for a cancelled response body", async () => {
     body: { streamId: 44, length: 3 },
   }));
   await assert.rejects(pending, /returned a body/);
+  const cancellation = parseBinaryFrame(socket.sent.at(-1));
+  assert.equal(cancellation.streamId, 44);
+  assert.equal(cancellation.flags, BINARY_FRAME_CANCEL | BINARY_FRAME_END);
   socket.receive(buildBinaryFrame(44, BINARY_FRAME_DATA, new Uint8Array([1, 2, 3])));
   socket.receive(buildBinaryFrame(44, BINARY_FRAME_END));
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -177,6 +265,108 @@ test("drops chunks for a cancelled response body", async () => {
   }));
   assert.deepEqual((await followup).data, { ok: true });
   client.close();
+});
+
+test("cancels a body on a late response", async () => {
+  const { client, socket } = await connectedClient();
+
+  socket.receive(JSON.stringify({
+    type: "res",
+    id: "no-longer-pending",
+    ok: true,
+    body: { streamId: 46, length: 3 },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const cancellation = parseBinaryFrame(socket.sent.at(-1));
+  assert.equal(cancellation.streamId, 46);
+  assert.equal(cancellation.flags, BINARY_FRAME_CANCEL | BINARY_FRAME_END);
+  client.close();
+});
+
+test("receiver cancellation stops the peer's shared outgoing body pump", async () => {
+  const senderFrames = [];
+  const receiverFrames = [];
+  let sender;
+  let receiver;
+  let cancelled = false;
+  sender = new BinaryBodyChannel({
+    sendFrame(frame) {
+      senderFrames.push(frame);
+      receiver.handleFrame(frame);
+    },
+  });
+  receiver = new BinaryBodyChannel({
+    sendFrame(frame) {
+      receiverFrames.push(frame);
+      sender.handleFrame(frame);
+    },
+  });
+  const outgoing = sender.prepare({
+    stream: new ReadableStream({
+      pull: () => new Promise(() => {}),
+      cancel: () => {
+        cancelled = true;
+      },
+    }),
+  });
+  const incoming = receiver.receive(outgoing.descriptor);
+  const sending = outgoing.send();
+
+  await incoming.stream.cancel("response no longer needed");
+  await sending;
+
+  assert.equal(cancelled, true);
+  assert.equal(senderFrames.length, 0);
+  const terminal = parseBinaryFrame(receiverFrames.at(-1));
+  assert.equal(terminal.streamId, outgoing.descriptor.streamId);
+  assert.equal(terminal.flags, BINARY_FRAME_CANCEL | BINARY_FRAME_END);
+});
+
+test("prepared body cancellation still terminates the announced stream", async () => {
+  const frames = [];
+  const channel = new BinaryBodyChannel({ sendFrame: (frame) => frames.push(frame) });
+  const outgoing = channel.prepare(bodyFromBytes(new Uint8Array([1])));
+
+  await outgoing.cancel("response rejected before send");
+
+  const terminal = parseBinaryFrame(frames[0]);
+  assert.equal(terminal.streamId, outgoing.descriptor.streamId);
+  assert.equal(terminal.flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
+});
+
+test("does not miss aborts while registering an outgoing body signal", async () => {
+  const frames = [];
+  let sourceCancelled = false;
+  let aborted = false;
+  const reason = new Error("abort during registration");
+  const signal = {
+    get aborted() {
+      return aborted;
+    },
+    reason,
+    addEventListener(_type, listener) {
+      aborted = true;
+      listener();
+    },
+    removeEventListener() {},
+  };
+  const channel = new BinaryBodyChannel({ sendFrame: (frame) => frames.push(frame) });
+  const outgoing = channel.prepare({
+    stream: new ReadableStream({
+      pull: () => new Promise(() => {}),
+      cancel: () => {
+        sourceCancelled = true;
+      },
+    }),
+  });
+
+  await outgoing.send(signal);
+
+  assert.equal(sourceCancelled, true);
+  const terminal = parseBinaryFrame(frames[0]);
+  assert.equal(terminal.streamId, outgoing.descriptor.streamId);
+  assert.equal(terminal.flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
 });
 
 test("sends an error frame when an outbound body is already locked", async () => {
@@ -211,5 +401,8 @@ test("cancels an upload when the request completes early", async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(cancelled, true);
+  const terminal = parseBinaryFrame(socket.sent.at(-1));
+  assert.equal(terminal.streamId, request.body.streamId);
+  assert.equal(terminal.flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
   client.close();
 });

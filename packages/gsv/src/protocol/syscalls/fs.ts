@@ -4,15 +4,12 @@ export type FsReadArgs = {
   limit?: number;
 };
 
-export type FsImageContent =
-  | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string };
-
 export type FsReadResult =
   | {
       ok: true;
-      content: string | FsImageContent[];
       path: string;
+      kind: "text" | "image";
+      contentType: string;
       lines?: number;
       size: number;
     }

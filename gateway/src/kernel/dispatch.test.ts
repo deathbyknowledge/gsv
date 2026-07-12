@@ -300,8 +300,10 @@ describe("dispatch", () => {
       },
       send: vi.fn(),
     };
-    const forwarded = vi.fn();
-    const registerRoute = vi.fn(async () => ({ cancel: vi.fn() }));
+    const outgoing = { cancel: vi.fn(async () => {}) };
+    const forwarded = vi.fn(() => outgoing);
+    const attachBody = vi.fn();
+    const registerRoute = vi.fn(async () => ({ cancel: vi.fn(), attachBody }));
     const deps = {
       sendFrame: forwarded,
       connections: new Map([["conn_1", connection]]),
@@ -348,6 +350,7 @@ describe("dispatch", () => {
       args: { path: "/tmp/file.txt" },
       body,
     });
+    expect(attachBody).toHaveBeenCalledWith(outgoing);
   });
 
   it("cancels registered routes when sending to the target fails", async () => {

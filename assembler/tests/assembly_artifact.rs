@@ -399,6 +399,8 @@ fn builds_runtime_artifact_for_declarative_backend_and_commands() {
     assert!(wrapper.contains("api.emitAppEvent(event, payload, undefined, session?.sessionId)"));
     assert!(wrapper.contains("api.emitAppEvent(event, payload, clientId, session?.sessionId)"));
     assert!(wrapper.contains("const api = env.GSV_API;"));
+    assert!(wrapper.contains("async requestFrame(call, args, options)"));
+    assert!(wrapper.contains("api.kernelRequestFrame(appFrame, call, args, options)"));
 }
 
 #[test]

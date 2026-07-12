@@ -1,5 +1,5 @@
 use crate::protocol::ToolDefinition;
-use crate::tools::Tool;
+use crate::tools::{Tool, ToolOutput};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -72,7 +72,7 @@ impl Tool for SearchTool {
         }
     }
 
-    async fn execute(&self, args: Value) -> Result<Value, String> {
+    async fn execute(&self, args: Value) -> Result<ToolOutput, String> {
         let args: SearchArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
@@ -124,22 +124,22 @@ impl Tool for SearchTool {
 
                         // Limit total matches
                         if matches.len() >= 100 {
-                            return Ok(json!({
+                            return Ok(ToolOutput::json(json!({
                                 "ok": true,
                                 "matches": matches,
                                 "count": matches.len(),
                                 "truncated": true
-                            }));
+                            })));
                         }
                     }
                 }
             }
         }
 
-        Ok(json!({
+        Ok(ToolOutput::json(json!({
             "ok": true,
             "matches": matches,
             "count": matches.len()
-        }))
+        })))
     }
 }

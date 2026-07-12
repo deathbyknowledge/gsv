@@ -1,5 +1,5 @@
 use crate::protocol::ToolDefinition;
-use crate::tools::Tool;
+use crate::tools::{Tool, ToolOutput};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -87,7 +87,7 @@ impl Tool for CopyTool {
         }
     }
 
-    async fn execute(&self, args: Value) -> Result<Value, String> {
+    async fn execute(&self, args: Value) -> Result<ToolOutput, String> {
         let args: CopyArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
@@ -134,7 +134,7 @@ impl Tool for CopyTool {
             .first()
             .map(|mime| mime.essence_str().to_string());
 
-        Ok(json!({
+        Ok(ToolOutput::json(json!({
             "ok": true,
             "source": {
                 "target": self.device_id,
@@ -146,7 +146,7 @@ impl Tool for CopyTool {
             },
             "size": bytes,
             "contentType": content_type
-        }))
+        })))
     }
 }
 
@@ -182,7 +182,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result["ok"], true);
+        assert_eq!(result.data["ok"], true);
         assert_eq!(
             tokio::fs::read_to_string(root.join("nested/dest.txt"))
                 .await

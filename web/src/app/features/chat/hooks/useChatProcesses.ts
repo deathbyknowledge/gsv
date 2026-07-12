@@ -131,6 +131,7 @@ export function useChatProcessMedia(options: UseChatProcessMediaOptions) {
     queryKey: chatProcessMediaQueryKey(options.args),
     enabled: connected && options.enabled !== false && options.args.key.trim().length > 0,
     queryFn: () => readChatProcessMedia(client, options.args),
+    staleTime: Infinity,
   });
 }
 

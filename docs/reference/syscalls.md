@@ -23,7 +23,12 @@ Every syscall request uses the same frame shape:
 
 Successful dispatch returns a response frame with `ok: true` and syscall-specific `data`. Protocol, authorization, routing, or thrown handler failures return `ok: false` with `{ "code": number, "message": string }`. Many syscall payloads also carry their own `ok` field for operation-level status, so callers should check both the frame and returned data.
 
-`fs.*` and `shell.exec` are hardware-routable. Their wire args may include `target`; dispatch strips it before the native or device handler receives the syscall.
+Some requests and successful responses attach a top-level byte-stream body;
+`args` and `data` then contain metadata only. Direct JavaScript clients must use
+`client.request()` for body-bearing syscalls and consume or cancel the body.
+Generated namespace methods and `client.call()` are data-only.
+
+`fs.*`, `shell.exec`, and `net.fetch` are hardware-routable. Their wire args may include `target`; dispatch strips it before the native or device handler receives the syscall.
 
 ## Shared Records
 
@@ -49,7 +54,7 @@ type ProcessIdentity = {
 type MediaInput = {
   type: "image" | "audio" | "video" | "document";
   mimeType: string;
-  data?: string;
+  key?: string;
   url?: string;
   filename?: string;
   size?: number;
@@ -253,7 +258,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `fs.read` | `handleFsRead`; CLI `Read` | Resolves paths against process `cwd` and home. Lists directories, reads text with numbered lines, or returns image content blocks. `offset` defaults to `0`; `limit` defaults to all lines. Native image reads cap at 25 MiB; CLI image reads cap at 10 MiB. |
+| `fs.read` | `handleFsRead`; CLI `Read` | Resolves paths against process `cwd` and home. Direct directory results are JSON. A successful file result always attaches a response body containing numbered UTF-8 text or raw image bytes; `data` contains file metadata. Text decoding is strict across native and device implementations, so invalid UTF-8 returns a binary-file error. `offset` defaults to `0`; `limit` defaults to all lines. The transport streams images without a target-specific size cap; process tool results cap model-context materialization at 25 MiB. |
 | `fs.write` | `handleFsWrite`; CLI `Write` | Creates or replaces a complete file. Native writes through `GsvFs.writeFile`; CLI creates parent directories explicitly. Returns written path and size. |
 | `fs.edit` | `handleFsEdit`; CLI `Edit` | Performs exact string replacement in a text file. `replaceAll` defaults to `false`; if multiple matches exist and `replaceAll` is false, the handler asks for a more specific edit. |
 | `fs.delete` | `handleFsDelete`; CLI `Delete` | Deletes the path. Native checks existence then calls `rm` with force; CLI deletes files or directories recursively. This is destructive. |
@@ -266,7 +271,7 @@ type FilesystemSyscalls = {
   "fs.read": {
     args: { target?: string; path: string; offset?: number; limit?: number };
     result:
-      | { ok: true; content: string | Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>; path: string; lines?: number; size: number }
+      | { ok: true; path: string; kind: "text" | "image"; contentType: string; lines?: number; size: number }
       | { ok: true; path: string; files: string[]; directories: string[] }
       | OperationError;
   };
@@ -291,6 +296,43 @@ type FilesystemSyscalls = {
     result:
       | { ok: true; matches: Array<{ path: string; line: number; content: string }>; count: number; truncated?: boolean }
       | OperationError;
+  };
+};
+```
+
+For a file result, `size` is the original file size; the body descriptor length
+is the transmitted payload size and can differ for numbered text. Process tool
+results and CodeMode deliberately materialize the body back into `content`, so
+the CodeMode examples below keep their existing object shape.
+
+## Network: `net.fetch`
+
+`net.fetch` performs an HTTP(S) request on `gsv` or a target device. HTTP request
+bytes use a top-level request body; GET and HEAD requests cannot carry one. The
+HTTP response body is returned as the response body while status and headers remain
+in `data`; HTTP error statuses are operation results, not protocol errors.
+Gateway and device implementations cap request and response bodies at 32 MiB.
+`timeoutMs` defaults to 60 seconds and is capped at 10 minutes.
+
+```ts
+type NetworkSyscalls = {
+  "net.fetch": {
+    args: {
+      target?: string;
+      url: string;
+      method?: string;
+      headers?: Record<string, string>;
+      redirect?: "follow" | "error" | "manual";
+      timeoutMs?: number;
+    };
+    result: {
+      ok: boolean;
+      url: string;
+      status: number;
+      statusText: string;
+      headers: Record<string, string>;
+      redirected: boolean;
+    };
   };
 };
 ```
@@ -484,13 +526,16 @@ Runtime behavior:
 | `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
 | `proc.profile.list` | `handleProcProfileList` | Returns system AI profiles plus enabled package-backed profiles visible to the caller. Package entries are sorted by package name and display name. |
 | `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. A default interactive top-level spawn reuses the caller's default conversation executor; custom spawns get UUID pids. |
-| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media-bearing user messages are admitted immediately and generation starts after background media preparation. Touches workspace activity before forwarding. |
+| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media entries contain process-scoped keys returned by `proc.media.write` or external URLs; inline `media.data` is not accepted. Media-bearing user messages are admitted immediately and generation starts after background media preparation. Touches workspace activity before forwarding. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Logical cancellation of the active run. Converts outstanding tool calls to error results, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. In-flight external work can still resolve later but stale handling guards state. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
 | `proc.kill` | Process DO | Optionally archives every non-empty conversation under the run-as agent's home, clears process media, and wipes Process DO state. After success the Kernel removes the process registry entry and detaches its conversation executor. |
 | `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, cursor flags, truncation status, timestamps, pending HIL, and the latest context-pressure state when available. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content. |
+| `proc.media.read` | Process DO | Reads one process-scoped media object. A successful result returns key, MIME type, and size in `data` and always attaches the media bytes as a response body. |
+| `proc.media.write` | Process DO | Streams one request body directly into process-scoped R2 storage. The body descriptor must declare its exact length so R2 receives a fixed-length stream. Returns a stable media reference for `proc.send`. |
+| `proc.media.delete` | Process DO | Idempotently deletes one unreferenced process-scoped media object. Keys outside the target process or already referenced by process history are rejected. Used to roll back uploads that are not admitted by `proc.send`. |
 | `proc.conversation.open` | Process DO | Creates or reopens a process-local conversation. If `conversationId` is omitted, the Process DO generates one. Optional `title` is trimmed and stored. |
 | `proc.conversation.list` | Process DO | Lists open conversations by default. `includeClosed: true` includes closed conversations. Each record includes generation, status, title, message count, and timestamps. |
 | `proc.conversation.get` | Process DO | Returns one conversation record for `conversationId` or `default`; unknown conversations return `conversation: null`. |
@@ -637,6 +682,21 @@ type ProcessSyscalls = {
   "proc.history": {
     args: { pid?: string; conversationId?: string; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
     result: { ok: true; pid: string; conversationId?: string; messages: Array<{ id?: number; role: "user" | "assistant" | "system" | "toolResult"; content: unknown; timestamp?: number }>; messageCount: number; truncated?: boolean; hasMoreBefore?: boolean; hasMoreAfter?: boolean; pendingHil?: ProcHilRequest | null; context?: ProcContextState | null } | OperationError;
+  };
+
+  "proc.media.read": {
+    args: { pid?: string; key: string };
+    result: { ok: true; key: string; mimeType: string; size: number } | OperationError;
+  };
+
+  "proc.media.write": {
+    args: { pid?: string; type: "image" | "audio" | "video" | "document"; mimeType: string; filename?: string; duration?: number; transcription?: string };
+    result: { ok: true; media: MediaInput & { key: string; size: number } } | OperationError;
+  };
+
+  "proc.media.delete": {
+    args: { pid?: string; key: string };
+    result: { ok: true; key: string } | OperationError;
   };
 
   "proc.conversation.open": {
@@ -1079,9 +1139,11 @@ type SystemSyscalls = {
 };
 ```
 
-## AI Bootstrap: `ai.*`
+## AI: `ai.*`
 
-`ai.*` is used by Process Durable Objects to prepare agent runs.
+`ai.tools` and `ai.config` are internal Process bootstrap calls. The media
+syscalls below are public, capability-gated operations. Their binary media uses
+top-level frame bodies rather than JSON/base64 fields.
 
 Runtime behavior:
 
@@ -1089,8 +1151,10 @@ Runtime behavior:
 |---|---|---|
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
 | `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/zai-org/glm-5.2`, fallback profile to `workers-ai-kimi-k2-6`, max tokens to 8192, context window to provider/model metadata or configured fallback, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
-
-External callers cannot normally invoke `ai.*`; these syscalls are exposed to process-originated calls.
+| `ai.transcription.create` | `handleAiTranscriptionCreate` | Requires audio metadata plus an audio request body. Returns transcription text and model metadata in JSON. |
+| `ai.image.read` | `handleAiImageRead` | Requires image metadata plus an image request body. Returns the image description and model metadata in JSON. |
+| `ai.image.generate` | `handleAiImageGenerate` | Accepts a text prompt. Inline generated image bytes use a response body; `data.image` contains MIME type and size, and providers may instead return `url`. |
+| `ai.speech.create` | `handleAiSpeechCreate` | Accepts text and voice options. Synthesized audio uses a response body with MIME type and size in `data.audio`; skipped or empty results have no body. |
 
 ```ts
 type AiSyscalls = {
@@ -1102,6 +1166,26 @@ type AiSyscalls = {
   "ai.config": {
     args: { profile?: AiContextProfile };
     result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; profileContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "profile" | "home" | "workspace" | "package"; label: string; writable: boolean } }>; profileApprovalPolicy?: string | null; maxContextBytes: number };
+  };
+
+  "ai.transcription.create": {
+    args: { audio: { mimeType: string; filename?: string }; language?: string; prompt?: string; mode?: "transcribe" | "translate" };
+    result: { text: string; language?: string; duration?: number; segments?: unknown[]; provider: string; model: string };
+  };
+
+  "ai.image.read": {
+    args: { image: { mimeType: string; filename?: string }; prompt?: string; model?: string; inputFormat?: "auto" | "chat" | "image"; maxTokens?: number };
+    result: { text: string; provider: string; model: string };
+  };
+
+  "ai.image.generate": {
+    args: { prompt: string; model?: string; size?: string; quality?: string; format?: string; timeoutMs?: number };
+    result: { image: { mimeType: string; size: number }; provider: string; model: string; revisedPrompt?: string; url?: string };
+  };
+
+  "ai.speech.create": {
+    args: { text: string; textFormat?: "markdown" | "plain"; model?: string; voice?: string; language?: string; encoding?: string; container?: string; sampleRate?: number; bitRate?: number };
+    result: { audio: { mimeType: string; size: number }; provider: string; model: string; voice?: string; encoding?: string; container?: string; skipped?: boolean };
   };
 };
 ```

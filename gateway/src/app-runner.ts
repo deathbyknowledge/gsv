@@ -18,6 +18,11 @@ import {
   type AppRpcScheduleUpsertInput,
 } from "./app-daemons";
 import { runAppRunnerSqlMigrations } from "./app-runner/schema/migrations";
+import {
+  BinaryBodyChannel,
+  type BinaryBody,
+  type BinaryFrameDescriptor,
+} from "@humansandmachines/gsv/protocol";
 
 type AppRunnerProps = {
   packageId: string;
@@ -61,6 +66,7 @@ type AppRequestFrame = {
   id: string;
   call: string;
   args?: unknown;
+  body?: BinaryFrameDescriptor;
 };
 
 type AppResponseFrame =
@@ -69,6 +75,7 @@ type AppResponseFrame =
       id: string;
       ok: true;
       data?: unknown;
+      body?: BinaryFrameDescriptor;
     }
   | {
       type: "res";
@@ -88,6 +95,11 @@ type AppSignalFrame = {
 };
 
 type AppSocketFrame = AppRequestFrame | AppResponseFrame | AppSignalFrame;
+
+type AppSocketResult = {
+  data?: unknown;
+  body?: BinaryBody;
+};
 
 type AppRuntimeContext = {
   appFrame: AppFrameContext;
@@ -204,20 +216,100 @@ class AppSocketError extends Error {
   }
 }
 
+export class AppSocketBodyTransport {
+  private readonly channels = new Map<WebSocket, BinaryBodyChannel>();
+
+  receive(socket: WebSocket, descriptor: BinaryFrameDescriptor): BinaryBody {
+    return this.channel(socket).receive(descriptor);
+  }
+
+  handleBinary(socket: WebSocket, message: ArrayBuffer): boolean {
+    return this.channel(socket).handleFrame(message);
+  }
+
+  async send(socket: WebSocket, frame: AppSocketFrame, body?: BinaryBody): Promise<void> {
+    if (!body) {
+      socket.send(JSON.stringify(frame));
+      return;
+    }
+    const outgoing = this.channel(socket).prepare(body);
+    try {
+      socket.send(JSON.stringify({
+        ...frame,
+        body: outgoing.descriptor,
+      }));
+    } catch (error) {
+      await outgoing.cancel(error);
+      throw error;
+    }
+    // Once the descriptor is sent, transfer failures are reported on the binary stream.
+    await outgoing.send().catch(() => {});
+  }
+
+  close(socket: WebSocket, reason = "App socket closed"): void {
+    this.channels.get(socket)?.close(new Error(reason));
+    this.channels.delete(socket);
+  }
+
+  private channel(socket: WebSocket): BinaryBodyChannel {
+    let channel = this.channels.get(socket);
+    if (!channel) {
+      channel = new BinaryBodyChannel({
+        sendFrame: (binary) => socket.send(binary),
+      });
+      this.channels.set(socket, channel);
+    }
+    return channel;
+  }
+}
+
+export async function requestAppKernelFrame(
+  kernel: KernelAppStub,
+  appFrame: AppFrameContext,
+  call: string,
+  args?: unknown,
+  options: { body?: BinaryBody } = {},
+): Promise<{ data: unknown; body?: BinaryBody }> {
+  const response = await kernel.appRequest(appFrame, {
+    type: "req",
+    id: crypto.randomUUID(),
+    call,
+    args,
+    ...(options.body ? { body: options.body } : {}),
+  } as RequestFrame);
+  if (!response.ok) {
+    throw new AppSocketError(response.error.code, response.error.message);
+  }
+  return {
+    data: response.data ?? {},
+    ...(response.body ? { body: response.body } : {}),
+  };
+}
+
+async function cancelUnlockedBody(body: BinaryBody | undefined, reason: string): Promise<void> {
+  if (body && !body.stream.locked) {
+    await body.stream.cancel(reason).catch(() => {});
+  }
+}
+
 export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
   async kernelRequest(appFrame: AppFrameContext, call: string, args?: unknown): Promise<unknown> {
-    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
-    const frame: RequestFrame = {
-      type: "req",
-      id: crypto.randomUUID(),
-      call,
-      args,
-    } as RequestFrame;
-    const response = await kernel.appRequest(appFrame, frame);
-    if (!response.ok) {
-      throw new Error(response.error.message);
+    const response = await this.kernelRequestFrame(appFrame, call, args);
+    if (response.body) {
+      await response.body.stream.cancel(`${call} returned a body`).catch(() => {});
+      throw new Error(`${call} returned a body; use kernel.requestFrame()`);
     }
     return response.data;
+  }
+
+  async kernelRequestFrame(
+    appFrame: AppFrameContext,
+    call: string,
+    args?: unknown,
+    options: { body?: BinaryBody } = {},
+  ): Promise<{ data: unknown; body?: BinaryBody }> {
+    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
+    return await requestAppKernelFrame(kernel, appFrame, call, args, options);
   }
 
   async upsertRpcSchedule(input: unknown): Promise<unknown> {
@@ -273,6 +365,7 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
 export class AppRunner extends DurableObject<Env> {
   private readonly daemonSchedules: AppRpcScheduleStore;
   private readonly appClients = new Map<string, RegisteredAppClient>();
+  private readonly appSocketBodies = new AppSocketBodyTransport();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -317,8 +410,10 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (typeof message !== "string") {
-      this.#closeSocket(ws, 1003, "App socket only accepts text frames");
+    if (message instanceof ArrayBuffer) {
+      if (!this.appSocketBodies.handleBinary(ws, message)) {
+        this.#closeSocket(ws, 1003, "Invalid binary app frame");
+      }
       return;
     }
 
@@ -335,14 +430,16 @@ export class AppRunner extends DurableObject<Env> {
       return;
     }
 
+    let body: BinaryBody | undefined;
     try {
-      const data = await this.#handleAppSocketRequest(ws, frame);
-      this.#sendSocketFrame(ws, {
+      body = frame.body ? this.appSocketBodies.receive(ws, frame.body) : undefined;
+      const response = await this.#handleAppSocketRequest(ws, frame, body);
+      await this.appSocketBodies.send(ws, {
         type: "res",
         id: frame.id,
         ok: true,
-        ...(data === undefined ? {} : { data }),
-      });
+        ...(response.data === undefined ? {} : { data: response.data }),
+      }, response.body);
     } catch (error) {
       const { code, message: errorMessage } = this.#frameError(error);
       this.#sendSocketFrame(ws, {
@@ -354,14 +451,18 @@ export class AppRunner extends DurableObject<Env> {
           message: errorMessage,
         },
       });
+    } finally {
+      await cancelUnlockedBody(body, "App request completed");
     }
   }
 
   webSocketClose(ws: WebSocket): void {
+    this.appSocketBodies.close(ws);
     this.#removeAppClientBySocket(ws);
   }
 
   webSocketError(ws: WebSocket): void {
+    this.appSocketBodies.close(ws, "App socket failed");
     this.#removeAppClientBySocket(ws);
   }
 
@@ -504,14 +605,24 @@ export class AppRunner extends DurableObject<Env> {
     });
   }
 
-  async #handleAppSocketRequest(ws: WebSocket, frame: AppRequestFrame): Promise<unknown> {
+  async #handleAppSocketRequest(
+    ws: WebSocket,
+    frame: AppRequestFrame,
+    body?: BinaryBody,
+  ): Promise<AppSocketResult> {
     switch (frame.call) {
       case "backend.invoke":
-        return this.#invokeBackendFromSocket(ws, frame.args);
+        if (body) {
+          throw new AppSocketError(400, "backend.invoke does not accept a body");
+        }
+        return { data: await this.#invokeBackendFromSocket(ws, frame.args) };
       case "kernel.request":
-        return this.#kernelRequestFromSocket(ws, frame.args);
+        return this.#kernelRequestFromSocket(ws, frame.args, body);
       case "app.ping":
-        return { ok: true, timestamp: Date.now() };
+        if (body) {
+          throw new AppSocketError(400, "app.ping does not accept a body");
+        }
+        return { data: { ok: true, timestamp: Date.now() } };
       default:
         throw new AppSocketError(404, `Unknown app call: ${frame.call}`);
     }
@@ -531,7 +642,11 @@ export class AppRunner extends DurableObject<Env> {
     return this.invokeAppRpc(method, record?.args, runtime);
   }
 
-  async #kernelRequestFromSocket(ws: WebSocket, args: unknown): Promise<unknown> {
+  async #kernelRequestFromSocket(
+    ws: WebSocket,
+    args: unknown,
+    body?: BinaryBody,
+  ): Promise<AppSocketResult> {
     const client = this.#clientForSocket(ws);
     if (!client) {
       throw new AppSocketError(401, "App socket is not connected");
@@ -542,16 +657,7 @@ export class AppRunner extends DurableObject<Env> {
       throw new AppSocketError(400, "kernel.request requires call");
     }
     const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
-    const response = await kernel.appRequest(client.appFrame, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call,
-      args: record?.args,
-    } as RequestFrame);
-    if (!response.ok) {
-      throw new AppSocketError(response.error.code, response.error.message);
-    }
-    return response.data;
+    return await requestAppKernelFrame(kernel, client.appFrame, call, record?.args, { body });
   }
 
   async alarm(): Promise<void> {
@@ -743,6 +849,7 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #closeSocket(socket: WebSocket, code: number, reason: string): void {
+    this.appSocketBodies.close(socket, reason);
     this.#removeAppClientBySocket(socket);
     try {
       socket.close(code, reason);
