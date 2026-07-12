@@ -335,6 +335,44 @@ describe("proc handlers", () => {
     );
   });
 
+  it("forwards codemode.run cancellation to the Process request", async () => {
+    const controller = new AbortController();
+    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+      if (frame.type === "sig") {
+        return null;
+      }
+      return await new Promise(() => {});
+    });
+    const ctx = {
+      callerOwnerUid: IDENTITY.uid,
+      identity: {
+        role: "user",
+        process: IDENTITY,
+        capabilities: ["codemode.run"],
+      },
+      requestSignal: controller.signal,
+      procs: {
+        get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })),
+      },
+    } as unknown as KernelContext;
+    const request = forwardToProcess({
+      type: "req",
+      id: "codemode-1",
+      call: "codemode.run",
+      args: { pid: "proc-1", code: "return 1" },
+    } as RequestFrame, ctx);
+    await vi.waitFor(() => expect(sendFrameToProcessMock).toHaveBeenCalledOnce());
+
+    controller.abort(new Error("new user message"));
+
+    await expect(request).rejects.toThrow("new user message");
+    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(2, "proc-1", {
+      type: "sig",
+      signal: "request.cancel",
+      payload: { id: "codemode-1", reason: "new user message" },
+    });
+  });
+
   it("routes proc.send results by the target process owner", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",

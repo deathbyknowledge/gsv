@@ -72,6 +72,7 @@ import {
 } from "./connect";
 import { dispatch, type DispatchDeps } from "./dispatch";
 import { bindStreamToAbort } from "../shared/streams";
+import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
@@ -1328,11 +1329,15 @@ export class Kernel extends Host<Env> {
       addMcpServerConnection: this.addMcpServerConnection.bind(this),
       removeMcpServerConnection: this.removeMcpServer.bind(this),
       refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
-      callMcpTool: (serverId, toolName, args) => this.mcp.callTool({
-        serverId,
-        name: toolName,
-        arguments: args,
-      }),
+      callMcpTool: (serverId, toolName, args, signal) => this.mcp.callTool(
+        {
+          serverId,
+          name: toolName,
+          arguments: args,
+        },
+        undefined,
+        signal ? { signal } : undefined,
+      ),
     };
   }
 
@@ -1347,8 +1352,87 @@ export class Kernel extends Host<Env> {
       sendFrame: this.sendWebSocketFrame.bind(this),
       registerRoute: this.registerRouteWithExpiry.bind(this),
       requestDevice: this.requestDevice.bind(this),
+      request: this.requestDispatchedFrame.bind(this),
       handleSysUpdate: this.handleSysUpdate.bind(this),
     };
+  }
+
+  private async requestDispatchedFrame(
+    frame: RequestFrame,
+    ctx: KernelContext,
+    signal?: AbortSignal,
+  ): Promise<ResponseFrame> {
+    if (isInternalOnlySyscall(frame.call)) {
+      await cancelUnlockedBody(frame.body, "Dispatched request rejected");
+      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    }
+    if (!hasCapability(ctx.identity?.capabilities ?? [], frame.call)) {
+      await cancelUnlockedBody(frame.body, "Dispatched request rejected");
+      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    }
+
+    const requestSignal = ctx.requestSignal && signal && ctx.requestSignal !== signal
+      ? AbortSignal.any([ctx.requestSignal, signal])
+      : signal ?? ctx.requestSignal;
+    if (requestSignal?.aborted) {
+      await cancelUnlockedBody(frame.body, "Request cancelled");
+      throw requestAbortError(requestSignal.reason);
+    }
+
+    const origin: RouteOrigin = { type: "app", id: frame.id };
+    const pending = this.createPendingAppResponse(frame.id);
+    const cancel = () => {
+      this.cancelRequest(
+        origin,
+        frame.id,
+        requestAbortError(requestSignal?.reason).message,
+        false,
+      );
+    };
+
+    try {
+      if (requestSignal) {
+        frame = this.bindRequestBodyCancellation(frame, requestSignal);
+      }
+      const result = await raceWithAbort(
+        dispatch(
+          frame,
+          origin,
+          { ...ctx, requestSignal },
+          this.buildDispatchDeps(),
+        ),
+        requestSignal,
+        {
+          abortReason: () => requestAbortError(requestSignal?.reason),
+          onAbort: cancel,
+          onLateResolve: (late) => {
+            if (late.handled && late.response.ok) {
+              void cancelUnlockedBody(late.response.body, "Request was cancelled");
+            }
+          },
+        },
+      );
+      const response = result.handled
+        ? result.response
+        : await raceWithAbort(
+            pending.promise,
+            requestSignal,
+            {
+              abortReason: () => requestAbortError(requestSignal?.reason),
+              onAbort: cancel,
+              onLateResolve: (late) => {
+                if (late.ok) {
+                  void cancelUnlockedBody(late.body, "Request was cancelled");
+                }
+              },
+            },
+          );
+      this.applyPostDispatchEffects(frame, response);
+      return response;
+    } finally {
+      pending.cleanup();
+      await cancelUnlockedBody(frame.body, "Dispatched request completed");
+    }
   }
 
   private async registerRouteWithExpiry(route: {
@@ -2506,11 +2590,20 @@ export class Kernel extends Host<Env> {
       if (!hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
         throw new Error("Permission denied: shell.exec");
       }
-      const result = await handleShellExec({
-        input: target.command,
-        cwd: target.cwd,
-        timeout: target.timeoutMs,
-      }, ctx);
+      const deps = this.buildDispatchDeps();
+      const result = await handleShellExec(
+        {
+          input: target.command,
+          cwd: target.cwd,
+          timeout: target.timeoutMs,
+        },
+        ctx,
+        {
+          fsCopyTransport: deps,
+          netFetchTransport: deps,
+          request: (frame, signal) => deps.request(frame, ctx, signal),
+        },
+      );
       if (result.status !== "completed") {
         throw new Error(result.status === "failed" ? result.error : `Command ${result.status}`);
       }

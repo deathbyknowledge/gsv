@@ -96,7 +96,7 @@ import type {
   ProcKillResult,
   ProcSpawnAssignment,
 } from "@humansandmachines/gsv/protocol";
-import { bodyFromBytes, bodyToBytes, bodyToText } from "@humansandmachines/gsv/protocol";
+import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { AdapterSurface } from "../adapter-interface";
 import type {
   AssistantMessage,
@@ -169,8 +169,8 @@ import {
   requestProcessNetFetch,
   sendFrameToKernel,
 } from "../shared/utils";
-import { decodeBase64Bytes, encodeBase64Bytes } from "../shared/base64";
-import { formatSize } from "../fs";
+import { raceWithAbort } from "../shared/abort";
+import { encodeBase64Bytes } from "../shared/base64";
 import {
   CODEMODE_EXEC,
   TOOL_TO_SYSCALL,
@@ -181,6 +181,10 @@ import {
   buildCodeModeMcpToolBindings,
   executeCodeMode,
 } from "./codemode";
+import {
+  createCodeModeRequest,
+} from "../codemode/request";
+import { materializeToolResponse } from "./tool-response";
 import {
   DEFAULT_CONVERSATION_ID,
   normalizeConversationId,
@@ -295,6 +299,7 @@ const MEDIA_PREPARATION_TIMEOUT_MS = 10 * 60_000;
 const COMPACTION_SUMMARY_WINDOW_CHARS = 24_000;
 const CONTEXT_PROVIDER_OVERFLOW_REASON = "context.provider_overflow";
 const MAX_RETRYABLE_GENERATION_ATTEMPTS = 3;
+const MAX_CANCELLED_CODE_MODE_REQUESTS = 128;
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
@@ -308,86 +313,9 @@ function asPlainRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function codeModeRequest(
-  call: SyscallName,
-  args: Record<string, unknown>,
-): { args: Record<string, unknown>; body?: FrameBody } {
-  if (call !== "net.fetch" || typeof args.bodyBase64 !== "string") {
-    return { args };
-  }
-  const encoded = args.bodyBase64;
-  const next = { ...args };
-  delete next.bodyBase64;
-  if (!encoded) {
-    return { args: next };
-  }
-  return { args: next, body: bodyFromBytes(decodeBase64Bytes(encoded)) };
-}
-
-async function materializeResponseBody(
-  call: string,
-  data: unknown,
-  body?: FrameBody,
-  signal?: AbortSignal,
-): Promise<unknown> {
-  const record = asPlainRecord(data);
-  if (call === "net.fetch") {
-    const bytes = body ? await bodyToBytes(body, Infinity, signal) : new Uint8Array();
-    const text = decodeUtf8(bytes);
-    return {
-      ...(record ?? {}),
-      bodyBase64: encodeBase64Bytes(bytes),
-      ...(text === null ? {} : { bodyText: text }),
-      bodyBytes: bytes.byteLength,
-    };
-  }
-  if (
-    call === "fs.read"
-    && record?.ok === true
-    && !("files" in record)
-    && !("directories" in record)
-    && !body
-  ) {
-    throw new Error("fs.read file response did not include a body");
-  }
-  if (!body) {
-    return data;
-  }
-  if (call === "fs.read" && record?.ok === true) {
-    if (record.kind === "text") {
-      return { ...record, content: await bodyToText(body, Infinity, signal) };
-    }
-    if (record.kind === "image") {
-      const bytes = await bodyToBytes(body, MAX_PROCESS_MEDIA_READ_BYTES, signal);
-      const mimeType = typeof record.contentType === "string"
-        ? record.contentType
-        : "application/octet-stream";
-      const path = typeof record.path === "string" ? record.path : "image";
-      const size = typeof record.size === "number" ? record.size : bytes.byteLength;
-      return {
-        ...record,
-        content: [
-          { type: "text", text: `Read image ${path} [${mimeType}, ${formatSize(size)}]` },
-          { type: "image", data: encodeBase64Bytes(bytes), mimeType },
-        ],
-      };
-    }
-  }
-  await body.stream.cancel().catch(() => {});
-  throw new Error(`Unexpected response body for ${call}`);
-}
-
 async function cancelResponseBody(frame: ResponseFrame, reason: string): Promise<void> {
   if (frame.ok && frame.body) {
     await frame.body.stream.cancel(reason).catch(() => {});
-  }
-}
-
-function decodeUtf8(bytes: Uint8Array): string | null {
-  try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
-  } catch {
-    return null;
   }
 }
 
@@ -807,6 +735,8 @@ export class Process extends Host<Env> {
   private readonly ripgit: RipgitClient | null;
   private readonly codeModeResponses = new Map<string, CodeModeResponseWaiter>();
   private readonly codeModeApprovals = new Map<string, CodeModeApprovalWaiter>();
+  private readonly codeModeRequestControllers = new Map<string, AbortController>();
+  private readonly cancelledCodeModeRequests = new Map<string, string>();
   private readonly runAbortControllers = new Map<string, AbortController>();
   private readonly activeTickRunIds = new Set<string>();
   private readonly deferredTickRunIds = new Set<string>();
@@ -950,7 +880,7 @@ export class Process extends Host<Env> {
 
     if (frame.ok) {
       try {
-        const result = await materializeResponseBody(
+        const result = await materializeToolResponse(
           pending.call,
           frame.data ?? null,
           frame.body,
@@ -1033,7 +963,8 @@ export class Process extends Host<Env> {
           );
           break;
         case "codemode.run":
-          data = await this.handleCodeModeRun(
+          data = await this.handleCancellableCodeModeRun(
+            frame.id,
             frame.args as CodeModeRunArgs,
           );
           break;
@@ -2994,7 +2925,10 @@ export class Process extends Host<Env> {
     }
 
     switch (frame.signal) {
-        case "identity.changed": {
+      case REQUEST_CANCEL_SIGNAL:
+        this.cancelCodeModeRequest(frame.payload);
+        break;
+      case "identity.changed": {
         const identity = (frame.payload as { identity: ProcessIdentity })
           ?.identity;
         if (identity) {
@@ -4737,7 +4671,7 @@ export class Process extends Host<Env> {
       const res = response;
       if (res.ok) {
         try {
-          const result = await materializeResponseBody(
+          const result = await materializeToolResponse(
             call,
             res.data ?? null,
             res.body,
@@ -5077,7 +5011,53 @@ export class Process extends Host<Env> {
     return this.store.markDispatched(dispatchId);
   }
 
-  private async handleCodeModeRun(rawArgs: CodeModeRunArgs): Promise<CodeModeRunResult> {
+  private async handleCancellableCodeModeRun(
+    requestId: string,
+    args: CodeModeRunArgs,
+  ): Promise<CodeModeRunResult> {
+    const controller = new AbortController();
+    const cancelled = this.cancelledCodeModeRequests.get(requestId);
+    this.cancelledCodeModeRequests.delete(requestId);
+    if (cancelled) {
+      controller.abort(new Error(cancelled));
+    }
+    this.codeModeRequestControllers.set(requestId, controller);
+    try {
+      return await this.handleCodeModeRun(args, controller.signal);
+    } finally {
+      if (this.codeModeRequestControllers.get(requestId) === controller) {
+        this.codeModeRequestControllers.delete(requestId);
+      }
+    }
+  }
+
+  private cancelCodeModeRequest(payload: unknown): void {
+    const value = asPlainRecord(payload);
+    const requestId = typeof value?.id === "string" ? value.id : "";
+    if (!requestId) {
+      return;
+    }
+    const reason = typeof value?.reason === "string" && value.reason.trim()
+      ? value.reason.trim()
+      : "Request cancelled";
+    const controller = this.codeModeRequestControllers.get(requestId);
+    if (controller) {
+      controller.abort(new Error(reason));
+      return;
+    }
+    if (this.cancelledCodeModeRequests.size >= MAX_CANCELLED_CODE_MODE_REQUESTS) {
+      const oldest = this.cancelledCodeModeRequests.keys().next().value;
+      if (oldest) {
+        this.cancelledCodeModeRequests.delete(oldest);
+      }
+    }
+    this.cancelledCodeModeRequests.set(requestId, reason);
+  }
+
+  private async handleCodeModeRun(
+    rawArgs: CodeModeRunArgs,
+    signal?: AbortSignal,
+  ): Promise<CodeModeRunResult> {
     const args = rawArgs && typeof rawArgs === "object"
       ? rawArgs as Partial<CodeModeRunArgs>
       : {};
@@ -5092,13 +5072,14 @@ export class Process extends Host<Env> {
       return await executeCodeMode(
         this.env,
         args.code,
-        (call, toolArgs) => this.executeCodeModeSyscall(null, call, toolArgs),
+        (call, toolArgs) => this.executeCodeModeSyscall(null, call, toolArgs, signal),
         {
           defaultTarget: normalizeOptionalString(args.target),
           defaultCwd: normalizeOptionalString(args.cwd),
           argv: Array.isArray(args.argv) ? args.argv.map((item) => String(item)) : [],
           args: args.args ?? null,
-          mcpToolBindings: await this.getCodeModeMcpToolBindings(),
+          mcpToolBindings: await this.getCodeModeMcpToolBindings(signal),
+          signal,
         },
       );
     } catch (error) {
@@ -5131,6 +5112,7 @@ export class Process extends Host<Env> {
     }
 
     try {
+      const signal = this.runAbortSignal(runId);
       const result = await executeCodeMode(
         this.env,
         args.code,
@@ -5142,9 +5124,11 @@ export class Process extends Host<Env> {
           },
           call,
           toolArgs,
+          signal,
         ),
         {
-          mcpToolBindings: await this.getCodeModeMcpToolBindings(),
+          mcpToolBindings: await this.getCodeModeMcpToolBindings(signal),
+          signal,
         },
       );
       this.store.resolve(dispatchId, result);
@@ -5156,11 +5140,12 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async getCodeModeMcpToolBindings() {
+  private async getCodeModeMcpToolBindings(signal?: AbortSignal) {
     try {
-      const result = await this.kernelRpc("sys.mcp.list", {});
+      const result = await this.kernelRpc("sys.mcp.list", {}, signal);
       return buildCodeModeMcpToolBindings(result.servers);
     } catch {
+      signal?.throwIfAborted();
       return [];
     }
   }
@@ -5173,7 +5158,9 @@ export class Process extends Host<Env> {
     } | null,
     call: SyscallName,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<unknown> {
+    signal?.throwIfAborted();
     if (context && this.handleRunStopped(context.runId)) {
       throw new Error("Run stopped before CodeMode tool execution completed");
     }
@@ -5221,6 +5208,7 @@ export class Process extends Host<Env> {
       toolCallId,
       call,
       toolArgs,
+      signal,
     );
 
     if (context && this.handleRunStopped(context.runId)) {
@@ -5229,11 +5217,11 @@ export class Process extends Host<Env> {
     }
 
     if (response.ok) {
-      return await materializeResponseBody(
+      return await materializeToolResponse(
         call,
         response.data ?? null,
         response.body,
-        context ? this.runAbortSignal(context.runId) : undefined,
+        signal ?? (context ? this.runAbortSignal(context.runId) : undefined),
       );
     }
 
@@ -5284,8 +5272,10 @@ export class Process extends Host<Env> {
     id: string,
     call: SyscallName,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<ResponseFrame> {
-    const request = codeModeRequest(call, args);
+    signal?.throwIfAborted();
+    const request = createCodeModeRequest(call, args);
     const reqFrame: RequestFrame = {
       type: "req",
       id,
@@ -5307,7 +5297,7 @@ export class Process extends Host<Env> {
     });
     void pending.catch(() => {});
 
-    try {
+    const operation = (async () => {
       const response = await sendFrameToKernel(this.pid, reqFrame);
       if (response && response.type === "res") {
         const waiter = this.codeModeResponses.get(id);
@@ -5326,6 +5316,29 @@ export class Process extends Host<Env> {
         throw new Error(`Unexpected response frame for ${call}: ${response.type}`);
       }
       return await pending;
+    })();
+
+    try {
+      return await raceWithAbort(operation, signal, {
+        abortReason: () => signal?.reason ?? new Error("CodeMode request cancelled"),
+        onAbort: () => {
+          const reason = signal?.reason instanceof Error
+            ? signal.reason.message
+            : "CodeMode request cancelled";
+          const waiter = this.codeModeResponses.get(id);
+          if (waiter) {
+            this.codeModeResponses.delete(id);
+            clearTimeout(waiter.timeoutId);
+            waiter.reject(new Error(reason));
+          }
+          this.ctx.waitUntil(
+            cancelProcessRequests(this.pid, [id], reason).catch(() => 0),
+          );
+        },
+        onLateResolve: (response) => {
+          void cancelResponseBody(response, "CodeMode request was cancelled");
+        },
+      });
     } catch (error) {
       const waiter = this.codeModeResponses.get(id);
       if (waiter) {
@@ -5363,6 +5376,10 @@ export class Process extends Host<Env> {
     }
 
     if (runId === null) {
+      for (const controller of this.codeModeRequestControllers.values()) {
+        controller.abort(new Error(reason));
+      }
+      this.codeModeRequestControllers.clear();
       for (const controller of this.runAbortControllers.values()) {
         controller.abort(new Error(reason));
       }

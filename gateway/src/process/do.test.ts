@@ -9,6 +9,7 @@ import {
   bodyFromText,
   bodyToBytes,
   bodyToText,
+  REQUEST_CANCEL_SIGNAL,
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/frames";
@@ -6631,6 +6632,127 @@ describe("Process DO — mechanical", () => {
           argv: ["alpha"],
           args: { mode: "manual" },
         },
+      });
+    });
+
+    it("cancels a direct codemode.run and blocks later tool side effects", async () => {
+      const pid = "mech-codemode-run-cancel";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const calls: string[] = [];
+        let markStarted!: () => void;
+        let release!: () => void;
+        const started = new Promise<void>((resolve) => {
+          markStarted = resolve;
+        });
+        const blocked = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        process.getCodeModeMcpToolBindings = async () => [];
+        process.executeCodeModeSyscall = async (
+          _context: unknown,
+          call: string,
+        ) => {
+          calls.push(call);
+          if (call === "shell.exec") {
+            markStarted();
+            await blocked;
+            return { status: "completed", output: "", exitCode: 0 };
+          }
+          return { ok: true };
+        };
+        const requestId = "codemode-cancel-1";
+        const execution = process.recvFrame({
+          type: "req",
+          id: requestId,
+          call: "codemode.run",
+          args: {
+            code: [
+              "try { await shell('wait'); } catch {}",
+              "try { await fs.write({ path: '/tmp/too-late', content: 'bad' }); } catch {}",
+              "return 'done';",
+            ].join("\n"),
+          },
+        });
+
+        await started;
+        await process.recvFrame({
+          type: "sig",
+          signal: REQUEST_CANCEL_SIGNAL,
+          payload: { id: requestId, reason: "new user message" },
+        });
+        const response = await execution;
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 25));
+
+        expect(response).toMatchObject({
+          type: "res",
+          id: requestId,
+          ok: true,
+          data: { status: "failed", error: "new user message" },
+        });
+        expect(calls).toEqual(["shell.exec"]);
+      });
+    });
+
+    it("cancels a direct codemode.run when the process resets", async () => {
+      const pid = "mech-codemode-run-reset";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const calls: string[] = [];
+        let markStarted!: () => void;
+        let release!: () => void;
+        const started = new Promise<void>((resolve) => {
+          markStarted = resolve;
+        });
+        const blocked = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        process.getCodeModeMcpToolBindings = async () => [];
+        process.executeCodeModeSyscall = async (
+          _context: unknown,
+          call: string,
+        ) => {
+          calls.push(call);
+          if (call === "shell.exec") {
+            markStarted();
+            await blocked;
+            return { status: "completed", output: "", exitCode: 0 };
+          }
+          return { ok: true };
+        };
+        const execution = process.recvFrame({
+          type: "req",
+          id: "codemode-reset-1",
+          call: "codemode.run",
+          args: {
+            code: [
+              "try { await shell('wait'); } catch {}",
+              "try { await fs.write({ path: '/tmp/too-late', content: 'bad' }); } catch {}",
+              "return 'done';",
+            ].join("\n"),
+          },
+        });
+
+        await started;
+        const reset = await process.recvFrame(makeReq("proc.reset", {}));
+        const response = await execution;
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 25));
+
+        expect(reset).toMatchObject({ ok: true, data: { ok: true, pid } });
+        expect(response).toMatchObject({
+          ok: true,
+          data: {
+            status: "failed",
+            error: "Process execution was reset: process.reset",
+          },
+        });
+        expect(calls).toEqual(["shell.exec"]);
       });
     });
 

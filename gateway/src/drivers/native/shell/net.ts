@@ -39,8 +39,9 @@ export function buildNetCommands(
       const timeout = options.timeoutMs
         ? setTimeout(() => controller.abort(new Error(`fetch timed out after ${options.timeoutMs}ms`)), options.timeoutMs)
         : null;
-      const signal = ctx.requestSignal
-        ? AbortSignal.any([controller.signal, ctx.requestSignal])
+      const shellSignal = commandCtx.signal ?? ctx.requestSignal;
+      const signal = shellSignal
+        ? AbortSignal.any([controller.signal, shellSignal])
         : controller.signal;
       try {
         const response = await fetchFromOptions(ctx, transport, options, signal);

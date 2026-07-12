@@ -5,6 +5,7 @@ import {
 import type { CodeModeMcpToolBinding } from "../codemode/mcp";
 import type { SyscallName } from "../syscalls";
 import type { CodeModeExecResult } from "../syscalls/codemode";
+import { raceWithAbort } from "../shared/abort";
 import {
   NET_FETCH,
   FS_DELETE,
@@ -27,7 +28,13 @@ export type CodeModeExecutionOptions = {
   argv?: string[];
   args?: unknown;
   mcpToolBindings?: CodeModeMcpToolBinding[];
+  signal?: AbortSignal;
 };
+
+export type CodeModeToolRequest = (
+  call: SyscallName,
+  args: Record<string, unknown>,
+) => Promise<unknown>;
 
 export function buildCodeModeSource(
   code: string,
@@ -56,7 +63,13 @@ export function buildCodeModeSource(
   const __defaultTarget = ${defaultTarget};
   const __defaultCwd = ${defaultCwd};
   const __isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-  const __isAbsolutePath = (path) => path.startsWith("/") || (
+  const __unwrapToolResult = (result) => {
+    if (__isObject(result) && typeof result.__gsvCodeModeAbort === "string") {
+      throw new Error(result.__gsvCodeModeAbort);
+    }
+    return result;
+  };
+  const __isAbsolutePath = (path) => path === "~" || path.startsWith("~/") || path.startsWith("/") || (
     path.length >= 3 &&
     ((path.charCodeAt(0) >= 65 && path.charCodeAt(0) <= 90) || (path.charCodeAt(0) >= 97 && path.charCodeAt(0) <= 122)) &&
     path[1] === ":" &&
@@ -137,7 +150,7 @@ export function buildCodeModeSource(
   };
   const fetch = async (input, init) => {
     const request = await __normalizeFetchRequest(input, init);
-    const response = await net.fetch(request);
+    const response = __unwrapToolResult(await net.fetch(request));
     const proxiedResponse = new Response(
       response.bodyBase64 ? __arrayBufferFromBase64(response.bodyBase64) : null,
       {
@@ -160,6 +173,7 @@ export function buildCodeModeSource(
     });
   } catch {}
   const __unwrapMcpResult = (result) => {
+    result = __unwrapToolResult(result);
     if (!__isObject(result)) return result;
     if ("toolResult" in result) return result.toolResult;
     if (result.isError) {
@@ -191,14 +205,14 @@ export function buildCodeModeSource(
     if (!__isObject(options)) {
       throw new Error("shell(input, options) requires options to be an object when provided");
     }
-    return await codemode.shell({ ...__withShellDefaults(options), input });
+    return __unwrapToolResult(await codemode.shell({ ...__withShellDefaults(options), input }));
   };
   const fs = Object.freeze({
-    read: (args) => codemode.read(__withFsDefaults("fs.read", args)),
-    write: (args) => codemode.write(__withFsDefaults("fs.write", args)),
-    edit: (args) => codemode.edit(__withFsDefaults("fs.edit", args)),
-    delete: (args) => codemode.delete(__withFsDefaults("fs.delete", args)),
-    search: (args) => codemode.search(__withFsDefaults("fs.search", args)),
+    read: async (args) => __unwrapToolResult(await codemode.read(__withFsDefaults("fs.read", args))),
+    write: async (args) => __unwrapToolResult(await codemode.write(__withFsDefaults("fs.write", args))),
+    edit: async (args) => __unwrapToolResult(await codemode.edit(__withFsDefaults("fs.edit", args))),
+    delete: async (args) => __unwrapToolResult(await codemode.delete(__withFsDefaults("fs.delete", args))),
+    search: async (args) => __unwrapToolResult(await codemode.search(__withFsDefaults("fs.search", args))),
   });
 ${mcpFunctionDeclarations}
   const __userMain = ${userMain};
@@ -250,7 +264,7 @@ function looksLikeFunctionExpression(source: string): boolean {
 export async function executeCodeMode(
   env: Env,
   code: string,
-  requestTool: (call: SyscallName, args: Record<string, unknown>) => Promise<unknown>,
+  requestTool: CodeModeToolRequest,
   options?: CodeModeExecutionOptions,
 ): Promise<CodeModeExecResult> {
   const executor = new DynamicWorkerExecutor({
@@ -258,23 +272,43 @@ export async function executeCodeMode(
     timeout: CODE_MODE_EXECUTION_TIMEOUT_MS,
     globalOutbound: null,
   });
+  const request = async (call: SyscallName, args: Record<string, unknown>) => {
+    if (options?.signal?.aborted) {
+      // Resolve the host RPC and throw in the sandbox; rejecting a late RPC is
+      // reported as unhandled after the outer execution has already returned.
+      return codeModeAbortResult(options.signal);
+    }
+    let result: unknown;
+    try {
+      result = await requestTool(call, args);
+    } catch (error) {
+      if (options?.signal?.aborted) {
+        return codeModeAbortResult(options.signal);
+      }
+      throw error;
+    }
+    if (options?.signal?.aborted) {
+      return codeModeAbortResult(options.signal);
+    }
+    return result;
+  };
 
   const providers: ResolvedProvider[] = [
     {
       name: "codemode",
       fns: {
-        shell: async (args: unknown) => requestTool(SHELL_EXEC as SyscallName, toRecord(args, "shell")),
-        read: async (args: unknown) => requestTool(FS_READ as SyscallName, toRecord(args, "fs.read")),
-        write: async (args: unknown) => requestTool(FS_WRITE as SyscallName, toRecord(args, "fs.write")),
-        edit: async (args: unknown) => requestTool(FS_EDIT as SyscallName, toRecord(args, "fs.edit")),
-        delete: async (args: unknown) => requestTool(FS_DELETE as SyscallName, toRecord(args, "fs.delete")),
-        search: async (args: unknown) => requestTool(FS_SEARCH as SyscallName, toRecord(args, "fs.search")),
+        shell: async (args: unknown) => request(SHELL_EXEC as SyscallName, toRecord(args, "shell")),
+        read: async (args: unknown) => request(FS_READ as SyscallName, toRecord(args, "fs.read")),
+        write: async (args: unknown) => request(FS_WRITE as SyscallName, toRecord(args, "fs.write")),
+        edit: async (args: unknown) => request(FS_EDIT as SyscallName, toRecord(args, "fs.edit")),
+        delete: async (args: unknown) => request(FS_DELETE as SyscallName, toRecord(args, "fs.delete")),
+        search: async (args: unknown) => request(FS_SEARCH as SyscallName, toRecord(args, "fs.search")),
       },
     },
     {
       name: "net",
       fns: {
-        fetch: async (args: unknown) => requestTool(NET_FETCH, toRecord(args, "fetch")),
+        fetch: async (args: unknown) => request(NET_FETCH, toRecord(args, "fetch")),
       },
     },
   ];
@@ -284,7 +318,7 @@ export async function executeCodeMode(
       name: "__mcp",
       fns: Object.fromEntries(mcpToolBindings.map((binding) => [
         binding.functionName,
-        async (args: unknown) => requestTool(SYS_MCP_CALL as SyscallName, {
+        async (args: unknown) => request(SYS_MCP_CALL as SyscallName, {
           serverId: binding.serverId,
           name: binding.toolName,
           arguments: toOptionalRecord(args, binding.functionName),
@@ -295,7 +329,10 @@ export async function executeCodeMode(
 
   let response;
   try {
-    response = await executor.execute(buildCodeModeSource(code, options), providers);
+    response = await raceWithAbort(
+      executor.execute(buildCodeModeSource(code, options), providers),
+      options?.signal,
+    );
   } catch (error) {
     return {
       status: "failed",
@@ -307,6 +344,16 @@ export async function executeCodeMode(
     return { status: "failed", error: response.error, logs };
   }
   return { status: "completed", result: response.result, logs };
+}
+
+function codeModeAbortResult(signal: AbortSignal): Record<string, string> {
+  return { __gsvCodeModeAbort: codeModeAbortMessage(signal) };
+}
+
+function codeModeAbortMessage(signal: AbortSignal): string {
+  return signal.reason instanceof Error
+    ? signal.reason.message
+    : "CodeMode execution cancelled";
 }
 
 function toRecord(value: unknown, name: string): Record<string, unknown> {

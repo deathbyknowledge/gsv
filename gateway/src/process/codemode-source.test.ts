@@ -3,6 +3,31 @@ import { env } from "cloudflare:workers";
 import { executeCodeMode } from "./codemode";
 
 describe.sequential("CodeMode source handling", () => {
+  it("leaves home-relative fs paths for the target filesystem to expand", async () => {
+    const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
+    const result = await executeCodeMode(
+      env,
+      `
+        await fs.read({ path: "~" });
+        return await fs.read({ path: "~/package.json" });
+      `,
+      async (call, args) => {
+        calls.push({ call, args });
+        return { ok: true, path: String(args.path), content: "{}" };
+      },
+      { defaultCwd: "/home/sam" },
+    );
+
+    expect(calls).toEqual([
+      { call: "fs.read", args: { path: "~" } },
+      { call: "fs.read", args: { path: "~/package.json" } },
+    ]);
+    expect(result).toEqual({
+      status: "completed",
+      result: { ok: true, path: "~/package.json", content: "{}" },
+    });
+  });
+
   it("does not prepend default cwd to Windows absolute fs paths", async () => {
     const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
     const result = await executeCodeMode(

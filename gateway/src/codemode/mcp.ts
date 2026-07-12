@@ -55,6 +55,7 @@ const RESERVED_MCP_FUNCTION_NAMES = new Set([
   "__mcp",
   "__normalizeFetchRequest",
   "__unwrapMcpResult",
+  "__unwrapToolResult",
   "__userMain",
   "__withFsDefaults",
   "__withObjectArgs",

@@ -26,7 +26,9 @@ import type {
   ProcSpawnResult,
   ProcSendArgs,
 } from "@humansandmachines/gsv/protocol";
+import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../shared/utils";
+import { raceWithAbort } from "../shared/abort";
 import { resolveUserPath } from "../fs";
 import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
@@ -528,7 +530,33 @@ export async function forwardToProcess(
     : frame.call === "proc.ai.config.set"
       ? withProcAiConfigProfile(frame as RequestFrame<"proc.ai.config.set">, ctx, proc.ownerUid)
       : frame;
-  const response = await sendFrameToProcess(pid, processFrame);
+  const responsePromise = sendFrameToProcess(pid, processFrame);
+  let cancellation: Promise<unknown> | undefined;
+  const signal = frame.call === "codemode.run" ? ctx.requestSignal : undefined;
+  let response: Awaited<ReturnType<typeof sendFrameToProcess>>;
+  try {
+    response = await raceWithAbort(responsePromise, signal, {
+      abortReason: () => signal?.reason ?? new Error("Request cancelled"),
+      onAbort: () => {
+        const reason = signal?.reason instanceof Error
+          ? signal.reason.message
+          : "Request cancelled";
+        cancellation = sendFrameToProcess(pid, {
+          type: "sig",
+          signal: REQUEST_CANCEL_SIGNAL,
+          payload: { id: frame.id, reason },
+        });
+      },
+      onLateResolve: (late) => {
+        if (late?.type === "res" && late.ok && late.body && !late.body.stream.locked) {
+          void late.body.stream.cancel("Request was cancelled");
+        }
+      },
+    });
+  } catch (error) {
+    await cancellation?.catch(() => {});
+    throw error;
+  }
 
   if (response && response.type === "res") {
     const res = response as ResponseFrame;

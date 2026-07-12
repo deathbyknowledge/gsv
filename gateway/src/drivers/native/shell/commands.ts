@@ -3,6 +3,7 @@ import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import type { NetFetchDeviceTransport } from "../../../kernel/net";
+import type { RequestFrame, ResponseFrame } from "../../../protocol/frames";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { FsCopyDeviceTransport } from "../fs";
 import { buildNotifyCommands } from "../notify-shell";
@@ -28,6 +29,10 @@ import { buildWikiCommand } from "./wiki";
 export type NativeShellCommandOptions = {
   fsCopyTransport?: FsCopyDeviceTransport;
   netFetchTransport?: NetFetchDeviceTransport;
+  request?: (
+    frame: RequestFrame,
+    signal?: AbortSignal,
+  ) => Promise<ResponseFrame>;
 };
 
 export function buildCustomCommands(
@@ -42,7 +47,7 @@ export function buildCustomCommands(
   const stat = buildStatCommand(fs, identity, ctx);
   const cp = buildCpCommand(ctx, options?.fsCopyTransport);
   const crontab = buildCrontabCommand(fs, ctx);
-  const codemode = buildCodeModeCommand(fs, identity, ctx);
+  const codemode = buildCodeModeCommand(fs, identity, ctx, options?.request);
   const mcp = buildMcpCommand(ctx);
   const pkg = buildPkgCommand(ctx);
   const skills = buildSkillsCommand(fs, ctx, identity);

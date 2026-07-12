@@ -13,8 +13,14 @@ import {
 import { sendFrameToProcess } from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
-import { bodyToBytes, bodyToText, type ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import {
+  bodyFromText,
+  bodyToBytes,
+  bodyToText,
+  type ProcessIdentity,
+} from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
+import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
 
 const generateMock = vi.hoisted(() => vi.fn());
 
@@ -926,6 +932,133 @@ describe("proc native command", () => {
     );
   });
 
+  it("spawns a fresh process by default from a top-level native shell", async () => {
+    const spawn = vi.fn();
+    const rootIdentity: ProcessIdentity = {
+      uid: 0,
+      gid: 0,
+      gids: [0],
+      username: "root",
+      home: "/root",
+      cwd: "/root",
+    };
+    const ctx = makeContext({
+      identity: rootIdentity,
+      capabilities: ["proc.spawn"],
+      procs: { spawn } as Partial<KernelContext["procs"]>,
+    });
+    ctx.processId = undefined;
+
+    const result = await handleShellExec(
+      { input: 'proc spawn --label manual-child --prompt "do work"' },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain('label="manual-child"');
+    expect(spawn).toHaveBeenCalledWith(
+      expect.stringMatching(/^proc:/),
+      expect.objectContaining({ username: "root" }),
+      expect.objectContaining({
+        interactive: true,
+        label: "manual-child",
+      }),
+    );
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^proc:/),
+      expect.objectContaining({ call: "proc.send", args: expect.objectContaining({ message: "do work" }) }),
+    );
+
+    const jsonResult = await handleShellExec(
+      { input: `proc spawn --json '{"fresh":false,"label":"json-child"}'` },
+      ctx,
+    );
+    expect(jsonResult.ok).toBe(true);
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(spawn).toHaveBeenLastCalledWith(
+      expect.stringMatching(/^proc:/),
+      expect.anything(),
+      expect.objectContaining({ label: "json-child" }),
+    );
+  });
+
+  it("resets a process through the kernel lifecycle path", async () => {
+    const { ctx, cancelBySourcePid, failIpcCallsByTarget } = makeLifecycleContext("proc.reset");
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "reset-child",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc:child",
+        archivedMessages: 3,
+        archivedTo: "/home/sam/archive.jsonl.gz",
+        archives: [],
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "proc reset --pid proc:child" },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe('pid=proc:child archived=3 archive="/home/sam/archive.jsonl.gz"\n');
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "proc:child",
+      expect.objectContaining({ call: "proc.reset", args: { pid: "proc:child" } }),
+    );
+    expect(cancelBySourcePid).toHaveBeenCalledWith({ uid: IDENTITY.uid, sourcePid: "proc:child" });
+    expect(failIpcCallsByTarget).toHaveBeenCalledWith(
+      IDENTITY.uid,
+      "proc:child",
+      "Target process was reset",
+    );
+  });
+
+  it("kills a process without archiving through the kernel lifecycle path", async () => {
+    const {
+      ctx,
+      kill,
+      cancelBySourcePid,
+      failIpcCallsByTarget,
+      deleteRunRoute,
+      clearActivePid,
+    } = makeLifecycleContext("proc.kill");
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "kill-child",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc:child",
+        archivedMessages: 0,
+        archives: [],
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "proc kill proc:child --no-archive" },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("pid=proc:child archived=0\n");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "proc:child",
+      expect.objectContaining({ call: "proc.kill", args: { pid: "proc:child", archive: false } }),
+    );
+    expect(cancelBySourcePid).toHaveBeenCalledWith({ uid: IDENTITY.uid, sourcePid: "proc:child" });
+    expect(failIpcCallsByTarget).toHaveBeenCalledWith(
+      IDENTITY.uid,
+      "proc:child",
+      "Target process was killed",
+    );
+    expect(deleteRunRoute).toHaveBeenCalledWith("run-child");
+    expect(kill).toHaveBeenCalledWith("proc:child");
+    expect(clearActivePid).toHaveBeenCalledWith("proc:child");
+  });
+
   it("delegates bounded work through a new child process", async () => {
     const spawnedPids: string[] = [];
     const parent = {
@@ -1535,6 +1668,151 @@ describe("pkg shell command", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("runs codemode directly with the invoking cwd and MCP bindings", async () => {
+    const request = vi.fn(async (
+      frame: RequestFrame,
+      signal?: AbortSignal,
+    ): Promise<ResponseFrame> => {
+      expect(signal).toBeInstanceOf(AbortSignal);
+      if (frame.call === "sys.mcp.list") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            servers: [{
+              serverId: "server-1",
+              uid: IDENTITY.uid,
+              name: "Search",
+              url: "https://mcp.example.com/mcp",
+              transport: "auto",
+              state: "ready",
+              authUrl: null,
+              error: null,
+              instructions: null,
+              capabilities: null,
+              tools: [{
+                name: "lookup-record",
+                description: "Look up a record",
+                inputSchema: { type: "object" },
+                outputSchema: { type: "object" },
+              }],
+              resourceCount: 0,
+              promptCount: 0,
+              createdAt: 1,
+              updatedAt: 2,
+            }],
+          },
+        };
+      }
+      if (frame.call === "fs.read") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            kind: "text",
+            path: (frame.args as { path: string }).path,
+            size: 5,
+            contentType: "text/plain; charset=utf-8",
+          },
+          body: bodyFromText("hello"),
+        };
+      }
+      if (frame.call === "sys.mcp.call") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { structuredContent: { title: "GSV" } },
+        };
+      }
+      throw new Error(`unexpected call: ${frame.call}`);
+    });
+    const ctx = makeContext({ capabilities: ["codemode.run"] });
+    ctx.processId = undefined;
+    Object.assign(ctx.env, { LOADER: env.LOADER });
+
+    const result = await handleShellExec(
+      {
+        input: "codemode -e 'const note = await fs.read({ path: \"note.txt\" }); return { note: note.content, match: await lookup_record({ query: \"gsv\" }) };'",
+        cwd: "/tmp",
+      },
+      ctx,
+      { request },
+    );
+
+    expect(result).toMatchObject({
+      status: "completed",
+      exitCode: 0,
+    });
+    expect(result.stdout).toContain('"note": "hello"');
+    expect(result.stdout).toContain('"title": "GSV"');
+    expect(request.mock.calls.map(([frame]) => ({
+      call: frame.call,
+      args: frame.args,
+    }))).toEqual([
+      {
+        call: "sys.mcp.list",
+        args: {},
+      },
+      {
+        call: "fs.read",
+        args: { path: "/tmp/note.txt" },
+      },
+      {
+        call: "sys.mcp.call",
+        args: {
+          serverId: "server-1",
+          name: "lookup-record",
+          arguments: { query: "gsv" },
+        },
+      },
+    ]);
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("releases a CodeMode response body when cancellation wins after dispatch", async () => {
+    const controller = new AbortController();
+    const cancel = vi.fn();
+    const body = {
+      length: 4,
+      stream: new ReadableStream<Uint8Array>({ cancel }),
+    };
+    const request = vi.fn(async (frame: RequestFrame): Promise<ResponseFrame> => {
+      if (frame.call === "sys.mcp.list") {
+        return { type: "res", id: frame.id, ok: true, data: { servers: [] } };
+      }
+      controller.abort(new Error("request cancelled"));
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: true,
+          kind: "text",
+          path: "/tmp/note.txt",
+          size: 4,
+          contentType: "text/plain",
+        },
+        body,
+      };
+    });
+    const ctx = makeContext({ capabilities: ["codemode.run"] });
+    ctx.requestSignal = controller.signal;
+    Object.assign(ctx.env, { LOADER: env.LOADER });
+
+    const result = await handleShellExec(
+      { input: "codemode -e 'return await fs.read({ path: \"/tmp/note.txt\" })'" },
+      ctx,
+      { request },
+    );
+
+    expect(result).toMatchObject({ status: "failed", error: "request cancelled" });
+    expect(cancel).toHaveBeenCalledWith("CodeMode response completed");
+  });
+
   it("shows mcp command usage", async () => {
     const result = await handleShellExec(
       { input: "mcp --help" },
@@ -1637,6 +1915,8 @@ describe("pkg shell command", () => {
 
   it("calls MCP tools through the native shell command", async () => {
     const ctx = makeContext({ capabilities: ["sys.mcp.call"] }) as KernelContext;
+    const controller = new AbortController();
+    ctx.requestSignal = controller.signal;
     const callMcpTool = vi.fn(async () => ({
       content: [{ type: "text", text: "found" }],
     }));

@@ -170,6 +170,11 @@ export type DispatchDeps = {
     args: unknown,
     options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
   ) => Promise<ResponseOkFrame>;
+  request: (
+    frame: RequestFrame,
+    ctx: KernelContext,
+    signal?: AbortSignal,
+  ) => Promise<ResponseFrame>;
   handleSysUpdate: (args: SysUpdateArgs | undefined, ctx: KernelContext) => Promise<SysUpdateResult>;
 };
 
@@ -305,6 +310,7 @@ async function dispatchNative(
         data = await handleShellExec(frame.args, ctx, {
           fsCopyTransport: deps,
           netFetchTransport: deps,
+          request: (request, signal) => deps.request(request, ctx, signal),
         });
         break;
 
@@ -656,6 +662,9 @@ async function dispatchNative(
 
     return { type: "res", id: frame.id, ok: true, data } as ResponseFrame;
   } catch (err) {
+    if (ctx.requestSignal?.aborted) {
+      return errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal));
+    }
     if (err instanceof AppSyscallError) {
       return errFrame(frame.id, err.status, err.message);
     }

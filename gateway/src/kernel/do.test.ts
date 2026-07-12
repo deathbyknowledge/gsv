@@ -17,6 +17,26 @@ import {
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
 describe("Kernel frame bodies", () => {
+  it("passes request cancellation to Agents SDK MCP calls", async () => {
+    const callTool = vi.fn(async () => ({ content: [] }));
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.mcp = { callTool };
+    const controller = new AbortController();
+    const ctx = kernel.buildKernelContext({ requestSignal: controller.signal });
+
+    await ctx.callMcpTool("server-1", "lookup", { query: "gsv" }, ctx.requestSignal);
+
+    expect(callTool).toHaveBeenCalledWith(
+      {
+        serverId: "server-1",
+        name: "lookup",
+        arguments: { query: "gsv" },
+      },
+      undefined,
+      { signal: controller.signal },
+    );
+  });
+
   it("decodes WebSocket body frames into a byte stream", async () => {
     const kernel = Object.create(Kernel.prototype) as any;
     kernel.frameBodyChannels = new Map();
@@ -426,6 +446,148 @@ describe("Kernel frame bodies", () => {
     });
 
     expect(ignoredCancellation).toBe("Process request completed");
+  });
+});
+
+describe("Kernel nested dispatch", () => {
+  it("cancels request bodies rejected by nested capability checks", async () => {
+    let cancelled: unknown;
+    const kernel = Object.create(Kernel.prototype) as any;
+    const response = await kernel.requestDispatchedFrame(
+      {
+        type: "req",
+        id: "nested-denied",
+        call: "net.fetch",
+        args: { url: "https://example.com" },
+        body: {
+          stream: new ReadableStream({
+            cancel(reason) {
+              cancelled = reason;
+            },
+          }),
+          length: 1,
+        },
+      },
+      { identity: { capabilities: [] } },
+    );
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: 403, message: "Permission denied: net.fetch" },
+    });
+    expect(cancelled).toBe("Dispatched request rejected");
+  });
+
+  it("forwards cancellation for an awaited nested device request", async () => {
+    const controller = new AbortController();
+    const reason = new Error("new user message");
+    const driver = {
+      id: "driver-connection",
+      state: {
+        identity: {
+          role: "driver",
+          device: "workstation",
+        },
+      },
+    };
+    let route: any = null;
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.pendingAppResponses = new Map();
+    kernel.activeRequests = new Map();
+    kernel.cancelledProcessRequests = new Map();
+    kernel.connections = new Map([[driver.id, driver]]);
+    kernel.shellSessions = { get: vi.fn() };
+    kernel.routedBodies = new Map();
+    kernel.routes = {
+      get: vi.fn((id: string) => route?.id === id ? route : null),
+      remove: vi.fn((id: string) => {
+        if (route?.id !== id) return null;
+        const removed = {
+          origin: route.origin,
+          call: route.call,
+          deviceId: route.deviceId,
+          scheduleId: null,
+        };
+        route = null;
+        return removed;
+      }),
+    };
+    kernel.cancelSchedule = vi.fn(async () => {});
+    kernel.registerRouteWithExpiry = vi.fn(async (input: any) => {
+      route = { ...input, scheduleId: null };
+      return {
+        cancel: () => kernel.cancelRoute(input.id),
+        attachBody: vi.fn(),
+      };
+    });
+    kernel.sendWebSocketFrame = vi.fn(() => null);
+    kernel.requestDevice = vi.fn();
+    kernel.handleSysUpdate = vi.fn();
+    const ctx = {
+      identity: {
+        role: "user",
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+        capabilities: ["shell.exec"],
+      },
+      devices: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => ({
+          device_id: "workstation",
+          owner_uid: 1000,
+          label: "Workstation",
+          description: "",
+          implements: ["shell.exec"],
+          platform: "linux",
+          version: "test",
+          online: true,
+          first_seen_at: 1,
+          last_seen_at: 2,
+          connected_at: 2,
+          disconnected_at: null,
+        })),
+      },
+      auth: { getPasswdByUid: vi.fn(() => null) },
+    };
+    const request = kernel.requestDispatchedFrame(
+      {
+        type: "req",
+        id: "nested-shell",
+        call: "shell.exec",
+        args: { target: "workstation", input: "sleep 300" },
+      },
+      ctx,
+      controller.signal,
+    );
+
+    await vi.waitFor(() => expect(kernel.sendWebSocketFrame).toHaveBeenCalledWith(
+      driver,
+      {
+        type: "req",
+        id: "nested-shell",
+        call: "shell.exec",
+        args: { input: "sleep 300" },
+      },
+    ));
+    expect(kernel.activeRequests.size).toBe(0);
+    controller.abort(reason);
+
+    await expect(request).rejects.toThrow("new user message");
+    expect(kernel.sendWebSocketFrame).toHaveBeenCalledWith(
+      driver,
+      {
+        type: "sig",
+        signal: "request.cancel",
+        payload: { id: "nested-shell", reason: "new user message" },
+      },
+    );
+    expect(route).toBeNull();
   });
 });
 
