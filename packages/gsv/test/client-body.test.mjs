@@ -10,7 +10,7 @@ import {
   parseBinaryFrame,
 } from "../dist/protocol/binary-frame.js";
 import { BinaryBodyChannel } from "../dist/protocol/binary-body-channel.js";
-import { bodyFromBytes } from "../dist/protocol/body.js";
+import { bodyFromBytes, bodyToBytes } from "../dist/protocol/body.js";
 import { REQUEST_CANCEL_SIGNAL } from "../dist/protocol.js";
 import {
   inferFsContentType,
@@ -117,6 +117,26 @@ test("bodyFromBytes supports an empty body", async () => {
 
   assert.equal(framed.length, 0);
   assert.equal((await new Response(framed.stream).arrayBuffer()).byteLength, 0);
+});
+
+test("bodyToBytes cancels an active read with its signal", async () => {
+  const controller = new AbortController();
+  let cancelled;
+  const body = {
+    stream: new ReadableStream({
+      pull: () => new Promise(() => {}),
+      cancel: (reason) => {
+        cancelled = reason;
+      },
+    }),
+  };
+  const reading = bodyToBytes(body, Infinity, controller.signal);
+  const reason = new Error("Run stopped");
+
+  controller.abort(reason);
+
+  await assert.rejects(reading, /Run stopped/);
+  assert.equal(cancelled, reason);
 });
 
 test("parses binary frame payloads without copying them", () => {

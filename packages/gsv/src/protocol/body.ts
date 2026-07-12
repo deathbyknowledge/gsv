@@ -38,7 +38,11 @@ export function bodyFromText(text: string): BinaryBody {
   return bodyFromBytes(new TextEncoder().encode(text));
 }
 
-export async function bodyToBytes(body: BinaryBody, maxBytes = Infinity): Promise<Uint8Array> {
+export async function bodyToBytes(
+  body: BinaryBody,
+  maxBytes = Infinity,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
   if (body.length !== undefined && body.length > maxBytes) {
     await body.stream.cancel().catch(() => {});
     throw new Error(`Body exceeds limit (${body.length} bytes, max ${maxBytes})`);
@@ -47,6 +51,17 @@ export async function bodyToBytes(body: BinaryBody, maxBytes = Infinity): Promis
   const reader = body.stream.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
+  let aborted: Error | null = null;
+  const abort = () => {
+    aborted ??= signal?.reason instanceof Error
+      ? signal.reason
+      : new Error("Body read cancelled");
+    void reader.cancel(aborted).catch(() => {});
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) {
+    abort();
+  }
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -60,7 +75,11 @@ export async function bodyToBytes(body: BinaryBody, maxBytes = Infinity): Promis
       }
       chunks.push(value);
     }
+    if (aborted) {
+      throw aborted;
+    }
   } finally {
+    signal?.removeEventListener("abort", abort);
     reader.releaseLock();
   }
 
@@ -83,6 +102,10 @@ export async function bodyToBytes(body: BinaryBody, maxBytes = Infinity): Promis
   return bytes;
 }
 
-export async function bodyToText(body: BinaryBody, maxBytes = Infinity): Promise<string> {
-  return new TextDecoder().decode(await bodyToBytes(body, maxBytes));
+export async function bodyToText(
+  body: BinaryBody,
+  maxBytes = Infinity,
+  signal?: AbortSignal,
+): Promise<string> {
+  return new TextDecoder().decode(await bodyToBytes(body, maxBytes, signal));
 }
