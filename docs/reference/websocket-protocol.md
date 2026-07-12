@@ -227,7 +227,8 @@ The websocket protocol is uniform: every operation is a `req` frame with a sysca
 | `proc.*` | Kernel and Process DO control plane |
 | `pkg.*`, `repo.*`, `sys.*`, `sched.*`, `notification.*`, `signal.*` | Kernel-handled |
 | `adapter.*` | Service-binding / adapter control path |
-| `ai.*` | Kernel-internal process bootstrap path |
+| `ai.tools`, `ai.config` | Kernel-internal process bootstrap path |
+| Other `ai.*` | Capability-gated inference and media operations |
 
 For routed `fs.*` and initial `shell.exec` requests, the gateway strips `args.target` before forwarding the request frame to the driver. Shell continuations use `args.sessionId`; the gateway looks up the session owner and forwards the same `shell.exec` frame to that device.
 
@@ -328,7 +329,7 @@ The current body-bearing syscalls are:
 | `fs.transfer.send` | No | Successful file bytes |
 | `net.fetch` | Optional HTTP request bytes | HTTP response bytes when the response has a body |
 | `proc.media.read` | No | Successful stored media bytes |
-| `proc.media.write` | Required media bytes with an exact declared size | No |
+| `proc.media.write` | Required media bytes with an exact descriptor length | No |
 | `ai.transcription.create` | Required audio bytes | No |
 | `ai.image.read` | Required image bytes | No |
 | `ai.image.generate` | No | Generated image bytes when returned inline |

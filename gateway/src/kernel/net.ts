@@ -8,7 +8,7 @@ export type NetFetchDeviceTransport = {
     deviceId: string,
     call: string,
     args: unknown,
-    options?: { ttlMs?: number; body?: FrameBody },
+    options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
   ) => Promise<ResponseOkFrame>;
 };
 
@@ -18,6 +18,7 @@ type NetFetchRedirect = NonNullable<NetFetchArgs["redirect"]>;
 
 const NET_FETCH_CALL = "net.fetch";
 const DEFAULT_NET_FETCH_TIMEOUT_MS = 60_000;
+export const MAX_NET_FETCH_REQUEST_BYTES = 32 * 1024 * 1024;
 export const MAX_NET_FETCH_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 export async function handleNetFetch(
@@ -85,6 +86,7 @@ export function createRoutedFetch(
     const response = await requestNetFetchWithSignal(
       () => transport.requestDevice(normalizedTarget, NET_FETCH_CALL, outbound.args, {
         ttlMs: timeoutMs,
+        signal: request.signal,
         ...(outbound.body ? { body: outbound.body } : {}),
       }),
       request.signal,
@@ -120,20 +122,35 @@ async function normalizeNetFetchRequest(
     }
   }
 
-  const legacyBody = (input as NetFetchArgs & { body?: unknown }).body;
-  if (legacyBody !== undefined) {
+  const legacyInput = input as NetFetchArgs & { body?: unknown; bodyBase64?: unknown };
+  const legacyField = legacyInput.body !== undefined
+    ? "body"
+    : legacyInput.bodyBase64 !== undefined
+      ? "bodyBase64"
+      : null;
+  if (legacyField) {
     if (frameBody) {
       await frameBody.stream.cancel().catch(() => {});
     }
-    throw new Error("net.fetch args.body was removed; use a request body");
+    throw new Error(`net.fetch args.${legacyField} was removed; use a request body`);
   }
-  const body = frameBody?.stream;
-  if ((method === "GET" || method === "HEAD") && body !== undefined) {
+  if ((method === "GET" || method === "HEAD") && frameBody) {
     if (frameBody) {
       await frameBody.stream.cancel().catch(() => {});
     }
     throw new Error(`${method} requests cannot include a body`);
   }
+  if (frameBody?.length !== undefined && frameBody.length > MAX_NET_FETCH_REQUEST_BYTES) {
+    const error = new Error(formatNetFetchRequestSizeError(
+      frameBody.length,
+      MAX_NET_FETCH_REQUEST_BYTES,
+    ));
+    await frameBody.stream.cancel(error).catch(() => {});
+    throw error;
+  }
+  const body = frameBody
+    ? limitNetFetchRequestBody(frameBody.stream, MAX_NET_FETCH_REQUEST_BYTES)
+    : undefined;
 
   return {
     url,
@@ -143,6 +160,54 @@ async function normalizeNetFetchRequest(
     redirect: normalizeRedirect(input.redirect),
     timeoutMs: normalizeNetFetchTimeoutMs(input.timeoutMs),
   };
+}
+
+export function limitNetFetchRequestBody(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes = MAX_NET_FETCH_REQUEST_BYTES,
+): ReadableStream<Uint8Array> {
+  const reader = stream.getReader();
+  let total = 0;
+  let finished = false;
+  const finish = () => {
+    if (!finished) {
+      finished = true;
+      reader.releaseLock();
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          finish();
+          controller.close();
+          return;
+        }
+        if (!value || value.byteLength === 0) {
+          return;
+        }
+        total += value.byteLength;
+        if (total > maxBytes) {
+          const error = new Error(formatNetFetchRequestSizeError(total, maxBytes));
+          await reader.cancel(error).catch(() => {});
+          finish();
+          controller.error(error);
+          return;
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        await reader.cancel(error).catch(() => {});
+        finish();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason).catch(() => {});
+      finish();
+    },
+  });
 }
 
 export function requestToNetFetchArgs(
@@ -259,9 +324,11 @@ export async function requestNetFetchWithSignal(
   start: () => Promise<ResponseOkFrame>,
   signal: AbortSignal,
   requestBody?: FrameBody,
+  cancelRequest?: (reason: unknown) => void | Promise<void>,
 ): Promise<ResponseOkFrame> {
   if (signal.aborted) {
     await requestBody?.stream.cancel(signal.reason).catch(() => {});
+    await cancelRequest?.(signal.reason);
     throw abortError(signal.reason);
   }
 
@@ -271,6 +338,7 @@ export async function requestNetFetchWithSignal(
     const onAbort = () => {
       aborted = true;
       void requestBody?.stream.cancel(signal.reason).catch(() => {});
+      void Promise.resolve(cancelRequest?.(signal.reason)).catch(() => {});
       reject(abortError(signal.reason));
     };
     signal.addEventListener("abort", onAbort, { once: true });
@@ -453,4 +521,8 @@ function parseContentLength(value: string | null): number | null {
 
 function formatNetFetchResponseSizeError(actualBytes: number, maxBytes: number): string {
   return `net.fetch response body exceeds limit (${actualBytes} bytes, max ${maxBytes})`;
+}
+
+function formatNetFetchRequestSizeError(actualBytes: number, maxBytes: number): string {
+  return `net.fetch request body exceeds limit (${actualBytes} bytes, max ${maxBytes})`;
 }

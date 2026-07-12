@@ -193,6 +193,7 @@ export class BinaryBodyChannel {
     state: OutgoingBinaryBodyState,
     signal?: AbortSignal,
   ): Promise<void> {
+    const cancelled = () => state.status === "cancelled";
     const abort = () => {
       state.status = "cancelled";
       state.cancelReason = signal?.reason;
@@ -207,11 +208,11 @@ export class BinaryBodyChannel {
       signal?.addEventListener("abort", abort, { once: true });
       sendLoop: while (true) {
         const { done, value } = await state.reader.read();
-        if (done || state.status === "cancelled") {
+        if (done || cancelled()) {
           break;
         }
         for (let offset = 0; offset < value.byteLength; offset += this.chunkBytes) {
-          if (state.status === "cancelled") {
+          if (cancelled()) {
             break sendLoop;
           }
           await this.sendFrame(buildBinaryFrame(
@@ -221,7 +222,7 @@ export class BinaryBodyChannel {
           ));
         }
       }
-      if (state.status === "cancelled" || signal?.aborted) {
+      if (cancelled() || signal?.aborted) {
         if (!state.peerTerminated) {
           state.peerTerminated = true;
           await this.sendError(state.streamId, state.cancelReason ?? signal?.reason);
@@ -232,7 +233,7 @@ export class BinaryBodyChannel {
       state.peerTerminated = true;
       state.status = "completed";
     } catch (error) {
-      if (state.status === "cancelled" || signal?.aborted) {
+      if (cancelled() || signal?.aborted) {
         await this.cancelSource(state, state.cancelReason ?? signal?.reason);
         if (!state.peerTerminated) {
           state.peerTerminated = true;

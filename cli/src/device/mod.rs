@@ -964,6 +964,14 @@ mod tests {
         )
         .await
         .contains("unknown field `body`"));
+        assert_eq!(
+            pending_body_error(
+                "net.fetch",
+                json!({ "url": "https://example.test/", "method": "GET" }),
+            )
+            .await,
+            "GET requests cannot include a body"
+        );
     }
 
     #[tokio::test]
@@ -972,6 +980,7 @@ mod tests {
             "net.fetch",
             json!({
                 "url": "https://example.test/",
+                "method": "POST",
                 "timeoutMs": 5,
             }),
         )

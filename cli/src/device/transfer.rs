@@ -911,6 +911,22 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error, "Body from 'stream' exceeds limit (4 bytes, max 3)");
+
+        let mut truncated = OutgoingBody::new(
+            &inbox,
+            Some(4),
+            None,
+            Cursor::new(vec![1, 2, 3]),
+            "stream".to_string(),
+        );
+        let error = truncated
+            .send_inner(|_frame| std::future::ready(Ok::<(), std::io::Error>(())))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "Transfer size changed for 'stream': expected 4, got 3"
+        );
     }
 
     #[tokio::test]

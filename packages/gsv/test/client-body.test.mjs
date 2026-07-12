@@ -90,7 +90,9 @@ test("keeps body-bearing syscalls off the data-only namespaces", () => {
   assert.equal(client.fs.transfer.send, undefined);
   assert.equal(client.fs.transfer.receive, undefined);
   assert.equal(client.net, undefined);
-  assert.equal(client.proc.media, undefined);
+  assert.equal(client.proc.media.read, undefined);
+  assert.equal(client.proc.media.write, undefined);
+  assert.equal(typeof client.proc.media.delete, "function");
   assert.equal(client.ai.transcription, undefined);
   assert.equal(client.ai.image, undefined);
   assert.equal(client.ai.speech, undefined);

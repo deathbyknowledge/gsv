@@ -16,6 +16,7 @@ export type RequestProcessNetFetchOptions = {
   ttlMs?: number;
   internalPurpose?: "model-transport";
   body?: FrameBody;
+  requestId?: string;
 };
 
 export async function getKernelPtr(): Promise<KernelPtr> {
@@ -42,6 +43,15 @@ export async function requestProcessNetFetch(
 ): Promise<ResponseOkFrame<"net.fetch">> {
   const kernel = await getKernelPtr();
   return kernel.requestProcessNetFetch(processId, target, args, options);
+}
+
+export async function cancelProcessNetFetch(
+  processId: string,
+  requestId: string,
+  reason?: string,
+): Promise<boolean> {
+  const kernel = await getKernelPtr();
+  return kernel.cancelProcessNetFetch(processId, requestId, reason);
 }
 
 export async function sendFrameToProcess(

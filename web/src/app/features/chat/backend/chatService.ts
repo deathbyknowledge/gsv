@@ -21,6 +21,7 @@ import type {
   ProcHistoryArgs,
   ProcHistoryResult,
   ProcListArgs,
+  ProcMediaInput,
   ProcMediaReadArgs,
   ProcMediaReadResult,
   ProcMediaWriteResult,
@@ -44,6 +45,7 @@ import {
   type ChatProcessAiConfigSetResult,
   type ChatProcessSummary,
   type ChatSendDraft,
+  MAX_CHAT_PROCESS_MEDIA_BYTES,
 } from "../domain/processes";
 
 type ChatGsvClient = Pick<GSVClient, "proc" | "request">;
@@ -52,7 +54,6 @@ type ProcAiConfigGetArgsWithPid = ProcAiConfigGetArgs & { pid?: string };
 type ProcAiConfigSetArgsWithPid = ProcAiConfigSetArgs & { pid?: string };
 
 type FailureResult = { ok: false; error: string };
-const MAX_CHAT_PROCESS_MEDIA_BYTES = 25 * 1024 * 1024;
 
 export type ChatProcessMedia = Extract<ProcMediaReadResult, { ok: true }> & {
   blob: Blob;
@@ -89,7 +90,12 @@ export async function sendChatMessage(
   client: ChatGsvClient,
   draft: ChatSendDraft,
 ): Promise<Extract<ProcSendResult, { ok: true }>> {
-  const media = await Promise.all((draft.media ?? []).map(async ({ body, ...input }) => {
+  const uploads = draft.media ?? [];
+  if (uploads.some(({ body }) => body.size > MAX_CHAT_PROCESS_MEDIA_BYTES)) {
+    throw new Error("Chat attachments cannot exceed 25 MiB");
+  }
+
+  const settled = await Promise.allSettled(uploads.map(async ({ body, ...input }) => {
     const response = await client.request("proc.media.write", {
       ...input,
       ...(draft.pid ? { pid: draft.pid } : {}),
@@ -99,10 +105,32 @@ export async function sendChatMessage(
     await response.body?.stream.cancel("proc.media.write does not return a body").catch(() => {});
     return throwIfFailed<Extract<ProcMediaWriteResult, { ok: true }>>(response.data).media;
   }));
-  return throwIfFailed(await client.proc.send(normalizeSendPayload({
-    ...draft,
-    ...(media.length > 0 ? { media } : {}),
-  })));
+  const media = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  const uploadError = settled.find((result) => result.status === "rejected");
+  if (uploadError?.status === "rejected") {
+    await rollbackChatMedia(client, draft.pid, media);
+    throw uploadError.reason;
+  }
+
+  try {
+    return throwIfFailed(await client.proc.send(normalizeSendPayload({
+      ...draft,
+      ...(media.length > 0 ? { media } : {}),
+    })));
+  } catch (error) {
+    await rollbackChatMedia(client, draft.pid, media);
+    throw error;
+  }
+}
+
+async function rollbackChatMedia(
+  client: ChatGsvClient,
+  pid: string | undefined,
+  media: ProcMediaInput[],
+): Promise<void> {
+  await Promise.allSettled(media.flatMap(({ key }) => key
+    ? [client.proc.media.delete({ key, ...(pid ? { pid } : {}) })]
+    : []));
 }
 
 export async function abortChatProcess(

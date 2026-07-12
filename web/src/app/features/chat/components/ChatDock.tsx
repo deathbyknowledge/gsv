@@ -21,11 +21,12 @@ import {
   applyChatLiveActivityToAgent,
   deriveChatLiveActivity,
 } from "../domain/activity";
-import type {
-  ChatHilDecision,
-  ChatMediaUpload,
-  ChatProcessSummary,
-  ChatRunState,
+import {
+  MAX_CHAT_PROCESS_MEDIA_BYTES,
+  type ChatHilDecision,
+  type ChatMediaUpload,
+  type ChatProcessSummary,
+  type ChatRunState,
 } from "../domain/processes";
 import {
   useAbortChatProcess,
@@ -196,7 +197,6 @@ function fileToDraftAttachment(file: File): DraftAttachment {
     mimeType,
     body: file,
     filename: file.name || undefined,
-    size: file.size,
     label,
     meta: [type, sizeLabel].filter(Boolean).join(" · "),
   };
@@ -403,7 +403,7 @@ export function ChatDock({
       type: item.type,
       mimeType: item.mimeType,
       ...(item.filename ? { filename: item.filename } : {}),
-      ...(item.size !== undefined ? { size: item.size } : {}),
+      size: item.body.size,
       ...(item.duration !== undefined ? { duration: item.duration } : {}),
       ...(item.transcription ? { transcription: item.transcription } : {}),
     })));
@@ -541,8 +541,10 @@ export function ChatDock({
     if (!files || files.length === 0) {
       return;
     }
-    setAttachmentError("");
-    setDraftAttachments((current) => current.concat(Array.from(files).map(fileToDraftAttachment)));
+    const selected = Array.from(files);
+    const accepted = selected.filter((file) => file.size <= MAX_CHAT_PROCESS_MEDIA_BYTES);
+    setAttachmentError(accepted.length === selected.length ? "" : "Chat attachments cannot exceed 25 MiB.");
+    setDraftAttachments((current) => current.concat(accepted.map(fileToDraftAttachment)));
   };
 
   const removeAttachment = (attachmentId: string) => {
@@ -556,7 +558,6 @@ export function ChatDock({
       mimeType: attachment.mimeType,
       body: attachment.body,
       ...(attachment.filename ? { filename: attachment.filename } : {}),
-      size: attachment.size,
       ...(attachment.duration ? { duration: attachment.duration } : {}),
       ...(attachment.transcription ? { transcription: attachment.transcription } : {}),
     }));

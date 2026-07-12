@@ -150,19 +150,25 @@ import {
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
   connections: Map<string, Connection>;
-  sendFrame: (connection: Connection, frame: RequestFrame | ResponseFrame) => void;
+  sendFrame: (
+    connection: Connection,
+    frame: RequestFrame | ResponseFrame,
+  ) => { cancel(reason?: unknown): Promise<void> } | null;
   registerRoute: (route: {
     id: string;
     call: SyscallName;
     origin: RouteOrigin;
     deviceId: string;
     ttlMs: number;
-  }) => Promise<{ cancel: () => void }>;
+  }) => Promise<{
+    cancel: () => void;
+    attachBody: (body: { cancel(reason?: unknown): Promise<void> }) => void;
+  }>;
   requestDevice: (
     deviceId: string,
     call: string,
     args: unknown,
-    options?: { ttlMs?: number; body?: FrameBody },
+    options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
   ) => Promise<ResponseOkFrame>;
   handleSysUpdate: (args: SysUpdateArgs | undefined, ctx: KernelContext) => Promise<SysUpdateResult>;
 };
@@ -349,6 +355,7 @@ async function dispatchNative(
       case "proc.ai.config.set":
       case "proc.media.read":
       case "proc.media.write":
+      case "proc.media.delete":
       case "proc.conversation.open":
       case "proc.conversation.list":
       case "proc.conversation.get":
@@ -704,13 +711,16 @@ async function routeToTarget(
   }
 
   try {
-    deps.sendFrame(deviceConn, {
+    const outgoing = deps.sendFrame(deviceConn, {
       type: "req",
       id: frame.id,
       call: frame.call,
       args: frame.args,
       ...(frame.body ? { body: frame.body } : {}),
     } as RequestFrame);
+    if (outgoing) {
+      route.attachBody(outgoing);
+    }
   } catch (error) {
     route.cancel();
     const message = error instanceof Error ? error.message : String(error);

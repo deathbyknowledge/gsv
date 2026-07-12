@@ -533,7 +533,8 @@ Runtime behavior:
 | `proc.kill` | Process DO | Optionally archives every non-empty conversation under the run-as agent's home, clears process media, and wipes Process DO state. After success the Kernel removes the process registry entry and detaches its conversation executor. |
 | `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, cursor flags, truncation status, timestamps, pending HIL, and the latest context-pressure state when available. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content. |
 | `proc.media.read` | Process DO | Reads one process-scoped media object. A successful result returns key, MIME type, and size in `data` and always attaches the media bytes as a response body. |
-| `proc.media.write` | Process DO | Streams one request body directly into process-scoped R2 storage. `size` is required so the gateway can preserve a fixed-length stream. Returns a stable media reference for `proc.send`. |
+| `proc.media.write` | Process DO | Streams one request body directly into process-scoped R2 storage. The body descriptor must declare its exact length so R2 receives a fixed-length stream. Returns a stable media reference for `proc.send`. |
+| `proc.media.delete` | Process DO | Idempotently deletes one process-scoped media object. Keys outside the target process are rejected. Used to roll back uploads that are not admitted by `proc.send`. |
 | `proc.conversation.open` | Process DO | Creates or reopens a process-local conversation. If `conversationId` is omitted, the Process DO generates one. Optional `title` is trimmed and stored. |
 | `proc.conversation.list` | Process DO | Lists open conversations by default. `includeClosed: true` includes closed conversations. Each record includes generation, status, title, message count, and timestamps. |
 | `proc.conversation.get` | Process DO | Returns one conversation record for `conversationId` or `default`; unknown conversations return `conversation: null`. |
@@ -683,13 +684,18 @@ type ProcessSyscalls = {
   };
 
   "proc.media.read": {
-    args: { pid?: string; key: string; mimeType?: string };
+    args: { pid?: string; key: string };
     result: { ok: true; key: string; mimeType: string; size: number } | OperationError;
   };
 
   "proc.media.write": {
-    args: { pid?: string; type: "image" | "audio" | "video" | "document"; mimeType: string; size: number; filename?: string; duration?: number; transcription?: string };
+    args: { pid?: string; type: "image" | "audio" | "video" | "document"; mimeType: string; filename?: string; duration?: number; transcription?: string };
     result: { ok: true; media: MediaInput & { key: string; size: number } } | OperationError;
+  };
+
+  "proc.media.delete": {
+    args: { pid?: string; key: string };
+    result: { ok: true; key: string } | OperationError;
   };
 
   "proc.conversation.open": {

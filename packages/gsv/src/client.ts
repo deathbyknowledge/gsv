@@ -218,8 +218,6 @@ const PROTOCOL_VERSION = 2;
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const LONG_RUNNING_REQUEST_TIMEOUT_MS = 120_000;
 const AI_TEXT_GENERATION_REQUEST_TIMEOUT_MS = 180_000;
-const DEFAULT_BINARY_RECEIVE_TIMEOUT_MS = 120_000;
-const DEFAULT_BINARY_CHUNK_SIZE = 1024 * 1024;
 const DEFAULT_DRIVER_KEEPALIVE_MS = 240_000;
 const WEBSOCKET_CONNECTING = 0;
 const WEBSOCKET_OPEN = 1;
@@ -444,8 +442,8 @@ export class GSVClient {
       ...requestTimeoutsMs,
     };
     this.bodyChannel = new BinaryBodyChannel({
-      chunkBytes: body?.chunkSize ?? DEFAULT_BINARY_CHUNK_SIZE,
-      idleTimeoutMs: body?.receiveTimeoutMs ?? DEFAULT_BINARY_RECEIVE_TIMEOUT_MS,
+      chunkBytes: body?.chunkSize,
+      idleTimeoutMs: body?.receiveTimeoutMs,
       sendFrame: (frame) => {
         const socket = this.socket;
         if (!socket || socket.readyState !== WEBSOCKET_OPEN) {

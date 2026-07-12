@@ -112,8 +112,6 @@ import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 
 const SERVER_VERSION = "0.4.0";
-const FRAME_BODY_CHUNK_BYTES = 1024 * 1024;
-const FRAME_BODY_TTL_MS = 120_000;
 const CLI_DOWNLOADS_REFRESHED_VERSION_KEY = "config/downloads/cli/refreshed_for_version";
 const CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY = "config/downloads/cli/refresh_attempt_at";
 const CLI_DOWNLOADS_REFRESHED_AT_KEY = "config/downloads/cli/refreshed_at";
@@ -130,6 +128,7 @@ type ProcessNetFetchOptions = {
   ttlMs?: number;
   internalPurpose?: "model-transport";
   body?: FrameBody;
+  requestId?: string;
 };
 
 type ResolvePackageAppRpcInput = {
@@ -204,6 +203,11 @@ export class Kernel extends Host<Env> {
   private readonly pendingAppResponses = new Map<string, (frame: ResponseFrame) => void>();
   private readonly pendingProcessSignals = new Map<string, Promise<void>>();
   private readonly frameBodyChannels = new Map<string, BinaryBodyChannel>();
+  private readonly routedBodies = new Map<string, OutgoingBinaryBody>();
+  private readonly processNetFetchRequests = new Map<
+    string,
+    { processId: string; controller: AbortController }
+  >();
   private cliDownloadsRefresh: Promise<void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -503,6 +507,7 @@ export class Kernel extends Host<Env> {
     args: NetFetchArgs,
     options: ProcessNetFetchOptions = {},
   ): Promise<ResponseOkFrame<"net.fetch">> {
+    let controller: AbortController | null = null;
     try {
       const ctx = this.buildProcessContext(processId);
       if (!ctx) {
@@ -522,16 +527,40 @@ export class Kernel extends Host<Env> {
       if (device.providerId !== "device" || device.route.kind !== "connection") {
         throw new Error(`Target does not support device requests: ${target}`);
       }
+      if (options.requestId) {
+        if (this.processNetFetchRequests.has(options.requestId)) {
+          throw new Error(`Duplicate process net.fetch request: ${options.requestId}`);
+        }
+        controller = new AbortController();
+        this.processNetFetchRequests.set(options.requestId, { processId, controller });
+      }
       const response = await this.requestDevice(
         device.targetId,
         "net.fetch",
         args,
-        { ttlMs: options.ttlMs, ...(options.body ? { body: options.body } : {}) },
+        {
+          ttlMs: options.ttlMs,
+          ...(options.body ? { body: options.body } : {}),
+          ...(options.requestId ? { id: options.requestId } : {}),
+          ...(controller ? { signal: controller.signal } : {}),
+        },
       );
       return response as ResponseOkFrame<"net.fetch">;
     } finally {
+      if (options.requestId) {
+        this.processNetFetchRequests.delete(options.requestId);
+      }
       await cancelUnlockedBody(options.body, "Process net.fetch completed");
     }
+  }
+
+  cancelProcessNetFetch(processId: string, requestId: string, reason?: string): boolean {
+    const pending = this.processNetFetchRequests.get(requestId);
+    if (!pending || pending.processId !== processId) {
+      return false;
+    }
+    pending.controller.abort(new Error(reason || "Process net.fetch cancelled"));
+    return true;
   }
 
   /**
@@ -1267,7 +1296,10 @@ export class Kernel extends Host<Env> {
     origin: RouteOrigin;
     deviceId: string;
     ttlMs: number;
-  }): Promise<{ cancel: () => void }> {
+  }): Promise<{
+    cancel: () => void;
+    attachBody: (body: OutgoingBinaryBody) => void;
+  }> {
     const scheduleId = (await this.schedule(
       route.ttlMs / 1000,
       "onRouteExpired",
@@ -1289,6 +1321,11 @@ export class Kernel extends Host<Env> {
 
     return {
       cancel: () => this.cancelRoute(route.id),
+      attachBody: (body) => {
+        const previous = this.routedBodies.get(route.id);
+        this.routedBodies.set(route.id, body);
+        void previous?.cancel("Routed body replaced");
+      },
     };
   }
 
@@ -1297,6 +1334,16 @@ export class Kernel extends Host<Env> {
     if (route?.scheduleId) {
       this.cancelSchedule(route.scheduleId).catch(() => {});
     }
+    this.cancelRoutedBody(routeId, "Route cancelled");
+  }
+
+  private cancelRoutedBody(routeId: string, reason: string): void {
+    const body = this.routedBodies.get(routeId);
+    if (!body) {
+      return;
+    }
+    this.routedBodies.delete(routeId);
+    void body.cancel(reason);
   }
 
   private decodeWebSocketFrame(
@@ -1350,8 +1397,6 @@ export class Kernel extends Host<Env> {
     let channel = this.frameBodyChannels.get(connection.id);
     if (!channel) {
       channel = new BinaryBodyChannel({
-        chunkBytes: FRAME_BODY_CHUNK_BYTES,
-        idleTimeoutMs: FRAME_BODY_TTL_MS,
         sendFrame: (binary) => connection.send(binary),
       });
       this.frameBodyChannels.set(connection.id, channel);
@@ -1368,8 +1413,17 @@ export class Kernel extends Host<Env> {
     deviceId: string,
     call: string,
     args: unknown,
-    options: { ttlMs?: number; body?: FrameBody } = {},
+    options: {
+      ttlMs?: number;
+      body?: FrameBody;
+      id?: string;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<Extract<ResponseFrame, { ok: true }>> {
+    if (options.signal?.aborted) {
+      await options.body?.stream.cancel(options.signal.reason).catch(() => {});
+      throw requestAbortError(options.signal.reason);
+    }
     const device = this.devices.get(deviceId);
     if (!device || !device.online) {
       throw new Error(`Device offline: ${deviceId}`);
@@ -1383,10 +1437,18 @@ export class Kernel extends Host<Env> {
       throw new Error(`No active connection for device: ${deviceId}`);
     }
 
-    const id = crypto.randomUUID();
+    const id = options.id ?? crypto.randomUUID();
     const pending = this.createPendingAppResponse(id);
     let route: { cancel: () => void } | null = null;
     let outgoing: OutgoingBinaryBody | null = null;
+    let rejectAbort: ((error: Error) => void) | null = null;
+    const aborted = new Promise<never>((_, reject) => {
+      rejectAbort = reject;
+    });
+    const onAbort = () => {
+      rejectAbort?.(requestAbortError(options.signal?.reason));
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
 
     try {
       route = await this.registerRouteWithExpiry({
@@ -1396,6 +1458,9 @@ export class Kernel extends Host<Env> {
         deviceId,
         ttlMs: options.ttlMs ?? 60_000,
       });
+      if (options.signal?.aborted) {
+        throw requestAbortError(options.signal.reason);
+      }
 
       outgoing = this.sendWebSocketFrame(deviceConn, {
         type: "req",
@@ -1404,21 +1469,20 @@ export class Kernel extends Host<Env> {
         args,
         ...(options.body ? { body: options.body } : {}),
       } as RequestFrame);
-    } catch (error) {
-      route?.cancel();
-      pending.cleanup();
-      throw error;
-    }
-
-    try {
-      const frame = await pending.promise;
+      const frame = options.signal
+        ? await Promise.race([pending.promise, aborted])
+        : await pending.promise;
       if (!frame.ok) {
         throw new Error(frame.error.message);
       }
       return frame;
     } finally {
+      options.signal?.removeEventListener("abort", onAbort);
       pending.cleanup();
-      await outgoing?.cancel("Device request completed");
+      route?.cancel();
+      await outgoing?.cancel(
+        options.signal?.aborted ? options.signal.reason : "Device request completed",
+      );
     }
   }
 

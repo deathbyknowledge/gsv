@@ -85,6 +85,8 @@ export type ChatMediaUpload = Omit<ProcMediaWriteArgs, "pid"> & {
   body: Blob;
 };
 
+export const MAX_CHAT_PROCESS_MEDIA_BYTES = 25 * 1024 * 1024;
+
 export type ChatSendPayload = ProcSendArgs;
 export type ChatHilDecision = ProcHilDecision;
 export type ChatHilDecisionArgs = ProcHilArgs;

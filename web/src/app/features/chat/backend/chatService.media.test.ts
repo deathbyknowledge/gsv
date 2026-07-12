@@ -10,7 +10,8 @@ describe("chat process media", () => {
       args: Record<string, unknown>,
       options?: { body?: { stream: ReadableStream<Uint8Array> } },
     ) => {
-      expect(args).toMatchObject({ pid: "proc:test", type: "image", size: 3 });
+      expect(args).toMatchObject({ pid: "proc:test", type: "image" });
+      expect(args).not.toHaveProperty("size");
       expect(await new Response(options?.body?.stream).text()).toBe("abc");
       return {
         data: {
@@ -37,7 +38,6 @@ describe("chat process media", () => {
         type: "image",
         mimeType: "image/png",
         filename: "test.png",
-        size: 3,
         body: new Blob(["abc"]),
       }],
     });
@@ -56,6 +56,95 @@ describe("chat process media", () => {
         key: "var/media/1000/proc/test.png",
         size: 3,
       }],
+    });
+  });
+
+  it("rejects oversized attachments before starting an upload", async () => {
+    const request = vi.fn();
+    const send = vi.fn();
+    const client = {
+      request,
+      proc: { send, media: { delete: vi.fn() } },
+    } as unknown as Pick<GSVClient, "proc" | "request">;
+
+    await expect(sendChatMessage(client, {
+      message: "too large",
+      media: [{
+        type: "video",
+        mimeType: "video/mp4",
+        body: { size: 25 * 1024 * 1024 + 1 } as Blob,
+      }],
+    })).rejects.toThrow("Chat attachments cannot exceed 25 MiB");
+    expect(request).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("rolls back successful parallel uploads when another upload fails", async () => {
+    const request = vi.fn(async (_call: string, args: { filename?: string }) => ({
+      data: args.filename === "bad.png"
+        ? { ok: false as const, error: "upload failed" }
+        : {
+            ok: true as const,
+            media: {
+              type: "image" as const,
+              mimeType: "image/png",
+              key: "var/media/1000/proc/good.png",
+              size: 1,
+            },
+          },
+    }));
+    const remove = vi.fn(async () => ({ ok: true as const, key: "var/media/1000/proc/good.png" }));
+    const send = vi.fn();
+    const client = {
+      request,
+      proc: { send, media: { delete: remove } },
+    } as unknown as Pick<GSVClient, "proc" | "request">;
+
+    await expect(sendChatMessage(client, {
+      pid: "proc:test",
+      message: "look",
+      media: [
+        { type: "image", mimeType: "image/png", filename: "good.png", body: new Blob(["a"]) },
+        { type: "image", mimeType: "image/png", filename: "bad.png", body: new Blob(["b"]) },
+      ],
+    })).rejects.toThrow("upload failed");
+
+    expect(send).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledWith({
+      pid: "proc:test",
+      key: "var/media/1000/proc/good.png",
+    });
+  });
+
+  it("rolls back staged media when proc.send rejects it", async () => {
+    const request = vi.fn(async () => ({
+      data: {
+        ok: true as const,
+        media: {
+          type: "image" as const,
+          mimeType: "image/png",
+          key: "var/media/1000/proc/staged.png",
+          size: 1,
+        },
+      },
+    }));
+    const remove = vi.fn(async () => ({ ok: true as const, key: "var/media/1000/proc/staged.png" }));
+    const client = {
+      request,
+      proc: {
+        send: vi.fn(async () => ({ ok: false as const, error: "conversation closed" })),
+        media: { delete: remove },
+      },
+    } as unknown as Pick<GSVClient, "proc" | "request">;
+
+    await expect(sendChatMessage(client, {
+      pid: "proc:test",
+      message: "look",
+      media: [{ type: "image", mimeType: "image/png", body: new Blob(["a"]) }],
+    })).rejects.toThrow("conversation closed");
+    expect(remove).toHaveBeenCalledWith({
+      pid: "proc:test",
+      key: "var/media/1000/proc/staged.png",
     });
   });
 

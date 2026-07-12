@@ -3335,7 +3335,6 @@ describe("Process DO — mechanical", () => {
           type: "image",
           mimeType: "image/png",
           filename: "proof.png",
-          size: 3,
         }),
         body: bodyFromBytes(new Uint8Array([1, 2, 3])),
       })) as ResponseFrame<"proc.media.write">;
@@ -3386,7 +3385,7 @@ describe("Process DO — mechanical", () => {
       });
 
       const read = (await stub.recvFrame(
-        makeReq("proc.media.read", { key: mediaKey, mimeType: "image/png" }),
+        makeReq("proc.media.read", { key: mediaKey }),
       )) as ResponseOkFrame;
       expect(read.ok).toBe(true);
       expect(read.data).toMatchObject({
@@ -3395,6 +3394,112 @@ describe("Process DO — mechanical", () => {
         mimeType: "image/png",
       });
       expect(read.body && [...await bodyToBytes(read.body)]).toEqual([1, 2, 3]);
+
+      const deleted = (await stub.recvFrame(
+        makeReq("proc.media.delete", { key: mediaKey }),
+      )) as ResponseOkFrame;
+      expect(deleted.data).toEqual({ ok: true, key: mediaKey });
+      const deletedAgain = (await stub.recvFrame(
+        makeReq("proc.media.delete", { key: mediaKey }),
+      )) as ResponseOkFrame;
+      expect(deletedAgain.data).toEqual({ ok: true, key: mediaKey });
+      expect(await env.STORAGE.head(mediaKey)).toBeNull();
+
+      const outside = (await stub.recvFrame(
+        makeReq("proc.media.delete", { key: "var/media/0/another-process/file" }),
+      )) as ResponseOkFrame;
+      expect(outside.data).toEqual({ ok: false, error: "media key is outside this process" });
+      const withBody = (await stub.recvFrame({
+        ...makeReq("proc.media.delete", { key: mediaKey }),
+        body: bodyFromBytes(new Uint8Array()),
+      })) as ResponseOkFrame;
+      expect(withBody.data).toEqual({ ok: false, error: "proc.media.delete does not accept a body" });
+    });
+
+    it("requires the media body descriptor length", async () => {
+      const stub = await initProcess("mech-media-length", ROOT_IDENTITY);
+      const response = (await stub.recvFrame({
+        ...makeReq("proc.media.write", {
+          type: "image",
+          mimeType: "image/png",
+        }),
+        body: {
+          stream: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array([1, 2, 3]));
+              controller.close();
+            },
+          }),
+        },
+      })) as ResponseOkFrame;
+
+      expect(response.data).toEqual({
+        ok: false,
+        error: "proc.media.write requires an exact body length",
+      });
+    });
+
+    it("deletes an upload that finishes after a process reset", async () => {
+      const pid = "mech-media-reset-race";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        const objects = new Map<string, Uint8Array>();
+        let releasePut!: () => void;
+        let markPutStarted!: () => void;
+        const putBlocked = new Promise<void>((resolve) => {
+          releasePut = resolve;
+        });
+        const putStarted = new Promise<void>((resolve) => {
+          markPutStarted = resolve;
+        });
+        const deleteObject = vi.fn(async (key: string | string[]) => {
+          for (const item of Array.isArray(key) ? key : [key]) {
+            objects.delete(item);
+          }
+        });
+        process.env = {
+          ...originalEnv,
+          STORAGE: {
+            put: vi.fn(async (key: string, stream: ReadableStream<Uint8Array>) => {
+              markPutStarted();
+              await putBlocked;
+              const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+              objects.set(key, bytes);
+              return { key, size: bytes.byteLength };
+            }),
+            list: vi.fn(async ({ prefix }: { prefix: string }) => ({
+              objects: [...objects.entries()]
+                .filter(([key]) => key.startsWith(prefix))
+                .map(([key, bytes]) => ({ key, size: bytes.byteLength })),
+              truncated: false,
+            })),
+            delete: deleteObject,
+          },
+        };
+
+        try {
+          const writing = process.handleProcMediaWrite(
+            { type: "image", mimeType: "image/png" },
+            bodyFromBytes(new Uint8Array([1, 2, 3])),
+          );
+          await putStarted;
+          await process.handleProcReset();
+          releasePut();
+
+          await expect(writing).resolves.toEqual({
+            ok: false,
+            error: "Process reset during media upload",
+          });
+          expect(objects.size).toBe(0);
+          expect(deleteObject).toHaveBeenCalledWith(expect.stringContaining(`/0/${pid}/`));
+        } finally {
+          process.env = originalEnv;
+          releasePut();
+        }
+      });
     });
 
     it("bounds media materialized while building model context", async () => {

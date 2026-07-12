@@ -29,7 +29,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
-import type { RequestFrame, ResponseOkFrame } from "../protocol/frames";
+import type { Frame, RequestFrame, ResponseOkFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
 import { decodeBase64Bytes, normalizeBase64Data } from "../shared/base64";
 import { isVisibleAdapterTarget } from "./adapter-targets";
@@ -660,22 +660,30 @@ export async function handleAdapterInbound(
 
   const origin = adapterInteractionOrigin(adapter, accountId, message, actorId);
   const media = await storeAdapterInboundMedia(pid, message.media);
-  const response = await sendFrameToProcess(pid, {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.send",
-    args: {
-      pid,
-      message: message.text?.trim() || "",
-      media,
-      origin,
-    },
-  } as RequestFrame);
+  let response: Frame | null;
+  try {
+    response = await sendFrameToProcess(pid, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.send",
+      args: {
+        pid,
+        message: message.text?.trim() || "",
+        media,
+        origin,
+      },
+    } as RequestFrame);
+  } catch (error) {
+    await rollbackAdapterMedia(pid, media);
+    throw error;
+  }
 
   if (!response || response.type !== "res") {
+    await rollbackAdapterMedia(pid, media);
     return { ok: false, error: "No response from process" };
   }
   if (!response.ok) {
+    await rollbackAdapterMedia(pid, media);
     return { ok: false, error: response.error.message };
   }
 
@@ -684,6 +692,7 @@ export async function handleAdapterInbound(
   const queued = data?.queued === true;
 
   if (!runId) {
+    await rollbackAdapterMedia(pid, media);
     return { ok: false, error: "proc.send did not return runId" };
   }
 
@@ -724,7 +733,7 @@ async function storeAdapterInboundMedia(
     return undefined;
   }
 
-  return await Promise.all(media.map(async (item) => {
+  const settled = await Promise.allSettled(media.map(async (item) => {
     if (!item.data) {
       return {
         type: item.type,
@@ -746,7 +755,6 @@ async function storeAdapterInboundMedia(
         pid,
         type: item.type,
         mimeType: item.mimeType,
-        size: bytes.byteLength,
         ...(item.filename ? { filename: item.filename } : {}),
         ...(item.duration !== undefined ? { duration: item.duration } : {}),
         ...(item.transcription ? { transcription: item.transcription } : {}),
@@ -764,6 +772,28 @@ async function storeAdapterInboundMedia(
     }
     return result.media;
   }));
+
+  const stored = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  const error = settled.find((result) => result.status === "rejected");
+  if (error?.status === "rejected") {
+    await rollbackAdapterMedia(pid, stored);
+    throw error.reason;
+  }
+  return stored;
+}
+
+async function rollbackAdapterMedia(
+  pid: string,
+  media: ProcMediaInput[] | undefined,
+): Promise<void> {
+  await Promise.allSettled((media ?? []).flatMap(({ key }) => key
+    ? [sendFrameToProcess(pid, {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.media.delete",
+        args: { pid, key },
+      } as RequestFrame<"proc.media.delete">)]
+    : []));
 }
 
 export function handleAdapterStateUpdate(

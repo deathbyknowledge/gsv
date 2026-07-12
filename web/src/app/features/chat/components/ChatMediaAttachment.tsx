@@ -129,7 +129,7 @@ export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentPro
   const key = chatMediaKey(media);
   const inlineSource = chatMediaSource(media);
   const mediaQuery = useChatProcessMedia({
-    args: { key, mimeType: chatMediaMimeType(media), ...(processId ? { pid: processId } : {}) },
+    args: { key, ...(processId ? { pid: processId } : {}) },
     enabled: !inlineSource && key.length > 0 && processId.length > 0,
   });
   const [storedSource, setStoredSource] = useState("");

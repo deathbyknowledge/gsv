@@ -417,6 +417,31 @@ mod tests {
         assert_eq!(result.body.unwrap().length, Some(0));
     }
 
+    #[tokio::test]
+    async fn omits_bodies_for_null_body_statuses() {
+        for (status, reason) in [
+            (204, "No Content"),
+            (205, "Reset Content"),
+            (304, "Not Modified"),
+        ] {
+            let (url, server) = serve_once(
+                format!(
+                    "HTTP/1.1 {} {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    status, reason
+                )
+                .into_bytes(),
+            );
+
+            let result = NetFetchTool::new()
+                .execute(json!({ "url": url }))
+                .await
+                .unwrap();
+            server.join().unwrap();
+
+            assert!(result.body.is_none(), "status {} returned a body", status);
+        }
+    }
+
     #[test]
     fn rejects_get_and_head_request_bodies_before_reading_them() {
         for method in ["GET", "HEAD"] {
