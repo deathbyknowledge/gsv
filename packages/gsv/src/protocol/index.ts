@@ -16,5 +16,8 @@ export type * from "./syscalls/apps";
 export type * from "./syscalls/map";
 export type * from "./adapters";
 export type * from "./package-assembly";
+export * from "./body";
 export * from "./binary-frame";
+export * from "./binary-body-channel";
+export * from "./file-content";
 export * from "./speech-text";

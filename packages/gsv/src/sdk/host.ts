@@ -46,7 +46,7 @@ type HostPortMessage =
   | { type: "rpc-result"; id: string; ok: true; data?: unknown }
   | { type: "rpc-result"; id: string; ok: false; error: string }
   | { type: "status"; status: { state?: string } }
-  | { type: "backend-message"; connectionId: string; data: string }
+  | { type: "backend-message"; connectionId: string; data: HostBackendSocketData }
   | { type: "backend-close"; connectionId: string; code: number; reason: string; wasClean: boolean }
   | { type: "backend-error"; connectionId: string; error: string };
 
@@ -56,22 +56,24 @@ export type HostBackendCloseEvent = {
   wasClean: boolean;
 };
 
+export type HostBackendSocketData = string | ArrayBuffer;
+
 export type HostBackendSocket = {
   readonly connectionId: string;
   readonly readyState: "open" | "closed";
-  send(data: string): Promise<void>;
+  send(data: HostBackendSocketData): Promise<void>;
   close(): void;
-  addEventListener(type: "message", listener: (data: string) => void): void;
+  addEventListener(type: "message", listener: (data: HostBackendSocketData) => void): void;
   addEventListener(type: "close", listener: (event: HostBackendCloseEvent) => void): void;
   addEventListener(type: "error", listener: (error: Error) => void): void;
-  removeEventListener(type: "message", listener: (data: string) => void): void;
+  removeEventListener(type: "message", listener: (data: HostBackendSocketData) => void): void;
   removeEventListener(type: "close", listener: (event: HostBackendCloseEvent) => void): void;
   removeEventListener(type: "error", listener: (error: Error) => void): void;
 };
 
 type HostBackendSocketRecord = {
   state: "open" | "closed";
-  messageListeners: Set<(data: string) => void>;
+  messageListeners: Set<(data: HostBackendSocketData) => void>;
   closeListeners: Set<(event: HostBackendCloseEvent) => void>;
   errorListeners: Set<(error: Error) => void>;
 };
@@ -228,14 +230,14 @@ async function createHostClient(): Promise<HostClient> {
   const statusListeners = new Set<HostStatusHandler>();
   const backendSockets = new Map<string, HostBackendSocketRecord>();
 
-  const rpc = <T>(method: string, payload?: unknown): Promise<T> => {
+  const rpc = <T>(method: string, payload?: unknown, transfer: Transferable[] = []): Promise<T> => {
     const id = `host-rpc-${++sequence}`;
     return new Promise<T>((resolve, reject) => {
       pending.set(id, {
         resolve: (value) => resolve(value as T),
         reject,
       });
-      port.postMessage({ type: "rpc", id, method, payload });
+      port.postMessage({ type: "rpc", id, method, payload }, transfer);
     });
   };
 
@@ -329,7 +331,11 @@ async function createHostClient(): Promise<HostClient> {
         if (record.state === "closed") {
           throw new Error("package backend socket is closed");
         }
-        await rpc("backend.send", { connectionId, data });
+        await rpc(
+          "backend.send",
+          { connectionId, data },
+          data instanceof ArrayBuffer ? [data] : [],
+        );
       },
       close: () => {
         if (record.state === "closed") {
@@ -341,7 +347,7 @@ async function createHostClient(): Promise<HostClient> {
       },
       addEventListener: (type, listener) => {
         if (type === "message") {
-          record.messageListeners.add(listener as (data: string) => void);
+          record.messageListeners.add(listener as (data: HostBackendSocketData) => void);
           return;
         }
         if (type === "close") {
@@ -352,7 +358,7 @@ async function createHostClient(): Promise<HostClient> {
       },
       removeEventListener: (type, listener) => {
         if (type === "message") {
-          record.messageListeners.delete(listener as (data: string) => void);
+          record.messageListeners.delete(listener as (data: HostBackendSocketData) => void);
           return;
         }
         if (type === "close") {
