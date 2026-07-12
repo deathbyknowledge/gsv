@@ -11,6 +11,7 @@ import {
 } from "../dist/protocol/binary-frame.js";
 import { BinaryBodyChannel } from "../dist/protocol/binary-body-channel.js";
 import { bodyFromBytes } from "../dist/protocol/body.js";
+import { REQUEST_CANCEL_SIGNAL } from "../dist/protocol.js";
 import {
   inferFsContentType,
   isTextContentType,
@@ -405,4 +406,169 @@ test("cancels an upload when the request completes early", async () => {
   assert.equal(terminal.streamId, request.body.streamId);
   assert.equal(terminal.flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
   client.close();
+});
+
+test("cancels an outbound request before rejecting its timeout", async () => {
+  const client = new GSVClient({
+    WebSocket: FakeWebSocket,
+    defaultRequestTimeoutMs: 10,
+  });
+  await client.connect({
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  const socket = FakeWebSocket.instance;
+  const pending = client.request("test.slow");
+  const request = JSON.parse(socket.sent.at(-1));
+
+  await assert.rejects(pending, /Request timed out after 10ms: test\.slow/);
+
+  const cancellation = JSON.parse(socket.sent.at(-1));
+  assert.deepEqual(cancellation, {
+    type: "sig",
+    signal: REQUEST_CANCEL_SIGNAL,
+    payload: {
+      id: request.id,
+      reason: "Request timed out after 10ms: test.slow",
+    },
+  });
+  client.close();
+});
+
+test("cancels an inbound driver request without publishing the reserved signal", async () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+  const driver = client.driver({ keepalive: false });
+  let requestSignal;
+  let started;
+  const requestStarted = new Promise((resolve) => {
+    started = resolve;
+  });
+  driver.implement("shell.exec", async (_request, context) => {
+    requestSignal = context.abortSignal;
+    started();
+    await new Promise((resolve) => context.abortSignal.addEventListener("abort", resolve, { once: true }));
+    return { data: { status: "completed", output: "late", exitCode: 0 } };
+  });
+  await driver.connect({
+    deviceId: "test-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  const socket = FakeWebSocket.instance;
+  const published = [];
+  client.onSignal((signal) => published.push(signal));
+
+  socket.receive(JSON.stringify({ type: "req", id: "inbound-1", call: "shell.exec", args: { input: "sleep 300" } }));
+  await requestStarted;
+  socket.receive(JSON.stringify({
+    type: "sig",
+    signal: REQUEST_CANCEL_SIGNAL,
+    payload: { id: "inbound-1", reason: "User interrupted" },
+  }));
+  socket.receive(JSON.stringify({
+    type: "sig",
+    signal: REQUEST_CANCEL_SIGNAL,
+    payload: { id: "inbound-1" },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(requestSignal.aborted, true);
+  assert.match(requestSignal.reason.message, /User interrupted/);
+  assert.deepEqual(published, []);
+  assert.equal(socket.sent.some((data) => {
+    if (typeof data !== "string") return false;
+    const frame = JSON.parse(data);
+    return frame.type === "res" && frame.id === "inbound-1";
+  }), false);
+  driver.close();
+});
+
+test("cancelling an inbound request terminates its incoming body", async () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+  const driver = client.driver({ keepalive: false });
+  let reading;
+  const bodyReading = new Promise((resolve) => {
+    reading = resolve;
+  });
+  driver.implement("shell.exec", async (request) => {
+    reading();
+    await new Response(request.body.stream).arrayBuffer();
+    return { data: {} };
+  });
+  await driver.connect({
+    deviceId: "body-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  const socket = FakeWebSocket.instance;
+
+  socket.receive(JSON.stringify({
+    type: "req",
+    id: "inbound-body",
+    call: "shell.exec",
+    args: {},
+    body: { streamId: 90, length: 3 },
+  }));
+  await bodyReading;
+  socket.receive(JSON.stringify({
+    type: "sig",
+    signal: REQUEST_CANCEL_SIGNAL,
+    payload: { id: "inbound-body", reason: "Stop upload" },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const terminal = parseBinaryFrame(socket.sent.at(-1));
+  assert.equal(terminal.streamId, 90);
+  assert.equal(terminal.flags, BINARY_FRAME_CANCEL | BINARY_FRAME_END);
+  assert.match(new TextDecoder().decode(terminal.payload), /Stop upload/);
+  driver.close();
+});
+
+test("cancelling an inbound request stops its response body", async () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+  const driver = client.driver({ keepalive: false });
+  let sourceCancelled;
+  const cancelled = new Promise((resolve) => {
+    sourceCancelled = resolve;
+  });
+  driver.implement("shell.exec", async () => ({
+    data: {},
+    body: {
+      stream: new ReadableStream({
+        pull: () => new Promise(() => {}),
+        cancel: sourceCancelled,
+      }),
+    },
+  }));
+  await driver.connect({
+    deviceId: "response-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  const socket = FakeWebSocket.instance;
+
+  socket.receive(JSON.stringify({ type: "req", id: "inbound-response", call: "shell.exec", args: {} }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const response = socket.sent
+    .filter((data) => typeof data === "string")
+    .map((data) => JSON.parse(data))
+    .find((frame) => frame.type === "res" && frame.id === "inbound-response");
+  assert.ok(response?.body);
+
+  socket.receive(JSON.stringify({
+    type: "sig",
+    signal: REQUEST_CANCEL_SIGNAL,
+    payload: { id: "inbound-response" },
+  }));
+  await cancelled;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const terminal = parseBinaryFrame(socket.sent.at(-1));
+  assert.equal(terminal.streamId, response.body.streamId);
+  assert.equal(terminal.flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
+  driver.close();
 });

@@ -7,6 +7,10 @@ import type {
   ResultOf,
   SyscallName,
 } from "./protocol";
+import {
+  REQUEST_CANCEL_SIGNAL,
+  type RequestCancelPayload,
+} from "./protocol/request-cancel";
 import type { BinaryFrameDescriptor } from "./protocol/binary-frame";
 import {
   BinaryBodyChannel,
@@ -115,6 +119,7 @@ export type GsvBodyOptions = {
 export type GsvInboundRequestHandler = (
   frame: GsvRequestFrame,
   body?: GsvBody,
+  abortSignal?: AbortSignal,
 ) => Promise<GsvResponse> | GsvResponse;
 
 export type GsvDriverPattern = SyscallName | `${string}.*`;
@@ -401,6 +406,7 @@ export class GSVClient {
   private socket: WebSocket | null = null;
   private socketEpoch = 0;
   private pending = new Map<string, PendingRequest>();
+  private inboundRequests = new Map<string, AbortController>();
   private inboundRequestHandler: GsvInboundRequestHandler | null = null;
   private signalListeners = new Set<(signal: string, payload: unknown) => void>();
   private statusListeners = new Set<(status: GsvClientStatus) => void>();
@@ -603,8 +609,10 @@ export class GSVClient {
       closeSocket(socket, 1000, reason);
     }
 
-    this.rejectAllPending(new Error("Disconnected"));
-    this.bodyChannel.close(new Error("Disconnected"));
+    const error = new Error("Disconnected");
+    this.rejectAllPending(error);
+    this.abortAllInbound(error);
+    this.bodyChannel.close(error);
     this.setStatus({
       state: "disconnected",
       url: null,
@@ -690,8 +698,10 @@ export class GSVClient {
       }
 
       this.socket = null;
-      this.rejectAllPending(new Error("Connection closed"));
-      this.bodyChannel.close(new Error("Connection closed"));
+      const error = new Error("Connection closed");
+      this.rejectAllPending(error);
+      this.abortAllInbound(error);
+      this.bodyChannel.close(error);
       this.setStatus({
         state: "disconnected",
         url: this.status.url,
@@ -788,9 +798,19 @@ export class GSVClient {
 
     return new Promise((resolve, reject) => {
       const timeoutId = globalThis.setTimeout(() => {
-        this.pending.delete(id);
-        bodyAbort?.abort(new Error(`Request timed out: ${call}`));
-        reject(new Error(`Request timed out after ${timeoutMs}ms: ${call}`));
+        if (!this.pending.delete(id)) {
+          return;
+        }
+        const error = new Error(`Request timed out after ${timeoutMs}ms: ${call}`);
+        try {
+          socket.send(JSON.stringify({
+            type: "sig",
+            signal: REQUEST_CANCEL_SIGNAL,
+            payload: { id, reason: error.message },
+          } satisfies GsvSignalFrame));
+        } catch {}
+        bodyAbort?.abort(error);
+        reject(error);
       }, timeoutMs);
 
       this.pending.set(id, {
@@ -912,6 +932,18 @@ export class GSVClient {
     }
 
     if (parsed.type === "sig") {
+      if (parsed.signal === REQUEST_CANCEL_SIGNAL) {
+        const payload = parsed.payload as Partial<RequestCancelPayload> | null;
+        if (payload && typeof payload === "object" && typeof payload.id === "string") {
+          const controller = this.inboundRequests.get(payload.id);
+          if (controller) {
+            this.inboundRequests.delete(payload.id);
+            const reason = typeof payload.reason === "string" ? payload.reason.trim() : "";
+            controller.abort(new Error(reason || "Request cancelled"));
+          }
+        }
+        return;
+      }
       for (const listener of this.signalListeners) {
         listener(parsed.signal, parsed.payload);
       }
@@ -954,10 +986,15 @@ export class GSVClient {
 
   private async handleInboundRequest(frame: GsvRequestFrame): Promise<void> {
     const handler = this.inboundRequestHandler;
+    const abortController = new AbortController();
+    this.inboundRequests.set(frame.id, abortController);
     let body: GsvBody | undefined;
     try {
-      body = frame.body !== undefined ? this.bodyChannel.receive(frame.body) : undefined;
+      body = frame.body !== undefined
+        ? this.bodyChannel.receive(frame.body, abortController.signal)
+        : undefined;
     } catch (error) {
+      this.inboundRequests.delete(frame.id);
       this.sendJson(errorFrame(frame.id, 400, errorMessage(error, "Invalid request body")));
       return;
     }
@@ -970,7 +1007,8 @@ export class GSVClient {
       let responseStarted = false;
       let outgoing: OutgoingBinaryBody | undefined;
       try {
-        const response = await handler(frame, body);
+        const response = await handler(frame, body, abortController.signal);
+        abortController.signal.throwIfAborted();
         outgoing = response.body ? this.bodyChannel.prepare(response.body) : undefined;
         this.sendJson({
           type: "res",
@@ -981,10 +1019,10 @@ export class GSVClient {
         });
         responseStarted = true;
         if (outgoing) {
-          await outgoing.send();
+          await outgoing.send(abortController.signal);
         }
       } catch (error) {
-        if (responseStarted) {
+        if (responseStarted || abortController.signal.aborted) {
           return;
         }
         await outgoing?.cancel(error);
@@ -999,6 +1037,9 @@ export class GSVClient {
     } finally {
       if (body && !body.stream.locked) {
         await body.stream.cancel("Inbound request completed").catch(() => {});
+      }
+      if (this.inboundRequests.get(frame.id) === abortController) {
+        this.inboundRequests.delete(frame.id);
       }
     }
   }
@@ -1022,6 +1063,13 @@ export class GSVClient {
       pending.reject(error);
     }
     this.pending.clear();
+  }
+
+  private abortAllInbound(error: Error): void {
+    for (const controller of this.inboundRequests.values()) {
+      controller.abort(error);
+    }
+    this.inboundRequests.clear();
   }
 
 }
@@ -1122,7 +1170,7 @@ export class GSVDriver {
   private ensureClientHandlers(): void {
     if (!this.unregisterRequestHandler) {
       this.unregisterRequestHandler = this.client.onRequest(
-        async (frame, body) => await this.handleRequest(frame, body),
+        async (frame, body, signal) => await this.handleRequest(frame, body, signal),
       );
     }
     if (!this.unregisterStatusHandler) {
@@ -1137,7 +1185,11 @@ export class GSVDriver {
     }
   }
 
-  private async handleRequest(frame: GsvRequestFrame, body?: GsvBody): Promise<GsvResponse> {
+  private async handleRequest(
+    frame: GsvRequestFrame,
+    body?: GsvBody,
+    signal?: AbortSignal,
+  ): Promise<GsvResponse> {
     const handler = this.findHandler(frame.call);
     if (!handler) {
       throw new GsvRequestError(404, `Driver does not implement ${frame.call}`);
@@ -1150,7 +1202,9 @@ export class GSVDriver {
     const context: GsvDriverContext = {
       client: this.client,
       connection,
-      abortSignal: this.abortController.signal,
+      abortSignal: signal
+        ? AbortSignal.any([this.abortController.signal, signal])
+        : this.abortController.signal,
       sendSignal: (signal, payload, seq) => this.client.sendSignal(signal, payload, seq),
     };
 

@@ -18,6 +18,8 @@ type PendingBinaryBody = {
   timeoutId: ReturnType<typeof setTimeout>;
   expectedBytes?: number;
   receivedBytes: number;
+  signal?: AbortSignal;
+  abort: () => void;
 };
 
 type OutgoingBinaryBodyState = {
@@ -67,7 +69,7 @@ export class BinaryBodyChannel {
     this.idleTimeoutMs = idleTimeoutMs;
   }
 
-  receive(descriptor: BinaryFrameDescriptor): BinaryBody {
+  receive(descriptor: BinaryFrameDescriptor, signal?: AbortSignal): BinaryBody {
     assertStreamId(descriptor.streamId);
     assertBodyLength(descriptor.length);
     if (this.pending.has(descriptor.streamId)) {
@@ -78,12 +80,23 @@ export class BinaryBodyChannel {
     return {
       stream: new ReadableStream<Uint8Array>({
         start: (controller) => {
+          const abort = () => {
+            if (signal) {
+              this.rejectPending(streamId, abortError(signal));
+            }
+          };
           this.pending.set(streamId, {
             controller,
             timeoutId: this.receiveTimeout(streamId),
             expectedBytes: length,
             receivedBytes: 0,
+            signal,
+            abort,
           });
+          signal?.addEventListener("abort", abort, { once: true });
+          if (signal?.aborted) {
+            abort();
+          }
         },
         cancel: async (reason) => {
           if (this.clearPending(streamId)) {
@@ -323,6 +336,7 @@ export class BinaryBodyChannel {
     }
     this.pending.delete(streamId);
     clearTimeout(pending.timeoutId);
+    pending.signal?.removeEventListener("abort", pending.abort);
     return pending;
   }
 
@@ -339,4 +353,10 @@ function assertBodyLength(length: number | undefined): void {
   if (length !== undefined && (!Number.isSafeInteger(length) || length < 0)) {
     throw new Error(`Invalid body length: ${length}`);
   }
+}
+
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error(String(signal.reason ?? "Binary body cancelled"));
 }
