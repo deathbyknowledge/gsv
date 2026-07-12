@@ -107,6 +107,7 @@ import {
   synthesizeSpeech,
   transcribeAudio,
 } from "../inference/capabilities";
+import { isVectorImageMimeType } from "../inference/image-mime";
 import { collectPromptSkillIndex } from "./skills";
 import { listVisibleTargets, targetToAiDevice } from "./targets";
 import {
@@ -451,12 +452,13 @@ async function readAiInputBody(
   body: FrameBody | undefined,
   maxBytes: number,
   label: "audio" | "image",
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
   if (!body) {
     throw new Error(`${label} request body is required`);
   }
 
-  const bytes = await bodyToBytes(body, maxBytes);
+  const bytes = await bodyToBytes(body, maxBytes, signal);
   if (bytes.byteLength === 0) {
     throw new Error(`${label} request body is empty`);
   }
@@ -477,7 +479,7 @@ export async function handleAiTranscriptionCreate(
     throw new Error("audio.mimeType must be an audio MIME type");
   }
 
-  const bytes = await readAiInputBody(body, media.transcriptionMaxBytes, "audio");
+  const bytes = await readAiInputBody(body, media.transcriptionMaxBytes, "audio", ctx.requestSignal);
   const base64 = encodeBase64Bytes(bytes);
 
   const mode = args.mode === "translate" ? "translate" : "transcribe";
@@ -517,8 +519,11 @@ export async function handleAiImageRead(
   if (typeof image.mimeType !== "string" || !image.mimeType.trim().toLowerCase().startsWith("image/")) {
     throw new Error("image.mimeType must be an image MIME type");
   }
+  if (isVectorImageMimeType(image.mimeType)) {
+    throw new Error("SVG image reading requires rasterization");
+  }
 
-  const bytes = await readAiInputBody(body, media.imageReadingMaxBytes, "image");
+  const bytes = await readAiInputBody(body, media.imageReadingMaxBytes, "image", ctx.requestSignal);
   const base64 = encodeBase64Bytes(bytes);
 
   const model = normalizeOptionalString(input.model) ?? media.imageReadingModel;

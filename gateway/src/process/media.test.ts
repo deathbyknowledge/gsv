@@ -214,6 +214,36 @@ describe("process media", () => {
     );
   });
 
+  it("stores SVG images without sending them to the raster image reader", async () => {
+    const pid = pidForTest("svg");
+    const ai: ImageReadingBinding = { run: vi.fn() };
+
+    const raw = await storeIncomingProcessMedia(
+      env.STORAGE,
+      0,
+      pid,
+      [
+        await storedMedia(pid, {
+          type: "image",
+          mimeType: "image/svg+xml",
+          filename: "diagram.svg",
+        }),
+      ],
+      { ai: ai as AudioTranscriptionBinding & ImageReadingBinding },
+    );
+
+    const media = parseStoredProcessMedia(raw);
+    expect(media).toEqual([
+      expect.objectContaining({
+        type: "image",
+        mimeType: "image/svg+xml",
+        filename: "diagram.svg",
+      }),
+    ]);
+    expect(media[0].description).toBeUndefined();
+    expect(ai.run).not.toHaveBeenCalled();
+  });
+
   it("supports legacy raw image Workers AI models", async () => {
     const pid = pidForTest("image-read-legacy");
     const ai: ImageReadingBinding = {

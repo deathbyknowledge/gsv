@@ -1776,6 +1776,37 @@ describe("handleAiImageRead", () => {
         mimeType: "text/plain",
       },
     }, makeImageReadContext(), bodyFromBytes(new Uint8Array([1])))).rejects.toThrow("image MIME type");
+
+    await expect(handleAiImageRead({
+      image: {
+        mimeType: "image/svg+xml",
+      },
+    }, makeImageReadContext(), bodyFromBytes(new Uint8Array([1])))).rejects.toThrow(
+      "SVG image reading requires rasterization",
+    );
+  });
+
+  it("cancels image body reads with the request", async () => {
+    const controller = new AbortController();
+    const reason = new Error("request cancelled");
+    let cancelled: unknown;
+    const ctx = makeImageReadContext();
+    ctx.requestSignal = controller.signal;
+    controller.abort(reason);
+
+    const read = handleAiImageRead({
+      image: { mimeType: "image/png" },
+    }, ctx, {
+      length: 1,
+      stream: new ReadableStream({
+        cancel(value) {
+          cancelled = value;
+        },
+      }),
+    });
+
+    await expect(read).rejects.toBe(reason);
+    expect(cancelled).toBe(reason);
   });
 });
 
@@ -1816,7 +1847,7 @@ describe("handleAiImageGenerate", () => {
     const result = await handleAiImageGenerate({ prompt: "a green terminal" }, ctx);
 
     expect(result.data.image).toEqual({
-      mimeType: "image/png",
+      mimeType: "image/jpeg",
       size: 3,
     });
     expect(result.body && [...await bodyToBytes(result.body)]).toEqual([1, 2, 3]);

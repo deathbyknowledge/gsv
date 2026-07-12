@@ -90,7 +90,7 @@ describe("AI media capability adapters", () => {
 
   it("routes Workers AI image generation through the binding", async () => {
     const workersAi = {
-      run: vi.fn(async () => ({ image: "AQID", mime_type: "image/png" })),
+      run: vi.fn(async () => ({ image: "/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==" })),
     };
 
     const result = await generateImage({ workersAi }, {
@@ -101,13 +101,80 @@ describe("AI media capability adapters", () => {
     expect(result).toMatchObject({
       provider: "workers-ai",
       model: DEFAULT_IMAGE_GENERATION_MODEL,
-      mimeType: "image/png",
+      mimeType: "image/jpeg",
     });
-    expect([...result!.bytes!]).toEqual([1, 2, 3]);
+    expect([...result!.bytes!.subarray(0, 4)]).toEqual([0xff, 0xd8, 0xff, 0xe0]);
     expect(workersAi.run).toHaveBeenCalledWith(
       DEFAULT_IMAGE_GENERATION_MODEL,
       { prompt: "a quiet desktop tool screenshot" },
     );
+  });
+
+  it.each([
+    ["@cf/custom/image", "iVBORw0KGgo=", "image/png"],
+    ["@cf/custom/image", "R0lGODlh", "image/gif"],
+  ])("sniffs Workers AI base64 output from %s", async (model, image, mimeType) => {
+    const result = await generateImage({
+      workersAi: { run: vi.fn(async () => ({ image })) },
+    }, {
+      provider: "workers-ai",
+      model,
+      prompt: "a generated image",
+    });
+
+    expect(result?.mimeType).toBe(mimeType);
+  });
+
+  it.each([
+    ["@cf/leonardo/phoenix-1.0", [0xff, 0xd8, 0xff, 0xe0], "image/jpeg"],
+    [
+      "@cf/custom/image",
+      [0x52, 0x49, 0x46, 0x46, 0x04, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50],
+      "image/webp",
+    ],
+  ])("sniffs Workers AI stream output from %s", async (model, data, mimeType) => {
+    const bytes = new Uint8Array(data);
+    const result = await generateImage({
+      workersAi: {
+        run: vi.fn(async () => new ReadableStream({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        })),
+      },
+    }, {
+      provider: "workers-ai",
+      model,
+      prompt: "a generated image",
+    });
+
+    expect(result?.mimeType).toBe(mimeType);
+    expect(result?.bytes).toEqual(bytes);
+  });
+
+  it("prefers explicit image MIME from provider fields, data URLs, and headers", async () => {
+    const jpeg = "/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==";
+    const responses = [
+      { value: { image: jpeg, mime_type: "Image/PNG; charset=binary" }, mimeType: "image/png" },
+      { value: `data:image/gif;base64,${jpeg}`, mimeType: "image/gif" },
+      {
+        value: new Response(Uint8Array.from(atob(jpeg), (char) => char.charCodeAt(0)), {
+          headers: { "content-type": "image/png" },
+        }),
+        mimeType: "image/png",
+      },
+    ];
+
+    for (const testCase of responses) {
+      const result = await generateImage({
+        workersAi: { run: vi.fn(async () => testCase.value) },
+      }, {
+        provider: "workers-ai",
+        prompt: "a generated image",
+      });
+      expect(result?.mimeType).toBe(testCase.mimeType);
+    }
   });
 
   it("routes OpenAI image generation through the images REST API", async () => {

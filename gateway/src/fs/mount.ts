@@ -7,7 +7,7 @@ import type {
 } from "just-bash";
 import type { FsSearchMatch } from "../syscalls/search";
 
-export type ExtendedMountStat = FsStat & { uid: number; gid: number };
+export type ExtendedMountStat = FsStat & { uid: number; gid: number; contentType?: string };
 
 export type FsSearchBackendResult = {
   matches: FsSearchMatch[];
@@ -59,6 +59,11 @@ export type WriteFileStreamOptions = {
   signal?: AbortSignal;
 };
 
+export type WriteFileOptions = {
+  encoding?: BufferEncoding;
+  contentType?: string;
+};
+
 export type WriteFileStreamResult = {
   size: number;
   streamed: boolean;
@@ -68,13 +73,15 @@ export interface MountBackend {
   handles(path: string): boolean;
   readFile(path: string, options?: { encoding?: BufferEncoding | null } | BufferEncoding): Promise<string>;
   readFileBuffer(path: string): Promise<Uint8Array>;
-  openFile?(path: string, options?: OpenFileOptions): Promise<OpenFileResult>;
-  writeFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void>;
+  /** Return undefined to use GsvFs's buffered fallback. */
+  openFile?(path: string, options?: OpenFileOptions): Promise<OpenFileResult | undefined>;
+  writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void>;
+  /** Return undefined without consuming content to use GsvFs's buffered fallback. */
   writeFileStream?(
     path: string,
     content: ReadableStream<Uint8Array>,
     options: WriteFileStreamOptions,
-  ): Promise<WriteFileStreamResult>;
+  ): Promise<WriteFileStreamResult | undefined>;
   appendFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<ExtendedMountStat>;

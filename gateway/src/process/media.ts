@@ -18,6 +18,7 @@ import {
   type ImageReadingInputFormat,
   type ImageReadingBinding,
 } from "../inference/image-reading";
+import { isVectorImageMimeType } from "../inference/image-mime";
 import { isWorkersAiProvider } from "../inference/workers-ai";
 import { encodeBase64Bytes } from "../shared/base64";
 
@@ -310,6 +311,9 @@ function shouldReadImage(
   options: StoreIncomingProcessMediaOptions,
 ): boolean {
   if (input.type !== "image") {
+    return false;
+  }
+  if (isVectorImageMimeType(input.mimeType)) {
     return false;
   }
   if (typeof stored.description === "string" && stored.description.trim().length > 0) {

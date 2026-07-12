@@ -32,6 +32,7 @@ import type {
   OpenFileRangeRequest,
   OpenFileOptions,
   OpenFileResult,
+  WriteFileOptions,
   WriteFileStreamOptions,
   WriteFileStreamResult,
 } from "./mount";
@@ -88,7 +89,10 @@ export class GsvFs implements IFileSystem {
     const p = await this.resolveFinalPath(path);
     const backend = this.backendForPath(p);
     if (backend.openFile) {
-      return backend.openFile(p, options);
+      const opened = await backend.openFile(p, options);
+      if (opened) {
+        return opened;
+      }
     }
     const stat = await backend.stat(p);
     if (!stat.isFile) {
@@ -119,12 +123,13 @@ export class GsvFs implements IFileSystem {
       totalSize: stat.size,
       mtime: stat.mtime,
       status: range ? 206 : 200,
+      contentType: stat.contentType,
       etag,
       ...(range ? { range } : {}),
     };
   }
 
-  async writeFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void> {
+  async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
     await this.backendForPath(p).writeFile(p, content, options);
   }
@@ -140,11 +145,16 @@ export class GsvFs implements IFileSystem {
     options.signal?.throwIfAborted();
     const backend = this.backendForPath(p);
     if (backend.writeFileStream) {
-      return backend.writeFileStream(p, content, options);
+      const result = await backend.writeFileStream(p, content, options);
+      if (result) {
+        return result;
+      }
     }
 
     const bytes = await streamToBytes(content, options.expectedSize, options.signal);
-    await backend.writeFile(p, bytes);
+    await backend.writeFile(p, bytes, {
+      contentType: options.contentType,
+    });
     return {
       size: bytes.byteLength,
       streamed: false,

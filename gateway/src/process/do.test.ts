@@ -3472,6 +3472,36 @@ describe("Process DO — mechanical", () => {
       expect(withBody.data).toEqual({ ok: false, error: "proc.media.delete does not accept a body" });
     });
 
+    it("keeps SVG attachments out of raster model image blocks", async () => {
+      const stub = await initProcess("mech-svg-context", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        const get = vi.fn();
+        process.store.appendMessage("user", "Review this diagram.", {
+          media: JSON.stringify([{
+            type: "image",
+            mimeType: "image/svg+xml",
+            key: "var/media/0/mech-svg-context/diagram.svg",
+            filename: "diagram.svg",
+          }]),
+        });
+        process.env = { ...originalEnv, STORAGE: { get } };
+
+        try {
+          const messages = await process.buildContextMessages("default");
+          expect(get).not.toHaveBeenCalled();
+          expect(messages[0].content).toEqual([
+            { type: "text", text: "Review this diagram." },
+            { type: "text", text: "Attached image \"diagram.svg\" [image/svg+xml]" },
+          ]);
+        } finally {
+          process.env = originalEnv;
+        }
+      });
+    });
+
     it("only deletes process-scoped media after preparation fails", async () => {
       const pid = "mech-media-preparation-cleanup";
       const stub = await initProcess(pid, ROOT_IDENTITY);

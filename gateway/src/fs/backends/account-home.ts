@@ -1,4 +1,5 @@
 import type {
+  BufferEncoding,
   FileContent,
   MkdirOptions,
   RmOptions,
@@ -10,7 +11,16 @@ import {
   canOwnerAccessAccountHome,
   homeUsernameFromPath,
 } from "../../kernel/account-access";
-import type { ExtendedMountStat, FsSearchBackendResult, MountBackend } from "../mount";
+import type {
+  ExtendedMountStat,
+  FsSearchBackendResult,
+  MountBackend,
+  OpenFileOptions,
+  OpenFileResult,
+  WriteFileOptions,
+  WriteFileStreamOptions,
+  WriteFileStreamResult,
+} from "../mount";
 import { R2MountBackend } from "./r2";
 import {
   RipgitClient,
@@ -145,7 +155,18 @@ class AccountHomeMountBackend implements MountBackend {
     throw new Error(`ENOENT: no such file or directory, open '${normalized}'`);
   }
 
-  async writeFile(path: string, content: FileContent): Promise<void> {
+  async openFile(path: string, options?: OpenFileOptions): Promise<OpenFileResult | undefined> {
+    const normalized = normalizePath(path);
+    if (this.classify(normalized) !== "other") {
+      return undefined;
+    }
+    if (!this.allowHomeR2Fallback) {
+      throwPermissionDenied(normalized);
+    }
+    return this.fallback.openFile(normalized, options);
+  }
+
+  async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
     const normalized = normalizePath(path);
     const kind = this.classify(normalized);
 
@@ -153,7 +174,7 @@ class AccountHomeMountBackend implements MountBackend {
       if (!this.allowHomeR2Fallback) {
         throwPermissionDenied(normalized);
       }
-      await this.fallback.writeFile(normalized, content);
+      await this.fallback.writeFile(normalized, content, options);
       return;
     }
 
@@ -166,6 +187,21 @@ class AccountHomeMountBackend implements MountBackend {
       asBytes(content),
       `gsv: write ${this.relativePathForOverlay(normalized)}`,
     );
+  }
+
+  async writeFileStream(
+    path: string,
+    content: ReadableStream<Uint8Array>,
+    options: WriteFileStreamOptions,
+  ): Promise<WriteFileStreamResult | undefined> {
+    const normalized = normalizePath(path);
+    if (this.classify(normalized) !== "other") {
+      return undefined;
+    }
+    if (!this.allowHomeR2Fallback) {
+      throwPermissionDenied(normalized);
+    }
+    return this.fallback.writeFileStream(normalized, content, options);
   }
 
   async appendFile(path: string, content: FileContent): Promise<void> {
@@ -665,8 +701,20 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
     return this.require(path).readFileBuffer(path);
   }
 
-  writeFile(path: string, content: FileContent): Promise<void> {
-    return this.require(path).writeFile(path, content);
+  openFile(path: string, options?: OpenFileOptions): Promise<OpenFileResult | undefined> {
+    return this.require(path).openFile(path, options);
+  }
+
+  writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
+    return this.require(path).writeFile(path, content, options);
+  }
+
+  writeFileStream(
+    path: string,
+    content: ReadableStream<Uint8Array>,
+    options: WriteFileStreamOptions,
+  ): Promise<WriteFileStreamResult | undefined> {
+    return this.require(path).writeFileStream(path, content, options);
   }
 
   appendFile(path: string, content: FileContent): Promise<void> {

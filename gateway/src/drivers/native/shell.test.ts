@@ -373,6 +373,22 @@ describe("native shell execution", () => {
     });
   });
 
+  it("reads SVG images as text", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>hello</text></svg>';
+    await env.STORAGE.put("tmp/fs-read-vector", svg, {
+      httpMetadata: { contentType: "image/svg+xml" },
+    });
+
+    const read = await handleFsRead({ path: "/tmp/fs-read-vector" }, makeContext());
+
+    expect(read.data).toMatchObject({
+      ok: true,
+      kind: "text",
+      contentType: "image/svg+xml",
+    });
+    expect(read.body && await bodyToText(read.body)).toBe(`     1\t${svg}`);
+  });
+
   it("rejects invalid UTF-8 in text-classified files", async () => {
     await env.STORAGE.put("tmp/fs-read-invalid", new Uint8Array([0xff]));
 
@@ -727,6 +743,39 @@ describe("media native commands", () => {
     expect(result.stdout).toContain("/home/sam/speech.mp3");
     expect(result.stdout).toContain("out.png");
     expect(result.stdout).toContain("speech.mp3");
+  });
+
+  it("preserves generated image MIME when the output extension differs", async () => {
+    const key = "home/sam/generated-jpeg.png";
+    let imageReadInput: Record<string, unknown> | undefined;
+    await env.STORAGE.delete(key);
+
+    const result = await handleShellExec(
+      {
+        input: "txt2img -o generated-jpeg.png green-square; img2txt generated-jpeg.png",
+      },
+      makeContext({
+        capabilities: ["ai.image.read", "ai.image.generate"],
+        aiRun: vi.fn(async (_model, input) => {
+          if (Array.isArray(input.messages)) {
+            imageReadInput = input;
+            return { response: "a green square" };
+          }
+          if (typeof input.prompt === "string") {
+            return { image: "/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==" };
+          }
+          return null;
+        }),
+      }),
+    );
+
+    const stored = await env.STORAGE.get(key);
+    expect(result).toMatchObject({ ok: true, exitCode: 0 });
+    expect(result.stdout).toContain("a green square");
+    expect(stored?.httpMetadata?.contentType).toBe("image/jpeg");
+    expect([...new Uint8Array(await stored!.arrayBuffer()).subarray(0, 4)])
+      .toEqual([0xff, 0xd8, 0xff, 0xe0]);
+    expect(JSON.stringify(imageReadInput)).toContain("data:image/jpeg;base64,");
   });
 });
 
@@ -1183,7 +1232,7 @@ describe("fs copy", () => {
     expect(result).toMatchObject({
       ok: true,
       size: "copied data".length,
-      contentType: "text/plain",
+      contentType: "text/plain; charset=utf-8",
     });
     expect(await (await env.STORAGE.get(destinationKey))?.text()).toBe("copied data");
   });

@@ -1,4 +1,5 @@
 import type {
+  BufferEncoding,
   FileContent,
   MkdirOptions,
   RmOptions,
@@ -11,6 +12,7 @@ import type {
   OpenFileOptions,
   OpenFileRange,
   OpenFileResult,
+  WriteFileOptions,
   WriteFileStreamOptions,
   WriteFileStreamResult,
 } from "../mount";
@@ -95,14 +97,18 @@ export class R2MountBackend implements MountBackend {
     };
   }
 
-  async writeFile(path: string, content: FileContent): Promise<void> {
+  async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
     const p = normalizePath(path);
     const key = toKey(p);
     const existing = await this.bucket.head(key);
     if (existing) this.assertMode(existing, WRITE_BIT, p);
 
     await this.bucket.put(key, content, {
-      httpMetadata: { contentType: inferContentType(p) },
+      httpMetadata: {
+        contentType: typeof options === "object" && options.contentType
+          ? options.contentType
+          : inferContentType(p),
+      },
       customMetadata: {
         uid: String(this.identity.uid),
         gid: String(this.identity.gid),
@@ -220,6 +226,7 @@ export class R2MountBackend implements MountBackend {
         mtime: head.uploaded,
         uid,
         gid,
+        contentType: head.httpMetadata?.contentType,
       };
     }
 

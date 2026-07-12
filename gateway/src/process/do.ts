@@ -162,6 +162,7 @@ import {
   hasWorkersAiModelPricing,
   isWorkersAiProvider,
 } from "../inference/workers-ai";
+import { isVectorImageMimeType } from "../inference/image-mime";
 import { assembleSystemPrompt } from "./context";
 import {
   cancelProcessRequests,
@@ -4815,7 +4816,7 @@ export class Process extends Host<Env> {
     }
 
     for (const item of media) {
-      if (item.type === "image" && item.key) {
+      if (item.type === "image" && item.key && !isVectorImageMimeType(item.mimeType)) {
         const described = item.description && item.description.trim().length > 0;
         if (item.description && item.description.trim().length > 0) {
           content.push({

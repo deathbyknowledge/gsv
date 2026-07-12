@@ -23,6 +23,7 @@ import {
 } from "../shared/base64";
 import { withTimeout } from "./timeout";
 import { isWorkersAiProvider } from "./workers-ai";
+import { sniffImageMimeType } from "./image-mime";
 
 export type CapabilityFetch = (
   input: string | URL | Request,
@@ -250,7 +251,10 @@ async function generateImageWithWorkersAi(
     timeoutMs,
     `Image generation timed out after ${timeoutMs}ms`,
   );
-  const image = await normalizeImageGenerationResponse(response, "image/png");
+  const image = await normalizeImageGenerationResponse(
+    response,
+    model === DEFAULT_IMAGE_GENERATION_MODEL ? "image/jpeg" : "image/png",
+  );
   return image ? { ...image, provider: "workers-ai", model } : null;
 }
 
@@ -340,25 +344,26 @@ async function normalizeImageGenerationResponse(
   fallbackMimeType: string,
 ): Promise<Omit<ImageGenerationResult, "provider" | "model"> | null> {
   if (response instanceof Response) {
-    return binaryDataFromBytes(
+    return imageDataFromBytes(
       await response.arrayBuffer(),
-      response.headers.get("content-type") || fallbackMimeType,
+      fallbackMimeType,
+      response.headers.get("content-type"),
     );
   }
   if (response instanceof ReadableStream) {
-    return binaryDataFromBytes(await new Response(response).arrayBuffer(), fallbackMimeType);
+    return imageDataFromBytes(await new Response(response).arrayBuffer(), fallbackMimeType);
   }
   if (response instanceof ArrayBuffer) {
-    return binaryDataFromBytes(response, fallbackMimeType);
+    return imageDataFromBytes(response, fallbackMimeType);
   }
   if (ArrayBuffer.isView(response)) {
-    return binaryDataFromBytes(response, fallbackMimeType);
+    return imageDataFromBytes(response, fallbackMimeType);
   }
   if (response instanceof Blob) {
-    return binaryDataFromBytes(await response.arrayBuffer(), response.type || fallbackMimeType);
+    return imageDataFromBytes(await response.arrayBuffer(), fallbackMimeType, response.type);
   }
   if (typeof response === "string" && response.trim().length > 0) {
-    return binaryDataFromBase64(response.trim(), fallbackMimeType);
+    return imageDataFromBase64(response.trim(), fallbackMimeType);
   }
   if (!response || typeof response !== "object") {
     return null;
@@ -382,10 +387,11 @@ async function normalizeImageGenerationResponse(
 
   const base64 = firstString(record.b64_json, record.image, record.data, record.output, record.result);
   if (base64) {
-    const mimeType =
-      firstString(record.mimeType, record.mime_type, record.contentType, record.content_type)
-      || fallbackMimeType;
-    const image = binaryDataFromBase64(base64, mimeType);
+    const image = imageDataFromBase64(
+      base64,
+      fallbackMimeType,
+      firstString(record.mimeType, record.mime_type, record.contentType, record.content_type),
+    );
     if (!image) {
       return null;
     }
@@ -406,6 +412,46 @@ async function normalizeImageGenerationResponse(
   }
 
   return null;
+}
+
+function imageDataFromBytes(
+  value: ArrayBuffer | ArrayBufferView,
+  fallbackMimeType: string,
+  explicitMimeType?: string | null,
+): { bytes: Uint8Array; mimeType: string } | null {
+  return resolveImageData(binaryDataFromBytes(value, fallbackMimeType), fallbackMimeType, explicitMimeType);
+}
+
+function imageDataFromBase64(
+  value: string,
+  fallbackMimeType: string,
+  explicitMimeType?: string,
+): { bytes: Uint8Array; mimeType: string } | null {
+  const image = binaryDataFromBase64(value, fallbackMimeType);
+  const dataUrlMimeType = /^data:[^;,]+;base64,/i.test(value) ? image?.mimeType : undefined;
+  return resolveImageData(image, fallbackMimeType, dataUrlMimeType ?? explicitMimeType);
+}
+
+function resolveImageData(
+  image: { bytes: Uint8Array; mimeType: string } | null,
+  fallbackMimeType: string,
+  explicitMimeType?: string | null,
+): { bytes: Uint8Array; mimeType: string } | null {
+  if (!image) return null;
+  return {
+    ...image,
+    mimeType: normalizeImageMimeType(explicitMimeType)
+      ?? sniffImageMimeType(image.bytes)
+      ?? fallbackMimeType,
+  };
+}
+
+function normalizeImageMimeType(value: unknown): string | undefined {
+  const normalized = normalizeOptionalText(value)
+    ?.split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  return normalized?.startsWith("image/") ? normalized : undefined;
 }
 
 async function withFetchTimeout(

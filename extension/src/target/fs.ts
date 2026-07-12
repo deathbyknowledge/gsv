@@ -484,7 +484,7 @@ export class BrowserFsDriver {
 
       const bytes = await this.fs.read(path);
       const contentType = stat.contentType ?? inferFsContentType(path);
-      if (contentType.startsWith("image/")) {
+      if (contentType.trim().toLowerCase().startsWith("image/") && !isTextContentType(contentType)) {
         return {
           data: {
             ok: true,

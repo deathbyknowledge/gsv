@@ -69,7 +69,7 @@ export async function handleFsRead(
     }
     const contentType = opened.contentType ?? inferContentType(p);
 
-    if (contentType.startsWith("image/")) {
+    if (contentType.trim().toLowerCase().startsWith("image/") && !isTextContentType(contentType)) {
       return readImage(p, contentType, opened.body, opened.size);
     }
 

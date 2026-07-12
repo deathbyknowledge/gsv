@@ -120,7 +120,7 @@ impl Tool for ReadTool {
         let size = metadata.len();
         let content_type = infer_content_type(&resolved);
 
-        if content_type.starts_with("image/") {
+        if content_type.starts_with("image/") && !is_text_content_type(content_type) {
             let file = tokio::fs::File::open(&resolved)
                 .await
                 .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
@@ -230,6 +230,7 @@ fn is_text_content_type(content_type: &str) -> bool {
                 | "application/x-javascript"
                 | "application/typescript"
                 | "application/toml"
+                | "image/svg+xml"
         )
         || content_type.ends_with("+json")
 }
@@ -257,6 +258,28 @@ mod tests {
         let mut actual = Vec::new();
         body.reader.read_to_end(&mut actual).await.unwrap();
         assert_eq!(actual, bytes);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn returns_svg_as_text() {
+        let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg"><text>hello</text></svg>"#;
+        fs::write(root.join("image.svg"), svg).unwrap();
+
+        let result = ReadTool::new(root.clone())
+            .execute(json!({ "path": "image.svg" }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.data["kind"], "text");
+        assert_eq!(result.data["contentType"], "image/svg+xml");
+        let mut body = result.body.unwrap();
+        let mut actual = String::new();
+        body.reader.read_to_string(&mut actual).await.unwrap();
+        assert_eq!(actual, format!("     1\t{}", svg));
 
         fs::remove_dir_all(root).unwrap();
     }

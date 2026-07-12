@@ -53,5 +53,6 @@ export function isTextContentType(contentType: string): boolean {
     || type === "application/javascript"
     || type === "application/x-javascript"
     || type === "application/typescript"
-    || type === "application/toml";
+    || type === "application/toml"
+    || type === "image/svg+xml";
 }

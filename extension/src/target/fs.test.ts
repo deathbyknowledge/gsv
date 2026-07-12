@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bodyToBytes } from "@humansandmachines/gsv/protocol";
+import { bodyToBytes, bodyToText } from "@humansandmachines/gsv/protocol";
 import { BrowserFsDriver, BrowserTargetFileSystem } from "./fs";
 import type { TargetFileSystem } from "./types";
 
@@ -26,6 +26,28 @@ describe("BrowserFsDriver", () => {
     });
     expect(response.body).toBeDefined();
     expect(await bodyToBytes(response.body!)).toEqual(bytes);
+  });
+
+  it("reads SVG images as text", async () => {
+    const runtime = {
+      exists: async () => false,
+      getAllPaths: async () => [],
+    } as unknown as TargetFileSystem;
+    const fs = new BrowserTargetFileSystem(runtime);
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>hello</text></svg>';
+    await fs.write("/tmp/vector", new TextEncoder().encode(svg), "image/svg+xml");
+
+    const response = await new BrowserFsDriver(fs).handle("fs.read", {
+      path: "/tmp/vector",
+    });
+
+    expect(response.data).toMatchObject({
+      ok: true,
+      kind: "text",
+      contentType: "image/svg+xml",
+    });
+    expect(response.body).toBeDefined();
+    expect(await bodyToText(response.body!)).toBe(`     1\t${svg}`);
   });
 
   it("rejects invalid UTF-8 in text-classified files", async () => {
