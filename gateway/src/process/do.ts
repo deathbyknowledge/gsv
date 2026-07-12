@@ -184,7 +184,7 @@ import {
 import {
   createCodeModeRequest,
 } from "../codemode/request";
-import { materializeToolResponse } from "./tool-response";
+import { formatAgentToolResponse, materializeToolResponse } from "./tool-response";
 import {
   DEFAULT_CONVERSATION_ID,
   normalizeConversationId,
@@ -903,7 +903,10 @@ export class Process extends Host<Env> {
           this.runAbortSignal(pending.runId),
         );
         this.rememberShellSessionTargetFromResult(pending.call, pending.args, result);
-        this.store.resolve(frame.id, result);
+        this.store.resolve(
+          frame.id,
+          formatAgentToolResponse(pending.call, pending.args, result),
+        );
       } catch (error) {
         this.store.fail(
           frame.id,
@@ -4720,7 +4723,7 @@ export class Process extends Host<Env> {
             this.runAbortSignal(runId),
           );
           this.rememberShellSessionTargetFromResult(call, args, result);
-          this.store.resolve(dispatchId, result);
+          this.store.resolve(dispatchId, formatAgentToolResponse(call, args, result));
         } catch (error) {
           this.store.fail(
             dispatchId,

@@ -61,6 +61,27 @@ export async function materializeToolResponse(
   throw new Error(`Unexpected response body for ${call}`);
 }
 
+export function formatAgentToolResponse(
+  call: string,
+  args: unknown,
+  result: unknown,
+): unknown {
+  const record = asRecord(result);
+  if (call !== "fs.read" || record?.kind !== "text" || typeof record.content !== "string") {
+    return result;
+  }
+
+  const request = asRecord(args);
+  const offset = typeof request?.offset === "number" ? request.offset : 0;
+  const lines = record.lines === 0 ? [] : record.content.split("\n");
+  return {
+    ...record,
+    content: lines
+      .map((line, index) => `${String(offset + index + 1).padStart(6)}\t${line}`)
+      .join("\n"),
+  };
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>

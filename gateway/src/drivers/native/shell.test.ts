@@ -345,7 +345,7 @@ describe("native shell execution", () => {
     expect(result.data).toMatchObject({ ok: false, error: expect.stringContaining("ENOENT") });
   });
 
-  it("returns exact numbered text ranges in frame bodies", async () => {
+  it("returns exact text ranges in frame bodies", async () => {
     const ctx = makeContext();
     const path = "/tmp/fs-read-range.txt";
     await handleFsWrite({ path, content: "zero\né\nlast\n" }, ctx);
@@ -359,7 +359,7 @@ describe("native shell execution", () => {
       lines: 3,
       size: 13,
     });
-    expect(read.body && await bodyToText(read.body)).toBe("     2\té\n     3\tlast\n     4\t");
+    expect(read.body && await bodyToText(read.body)).toBe("é\nlast\n");
   });
 
   it("uses stored MIME types for reads and transfer metadata", async () => {
@@ -399,7 +399,7 @@ describe("native shell execution", () => {
       kind: "text",
       contentType: "image/svg+xml",
     });
-    expect(read.body && await bodyToText(read.body)).toBe(`     1\t${svg}`);
+    expect(read.body && await bodyToText(read.body)).toBe(svg);
   });
 
   it("rejects invalid UTF-8 in text-classified files", async () => {

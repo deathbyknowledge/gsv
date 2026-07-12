@@ -510,9 +510,6 @@ export class BrowserFsDriver {
       const limit = parseNonNegativeInteger(args.limit);
       const lines = text.split("\n");
       const selected = limit === null ? lines.slice(offset) : lines.slice(offset, offset + limit);
-      const content = selected
-        .map((line, index) => `${String(offset + index + 1).padStart(6)}\t${line}`)
-        .join("\n");
       return {
         data: {
           ok: true,
@@ -522,7 +519,7 @@ export class BrowserFsDriver {
           contentType,
           lines: selected.length,
         },
-        body: bodyFromText(content),
+        body: bodyFromText(selected.join("\n")),
       };
     } catch (error) {
       return { data: { ok: false, error: error instanceof Error ? error.message : String(error) } };

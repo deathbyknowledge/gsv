@@ -7884,7 +7884,7 @@ describe("Process DO — mechanical", () => {
       } as any);
     });
 
-    it("materializes synchronous filesystem response bodies", async () => {
+    it("adds line numbers to agent filesystem results", async () => {
       const pid = "mech-res-sync-body";
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const originalRecvFrame = Kernel.prototype.recvFrame;
@@ -7903,7 +7903,7 @@ describe("Process DO — mechanical", () => {
                 size: 5,
                 lines: 1,
               },
-              body: bodyFromText("     1\thello"),
+              body: bodyFromText("hello"),
             } as ResponseFrame;
           }
           return originalRecvFrame.call(this, processId, frame);
@@ -7919,19 +7919,19 @@ describe("Process DO — mechanical", () => {
             "call-sync-body",
             "run-sync-body",
             "fs.read",
-            { path: "/tmp/note.txt" },
+            { path: "/tmp/note.txt", offset: 1 },
           );
 
           await process.dispatchSyscall(
             "run-sync-body",
             "dispatch-sync-body",
             "fs.read",
-            { path: "/tmp/note.txt" },
+            { path: "/tmp/note.txt", offset: 1 },
           );
 
           expect(process.store.getResults("run-sync-body")).toMatchObject([{
             status: "completed",
-            result: { content: "     1\thello" },
+            result: { content: "     2\thello" },
           }]);
           process.currentRun = null;
         });

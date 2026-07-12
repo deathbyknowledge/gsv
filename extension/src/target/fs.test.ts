@@ -47,7 +47,30 @@ describe("BrowserFsDriver", () => {
       contentType: "image/svg+xml",
     });
     expect(response.body).toBeDefined();
-    expect(await bodyToText(response.body!)).toBe(`     1\t${svg}`);
+    expect(await bodyToText(response.body!)).toBe(svg);
+  });
+
+  it("returns selected text without line numbers", async () => {
+    const runtime = {
+      exists: async () => false,
+      getAllPaths: async () => [],
+    } as unknown as TargetFileSystem;
+    const fs = new BrowserTargetFileSystem(runtime);
+    await fs.write("/tmp/lines.txt", new TextEncoder().encode("one\ntwo\nthree"), "text/plain");
+
+    const response = await new BrowserFsDriver(fs).handle("fs.read", {
+      path: "/tmp/lines.txt",
+      offset: 1,
+      limit: 1,
+    });
+
+    expect(response.data).toMatchObject({
+      ok: true,
+      kind: "text",
+      lines: 1,
+    });
+    expect(response.body).toBeDefined();
+    expect(await bodyToText(response.body!)).toBe("two");
   });
 
   it("rejects invalid UTF-8 in text-classified files", async () => {

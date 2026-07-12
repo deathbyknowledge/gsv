@@ -2,8 +2,8 @@
  * Native FS driver — implements fs.* syscall handlers using GsvFs.
  *
  * Each handler constructs a GsvFs with the caller's identity and kernel
- * registries, then adds syscall-specific formatting on top of the raw
- * IFileSystem operations (line numbering, image detection, directory listing,
+ * registries, then adds syscall-specific behavior on top of the raw
+ * IFileSystem operations (image detection, directory listing, and
  * find-and-replace editing).
  */
 
@@ -118,9 +118,6 @@ function readText(
   const start = offset ?? 0;
   const count = limit ?? allLines.length;
   const selected = allLines.slice(start, start + count);
-  const numbered = selected
-    .map((line, i) => `${String(start + i + 1).padStart(6)}\t${line}`)
-    .join("\n");
 
   return {
     data: {
@@ -131,7 +128,7 @@ function readText(
       lines: selected.length,
       size,
     },
-    body: bodyFromText(numbered),
+    body: bodyFromText(selected.join("\n")),
   };
 }
 

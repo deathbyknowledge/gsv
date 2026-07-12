@@ -258,7 +258,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `fs.read` | `handleFsRead`; CLI `Read` | Resolves paths against process `cwd` and home. Direct directory results are JSON. A successful file result always attaches a response body containing numbered UTF-8 text or raw image bytes; `data` contains file metadata. Text decoding is strict across native and device implementations, so invalid UTF-8 returns a binary-file error. `offset` defaults to `0`; `limit` defaults to all lines. The transport streams images without a target-specific size cap; process tool results cap model-context materialization at 25 MiB. |
+| `fs.read` | `handleFsRead`; CLI `Read` | Resolves paths against process `cwd` and home. Direct directory results are JSON. A successful file result always attaches a response body containing raw UTF-8 text or image bytes; `data` contains file metadata. Text decoding is strict across native and device implementations, so invalid UTF-8 returns a binary-file error. `offset` defaults to `0`; `limit` defaults to all lines. Agent tool results add line numbers when presenting text to the model. The transport streams images without a target-specific size cap; process tool results cap model-context materialization at 25 MiB. |
 | `fs.write` | `handleFsWrite`; CLI `Write` | Creates or replaces a complete file. Native writes through `GsvFs.writeFile`; CLI creates parent directories explicitly. Returns written path and size. |
 | `fs.edit` | `handleFsEdit`; CLI `Edit` | Performs exact string replacement in a text file. `replaceAll` defaults to `false`; if multiple matches exist and `replaceAll` is false, the handler asks for a more specific edit. |
 | `fs.delete` | `handleFsDelete`; CLI `Delete` | Deletes the path. Native checks existence then calls `rm` with force; CLI deletes files or directories recursively. This is destructive. |
@@ -301,9 +301,9 @@ type FilesystemSyscalls = {
 ```
 
 For a file result, `size` is the original file size; the body descriptor length
-is the transmitted payload size and can differ for numbered text. Process tool
-results and CodeMode deliberately materialize the body back into `content`, so
-the CodeMode examples below keep their existing object shape.
+is the transmitted payload size and can differ when `offset` or `limit` selects
+only part of the file. Process tool results and CodeMode materialize the body
+back into `content`; only direct agent tool results add line numbers.
 
 ## Network: `net.fetch`
 

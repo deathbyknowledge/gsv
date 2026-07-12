@@ -257,10 +257,7 @@ async fn test_read_tool() {
     let mut bytes = Vec::new();
     body.reader.read_to_end(&mut bytes).await.unwrap();
     let content = String::from_utf8(bytes).unwrap();
-    assert_eq!(
-        content,
-        "     1\tline 1\n     2\tline 2\n     3\tline 3\n     4\t"
-    );
+    assert_eq!(content, "line 1\nline 2\nline 3\n");
 
     // Cleanup
     let _ = std::fs::remove_file(&test_file);
@@ -325,7 +322,7 @@ async fn test_read_tool_with_offset_limit() {
     let mut bytes = Vec::new();
     body.reader.read_to_end(&mut bytes).await.unwrap();
     let content = String::from_utf8(bytes).unwrap();
-    assert_eq!(content, "     3\tline 3\n     4\tline 4\n     5\tline 5");
+    assert_eq!(content, "line 3\nline 4\nline 5");
 
     // Cleanup
     let _ = std::fs::remove_file(&test_file);

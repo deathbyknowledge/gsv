@@ -155,8 +155,6 @@ impl Tool for ReadTool {
             .split('\n')
             .skip(offset)
             .take(args.limit.unwrap_or(usize::MAX))
-            .enumerate()
-            .map(|(index, line)| format!("{:6}\t{}", offset + index + 1, line))
             .collect::<Vec<_>>();
         let body = selected.join("\n").into_bytes();
 
@@ -279,7 +277,7 @@ mod tests {
         let mut body = result.body.unwrap();
         let mut actual = String::new();
         body.reader.read_to_string(&mut actual).await.unwrap();
-        assert_eq!(actual, format!("     1\t{}", svg));
+        assert_eq!(actual, svg);
 
         fs::remove_dir_all(root).unwrap();
     }
