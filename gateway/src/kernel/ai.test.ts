@@ -1709,7 +1709,11 @@ describe("handleAiImageRead", () => {
       env: {
         AI: {
           run: vi.fn(async () => options.response ?? ({
-            response: "A small terminal window with green text.",
+            choices: [{
+              message: {
+                content: "A small terminal window with green text.",
+              },
+            }],
           })),
         },
       },

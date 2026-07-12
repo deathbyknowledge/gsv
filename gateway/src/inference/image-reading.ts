@@ -231,6 +231,7 @@ function firstText(value: unknown): string | null {
   for (const candidate of [
     record.description,
     record.response,
+    record.content,
     record.text,
     record.output,
     record.result,
