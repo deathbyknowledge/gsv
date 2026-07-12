@@ -1179,6 +1179,12 @@ export class Process extends Host<Env> {
     if (args.media?.some((item) => "data" in item)) {
       return { ok: false, error: "proc.send media.data was removed; use proc.media.write" };
     }
+    const mediaPrefix = processMediaPrefix(this.identity.uid, this.pid);
+    if (args.media?.some((item) =>
+      typeof item.key === "string" && item.key.length > 0 && !item.key.startsWith(mediaPrefix)
+    )) {
+      return { ok: false, error: "media key is outside this process" };
+    }
     const runId = crypto.randomUUID();
     const conversationId = normalizeConversationId(args.conversationId);
     const conversation = this.store.ensureConversation(conversationId);
@@ -1386,7 +1392,10 @@ export class Process extends Host<Env> {
         });
       }
     } catch (error) {
-      const keys = input.flatMap((item) => typeof item.key === "string" ? [item.key] : []);
+      const prefix = processMediaPrefix(this.identity.uid, this.pid);
+      const keys = input.flatMap((item) =>
+        typeof item.key === "string" && item.key.startsWith(prefix) ? [item.key] : []
+      );
       const releaseLifecycle = await this.acquireLifecycleTransition();
       let unreferenced: string[];
       try {
@@ -4849,6 +4858,9 @@ export class Process extends Host<Env> {
     key: string,
     budget: { remainingBytes: number },
   ): Promise<string | null> {
+    if (!key.startsWith(processMediaPrefix(this.identity.uid, this.pid))) {
+      return null;
+    }
     const object = await this.env.STORAGE.get(key);
     if (
       !object

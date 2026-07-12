@@ -3170,6 +3170,39 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("rejects out-of-scope media before changing the active run", async () => {
+      const pid = "mech-send-foreign-media";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const foreignKey = `var/media/0/another-process/${crypto.randomUUID()}`;
+      await env.STORAGE.put(foreignKey, new Uint8Array([1, 2, 3]));
+
+      try {
+        const result = await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          process.currentRun = { runId: "run-existing", conversationId: "default" };
+          const response = await process.handleProcSend({
+            message: "read this",
+            media: [{ type: "image", mimeType: "image/png", key: foreignKey }],
+            origin: { kind: "client", connectionId: "client-1" },
+          });
+          return {
+            response,
+            currentRun: process.currentRun,
+            messages: process.store.getMessages(),
+          };
+        });
+
+        expect(result).toEqual({
+          response: { ok: false, error: "media key is outside this process" },
+          currentRun: { runId: "run-existing", conversationId: "default" },
+          messages: [],
+        });
+        expect(await env.STORAGE.head(foreignKey)).not.toBeNull();
+      } finally {
+        await env.STORAGE.delete(foreignKey);
+      }
+    });
+
     it.each([false, true])(
       "keeps a newer user run authoritative when earlier media fails=%s",
       async (fails) => {
@@ -3439,6 +3472,44 @@ describe("Process DO — mechanical", () => {
       expect(withBody.data).toEqual({ ok: false, error: "proc.media.delete does not accept a body" });
     });
 
+    it("only deletes process-scoped media after preparation fails", async () => {
+      const pid = "mech-media-preparation-cleanup";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const ownKey = `var/media/0/${pid}/${crypto.randomUUID()}`;
+      const foreignKey = `var/media/0/another-process/${crypto.randomUUID()}`;
+      await env.STORAGE.put(ownKey, new Uint8Array([1]));
+      await env.STORAGE.put(foreignKey, new Uint8Array([2]));
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          const runId = "run-media-cleanup";
+          const media = [
+            { type: "document", mimeType: "application/octet-stream", key: ownKey },
+            { type: "document", mimeType: "application/octet-stream", key: foreignKey },
+          ];
+          const messageId = process.store.appendMessage("user", "attachments", {
+            runId,
+            media: JSON.stringify(media),
+          });
+          process.currentRun = {
+            runId,
+            conversationId: "default",
+            pendingMediaMessageId: messageId,
+          };
+          process.sendSignal = vi.fn(async () => {});
+          process.resolveMediaProcessingOptions = vi.fn(async () => ({ ai: process.env.AI }));
+
+          await process.prepareRunMedia(runId, "default", messageId, media);
+        });
+
+        expect(await env.STORAGE.head(ownKey)).toBeNull();
+        expect(await env.STORAGE.head(foreignKey)).not.toBeNull();
+      } finally {
+        await env.STORAGE.delete([ownKey, foreignKey]);
+      }
+    });
+
     it("requires the media body descriptor length", async () => {
       const stub = await initProcess("mech-media-length", ROOT_IDENTITY);
       const response = (await stub.recvFrame({
@@ -3526,24 +3597,26 @@ describe("Process DO — mechanical", () => {
     });
 
     it("bounds media materialized while building model context", async () => {
-      const stub = await initProcess("mech-bounded-context-media", ROOT_IDENTITY);
+      const pid = "mech-bounded-context-media";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         const originalEnv = process.env;
         const arrayBuffer = vi.fn(async () => new Uint8Array([1]).buffer);
+        const prefix = `var/media/0/${pid}/`;
         process.store.appendMessage("user", "Review these images.", {
           media: JSON.stringify([
-            { type: "image", mimeType: "image/png", key: "oversized" },
-            { type: "image", mimeType: "image/png", key: "first" },
-            { type: "image", mimeType: "image/png", key: "second" },
+            { type: "image", mimeType: "image/png", key: `${prefix}oversized` },
+            { type: "image", mimeType: "image/png", key: `${prefix}first` },
+            { type: "image", mimeType: "image/png", key: `${prefix}second` },
           ]),
         });
         process.env = {
           ...originalEnv,
           STORAGE: {
             get: vi.fn(async (key: string) => ({
-              size: key === "oversized" ? 25 * 1024 * 1024 + 1 : 15 * 1024 * 1024,
+              size: key.endsWith("oversized") ? 25 * 1024 * 1024 + 1 : 15 * 1024 * 1024,
               arrayBuffer,
             })),
           },
@@ -3554,6 +3627,40 @@ describe("Process DO — mechanical", () => {
           expect(arrayBuffer).toHaveBeenCalledTimes(1);
           expect(messages[0].content).toEqual(expect.arrayContaining([
             expect.objectContaining({ type: "image", data: "AQ==" }),
+          ]));
+        } finally {
+          process.env = originalEnv;
+        }
+      });
+    });
+
+    it("does not hydrate out-of-scope media from persisted history", async () => {
+      const stub = await initProcess("mech-foreign-context-media", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        const get = vi.fn(async () => ({
+          size: 3,
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        }));
+        process.store.appendMessage("user", "Legacy attachment", {
+          media: JSON.stringify([{
+            type: "image",
+            mimeType: "image/png",
+            key: "var/media/0/another-process/secret.png",
+          }]),
+        });
+        process.env = {
+          ...originalEnv,
+          STORAGE: { get },
+        };
+
+        try {
+          const messages = await process.buildContextMessages("default");
+          expect(get).not.toHaveBeenCalled();
+          expect(messages[0].content).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: "image" }),
           ]));
         } finally {
           process.env = originalEnv;
