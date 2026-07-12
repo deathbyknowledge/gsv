@@ -225,7 +225,7 @@ async function probeSetupMode(client: GSVClient, url: string): Promise<boolean> 
       protocol: 2,
       client: {
         id: "gsv-ui-setup-probe",
-        version: "0.5.0",
+        version: "0.4.0",
         platform: "browser",
         role: "user",
       },
