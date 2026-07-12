@@ -1,5 +1,5 @@
 import { withTimeout } from "./timeout";
-import { base64DataFromBytes, base64DataFromString } from "../shared/base64";
+import { binaryDataFromBase64, binaryDataFromBytes } from "../shared/base64";
 
 export type AudioSpeechBinding = {
   run(model: string, input: Record<string, unknown>): Promise<unknown>;
@@ -18,9 +18,8 @@ export type AudioSpeechRequest = {
 };
 
 export type AudioSpeechResult = {
-  data: string;
+  bytes: Uint8Array;
   mimeType: string;
-  size: number;
   provider: string;
   model: string;
   voice?: string;
@@ -107,27 +106,27 @@ function buildWorkersAiSpeechInput(
 async function normalizeSpeechResponse(
   response: unknown,
   fallbackMimeType: string,
-): Promise<{ data: string; mimeType: string; size: number } | null> {
+): Promise<{ bytes: Uint8Array; mimeType: string } | null> {
   if (response instanceof ReadableStream) {
-    return base64DataFromBytes(await new Response(response).arrayBuffer(), fallbackMimeType);
+    return binaryDataFromBytes(await new Response(response).arrayBuffer(), fallbackMimeType);
   }
   if (response instanceof Response) {
-    return base64DataFromBytes(
+    return binaryDataFromBytes(
       await response.arrayBuffer(),
       response.headers.get("content-type") || fallbackMimeType,
     );
   }
   if (response instanceof ArrayBuffer) {
-    return base64DataFromBytes(response, fallbackMimeType);
+    return binaryDataFromBytes(response, fallbackMimeType);
   }
   if (ArrayBuffer.isView(response)) {
-    return base64DataFromBytes(response, fallbackMimeType);
+    return binaryDataFromBytes(response, fallbackMimeType);
   }
   if (response instanceof Blob) {
-    return base64DataFromBytes(await response.arrayBuffer(), response.type || fallbackMimeType);
+    return binaryDataFromBytes(await response.arrayBuffer(), response.type || fallbackMimeType);
   }
   if (typeof response === "string" && response.trim().length > 0) {
-    return base64DataFromString(response.trim(), fallbackMimeType);
+    return binaryDataFromBase64(response.trim(), fallbackMimeType);
   }
   if (!response || typeof response !== "object") {
     return null;
@@ -137,7 +136,7 @@ async function normalizeSpeechResponse(
   const base64 = firstString(record.audio, record.data, record.output, record.result);
   if (base64) {
     const mimeType = firstString(record.mimeType, record.mime_type, record.contentType, record.content_type) || fallbackMimeType;
-    return base64DataFromString(base64, mimeType);
+    return binaryDataFromBase64(base64, mimeType);
   }
 
   return null;

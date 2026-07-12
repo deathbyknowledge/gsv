@@ -12,7 +12,7 @@ import type { InteractionOrigin } from "./interaction-origin";
 export type ProcMediaInput = {
   type: "image" | "audio" | "video" | "document";
   mimeType: string;
-  data?: string;
+  key?: string;
   url?: string;
   filename?: string;
   size?: number;
@@ -374,7 +374,6 @@ export type ProcHistoryResult =
 export type ProcMediaReadArgs = {
   pid?: string;
   key: string;
-  mimeType?: string;
 };
 
 export type ProcMediaReadResult =
@@ -383,8 +382,27 @@ export type ProcMediaReadResult =
       key: string;
       mimeType: string;
       size: number;
-      dataUrl: string;
     }
+  | { ok: false; error: string };
+
+export type ProcMediaWriteArgs = Omit<ProcMediaInput, "key" | "url" | "size"> & {
+  pid?: string;
+};
+
+export type ProcMediaWriteResult =
+  | {
+      ok: true;
+      media: ProcMediaInput & { key: string; size: number };
+    }
+  | { ok: false; error: string };
+
+export type ProcMediaDeleteArgs = {
+  pid?: string;
+  key: string;
+};
+
+export type ProcMediaDeleteResult =
+  | { ok: true; key: string }
   | { ok: false; error: string };
 
 export type ProcConversationStatus = "open" | "closed";

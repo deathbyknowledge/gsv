@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AiTranscriptionCreateResult } from "@humansandmachines/gsv/protocol";
 import { useGateway } from "../../../services/gateway/GatewayProvider";
+import { requestAudioTranscription } from "../../../services/gateway/mediaRequests";
 import {
-  blobToDataUrl,
   canUseAmbientMode,
   canUseBrowserVoiceRecorder,
   presenceRecordingFilename,
@@ -179,15 +179,12 @@ export function useChatAmbientTranscription({
     mimeType: string,
     startedAt = Date.now(),
   ): Promise<AiTranscriptionCreateResult> => {
-    const data = await blobToDataUrl(blob);
-    const result = await client.ai.transcription.create({
+    const result = await requestAudioTranscription(client, {
       audio: {
-        data,
         mimeType,
         filename: presenceRecordingFilename(mimeType, startedAt),
-        size: blob.size,
       },
-    });
+    }, blob);
     const text = typeof result.text === "string" ? result.text.trim() : "";
     if (!text) {
       throw new Error("No speech was transcribed");

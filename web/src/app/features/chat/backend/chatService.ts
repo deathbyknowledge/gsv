@@ -21,12 +21,15 @@ import type {
   ProcHistoryArgs,
   ProcHistoryResult,
   ProcListArgs,
+  ProcMediaInput,
   ProcMediaReadArgs,
   ProcMediaReadResult,
+  ProcMediaWriteResult,
   ProcSendResult,
   ProcSpawnArgs,
   ProcSpawnResult,
 } from "@humansandmachines/gsv/protocol";
+import { frameBodyFromBlob, frameBodyToBlob } from "../../../services/gateway/frameBody";
 import {
   normalizeHistory,
   normalizeProcessSummaries,
@@ -42,13 +45,19 @@ import {
   type ChatProcessAiConfigSetResult,
   type ChatProcessSummary,
   type ChatSendDraft,
+  MAX_CHAT_PROCESS_MEDIA_BYTES,
 } from "../domain/processes";
 
-type ChatGsvClient = Pick<GSVClient, "proc">;
+type ChatGsvClient = Pick<GSVClient, "proc" | "request">;
+type ChatMediaGsvClient = Pick<GSVClient, "request">;
 type ProcAiConfigGetArgsWithPid = ProcAiConfigGetArgs & { pid?: string };
 type ProcAiConfigSetArgsWithPid = ProcAiConfigSetArgs & { pid?: string };
 
 type FailureResult = { ok: false; error: string };
+
+export type ChatProcessMedia = Extract<ProcMediaReadResult, { ok: true }> & {
+  blob: Blob;
+};
 
 function throwIfFailed<T>(result: T | FailureResult): T {
   if (
@@ -81,7 +90,47 @@ export async function sendChatMessage(
   client: ChatGsvClient,
   draft: ChatSendDraft,
 ): Promise<Extract<ProcSendResult, { ok: true }>> {
-  return throwIfFailed(await client.proc.send(normalizeSendPayload(draft)));
+  const uploads = draft.media ?? [];
+  if (uploads.some(({ body }) => body.size > MAX_CHAT_PROCESS_MEDIA_BYTES)) {
+    throw new Error("Chat attachments cannot exceed 25 MiB");
+  }
+
+  const settled = await Promise.allSettled(uploads.map(async ({ body, ...input }) => {
+    const response = await client.request("proc.media.write", {
+      ...input,
+      ...(draft.pid ? { pid: draft.pid } : {}),
+    }, {
+      body: frameBodyFromBlob(body),
+    });
+    await response.body?.stream.cancel("proc.media.write does not return a body").catch(() => {});
+    return throwIfFailed<Extract<ProcMediaWriteResult, { ok: true }>>(response.data).media;
+  }));
+  const media = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+  const uploadError = settled.find((result) => result.status === "rejected");
+  if (uploadError?.status === "rejected") {
+    await rollbackChatMedia(client, draft.pid, media);
+    throw uploadError.reason;
+  }
+
+  try {
+    return throwIfFailed(await client.proc.send(normalizeSendPayload({
+      ...draft,
+      ...(media.length > 0 ? { media } : {}),
+    })));
+  } catch (error) {
+    await rollbackChatMedia(client, draft.pid, media);
+    throw error;
+  }
+}
+
+async function rollbackChatMedia(
+  client: ChatGsvClient,
+  pid: string | undefined,
+  media: ProcMediaInput[],
+): Promise<void> {
+  await Promise.allSettled(media.flatMap(({ key }) => key
+    ? [client.proc.media.delete({ key, ...(pid ? { pid } : {}) })]
+    : []));
 }
 
 export async function abortChatProcess(
@@ -111,10 +160,31 @@ export async function getChatHistory(
 }
 
 export async function readChatProcessMedia(
-  client: ChatGsvClient,
+  client: ChatMediaGsvClient,
   args: ProcMediaReadArgs,
-): Promise<Extract<ProcMediaReadResult, { ok: true }>> {
-  return throwIfFailed(await client.proc.media.read(args));
+): Promise<ChatProcessMedia> {
+  const response = await client.request("proc.media.read", args);
+  if (!response.data.ok) {
+    await response.body?.stream.cancel(response.data.error).catch(() => {});
+    throw new Error(response.data.error || "GSV process media request failed");
+  }
+  if (response.data.size > MAX_CHAT_PROCESS_MEDIA_BYTES) {
+    const error = new Error("Process media exceeds the 25 MiB display limit");
+    await response.body?.stream.cancel(error).catch(() => {});
+    throw error;
+  }
+  if (!response.body) {
+    throw new Error("Process media response did not include a body");
+  }
+  const blob = await frameBodyToBlob(response.body, {
+    mimeType: response.data.mimeType,
+    expectedLength: response.data.size,
+    label: "Process media",
+  });
+  return {
+    ...response.data,
+    blob,
+  };
 }
 
 export async function listChatConversations(

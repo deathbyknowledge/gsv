@@ -53,18 +53,9 @@ export function chatMediaDescription(media: unknown): string {
 
 export function chatMediaSource(media: unknown, storedSource = ""): string {
   const record = asRecord(media);
-  const previewUrl = asString(record?.previewUrl);
-  if (previewUrl) return safeMediaSourceUrl(previewUrl, ["blob:", "data:", "https:", "http:"]);
   const url = asString(record?.url);
   if (url) return safeMediaSourceUrl(url, ["https:", "http:"]);
-  const data = asString(record?.data);
-  if (data) {
-    const dataUrl = data.startsWith("data:")
-      ? data
-      : `data:${chatMediaMimeType(media)};base64,${data}`;
-    return safeMediaSourceUrl(dataUrl, ["data:"]);
-  }
-  return storedSource ? safeMediaSourceUrl(storedSource, ["data:"]) : "";
+  return storedSource ? safeMediaSourceUrl(storedSource, ["blob:"]) : "";
 }
 
 export function formatChatMediaSize(size: number | null | undefined): string {

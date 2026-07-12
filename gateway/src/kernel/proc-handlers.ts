@@ -6,7 +6,8 @@
  * proc.send/kill/history/reset — forwarded to the Process DO via recvFrame.
  */
 
-import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { FrameBody, RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { ResultOf, SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import type {
@@ -499,7 +500,7 @@ export async function handleProcIpcCall(
 export async function forwardToProcess(
   frame: RequestFrame,
   ctx: KernelContext,
-): Promise<unknown> {
+): Promise<{ data?: ResultOf<SyscallName>; body?: FrameBody }> {
   const identity = ctx.identity!;
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const args = frame.args as { pid?: string };
@@ -573,22 +574,28 @@ export async function forwardToProcess(
         }
         ctx.conversations.clearActivePid(pid);
       }
-      const data = (res as { data?: { runId?: unknown } }).data;
+      const responseData = res.data;
+      const runData = responseData as { runId?: unknown } | undefined;
       if (
         frame.call === "proc.send"
         && identity.role === "user"
         && ctx.connection
-        && typeof data?.runId === "string"
+        && typeof runData?.runId === "string"
       ) {
-        ctx.runRoutes.setConnectionRoute(data.runId, proc.ownerUid, ctx.connection.id);
+        ctx.runRoutes.setConnectionRoute(runData.runId, proc.ownerUid, ctx.connection.id);
       }
-      return data;
+      return {
+        data: responseData,
+        ...(res.body ? { body: res.body } : {}),
+      };
     } else {
       throw new Error((res as { error: { message: string } }).error.message);
     }
   }
 
-  return { ok: true, status: "delivered" };
+  return {
+    data: { ok: true, status: "delivered" } as ResultOf<SyscallName>,
+  };
 }
 
 function withRedactedProcAiConfigGet(

@@ -66,10 +66,9 @@ describe("AI media capability adapters", () => {
       model: DEFAULT_OPENAI_SPEECH_MODEL,
       voice: DEFAULT_OPENAI_SPEECH_VOICE,
       encoding: "mp3",
-      data: "data:audio/mpeg;base64,AQID",
       mimeType: "audio/mpeg",
-      size: 3,
     });
+    expect([...result!.bytes]).toEqual([1, 2, 3]);
     const init = vi.mocked(fetchFn).mock.calls[0][1]!;
     expect(fetchFn).toHaveBeenCalledWith(
       "https://api.openai.com/v1/audio/speech",
@@ -102,10 +101,9 @@ describe("AI media capability adapters", () => {
     expect(result).toMatchObject({
       provider: "workers-ai",
       model: DEFAULT_IMAGE_GENERATION_MODEL,
-      data: "data:image/png;base64,AQID",
       mimeType: "image/png",
-      size: 3,
     });
+    expect([...result!.bytes!]).toEqual([1, 2, 3]);
     expect(workersAi.run).toHaveBeenCalledWith(
       DEFAULT_IMAGE_GENERATION_MODEL,
       { prompt: "a quiet desktop tool screenshot" },
@@ -132,11 +130,10 @@ describe("AI media capability adapters", () => {
     expect(result).toMatchObject({
       provider: "openai",
       model: DEFAULT_OPENAI_IMAGE_MODEL,
-      data: "data:image/webp;base64,AQID",
       mimeType: "image/webp",
-      size: 3,
       revisedPrompt: "a quiet desktop tool screenshot",
     });
+    expect([...result!.bytes!]).toEqual([1, 2, 3]);
     const init = vi.mocked(fetchFn).mock.calls[0][1]!;
     expect(fetchFn).toHaveBeenCalledWith(
       "https://api.openai.com/v1/images/generations",

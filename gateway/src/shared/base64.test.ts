@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  base64DataFromBytes,
-  base64DataFromString,
-  base64DecodedLength,
+  binaryDataFromBase64,
+  binaryDataFromBytes,
   encodeBase64Bytes,
 } from "./base64";
 
@@ -34,27 +33,25 @@ describe("encodeBase64Bytes", () => {
   });
 });
 
-describe("base64 media data", () => {
-  it("encodes only the visible bytes and reports their decoded size", () => {
+describe("binary media data", () => {
+  it("retains only the visible bytes", () => {
     const source = new Uint8Array([1, 2, 3, 4]);
+    const result = binaryDataFromBytes(source.subarray(1, 3), "audio/mpeg");
 
-    expect(base64DataFromBytes(source.subarray(1, 3), "audio/mpeg")).toEqual({
-      data: "data:audio/mpeg;base64,AgM=",
-      mimeType: "audio/mpeg",
-      size: 2,
-    });
+    expect(result?.mimeType).toBe("audio/mpeg");
+    expect([...result!.bytes]).toEqual([2, 3]);
   });
 
-  it("preserves a data URL's MIME type and payload", () => {
-    expect(base64DataFromString("data:image/webp;base64,AQID", "image/png")).toEqual({
-      data: "data:image/webp;base64,AQID",
-      mimeType: "image/webp",
-      size: 3,
-    });
+  it("decodes provider base64 and preserves a data URL's MIME type", () => {
+    const result = binaryDataFromBase64("data:image/webp;base64,AQID", "image/png");
+
+    expect(result?.mimeType).toBe("image/webp");
+    expect([...result!.bytes]).toEqual([1, 2, 3]);
+    expect([...binaryDataFromBase64("AQ\nID BA==", "image/png")!.bytes]).toEqual([1, 2, 3, 4]);
   });
 
-  it("measures base64 after ignoring whitespace", () => {
-    expect(base64DecodedLength("AQ\nID BA==")).toBe(4);
-    expect(base64DataFromString("", "image/png")).toBeNull();
+  it("rejects empty media", () => {
+    expect(binaryDataFromBytes(new Uint8Array(), "image/png")).toBeNull();
+    expect(binaryDataFromBase64("", "image/png")).toBeNull();
   });
 });

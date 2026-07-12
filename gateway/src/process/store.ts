@@ -845,6 +845,14 @@ export class ProcessStore {
     );
   }
 
+  clearMessageMedia(messageId: number, runId: string): void {
+    this.sql.exec(
+      "UPDATE messages SET media_json = NULL WHERE id = ? AND run_id = ?",
+      messageId,
+      runId,
+    );
+  }
+
   hasMessageMedia(messageId: number, runId: string): boolean {
     return this.sql.exec<{ present: number }>(
       `SELECT media_json IS NOT NULL AS present
@@ -853,6 +861,20 @@ export class ProcessStore {
       messageId,
       runId,
     ).toArray()[0]?.present === 1;
+  }
+
+  referencesMediaKey(key: string): boolean {
+    const rows = this.sql.exec<{ media_json: string }>(
+      `SELECT media_json FROM messages WHERE media_json IS NOT NULL
+       UNION ALL
+       SELECT media_json FROM message_queue WHERE media_json IS NOT NULL`,
+    );
+    for (const row of rows) {
+      if (parseStoredProcessMedia(row.media_json).some((item) => item.key === key)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   getMessages(opts?: {

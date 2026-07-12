@@ -88,6 +88,10 @@ import type {
   ProcListResult,
   ProcMediaReadArgs,
   ProcMediaReadResult,
+  ProcMediaDeleteArgs,
+  ProcMediaDeleteResult,
+  ProcMediaWriteArgs,
+  ProcMediaWriteResult,
   ProcResetArgs,
   ProcResetResult,
   ProcSendArgs,
@@ -311,6 +315,8 @@ export type SyscallDomains = {
   "proc.ai.config.get": { args: ProcAiConfigGetArgs; result: ProcAiConfigGetResult };
   "proc.ai.config.set": { args: ProcAiConfigSetArgs; result: ProcAiConfigSetResult };
   "proc.media.read": { args: ProcMediaReadArgs; result: ProcMediaReadResult };
+  "proc.media.write": { args: ProcMediaWriteArgs; result: ProcMediaWriteResult };
+  "proc.media.delete": { args: ProcMediaDeleteArgs; result: ProcMediaDeleteResult };
   "proc.conversation.open": { args: ProcConversationOpenArgs; result: ProcConversationOpenResult };
   "proc.conversation.list": { args: ProcConversationListArgs; result: ProcConversationListResult };
   "proc.conversation.get": { args: ProcConversationGetArgs; result: ProcConversationGetResult };

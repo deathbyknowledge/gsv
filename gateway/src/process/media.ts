@@ -19,7 +19,7 @@ import {
   type ImageReadingBinding,
 } from "../inference/image-reading";
 import { isWorkersAiProvider } from "../inference/workers-ai";
-import { decodeBase64Bytes, normalizeBase64Data } from "../shared/base64";
+import { encodeBase64Bytes } from "../shared/base64";
 
 export {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
@@ -95,15 +95,29 @@ export async function storeIncomingProcessMedia(
     let bytes: Uint8Array | null = null;
     let base64: string | null = null;
 
-    if (typeof item.data === "string" && item.data.length > 0) {
-      base64 = normalizeBase64Data(item.data);
-      bytes = decodeBase64Bytes(base64);
-      const key = `${prefix}${crypto.randomUUID()}${inferExtension(item.filename, item.mimeType)}`;
-      await bucket.put(key, bytes, {
-        httpMetadata: { contentType: item.mimeType },
-      });
-      next.key = key;
-      next.size = bytes.byteLength;
+    if (typeof item.key === "string" && item.key.length > 0) {
+      if (!item.key.startsWith(prefix)) {
+        throw new Error("media key is outside this process");
+      }
+      const object = await bucket.head(item.key);
+      if (!object) {
+        throw new Error(`media not found: ${item.key}`);
+      }
+      next.key = item.key;
+      next.size = object.size;
+
+      const processingLimit = item.type === "audio"
+        ? options.maxTranscriptionBytes ?? DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES
+        : item.type === "image"
+          ? options.imageReadingMaxBytes ?? DEFAULT_MAX_IMAGE_READING_BYTES
+          : 0;
+      if (processingLimit > 0 && object.size <= processingLimit) {
+        const stored = await bucket.get(item.key);
+        if (stored) {
+          bytes = new Uint8Array(await stored.arrayBuffer());
+          base64 = encodeBase64Bytes(bytes);
+        }
+      }
     } else if (typeof item.url === "string" && item.url.length > 0) {
       next.url = item.url;
     }
@@ -387,36 +401,6 @@ async function describeIncomingImage(
   } catch (error) {
     console.warn("[ProcessMedia] image reading failed:", error);
     return null;
-  }
-}
-
-function inferExtension(filename: string | undefined, mimeType: string): string {
-  const fileMatch = filename?.match(/(\.[a-z0-9]+)$/i);
-  if (fileMatch) {
-    return fileMatch[1].toLowerCase();
-  }
-
-  switch (mimeType.split(";")[0].trim().toLowerCase()) {
-    case "image/jpeg":
-      return ".jpg";
-    case "image/png":
-      return ".png";
-    case "image/webp":
-      return ".webp";
-    case "image/gif":
-      return ".gif";
-    case "audio/mpeg":
-      return ".mp3";
-    case "audio/ogg":
-      return ".ogg";
-    case "audio/wav":
-      return ".wav";
-    case "video/mp4":
-      return ".mp4";
-    case "application/pdf":
-      return ".pdf";
-    default:
-      return "";
   }
 }
 

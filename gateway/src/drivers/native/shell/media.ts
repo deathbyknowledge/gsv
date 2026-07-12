@@ -1,5 +1,6 @@
 import { defineCommand, type Command, type CommandContext, type ExecResult } from "just-bash";
 import type { GsvFs } from "../../../fs/gsv-fs";
+import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 import {
   handleAiImageGenerate,
   handleAiImageRead,
@@ -7,7 +8,6 @@ import {
   handleAiTranscriptionCreate,
 } from "../../../kernel/ai";
 import type { KernelContext } from "../../../kernel/context";
-import { decodeBase64Bytes, encodeBase64Bytes } from "../../../shared/base64";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 type ParsedArgs = {
@@ -73,16 +73,14 @@ async function runImg2Txt(
 
   const result = await handleAiImageRead({
     image: {
-      data: encodeBase64Bytes(bytes),
       mimeType,
       filename: pathName(path),
-      size: bytes.byteLength,
     },
     prompt: optionValue(parsed, "prompt"),
     model: optionValue(parsed, "model"),
     inputFormat: normalizeInputFormatOption(optionValue(parsed, "input-format")),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
-  }, ctx);
+  }, ctx, bodyFromBytes(bytes));
 
   if (hasOption(parsed, "json")) {
     return okJson(result);
@@ -109,7 +107,7 @@ async function runTxt2Img(
   const prompt = readTextArgument(parsed.positionals, shellCtx, "prompt");
   const timeoutMs = parsePositiveIntOption(optionValue(parsed, "timeout-ms"), "--timeout-ms");
 
-  const result = await handleAiImageGenerate({
+  const response = await handleAiImageGenerate({
     prompt,
     model: optionValue(parsed, "model"),
     size: optionValue(parsed, "size"),
@@ -117,14 +115,16 @@ async function runTxt2Img(
     format: optionValue(parsed, "format"),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
   }, ctx);
-  if (!result.image.data || result.image.size <= 0) {
+  const result = response.data;
+  if (!response.body || result.image.size <= 0) {
+    await response.body?.stream.cancel().catch(() => {});
     throw new Error(result.url
       ? `image generation returned a URL instead of inline image data: ${result.url}`
       : "image generation returned no image data");
   }
 
   const outputPath = resolvePath(shellCtx, out);
-  await fs.writeFile(outputPath, base64ToBytes(result.image.data));
+  await fs.writeFile(outputPath, await bodyToBytes(response.body));
 
   if (hasOption(parsed, "json")) {
     return okJson({
@@ -167,15 +167,13 @@ async function runStt(
 
   const result = await handleAiTranscriptionCreate({
     audio: {
-      data: encodeBase64Bytes(bytes),
       mimeType,
       filename: pathName(path),
-      size: bytes.byteLength,
     },
     language: optionValue(parsed, "language"),
     prompt: optionValue(parsed, "prompt"),
     mode: hasOption(parsed, "translate") ? "translate" : "transcribe",
-  }, ctx);
+  }, ctx, bodyFromBytes(bytes));
 
   if (hasOption(parsed, "json")) {
     return okJson(result);
@@ -204,7 +202,7 @@ async function runTts(
   const bitRate = parsePositiveIntOption(optionValue(parsed, "bit-rate"), "--bit-rate");
   const encoding = optionValue(parsed, "encoding") ?? optionValue(parsed, "format");
 
-  const result = await handleAiSpeechCreate({
+  const response = await handleAiSpeechCreate({
     text,
     textFormat: hasOption(parsed, "plain") ? "plain" : hasOption(parsed, "markdown") ? "markdown" : undefined,
     model: optionValue(parsed, "model"),
@@ -215,17 +213,19 @@ async function runTts(
     ...(sampleRate !== undefined ? { sampleRate } : {}),
     ...(bitRate !== undefined ? { bitRate } : {}),
   }, ctx);
+  const result = response.data;
   if (result.skipped) {
     return hasOption(parsed, "json")
       ? okJson({ output: null, skipped: true, provider: result.provider, model: result.model })
       : ok("skipped\n");
   }
-  if (!result.audio.data || result.audio.size <= 0) {
+  if (!response.body || result.audio.size <= 0) {
+    await response.body?.stream.cancel().catch(() => {});
     throw new Error("speech synthesis returned no audio data");
   }
 
   const outputPath = resolvePath(shellCtx, out);
-  await fs.writeFile(outputPath, base64ToBytes(result.audio.data));
+  await fs.writeFile(outputPath, await bodyToBytes(response.body));
 
   if (hasOption(parsed, "json")) {
     return okJson({
@@ -342,11 +342,6 @@ function readTextArgument(positionals: string[], ctx: CommandContext, label: str
 
 function resolvePath(ctx: CommandContext, path: string): string {
   return ctx.fs.resolvePath(ctx.cwd, path);
-}
-
-function base64ToBytes(value: string): Uint8Array {
-  const base64 = value.includes(",") ? value.slice(value.indexOf(",") + 1) : value;
-  return decodeBase64Bytes(base64);
 }
 
 function inferImageMimeType(path: string): string | undefined {

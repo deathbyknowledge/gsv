@@ -10,6 +10,7 @@ import {
   handleAdapterStatus,
 } from "./adapter-handlers";
 import { sendFrameToProcess } from "../shared/utils";
+import { bodyToBytes } from "@humansandmachines/gsv/protocol";
 
 vi.mock("../shared/utils", () => ({
   sendFrameToProcess: vi.fn(),
@@ -1136,6 +1137,183 @@ describe("adapter lifecycle handlers", () => {
         }),
       }),
     );
+  });
+
+  it("stores adapter media before delivering proc.send", async () => {
+    sendFrameToProcessMock
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "history-1",
+        ok: true,
+        data: { pendingHil: null },
+      } as any)
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "media-1",
+        ok: true,
+        data: {
+          ok: true,
+          media: {
+            type: "image",
+            mimeType: "image/png",
+            key: "var/media/1000/pid-1/image",
+            size: 3,
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "send-1",
+        ok: true,
+        data: { ok: true, status: "started", runId: "run-1" },
+      } as any);
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: {
+        adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
+      },
+    }, { upsert: vi.fn() });
+
+    await handleAdapterInbound({
+      adapter: "whatsapp",
+      accountId: "primary",
+      message: {
+        messageId: "msg-media",
+        surface: { kind: "dm", id: "dm-1" },
+        actor: { id: "wa:+123" },
+        text: "photo",
+        media: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+      },
+    }, ctx);
+
+    const upload = sendFrameToProcessMock.mock.calls[1]?.[1];
+    expect(upload).toMatchObject({
+      call: "proc.media.write",
+      args: { type: "image", mimeType: "image/png" },
+    });
+    expect(upload?.args).not.toHaveProperty("size");
+    expect(upload?.body && [...await bodyToBytes(upload.body)]).toEqual([1, 2, 3]);
+    expect(sendFrameToProcessMock.mock.calls[2]?.[1]).toMatchObject({
+      call: "proc.send",
+      args: {
+        media: [{
+          type: "image",
+          mimeType: "image/png",
+          key: "var/media/1000/pid-1/image",
+          size: 3,
+        }],
+      },
+    });
+  });
+
+  it("rolls back adapter uploads when another upload fails", async () => {
+    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+      if (frame.call === "proc.history") {
+        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
+      }
+      if (frame.call === "proc.media.write" && frame.args.filename === "good.png") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            media: {
+              type: "image",
+              mimeType: "image/png",
+              key: "var/media/1000/pid-1/good",
+              size: 1,
+            },
+          },
+        };
+      }
+      if (frame.call === "proc.media.write") {
+        return { type: "res", id: frame.id, ok: true, data: { ok: false, error: "upload failed" } };
+      }
+      if (frame.call === "proc.media.delete") {
+        return { type: "res", id: frame.id, ok: true, data: { ok: true, key: frame.args.key } };
+      }
+      throw new Error(`Unexpected call: ${frame.call}`);
+    });
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: {
+        adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
+      },
+    }, { upsert: vi.fn() });
+
+    await expect(handleAdapterInbound({
+      adapter: "whatsapp",
+      accountId: "primary",
+      message: {
+        messageId: "msg-media-rollback",
+        surface: { kind: "dm", id: "dm-1" },
+        actor: { id: "wa:+123" },
+        text: "photos",
+        media: [
+          { type: "image", mimeType: "image/png", filename: "good.png", data: "AQ==" },
+          { type: "image", mimeType: "image/png", filename: "bad.png", data: "Ag==" },
+        ],
+      },
+    }, ctx)).rejects.toThrow("upload failed");
+
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith("pid-1", expect.objectContaining({
+      call: "proc.media.delete",
+      args: { pid: "pid-1", key: "var/media/1000/pid-1/good" },
+    }));
+    expect(sendFrameToProcessMock.mock.calls.some(([, frame]) => frame.call === "proc.send")).toBe(false);
+  });
+
+  it("rolls back adapter uploads when proc.send fails", async () => {
+    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+      if (frame.call === "proc.history") {
+        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
+      }
+      if (frame.call === "proc.media.write") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            media: {
+              type: "image",
+              mimeType: "image/png",
+              key: "var/media/1000/pid-1/staged",
+              size: 1,
+            },
+          },
+        };
+      }
+      if (frame.call === "proc.send") {
+        return { type: "res", id: frame.id, ok: false, error: { code: 500, message: "delivery failed" } };
+      }
+      if (frame.call === "proc.media.delete") {
+        return { type: "res", id: frame.id, ok: true, data: { ok: true, key: frame.args.key } };
+      }
+      throw new Error(`Unexpected call: ${frame.call}`);
+    });
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: {
+        adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
+      },
+    }, { upsert: vi.fn() });
+
+    const result = await handleAdapterInbound({
+      adapter: "whatsapp",
+      accountId: "primary",
+      message: {
+        messageId: "msg-media-send-fail",
+        surface: { kind: "dm", id: "dm-1" },
+        actor: { id: "wa:+123" },
+        text: "photo",
+        media: [{ type: "image", mimeType: "image/png", data: "AQ==" }],
+      },
+    }, ctx);
+
+    expect(result).toEqual({ ok: false, error: "delivery failed" });
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith("pid-1", expect.objectContaining({
+      call: "proc.media.delete",
+      args: { pid: "pid-1", key: "var/media/1000/pid-1/staged" },
+    }));
   });
 
   it("adapter.inbound accepts approve in dm while a confirmation is pending", async () => {

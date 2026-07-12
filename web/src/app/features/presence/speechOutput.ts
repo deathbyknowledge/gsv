@@ -1,6 +1,9 @@
 import { normalizeSpeechText } from "@humansandmachines/gsv/protocol";
-import type { AiSpeechCreateResult } from "@humansandmachines/gsv/protocol";
 import type { GSVClient } from "@humansandmachines/gsv/client";
+import {
+  requestSpeechAudio,
+  type SpeechAudioResponse,
+} from "../../services/gateway/mediaRequests";
 import { SPEECH_PREFETCH_CONCURRENCY } from "./constants";
 import { formatError } from "./display";
 import { chunkSpeechText, selectSpeechPrefix } from "./speechText";
@@ -14,7 +17,7 @@ import {
   recordVoiceTimingFailure,
 } from "./voiceTiming";
 
-type PresenceSpeechClient = Pick<GSVClient, "ai" | "isConnected">;
+type PresenceSpeechClient = Pick<GSVClient, "isConnected" | "request">;
 
 type PresenceSpeechOutputOptions = {
   gatewayClient: PresenceSpeechClient;
@@ -100,7 +103,7 @@ export function createPresenceSpeechOutput(options: PresenceSpeechOutputOptions)
     const attempt = ++speechAttempt;
 
     try {
-      const pendingSpeech = new Map<number, Promise<AiSpeechCreateResult>>();
+      const pendingSpeech = new Map<number, Promise<SpeechAudioResponse>>();
       let nextRequestIndex = 0;
       const ensurePrefetch = () => {
         while (
@@ -238,21 +241,21 @@ export function createPresenceSpeechOutput(options: PresenceSpeechOutputOptions)
     chunk: SpeechChunk,
     attempt: number,
     timing?: VoiceTimingTrace,
-  ): Promise<AiSpeechCreateResult> {
+  ): Promise<SpeechAudioResponse> {
     if (attempt !== speechAttempt) {
       throw new Error("Speech cancelled");
     }
     const requestedAt = Date.now();
     markVoiceTiming(timing, chunk.index === 0 ? "speech_first_chunk_requested" : "speech_chunk_requested");
-    const result = await gatewayClient.ai.speech.create({
+    const response = await requestSpeechAudio(gatewayClient, {
       text: chunk.text,
     });
-    recordVoiceTimingChunkReady(timing, chunk, requestedAt, result);
-    return result;
+    recordVoiceTimingChunkReady(timing, chunk, requestedAt, response.result);
+    return response;
   }
 
   function playSpeechChunk(
-    result: AiSpeechCreateResult,
+    response: SpeechAudioResponse,
     chunk: SpeechChunk,
     attempt: number,
     timing?: VoiceTimingTrace,
@@ -262,12 +265,13 @@ export function createPresenceSpeechOutput(options: PresenceSpeechOutputOptions)
         resolve();
         return;
       }
-      if (result.skipped || result.audio.size <= 0 || !result.audio.data) {
+      if (response.result.skipped || response.result.audio.size <= 0 || !response.audio) {
         resolve();
         return;
       }
 
-      const audio = new Audio(result.audio.data);
+      const source = URL.createObjectURL(response.audio);
+      const audio = new Audio(source);
       let settled = false;
       let cancelPlayback: (() => void) | null = null;
       const cleanup = () => {
@@ -277,9 +281,7 @@ export function createPresenceSpeechOutput(options: PresenceSpeechOutputOptions)
         if (speechAudio === audio) {
           speechAudio = null;
         }
-        if (audio.src.startsWith("blob:")) {
-          URL.revokeObjectURL(audio.src);
-        }
+        URL.revokeObjectURL(source);
         if (speechPlaybackCancel === cancelPlayback) {
           speechPlaybackCancel = null;
         }

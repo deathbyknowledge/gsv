@@ -16,8 +16,8 @@ import {
   type AudioSpeechResult,
 } from "./speech";
 import {
-  base64DataFromBytes,
-  base64DataFromString,
+  binaryDataFromBase64,
+  binaryDataFromBytes,
   decodeBase64Bytes,
   normalizeBase64Data,
 } from "../shared/base64";
@@ -50,9 +50,8 @@ export type ImageGenerationRequest = {
 };
 
 export type ImageGenerationResult = {
-  data: string;
+  bytes?: Uint8Array;
   mimeType: string;
-  size: number;
   provider: string;
   model: string;
   revisedPrompt?: string;
@@ -218,7 +217,7 @@ async function synthesizeSpeechWithOpenAi(
     "OpenAI speech synthesis",
   );
   await throwIfNotOk(response, "OpenAI speech synthesis");
-  const audio = base64DataFromBytes(
+  const audio = binaryDataFromBytes(
     await response.arrayBuffer(),
     response.headers.get("content-type") || mimeTypeForOpenAiSpeechFormat(format),
   );
@@ -341,25 +340,25 @@ async function normalizeImageGenerationResponse(
   fallbackMimeType: string,
 ): Promise<Omit<ImageGenerationResult, "provider" | "model"> | null> {
   if (response instanceof Response) {
-    return base64DataFromBytes(
+    return binaryDataFromBytes(
       await response.arrayBuffer(),
       response.headers.get("content-type") || fallbackMimeType,
     );
   }
   if (response instanceof ReadableStream) {
-    return base64DataFromBytes(await new Response(response).arrayBuffer(), fallbackMimeType);
+    return binaryDataFromBytes(await new Response(response).arrayBuffer(), fallbackMimeType);
   }
   if (response instanceof ArrayBuffer) {
-    return base64DataFromBytes(response, fallbackMimeType);
+    return binaryDataFromBytes(response, fallbackMimeType);
   }
   if (ArrayBuffer.isView(response)) {
-    return base64DataFromBytes(response, fallbackMimeType);
+    return binaryDataFromBytes(response, fallbackMimeType);
   }
   if (response instanceof Blob) {
-    return base64DataFromBytes(await response.arrayBuffer(), response.type || fallbackMimeType);
+    return binaryDataFromBytes(await response.arrayBuffer(), response.type || fallbackMimeType);
   }
   if (typeof response === "string" && response.trim().length > 0) {
-    return base64DataFromString(response.trim(), fallbackMimeType);
+    return binaryDataFromBase64(response.trim(), fallbackMimeType);
   }
   if (!response || typeof response !== "object") {
     return null;
@@ -386,7 +385,7 @@ async function normalizeImageGenerationResponse(
     const mimeType =
       firstString(record.mimeType, record.mime_type, record.contentType, record.content_type)
       || fallbackMimeType;
-    const image = base64DataFromString(base64, mimeType);
+    const image = binaryDataFromBase64(base64, mimeType);
     if (!image) {
       return null;
     }
@@ -400,9 +399,7 @@ async function normalizeImageGenerationResponse(
   const url = firstString(record.url);
   if (url) {
     return {
-      data: "",
       mimeType: "",
-      size: 0,
       url,
       ...(firstString(record.revised_prompt) ? { revisedPrompt: firstString(record.revised_prompt) } : {}),
     };
