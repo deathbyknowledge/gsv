@@ -107,7 +107,7 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/image/read/api_key": "",
   "config/ai/image/read/input_format": "auto",
   "config/ai/image/read/max_bytes": "10485760",
-  "config/ai/image/read/max_tokens": "512",
+  "config/ai/image/read/max_tokens": "8192",
   "config/ai/image/read/timeout_ms": "30000",
   "config/ai/image/read/prompt": "Describe this image for an AI assistant that cannot see it. Include visible text, UI details, objects, people, layout, and any information needed to answer follow-up questions.",
   "config/ai/image/generation/provider": "workers-ai",

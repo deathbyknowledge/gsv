@@ -1734,14 +1734,10 @@ describe("handleAiImageRead", () => {
     expect(result.model).toBe(DEFAULT_IMAGE_READING_MODEL);
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
       DEFAULT_IMAGE_READING_MODEL,
-      expect.objectContaining({
+      {
         max_completion_tokens: DEFAULT_IMAGE_READING_MAX_TOKENS,
-        chat_template_kwargs: {
-          enable_thinking: false,
-          clear_thinking: true,
-        },
         messages: expect.any(Array),
-      }),
+      },
     );
   });
 
