@@ -32,6 +32,7 @@ import type {
 } from "../domain/consoleModels";
 import { modelProfileIdFromOptionValue } from "../domain/consoleAi";
 import { isSensitiveSettingKey } from "../domain/consoleSettings";
+import { requestFsRead } from "../../../services/gateway/fsRead";
 export type { AgentApprovalAction } from "../domain/consoleAgentBehavior";
 
 export const DEFAULT_CONSOLE_ADAPTERS = ["whatsapp", "discord", "telegram"] as const;
@@ -431,7 +432,7 @@ export async function runConsoleProcessAction(
 }
 
 export async function loadConsoleAgentContext(
-  client: Pick<GSVClient, "call">,
+  client: Pick<GSVClient, "request">,
   username: string,
 ): Promise<ConsoleAgentContextFile[]> {
   const normalizedUsername = normalizeContextUsername(username);
@@ -440,26 +441,17 @@ export async function loadConsoleAgentContext(
   }
 
   const dir = contextDir(normalizedUsername);
-  const listing = await client.call("fs.read", { path: dir }) as {
-    ok?: boolean;
-    files?: unknown;
-    error?: string;
-  };
-  if (listing.ok === false) {
+  const listing = await requestFsRead(client, { path: dir });
+  if (!listing.ok || !("files" in listing)) {
     return [];
   }
 
-  const names = Array.isArray(listing.files)
-    ? listing.files.filter((name): name is string => typeof name === "string" && name.endsWith(".md")).sort()
-    : [];
+  const names = listing.files.filter((name) => name.endsWith(".md")).sort();
   const files: ConsoleAgentContextFile[] = [];
 
   for (const name of names) {
-    const result = await client.call("fs.read", { path: `${dir}/${name}` }) as {
-      ok?: boolean;
-      content?: unknown;
-    };
-    if (result.ok === false || typeof result.content !== "string") {
+    const result = await requestFsRead(client, { path: `${dir}/${name}` });
+    if (!result.ok || !("kind" in result) || result.kind !== "text") {
       continue;
     }
     const content = stripLineNumbers(result.content);

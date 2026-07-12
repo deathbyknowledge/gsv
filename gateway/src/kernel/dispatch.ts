@@ -17,10 +17,7 @@ import type {
   ResponseFrame,
   ResponseOkFrame,
 } from "../protocol/frames";
-import type {
-  SysUpdateArgs,
-  SysUpdateResult,
-} from "@humansandmachines/gsv/protocol";
+import type { SysUpdateArgs, SysUpdateResult } from "@humansandmachines/gsv/protocol";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
@@ -262,8 +259,12 @@ async function dispatchNative(
 
     switch (frame.call) {
       case "fs.read":
-        data = await handleFsRead(frame.args, ctx);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleFsRead(frame.args, ctx),
+        };
       case "fs.write":
         data = await handleFsWrite(frame.args, ctx);
         break;
@@ -296,8 +297,12 @@ async function dispatchNative(
         break;
 
       case "net.fetch":
-        data = await handleNetFetch(frame.args, ctx);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleNetFetch(frame.args, ctx, frame.body),
+        };
 
       case "app.open":
         data = await handleAppOpen(frame.args, ctx);
@@ -316,8 +321,12 @@ async function dispatchNative(
         break;
 
       case "codemode.run":
-        data = await forwardToProcess(frame, ctx);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await forwardToProcess(frame, ctx),
+        };
 
       case "proc.list":
         data = handleProcList(frame.args, ctx);
@@ -339,6 +348,7 @@ async function dispatchNative(
       case "proc.ai.config.get":
       case "proc.ai.config.set":
       case "proc.media.read":
+      case "proc.media.write":
       case "proc.conversation.open":
       case "proc.conversation.list":
       case "proc.conversation.get":
@@ -354,8 +364,12 @@ async function dispatchNative(
       case "proc.conversation.generations":
       case "proc.conversation.generation.manifest":
       case "proc.reset":
-        data = await forwardToProcess(frame, ctx);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await forwardToProcess(frame, ctx),
+        };
       case "proc.ipc.deliver":
         return errFrame(frame.id, 403, "proc.ipc.deliver is kernel-only");
       case "proc.setidentity":
@@ -451,17 +465,25 @@ async function dispatchNative(
         data = await handleAiTextGenerate(frame.args, ctx, deps);
         break;
       case "ai.transcription.create":
-        data = await handleAiTranscriptionCreate(frame.args, ctx);
+        data = await handleAiTranscriptionCreate(frame.args, ctx, frame.body);
         break;
       case "ai.image.read":
-        data = await handleAiImageRead(frame.args, ctx);
+        data = await handleAiImageRead(frame.args, ctx, frame.body);
         break;
       case "ai.image.generate":
-        data = await handleAiImageGenerate(frame.args, ctx);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleAiImageGenerate(frame.args, ctx),
+        };
       case "ai.speech.create":
-        data = await handleAiSpeechCreate(frame.args, ctx);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleAiSpeechCreate(frame.args, ctx),
+        };
 
       // --- sys.* ---
       case "sys.connect":

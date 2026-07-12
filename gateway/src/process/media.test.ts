@@ -24,6 +24,7 @@ vi.mock("../inference/pi-ai", () => {
 });
 
 import { completePiAiSimple } from "../inference/pi-ai";
+import type { ProcMediaInput } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_IMAGE_READING_MODEL,
@@ -42,6 +43,18 @@ function pidForTest(name: string): string {
   return pid;
 }
 
+async function storedMedia(
+  pid: string,
+  input: Omit<ProcMediaInput, "key" | "size">,
+): Promise<ProcMediaInput> {
+  const key = `var/media/0/${pid}/${crypto.randomUUID()}`;
+  const bytes = new Uint8Array([1, 2, 3]);
+  await env.STORAGE.put(key, bytes, {
+    httpMetadata: { contentType: input.mimeType },
+  });
+  return { ...input, key, size: bytes.byteLength };
+}
+
 afterEach(async () => {
   for (const pid of touchedPids) {
     await deleteProcessMedia(env.STORAGE, 0, pid);
@@ -52,6 +65,7 @@ afterEach(async () => {
 
 describe("process media", () => {
   it("transcribes incoming audio with Workers AI before storing metadata", async () => {
+    const pid = pidForTest("transcribe");
     const ai: AudioTranscriptionBinding = {
       run: vi.fn(async () => ({
         text: "voice note transcript",
@@ -62,14 +76,13 @@ describe("process media", () => {
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
       0,
-      pidForTest("transcribe"),
+      pid,
       [
-        {
+        await storedMedia(pid, {
           type: "audio",
           mimeType: "audio/ogg",
-          data: "AQID",
           filename: "voice.ogg",
-        },
+        }),
       ],
       { ai },
     );
@@ -90,6 +103,7 @@ describe("process media", () => {
   });
 
   it("keeps audio media when transcription fails", async () => {
+    const pid = pidForTest("transcribe-fail");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const ai: AudioTranscriptionBinding = {
       run: vi.fn(async () => {
@@ -100,14 +114,13 @@ describe("process media", () => {
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
       0,
-      pidForTest("transcribe-fail"),
+      pid,
       [
-        {
+        await storedMedia(pid, {
           type: "audio",
           mimeType: "audio/ogg",
-          data: "AQID",
           filename: "voice.ogg",
-        },
+        }),
       ],
       { ai },
     );
@@ -122,6 +135,7 @@ describe("process media", () => {
   });
 
   it("does not retranscribe audio that already has a transcript", async () => {
+    const pid = pidForTest("existing-transcript");
     const ai: AudioTranscriptionBinding = {
       run: vi.fn(async () => ({ text: "ignored" })),
     };
@@ -129,15 +143,14 @@ describe("process media", () => {
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
       0,
-      pidForTest("existing-transcript"),
+      pid,
       [
-        {
+        await storedMedia(pid, {
           type: "audio",
           mimeType: "audio/ogg",
-          data: "AQID",
           filename: "voice.ogg",
           transcription: "existing transcript",
-        },
+        }),
       ],
       { ai },
     );
@@ -148,6 +161,7 @@ describe("process media", () => {
   });
 
   it("describes incoming images with the configured image reader", async () => {
+    const pid = pidForTest("image-read");
     const ai: ImageReadingBinding = {
       run: vi.fn(async () => ({
         description: "a screenshot of a settings page",
@@ -157,14 +171,13 @@ describe("process media", () => {
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
       0,
-      pidForTest("image-read"),
+      pid,
       [
-        {
+        await storedMedia(pid, {
           type: "image",
           mimeType: "image/png",
-          data: "AQID",
           filename: "settings.png",
-        },
+        }),
       ],
       {
         ai: ai as AudioTranscriptionBinding & ImageReadingBinding,
@@ -202,6 +215,7 @@ describe("process media", () => {
   });
 
   it("supports legacy raw image Workers AI models", async () => {
+    const pid = pidForTest("image-read-legacy");
     const ai: ImageReadingBinding = {
       run: vi.fn(async () => ({
         description: "a legacy image model description",
@@ -211,14 +225,13 @@ describe("process media", () => {
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
       0,
-      pidForTest("image-read-legacy"),
+      pid,
       [
-        {
+        await storedMedia(pid, {
           type: "image",
           mimeType: "image/png",
-          data: "AQID",
           filename: "settings.png",
-        },
+        }),
       ],
       {
         ai: ai as AudioTranscriptionBinding & ImageReadingBinding,
@@ -242,17 +255,17 @@ describe("process media", () => {
   });
 
   it("routes non-Workers image readers through pi-ai providers", async () => {
+    const pid = pidForTest("image-read-piai");
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
       0,
-      pidForTest("image-read-piai"),
+      pid,
       [
-        {
+        await storedMedia(pid, {
           type: "image",
           mimeType: "image/png",
-          data: "AQID",
           filename: "settings.png",
-        },
+        }),
       ],
       {
         imageReadingProvider: "openai",
@@ -288,6 +301,7 @@ describe("process media", () => {
   });
 
   it("keeps image media when image reading fails", async () => {
+    const pid = pidForTest("image-read-fail");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const ai: ImageReadingBinding = {
       run: vi.fn(async () => {
@@ -298,14 +312,13 @@ describe("process media", () => {
     const raw = await storeIncomingProcessMedia(
       env.STORAGE,
       0,
-      pidForTest("image-read-fail"),
+      pid,
       [
-        {
+        await storedMedia(pid, {
           type: "image",
           mimeType: "image/png",
-          data: "AQID",
           filename: "settings.png",
-        },
+        }),
       ],
       { ai: ai as AudioTranscriptionBinding & ImageReadingBinding },
     );

@@ -1,12 +1,12 @@
 import type { AiTranscriptionCreateResult } from "@humansandmachines/gsv/protocol";
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import {
-  blobToDataUrl,
   canUseAmbientMode,
   canUseBrowserVoiceRecorder,
   presenceRecordingFilename,
   totalBlobSize,
 } from "./audio";
+import { requestAudioTranscription } from "../../services/gateway/mediaRequests";
 import { AMBIENT_MIN_SEGMENT_BYTES, AMBIENT_MIN_SEGMENT_MS } from "./constants";
 import {
   appendTranscript,
@@ -34,7 +34,7 @@ import {
   recordVoiceTimingFailure,
 } from "./voiceTiming";
 
-type PresenceGsvClient = Pick<GSVClient, "ai" | "isConnected" | "onSignal" | "onStatus" | "proc">;
+type PresenceGsvClient = Pick<GSVClient, "isConnected" | "onSignal" | "onStatus" | "proc" | "request">;
 
 export type PresenceLogEntry = {
   id: string;
@@ -418,15 +418,12 @@ export class PresenceController {
   }
 
   private async transcribeBlob(blob: Blob, mimeType: string, startedAt = Date.now()): Promise<AiTranscriptionCreateResult> {
-    const data = await blobToDataUrl(blob);
-    const result = await this.gatewayClient.ai.transcription.create({
+    const result = await requestAudioTranscription(this.gatewayClient, {
       audio: {
-        data,
         mimeType,
         filename: presenceRecordingFilename(mimeType, startedAt),
-        size: blob.size,
       },
-    });
+    }, blob);
     const text = typeof result.text === "string" ? result.text.trim() : "";
     if (!text) {
       throw new Error("No speech was transcribed");

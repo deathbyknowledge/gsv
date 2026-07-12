@@ -3,8 +3,6 @@ export type NetFetchArgs = {
   url: string;
   method?: string;
   headers?: Record<string, string>;
-  body?: string;
-  bodyBase64?: string;
   redirect?: "follow" | "error" | "manual";
   timeoutMs?: number;
 };
@@ -16,7 +14,4 @@ export type NetFetchResult = {
   statusText: string;
   headers: Record<string, string>;
   redirected: boolean;
-  bodyBase64: string;
-  bodyText?: string;
-  bodyBytes: number;
 };

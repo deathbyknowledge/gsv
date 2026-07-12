@@ -24,11 +24,14 @@ import type {
   AdapterSendResult,
   AdapterStatusArgs,
   AdapterStatusResult,
+  ProcMediaInput,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
+import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
-import type { RequestFrame } from "../protocol/frames";
+import type { RequestFrame, ResponseOkFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
+import { decodeBase64Bytes, normalizeBase64Data } from "../shared/base64";
 import { isVisibleAdapterTarget } from "./adapter-targets";
 import { ensureDefaultConversationExecutor } from "./agents";
 import { canOwnerRunAsAccount } from "./account-access";
@@ -656,6 +659,7 @@ export async function handleAdapterInbound(
   }
 
   const origin = adapterInteractionOrigin(adapter, accountId, message, actorId);
+  const media = await storeAdapterInboundMedia(pid, message.media);
   const response = await sendFrameToProcess(pid, {
     type: "req",
     id: crypto.randomUUID(),
@@ -663,7 +667,7 @@ export async function handleAdapterInbound(
     args: {
       pid,
       message: message.text?.trim() || "",
-      media: message.media,
+      media,
       origin,
     },
   } as RequestFrame);
@@ -710,6 +714,56 @@ export async function handleAdapterInbound(
       queued,
     },
   };
+}
+
+async function storeAdapterInboundMedia(
+  pid: string,
+  media: AdapterInboundMessage["media"],
+): Promise<ProcMediaInput[] | undefined> {
+  if (!media?.length) {
+    return undefined;
+  }
+
+  return await Promise.all(media.map(async (item) => {
+    if (!item.data) {
+      return {
+        type: item.type,
+        mimeType: item.mimeType,
+        ...(item.url ? { url: item.url } : {}),
+        ...(item.filename ? { filename: item.filename } : {}),
+        ...(item.size !== undefined ? { size: item.size } : {}),
+        ...(item.duration !== undefined ? { duration: item.duration } : {}),
+        ...(item.transcription ? { transcription: item.transcription } : {}),
+      };
+    }
+
+    const bytes = decodeBase64Bytes(normalizeBase64Data(item.data));
+    const response = await sendFrameToProcess(pid, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.media.write",
+      args: {
+        pid,
+        type: item.type,
+        mimeType: item.mimeType,
+        size: bytes.byteLength,
+        ...(item.filename ? { filename: item.filename } : {}),
+        ...(item.duration !== undefined ? { duration: item.duration } : {}),
+        ...(item.transcription ? { transcription: item.transcription } : {}),
+      },
+      body: bodyFromBytes(bytes),
+    } as RequestFrame<"proc.media.write">);
+    if (!response || response.type !== "res" || !response.ok) {
+      throw new Error(response && response.type === "res" && !response.ok
+        ? response.error.message
+        : "No response while storing adapter media");
+    }
+    const result = (response as ResponseOkFrame<"proc.media.write">).data;
+    if (!result?.ok) {
+      throw new Error(result?.error || "Failed to store adapter media");
+    }
+    return result.media;
+  }));
 }
 
 export function handleAdapterStateUpdate(

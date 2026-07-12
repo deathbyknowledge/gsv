@@ -21,7 +21,12 @@ import {
   applyChatLiveActivityToAgent,
   deriveChatLiveActivity,
 } from "../domain/activity";
-import type { ChatHilDecision, ChatProcessSummary, ChatRunState } from "../domain/processes";
+import type {
+  ChatHilDecision,
+  ChatMediaUpload,
+  ChatProcessSummary,
+  ChatRunState,
+} from "../domain/processes";
 import {
   useAbortChatProcess,
   useCompactChatConversation,
@@ -147,20 +152,7 @@ function formatConversationCostTooltip(context: ProcContextState | null | undefi
   return details.join(" · ");
 }
 
-type DraftAttachment = ProcMediaInput & MessageInputAttachment & {
-  previewUrl?: string;
-};
-
-function revokeDraftAttachment(attachment: DraftAttachment): void {
-  if (!attachment.previewUrl || typeof URL === "undefined") {
-    return;
-  }
-  URL.revokeObjectURL(attachment.previewUrl);
-}
-
-function revokeDraftAttachments(attachments: readonly DraftAttachment[]): void {
-  attachments.forEach(revokeDraftAttachment);
-}
+type DraftAttachment = ChatMediaUpload & MessageInputAttachment;
 
 function formatAttachmentSize(size: number | undefined): string {
   if (!size || size <= 0) {
@@ -190,17 +182,7 @@ function inferAttachmentType(file: File): ProcMediaInput["type"] {
   return "document";
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("Attachment could not be read."));
-    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
-    reader.readAsDataURL(file);
-  });
-}
-
-async function fileToDraftAttachment(file: File): Promise<DraftAttachment> {
-  const data = await readFileAsDataUrl(file);
+function fileToDraftAttachment(file: File): DraftAttachment {
   const mimeType = file.type || "application/octet-stream";
   const type = inferAttachmentType(file);
   const sizeLabel = formatAttachmentSize(file.size);
@@ -212,7 +194,7 @@ async function fileToDraftAttachment(file: File): Promise<DraftAttachment> {
     id: `${file.name}:${file.size}:${file.lastModified}:${randomId}`,
     type,
     mimeType,
-    data,
+    body: file,
     filename: file.name || undefined,
     size: file.size,
     label,
@@ -254,7 +236,6 @@ export function ChatDock({
   const [newTaskFocusKey, setNewTaskFocusKey] = useState(0);
   const [composerDraft, setComposerDraft] = useState("");
   const [branchNotice, setBranchNotice] = useState("");
-  const draftAttachmentsRef = useRef<DraftAttachment[]>([]);
   const activeProcessId = agent?.processId?.trim() ?? "";
   const startRunAs = agent?.runAs?.trim() ?? "";
   const hasActiveProcess = activeProcessId.length > 0;
@@ -304,10 +285,7 @@ export function ChatDock({
   }, [agentPanelOpen]);
 
   useEffect(() => {
-    setDraftAttachments((current) => {
-      revokeDraftAttachments(current);
-      return [];
-    });
+    setDraftAttachments([]);
     setAttachmentError("");
     setArchiveOpen(false);
     setSelectedArchiveSegmentId("");
@@ -326,16 +304,6 @@ export function ChatDock({
     const timer = setTimeout(() => setBranchNotice(""), 4000);
     return () => clearTimeout(timer);
   }, [branchNotice]);
-
-  useEffect(() => {
-    draftAttachmentsRef.current = draftAttachments;
-  }, [draftAttachments]);
-
-  useEffect(() => {
-    return () => {
-      revokeDraftAttachments(draftAttachmentsRef.current);
-    };
-  }, []);
 
   const activeAgent = useMemo(() => buildChatAgentViewModel({
     agent: effectiveAgent,
@@ -406,7 +374,7 @@ export function ChatDock({
   const inputDisabled = !hasActiveProcess && !canStartProcess && !processLookupLoading;
   const sendChatDraft = useCallback(async (
     message: string,
-    media: ProcMediaInput[] = [],
+    media: ChatMediaUpload[] = [],
   ): Promise<boolean> => {
     if ((!hasActiveProcess && !canStartProcess) || sendMessage.isPending || spawnProcess.isPending) {
       return false;
@@ -431,7 +399,14 @@ export function ChatDock({
       onSelectConversation?.("default");
     }
 
-    chatRuntime.appendOptimisticUserMessage(outgoingMessage, media);
+    chatRuntime.appendOptimisticUserMessage(outgoingMessage, media.map((item): ProcMediaInput => ({
+      type: item.type,
+      mimeType: item.mimeType,
+      ...(item.filename ? { filename: item.filename } : {}),
+      ...(item.size !== undefined ? { size: item.size } : {}),
+      ...(item.duration !== undefined ? { duration: item.duration } : {}),
+      ...(item.transcription ? { transcription: item.transcription } : {}),
+    })));
     setAttachmentError("");
     await sendMessage.mutateAsync({
       message: outgoingMessage,
@@ -567,37 +542,21 @@ export function ChatDock({
       return;
     }
     setAttachmentError("");
-    void Promise.all(Array.from(files).map(fileToDraftAttachment))
-      .then((attachments) => {
-        setDraftAttachments((current) => current.concat(attachments));
-      })
-      .catch((error) => {
-        setAttachmentError(errorMessage(error, "Attachment could not be read."));
-      });
+    setDraftAttachments((current) => current.concat(Array.from(files).map(fileToDraftAttachment)));
   };
 
   const removeAttachment = (attachmentId: string) => {
-    setDraftAttachments((current) => {
-      const next = current.filter((attachment) => {
-        if (attachment.id === attachmentId) {
-          revokeDraftAttachment(attachment);
-          return false;
-        }
-        return true;
-      });
-      return next;
-    });
+    setDraftAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
   };
 
   const handleSendMessage = async (message: string) => {
     const sentAttachments = draftAttachments;
-    const media = sentAttachments.map((attachment): ProcMediaInput => ({
+    const media = sentAttachments.map((attachment): ChatMediaUpload => ({
       type: attachment.type,
       mimeType: attachment.mimeType,
-      ...(attachment.data ? { data: attachment.data } : {}),
-      ...(attachment.url ? { url: attachment.url } : {}),
+      body: attachment.body,
       ...(attachment.filename ? { filename: attachment.filename } : {}),
-      ...(attachment.size ? { size: attachment.size } : {}),
+      size: attachment.size,
       ...(attachment.duration ? { duration: attachment.duration } : {}),
       ...(attachment.transcription ? { transcription: attachment.transcription } : {}),
     }));
@@ -621,7 +580,6 @@ export function ChatDock({
       }
       return;
     }
-    revokeDraftAttachments(sentAttachments);
   };
 
   const branchFromMessage = (messageId: number) => {

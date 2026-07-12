@@ -52,21 +52,6 @@ export function presenceRecordingFilename(mimeType: string, timestamp = Date.now
   return `presence-${stamp}.${extensionForVoiceMimeType(mimeType)}`;
 }
 
-export function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read audio"));
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        resolve(reader.result);
-        return;
-      }
-      reject(new Error("Failed to read audio"));
-    };
-    reader.readAsDataURL(blob);
-  });
-}
-
 export function currentRms(analyser: AnalyserNode, samples: Float32Array<ArrayBuffer>): number {
   analyser.getFloatTimeDomainData(samples);
   let sum = 0;

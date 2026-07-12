@@ -310,6 +310,12 @@ function buildKernelClient(env, props, kernelOverride) {{
       async request(call, args) {{
         return api.kernelRequest(appFrame, call, args);
       }},
+      async requestFrame(call, args, options) {{
+        if (typeof api.kernelRequestFrame !== "function") {{
+          throw new Error("kernel frame requests are unavailable");
+        }}
+        return api.kernelRequestFrame(appFrame, call, args, options);
+      }},
     }};
   }}
   if (env.KERNEL && typeof env.KERNEL.request === "function") {{
@@ -317,6 +323,9 @@ function buildKernelClient(env, props, kernelOverride) {{
   }}
   return {{
     async request() {{
+      throw new Error("kernel binding is unavailable");
+    }},
+    async requestFrame() {{
       throw new Error("kernel binding is unavailable");
     }},
   }};

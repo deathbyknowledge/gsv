@@ -10,6 +10,7 @@ import {
   handleAdapterStatus,
 } from "./adapter-handlers";
 import { sendFrameToProcess } from "../shared/utils";
+import { bodyToBytes } from "@humansandmachines/gsv/protocol";
 
 vi.mock("../shared/utils", () => ({
   sendFrameToProcess: vi.fn(),
@@ -1136,6 +1137,71 @@ describe("adapter lifecycle handlers", () => {
         }),
       }),
     );
+  });
+
+  it("stores adapter media before delivering proc.send", async () => {
+    sendFrameToProcessMock
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "history-1",
+        ok: true,
+        data: { pendingHil: null },
+      } as any)
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "media-1",
+        ok: true,
+        data: {
+          ok: true,
+          media: {
+            type: "image",
+            mimeType: "image/png",
+            key: "var/media/1000/pid-1/image",
+            size: 3,
+          },
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "send-1",
+        ok: true,
+        data: { ok: true, status: "started", runId: "run-1" },
+      } as any);
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: {
+        adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
+      },
+    }, { upsert: vi.fn() });
+
+    await handleAdapterInbound({
+      adapter: "whatsapp",
+      accountId: "primary",
+      message: {
+        messageId: "msg-media",
+        surface: { kind: "dm", id: "dm-1" },
+        actor: { id: "wa:+123" },
+        text: "photo",
+        media: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+      },
+    }, ctx);
+
+    const upload = sendFrameToProcessMock.mock.calls[1]?.[1];
+    expect(upload).toMatchObject({
+      call: "proc.media.write",
+      args: { type: "image", mimeType: "image/png", size: 3 },
+    });
+    expect(upload?.body && [...await bodyToBytes(upload.body)]).toEqual([1, 2, 3]);
+    expect(sendFrameToProcessMock.mock.calls[2]?.[1]).toMatchObject({
+      call: "proc.send",
+      args: {
+        media: [{
+          type: "image",
+          mimeType: "image/png",
+          key: "var/media/1000/pid-1/image",
+          size: 3,
+        }],
+      },
+    });
   });
 
   it("adapter.inbound accepts approve in dm while a confirmation is pending", async () => {

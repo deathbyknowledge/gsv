@@ -132,7 +132,17 @@ export function ChatMediaAttachment({ media, processId }: ChatMediaAttachmentPro
     args: { key, mimeType: chatMediaMimeType(media), ...(processId ? { pid: processId } : {}) },
     enabled: !inlineSource && key.length > 0 && processId.length > 0,
   });
-  const storedSource = mediaQuery.data?.dataUrl ?? "";
+  const [storedSource, setStoredSource] = useState("");
+  const storedBlob = mediaQuery.data?.blob;
+  useEffect(() => {
+    if (!storedBlob) {
+      setStoredSource("");
+      return undefined;
+    }
+    const source = URL.createObjectURL(storedBlob);
+    setStoredSource(source);
+    return () => URL.revokeObjectURL(source);
+  }, [storedBlob]);
   const source = inlineSource || chatMediaSource(media, storedSource);
   const kind = chatMediaKind(media);
   const filename = chatMediaFilename(media);

@@ -3,6 +3,8 @@ export const BINARY_FRAME_HEADER_BYTES = 5;
 export const BINARY_FRAME_DATA = 1 << 0;
 export const BINARY_FRAME_END = 1 << 1;
 export const BINARY_FRAME_ERROR = 1 << 2;
+/** The receiver no longer wants the peer's outgoing stream. */
+export const BINARY_FRAME_CANCEL = 1 << 3;
 
 export type BinaryFrame = {
   streamId: number;
@@ -46,7 +48,7 @@ export function parseBinaryFrame(data: ArrayBuffer | ArrayBufferView): BinaryFra
   return {
     streamId,
     flags: view.getUint8(4),
-    payload: bytes.slice(BINARY_FRAME_HEADER_BYTES),
+    payload: bytes.subarray(BINARY_FRAME_HEADER_BYTES),
   };
 }
 

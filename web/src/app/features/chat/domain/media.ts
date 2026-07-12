@@ -64,7 +64,7 @@ export function chatMediaSource(media: unknown, storedSource = ""): string {
       : `data:${chatMediaMimeType(media)};base64,${data}`;
     return safeMediaSourceUrl(dataUrl, ["data:"]);
   }
-  return storedSource ? safeMediaSourceUrl(storedSource, ["data:"]) : "";
+  return storedSource ? safeMediaSourceUrl(storedSource, ["blob:", "data:"]) : "";
 }
 
 export function formatChatMediaSize(size: number | null | undefined): string {

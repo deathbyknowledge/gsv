@@ -169,6 +169,37 @@ function rpc(port: MessagePort, method: string, payload?: unknown): Promise<unkn
   });
 }
 
+function waitForPortMessage(
+  port: MessagePort,
+  predicate: (value: unknown) => boolean,
+): Promise<unknown> {
+  return new Promise((resolve) => {
+    const listener = (event: MessageEvent<unknown>) => {
+      if (!predicate(event.data)) {
+        return;
+      }
+      port.removeEventListener("message", listener);
+      resolve(event.data);
+    };
+    port.addEventListener("message", listener);
+  });
+}
+
+async function rpcThroughListener(
+  port: MessagePort,
+  method: string,
+  payload?: unknown,
+  transfer: Transferable[] = [],
+): Promise<unknown> {
+  const id = `listener-${method}`;
+  const response = waitForPortMessage(port, (value) => (
+    (value as { type?: string; id?: string }).type === "rpc-result"
+    && (value as { id?: string }).id === id
+  ));
+  port.postMessage({ type: "rpc", id, method, payload }, transfer);
+  return await response;
+}
+
 describe("attachHostBridge", () => {
   it("rejects removed syscall bridge methods without calling the gateway client", async () => {
     const gatewayClient = createHostStatusClient();
@@ -417,6 +448,77 @@ describe("attachHostBridge", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain("outside the app session");
     expect(fetchMock).not.toHaveBeenCalled();
+
+    controller.destroy();
+    port.close();
+  });
+
+  it("relays binary package backend frames through the embedded host bridge", async () => {
+    class FakeBackendWebSocket extends EventTarget {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static CLOSING = 2;
+      static CLOSED = 3;
+      static instance: FakeBackendWebSocket;
+
+      readyState = FakeBackendWebSocket.CONNECTING;
+      binaryType = "blob";
+      sent: Array<string | ArrayBuffer> = [];
+
+      constructor() {
+        super();
+        FakeBackendWebSocket.instance = this;
+        queueMicrotask(() => {
+          this.readyState = FakeBackendWebSocket.OPEN;
+          this.dispatchEvent(new Event("open"));
+        });
+      }
+
+      send(data: string | ArrayBuffer): void {
+        this.sent.push(data);
+      }
+
+      close(): void {
+        this.readyState = FakeBackendWebSocket.CLOSED;
+      }
+
+      receive(data: string | ArrayBuffer): void {
+        this.dispatchEvent(new MessageEvent("message", { data }));
+      }
+    }
+    vi.stubGlobal("WebSocket", FakeBackendWebSocket);
+    const { controller, port } = await connectPackageBridge(createHostStatusClient());
+
+    const connected = await rpcThroughListener(port, "backend.connect", { boot: APP_SESSION }) as {
+      ok: boolean;
+      data?: { connectionId?: string };
+    };
+    expect(connected.ok).toBe(true);
+    const connectionId = connected.data?.connectionId;
+    expect(connectionId).toBeTruthy();
+    const socket = FakeBackendWebSocket.instance;
+    expect(socket.binaryType).toBe("arraybuffer");
+
+    const inbound = new Uint8Array([1, 2, 3]).buffer;
+    const inboundMessage = waitForPortMessage(port, (value) => (
+      (value as { type?: string }).type === "backend-message"
+    ));
+    socket.receive(inbound);
+    const relayed = await inboundMessage as { connectionId: string; data: ArrayBuffer };
+    expect(inbound.byteLength).toBe(0);
+    expect(relayed.connectionId).toBe(connectionId);
+    expect([...new Uint8Array(relayed.data)]).toEqual([1, 2, 3]);
+
+    const outbound = new Uint8Array([4, 5, 6]).buffer;
+    const sent = await rpcThroughListener(
+      port,
+      "backend.send",
+      { connectionId, data: outbound },
+      [outbound],
+    ) as { ok: boolean };
+    expect(sent.ok).toBe(true);
+    expect(outbound.byteLength).toBe(0);
+    expect([...new Uint8Array(socket.sent[0] as ArrayBuffer)]).toEqual([4, 5, 6]);
 
     controller.destroy();
     port.close();

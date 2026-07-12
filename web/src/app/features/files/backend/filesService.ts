@@ -15,8 +15,9 @@ import {
   normalizeFilesWrite,
 } from "../domain/normalization";
 import { detectPathStyle, normalizePath, normalizeTarget, targetArgs } from "../domain/paths";
+import { requestFsRead } from "../../../services/gateway/fsRead";
 
-export type FilesClient = Pick<GSVClient, "call">;
+export type FilesClient = Pick<GSVClient, "call" | "request">;
 
 export type FilesReadArgs = {
   target?: string | null;
@@ -53,7 +54,7 @@ function isOkPayload(payload: unknown): boolean {
 }
 
 async function readRawPathWithFallback(client: FilesClient, target: string, path: string): Promise<{ path: string; payload: unknown }> {
-  const payload = await client.call<unknown>("fs.read", targetArgs(target, { path }));
+  const payload = await requestFsRead(client, targetArgs(target, { path }));
   if (isOkPayload(payload) || target === "gsv") {
     return { path, payload };
   }
@@ -63,7 +64,7 @@ async function readRawPathWithFallback(client: FilesClient, target: string, path
     return { path, payload };
   }
 
-  const fallbackPayload = await client.call<unknown>("fs.read", targetArgs(target, { path: fallbackPath }));
+  const fallbackPayload = await requestFsRead(client, targetArgs(target, { path: fallbackPath }));
   if (isOkPayload(fallbackPayload)) {
     return { path: fallbackPath, payload: fallbackPayload };
   }
@@ -75,7 +76,7 @@ export async function readFilesPath(client: FilesClient, args: FilesReadArgs): P
   const target = normalizeTarget(args.target);
   const path = normalizePath(args.path, detectPathStyle(args.path));
   if (args.offset !== undefined || args.limit !== undefined) {
-    const payload = await client.call<unknown>("fs.read", targetArgs(target, {
+    const payload = await requestFsRead(client, targetArgs(target, {
       path,
       offset: args.offset,
       limit: args.limit,

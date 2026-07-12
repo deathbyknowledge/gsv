@@ -1,3 +1,4 @@
+import type { BinaryBody } from "@humansandmachines/gsv/protocol";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 
 export type ErrorShape = {
@@ -7,10 +8,7 @@ export type ErrorShape = {
   retryable?: boolean;
 };
 
-export type FrameBody = {
-  stream: ReadableStream<Uint8Array>;
-  length?: number;
-};
+export type FrameBody = BinaryBody;
 
 export type RequestFrame<S extends SyscallName = SyscallName> = {
   [K in S]: {
