@@ -6036,6 +6036,7 @@ describe("Process DO — mechanical", () => {
             rules: [{ match: "fs.read", action: "ask" }],
           },
         };
+        process.scheduleTick = vi.fn(async () => {});
         registerToolBlock(process, "run-hil-2", [
           { type: "toolCall", id: "call-hil-2", name: "Read", arguments: { path: "/root/secret.txt" } },
         ]);
