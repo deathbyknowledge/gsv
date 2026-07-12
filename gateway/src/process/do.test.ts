@@ -4092,7 +4092,7 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess("mech-ipc-killed-source", ROOT_IDENTITY);
 
       await stub.recvFrame(makeReq("proc.kill", { archive: false }));
-      await stub.recvFrame({
+      const late = await stub.recvFrame({
         type: "sig",
         signal: "ipc.timeout",
         payload: {
@@ -4106,12 +4106,17 @@ describe("Process DO — mechanical", () => {
           error: "IPC call timed out",
         },
       });
+      expect(late).toBeNull();
 
-      await runInDurableObject(stub, (instance: Process) => {
-        const process = instance as any;
-        expect(process.store.getMessages()).toEqual([]);
-        expect(process.currentRun).toBeNull();
-        expect(process.store.getValue("pid")).toBeNull();
+      await runInDurableObject(stub, (_instance: Process, state) => {
+        const tables = state.storage.sql.exec<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'table'",
+        ).toArray().map((row) => row.name);
+        expect(tables).not.toEqual(expect.arrayContaining([
+          "conversations",
+          "messages",
+          "process_kv",
+        ]));
       });
     });
 
@@ -7201,51 +7206,117 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.kill", () => {
-    it("clears conversation and runtime state so next send is not queued", async () => {
+    it("can dispose an executor whose identity initialization never completed", async () => {
+      const pid = "mech-kill-uninitialized";
+      const stub = await getProcessByPid(pid);
+
+      const killed = await stub.recvFrame(makeReq("proc.kill", { pid, archive: false }));
+      expect(killed).toMatchObject({
+        ok: true,
+        data: { ok: true, pid, archivedMessages: 0, archives: [] },
+      });
+      await expect(stub.recvFrame(
+        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY }),
+      )).resolves.toMatchObject({
+        ok: false,
+        error: { code: 410 },
+      });
+    });
+
+    it("does not tear down an active executor when run-finish delivery fails", async () => {
+      const pid = "mech-kill-finish-failure";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = { runId: "run-kill-failure", conversationId: "default" };
+        process.sendSignal = vi.fn(async () => {
+          throw new Error("finish route unavailable");
+        });
+
+        const response = await process.recvFrame(makeReq("proc.kill", { archive: false }));
+        expect(response).toMatchObject({
+          ok: false,
+          error: { message: "finish route unavailable" },
+        });
+        expect(process.isInitialized()).toBe(true);
+        expect(process.currentRun).toMatchObject({ runId: "run-kill-failure" });
+      });
+    });
+
+    it("finishes the active run and leaves the executor empty and dead", async () => {
       const pid = "mech-kill-runtime";
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const runId = "run-kill-runtime";
 
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.setValue("currentRun", JSON.stringify({ runId }));
-        store.register("dispatch-kill-1", "call-kill-1", runId, "fs.read", { path: "/tmp/test.txt" });
-        store.enqueue(runId, "queued before kill");
-        store.appendMessage("user", "hello before kill");
+      const killed = await runInDurableObject(stub, async (instance: Process, state) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = vi.fn(async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        });
+        process.currentRun = { runId, conversationId: "default" };
+        process.store.register(
+          "dispatch-kill-1",
+          "call-kill-1",
+          runId,
+          "fs.read",
+          { path: "/tmp/test.txt" },
+        );
+        process.store.enqueue("queued-kill", "queued before kill");
+        process.store.appendMessage("user", "hello before kill");
+        await state.storage.setAlarm(Date.now() + 60_000);
+
+        const response = await process.recvFrame(
+          makeReq("proc.kill", { archive: false }),
+        );
+        const tables = state.storage.sql.exec<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'table'",
+        ).toArray().map((row) => row.name);
+        return {
+          response,
+          emitted,
+          alarm: await state.storage.getAlarm(),
+          tables,
+          keys: [...(await state.storage.list()).keys()],
+        };
       });
 
-      const killRes = (await stub.recvFrame(
-        makeReq("proc.kill", { archive: false }),
-      )) as ResponseOkFrame;
-      expect(killRes.ok).toBe(true);
-      expect(killRes.data).toMatchObject({
+      expect(killed.response).toMatchObject({
         ok: true,
-        pid,
-        archivedMessages: 0,
-        archives: [],
+        data: {
+          ok: true,
+          pid,
+          archivedMessages: 0,
+          archives: [],
+        },
       });
-
-      // Kill wipes the executor entirely (the DO is fungible): no leftover run,
-      // queue, results, identity, or messages remain.
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        expect(store.getValue("currentRun")).toBeNull();
-        expect(store.queueSize()).toBe(0);
-        expect(store.getResults(runId)).toHaveLength(0);
-        expect(store.messageCount()).toBe(0);
-        expect(store.getValue("identity")).toBeNull();
+      expect(killed.emitted).toContainEqual({
+        signal: "proc.run.finished",
+        payload: expect.objectContaining({
+          pid,
+          runId,
+          status: "aborted",
+          reason: "process.kill",
+          aborted: true,
+          queuedCount: 0,
+        }),
       });
+      expect(killed.alarm).toBeNull();
+      expect(killed.keys).toEqual([]);
+      expect(killed.tables).not.toEqual(expect.arrayContaining([
+        "conversations",
+        "messages",
+        "process_kv",
+      ]));
 
-      // A fresh executor is established (as the kernel would on resume), then a
-      // send starts cleanly rather than being queued behind stale runtime state.
-      await stub.recvFrame(
-        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY, profile: DEFAULT_PROFILE }),
+      const reuse = await stub.recvFrame(
+        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY }),
       );
-      const sendRes = (await stub.recvFrame(
-        makeReq("proc.send", { message: "first after kill" }),
-      )) as ResponseOkFrame;
-      const sendData = sendRes.data as { queued?: boolean };
-      expect(sendData.queued).toBeUndefined();
+      expect(reuse).toMatchObject({
+        ok: false,
+        error: { code: 410, message: "Process no longer exists" },
+      });
     });
 
     it("archives all conversations before clearing killed process history", async () => {
@@ -7281,16 +7352,6 @@ describe("Process DO — mechanical", () => {
         expect(obj).not.toBeNull();
       }
 
-      // Kill wipes the executor: the DO storage is pristine afterwards (the
-      // durable transcript bytes live in the agent home, checked above). The
-      // default conversation is freshly re-initialised and the ad-hoc "build"
-      // conversation no longer exists in the wiped executor.
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        expect(store.totalMessageCount()).toBe(0);
-        expect(store.getConversation("default").generation).toBe(1);
-        expect(store.getConversation("build")).toBeNull();
-      });
     });
   });
 

@@ -31,7 +31,7 @@ pub(crate) async fn run_proc(
             prompt,
             parent_pid,
         } => {
-            let mut args = json!({});
+            let mut args = json!({ "fresh": true });
             if let Some(run_as) = run_as {
                 args["runAs"] = json!(run_as);
             }

@@ -1181,6 +1181,53 @@ describe("Kernel process device requests", () => {
 });
 
 describe("Kernel process runtime projection", () => {
+  it("waits for earlier process signals before acknowledging a run finish", async () => {
+    let releaseStarted!: () => void;
+    const startedBlocked = new Promise<void>((resolve) => {
+      releaseStarted = resolve;
+    });
+    const events: string[] = [];
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.pendingProcessSignals = new Map();
+    kernel.extractRunId = vi.fn((payload) => payload.runId);
+    kernel.updateProcessRuntimeFromSignal = vi.fn(() => true);
+    kernel.completeIpcCallsForProcessSignal = vi.fn();
+    kernel.handleProcessSignal = vi.fn(async (_pid: string, frame: { signal: string }) => {
+      events.push(`${frame.signal}:start`);
+      if (frame.signal === "proc.run.started") {
+        await startedBlocked;
+      }
+      events.push(`${frame.signal}:done`);
+    });
+
+    await kernel.recvFrame("proc-1", {
+      type: "sig",
+      signal: "proc.run.started",
+      payload: { runId: "run-1" },
+    });
+    await vi.waitFor(() => expect(events).toEqual(["proc.run.started:start"]));
+
+    let finishAcknowledged = false;
+    const finishing = kernel.recvFrame("proc-1", {
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: { runId: "run-1" },
+    }).then(() => {
+      finishAcknowledged = true;
+    });
+    await Promise.resolve();
+    expect(finishAcknowledged).toBe(false);
+
+    releaseStarted();
+    await finishing;
+    expect(events).toEqual([
+      "proc.run.started:start",
+      "proc.run.started:done",
+      "proc.run.finished:start",
+      "proc.run.finished:done",
+    ]);
+  });
+
   it("accepts a newer successor start and rejects an older reordered start", () => {
     const record = { activeRunId: "run-old", lastActiveAt: 100 };
     const updateRuntimeState = vi.fn((_pid: string, patch: Record<string, unknown>) => {

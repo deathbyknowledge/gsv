@@ -197,38 +197,68 @@ export async function handleProcSpawn(
 
   const interactive = args.interactive ?? true;
 
-  ctx.procs.spawn(pid, spawnIdentity, {
-    parentPid: parentPid ?? undefined,
-    ownerUid,
-    interactive,
-    label: args.label,
-    cwd: spawnIdentity.cwd,
-    contextFiles: args.assignment?.contextFiles ?? [],
-  });
-
-  // Each spawned process gets its own durable conversation so its transcript
-  // persists in the run-as agent's home, addressable independent of this
-  // (fungible) executor.
-  const conversation = ctx.conversations.create({
-    ownerUid,
-    agentUid: spawnIdentity.uid,
-    agentHome: spawnIdentity.home,
-    title: args.label ?? null,
-  });
-  ctx.conversations.setActivePid(conversation.conversationId, pid);
-
-  await sendFrameToProcess(pid, {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.setidentity",
-    args: {
-      pid,
-      identity: spawnIdentity,
+  let conversationId: string | null = null;
+  try {
+    ctx.procs.spawn(pid, spawnIdentity, {
+      parentPid: parentPid ?? undefined,
+      ownerUid,
       interactive,
-      assignment: args.assignment as ProcSpawnAssignment | undefined,
-      conversationId: conversation.conversationId,
-    },
-  });
+      label: args.label,
+      cwd: spawnIdentity.cwd,
+      contextFiles: args.assignment?.contextFiles ?? [],
+    });
+
+    // Each spawned process gets its own durable conversation so its transcript
+    // persists in the run-as agent's home, addressable independent of this
+    // (fungible) executor.
+    const conversation = ctx.conversations.create({
+      ownerUid,
+      agentUid: spawnIdentity.uid,
+      agentHome: spawnIdentity.home,
+      title: args.label ?? null,
+    });
+    conversationId = conversation.conversationId;
+    if (!ctx.conversations.setActivePid(conversationId, pid)) {
+      throw new Error("Failed to bind process conversation");
+    }
+
+    const requestId = crypto.randomUUID();
+    const response = await sendFrameToProcess(pid, {
+      type: "req",
+      id: requestId,
+      call: "proc.setidentity",
+      args: {
+        pid,
+        identity: spawnIdentity,
+        interactive,
+        assignment: args.assignment as ProcSpawnAssignment | undefined,
+        conversationId,
+      },
+    });
+    if (!response || response.type !== "res" || response.id !== requestId) {
+      throw new Error("proc.setidentity returned no valid response");
+    }
+    if (!response.ok) {
+      throw new Error(response.error.message);
+    }
+    if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
+      throw new Error("proc.setidentity rejected initialization");
+    }
+  } catch (error) {
+    try {
+      await rollbackSpawn(ctx, pid, conversationId);
+    } catch (rollbackError) {
+      return {
+        ok: false,
+        error: `Failed to initialize process: ${error instanceof Error ? error.message : String(error)}; `
+          + `rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+      };
+    }
+    return {
+      ok: false,
+      error: `Failed to initialize process: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 
   if (args.prompt) {
     const origin = interactionOriginForContext(ctx);
@@ -250,6 +280,34 @@ export async function handleProcSpawn(
     label: args.label,
     cwd: spawnIdentity.cwd,
   };
+}
+
+async function rollbackSpawn(
+  ctx: KernelContext,
+  pid: string,
+  conversationId: string | null,
+): Promise<void> {
+  const requestId = crypto.randomUUID();
+  const response = await sendFrameToProcess(pid, {
+    type: "req",
+    id: requestId,
+    call: "proc.kill",
+    args: { pid, archive: false },
+  });
+  if (!response || response.type !== "res" || response.id !== requestId) {
+    throw new Error("proc.kill returned no valid response");
+  }
+  if (!response.ok) {
+    throw new Error(response.error.message);
+  }
+  if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
+    throw new Error("proc.kill rejected rollback");
+  }
+  ctx.conversations.clearActivePid(pid);
+  if (conversationId) {
+    ctx.conversations.remove(conversationId);
+  }
+  ctx.procs.kill(pid);
 }
 
 /**

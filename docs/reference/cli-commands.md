@@ -33,8 +33,8 @@ gsv shell
 for the matching `proc.run.finished` signal for up to 120 seconds. The
 interactive prompt returns after each message is accepted so another message
 can supersede an active run; type `quit` or `exit` to leave. `--pid` targets a
-specific process; when omitted, the Kernel targets your init process. Set
-`GSV_CLIENT_DEBUG=1` to trace run-signal matching.
+specific process; when omitted, the Kernel targets your default personal-agent
+conversation. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
 
 `shell` opens an interactive prompt backed by the gateway `shell.exec` syscall.
 Commands run inside the gateway OS context, not directly on your local machine.
@@ -48,6 +48,9 @@ and other schedule targets:
 ```bash
 proc self
 proc list
+proc spawn [--as ACCOUNT] [--label LABEL] [--prompt TEXT]
+proc reset [--pid PID]
+proc kill PID [--no-archive]
 proc send <pid> [--conversation id] [--metadata-json json] <message>
 proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>
 crontab -l
@@ -61,10 +64,12 @@ sched remove <id>
 sched run <id> [--force]
 ```
 
-`proc send` is asynchronous same-owner process mail. `proc call` is bounded:
-the source process receives either `ipc.reply` or `ipc.timeout` in its default
-conversation. `proc self` prints the current GSV process id; the shell also
-exports it as `GSV_PID`.
+`proc spawn` always creates a fresh process. `proc send` is asynchronous
+same-owner process mail. `proc call` is bounded: the source process receives
+either `ipc.reply` or `ipc.timeout` in its default conversation. In a
+process-backed shell, `proc self` prints the current process id and the shell
+exports it as `GSV_PID`; a top-level user shell has no current process, so
+`proc self` exits with an error there.
 
 Use `crontab FILE` or write `/var/spool/cron/<user>` for recurring shell-command
 automation. The crontab file is the desired state: reinstalling it deletes and
@@ -78,18 +83,18 @@ users. `sched add --json` is a low-level compatibility path for direct
 
 ```bash
 gsv proc list [--uid UID]
-gsv proc spawn [--label LABEL] [--prompt TEXT] [--parent PID]
+gsv proc spawn [--as ACCOUNT] [--label LABEL] [--prompt TEXT] [--parent PID]
 gsv proc send MESSAGE [--pid PID]
 gsv proc history [--pid PID] [--limit N] [--offset N]
 gsv proc reset [--pid PID]
 gsv proc kill PID [--no-archive]
 ```
 
-Processes are the agent-facing execution model. `spawn` creates a child process;
+Processes are the agent-facing execution model. `spawn` creates a new process;
 `send` only reports acceptance, while `chat` waits for streamed output.
-`history`, `reset`, and `kill` operate on the selected process or your init
-process when `--pid` is omitted. `--uid` filters process lists and requires root
-when viewing another user.
+`history` and `reset` use your default conversation when `--pid` is omitted.
+`kill` requires a PID. `--uid` filters process lists and requires root when
+viewing another user.
 
 ## Device Commands
 

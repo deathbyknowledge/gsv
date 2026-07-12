@@ -743,6 +743,7 @@ export class Process extends Host<Env> {
   private lifecycleTransition: Promise<void> = Promise.resolve();
   private lifecycleEpoch = 0;
   private queuedSendAdmission: Promise<void> = Promise.resolve();
+  private killed = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -842,6 +843,21 @@ export class Process extends Host<Env> {
    * Single entry point — called by the Kernel to deliver frames.
    */
   async recvFrame(frame: Frame) {
+    if (this.killed) {
+      if (frame.type === "req") {
+        await frame.body?.stream.cancel("Process no longer exists").catch(() => {});
+        return {
+          type: "res",
+          id: frame.id,
+          ok: false,
+          error: { code: 410, message: "Process no longer exists" },
+        } satisfies ResponseErrFrame;
+      }
+      if (frame.type === "res") {
+        await cancelResponseBody(frame, "Process no longer exists");
+      }
+      return null;
+    }
     switch (frame.type) {
       case "req":
         return this.handleReq(frame);
@@ -2861,25 +2877,43 @@ export class Process extends Host<Env> {
   }): Promise<ProcKillResult> {
     const releaseLifecycle = await this.acquireLifecycleTransition();
     try {
-      const pid = this.pid;
+      const initialized = this.isInitialized();
+      const pid = initialized ? this.pid : args.pid;
+      if (!pid) {
+        throw new Error("Process not initialized — pid missing");
+      }
       const shouldArchive = args.archive !== false;
-      await this.resetExecutionState("process.kill", false);
-      const totalMessages = this.store.totalMessageCount();
+      if (initialized && this.currentRun) {
+        await this.sendSignal("proc.run.finished", this.runFinishedPayload(
+          this.currentRun,
+          {
+            status: "aborted",
+            reason: "process.kill",
+            text: null,
+          },
+          0,
+        ));
+      }
+      if (initialized) {
+        await this.resetExecutionState("process.kill", false);
+      }
+      const totalMessages = initialized ? this.store.totalMessageCount() : 0;
 
       const archive = shouldArchive && totalMessages > 0
         ? await this.archiveAllConversationMessages(crypto.randomUUID(), "kill")
         : emptyProcessArchive();
 
-      await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
+      if (initialized) {
+        await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
+      }
 
       // The executor is fungible: a killed process is gone. The durable
       // transcript already lives in the agent home (archived above), so we wipe
       // all live DO storage rather than keeping a reset stub around. A future
       // executor gets a fresh DO (and hydrates from the home archive on resume).
+      await this.ctx.storage.deleteAlarm();
       await this.ctx.storage.deleteAll();
-      this._ensureSchema();
-      runProcessSqlMigrations(this.ctx.storage);
-      this.store.ensureConversation(DEFAULT_CONVERSATION_ID);
+      this.killed = true;
 
       return {
         ok: true,
@@ -4420,7 +4454,23 @@ export class Process extends Host<Env> {
   }
 
   private emitRunFinished(run: RunState, options: RunFinishOptions): void {
-    const payload = {
+    const payload = this.runFinishedPayload(run, options);
+    const pending = JSON.parse(
+      this.store.getValue(PENDING_RUN_FINISHES_KEY) ?? "[]",
+    ) as Array<typeof payload>;
+    if (!pending.some((finish) => finish.runId === run.runId)) {
+      pending.push(payload);
+      this.store.setValue(PENDING_RUN_FINISHES_KEY, JSON.stringify(pending));
+    }
+    this.ctx.waitUntil(this.onRunFinishDelivery(run.runId));
+  }
+
+  private runFinishedPayload(
+    run: RunState,
+    options: RunFinishOptions,
+    queuedCount = this.store.queueSize(),
+  ) {
+    return {
       pid: this.pid,
       runId: run.runId,
       conversationId: normalizeConversationId(run.conversationId),
@@ -4430,17 +4480,9 @@ export class Process extends Host<Env> {
       ...(options.error ? { error: options.error } : {}),
       ...(options.usage !== undefined ? { usage: options.usage } : {}),
       ...(options.status === "aborted" ? { aborted: true } : {}),
-      queuedCount: this.store.queueSize(),
+      queuedCount,
       timestamp: Date.now(),
     };
-    const pending = JSON.parse(
-      this.store.getValue(PENDING_RUN_FINISHES_KEY) ?? "[]",
-    ) as Array<typeof payload>;
-    if (!pending.some((finish) => finish.runId === run.runId)) {
-      pending.push(payload);
-      this.store.setValue(PENDING_RUN_FINISHES_KEY, JSON.stringify(pending));
-    }
-    this.ctx.waitUntil(this.onRunFinishDelivery(run.runId));
   }
 
   async onRunFinishDelivery(runId: string): Promise<void> {

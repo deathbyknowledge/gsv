@@ -48,6 +48,11 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
 beforeEach(() => {
   sendFrameToProcessMock.mockReset();
+  sendFrameToProcessMock.mockImplementation(async (_pid, frame) => (
+    frame.type === "req" && frame.call === "proc.setidentity"
+      ? { type: "res", id: frame.id, ok: true, data: { ok: true } }
+      : null
+  ));
   generateMock.mockReset();
 });
 
@@ -222,7 +227,9 @@ function makeContext(options?: {
     } as never,
     conversations: {
       create: vi.fn(() => ({ conversationId: "conv-1" })),
-      setActivePid: vi.fn(),
+      setActivePid: vi.fn(() => true),
+      clearActivePid: vi.fn(),
+      remove: vi.fn(() => true),
       getByActivePid: vi.fn(() => null),
     } as unknown as KernelContext["conversations"],
     packages: {
@@ -862,6 +869,44 @@ describe("targets native command", () => {
 });
 
 describe("proc native command", () => {
+  function makeLifecycleContext(capability: "proc.reset" | "proc.kill") {
+    const process = {
+      processId: "proc:child",
+      uid: IDENTITY.uid,
+      ownerUid: IDENTITY.uid,
+      activeRunId: "run-child",
+    };
+    const kill = vi.fn();
+    const cancelBySourcePid = vi.fn();
+    const failIpcCallsByTarget = vi.fn();
+    const deleteRunRoute = vi.fn();
+    const clearActivePid = vi.fn();
+    const ctx = makeContext({
+      capabilities: [capability],
+      procs: {
+        get: vi.fn((pid: string) => pid === process.processId ? process : null),
+        getOwnerUid: vi.fn(() => IDENTITY.uid),
+        kill,
+      } as Partial<KernelContext["procs"]>,
+      ipcCalls: {
+        cancelBySourcePid,
+      } as unknown as KernelContext["ipcCalls"],
+    });
+    Object.assign(ctx, {
+      failIpcCallsByTarget,
+      runRoutes: { delete: deleteRunRoute },
+    });
+    Object.assign(ctx.conversations, { clearActivePid });
+    return {
+      ctx,
+      kill,
+      cancelBySourcePid,
+      failIpcCallsByTarget,
+      deleteRunRoute,
+      clearActivePid,
+    };
+  }
+
   it("lists runnable accounts", async () => {
     const passwd = [
       { username: "sam", uid: 1000, gid: 1000, gecos: "Sam", home: "/home/sam", shell: "/bin/init" },
@@ -1958,7 +2003,12 @@ describe("pkg shell command", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(callMcpTool).toHaveBeenCalledWith("server-1", "lookup", { query: "gsv" });
+    expect(callMcpTool).toHaveBeenCalledWith(
+      "server-1",
+      "lookup",
+      { query: "gsv" },
+      controller.signal,
+    );
     expect(result.stdout).toBe("found\n");
     expect(result.stderr).toBe("");
   });
@@ -1971,6 +2021,8 @@ describe("pkg shell command", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("proc self");
+    expect(result.stdout).toContain("proc reset [--pid PID]");
+    expect(result.stdout).toContain("proc kill PID [--no-archive]");
     expect(result.stdout).toContain("proc send <pid>");
     expect(result.stdout).toContain("proc call <pid>");
     expect(result.stderr).toBe("");

@@ -534,8 +534,11 @@ export class Kernel extends Host<Env> {
         }
         return null;
       }
-      this.enqueueProcessSignal(processId, frame);
+      const delivered = this.enqueueProcessSignal(processId, frame);
       this.completeIpcCallsForProcessSignal(processId, frame);
+      if (frame.signal === "proc.run.finished") {
+        await delivered;
+      }
       return null;
     }
 
@@ -968,10 +971,10 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private enqueueProcessSignal(processId: string, frame: SignalFrame): void {
+  private enqueueProcessSignal(processId: string, frame: SignalFrame): Promise<void> {
     const previous = this.pendingProcessSignals.get(processId) ?? Promise.resolve();
-    const queued = previous
-      .then(() => this.handleProcessSignal(processId, frame))
+    const delivery = previous.then(() => this.handleProcessSignal(processId, frame));
+    const queued = delivery
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[Kernel] process signal dispatch failed for ${processId}/${frame.signal}: ${message}`);
@@ -982,6 +985,7 @@ export class Kernel extends Host<Env> {
         }
       });
     this.pendingProcessSignals.set(processId, queued);
+    return delivery;
   }
 
   private completeIpcCallsForProcessSignal(processId: string, frame: SignalFrame): void {

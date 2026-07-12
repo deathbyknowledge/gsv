@@ -35,7 +35,7 @@ pub(crate) enum Commands {
         /// Message to send (if omitted, enters interactive mode)
         message: Option<String>,
 
-        /// Optional process ID (defaults to your init process)
+        /// Optional process ID (defaults to your personal-agent conversation)
         #[arg(long)]
         pid: Option<String>,
     },
@@ -538,7 +538,7 @@ pub(crate) enum ProcAction {
         uid: Option<u32>,
     },
 
-    /// Spawn a child process
+    /// Spawn a new process
     Spawn {
         /// Account to run the process as: a username, uid, or `package#agent`
         /// (defaults to your personal agent)
@@ -553,7 +553,7 @@ pub(crate) enum ProcAction {
         #[arg(long)]
         prompt: Option<String>,
 
-        /// Optional parent process ID (defaults to your init process)
+        /// Optional parent process ID
         #[arg(long = "parent")]
         parent_pid: Option<String>,
     },
@@ -563,14 +563,14 @@ pub(crate) enum ProcAction {
         /// Message to deliver
         message: String,
 
-        /// Optional process ID (defaults to your init process)
+        /// Optional process ID (defaults to your personal-agent conversation)
         #[arg(long)]
         pid: Option<String>,
     },
 
     /// Read process message history
     History {
-        /// Optional process ID (defaults to your init process)
+        /// Optional process ID (defaults to your personal-agent conversation)
         #[arg(long)]
         pid: Option<String>,
 
@@ -589,7 +589,7 @@ pub(crate) enum ProcAction {
 
     /// Reset process conversation history
     Reset {
-        /// Optional process ID (defaults to your init process)
+        /// Optional process ID (defaults to your personal-agent conversation)
         #[arg(long)]
         pid: Option<String>,
     },
