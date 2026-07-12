@@ -522,7 +522,9 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   const source: UnderlyingByteSource = {
     type: "bytes",
     start(controller) {
-      controller.enqueue(bytes);
+      if (bytes.byteLength > 0) {
+        controller.enqueue(bytes);
+      }
       controller.close();
     },
   };

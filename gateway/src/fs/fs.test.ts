@@ -81,6 +81,21 @@ describe("GsvFs openFile", () => {
     expect(value).toEqual(new Uint8Array([1, 2, 3]));
     reader.releaseLock();
   });
+
+  it("returns an empty byte stream for empty fallback files", async () => {
+    const fs = Object.create(GsvFs.prototype) as any;
+    fs.resolveFinalPath = async (path: string) => path;
+    fs.backendForPath = () => ({
+      stat: async () => ({ isFile: true, isDirectory: false, size: 0, mtime: new Date(1) }),
+      readFileBuffer: async () => new Uint8Array(),
+    });
+
+    const opened = await fs.openFile("/empty.bin");
+    const bytes = new Uint8Array(await new Response(opened.body).arrayBuffer());
+
+    expect(opened.size).toBe(0);
+    expect(bytes).toEqual(new Uint8Array());
+  });
 });
 
 function makeConfigBackedFs(
