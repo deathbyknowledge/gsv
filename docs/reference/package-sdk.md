@@ -91,7 +91,9 @@ Backend instance bindings:
 - `this.meta`
   - `{ packageName, packageId, routeBase }`
 - `this.kernel.request(call, args)`
-  - issue kernel requests
+  - issue data-only kernel requests; rejects responses that carry a body
+- `this.kernel.requestFrame(call, args, { body? })`
+  - issue body-aware kernel requests and receive `{ data, body? }`
 - `this.storage?.sql.exec(statement, ...bindings)`
   - execute package-scoped SQLite statements
 - `this.viewer`
@@ -121,11 +123,18 @@ runtime: inside the GSV shell it uses the host bridge and shell-owned app
 session, while standalone/dev contexts may use the direct app-session route.
 
 ```ts
+import { bodyToText } from "@humansandmachines/gsv/protocol";
+
 const gsv = await createGsvClient();
 
-await gsv.request("fs.read", { path: "/notes/today.md" });
-await gsv.fs.read({ path: "/notes/today.md" });
+const response = await gsv.request("fs.read", { path: "/notes/today.md" });
+const text = response.body ? await bodyToText(response.body) : "";
+await gsv.fs.transfer.stat({ path: "/notes/today.md" });
 ```
+
+Use `request()` for body-bearing syscalls such as `fs.read`, `net.fetch`, and
+`proc.media.read`. Generated namespaces and `call()` are data-only, so those
+syscalls are intentionally absent from them.
 
 The gateway evaluates requests with the package app principal and the
 manifest-declared `meta.capabilities.kernel` allowlist.
