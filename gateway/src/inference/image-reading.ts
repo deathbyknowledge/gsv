@@ -176,6 +176,10 @@ function buildChatVisionInput(
       },
     ],
     max_completion_tokens: maxTokens,
+    chat_template_kwargs: {
+      enable_thinking: false,
+      clear_thinking: true,
+    },
   };
 }
 
