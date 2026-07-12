@@ -2630,9 +2630,13 @@ describe("Process DO — mechanical", () => {
 
       const result = await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        const kernelCalls: Array<{ call: string; args: any }> = [];
-        process.kernelRpc = async (call: string, args: any) => {
-          kernelCalls.push({ call, args });
+        const kernelCalls: Array<{ call: string; args: any; runSignal: boolean }> = [];
+        process.kernelRpc = async (call: string, args: any, signal?: AbortSignal) => {
+          kernelCalls.push({
+            call,
+            args,
+            runSignal: signal === process.runAbortSignal("run-chat-device-executor"),
+          });
           return {
             message: {
               role: "assistant",
@@ -2692,6 +2696,7 @@ describe("Process DO — mechanical", () => {
       expect(result.kernelCalls).toHaveLength(1);
       expect(result.kernelCalls[0]).toMatchObject({
         call: "ai.text.generate",
+        runSignal: true,
         args: {
           target: "local-gpu",
           systemPrompt: "Test system prompt.",
@@ -5683,6 +5688,148 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("cancels pending tool, CodeMode, and provider requests", async () => {
+      const pid = "mech-abort-cancels-requests";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const cancelSpy = vi
+        .spyOn(Kernel.prototype as any, "cancelProcessRequests")
+        .mockReturnValue(3);
+
+      try {
+        await runInDurableObject(stub, (instance: Process) => {
+          const process = instance as any;
+          process.currentRun = { runId: "run-1", conversationId: "default" };
+          process.store.register(
+            "dispatch-1",
+            "call-1",
+            "run-1",
+            "fs.search",
+            { query: "needle" },
+          );
+          process.store.markDispatched("dispatch-1");
+          process.codeModeResponses.set("nested-1", {
+            runId: "run-1",
+            call: "net.fetch",
+            args: {},
+            resolve: vi.fn(),
+            reject: vi.fn(),
+            timeoutId: setTimeout(() => {}, 60_000),
+          });
+          const provider = new AbortController();
+          process.runAbortControllers.set("run-1", provider);
+          process.providerAbortSignal = provider.signal;
+        });
+
+        await stub.recvFrame(makeReq("proc.abort", {}));
+
+        await vi.waitFor(() => expect(cancelSpy).toHaveBeenCalledWith(
+          pid,
+          expect.arrayContaining(["dispatch-1", "nested-1"]),
+          "User interrupted tool execution",
+        ));
+        await runInDurableObject(stub, (instance: Process) => {
+          const process = instance as any;
+          expect(process.providerAbortSignal.reason).toEqual(
+            new Error("User interrupted tool execution"),
+          );
+          expect(process.runAbortControllers.size).toBe(0);
+        });
+      } finally {
+        cancelSpy.mockRestore();
+      }
+    });
+
+    it("returns early and cancels a remote generation request", async () => {
+      const pid = "mech-abort-remote-generation";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      let releaseRequest!: () => void;
+      const requestBlocked = new Promise<void>((resolve) => {
+        releaseRequest = resolve;
+      });
+      const recvSpy = vi
+        .spyOn(Kernel.prototype as any, "recvFrame")
+        .mockImplementation(async (_processId: string, frame: RequestFrame) => {
+          await requestBlocked;
+          return { type: "res", id: frame.id, ok: true, data: {} };
+        });
+      const cancelSpy = vi
+        .spyOn(Kernel.prototype as any, "cancelProcessRequests")
+        .mockReturnValue(1);
+
+      try {
+        const result = await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          const controller = new AbortController();
+          const request = process.kernelRpc(
+            "ai.text.generate",
+            {},
+            controller.signal,
+          );
+          controller.abort(new Error("User interrupted generation"));
+          try {
+            await request;
+            return "resolved";
+          } catch (error) {
+            return error instanceof Error ? error.message : String(error);
+          }
+        });
+
+        expect(result).toBe("User interrupted generation");
+        await vi.waitFor(() => expect(cancelSpy).toHaveBeenCalledWith(
+          pid,
+          [expect.any(String)],
+          "User interrupted generation",
+        ));
+      } finally {
+        releaseRequest();
+        recvSpy.mockRestore();
+        cancelSpy.mockRestore();
+      }
+    });
+
+    it("returns without waiting for request cancellation cleanup", async () => {
+      const pid = "mech-abort-nonblocking-request-cancel";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = { runId: "run-1", conversationId: "default" };
+        process.store.register("dispatch-1", "call-1", "run-1", "fs.search", {});
+        process.store.markDispatched("dispatch-1");
+      });
+
+      let releaseCancellation!: () => void;
+      const cancellationBlocked = new Promise<void>((resolve) => {
+        releaseCancellation = resolve;
+      });
+      const cancelSpy = vi
+        .spyOn(Kernel.prototype as any, "cancelProcessRequests")
+        .mockImplementation(async () => {
+          await cancellationBlocked;
+          return 1;
+        });
+
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const response = await Promise.race([
+          stub.recvFrame(makeReq("proc.abort", {})),
+          new Promise<never>((_resolve, reject) => {
+            timeoutId = setTimeout(
+              () => reject(new Error("proc.abort waited for request cancellation")),
+              150,
+            );
+          }),
+        ]) as ResponseOkFrame;
+        expect(response.data).toMatchObject({ ok: true, aborted: true, runId: "run-1" });
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        releaseCancellation();
+        await cancellationBlocked;
+        cancelSpy.mockRestore();
+      }
+    });
+
     it("returns without waiting for signal fanout delivery", async () => {
       const pid = "mech-abort-nonblocking-signal";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -7470,6 +7617,53 @@ describe("Process DO — mechanical", () => {
       } finally {
         recvSpy.mockRestore();
       }
+    });
+
+    it("stops response body materialization when its run is aborted", async () => {
+      const pid = "mech-res-body-abort";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = { runId: "run-body-abort", conversationId: "default" };
+        process.store.register(
+          "dispatch-body-abort",
+          "call-body-abort",
+          "run-body-abort",
+          "fs.read",
+          { path: "/tmp/note.txt" },
+        );
+        process.store.markDispatched("dispatch-body-abort");
+        let cancelled: unknown;
+        const response = process.handleRes({
+          type: "res",
+          id: "dispatch-body-abort",
+          ok: true,
+          data: {
+            ok: true,
+            path: "/tmp/note.txt",
+            kind: "text",
+            contentType: "text/plain",
+            size: 1,
+            lines: 1,
+          },
+          body: {
+            stream: new ReadableStream({
+              pull: () => new Promise(() => {}),
+              cancel: (reason) => {
+                cancelled = reason;
+              },
+            }),
+          },
+        });
+        expect(process.runAbortControllers.has("run-body-abort")).toBe(true);
+
+        await process.handleProcAbort({});
+        await response;
+
+        expect(cancelled).toEqual(new Error("User interrupted tool execution"));
+        expect(process.runAbortControllers.size).toBe(0);
+      });
     });
 
     it("does not continue the run until all tool calls in a batch are dispatched", async () => {

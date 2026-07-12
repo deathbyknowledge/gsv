@@ -56,6 +56,7 @@ export type KernelContext = {
   identity?: ConnectionIdentity;
   processId?: string;
   processRunId?: string;
+  requestSignal?: AbortSignal;
   callerOwnerUid?: number;
   appFrame?: AppFrameContext;
   serverVersion: string;

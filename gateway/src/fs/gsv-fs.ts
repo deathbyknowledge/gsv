@@ -41,6 +41,7 @@ import { isAccountHomeReservedPath } from "./backends/account-home";
 import { isPackageMountPath } from "./backends/packages";
 import { isProcessSourcePath } from "./backends/process-sources";
 import { normalizePath } from "./utils";
+import { bindStreamToAbort } from "../shared/streams";
 
 const MAX_SYMLINK_DEPTH = 16;
 
@@ -134,13 +135,15 @@ export class GsvFs implements IFileSystem {
     options: WriteFileStreamOptions,
   ): Promise<WriteFileStreamResult> {
     assertExpectedSize(options?.expectedSize);
+    options.signal?.throwIfAborted();
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
+    options.signal?.throwIfAborted();
     const backend = this.backendForPath(p);
     if (backend.writeFileStream) {
       return backend.writeFileStream(p, content, options);
     }
 
-    const bytes = await streamToBytes(content, options.expectedSize);
+    const bytes = await streamToBytes(content, options.expectedSize, options.signal);
     await backend.writeFile(p, bytes);
     return {
       size: bytes.byteLength,
@@ -349,13 +352,20 @@ export class GsvFs implements IFileSystem {
     return [];
   }
 
-  async search(path: string, query: string, include?: string): Promise<FsSearchBackendResult> {
+  async search(
+    path: string,
+    query: string,
+    include?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult> {
+    signal?.throwIfAborted();
     const p = await this.resolveFinalPath(path);
+    signal?.throwIfAborted();
     const backend = this.backendForPath(p);
     if (!backend.search) {
       throw new Error(`ENOSYS: search is not supported for '${p}'`);
     }
-    return backend.search(p, query, include);
+    return backend.search(p, query, include, signal);
   }
 
   private async resolveFinalPath(
@@ -545,8 +555,12 @@ function assertExpectedSize(size: unknown): asserts size is number {
   }
 }
 
-async function streamToBytes(stream: ReadableStream<Uint8Array>, expectedSize: number): Promise<Uint8Array> {
-  const reader = stream.getReader();
+async function streamToBytes(
+  stream: ReadableStream<Uint8Array>,
+  expectedSize: number,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  const reader = (signal ? bindStreamToAbort(stream, signal) : stream).getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
 
@@ -558,10 +572,13 @@ async function streamToBytes(stream: ReadableStream<Uint8Array>, expectedSize: n
       }
       size += value.byteLength;
       if (size > expectedSize) {
-        throw new Error(`EFBIG: stream exceeds expectedSize ${expectedSize}`);
+        const error = new Error(`EFBIG: stream exceeds expectedSize ${expectedSize}`);
+        await reader.cancel(error).catch(() => {});
+        throw error;
       }
       chunks.push(value);
     }
+    signal?.throwIfAborted();
   } finally {
     reader.releaseLock();
   }

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { bodyFromText, bodyToText } from "@humansandmachines/gsv/protocol";
 import {
+  createRoutedFetch,
   handleNetFetch,
   limitNetFetchRequestBody,
   limitNetFetchResponseBody,
@@ -251,6 +252,87 @@ describe("responseFromNetFetchResult", () => {
     await expect(bodyToText({ stream })).rejects.toThrow(
       "net.fetch response body exceeds limit (4 bytes, max 3)",
     );
+  });
+});
+
+describe("handleNetFetch", () => {
+  it("aborts native fetches when their request is cancelled", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+      const signal = init?.signal;
+      return await new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = handleNetFetch(
+      { url: "https://example.test/slow" },
+      { requestSignal: controller.signal } as never,
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    controller.abort(new Error("User interrupted"));
+
+    await expect(request).rejects.toThrow("User interrupted");
+  });
+});
+
+describe("createRoutedFetch", () => {
+  it("passes request cancellation to the device transport", async () => {
+    const controller = new AbortController();
+    const requestDevice = vi.fn(async (
+      _deviceId: string,
+      _call: string,
+      _args: unknown,
+      options?: { signal?: AbortSignal },
+    ) => await new Promise<ResponseOkFrame>((_resolve, reject) => {
+      options?.signal?.addEventListener(
+        "abort",
+        () => reject(options.signal?.reason),
+        { once: true },
+      );
+    }));
+    const routedFetch = createRoutedFetch({
+      requestSignal: controller.signal,
+      identity: {
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+      },
+      auth: {
+        getPasswdByUid: () => ({ username: "sam" }),
+      },
+      devices: {
+        canAccess: () => true,
+        get: () => ({
+          device_id: "workstation",
+          owner_uid: 1000,
+          label: "Workstation",
+          description: "",
+          implements: ["net.fetch"],
+          platform: "linux",
+          version: "1",
+          online: true,
+          first_seen_at: 1,
+          last_seen_at: 1,
+          connected_at: 1,
+          disconnected_at: null,
+        }),
+      },
+    } as never, { requestDevice }, "workstation");
+    const request = routedFetch("https://example.test/slow");
+    await vi.waitFor(() => expect(requestDevice).toHaveBeenCalledOnce());
+    const reason = new Error("User interrupted generation");
+
+    controller.abort(reason);
+
+    await expect(request).rejects.toBe(reason);
+    expect(requestDevice.mock.calls[0][3]?.signal?.aborted).toBe(true);
   });
 });
 

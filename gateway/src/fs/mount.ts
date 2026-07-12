@@ -56,6 +56,7 @@ export type WriteFileStreamOptions = {
   contentType?: string;
   cacheControl?: string;
   contentDisposition?: string;
+  signal?: AbortSignal;
 };
 
 export type WriteFileStreamResult = {
@@ -83,7 +84,12 @@ export interface MountBackend {
   rm(path: string, options?: RmOptions): Promise<void>;
   symlink?(target: string, linkPath: string): Promise<void>;
   readlink?(path: string): Promise<string>;
-  search?(path: string, query: string, include?: string): Promise<FsSearchBackendResult>;
+  search?(
+    path: string,
+    query: string,
+    include?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult>;
   chmod?(path: string, mode: number): Promise<void>;
   chown?(path: string, uid?: number, gid?: number): Promise<void>;
   utimes?(path: string, atime: Date, mtime: Date): Promise<void>;

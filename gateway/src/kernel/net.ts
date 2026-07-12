@@ -2,6 +2,7 @@ import type { KernelContext } from "./context";
 import { getVisibleTarget } from "./targets";
 import type { NetFetchArgs, NetFetchResult } from "@humansandmachines/gsv/protocol";
 import type { FrameBody, ResponseOkFrame } from "../protocol/frames";
+import { abortError, bindStreamToAbort } from "../shared/streams";
 
 export type NetFetchDeviceTransport = {
   requestDevice: (
@@ -24,7 +25,7 @@ export const MAX_NET_FETCH_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 export async function handleNetFetch(
   args: NetFetchArgs,
-  _ctx: KernelContext,
+  ctx: KernelContext,
   body?: FrameBody,
 ): Promise<{ data: NetFetchResult; body?: FrameBody }> {
   const request = await normalizeNetFetchRequest(args, body);
@@ -32,6 +33,9 @@ export async function handleNetFetch(
   const timeout = setTimeout(() => {
     controller.abort(new Error(`net.fetch timed out after ${request.timeoutMs}ms`));
   }, request.timeoutMs);
+  const signal = ctx.requestSignal
+    ? AbortSignal.any([controller.signal, ctx.requestSignal])
+    : controller.signal;
   let bodyOwnsTimeout = false;
 
   try {
@@ -41,7 +45,7 @@ export async function handleNetFetch(
       headers: request.headers,
       body: request.body,
       redirect,
-      signal: controller.signal,
+      signal,
     });
     if (request.redirect === "error" && isRedirectStatus(response.status)) {
       throw new TypeError("net.fetch encountered a redirect with redirect mode error");
@@ -78,9 +82,15 @@ export function createRoutedFetch(
     const requestedRedirect = normalizeRedirect(
       init?.redirect ?? (input instanceof Request ? input.redirect : undefined),
     );
-    const request = new Request(input, requestedRedirect === "error"
-      ? { ...init, redirect: "manual" }
-      : init);
+    const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const signal = ctx.requestSignal && callerSignal
+      ? AbortSignal.any([ctx.requestSignal, callerSignal])
+      : ctx.requestSignal ?? callerSignal;
+    const request = new Request(input, {
+      ...init,
+      ...(requestedRedirect === "error" ? { redirect: "manual" } : {}),
+      ...(signal ? { signal } : {}),
+    });
     const outbound = requestToNetFetchArgs(request, requestedRedirect);
     const timeoutMs = normalizeNetFetchTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
     outbound.args.timeoutMs = timeoutMs;
@@ -337,10 +347,6 @@ export async function requestNetFetchWithSignal(
   });
 }
 
-function abortError(reason: unknown): Error {
-  return reason instanceof Error ? reason : new Error("The operation was aborted");
-}
-
 export function responseFromNetFetchResult(
   raw: unknown,
   frameBody?: FrameBody,
@@ -382,59 +388,6 @@ export function responseFromNetFetchResult(
     void frameBody?.stream.cancel(error).catch(() => {});
     throw error;
   }
-}
-
-function bindStreamToAbort(
-  stream: ReadableStream<Uint8Array>,
-  signal: AbortSignal,
-): ReadableStream<Uint8Array> {
-  const reader = stream.getReader();
-  let finished = false;
-  let controller: ReadableStreamDefaultController<Uint8Array>;
-  const finish = () => {
-    if (finished) {
-      return;
-    }
-    finished = true;
-    signal.removeEventListener("abort", abort);
-    reader.releaseLock();
-  };
-  const abort = () => {
-    if (finished) {
-      return;
-    }
-    const error = abortError(signal.reason);
-    controller.error(error);
-    void reader.cancel(error).catch(() => {}).finally(finish);
-  };
-
-  return new ReadableStream<Uint8Array>({
-    start(value) {
-      controller = value;
-      signal.addEventListener("abort", abort, { once: true });
-      if (signal.aborted) {
-        abort();
-      }
-    },
-    async pull(value) {
-      try {
-        const chunk = await reader.read();
-        if (chunk.done) {
-          finish();
-          value.close();
-        } else {
-          value.enqueue(chunk.value);
-        }
-      } catch (error) {
-        finish();
-        value.error(error);
-      }
-    },
-    async cancel(reason) {
-      await reader.cancel(reason).catch(() => {});
-      finish();
-    },
-  });
 }
 
 function normalizeHttpUrl(value: unknown): string {

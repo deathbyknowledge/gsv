@@ -185,6 +185,12 @@ export async function dispatch(
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<DispatchResult> {
+  if (ctx.requestSignal?.aborted) {
+    return {
+      handled: true,
+      response: errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal)),
+    };
+  }
   const raw = frame.args as Record<string, unknown>;
   const target = raw.target as string | undefined;
   const sessionId = frame.call === "shell.exec" && typeof raw.sessionId === "string"
@@ -704,6 +710,13 @@ async function routeToTarget(
       deviceId: target.targetId,
       ttlMs,
     });
+    if (ctx.requestSignal?.aborted) {
+      route.cancel();
+      return {
+        handled: true,
+        response: errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal)),
+      };
+    }
   } catch (error) {
     route?.cancel();
     const message = error instanceof Error ? error.message : String(error);
@@ -784,6 +797,10 @@ function findDeviceConnection(
 
 function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
+}
+
+function requestCancelMessage(signal: AbortSignal): string {
+  return signal.reason instanceof Error ? signal.reason.message : "Request cancelled";
 }
 
 function failedShellSessionFrame(id: string, session: ShellSessionRecord): ResponseFrame {

@@ -379,14 +379,21 @@ class ProcessSourceBackend implements MountBackend {
     throw new Error(`ENOENT: no such file or directory, utimes '${normalizedPath}'`);
   }
 
-  async search(path: string, query: string): Promise<FsSearchBackendResult> {
+  async search(
+    path: string,
+    query: string,
+    _include?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult> {
+    signal?.throwIfAborted();
     const normalizedPath = normalizePath(path);
     const virtualRepos = this.virtualDirectoryRepos(normalizedPath);
     if (virtualRepos) {
       const matches = [];
       let truncated = false;
       for (const repo of virtualRepos) {
-        const result = await this.searchRepo(repo, "", query);
+        signal?.throwIfAborted();
+        const result = await this.searchRepo(repo, "", query, signal);
         matches.push(...result.matches);
         truncated = truncated || result.truncated === true;
       }
@@ -395,7 +402,7 @@ class ProcessSourceBackend implements MountBackend {
 
     const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
     if (repoResolved) {
-      return this.searchRepo(repoResolved.repo, repoResolved.relativePath, query);
+      return this.searchRepo(repoResolved.repo, repoResolved.relativePath, query, signal);
     }
     throwMissingSourcePath(normalizedPath);
   }
@@ -404,13 +411,17 @@ class ProcessSourceBackend implements MountBackend {
     repo: SourceRepo,
     relativePath: string,
     query: string,
+    signal?: AbortSignal,
   ): Promise<FsSearchBackendResult> {
     const overlay = await this.readOverlay(repo);
+    signal?.throwIfAborted();
     const result = await this.ripgit.search(
       this.repoRefForSourceRepo(repo),
       query,
       relativePath || undefined,
+      signal,
     );
+    signal?.throwIfAborted();
     return {
       truncated: result.truncated,
       matches: [

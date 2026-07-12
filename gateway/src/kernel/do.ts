@@ -33,6 +33,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   BinaryBodyChannel,
+  REQUEST_CANCEL_SIGNAL,
   type BinaryFrameDescriptor,
   type OutgoingBinaryBody,
 } from "@humansandmachines/gsv/protocol";
@@ -70,6 +71,7 @@ import {
   SETUP_REQUIRED_ERROR_CODE,
 } from "./connect";
 import { dispatch, type DispatchDeps } from "./dispatch";
+import { bindStreamToAbort } from "../shared/streams";
 import type { KernelContext } from "./context";
 import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
@@ -116,8 +118,9 @@ const CLI_DOWNLOADS_REFRESHED_VERSION_KEY = "config/downloads/cli/refreshed_for_
 const CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY = "config/downloads/cli/refresh_attempt_at";
 const CLI_DOWNLOADS_REFRESHED_AT_KEY = "config/downloads/cli/refreshed_at";
 const CLI_DOWNLOADS_REFRESH_RETRY_MS = 15 * 60 * 1000;
-const PROCESS_NET_FETCH_CANCEL_TTL_MS = 60_000;
-const MAX_PROCESS_NET_FETCH_CANCELLATIONS = 1024;
+const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
+const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
+const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
 
 type ConnectionState = {
   step: "pending" | "connected";
@@ -209,11 +212,11 @@ export class Kernel extends Host<Env> {
     string,
     { cancel(reason?: unknown): Promise<void> }
   >();
-  private readonly processNetFetchRequests = new Map<
+  private readonly activeRequests = new Map<
     string,
-    { processId: string; controller: AbortController }
+    { origin: RouteOrigin; controller: AbortController }
   >();
-  private readonly cancelledProcessNetFetchRequests = new Map<
+  private readonly cancelledProcessRequests = new Map<
     string,
     { expiresAt: number; reason: string }
   >();
@@ -420,6 +423,12 @@ export class Kernel extends Host<Env> {
     if (!state) return;
 
     this.connections.delete(connection.id);
+    const origin: RouteOrigin = { type: "connection", id: connection.id };
+    for (const [requestId, request] of this.activeRequests) {
+      if (sameRouteOrigin(request.origin, origin)) {
+        this.cancelRequest(origin, requestId, "Origin disconnected", false);
+      }
+    }
 
     const identity = state.identity;
 
@@ -473,9 +482,31 @@ export class Kernel extends Host<Env> {
           this.sendError(connection, "?", 400, "Signals cannot carry bodies");
           return;
         }
-        this.handleSig(connection, parsed);
+        if (parsed.signal === REQUEST_CANCEL_SIGNAL) {
+          this.handleRequestCancel(connection, parsed);
+        } else {
+          this.handleSig(connection, parsed);
+        }
         break;
     }
+  }
+
+  private handleRequestCancel(
+    connection: Connection<ConnectionState>,
+    frame: SignalFrame,
+  ): void {
+    if (connection.state?.step !== "connected") {
+      return;
+    }
+    const payload = asRecord(frame.payload);
+    const requestId = typeof payload?.id === "string" ? payload.id : "";
+    const reason = typeof payload?.reason === "string" ? payload.reason : undefined;
+    this.cancelRequest(
+      { type: "connection", id: connection.id },
+      requestId,
+      reason,
+      false,
+    );
   }
 
   /**
@@ -517,6 +548,7 @@ export class Kernel extends Host<Env> {
     options: ProcessNetFetchOptions = {},
   ): Promise<ResponseOkFrame<"net.fetch">> {
     let controller: AbortController | null = null;
+    const origin: RouteOrigin = { type: "process", id: processId };
     try {
       const ctx = this.buildProcessContext(processId);
       if (!ctx) {
@@ -537,17 +569,7 @@ export class Kernel extends Host<Env> {
         throw new Error(`Target does not support device requests: ${target}`);
       }
       if (options.requestId) {
-        if (this.processNetFetchRequests.has(options.requestId)) {
-          throw new Error(`Duplicate process net.fetch request: ${options.requestId}`);
-        }
-        const cancellationKey = `${processId}\0${options.requestId}`;
-        const cancellation = this.cancelledProcessNetFetchRequests.get(cancellationKey);
-        this.cancelledProcessNetFetchRequests.delete(cancellationKey);
-        if (cancellation && cancellation.expiresAt > Date.now()) {
-          throw new Error(cancellation.reason);
-        }
-        controller = new AbortController();
-        this.processNetFetchRequests.set(options.requestId, { processId, controller });
+        controller = this.registerActiveRequest(origin, options.requestId);
       }
       const response = await this.requestDevice(
         device.targetId,
@@ -562,43 +584,25 @@ export class Kernel extends Host<Env> {
       );
       return response as ResponseOkFrame<"net.fetch">;
     } finally {
-      if (options.requestId) {
-        this.processNetFetchRequests.delete(options.requestId);
+      if (options.requestId && controller) {
+        this.finishActiveRequest(options.requestId, controller);
       }
       await cancelUnlockedBody(options.body, "Process net.fetch completed");
     }
   }
 
-  cancelProcessNetFetch(processId: string, requestId: string, reason?: string): boolean {
-    if (!processId || !requestId) {
-      return false;
+  cancelProcessRequests(processId: string, requestIds: string[], reason?: string): number {
+    if (!processId || !Array.isArray(requestIds)) {
+      return 0;
     }
-    const pending = this.processNetFetchRequests.get(requestId);
-    if (pending) {
-      if (pending.processId !== processId) {
-        return false;
-      }
-      pending.controller.abort(new Error(reason || "Process net.fetch cancelled"));
-      return true;
-    }
-
-    const now = Date.now();
-    for (const [key, cancellation] of this.cancelledProcessNetFetchRequests) {
-      if (cancellation.expiresAt <= now) {
-        this.cancelledProcessNetFetchRequests.delete(key);
+    const origin: RouteOrigin = { type: "process", id: processId };
+    let cancelled = 0;
+    for (const requestId of new Set(requestIds)) {
+      if (this.cancelRequest(origin, requestId, reason, true)) {
+        cancelled += 1;
       }
     }
-    if (this.cancelledProcessNetFetchRequests.size >= MAX_PROCESS_NET_FETCH_CANCELLATIONS) {
-      const oldest = this.cancelledProcessNetFetchRequests.keys().next().value;
-      if (oldest) {
-        this.cancelledProcessNetFetchRequests.delete(oldest);
-      }
-    }
-    this.cancelledProcessNetFetchRequests.set(`${processId}\0${requestId}`, {
-      expiresAt: now + PROCESS_NET_FETCH_CANCEL_TTL_MS,
-      reason: reason || "Process net.fetch cancelled",
-    });
-    return true;
+    return cancelled;
   }
 
   /**
@@ -1191,7 +1195,24 @@ export class Kernel extends Host<Env> {
     }
 
     const origin: RouteOrigin = { type: "process", id: processId };
-    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+    let controller: AbortController;
+    try {
+      controller = this.registerActiveRequest(origin, frame.id);
+    } catch (error) {
+      return errFrame(frame.id, 499, error instanceof Error ? error.message : String(error));
+    }
+    let result;
+    try {
+      frame = this.bindRequestBodyCancellation(frame, controller.signal);
+      result = await dispatch(
+        frame,
+        origin,
+        { ...ctx, requestSignal: controller.signal },
+        this.buildDispatchDeps(),
+      );
+    } finally {
+      this.finishActiveRequest(frame.id, controller);
+    }
 
     if (result.handled) {
       this.applyPostDispatchEffects(frame, result.response);
@@ -1263,6 +1284,7 @@ export class Kernel extends Host<Env> {
     identity?: ConnectionIdentity;
     processId?: string;
     processRunId?: string;
+    requestSignal?: AbortSignal;
     callerOwnerUid?: number;
     appFrame?: AppFrameContext;
   }): KernelContext {
@@ -1290,6 +1312,7 @@ export class Kernel extends Host<Env> {
       identity: options.identity,
       processId: options.processId,
       processRunId: options.processRunId,
+      requestSignal: options.requestSignal,
       callerOwnerUid: options.callerOwnerUid,
       appFrame: options.appFrame,
       serverVersion: SERVER_VERSION,
@@ -1365,6 +1388,122 @@ export class Kernel extends Host<Env> {
         void previous?.cancel("Routed body replaced");
       },
     };
+  }
+
+  private registerActiveRequest(origin: RouteOrigin, requestId: string): AbortController {
+    if (!requestId || this.activeRequests.has(requestId) || this.routes.get(requestId)) {
+      throw new Error(`Duplicate request: ${requestId}`);
+    }
+    if (origin.type === "process") {
+      const key = `${origin.id}\0${requestId}`;
+      const cancellation = this.cancelledProcessRequests.get(key);
+      this.cancelledProcessRequests.delete(key);
+      if (cancellation && cancellation.expiresAt > Date.now()) {
+        throw new Error(cancellation.reason);
+      }
+    }
+    const controller = new AbortController();
+    this.activeRequests.set(requestId, { origin, controller });
+    return controller;
+  }
+
+  private bindRequestBodyCancellation(
+    frame: RequestFrame,
+    signal: AbortSignal,
+  ): RequestFrame {
+    if (!frame.body) {
+      return frame;
+    }
+    const body = frame.body;
+    frame.body = {
+      ...body,
+      stream: bindStreamToAbort(body.stream, signal),
+    };
+    return frame;
+  }
+
+  private finishActiveRequest(requestId: string, controller: AbortController): void {
+    if (this.activeRequests.get(requestId)?.controller === controller) {
+      this.activeRequests.delete(requestId);
+    }
+  }
+
+  private cancelRequest(
+    origin: RouteOrigin,
+    requestId: string,
+    reason: string | undefined,
+    rememberMissing: boolean,
+  ): boolean {
+    if (!requestId) {
+      return false;
+    }
+    const active = this.activeRequests.get(requestId);
+    const ownsActive = active !== undefined && sameRouteOrigin(active.origin, origin);
+    if (active && !ownsActive) {
+      return false;
+    }
+
+    const route = this.routes.get(requestId);
+    const internalAppRoute = route !== null
+      && ownsActive
+      && route.origin.type === "app"
+      && route.origin.id === requestId;
+    const ownsRoute = route !== null && (
+      sameRouteOrigin(route.origin, origin)
+      || internalAppRoute
+    );
+    if (route && !ownsRoute) {
+      return false;
+    }
+
+    const message = normalizeRequestCancelReason(reason);
+    if (ownsActive) {
+      active.controller.abort(new Error(message));
+    }
+    if (route && ownsRoute) {
+      if (!internalAppRoute) {
+        this.sendDeviceRequestCancel(route.deviceId, requestId, message);
+      }
+      this.cancelRoute(requestId);
+    }
+    if (ownsActive || ownsRoute) {
+      return true;
+    }
+    if (!rememberMissing || origin.type !== "process") {
+      return false;
+    }
+
+    const now = Date.now();
+    for (const [key, cancellation] of this.cancelledProcessRequests) {
+      if (cancellation.expiresAt <= now) {
+        this.cancelledProcessRequests.delete(key);
+      }
+    }
+    if (this.cancelledProcessRequests.size >= MAX_PROCESS_REQUEST_CANCELLATIONS) {
+      const oldest = this.cancelledProcessRequests.keys().next().value;
+      if (oldest) {
+        this.cancelledProcessRequests.delete(oldest);
+      }
+    }
+    this.cancelledProcessRequests.set(`${origin.id}\0${requestId}`, {
+      expiresAt: now + PROCESS_REQUEST_CANCEL_TTL_MS,
+      reason: message,
+    });
+    return true;
+  }
+
+  private sendDeviceRequestCancel(deviceId: string, requestId: string, reason: string): void {
+    const connection = this.findDeviceConnection(deviceId);
+    if (!connection) {
+      return;
+    }
+    try {
+      this.sendWebSocketFrame(connection, {
+        type: "sig",
+        signal: REQUEST_CANCEL_SIGNAL,
+        payload: { id: requestId, reason },
+      });
+    } catch {}
   }
 
   private cancelRoute(routeId: string): void {
@@ -1480,6 +1619,7 @@ export class Kernel extends Host<Env> {
     let route: { cancel: () => void } | null = null;
     let outgoing: OutgoingBinaryBody | null = null;
     let onAbort: (() => void) | null = null;
+    let requestSent = false;
 
     try {
       route = await this.registerRouteWithExpiry({
@@ -1500,11 +1640,21 @@ export class Kernel extends Host<Env> {
         args,
         ...(options.body ? { body: options.body } : {}),
       } as RequestFrame);
+      requestSent = true;
       const frame = options.signal
         ? await Promise.race([
             pending.promise,
             new Promise<never>((_, reject) => {
-              onAbort = () => reject(requestAbortError(options.signal?.reason));
+              onAbort = () => {
+                if (requestSent) {
+                  this.sendDeviceRequestCancel(
+                    deviceId,
+                    id,
+                    normalizeRequestCancelReason(requestAbortError(options.signal?.reason).message),
+                  );
+                }
+                reject(requestAbortError(options.signal?.reason));
+              };
               options.signal?.addEventListener("abort", onAbort, { once: true });
               if (options.signal?.aborted) {
                 onAbort();
@@ -1649,12 +1799,26 @@ export class Kernel extends Host<Env> {
         return;
       }
 
-      const result = await dispatch(
-        frame,
-        { type: "connection", id: connection.id },
-        this.buildContext(connection),
-        this.buildDispatchDeps(),
-      );
+      const origin: RouteOrigin = { type: "connection", id: connection.id };
+      let controller: AbortController;
+      try {
+        controller = this.registerActiveRequest(origin, frame.id);
+      } catch (error) {
+        this.sendError(connection, frame.id, 409, error instanceof Error ? error.message : String(error));
+        return;
+      }
+      let result;
+      try {
+        frame = this.bindRequestBodyCancellation(frame, controller.signal);
+        result = await dispatch(
+          frame,
+          origin,
+          { ...this.buildContext(connection), requestSignal: controller.signal },
+          this.buildDispatchDeps(),
+        );
+      } finally {
+        this.finishActiveRequest(frame.id, controller);
+      }
       if (result.handled) {
         this.applyPostDispatchEffects(frame, result.response);
         this.sendWebSocketFrame(connection, result.response);
@@ -2192,6 +2356,7 @@ export class Kernel extends Host<Env> {
   async onRouteExpired(routeId: string): Promise<void> {
     const expired = this.routes.remove(routeId);
     if (!expired) return;
+    this.sendDeviceRequestCancel(expired.deviceId, routeId, "Request timed out");
     this.cancelRoutedBody(routeId, "Route expired");
 
     const timeoutFrame: ResponseFrame = {
@@ -2529,6 +2694,7 @@ export class Kernel extends Host<Env> {
   private failRoutesForConnection(connectionId: string): void {
     const failed = this.routes.failForConnection(connectionId);
     for (const entry of failed) {
+      this.sendDeviceRequestCancel(entry.deviceId, entry.id, "Origin disconnected");
       this.cancelRoutedBody(entry.id, "Origin disconnected");
       if (entry.scheduleId) {
         this.cancelSchedule(entry.scheduleId).catch(() => {});
@@ -2755,6 +2921,15 @@ function errFrame(id: string, code: number, message: string): ResponseFrame {
 
 function requestAbortError(reason: unknown): Error {
   return reason instanceof Error ? reason : new Error("Device request cancelled");
+}
+
+function sameRouteOrigin(left: RouteOrigin, right: RouteOrigin): boolean {
+  return left.type === right.type && left.id === right.id;
+}
+
+function normalizeRequestCancelReason(reason: string | undefined): string {
+  const normalized = reason?.trim();
+  return (normalized || "Request cancelled").slice(0, MAX_REQUEST_CANCEL_REASON_LENGTH);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

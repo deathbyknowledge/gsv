@@ -411,7 +411,13 @@ class AccountHomeMountBackend implements MountBackend {
     await this.applyDelete(relativePath, false, `gsv: rm ${relativePath}`);
   }
 
-  async search(path: string, query: string, include?: string): Promise<FsSearchBackendResult> {
+  async search(
+    path: string,
+    query: string,
+    include?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult> {
+    signal?.throwIfAborted();
     const normalized = normalizePath(path);
     const kind = this.classify(normalized);
 
@@ -419,32 +425,38 @@ class AccountHomeMountBackend implements MountBackend {
       if (!this.allowHomeR2Fallback) {
         throwPermissionDenied(normalized);
       }
-      return this.fallback.search!(normalized, query, include);
+      return this.fallback.search!(normalized, query, include, signal);
     }
 
     const combined = new Map<string, FsSearchBackendResult["matches"][number]>();
 
     if (kind === "home") {
       if (this.allowHomeR2Fallback) {
-        const fallbackMatches = await this.fallback.search!(normalized, query, include).catch(() => ({ matches: [] as FsSearchBackendResult["matches"] }));
+        const fallbackMatches = await this.fallback.search!(normalized, query, include, signal).catch(() => {
+          signal?.throwIfAborted();
+          return { matches: [] as FsSearchBackendResult["matches"] };
+        });
         for (const match of fallbackMatches.matches) {
           combined.set(`${match.path}:${match.line}:${match.content}`, match);
         }
       }
-      for (const match of await this.searchRepo(query)) {
+      for (const match of await this.searchRepo(query, undefined, signal)) {
         combined.set(`${match.path}:${match.line}:${match.content}`, match);
       }
       return { matches: [...combined.values()] };
     }
 
     const relativePrefix = this.relativePathForOverlay(normalized);
-    const repoMatches = await this.searchRepo(query, relativePrefix);
+    const repoMatches = await this.searchRepo(query, relativePrefix, signal);
     for (const match of repoMatches) {
       combined.set(`${match.path}:${match.line}:${match.content}`, match);
     }
 
     if (this.canFallbackToR2(normalized)) {
-      const fallbackMatches = await this.fallback.search!(normalized, query, include).catch(() => ({ matches: [] as FsSearchBackendResult["matches"] }));
+      const fallbackMatches = await this.fallback.search!(normalized, query, include, signal).catch(() => {
+        signal?.throwIfAborted();
+        return { matches: [] as FsSearchBackendResult["matches"] };
+      });
       for (const match of fallbackMatches.matches) {
         combined.set(`${match.path}:${match.line}:${match.content}`, match);
       }
@@ -563,8 +575,12 @@ class AccountHomeMountBackend implements MountBackend {
     return result.entries.find((entry) => entry.name === name) ?? null;
   }
 
-  private async searchRepo(query: string, prefix?: string): Promise<FsSearchBackendResult["matches"]> {
-    const result = await this.client.search(this.repo, query, prefix);
+  private async searchRepo(
+    query: string,
+    prefix?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult["matches"]> {
+    const result = await this.client.search(this.repo, query, prefix, signal);
     return result.matches.map((match) => ({
       path: `${this.home}/${match.path}`.replace(/\/+/g, "/"),
       line: match.line,
@@ -698,8 +714,13 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
     return backend.readlink(path);
   }
 
-  search(path: string, query: string, include?: string): Promise<FsSearchBackendResult> {
-    return this.require(path).search(path, query, include);
+  search(
+    path: string,
+    query: string,
+    include?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult> {
+    return this.require(path).search(path, query, include, signal);
   }
 
   private require(path: string): AccountHomeMountBackend {

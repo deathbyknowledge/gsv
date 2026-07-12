@@ -13,6 +13,7 @@ The current protocol is syscall-based:
 The source of truth is:
 
 - `gateway/src/protocol/frames.ts`
+- `packages/gsv/src/protocol/request-cancel.ts`
 - `packages/gsv/src/protocol/syscalls/system.ts`
 - `gateway/src/kernel/connect.ts`
 - `gateway/src/kernel/dispatch.ts`
@@ -274,6 +275,34 @@ Service connections receive no ambient signals. Adapter workers report state thr
 - user connections receive routed process signals for their own runs
 - adapter surfaces consume HIL and terminal run signals through their run route
 
+### Request cancellation
+
+`request.cancel` is a reserved one-way control signal for cancelling an entire
+request:
+
+```json
+{
+  "type": "sig",
+  "signal": "request.cancel",
+  "payload": {
+    "id": "request-uuid",
+    "reason": "User interrupted tool execution"
+  }
+}
+```
+
+The `id` is the original request ID. The optional reason is diagnostic only;
+request ownership is determined from the authenticated connection or Process
+route. The gateway removes matching routes and body pumps before forwarding the
+signal to a driver. Drivers stop the active handler and suppress late responses.
+Unknown, duplicate, and post-completion cancellation signals have no effect.
+
+Process abort, reset, kill, user supersession, route expiry, client timeout, and
+origin disconnect use this mechanism. Cancellation is best effort for handlers
+that have already crossed an irreversible boundary. A `shell.exec` request that
+already returned a running session is complete; controlling that session is a
+separate operation.
+
 ---
 
 ## Frame Bodies
@@ -320,10 +349,10 @@ Receiver cancellation uses `CANCEL | END` (`10`). The original sender stops its
 matching outgoing pump without treating the cancellation as a frame for an
 unrelated incoming stream that happens to use the same numeric ID.
 
-Body cancellation stops the byte pump, not a bodyless syscall that has already
-started on a remote device. Those requests remain bounded by their syscall
-timeout; `net.fetch` timeouts are capped at 10 minutes. Generic remote request
-preemption requires a separate control frame.
+Body cancellation stops only the byte pump. Cancelling the whole syscall uses
+the `request.cancel` control signal above. The two mechanisms are independent:
+a request may have no body, and a completed request may leave a response body
+that its consumer can still cancel.
 
 The current body-bearing syscalls are:
 

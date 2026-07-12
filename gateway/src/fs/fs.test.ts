@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
 import type { KernelRefs } from "./index";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { R2MountBackend } from "./backends/r2";
 
 const ROOT: ProcessIdentity = {
   uid: 0,
@@ -969,6 +970,37 @@ describe("GsvFs write metadata", () => {
     expect(await fs.readFile(`/${TEST_PREFIX}stream.txt`)).toBe("streamed data");
   });
 
+  it("cancels streamed R2 writes", async () => {
+    const fs = makeFs(SAM);
+    const path = `/${TEST_PREFIX}cancelled-stream.txt`;
+    let read!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      read = resolve;
+    });
+    let cancelled: unknown;
+    const stream = new ReadableStream<Uint8Array>({
+      pull() {
+        read();
+      },
+      cancel(reason) {
+        cancelled = reason;
+      },
+    }, { highWaterMark: 0 });
+    const controller = new AbortController();
+    const reason = new Error("write cancelled");
+    const write = fs.writeFileStream(path, stream, {
+      expectedSize: 1,
+      signal: controller.signal,
+    });
+    await readStarted;
+
+    controller.abort(reason);
+
+    await expect(write).rejects.toEqual(reason);
+    expect(cancelled).toBe(reason);
+    expect(await env.STORAGE.head(path.slice(1))).toBeNull();
+  });
+
   it("streams writes through symlink targets", async () => {
     const fs = makeFs(SAM);
     const bytes = new TextEncoder().encode("updated");
@@ -1040,6 +1072,43 @@ describe("GsvFs write metadata", () => {
       bytesToStream(new TextEncoder().encode("short")),
       { expectedSize: 12 },
     )).rejects.toThrow("did not match expectedSize");
+  });
+
+  it("cancels buffered stream writes", async () => {
+    const fs = Object.create(GsvFs.prototype) as any;
+    let written = false;
+    fs.resolveFinalPath = async (path: string) => path;
+    fs.backendForPath = () => ({
+      writeFile: async () => {
+        written = true;
+      },
+    });
+    let read!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      read = resolve;
+    });
+    let cancelled: unknown;
+    const stream = new ReadableStream<Uint8Array>({
+      pull() {
+        read();
+      },
+      cancel(reason) {
+        cancelled = reason;
+      },
+    }, { highWaterMark: 0 });
+    const controller = new AbortController();
+    const reason = new Error("write cancelled");
+    const write = fs.writeFileStream("/virtual.bin", stream, {
+      expectedSize: 1,
+      signal: controller.signal,
+    });
+    await readStarted;
+
+    controller.abort(reason);
+
+    await expect(write).rejects.toBe(reason);
+    expect(cancelled).toBe(reason);
+    expect(written).toBe(false);
   });
 });
 
@@ -1711,5 +1780,40 @@ describe("GsvFs search", () => {
         content: "secret-needle",
       },
     ]);
+  });
+
+  it("cancels a file body read", async () => {
+    let startRead!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      startRead = resolve;
+    });
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull() {
+        startRead();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }, { highWaterMark: 0 });
+    const object = {
+      body,
+      customMetadata: { uid: "1000", gid: "1000", mode: "644" },
+      httpMetadata: { contentType: "text/plain" },
+      key: `${TEST_PREFIX}slow.txt`,
+      size: 1,
+    };
+    const backend = new R2MountBackend({
+      get: async () => object,
+    } as unknown as R2Bucket, SAM);
+    const controller = new AbortController();
+    const reason = new Error("search cancelled");
+
+    const search = backend.search(`/${object.key}`, "needle", undefined, controller.signal);
+    await reading;
+    controller.abort(reason);
+
+    await expect(search).rejects.toBe(reason);
+    expect(cancelled).toBe(true);
   });
 });

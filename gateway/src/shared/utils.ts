@@ -45,13 +45,13 @@ export async function requestProcessNetFetch(
   return kernel.requestProcessNetFetch(processId, target, args, options);
 }
 
-export async function cancelProcessNetFetch(
+export async function cancelProcessRequests(
   processId: string,
-  requestId: string,
+  requestIds: string[],
   reason?: string,
-): Promise<boolean> {
+): Promise<number> {
   const kernel = await getKernelPtr();
-  return kernel.cancelProcessNetFetch(processId, requestId, reason);
+  return kernel.cancelProcessRequests(processId, requestIds, reason);
 }
 
 export async function sendFrameToProcess(

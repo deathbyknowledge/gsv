@@ -3,7 +3,7 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { bodyToText, type ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type {
   MountBackend,
   ExtendedMountStat,
@@ -15,6 +15,7 @@ import type {
   WriteFileStreamResult,
 } from "../mount";
 import { concatBytes, inferContentType, isTextContentType, normalizePath } from "../utils";
+import { bindStreamToAbort } from "../../shared/streams";
 
 const READ_BIT = 4;
 const WRITE_BIT = 2;
@@ -116,20 +117,28 @@ export class R2MountBackend implements MountBackend {
     options: WriteFileStreamOptions,
   ): Promise<WriteFileStreamResult> {
     assertExpectedSize(options?.expectedSize);
+    options.signal?.throwIfAborted();
     const p = normalizePath(path);
     const key = toKey(p);
     const existing = await this.bucket.head(key);
+    options.signal?.throwIfAborted();
     if (existing) this.assertMode(existing, WRITE_BIT, p);
 
-    const value = content.pipeThrough(new FixedLengthStream(options.expectedSize));
-    const result = await this.bucket.put(key, value, {
-      httpMetadata: toR2HttpMetadata(p, options),
-      customMetadata: {
-        uid: String(this.identity.uid),
-        gid: String(this.identity.gid),
-        mode: existing?.customMetadata?.mode ?? "644",
-      },
-    });
+    const source = options.signal
+      ? bindStreamToAbort(content, options.signal)
+      : content;
+    const fixed = new FixedLengthStream(options.expectedSize);
+    const [result] = await Promise.all([
+      this.bucket.put(key, fixed.readable, {
+        httpMetadata: toR2HttpMetadata(p, options),
+        customMetadata: {
+          uid: String(this.identity.uid),
+          gid: String(this.identity.gid),
+          mode: existing?.customMetadata?.mode ?? "644",
+        },
+      }),
+      source.pipeTo(fixed.writable),
+    ]);
 
     return {
       size: result.size,
@@ -364,7 +373,13 @@ export class R2MountBackend implements MountBackend {
     return obj.text();
   }
 
-  async search(path: string, query: string, include?: string): Promise<FsSearchBackendResult> {
+  async search(
+    path: string,
+    query: string,
+    include?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult> {
+    signal?.throwIfAborted();
     const prefix = normalizePath(path);
     const key = toKey(prefix);
     const searchPrefix = prefix.endsWith("/") ? prefix : prefix + "/";
@@ -375,6 +390,7 @@ export class R2MountBackend implements MountBackend {
 
     if (key) {
       const direct = await this.bucket.get(key);
+      signal?.throwIfAborted();
       if (direct && !isDirectoryMarker(direct)) {
         truncated = await this.searchObject({
           displayPath: prefix,
@@ -383,6 +399,7 @@ export class R2MountBackend implements MountBackend {
           matches,
           object: direct,
           query: needle,
+          signal,
           throwOnDenied: true,
         });
         return { matches, truncated };
@@ -398,11 +415,14 @@ export class R2MountBackend implements MountBackend {
         cursor,
         limit: 100,
       });
+      signal?.throwIfAborted();
 
       for (const obj of listed.objects) {
+        signal?.throwIfAborted();
         if (include && !matchGlob(include, obj.key)) continue;
 
         const full = await this.bucket.get(obj.key);
+        signal?.throwIfAborted();
         if (!full) continue;
         if (isDirectoryMarker(full) || isSymlink(full)) continue;
 
@@ -413,6 +433,7 @@ export class R2MountBackend implements MountBackend {
           matches,
           object: full,
           query: needle,
+          signal,
           throwOnDenied: false,
         });
         if (truncated) {
@@ -433,6 +454,7 @@ export class R2MountBackend implements MountBackend {
     matches,
     object,
     query,
+    signal,
     throwOnDenied,
   }: {
     displayPath: string;
@@ -441,6 +463,7 @@ export class R2MountBackend implements MountBackend {
     matches: FsSearchBackendResult["matches"];
     object: R2ObjectBody;
     query: string;
+    signal?: AbortSignal;
     throwOnDenied: boolean;
   }): Promise<boolean> {
     if (include && !matchGlob(include, key)) {
@@ -467,7 +490,11 @@ export class R2MountBackend implements MountBackend {
       return false;
     }
 
-    const text = await object.text();
+    const text = await bodyToText(
+      { stream: object.body as ReadableStream<Uint8Array>, length: object.size },
+      Infinity,
+      signal,
+    );
     const lines = text.split("\n");
 
     for (let i = 0; i < lines.length; i++) {

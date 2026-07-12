@@ -129,6 +129,14 @@ describe("Kernel frame bodies", () => {
     await expect(request).rejects.toBe(reason);
     expect(cancelRoute).toHaveBeenCalledOnce();
     expect(outgoing.cancel).toHaveBeenCalledWith(reason);
+    expect(kernel.sendWebSocketFrame).toHaveBeenLastCalledWith(
+      { id: "device-connection" },
+      {
+        type: "sig",
+        signal: "request.cancel",
+        payload: { id: expect.any(String), reason: "caller stopped" },
+      },
+    );
   });
 
   it("cancels announced bodies on requests rejected before dispatch", async () => {
@@ -301,9 +309,152 @@ describe("Kernel frame bodies", () => {
     expect(cancelled).toBe(true);
     expect(sends).toHaveLength(1);
   });
+
+  it("cancels a request body forwarded to a process", async () => {
+    let reading!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      reading = resolve;
+    });
+    let forwardedError: unknown;
+    sendFrameToProcessMock.mockImplementationOnce(async (_pid, frame) => {
+      const reader = frame.body!.stream.getReader();
+      reading();
+      try {
+        await reader.read();
+      } catch (error) {
+        forwardedError = error;
+        throw error;
+      } finally {
+        reader.releaseLock();
+      }
+      return null;
+    });
+    let sourceCancellation: unknown;
+    const body = new ReadableStream<Uint8Array>({
+      pull() {},
+      cancel(reason) {
+        sourceCancellation = reason;
+      },
+    }, { highWaterMark: 0 });
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.activeRequests = new Map();
+    kernel.cancelledProcessRequests = new Map();
+    kernel.routes = { get: () => null };
+    kernel.buildProcessContext = () => ({
+      callerOwnerUid: 0,
+      identity: {
+        role: "user",
+        process: {
+          uid: 0,
+          gid: 0,
+          gids: [0],
+          username: "root",
+          home: "/root",
+          cwd: "/root",
+        },
+        capabilities: ["*"],
+      },
+      procs: {
+        get: () => ({ ownerUid: 0 }),
+      },
+      conversations: {
+        getByActivePid: () => null,
+      },
+    });
+    kernel.buildDispatchDeps = () => ({});
+    kernel.applyPostDispatchEffects = vi.fn();
+    const request = kernel.handleProcessReq("source-process", {
+      type: "req",
+      id: "media-upload",
+      call: "proc.media.write",
+      args: {
+        pid: "target-process",
+        type: "image",
+        mimeType: "image/png",
+      },
+      body: { stream: body, length: 1 },
+    });
+    await Promise.race([
+      readStarted,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error("forwarded body was not read")), 500);
+      }),
+    ]);
+
+    expect(kernel.cancelProcessRequests(
+      "source-process",
+      ["media-upload"],
+      "User interrupted upload",
+    )).toBe(1);
+
+    await expect(Promise.race([
+      request,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error("forwarded body did not cancel")), 500);
+      }),
+    ])).resolves.toMatchObject({
+      ok: false,
+      error: { message: "User interrupted upload" },
+    });
+    expect(forwardedError).toEqual(new Error("User interrupted upload"));
+    expect(sourceCancellation).toEqual(new Error("User interrupted upload"));
+
+    let ignoredCancellation: unknown;
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "ignored-upload",
+      ok: true,
+      data: { ok: true },
+    });
+    await kernel.recvFrame("source-process", {
+      type: "req",
+      id: "ignored-upload",
+      call: "proc.media.write",
+      args: {
+        pid: "target-process",
+        type: "image",
+        mimeType: "image/png",
+      },
+      body: {
+        stream: new ReadableStream<Uint8Array>({
+          cancel(reason) {
+            ignoredCancellation = reason;
+          },
+        }),
+        length: 1,
+      },
+    });
+
+    expect(ignoredCancellation).toBe("Process request completed");
+  });
 });
 
 describe("Kernel device connection cleanup", () => {
+  it("aborts native requests when their origin disconnects", () => {
+    const controller = new AbortController();
+    const connection = {
+      id: "connection-1",
+      state: { step: "connected", identity: { role: "user" } },
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.connections = new Map([[connection.id, connection]]);
+    kernel.activeRequests = new Map([
+      ["request-1", {
+        origin: { type: "connection", id: connection.id },
+        controller,
+      }],
+    ]);
+    kernel.routes = { get: vi.fn(() => null) };
+    kernel.closeFrameBodyChannel = vi.fn();
+    kernel.failRoutesForConnection = vi.fn();
+    kernel.runRoutes = { clearForConnection: vi.fn() };
+
+    kernel.onClose(connection);
+
+    expect(controller.signal.reason).toEqual(new Error("Origin disconnected"));
+    expect(kernel.failRoutesForConnection).toHaveBeenCalledWith(connection.id);
+  });
+
   it("closes live driver connections when a machine is forgotten", () => {
     const alpha = {
       state: {
@@ -659,9 +810,13 @@ describe("Kernel process device requests", () => {
         get: ReturnType<typeof vi.fn>;
       };
       requestDevice: typeof requestDevice;
-      cancelProcessNetFetch(processId: string, requestId: string, reason?: string): boolean;
-      processNetFetchRequests: Map<string, { processId: string; controller: AbortController }>;
-      cancelledProcessNetFetchRequests: Map<
+      routes: { get: ReturnType<typeof vi.fn> };
+      cancelProcessRequests(processId: string, requestIds: string[], reason?: string): number;
+      activeRequests: Map<
+        string,
+        { origin: { type: "process"; id: string }; controller: AbortController }
+      >;
+      cancelledProcessRequests: Map<
         string,
         { expiresAt: number; reason: string }
       >;
@@ -693,8 +848,9 @@ describe("Kernel process device requests", () => {
       get: vi.fn(() => device),
     };
     kernel.requestDevice = requestDevice;
-    kernel.processNetFetchRequests = new Map();
-    kernel.cancelledProcessNetFetchRequests = new Map();
+    kernel.routes = { get: vi.fn(() => null) };
+    kernel.activeRequests = new Map();
+    kernel.cancelledProcessRequests = new Map();
     return { kernel, requestDevice };
   }
 
@@ -783,26 +939,73 @@ describe("Kernel process device requests", () => {
         signal: expect.any(AbortSignal),
       }),
     );
-    expect(kernel.processNetFetchRequests.size).toBe(0);
+    expect(kernel.activeRequests.size).toBe(0);
   });
 
-  it("only lets the owning process cancel a routed fetch", () => {
+  it("only lets the owning process cancel an active request", () => {
     const kernel = Object.create(Kernel.prototype) as any;
     const controller = new AbortController();
-    kernel.processNetFetchRequests = new Map([
-      ["fetch-1", { processId: "proc_1", controller }],
+    kernel.activeRequests = new Map([
+      ["fetch-1", { origin: { type: "process", id: "proc_1" }, controller }],
     ]);
+    kernel.cancelledProcessRequests = new Map();
+    kernel.routes = { get: vi.fn(() => null) };
 
-    expect(kernel.cancelProcessNetFetch("proc_2", "fetch-1")).toBe(false);
+    expect(kernel.cancelProcessRequests("proc_2", ["fetch-1"])).toBe(0);
     expect(controller.signal.aborted).toBe(false);
-    expect(kernel.cancelProcessNetFetch("proc_1", "fetch-1", "stopped")).toBe(true);
+    expect(kernel.cancelProcessRequests("proc_1", ["fetch-1"], "stopped")).toBe(1);
     expect(controller.signal.reason).toEqual(new Error("stopped"));
+  });
+
+  it("forwards routed cancellation only for the owning process", () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.activeRequests = new Map();
+    kernel.cancelledProcessRequests = new Map();
+    kernel.routes = {
+      get: vi.fn(() => ({
+        id: "search-1",
+        origin: { type: "process", id: "proc_1" },
+        deviceId: "device-1",
+      })),
+    };
+    kernel.sendDeviceRequestCancel = vi.fn();
+    kernel.cancelRoute = vi.fn();
+
+    expect(kernel.cancelProcessRequests("proc_2", ["search-1"], "stopped")).toBe(0);
+    expect(kernel.sendDeviceRequestCancel).not.toHaveBeenCalled();
+    expect(kernel.cancelProcessRequests("proc_1", ["search-1"], "stopped")).toBe(1);
+    expect(kernel.sendDeviceRequestCancel).toHaveBeenCalledWith(
+      "device-1",
+      "search-1",
+      "stopped",
+    );
+    expect(kernel.cancelRoute).toHaveBeenCalledWith("search-1");
+  });
+
+  it("cancels a connection request without exposing the control signal", () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    const controller = new AbortController();
+    kernel.activeRequests = new Map([
+      ["request-1", { origin: { type: "connection", id: "conn-1" }, controller }],
+    ]);
+    kernel.routes = { get: vi.fn(() => null) };
+
+    kernel.handleRequestCancel(
+      { id: "conn-1", state: { step: "connected" } },
+      {
+        type: "sig",
+        signal: "request.cancel",
+        payload: { id: "request-1", reason: "client timed out" },
+      },
+    );
+
+    expect(controller.signal.reason).toEqual(new Error("client timed out"));
   });
 
   it("honors cancellation that arrives before process fetch registration", async () => {
     const { kernel, requestDevice } = buildKernelForDeviceRequest();
 
-    expect(kernel.cancelProcessNetFetch("proc_1", "fetch-early", "superseded")).toBe(true);
+    expect(kernel.cancelProcessRequests("proc_1", ["fetch-early"], "superseded")).toBe(1);
     await expect(kernel.requestProcessNetFetch(
       "proc_1",
       "linux-machine",
@@ -811,7 +1014,7 @@ describe("Kernel process device requests", () => {
     )).rejects.toThrow("superseded");
 
     expect(requestDevice).not.toHaveBeenCalled();
-    expect(kernel.cancelledProcessNetFetchRequests.size).toBe(0);
+    expect(kernel.cancelledProcessRequests.size).toBe(0);
   });
 });
 

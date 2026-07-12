@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
+import { Bash } from "just-bash";
 import { handleShellExec } from "./shell";
 import {
   handleFsCopy,
@@ -1255,6 +1256,38 @@ describe("fs copy", () => {
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
     });
     expect(received).toBe("to device");
+  });
+
+  it("cancels a device copy request", async () => {
+    const controller = new AbortController();
+    const ctx = makeContext() as KernelContext;
+    ctx.requestSignal = controller.signal;
+    ctx.devices = {
+      canAccess: vi.fn(() => true),
+      canHandle: vi.fn(() => true),
+    } as never;
+    let requestSignal: AbortSignal | undefined;
+    const request = handleFsCopy({
+      source: { target: "gsv", path: "/tmp/source.txt" },
+      destination: { target: "rearden", path: "/tmp/destination.txt" },
+    }, ctx, {
+      async requestDevice(_deviceId, _call, _args, options) {
+        requestSignal = options?.signal;
+        return await new Promise((_resolve, reject) => {
+          requestSignal?.addEventListener(
+            "abort",
+            () => reject(requestSignal?.reason),
+            { once: true },
+          );
+        });
+      },
+    });
+    await vi.waitFor(() => expect(requestSignal).toBe(controller.signal));
+    const reason = new Error("copy cancelled");
+
+    controller.abort(reason);
+
+    await expect(request).resolves.toEqual({ ok: false, error: "copy cancelled" });
   });
 
   it("returns device receive failures when copying from gsv", async () => {
@@ -2589,5 +2622,33 @@ describe("pkg shell command", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout).not.toContain("shadowed wiki command");
     expect(calls).toHaveLength(0);
+  });
+
+  it("aborts native shell execution with its request", async () => {
+    const controller = new AbortController();
+    const ctx = makeContext();
+    ctx.requestSignal = controller.signal;
+    const exec = vi.spyOn(Bash.prototype, "exec").mockImplementation(
+      async (_command, options) => await new Promise((_resolve, reject) => {
+        options?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      }),
+    );
+
+    try {
+      const request = handleShellExec({ input: "slow command" }, ctx);
+      await vi.waitFor(() => expect(exec).toHaveBeenCalledOnce());
+      controller.abort(new Error("User interrupted"));
+
+      await expect(request).resolves.toMatchObject({
+        status: "failed",
+        error: "User interrupted",
+      });
+    } finally {
+      exec.mockRestore();
+    }
   });
 });

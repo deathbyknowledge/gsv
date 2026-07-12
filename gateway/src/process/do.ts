@@ -164,7 +164,7 @@ import {
 } from "../inference/workers-ai";
 import { assembleSystemPrompt } from "./context";
 import {
-  cancelProcessNetFetch,
+  cancelProcessRequests,
   requestProcessNetFetch,
   sendFrameToKernel,
 } from "../shared/utils";
@@ -327,10 +327,11 @@ async function materializeResponseBody(
   call: string,
   data: unknown,
   body?: FrameBody,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const record = asPlainRecord(data);
   if (call === "net.fetch") {
-    const bytes = body ? await bodyToBytes(body) : new Uint8Array();
+    const bytes = body ? await bodyToBytes(body, Infinity, signal) : new Uint8Array();
     const text = decodeUtf8(bytes);
     return {
       ...(record ?? {}),
@@ -353,10 +354,10 @@ async function materializeResponseBody(
   }
   if (call === "fs.read" && record?.ok === true) {
     if (record.kind === "text") {
-      return { ...record, content: await bodyToText(body) };
+      return { ...record, content: await bodyToText(body, Infinity, signal) };
     }
     if (record.kind === "image") {
-      const bytes = await bodyToBytes(body, MAX_PROCESS_MEDIA_READ_BYTES);
+      const bytes = await bodyToBytes(body, MAX_PROCESS_MEDIA_READ_BYTES, signal);
       const mimeType = typeof record.contentType === "string"
         ? record.contentType
         : "application/octet-stream";
@@ -805,6 +806,7 @@ export class Process extends Host<Env> {
   private readonly ripgit: RipgitClient | null;
   private readonly codeModeResponses = new Map<string, CodeModeResponseWaiter>();
   private readonly codeModeApprovals = new Map<string, CodeModeApprovalWaiter>();
+  private readonly runAbortControllers = new Map<string, AbortController>();
   private readonly activeTickRunIds = new Set<string>();
   private readonly deferredTickRunIds = new Set<string>();
   private lifecycleTransition: Promise<void> = Promise.resolve();
@@ -951,6 +953,7 @@ export class Process extends Host<Env> {
           pending.call,
           frame.data ?? null,
           frame.body,
+          this.runAbortSignal(pending.runId),
         );
         this.rememberShellSessionTargetFromResult(pending.call, pending.args, result);
         this.store.resolve(frame.id, result);
@@ -1244,6 +1247,7 @@ export class Process extends Host<Env> {
       const activeRun = this.currentRun;
       let interrupted: { interrupted: number; appended: number } | null = null;
       if (activeRun) {
+        this.cancelPendingRequests(activeRun.runId, USER_SUPERSEDED_TOOL_MESSAGE);
         this.rememberAbortedRun(activeRun.runId);
         interrupted = this.ingestToolResults(
           activeRun.runId,
@@ -1625,6 +1629,7 @@ export class Process extends Host<Env> {
       }
 
       const runId = run.runId;
+      this.cancelPendingRequests(runId, "User interrupted tool execution");
       this.rememberAbortedRun(runId);
       const pendingHil = this.store.getPendingHilForRun(runId);
       const interrupted = this.ingestToolResults(runId, this.store.getResults(runId), {
@@ -2853,6 +2858,10 @@ export class Process extends Host<Env> {
     const stoppedActiveRun = activeRun?.conversationId === normalizedConversationId;
 
     if (stoppedActiveRun) {
+      this.cancelPendingRequests(
+        activeRun.runId,
+        `Conversation was reset: ${normalizedConversationId}`,
+      );
       this.rememberAbortedRun(activeRun.runId);
       this.ingestToolResults(activeRun.runId, this.store.getResults(activeRun.runId), {
         interruptPending: `Conversation was reset: ${normalizedConversationId}`,
@@ -2947,6 +2956,7 @@ export class Process extends Host<Env> {
     this.lifecycleEpoch += 1;
     this.store.setValue(PROCESS_RESET_AT_KEY, String(Date.now()));
     const activeRun = this.currentRun;
+    this.cancelPendingRequests(null, `Process execution was reset: ${reason}`);
     this.rejectCodeModeWaiters(null, "Process execution state was reset");
     if (activeRun) {
       this.rememberAbortedRun(activeRun.runId);
@@ -3030,6 +3040,9 @@ export class Process extends Host<Env> {
     }
     const tool = this.store.getResults(runId).find((result) => result.dispatchId === dispatchId);
     if (tool?.status === "pending") {
+      this.ctx.waitUntil(
+        cancelProcessRequests(this.pid, [dispatchId], "Tool execution timed out").catch(() => 0),
+      );
       this.store.fail(dispatchId, `Tool execution timed out after ${TOOL_DISPATCH_TIMEOUT_MS}ms`);
       await this.resumeResolvedToolRun(runId);
     } else if (tool?.status === "registered") {
@@ -3788,12 +3801,16 @@ export class Process extends Host<Env> {
     if (executor.kind === "process" && executor.pid === this.pid) {
       return await this.generateAssistantResponseLocally(options);
     }
-    const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
-      config: options.aiTextGenerateConfig,
-      context: options.context,
-      sessionAffinityKey: options.sessionAffinityKey,
-      target: executor.kind === "device" ? executor.target : undefined,
-    }));
+    const result = await this.kernelRpc(
+      "ai.text.generate",
+      this.buildAiTextGenerateArgs({
+        config: options.aiTextGenerateConfig,
+        context: options.context,
+        sessionAffinityKey: options.sessionAffinityKey,
+        target: executor.kind === "device" ? executor.target : undefined,
+      }),
+      this.runAbortSignal(options.runId),
+    );
     return result.message as unknown as AssistantMessage;
   }
 
@@ -3806,7 +3823,7 @@ export class Process extends Host<Env> {
     sessionAffinityKey?: string;
     streamSeq?: StreamSeqCounter;
   }): Promise<AssistantMessage | null> {
-    const routedFetch = this.createGenerationFetch(options.config);
+    const routedFetch = this.createGenerationFetch(options.config, options.runId);
     const stream = options.config.generationStreaming !== "off" &&
       typeof this.generation.stream === "function"
       // TODO: add ai.text.stream
@@ -3856,15 +3873,20 @@ export class Process extends Host<Env> {
   }): Promise<string> {
     const executor = options.config.executor;
     if (executor.kind !== "process" || executor.pid !== this.pid) {
-      const result = await this.kernelRpc("ai.text.generate", this.buildAiTextGenerateArgs({
-        context: options.context,
-        options: options.options,
-        sessionAffinityKey: options.sessionAffinityKey,
-        target: executor.kind === "device" ? executor.target : undefined,
-      }));
+      const runId = this.currentRun?.runId;
+      const result = await this.kernelRpc(
+        "ai.text.generate",
+        this.buildAiTextGenerateArgs({
+          context: options.context,
+          options: options.options,
+          sessionAffinityKey: options.sessionAffinityKey,
+          target: executor.kind === "device" ? executor.target : undefined,
+        }),
+        runId ? this.runAbortSignal(runId) : undefined,
+      );
       return result.text ?? "";
     }
-    const routedFetch = this.createGenerationFetch(options.config);
+    const routedFetch = this.createGenerationFetch(options.config, this.currentRun?.runId);
     return await this.generation.generateText({
       config: options.config,
       context: options.context,
@@ -3935,6 +3957,7 @@ export class Process extends Host<Env> {
         && this.store.queueSize(run.conversationId) === 0;
       this.emitRunFinished(run, options);
       this.currentRun = null;
+      this.runAbortControllers.delete(runId);
       this.store.clearPendingHil();
       console.log(`[Process] Finished run ${runId}`);
 
@@ -4168,10 +4191,42 @@ export class Process extends Host<Env> {
   private async kernelRpc<T extends SyscallName>(
     call: T,
     args: unknown = {},
+    signal?: AbortSignal,
   ): Promise<ResultOf<T>> {
+    signal?.throwIfAborted();
     const id = crypto.randomUUID();
     const frame = { type: "req", id, call, args } as RequestFrame;
-    const response = await sendFrameToKernel(this.pid, frame);
+    const pending = sendFrameToKernel(this.pid, frame);
+    let rejectAbort: ((reason: unknown) => void) | undefined;
+    const aborted = signal && new Promise<never>((_resolve, reject) => {
+      rejectAbort = reject;
+    });
+    const cancel = () => {
+      const reason = signal?.reason instanceof Error
+        ? signal.reason.message
+        : "Request cancelled";
+      this.ctx.waitUntil(
+        cancelProcessRequests(
+          this.pid,
+          [id],
+          reason,
+        ).catch(() => 0),
+      );
+      void pending.then((response) =>
+        response?.type === "res"
+          ? cancelResponseBody(response, reason)
+          : undefined
+      ).catch(() => {});
+      rejectAbort?.(signal?.reason);
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    let response: Frame | null;
+    try {
+      response = await (aborted ? Promise.race([pending, aborted]) : pending);
+      signal?.throwIfAborted();
+    } finally {
+      signal?.removeEventListener("abort", cancel);
+    }
 
     if (!response || response.type !== "res") {
       throw new Error(`No synchronous response for ${call}`);
@@ -4182,7 +4237,10 @@ export class Process extends Host<Env> {
     return response.data as ResultOf<T>;
   }
 
-  private createGenerationFetch(config: AiConfigResult): typeof fetch | undefined {
+  private createGenerationFetch(
+    config: AiConfigResult,
+    runId?: string,
+  ): typeof fetch | undefined {
     const target = normalizeTarget(config.transportTarget);
     if (target === "gsv") {
       return undefined;
@@ -4194,9 +4252,16 @@ export class Process extends Host<Env> {
         || requestedRedirect === "manual"
         ? requestedRedirect
         : undefined;
-      const request = new Request(input, redirect === "error"
-        ? { ...init, redirect: "manual" }
-        : init);
+      const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+      const runSignal = runId ? this.runAbortSignal(runId) : undefined;
+      const signal = runSignal && callerSignal
+        ? AbortSignal.any([runSignal, callerSignal])
+        : runSignal ?? callerSignal;
+      const request = new Request(input, {
+        ...init,
+        ...(redirect === "error" ? { redirect: "manual" } : {}),
+        ...(signal ? { signal } : {}),
+      });
       const outbound = requestToNetFetchArgs(request, redirect);
       const timeoutMs = normalizeNetFetchTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
       const requestId = crypto.randomUUID();
@@ -4214,15 +4279,24 @@ export class Process extends Host<Env> {
         request.signal,
         outbound.body,
         (reason) => {
-          this.ctx.waitUntil(cancelProcessNetFetch(
+          this.ctx.waitUntil(cancelProcessRequests(
             this.pid,
-            requestId,
+            [requestId],
             reason instanceof Error ? reason.message : undefined,
-          ));
+          ).catch(() => 0));
         },
       );
       return responseFromNetFetchResult(response.data, response.body, request.signal);
     };
+  }
+
+  private runAbortSignal(runId: string): AbortSignal {
+    let controller = this.runAbortControllers.get(runId);
+    if (!controller) {
+      controller = new AbortController();
+      this.runAbortControllers.set(runId, controller);
+    }
+    return controller.signal;
   }
 
   private async requestKernelNetFetch(
@@ -4647,7 +4721,12 @@ export class Process extends Host<Env> {
       const res = response;
       if (res.ok) {
         try {
-          const result = await materializeResponseBody(call, res.data ?? null, res.body);
+          const result = await materializeResponseBody(
+            call,
+            res.data ?? null,
+            res.body,
+            this.runAbortSignal(runId),
+          );
           this.rememberShellSessionTargetFromResult(call, args, result);
           this.store.resolve(dispatchId, result);
         } catch (error) {
@@ -5131,7 +5210,12 @@ export class Process extends Host<Env> {
     }
 
     if (response.ok) {
-      return await materializeResponseBody(call, response.data ?? null, response.body);
+      return await materializeResponseBody(
+        call,
+        response.data ?? null,
+        response.body,
+        context ? this.runAbortSignal(context.runId) : undefined,
+      );
     }
 
     throw new Error(response.error.message);
@@ -5195,6 +5279,9 @@ export class Process extends Host<Env> {
     const pending = new Promise<ResponseFrame>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.codeModeResponses.delete(id);
+        this.ctx.waitUntil(
+          cancelProcessRequests(this.pid, [id], `${call} timed out`).catch(() => 0),
+        );
         reject(new Error(`Timed out waiting for ${call}`));
       }, CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS);
       this.codeModeResponses.set(id, { runId, call, args, resolve, reject, timeoutId });
@@ -5238,6 +5325,39 @@ export class Process extends Host<Env> {
     this.codeModeApprovals.delete(requestId);
     clearTimeout(waiter.timeoutId);
     waiter.resolve(approved);
+  }
+
+  private cancelPendingRequests(runId: string | null, reason: string): void {
+    const requestIds = new Set<string>();
+    const toolRunId = runId ?? this.currentRun?.runId;
+    if (toolRunId) {
+      for (const result of this.store.getResults(toolRunId)) {
+        if (result.status === "registered" || result.status === "pending") {
+          requestIds.add(result.dispatchId);
+        }
+      }
+    }
+    for (const [id, waiter] of this.codeModeResponses) {
+      if (runId === null || waiter.runId === runId) {
+        requestIds.add(id);
+      }
+    }
+
+    if (runId === null) {
+      for (const controller of this.runAbortControllers.values()) {
+        controller.abort(new Error(reason));
+      }
+      this.runAbortControllers.clear();
+    } else {
+      this.runAbortControllers.get(runId)?.abort(new Error(reason));
+      this.runAbortControllers.delete(runId);
+    }
+
+    if (requestIds.size > 0) {
+      this.ctx.waitUntil(
+        cancelProcessRequests(this.pid, [...requestIds], reason).catch(() => 0),
+      );
+    }
   }
 
   private rejectCodeModeWaiters(runId: string | null, message: string): void {
