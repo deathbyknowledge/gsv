@@ -1,13 +1,10 @@
 use crate::protocol::ToolDefinition;
-use crate::tools::Tool;
+use crate::tools::{Tool, ToolBody, ToolOutput};
 use async_trait::async_trait;
-use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fs;
-use std::path::PathBuf;
-
-const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+use std::path::{Path, PathBuf};
 
 pub struct ReadTool {
     workspace: PathBuf,
@@ -47,7 +44,7 @@ fn format_byte_size(bytes: u64) -> String {
     }
 }
 
-fn read_directory(path: &PathBuf) -> Result<Value, String> {
+fn read_directory(path: &Path) -> Result<ToolOutput, String> {
     let entries =
         fs::read_dir(path).map_err(|e| format!("Failed to read '{}': {}", path.display(), e))?;
 
@@ -71,12 +68,12 @@ fn read_directory(path: &PathBuf) -> Result<Value, String> {
     directories.sort();
     files.sort();
 
-    Ok(json!({
+    Ok(ToolOutput::json(json!({
         "ok": true,
         "path": path.display().to_string(),
         "files": files,
         "directories": directories
-    }))
+    })))
 }
 
 #[async_trait]
@@ -107,102 +104,160 @@ impl Tool for ReadTool {
         }
     }
 
-    async fn execute(&self, args: Value) -> Result<Value, String> {
+    async fn execute(&self, args: Value) -> Result<ToolOutput, String> {
         let args: ReadArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
         let resolved = self.resolve_path(&args.path);
-        let metadata = fs::metadata(&resolved)
+        let metadata = tokio::fs::metadata(&resolved)
+            .await
             .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
 
         if metadata.is_dir() {
             return read_directory(&resolved);
         }
 
-        match fs::read_to_string(&resolved) {
-            Ok(content) => {
-                let lines: Vec<&str> = content.lines().collect();
-                let offset = args.offset.unwrap_or(0);
-                let limit = args.limit.unwrap_or(lines.len());
+        let size = metadata.len();
+        let content_type = infer_content_type(&resolved);
 
-                let selected: Vec<String> = lines
-                    .into_iter()
-                    .skip(offset)
-                    .take(limit)
-                    .enumerate()
-                    .map(|(i, line)| format!("{:6}\t{}", offset + i + 1, line))
-                    .collect();
-
-                Ok(json!({
+        if content_type.starts_with("image/") {
+            let file = tokio::fs::File::open(&resolved)
+                .await
+                .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
+            return Ok(ToolOutput::with_body(
+                json!({
                     "ok": true,
                     "path": resolved.display().to_string(),
-                    "content": selected.join("\n"),
-                    "lines": selected.len(),
-                    "size": metadata.len()
-                }))
-            }
-            Err(text_read_err) => {
-                let raw_bytes = fs::read(&resolved)
-                    .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
-
-                let byte_count = raw_bytes.len() as u64;
-                let human_size = format_byte_size(byte_count);
-                let mime_type = infer::get(&raw_bytes).map(|ft| ft.mime_type().to_string());
-
-                match &mime_type {
-                    Some(mime) if mime.starts_with("image/") => {
-                        if byte_count > MAX_IMAGE_BYTES {
-                            return Err(format!(
-                                "Image file too large ({}, max {})",
-                                human_size,
-                                format_byte_size(MAX_IMAGE_BYTES)
-                            ));
-                        }
-
-                        let encoded = base64::engine::general_purpose::STANDARD.encode(&raw_bytes);
-
-                        Ok(json!({
-                            "ok": true,
-                            "path": resolved.display().to_string(),
-                            "size": byte_count,
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": format!(
-                                        "Read image file {} [{}, {}]",
-                                        resolved.display(),
-                                        mime,
-                                        human_size
-                                    )
-                                },
-                                {
-                                    "type": "image",
-                                    "data": encoded,
-                                    "mimeType": mime
-                                }
-                            ]
-                        }))
-                    }
-                    Some(mime) => Err(format!(
-                        "Binary file ({}, {}) - not a text file",
-                        mime, human_size
-                    )),
-                    None => {
-                        if text_read_err.kind() == std::io::ErrorKind::NotFound {
-                            Err(format!(
-                                "Failed to read '{}': {}",
-                                resolved.display(),
-                                text_read_err
-                            ))
-                        } else {
-                            Err(format!(
-                                "Binary file (unknown type, {}) - not a text file",
-                                human_size
-                            ))
-                        }
-                    }
-                }
-            }
+                    "size": size,
+                    "kind": "image",
+                    "contentType": content_type,
+                }),
+                ToolBody::reader(file, Some(size), None, resolved.display().to_string()),
+            ));
         }
+
+        let binary_error = || {
+            format!(
+                "Binary file ({}, {}) - not a text file",
+                content_type,
+                format_byte_size(size)
+            )
+        };
+        if !is_text_content_type(content_type) {
+            return Err(binary_error());
+        }
+        let bytes = tokio::fs::read(&resolved)
+            .await
+            .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
+        let content = String::from_utf8(bytes).map_err(|_error| binary_error())?;
+        let offset = args.offset.unwrap_or(0);
+        let selected = content
+            .split('\n')
+            .skip(offset)
+            .take(args.limit.unwrap_or(usize::MAX))
+            .enumerate()
+            .map(|(index, line)| format!("{:6}\t{}", offset + index + 1, line))
+            .collect::<Vec<_>>();
+        let body = selected.join("\n").into_bytes();
+
+        Ok(ToolOutput::with_body(
+            json!({
+                "ok": true,
+                "path": resolved.display().to_string(),
+                "size": size,
+                "kind": "text",
+                "contentType": content_type,
+                "lines": selected.len(),
+            }),
+            ToolBody::bytes(body, resolved.display().to_string()),
+        ))
+    }
+}
+
+fn infer_content_type(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("md") => "text/markdown",
+        Some("json" | "map") => "application/json",
+        Some("yaml" | "yml") => "application/yaml",
+        Some("xml") => "application/xml",
+        Some("toml") => "application/toml",
+        Some("js" | "cjs" | "mjs" | "jsx") => "application/javascript",
+        Some("ts" | "tsx") => "application/typescript",
+        Some("html" | "htm") => "text/html",
+        Some("css") => "text/css",
+        Some("txt" | "log") => "text/plain",
+        Some("csv") => "text/csv",
+        Some("sh") => "text/x-shellscript",
+        Some("py") => "text/x-python",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("svg") => "image/svg+xml",
+        Some("wasm") => "application/wasm",
+        Some("data") => "application/octet-stream",
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("ogg") => "audio/ogg",
+        Some("webm") => "audio/webm",
+        Some("m4a") => "audio/mp4",
+        Some("mp4") => "video/mp4",
+        Some("mov") => "video/quicktime",
+        Some("pdf") => "application/pdf",
+        _ => "text/plain",
+    }
+}
+
+fn is_text_content_type(content_type: &str) -> bool {
+    let content_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    content_type.starts_with("text/")
+        || matches!(
+            content_type.as_str(),
+            "application/json"
+                | "application/yaml"
+                | "application/xml"
+                | "application/javascript"
+                | "application/x-javascript"
+                | "application/typescript"
+                | "application/toml"
+        )
+        || content_type.ends_with("+json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn returns_raw_image_bytes_as_a_body() {
+        let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        fs::write(root.join("image.png"), &bytes).unwrap();
+
+        let result = ReadTool::new(root.clone())
+            .execute(json!({ "path": "image.png" }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.data["contentType"], "image/png");
+        let mut body = result.body.unwrap();
+        assert_eq!(body.length, Some(bytes.len() as u64));
+        let mut actual = Vec::new();
+        body.reader.read_to_end(&mut actual).await.unwrap();
+        assert_eq!(actual, bytes);
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

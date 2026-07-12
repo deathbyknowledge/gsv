@@ -6,6 +6,7 @@ pub const PROTOCOL_VERSION: u32 = 2;
 pub const BINARY_FRAME_DATA: u8 = 1 << 0;
 pub const BINARY_FRAME_END: u8 = 1 << 1;
 pub const BINARY_FRAME_ERROR: u8 = 1 << 2;
+pub const BINARY_FRAME_CANCEL: u8 = 1 << 3;
 
 // ---------------------------------------------------------------------------
 //  Core frame types — mirrors gateway/src/protocol/frames.ts

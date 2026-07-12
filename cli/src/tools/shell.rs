@@ -1,5 +1,5 @@
 use crate::protocol::{DeviceExecEventParams, ToolDefinition};
-use crate::tools::Tool;
+use crate::tools::{Tool, ToolOutput};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -649,7 +649,7 @@ impl Tool for ShellTool {
         }
     }
 
-    async fn execute(&self, args: Value) -> Result<Value, String> {
+    async fn execute(&self, args: Value) -> Result<ToolOutput, String> {
         let args: ShellArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
@@ -677,7 +677,9 @@ impl Tool for ShellTool {
                     .await
                     .map_err(|e| format!("Failed to flush stdin: {}", e))?;
             }
-            return Ok(wait_for_shell_result(&handle, normalize_yield_ms(args.yield_ms)).await);
+            return Ok(ToolOutput::json(
+                wait_for_shell_result(&handle, normalize_yield_ms(args.yield_ms)).await,
+            ));
         }
 
         let command = args.input.unwrap_or_default();
@@ -696,9 +698,11 @@ impl Tool for ShellTool {
 
         if args.background == Some(true) {
             let snapshot = mark_backgrounded(&handle, None).await;
-            return Ok(running_result(&snapshot));
+            return Ok(ToolOutput::json(running_result(&snapshot)));
         }
 
-        Ok(wait_for_shell_result(&handle, normalize_yield_ms(args.yield_ms)).await)
+        Ok(ToolOutput::json(
+            wait_for_shell_result(&handle, normalize_yield_ms(args.yield_ms)).await,
+        ))
     }
 }

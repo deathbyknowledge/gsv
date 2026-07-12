@@ -26,7 +26,6 @@ export const FS_READ_DEFINITION: ToolDefinition = {
 };
 
 export type {
-  FsImageContent,
   FsReadArgs,
   FsReadResult,
 } from "@humansandmachines/gsv/protocol";

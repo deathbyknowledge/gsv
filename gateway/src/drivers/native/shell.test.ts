@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { handleShellExec } from "./shell";
-import { handleFsCopy, handleFsRead, handleFsTransferReceive, handleFsTransferSend, handleFsWrite } from "./fs";
+import {
+  handleFsCopy,
+  handleFsRead,
+  handleFsTransferReceive,
+  handleFsTransferSend,
+  handleFsTransferStat,
+  handleFsWrite,
+} from "./fs";
 import { sendFrameToProcess } from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { bodyToBytes, bodyToText, type ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
 
 const generateMock = vi.hoisted(() => vi.fn());
@@ -313,16 +320,82 @@ describe("native shell execution", () => {
     });
 
     await handleShellExec({ input: `printf 'from shell' > ${path}` }, ctx);
-    await expect(handleFsRead({ path }, ctx)).resolves.toMatchObject({
-      ok: true,
-      content: expect.stringContaining("from shell"),
-    });
+    const read = await handleFsRead({ path }, ctx);
+    expect(read.data).toMatchObject({ ok: true, kind: "text" });
+    expect(read.body && await bodyToText(read.body)).toContain("from shell");
   });
 
   it("preserves filesystem errors from fs.read", async () => {
     const result = await handleFsRead({ path: "/tmp/does-not-exist" }, makeContext());
 
-    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("ENOENT") });
+    expect(result.data).toMatchObject({ ok: false, error: expect.stringContaining("ENOENT") });
+  });
+
+  it("returns exact numbered text ranges in frame bodies", async () => {
+    const ctx = makeContext();
+    const path = "/tmp/fs-read-range.txt";
+    await handleFsWrite({ path, content: "zero\né\nlast\n" }, ctx);
+
+    const read = await handleFsRead({ path, offset: 1, limit: 3 }, ctx);
+
+    expect(read.data).toMatchObject({
+      ok: true,
+      kind: "text",
+      contentType: "text/plain",
+      lines: 3,
+      size: 13,
+    });
+    expect(read.body && await bodyToText(read.body)).toBe("     2\té\n     3\tlast\n     4\t");
+  });
+
+  it("uses stored MIME types for reads and transfer metadata", async () => {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    await env.STORAGE.put("tmp/fs-read-image", bytes, {
+      httpMetadata: { contentType: "image/png" },
+    });
+
+    const ctx = makeContext();
+    const read = await handleFsRead({ path: "/tmp/fs-read-image" }, ctx);
+    const stat = await handleFsTransferStat({ path: "/tmp/fs-read-image" }, ctx);
+
+    expect(read.data).toMatchObject({
+      ok: true,
+      kind: "image",
+      contentType: "image/png",
+      size: bytes.byteLength,
+    });
+    expect(read.body && await bodyToBytes(read.body)).toEqual(bytes);
+    expect(stat).toMatchObject({
+      ok: true,
+      contentType: "image/png",
+      size: bytes.byteLength,
+    });
+  });
+
+  it("rejects invalid UTF-8 in text-classified files", async () => {
+    await env.STORAGE.put("tmp/fs-read-invalid", new Uint8Array([0xff]));
+
+    const read = await handleFsRead({ path: "/tmp/fs-read-invalid" }, makeContext());
+
+    expect(read.data).toMatchObject({ ok: false, error: expect.stringContaining("Binary file") });
+    expect(read.body).toBeUndefined();
+  });
+
+  it("writes network output files as raw bytes", async () => {
+    const bytes = new Uint8Array([0, 0xff, 1]);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(bytes)));
+    const ctx = makeContext();
+    try {
+      const result = await handleShellExec({
+        input: "gsv-fetch -o /tmp/fetched.bin https://example.test/file",
+      }, ctx);
+      const stored = await handleFsTransferSend({ path: "/tmp/fetched.bin" }, ctx);
+
+      expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+      expect(stored.body && await bodyToBytes(stored.body)).toEqual(bytes);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("uses the owning human's package scopes for agent-backed fs", async () => {
@@ -375,17 +448,17 @@ describe("native shell execution", () => {
     });
 
     const sourceList = await handleFsRead({ path: "/src/repos/root" }, ctx);
-    expect(sourceList.ok).toBe(true);
-    if (sourceList.ok) {
-      expect(sourceList.directories).toContain("human-tools");
-      expect(sourceList.directories).not.toContain("agent-tools");
+    expect(sourceList.data.ok).toBe(true);
+    if (sourceList.data.ok && "directories" in sourceList.data) {
+      expect(sourceList.data.directories).toContain("human-tools");
+      expect(sourceList.data.directories).not.toContain("agent-tools");
     }
 
     const binList = await handleFsRead({ path: "/usr/local/bin" }, ctx);
-    expect(binList.ok).toBe(true);
-    if (binList.ok) {
-      expect(binList.files).toContain("human-tool");
-      expect(binList.files).not.toContain("agent-tool");
+    expect(binList.data.ok).toBe(true);
+    if (binList.data.ok && "files" in binList.data) {
+      expect(binList.data.files).toContain("human-tool");
+      expect(binList.data.files).not.toContain("agent-tool");
     }
   });
 });

@@ -32,10 +32,8 @@ import type {
   FsTransferStatArgs,
   FsTransferStatResult,
 } from "@humansandmachines/gsv/protocol";
-import { encodeBase64Bytes } from "../../shared/base64";
+import { bodyFromText, bodyToBytes } from "@humansandmachines/gsv/protocol";
 import { createNativeFileSystem } from "./filesystem";
-
-const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 
 export type FsCopyDeviceTransport = {
   requestDevice(
@@ -54,7 +52,7 @@ function resolve(path: string, ctx: KernelContext): string {
 export async function handleFsRead(
   args: FsReadArgs,
   ctx: KernelContext,
-): Promise<FsReadResult> {
+): Promise<{ data: FsReadResult; body?: FrameBody }> {
   const fs = createNativeFileSystem(ctx);
   const p = resolve(args.path, ctx);
 
@@ -65,34 +63,53 @@ export async function handleFsRead(
       return await readDirectory(fs, p);
     }
 
-    const contentType = inferContentType(p);
+    const opened = await fs.openFile(p);
+    if (opened.status !== 200 || !opened.body) {
+      throw new Error(`Unable to open file: ${p}`);
+    }
+    const contentType = opened.contentType ?? inferContentType(p);
 
     if (contentType.startsWith("image/")) {
-      return await readImage(fs, p, contentType, st.size);
+      return readImage(p, contentType, opened.body, opened.size);
     }
 
     if (!isTextContentType(contentType)) {
+      await opened.body.cancel().catch(() => {});
       return {
-        ok: false,
-        error: `Binary file (${contentType}, ${formatSize(st.size)}) — not readable as text`,
+        data: {
+          ok: false,
+          error: `Binary file (${contentType}, ${formatSize(st.size)}) — not readable as text`,
+        },
       };
     }
 
-    return await readText(fs, p, st.size, args.offset, args.limit);
+    const bytes = await bodyToBytes({ stream: opened.body, length: opened.size });
+    return readText(bytes, p, contentType, st.size, args.offset, args.limit);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: msg };
+    return { data: { ok: false, error: msg } };
   }
 }
 
-async function readText(
-  fs: GsvFs,
+function readText(
+  bytes: Uint8Array,
   path: string,
+  contentType: string,
   size: number,
   offset?: number,
   limit?: number,
-): Promise<FsReadResult> {
-  const text = await fs.readFile(path);
+): { data: FsReadResult; body?: FrameBody } {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
+  } catch {
+    return {
+      data: {
+        ok: false,
+        error: `Binary file (${contentType}, ${formatSize(size)}) — not readable as text`,
+      },
+    };
+  }
   const allLines = text.split("\n");
   const start = offset ?? 0;
   const count = limit ?? allLines.length;
@@ -101,40 +118,44 @@ async function readText(
     .map((line, i) => `${String(start + i + 1).padStart(6)}\t${line}`)
     .join("\n");
 
-  return { ok: true, content: numbered, path, lines: selected.length, size };
-}
-
-async function readImage(
-  fs: GsvFs,
-  path: string,
-  mimeType: string,
-  size: number,
-): Promise<FsReadResult> {
-  if (size > MAX_IMAGE_BYTES) {
-    return {
-      ok: false,
-      error: `Image too large (${formatSize(size)}, max ${formatSize(MAX_IMAGE_BYTES)})`,
-    };
-  }
-
-  const buf = await fs.readFileBuffer(path);
-  const base64 = encodeBase64Bytes(buf);
-
   return {
-    ok: true,
-    content: [
-      {
-        type: "text",
-        text: `Read image ${path} [${mimeType}, ${formatSize(size)}]`,
-      },
-      { type: "image", data: base64, mimeType },
-    ],
-    path,
-    size,
+    data: {
+      ok: true,
+      path,
+      kind: "text",
+      contentType,
+      lines: selected.length,
+      size,
+    },
+    body: bodyFromText(numbered),
   };
 }
 
-async function readDirectory(fs: GsvFs, path: string): Promise<FsReadResult> {
+function readImage(
+  path: string,
+  mimeType: string,
+  stream: ReadableStream<Uint8Array>,
+  size: number,
+): { data: FsReadResult; body?: FrameBody } {
+  return {
+    data: {
+      ok: true,
+      path,
+      kind: "image",
+      contentType: mimeType,
+      size,
+    },
+    body: {
+      stream,
+      length: size,
+    },
+  };
+}
+
+async function readDirectory(
+  fs: GsvFs,
+  path: string,
+): Promise<{ data: FsReadResult }> {
   const names = await fs.readdir(path);
   const files: string[] = [];
   const directories: string[] = [];
@@ -150,7 +171,7 @@ async function readDirectory(fs: GsvFs, path: string): Promise<FsReadResult> {
     }
   }
 
-  return { ok: true, path, files, directories };
+  return { data: { ok: true, path, files, directories } };
 }
 
 export async function handleFsTransferStat(
@@ -166,13 +187,19 @@ export async function handleFsTransferStat(
   const path = resolve(rawPath, ctx);
   try {
     const stat = await fs.stat(path);
+    let contentType: string | undefined;
+    if (stat.isFile) {
+      const opened = await fs.openFile(path);
+      contentType = opened.contentType ?? inferContentType(path);
+      await opened.body?.cancel().catch(() => {});
+    }
     return {
       ok: true,
       path,
       size: stat.size,
       isFile: stat.isFile,
       isDirectory: stat.isDirectory,
-      contentType: stat.isFile ? inferContentType(path) : undefined,
+      contentType,
     };
   } catch (error) {
     return {

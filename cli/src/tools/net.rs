@@ -1,8 +1,7 @@
 use crate::protocol::ToolDefinition;
-use crate::tools::Tool;
+use crate::tools::{Tool, ToolBody, ToolOutput};
 use async_trait::async_trait;
-use base64::Engine;
-use futures_util::StreamExt;
+use futures_util::TryStreamExt;
 use reqwest::{redirect::Policy, Method, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -12,10 +11,14 @@ use std::sync::{
     Arc,
 };
 use std::time::Duration;
+use tokio_util::io::StreamReader;
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
+const MAX_TIMEOUT_MS: u64 = 10 * 60_000;
+const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
+#[derive(Default)]
 pub struct NetFetchTool;
 
 impl NetFetchTool {
@@ -26,6 +29,7 @@ impl NetFetchTool {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct NetFetchArgs {
     url: String,
     #[serde(default)]
@@ -33,13 +37,9 @@ struct NetFetchArgs {
     #[serde(default)]
     headers: HashMap<String, String>,
     #[serde(default)]
-    body: Option<String>,
-    #[serde(default)]
-    body_base64: Option<String>,
-    #[serde(default)]
     redirect: Option<NetFetchRedirect>,
-    #[serde(default)]
-    timeout_ms: Option<u64>,
+    #[serde(default, rename = "timeoutMs")]
+    _timeout_ms: Option<u64>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -65,8 +65,6 @@ impl Tool for NetFetchTool {
                         "type": "object",
                         "additionalProperties": { "type": "string" }
                     },
-                    "body": { "type": "string" },
-                    "bodyBase64": { "type": "string" },
                     "redirect": {
                         "type": "string",
                         "enum": ["follow", "error", "manual"]
@@ -78,24 +76,58 @@ impl Tool for NetFetchTool {
         }
     }
 
-    async fn execute(&self, args: Value) -> Result<Value, String> {
-        let args: NetFetchArgs =
-            serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
-        let url =
-            reqwest::Url::parse(args.url.trim()).map_err(|e| format!("Invalid URL: {}", e))?;
+    async fn execute(&self, args: Value) -> Result<ToolOutput, String> {
+        self.execute_request(args, None).await
+    }
+
+    fn request_body_limit(&self, args: &Value) -> Result<usize, String> {
+        let args: NetFetchArgs = serde_json::from_value(args.clone())
+            .map_err(|e| format!("Invalid arguments: {}", e))?;
+        let method = parse_method(args.method.as_deref())?;
+        if method == Method::GET || method == Method::HEAD {
+            return Err(format!("{} requests cannot include a body", method));
+        }
+        Ok(MAX_REQUEST_BYTES)
+    }
+
+    fn timeout(&self, args: &Value) -> Option<Duration> {
+        Some(Duration::from_millis(net_fetch_timeout_ms(args)))
+    }
+
+    async fn execute_with_body(
+        &self,
+        args: Value,
+        body: Option<Vec<u8>>,
+    ) -> Result<ToolOutput, String> {
+        self.execute_request(args, body).await
+    }
+}
+
+impl NetFetchTool {
+    async fn execute_request(
+        &self,
+        args: Value,
+        frame_body: Option<Vec<u8>>,
+    ) -> Result<ToolOutput, String> {
+        let timeout = net_fetch_timeout_ms(&args);
+        let NetFetchArgs {
+            url,
+            method,
+            headers,
+            redirect,
+            _timeout_ms: _,
+        } = serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
+        let url = reqwest::Url::parse(url.trim()).map_err(|e| format!("Invalid URL: {}", e))?;
         if url.scheme() != "http" && url.scheme() != "https" {
             return Err("URL must use HTTP or HTTPS".to_string());
         }
 
-        let method = args
-            .method
-            .as_deref()
-            .unwrap_or("GET")
-            .parse::<Method>()
-            .map_err(|e| format!("Invalid method: {}", e))?;
-        let should_read_body = method != Method::HEAD;
-        let timeout_ms = args.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).max(1);
-        let redirect = args.redirect.unwrap_or(NetFetchRedirect::Follow);
+        let method = parse_method(method.as_deref())?;
+        if frame_body.is_some() && (method == Method::GET || method == Method::HEAD) {
+            return Err(format!("{} requests cannot include a body", method));
+        }
+        let should_read_response_body = method != Method::HEAD;
+        let redirect = redirect.unwrap_or(NetFetchRedirect::Follow);
         let redirected = Arc::new(AtomicBool::new(false));
         let redirect_policy = match redirect {
             NetFetchRedirect::Follow => {
@@ -112,22 +144,17 @@ impl Tool for NetFetchTool {
             NetFetchRedirect::Error | NetFetchRedirect::Manual => Policy::none(),
         };
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_millis(timeout_ms))
+            .timeout(Duration::from_millis(timeout))
             .redirect(redirect_policy)
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
         let mut request = client.request(method, url);
-        for (key, value) in args.headers {
+        for (key, value) in headers {
             request = request.header(key, value);
         }
 
-        if let Some(body_base64) = args.body_base64 {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(body_base64.as_bytes())
-                .map_err(|e| format!("Invalid bodyBase64: {}", e))?;
-            request = request.body(bytes);
-        } else if let Some(body) = args.body {
+        if let Some(body) = frame_body {
             request = request.body(body);
         }
 
@@ -147,56 +174,63 @@ impl Tool for NetFetchTool {
             }
         }
 
-        let body =
-            read_limited_response_body(response, should_read_body, MAX_RESPONSE_BYTES).await?;
-        let body_base64 = base64::engine::general_purpose::STANDARD.encode(&body);
-        let body_text = std::str::from_utf8(&body).ok().map(str::to_string);
-
-        Ok(json!({
+        let body = response_body(
+            response,
+            should_read_response_body && !is_null_body_status(status),
+            MAX_RESPONSE_BYTES,
+        )?;
+        let data = json!({
             "ok": status.is_success(),
             "url": final_url,
             "status": status.as_u16(),
             "statusText": status.canonical_reason().unwrap_or(""),
             "headers": headers,
             "redirected": redirected.load(Ordering::Relaxed),
-            "bodyBase64": body_base64,
-            "bodyText": body_text,
-            "bodyBytes": body.len(),
-        }))
+        });
+        Ok(match body {
+            Some(body) => ToolOutput::with_body(data, body),
+            None => ToolOutput::json(data),
+        })
     }
 }
 
-async fn read_limited_response_body(
+fn parse_method(method: Option<&str>) -> Result<Method, String> {
+    method
+        .unwrap_or("GET")
+        .parse::<Method>()
+        .map_err(|e| format!("Invalid method: {}", e))
+}
+
+fn net_fetch_timeout_ms(args: &Value) -> u64 {
+    args.get("timeoutMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_TIMEOUT_MS)
+        .clamp(1, MAX_TIMEOUT_MS)
+}
+
+fn response_body(
     response: reqwest::Response,
     should_read_body: bool,
     max_bytes: usize,
-) -> Result<Vec<u8>, String> {
-    if !should_read_body || is_null_body_status(response.status()) {
-        return Ok(Vec::new());
+) -> Result<Option<ToolBody>, String> {
+    if !should_read_body {
+        return Ok(None);
     }
-    if let Some(content_length) = response.content_length() {
+    let content_length = response.content_length();
+    if let Some(content_length) = content_length {
         if content_length > max_bytes as u64 {
             return Err(format_response_size_error(content_length, max_bytes));
         }
     }
-
-    let mut body = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Failed to read response body: {}", e))?;
-        if chunk.is_empty() {
-            continue;
-        }
-        let next_len = body
-            .len()
-            .checked_add(chunk.len())
-            .ok_or_else(|| format_response_size_error(u64::MAX, max_bytes))?;
-        if next_len > max_bytes {
-            return Err(format_response_size_error(next_len as u64, max_bytes));
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
+    let stream = response
+        .bytes_stream()
+        .map_err(|error| std::io::Error::other(format!("Failed to read response body: {}", error)));
+    Ok(Some(ToolBody::reader(
+        StreamReader::new(stream),
+        content_length,
+        Some(max_bytes as u64),
+        "net.fetch response",
+    )))
 }
 
 fn is_null_body_status(status: StatusCode) -> bool {
@@ -219,12 +253,21 @@ fn format_response_size_error(actual_bytes: u64, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::thread;
+    use tokio::io::AsyncReadExt;
 
     const REDIRECT_RESPONSE: &[u8] =
         b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    #[test]
+    fn caps_request_timeouts() {
+        assert_eq!(
+            net_fetch_timeout_ms(&json!({ "timeoutMs": u64::MAX })),
+            MAX_TIMEOUT_MS
+        );
+    }
 
     #[tokio::test]
     async fn allows_head_response_with_large_content_length() {
@@ -245,9 +288,8 @@ mod tests {
             .unwrap();
         server.join().unwrap();
 
-        assert_eq!(result.get("status").and_then(Value::as_u64), Some(200));
-        assert_eq!(result.get("bodyBytes").and_then(Value::as_u64), Some(0));
-        assert_eq!(result.get("bodyBase64").and_then(Value::as_str), Some(""));
+        assert_eq!(result.data.get("status").and_then(Value::as_u64), Some(200));
+        assert!(result.body.is_none());
     }
 
     #[tokio::test]
@@ -277,17 +319,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_streamed_response_that_exceeds_limit() {
+    async fn marks_unknown_length_response_with_a_streaming_limit() {
         let (url, server) =
             serve_once(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nabcd".to_vec());
         let response = reqwest::Client::new().get(url).send().await.unwrap();
 
-        let error = read_limited_response_body(response, true, 3)
-            .await
-            .unwrap_err();
+        let mut body = response_body(response, true, 3).unwrap().unwrap();
         server.join().unwrap();
 
-        assert_eq!(error, "Response body exceeds limit (4 bytes, max 3)");
+        assert_eq!(body.length, None);
+        assert_eq!(body.max_length, Some(3));
+        let mut bytes = Vec::new();
+        body.reader.read_to_end(&mut bytes).await.unwrap();
+        assert_eq!(bytes, b"abcd");
     }
 
     #[tokio::test]
@@ -300,9 +344,9 @@ mod tests {
             .unwrap();
         server.join().unwrap();
 
-        assert_eq!(result.get("status").and_then(Value::as_u64), Some(302));
+        assert_eq!(result.data.get("status").and_then(Value::as_u64), Some(302));
         assert_eq!(
-            result.get("redirected").and_then(Value::as_bool),
+            result.data.get("redirected").and_then(Value::as_bool),
             Some(false)
         );
     }
@@ -317,9 +361,9 @@ mod tests {
             .unwrap();
         server.join().unwrap();
 
-        assert_eq!(result.get("status").and_then(Value::as_u64), Some(200));
+        assert_eq!(result.data.get("status").and_then(Value::as_u64), Some(200));
         assert_eq!(
-            result.get("redirected").and_then(Value::as_bool),
+            result.data.get("redirected").and_then(Value::as_bool),
             Some(true)
         );
     }
@@ -340,6 +384,93 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn sends_request_and_returns_response_frame_bodies() {
+        let (url, server) = serve_echo();
+        let bytes = vec![0, 1, 0xfe, 0xff];
+
+        let result = NetFetchTool::new()
+            .execute_with_body(
+                json!({
+                    "url": url,
+                    "method": "POST",
+                    "headers": { "content-type": "application/octet-stream" },
+                }),
+                Some(bytes.clone()),
+            )
+            .await
+            .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(result.data["status"], 200);
+        let mut body = result.body.unwrap();
+        assert_eq!(body.length, Some(bytes.len() as u64));
+        let mut actual = Vec::new();
+        body.reader.read_to_end(&mut actual).await.unwrap();
+        assert_eq!(actual, bytes);
+    }
+
+    #[tokio::test]
+    async fn returns_an_explicit_body_for_an_empty_get_response() {
+        let (url, server) = serve_once(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+        );
+
+        let result = NetFetchTool::new()
+            .execute(json!({ "url": url }))
+            .await
+            .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(result.body.unwrap().length, Some(0));
+    }
+
+    #[tokio::test]
+    async fn omits_bodies_for_null_body_statuses() {
+        for (status, reason) in [
+            (204, "No Content"),
+            (205, "Reset Content"),
+            (304, "Not Modified"),
+        ] {
+            let (url, server) = serve_once(
+                format!(
+                    "HTTP/1.1 {} {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    status, reason
+                )
+                .into_bytes(),
+            );
+
+            let result = NetFetchTool::new()
+                .execute(json!({ "url": url }))
+                .await
+                .unwrap();
+            server.join().unwrap();
+
+            assert!(result.body.is_none(), "status {} returned a body", status);
+        }
+    }
+
+    #[test]
+    fn rejects_get_and_head_request_bodies_before_reading_them() {
+        for method in ["GET", "HEAD"] {
+            let args = json!({ "url": "https://example.test/", "method": method });
+            assert_eq!(
+                NetFetchTool::new().request_body_limit(&args).unwrap_err(),
+                format!("{} requests cannot include a body", method)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_inline_request_bodies() {
+        for field in ["body", "bodyBase64"] {
+            let mut args = json!({ "url": "https://example.test/" });
+            args[field] = json!("payload");
+            let error = NetFetchTool::new().execute(args).await.unwrap_err();
+            assert!(error.contains(field));
+        }
+    }
+
     fn serve_once(response: Vec<u8>) -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -348,6 +479,37 @@ mod tests {
             let mut request = [0_u8; 4096];
             let _ = stream.read(&mut request);
             stream.write_all(&response).unwrap();
+        });
+        (format!("http://{}", addr), handle)
+    }
+
+    fn serve_echo() -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut content_length = 0;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':') {
+                    if name.eq_ignore_ascii_case("content-length") {
+                        content_length = value.trim().parse().unwrap();
+                    }
+                }
+            }
+            let mut body = vec![0; content_length];
+            reader.read_exact(&mut body).unwrap();
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).unwrap();
+            stream.write_all(&body).unwrap();
         });
         (format!("http://{}", addr), handle)
     }

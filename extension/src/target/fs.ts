@@ -1,4 +1,10 @@
 import type { GsvBody, GsvResponse } from "@humansandmachines/gsv/client";
+import {
+  bodyFromBytes,
+  bodyFromText,
+  inferFsContentType,
+  isTextContentType,
+} from "@humansandmachines/gsv/protocol";
 import { basename, dirname, joinPath, normalizePath } from "../shared/paths";
 import {
   bytesFromStoredContent,
@@ -58,7 +64,6 @@ type TransferArgs = {
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
-const MAX_TEXT_READ_BYTES = 2 * 1024 * 1024;
 const MAX_SEARCH_MATCHES = 200;
 const DEFAULT_DIRECTORIES = [
   "/",
@@ -99,7 +104,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     await this.assertNotDirectory(normalized);
     await this.ensureDirectory(dirname(normalized));
     this.files.set(normalized, copyBytes(content));
-    const resolvedContentType = contentType ?? inferContentType(normalized);
+    const resolvedContentType = contentType ?? inferFsContentType(normalized);
     this.contentTypes.set(normalized, resolvedContentType);
     await this.persistEntry({
       path: normalized,
@@ -241,7 +246,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
         isFile: true,
         isDirectory: false,
         size: value.byteLength,
-        contentType: this.contentTypes.get(normalized) ?? inferContentType(normalized),
+        contentType: this.contentTypes.get(normalized) ?? inferFsContentType(normalized),
       };
     }
     throw new Error(`No such file or directory: ${normalized}`);
@@ -276,7 +281,7 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
       } catch {
         continue;
       }
-      if (!stat.isFile || !isTextContentType(stat.contentType ?? inferContentType(candidate))) {
+      if (!stat.isFile || !isTextContentType(stat.contentType ?? inferFsContentType(candidate))) {
         continue;
       }
       const text = textDecoder.decode(await this.read(candidate));
@@ -446,7 +451,7 @@ export class BrowserFsDriver {
   async handle(call: string, args: unknown, body?: GsvBody): Promise<GsvResponse> {
     switch (call) {
       case "fs.read":
-        return { data: await this.read(args) };
+        return await this.read(args);
       case "fs.write":
         return { data: await this.write(args) };
       case "fs.edit":
@@ -468,42 +473,60 @@ export class BrowserFsDriver {
     }
   }
 
-  private async read(raw: unknown): Promise<unknown> {
+  private async read(raw: unknown): Promise<GsvResponse> {
     const args = asRecord(raw) as FsReadArgs;
     const path = parsePath(args.path, "fs.read");
-    const stat = await this.fs.stat(path);
-    if (stat.isDirectory) {
-      return { ok: true, path, ...await this.fs.list(path) };
-    }
+    try {
+      const stat = await this.fs.stat(path);
+      if (stat.isDirectory) {
+        return { data: { ok: true, path, ...await this.fs.list(path) } };
+      }
 
-    const bytes = await this.fs.read(path);
-    const contentType = stat.contentType ?? inferContentType(path);
-    if (contentType.startsWith("image/")) {
+      const bytes = await this.fs.read(path);
+      const contentType = stat.contentType ?? inferFsContentType(path);
+      if (contentType.startsWith("image/")) {
+        return {
+          data: {
+            ok: true,
+            path,
+            size: bytes.byteLength,
+            kind: "image",
+            contentType,
+          },
+          body: bodyFromBytes(bytes),
+        };
+      }
+      if (!isTextContentType(contentType)) {
+        return { data: { ok: false, error: `Binary file (${contentType}, ${formatSize(bytes.byteLength)})` } };
+      }
+
+      let text: string;
+      try {
+        text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      } catch {
+        return { data: { ok: false, error: `Binary file (${contentType}, ${formatSize(bytes.byteLength)})` } };
+      }
+      const offset = parseNonNegativeInteger(args.offset) ?? 0;
+      const limit = parseNonNegativeInteger(args.limit);
+      const lines = text.split("\n");
+      const selected = limit === null ? lines.slice(offset) : lines.slice(offset, offset + limit);
+      const content = selected
+        .map((line, index) => `${String(offset + index + 1).padStart(6)}\t${line}`)
+        .join("\n");
       return {
-        ok: true,
-        path,
-        size: bytes.byteLength,
-        content: [{ type: "image", data: bytesToBase64(bytes), mimeType: contentType }],
+        data: {
+          ok: true,
+          path,
+          size: bytes.byteLength,
+          kind: "text",
+          contentType,
+          lines: selected.length,
+        },
+        body: bodyFromText(content),
       };
+    } catch (error) {
+      return { data: { ok: false, error: error instanceof Error ? error.message : String(error) } };
     }
-    if (!isTextContentType(contentType)) {
-      return { ok: false, error: `Binary file (${contentType}, ${formatSize(bytes.byteLength)})` };
-    }
-    if (bytes.byteLength > MAX_TEXT_READ_BYTES) {
-      return { ok: false, error: `Text file too large (${formatSize(bytes.byteLength)})` };
-    }
-
-    const offset = parseNonNegativeInteger(args.offset) ?? 0;
-    const limit = parseNonNegativeInteger(args.limit);
-    const lines = textDecoder.decode(bytes).split("\n");
-    const selected = limit === null ? lines.slice(offset) : lines.slice(offset, offset + limit);
-    return {
-      ok: true,
-      path,
-      size: bytes.byteLength,
-      lines: lines.length,
-      content: selected.join("\n"),
-    };
   }
 
   private async write(raw: unknown): Promise<unknown> {
@@ -583,7 +606,7 @@ export class BrowserFsDriver {
         size: stat.size,
         isFile: stat.isFile,
         isDirectory: stat.isDirectory,
-        contentType: stat.contentType ?? inferContentType(path),
+        contentType: stat.contentType ?? inferFsContentType(path),
       };
     } catch (error) {
       return {
@@ -603,17 +626,9 @@ export class BrowserFsDriver {
         ok: true,
         path,
         size: bytes.byteLength,
-        contentType: stat.contentType ?? inferContentType(path),
+        contentType: stat.contentType ?? inferFsContentType(path),
       },
-      body: {
-        stream: new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(bytes);
-            controller.close();
-          },
-        }),
-        length: bytes.byteLength,
-      },
+      body: bodyFromBytes(bytes),
     };
   }
 
@@ -630,7 +645,7 @@ export class BrowserFsDriver {
 
     try {
       const bytes = await readStream(body.stream, body.length);
-      const contentType = typeof args.contentType === "string" ? args.contentType : inferContentType(path);
+      const contentType = typeof args.contentType === "string" ? args.contentType : inferFsContentType(path);
       await this.fs.write(path, bytes, contentType);
       return {
         data: {
@@ -700,45 +715,6 @@ async function readStream(stream: ReadableStream<Uint8Array>, expectedSize: numb
     offset += chunk.byteLength;
   }
   return output;
-}
-
-function inferContentType(path: string): string {
-  const lower = path.toLowerCase();
-  if (lower.endsWith(".png")) return "image/png";
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
-  if (lower.endsWith(".gif")) return "image/gif";
-  if (lower.endsWith(".webp")) return "image/webp";
-  if (lower.endsWith(".svg")) return "image/svg+xml";
-  if (lower.endsWith(".webm")) return "audio/webm";
-  if (lower.endsWith(".ogg")) return "audio/ogg";
-  if (lower.endsWith(".wav")) return "audio/wav";
-  if (lower.endsWith(".mp3")) return "audio/mpeg";
-  if (lower.endsWith(".m4a")) return "audio/mp4";
-  if (lower.endsWith(".json")) return "application/json";
-  if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
-  if (lower.endsWith(".css")) return "text/css";
-  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".ts")) return "text/javascript";
-  if (lower.endsWith(".md")) return "text/markdown";
-  if (lower.endsWith(".txt") || lower.endsWith(".log")) return "text/plain";
-  return "application/octet-stream";
-}
-
-function isTextContentType(contentType: string): boolean {
-  const normalized = contentType.toLowerCase().split(";")[0]?.trim() ?? "";
-  return normalized.startsWith("text/")
-    || normalized === "application/json"
-    || normalized.endsWith("+json")
-    || normalized === "application/javascript"
-    || normalized === "application/x-javascript"
-    || normalized === "image/svg+xml";
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary);
 }
 
 function formatSize(size: number): string {
