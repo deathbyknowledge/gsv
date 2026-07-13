@@ -20,14 +20,19 @@ import {
   stopAllMediaRecordings,
 } from "../target/media-recorder";
 import { networkStatus, stopNetworkCapture } from "../target/network-recorder";
+import { ConnectionSupervisor } from "./connection-supervisor";
 import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver";
 
 const client = new GSVClient();
 const driver = client.driver({
   platform: "browser-extension",
   version: "0.4.0",
-  keepalive: { intervalMs: 25_000 },
+  keepalive: {
+    intervalMs: 25_000,
+    acknowledgement: { timeoutMs: 10_000 },
+  },
 });
+const connectionSupervisor = new ConnectionSupervisor(driver);
 let diagnostics: ExtensionDiagnostics = emptyDiagnostics();
 const diagnosticsReady = loadDiagnostics().then((stored) => {
   diagnostics = mergeDiagnostics(stored, diagnostics);
@@ -36,10 +41,8 @@ const diagnosticsReady = loadDiagnostics().then((stored) => {
 });
 let diagnosticsWrite: Promise<void> = Promise.resolve();
 let lastConnectionStatus = "";
-let connectPromise: Promise<void> | null = null;
-let manualReconnectSuppressed = false;
 const runtimeStateReady = loadRuntimeState().then((state) => {
-  manualReconnectSuppressed = state.manualReconnectSuppressed;
+  connectionSupervisor.setReconnectSuppressed(state.manualReconnectSuppressed);
 }).catch((error) => {
   console.warn("GSV browser target runtime state unavailable", error);
 });
@@ -48,6 +51,7 @@ const browserTarget = createBrowserTargetDriver(addActivity);
 driver.implement("shell.exec", browserTarget.handle);
 driver.implement("fs.*", browserTarget.handle);
 client.onStatus((status) => {
+  connectionSupervisor.handleStatus(status);
   const key = `${status.state}:${status.connectionId ?? ""}:${status.message ?? ""}`;
   if (key === lastConnectionStatus) {
     return;
@@ -56,26 +60,41 @@ client.onStatus((status) => {
   const detail = status.state === "connected"
     ? status.connectionId ?? status.message ?? "gateway"
     : status.message ?? status.connectionId ?? "gateway";
+  const unexpectedDisconnect = status.state === "disconnected"
+    && Boolean(status.message)
+    && !connectionSupervisor.getState().reconnectSuppressed
+    && status.message !== "connection settings changed"
+    && status.message !== "automatic reconnect disabled";
   addActivity({
     kind: "connection",
     label: status.state,
     detail,
-    status: status.state === "connected" ? "ok" : status.state === "connecting" ? "active" : "info",
+    status: status.state === "connected"
+      ? "ok"
+      : status.state === "connecting"
+        ? "active"
+        : unexpectedDisconnect
+          ? "error"
+          : "info",
   });
 });
 
 chrome.runtime.onInstalled.addListener(() => {
-  void maybeConnect();
+  void maybeConnect().catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  void maybeConnect();
+  void maybeConnect().catch(() => {});
 });
 
-chrome.alarms.create("gsv-reconnect", { periodInMinutes: 1 });
+void chrome.alarms.get("gsv-reconnect").then((alarm) => {
+  if (!alarm) {
+    chrome.alarms.create("gsv-reconnect", { periodInMinutes: 1 });
+  }
+});
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "gsv-reconnect") {
-    void maybeConnect();
+    void maybeConnect().catch(() => {});
   }
 });
 
@@ -86,12 +105,15 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResp
   return true;
 });
 
-void maybeConnect();
+void maybeConnect().catch(() => {});
 
 async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeResponse> {
   try {
     switch (message.type) {
       case "status":
+        return await stateResponse();
+      case "refresh":
+        await maybeConnect();
         return await stateResponse();
       case "connect":
         await setManualReconnectSuppressed(false);
@@ -99,7 +121,6 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
         return await stateResponse();
       case "disconnect":
         await setManualReconnectSuppressed(true);
-        driver.disconnect();
         return await stateResponse();
       case "stop-all":
         return await stopAll();
@@ -116,9 +137,7 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
           status: "info",
         });
         await setManualReconnectSuppressed(false);
-        if (config.autoConnect && configReady(config)) {
-          await connectNow(config);
-        }
+        await connectionSupervisor.reconcile(config);
         return await stateResponse();
       }
       case "open-side-panel":
@@ -129,7 +148,9 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
     }
   } catch (error) {
     const messageText = errorMessage(error);
-    const connectionRequest = message.type === "connect" || message.type === "save-config";
+    const connectionRequest = message.type === "connect"
+      || message.type === "refresh"
+      || message.type === "save-config";
     addActivity({
       kind: connectionRequest ? "connection" : "error",
       label: connectionRequest ? "connect failed" : "runtime",
@@ -143,15 +164,7 @@ async function handleRuntimeMessage(message: RuntimeMessage): Promise<RuntimeRes
 async function maybeConnect(): Promise<void> {
   await runtimeStateReady;
   const config = await loadConfig();
-  if (
-    manualReconnectSuppressed
-    || !config.autoConnect
-    || !configReady(config)
-    || client.getStatus().state !== "disconnected"
-  ) {
-    return;
-  }
-  await connectNow(config).catch(() => {});
+  await connectionSupervisor.reconcile(config);
 }
 
 async function connectNow(config?: ExtensionConfig): Promise<void> {
@@ -160,17 +173,7 @@ async function connectNow(config?: ExtensionConfig): Promise<void> {
   if (!configReady(config)) {
     throw new Error("Configure gateway URL, username, token, and device id first");
   }
-  if (!connectPromise) {
-    connectPromise = driver.connect({
-      url: config.gatewayUrl,
-      username: config.username,
-      token: config.token,
-      deviceId: config.deviceId,
-    }).then(() => undefined).finally(() => {
-      connectPromise = null;
-    });
-  }
-  await connectPromise;
+  await connectionSupervisor.reconcile(config, { manual: true });
 }
 
 async function stopAll(): Promise<RuntimeResponse> {
@@ -187,10 +190,9 @@ async function stopAll(): Promise<RuntimeResponse> {
     cleanupErrors.push(`debugger: ${errorMessage(error)}`);
     return [];
   });
-  await setManualReconnectSuppressed(true).catch((error) => {
+  await setManualReconnectSuppressed(true, "stop all").catch((error) => {
     cleanupErrors.push(`runtime state: ${errorMessage(error)}`);
   });
-  driver.disconnect("stop all");
   addActivity({
     kind: cleanupErrors.length > 0 ? "error" : "sensitive",
     label: "stop all",
@@ -214,9 +216,9 @@ async function grantMediaCaptureAccess(tabId?: number): Promise<RuntimeResponse>
   return await stateResponse();
 }
 
-async function setManualReconnectSuppressed(value: boolean): Promise<void> {
+async function setManualReconnectSuppressed(value: boolean, reason?: string): Promise<void> {
   await runtimeStateReady;
-  manualReconnectSuppressed = value;
+  connectionSupervisor.setReconnectSuppressed(value, reason);
   await saveRuntimeState({ manualReconnectSuppressed: value });
 }
 
@@ -250,10 +252,19 @@ async function buildUiState(): Promise<ExtensionUiState> {
   await diagnosticsReady;
   const config = await loadConfig();
   const status = client.getStatus();
+  const supervisor = connectionSupervisor.getState();
+  const retryInSeconds = supervisor.retryAt === null
+    ? null
+    : Math.max(1, Math.ceil((supervisor.retryAt - Date.now()) / 1_000));
   const connection = {
     state: status.state,
     connectionId: status.connectionId,
-    message: status.message,
+    message: supervisor.reconnectSuppressed
+      ? "Reconnect paused by user"
+      : retryInSeconds === null
+        ? status.message
+        : `Retrying in ${retryInSeconds}s: ${status.message ?? "connection unavailable"}`,
+    reconnectSuppressed: supervisor.reconnectSuppressed,
   };
   const captures = networkStatus();
   const mediaRecordings = await mediaRecordingStatus().catch(() => []);

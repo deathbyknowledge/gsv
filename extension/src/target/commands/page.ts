@@ -10,6 +10,7 @@ import {
   releaseDebugger,
   sendDebuggerCommand,
 } from "../../shared/debugger";
+import { abortable, abortableDelay } from "../abort";
 import type { BrowserCommand, CommandContext, CommandResult } from "../types";
 import { commandError, commandOk } from "../types";
 import { hasHelpFlag, parseInteger, splitOption } from "./args";
@@ -206,7 +207,7 @@ async function runPageCommand(args: string[], ctx: CommandContext): Promise<Comm
       case "scroll":
         return await runScroll(rest);
       case "wait":
-        return await runWait(rest);
+        return await runWait(rest, ctx);
       case "js":
         return await runJavaScript(rest);
       default:
@@ -392,7 +393,7 @@ async function runScroll(args: string[]): Promise<CommandResult> {
   return commandCompactJson({ tabId: tab.id, scroll: result.value });
 }
 
-async function runWait(args: string[]): Promise<CommandResult> {
+async function runWait(args: string[], ctx: CommandContext): Promise<CommandResult> {
   const parsed = parseWaitOptions(args);
   if (!parsed.ok) {
     return commandError(parsed.error);
@@ -408,18 +409,33 @@ async function runWait(args: string[]): Promise<CommandResult> {
   }
 
   const tab = await resolveTab(parsed.value.tabId);
-  const result = normalizeInjectedResult<unknown>(
-    await executeInTab<unknown>(
-      tab.id,
-      injectedWaitForSelector as unknown as (...args: unknown[]) => unknown,
-      [selector, parsed.value.timeoutMs],
-    ),
-    "page wait",
-  );
-  if (!result.ok) {
-    return commandError(result.error);
+  const startedAt = ctx.now();
+
+  while (true) {
+    const result = normalizeInjectedResult<Record<string, unknown> | null>(
+      await abortable(
+        executeInTab<unknown>(tab.id, injectedFindSelector, [selector]),
+        ctx.abortSignal,
+      ),
+      "page wait",
+    );
+    if (!result.ok) {
+      return commandError(result.error);
+    }
+
+    const elapsedMs = ctx.now() - startedAt;
+    if (result.value) {
+      return commandCompactJson({
+        tabId: tab.id,
+        wait: { selector, elapsedMs, element: result.value },
+      });
+    }
+    if (elapsedMs >= parsed.value.timeoutMs) {
+      return commandError(`Timed out after ${parsed.value.timeoutMs}ms waiting for selector: ${selector}`);
+    }
+
+    await abortableDelay(Math.min(100, parsed.value.timeoutMs - elapsedMs), ctx.abortSignal);
   }
-  return commandCompactJson({ tabId: tab.id, wait: result.value });
 }
 
 async function runJavaScript(args: string[]): Promise<CommandResult> {
@@ -1276,10 +1292,8 @@ function injectedScrollPage(target: unknown): InjectedResult<unknown> {
   }
 }
 
-function injectedWaitForSelector(selector: unknown, timeoutMs: unknown): Promise<InjectedResult<unknown>> {
+function injectedFindSelector(selector: unknown): InjectedResult<Record<string, unknown> | null> {
   const selectorText = typeof selector === "string" ? selector : "";
-  const timeout = typeof timeoutMs === "number" && Number.isFinite(timeoutMs) ? timeoutMs : 5_000;
-  const startedAt = Date.now();
 
   function summarizeElement(element: Element): Record<string, unknown> {
     const rect = element.getBoundingClientRect();
@@ -1303,36 +1317,12 @@ function injectedWaitForSelector(selector: unknown, timeoutMs: unknown): Promise
     };
   }
 
-  return new Promise((resolve) => {
-    function tick(): void {
-      let element: Element | null = null;
-      try {
-        element = document.querySelector(selectorText);
-      } catch (error) {
-        resolve({ ok: false, error: error instanceof Error ? error.message : String(error) });
-        return;
-      }
-
-      if (element) {
-        resolve({
-          ok: true,
-          value: {
-            selector: selectorText,
-            elapsedMs: Date.now() - startedAt,
-            element: summarizeElement(element),
-          },
-        });
-        return;
-      }
-
-      if (Date.now() - startedAt >= timeout) {
-        resolve({ ok: false, error: `Timed out after ${timeout}ms waiting for selector: ${selectorText}` });
-        return;
-      }
-      window.setTimeout(tick, 100);
-    }
-    tick();
-  });
+  try {
+    const element = document.querySelector(selectorText);
+    return { ok: true, value: element ? summarizeElement(element) : null };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 function pageUsageFor(subcommand: string): string {

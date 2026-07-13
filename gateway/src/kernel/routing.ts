@@ -18,10 +18,16 @@ export type RouteEntry = {
   call: SyscallName;
   origin: RouteOrigin;
   deviceId: string;
+  driverConnectionId: string | null;
   createdAt: number;
   expiresAt: number | null;
   scheduleId: string | null;
 };
+
+export type FailedDeviceRoute = Pick<
+  RouteEntry,
+  "id" | "origin" | "deviceId" | "scheduleId"
+>;
 
 const DEFAULT_TTL_MS = 60_000;
 
@@ -33,6 +39,7 @@ export class RoutingTable {
     call: SyscallName,
     origin: RouteOrigin,
     deviceId: string,
+    driverConnectionId: string,
     options?: { ttlMs?: number; scheduleId?: string },
   ): void {
     const now = Date.now();
@@ -41,28 +48,35 @@ export class RoutingTable {
     const scheduleId = options?.scheduleId ?? null;
 
     this.sql.exec(
-      `INSERT OR REPLACE INTO routing_table (id, call, origin_type, origin_id, device_id, created_at, expires_at, schedule_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO routing_table
+       (id, call, origin_type, origin_id, device_id, driver_connection_id, created_at, expires_at, schedule_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       call,
       origin.type,
       origin.id,
       deviceId,
+      driverConnectionId,
       now,
       expiresAt,
       scheduleId,
     );
   }
 
-  remove(id: string): { origin: RouteOrigin; call: SyscallName; deviceId: string; scheduleId: string | null } | null {
+  remove(id: string): Pick<
+    RouteEntry,
+    "origin" | "call" | "deviceId" | "driverConnectionId" | "scheduleId"
+  > | null {
     const rows = [...this.sql.exec<{
       origin_type: string;
       origin_id: string;
       call: string;
       device_id: string;
+      driver_connection_id: string | null;
       schedule_id: string | null;
     }>(
-      "SELECT origin_type, origin_id, call, device_id, schedule_id FROM routing_table WHERE id = ?",
+      `SELECT origin_type, origin_id, call, device_id, driver_connection_id, schedule_id
+       FROM routing_table WHERE id = ?`,
       id,
     )];
 
@@ -75,6 +89,7 @@ export class RoutingTable {
       origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
       call: row.call as SyscallName,
       deviceId: row.device_id,
+      driverConnectionId: row.driver_connection_id,
       scheduleId: row.schedule_id,
     };
   }
@@ -86,6 +101,7 @@ export class RoutingTable {
       origin_type: string;
       origin_id: string;
       device_id: string;
+      driver_connection_id: string | null;
       created_at: number;
       expires_at: number | null;
       schedule_id: string | null;
@@ -102,21 +118,23 @@ export class RoutingTable {
       call: row.call as SyscallName,
       origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
       deviceId: row.device_id,
+      driverConnectionId: row.driver_connection_id,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
       scheduleId: row.schedule_id,
     };
   }
 
-  failForDevice(deviceId: string): { id: string; origin: RouteOrigin; call: SyscallName; scheduleId: string | null }[] {
+  failForDevice(deviceId: string): FailedDeviceRoute[] {
     const rows = [...this.sql.exec<{
       id: string;
       origin_type: string;
       origin_id: string;
-      call: string;
+      device_id: string;
       schedule_id: string | null;
     }>(
-      "SELECT id, origin_type, origin_id, call, schedule_id FROM routing_table WHERE device_id = ?",
+      `SELECT id, origin_type, origin_id, device_id, schedule_id
+       FROM routing_table WHERE device_id = ?`,
       deviceId,
     )];
 
@@ -127,18 +145,53 @@ export class RoutingTable {
     return rows.map((row) => ({
       id: row.id,
       origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
-      call: row.call as SyscallName,
+      deviceId: row.device_id,
       scheduleId: row.schedule_id,
     }));
   }
 
-  failForConnection(connectionId: string): { id: string; deviceId: string; scheduleId: string | null }[] {
+  failForDriverConnection(driverConnectionId: string): FailedDeviceRoute[] {
     const rows = [...this.sql.exec<{
       id: string;
+      origin_type: string;
+      origin_id: string;
       device_id: string;
       schedule_id: string | null;
     }>(
-      "SELECT id, device_id, schedule_id FROM routing_table WHERE origin_type = 'connection' AND origin_id = ?",
+      `SELECT id, origin_type, origin_id, device_id, schedule_id
+       FROM routing_table WHERE driver_connection_id = ?`,
+      driverConnectionId,
+    )];
+
+    if (rows.length > 0) {
+      this.sql.exec(
+        "DELETE FROM routing_table WHERE driver_connection_id = ?",
+        driverConnectionId,
+      );
+    }
+
+    return rows.map((row) => ({
+      id: row.id,
+      origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
+      deviceId: row.device_id,
+      scheduleId: row.schedule_id,
+    }));
+  }
+
+  failForConnection(connectionId: string): {
+    id: string;
+    deviceId: string;
+    driverConnectionId: string | null;
+    scheduleId: string | null;
+  }[] {
+    const rows = [...this.sql.exec<{
+      id: string;
+      device_id: string;
+      driver_connection_id: string | null;
+      schedule_id: string | null;
+    }>(
+      `SELECT id, device_id, driver_connection_id, schedule_id FROM routing_table
+       WHERE origin_type = 'connection' AND origin_id = ?`,
       connectionId,
     )];
 
@@ -152,6 +205,7 @@ export class RoutingTable {
     return rows.map((row) => ({
       id: row.id,
       deviceId: row.device_id,
+      driverConnectionId: row.driver_connection_id,
       scheduleId: row.schedule_id,
     }));
   }

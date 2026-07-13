@@ -23,6 +23,8 @@ class FakeWebSocket extends EventTarget {
   binaryType = "blob";
   readyState = 0;
   sent = [];
+  closeCalls = [];
+  connectSignals = ["device.pong"];
 
   constructor() {
     super();
@@ -48,18 +50,56 @@ class FakeWebSocket extends EventTarget {
           protocol: 2,
           server: { connectionId: "test" },
           identity: { role: "user" },
+          syscalls: [],
+          signals: this.connectSignals,
         },
       })));
     }
   }
 
-  close() {
+  close(code, reason) {
+    this.closeCalls.push({ code, reason });
     this.readyState = 3;
+    this.dispatchEvent(new Event("close"));
   }
 
   receive(data) {
     this.dispatchEvent(new MessageEvent("message", { data }));
   }
+}
+
+class OpeningWebSocket extends EventTarget {
+  static instance;
+
+  binaryType = "blob";
+  readyState = 0;
+  closeCalls = [];
+
+  constructor() {
+    super();
+    OpeningWebSocket.instance = this;
+  }
+
+  send() {}
+
+  close(code, reason) {
+    this.closeCalls.push({ code, reason });
+    this.readyState = 3;
+    this.dispatchEvent(new Event("close"));
+  }
+}
+
+class SignalFailingWebSocket extends FakeWebSocket {
+  send(data) {
+    if (typeof data === "string" && JSON.parse(data).type === "sig") {
+      throw new Error("send failed");
+    }
+    super.send(data);
+  }
+}
+
+class LegacyGatewayWebSocket extends FakeWebSocket {
+  connectSignals = [];
 }
 
 function body(bytes) {
@@ -83,6 +123,34 @@ async function connectedClient() {
   });
   return { client, socket: FakeWebSocket.instance };
 }
+
+test("closes a WebSocket that is still opening when the connection is cancelled", async () => {
+  const client = new GSVClient({ WebSocket: OpeningWebSocket });
+  const connecting = client.connect({
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  await Promise.resolve();
+
+  client.disconnect("connection settings changed");
+
+  await assert.rejects(connecting, /closed during connect/);
+  assert.deepEqual(OpeningWebSocket.instance.closeCalls, [{
+    code: 1000,
+    reason: "connection settings changed",
+  }]);
+});
+
+test("closes an established WebSocket immediately when it errors", async () => {
+  const { client, socket } = await connectedClient();
+
+  socket.dispatchEvent(new Event("error"));
+
+  assert.equal(client.getStatus().state, "disconnected");
+  assert.equal(client.getStatus().message, "WebSocket error");
+  assert.deepEqual(socket.closeCalls, [{ code: 1000, reason: "WebSocket error" }]);
+});
 
 test("keeps body-bearing syscalls off the data-only namespaces", () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
@@ -502,6 +570,128 @@ test("cancels an inbound driver request without publishing the reserved signal",
     const frame = JSON.parse(data);
     return frame.type === "res" && frame.id === "inbound-1";
   }), false);
+  driver.close();
+});
+
+test("keeps driver acknowledgement checks opt-in", async () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+  const driver = client.driver({ keepalive: { intervalMs: 10 } });
+  driver.implement("shell.exec", async () => ({ data: {} }));
+
+  await driver.connect({
+    deviceId: "test-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const ping = JSON.parse(FakeWebSocket.instance.sent.at(-1));
+  assert.equal(ping.signal, "device.ping");
+  assert.equal(ping.payload.nonce, undefined);
+  driver.close();
+});
+
+test("uses unacknowledged keepalives when the gateway does not advertise pong support", async () => {
+  const client = new GSVClient({ WebSocket: LegacyGatewayWebSocket });
+  const driver = client.driver({
+    keepalive: {
+      intervalMs: 10,
+      acknowledgement: { timeoutMs: 20 },
+    },
+  });
+  driver.implement("shell.exec", async () => ({ data: {} }));
+
+  await driver.connect({
+    deviceId: "test-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  const ping = JSON.parse(LegacyGatewayWebSocket.instance.sent.at(-1));
+  assert.equal(ping.signal, "device.ping");
+  assert.equal(ping.payload.nonce, undefined);
+  assert.equal(client.getStatus().state, "connected");
+  driver.close();
+});
+
+test("disconnects a driver when its keepalive acknowledgement is missing", async () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+  const driver = client.driver({
+    keepalive: {
+      intervalMs: 1_000,
+      acknowledgement: { timeoutMs: 20 },
+    },
+  });
+  driver.implement("shell.exec", async () => ({ data: {} }));
+  await driver.connect({
+    deviceId: "test-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  const socket = FakeWebSocket.instance;
+  const ping = JSON.parse(socket.sent.at(-1));
+
+  socket.receive(JSON.stringify({
+    type: "sig",
+    signal: "device.pong",
+    payload: { nonce: `${ping.payload.nonce}-stale` },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  assert.equal(client.getStatus().state, "disconnected");
+  assert.equal(client.getStatus().message, "device heartbeat timed out");
+  driver.close();
+});
+
+test("disconnects a driver when an acknowledged keepalive cannot be sent", async () => {
+  const client = new GSVClient({ WebSocket: SignalFailingWebSocket });
+  const driver = client.driver({
+    keepalive: { acknowledgement: {} },
+  });
+  driver.implement("shell.exec", async () => ({ data: {} }));
+
+  await driver.connect({
+    deviceId: "test-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+
+  assert.equal(client.getStatus().state, "disconnected");
+  assert.equal(client.getStatus().message, "device heartbeat send failed");
+  driver.close();
+});
+
+test("accepts only the matching driver keepalive acknowledgement", async () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+  const driver = client.driver({
+    keepalive: {
+      intervalMs: 1_000,
+      acknowledgement: { timeoutMs: 20 },
+    },
+  });
+  driver.implement("shell.exec", async () => ({ data: {} }));
+  await driver.connect({
+    deviceId: "test-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  const socket = FakeWebSocket.instance;
+  const ping = JSON.parse(socket.sent.at(-1));
+
+  socket.receive(JSON.stringify({
+    type: "sig",
+    signal: "device.pong",
+    payload: { nonce: ping.payload.nonce, at: Date.now() },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  assert.equal(client.getStatus().state, "connected");
   driver.close();
 });
 

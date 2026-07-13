@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { dispatch, type DispatchDeps } from "./dispatch";
+import { dispatch, routedFrameTtlMs, type DispatchDeps } from "./dispatch";
 import type { KernelContext } from "./context";
 import type { RequestFrame } from "../protocol/frames";
 
@@ -41,6 +41,23 @@ function makeContext(): KernelContext {
   } as unknown as KernelContext;
 }
 
+describe("routed frame deadlines", () => {
+  it("leaves enough time for browser shell waits", () => {
+    expect(routedFrameTtlMs({
+      type: "req",
+      id: "shell-default",
+      call: "shell.exec",
+      args: { input: "page wait '#ready' --timeout 120000" },
+    })).toBe(11 * 60_000);
+    expect(routedFrameTtlMs({
+      type: "req",
+      id: "shell-explicit",
+      call: "shell.exec",
+      args: { input: "sleep 120", timeout: 120_000 },
+    })).toBe(130_000);
+  });
+});
+
 function sendFrame(connection: { send(message: string): void }, frame: unknown): void {
   connection.send(JSON.stringify(frame));
 }
@@ -54,7 +71,9 @@ describe("dispatch", () => {
       sendFrame,
       connections: new Map([
         ["conn_1", {
+          id: "conn_1",
           state: {
+            step: "connected",
             identity: {
               role: "driver",
               process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
@@ -98,6 +117,7 @@ describe("dispatch", () => {
       call: "fs.read",
       origin: { type: "process", id: "proc_1" },
       deviceId: "browser:conn_1",
+      driverConnectionId: "conn_1",
       ttlMs: 60_000,
     });
     expect(send).toHaveBeenCalledWith(JSON.stringify({
@@ -110,6 +130,55 @@ describe("dispatch", () => {
     expect(cancelRoute).not.toHaveBeenCalled();
   });
 
+  it("does not route work to a superseded driver connection", async () => {
+    const registerRoute = vi.fn();
+    const deps = {
+      sendFrame,
+      connections: new Map([
+        ["old-connection", {
+          id: "old-connection",
+          state: {
+            step: "superseded",
+            identity: { role: "driver", device: "browser" },
+          },
+          send: vi.fn(),
+        }],
+      ]),
+      registerRoute,
+      shellSessions: { get: vi.fn() },
+    } as unknown as DispatchDeps;
+    const ctx = {
+      ...makeContext(),
+      devices: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => deviceRecord("browser", true)),
+      },
+    } as unknown as KernelContext;
+
+    const result = await dispatch(
+      {
+        type: "req",
+        id: "request-1",
+        call: "fs.read",
+        args: { target: "browser", path: "/tmp/file" },
+      } as RequestFrame<"fs.read">,
+      { type: "process", id: "process-1" },
+      ctx,
+      deps,
+    );
+
+    expect(result).toEqual({
+      handled: true,
+      response: {
+        type: "res",
+        id: "request-1",
+        ok: false,
+        error: { code: 503, message: "No active connection for device: browser" },
+      },
+    });
+    expect(registerRoute).not.toHaveBeenCalled();
+  });
+
   it("uses the requested net.fetch timeout for routed device route ttl", async () => {
     const send = vi.fn();
     const registerRoute = vi.fn(async () => ({ cancel: vi.fn() }));
@@ -117,7 +186,9 @@ describe("dispatch", () => {
       sendFrame,
       connections: new Map([
         ["conn_1", {
+          id: "conn_1",
           state: {
+            step: "connected",
             identity: {
               role: "driver",
               process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
@@ -166,6 +237,7 @@ describe("dispatch", () => {
       call: "net.fetch",
       origin: { type: "process", id: "proc_1" },
       deviceId: "linux-machine",
+      driverConnectionId: "conn_1",
       ttlMs: 180_000,
     });
     expect(send).toHaveBeenCalledWith(JSON.stringify({
@@ -189,7 +261,9 @@ describe("dispatch", () => {
       sendFrame,
       connections: new Map([
         ["conn_1", {
+          id: "conn_1",
           state: {
+            step: "connected",
             identity: {
               role: "driver",
               process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
@@ -244,7 +318,9 @@ describe("dispatch", () => {
 
   it("forwards request bodies to device targets", async () => {
     const connection = {
+      id: "conn_1",
       state: {
+        step: "connected",
         identity: {
           role: "driver",
           process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },
@@ -318,7 +394,9 @@ describe("dispatch", () => {
       sendFrame,
       connections: new Map([
         ["conn_1", {
+          id: "conn_1",
           state: {
+            step: "connected",
             identity: {
               role: "driver",
               process: { uid: 1000, gid: 1000, gids: [1000], username: "sam", home: "/home/sam" },

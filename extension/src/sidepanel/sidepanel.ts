@@ -68,7 +68,7 @@ async function runAction(action: string): Promise<void> {
       await chrome.runtime.openOptionsPage();
       response = await sendUiMessage({ type: "status" });
     } else if (action === "refresh") {
-      response = await sendUiMessage({ type: "status" });
+      response = await sendUiMessage({ type: "refresh" });
     } else {
       throw new Error(`Unknown action: ${action}`);
     }

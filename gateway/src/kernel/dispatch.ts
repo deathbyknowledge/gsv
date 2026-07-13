@@ -158,6 +158,7 @@ export type DispatchDeps = {
     call: SyscallName;
     origin: RouteOrigin;
     deviceId: string;
+    driverConnectionId: string;
     ttlMs: number;
   }) => Promise<{
     cancel: () => void;
@@ -181,6 +182,9 @@ export type DispatchResult =
   | { handled: false };
 
 const DEFAULT_DEVICE_TTL_MS = 60_000;
+// The process watchdog is ten minutes; routing must not preempt it.
+const DEFAULT_SHELL_DEVICE_TTL_MS = 11 * 60_000;
+const SHELL_TIMEOUT_GRACE_MS = 10_000;
 
 export async function dispatch(
   frame: RequestFrame,
@@ -712,6 +716,7 @@ async function routeToTarget(
       call: frame.call,
       origin,
       deviceId: target.targetId,
+      driverConnectionId: deviceConn.id,
       ttlMs,
     });
     if (ctx.requestSignal?.aborted) {
@@ -753,14 +758,24 @@ async function routeToTarget(
   return { handled: false };
 }
 
-function routedFrameTtlMs(frame: RequestFrame): number {
-  if (frame.call !== "net.fetch") {
-    return DEFAULT_DEVICE_TTL_MS;
+export function routedFrameTtlMs(frame: RequestFrame): number {
+  const timeout = frame.args && typeof frame.args === "object"
+    ? (frame.args as { timeout?: unknown; timeoutMs?: unknown })
+    : {};
+  if (frame.call === "shell.exec") {
+    const requested = timeout.timeout;
+    if (typeof requested !== "number" || !Number.isFinite(requested) || requested <= 0) {
+      return DEFAULT_SHELL_DEVICE_TTL_MS;
+    }
+    return Math.min(
+      DEFAULT_SHELL_DEVICE_TTL_MS,
+      Math.max(1_000, Math.trunc(requested) + SHELL_TIMEOUT_GRACE_MS),
+    );
   }
-  const timeoutMs = frame.args && typeof frame.args === "object"
-    ? (frame.args as { timeoutMs?: unknown }).timeoutMs
-    : undefined;
-  return normalizeNetFetchTimeoutMs(timeoutMs);
+  if (frame.call === "net.fetch") {
+    return normalizeNetFetchTimeoutMs(timeout.timeoutMs);
+  }
+  return DEFAULT_DEVICE_TTL_MS;
 }
 
 async function routeToAdapterShell(
@@ -790,9 +805,14 @@ function findDeviceConnection(
 ): Connection | null {
   for (const [, conn] of connections) {
     const state = conn.state as {
+      step?: string;
       identity?: { role: string; device?: string };
     } | undefined;
-    if (state?.identity?.role === "driver" && state.identity.device === deviceId) {
+    if (
+      state?.step === "connected" &&
+      state.identity?.role === "driver" &&
+      state.identity.device === deviceId
+    ) {
       return conn;
     }
   }

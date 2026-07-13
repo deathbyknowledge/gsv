@@ -285,7 +285,7 @@ function buildSignalList(role: string): string[] {
     case "user":
       return [...USER_CONNECTION_SIGNALS];
     case "driver":
-      return ["device.status"];
+      return ["device.status", "device.pong"];
     default:
       return [];
   }

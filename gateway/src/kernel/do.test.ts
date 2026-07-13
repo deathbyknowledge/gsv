@@ -104,7 +104,15 @@ describe("Kernel frame bodies", () => {
       get: () => ({ online: true }),
       canHandle: () => true,
     };
-    kernel.findDeviceConnection = () => ({ id: "device-connection" });
+    const deviceConnection = {
+      id: "device-connection",
+      state: {
+        step: "connected",
+        identity: { role: "driver", device: "device-1" },
+      },
+    };
+    kernel.connections = new Map([[deviceConnection.id, deviceConnection]]);
+    kernel.findDeviceConnection = () => deviceConnection;
     kernel.registerRouteWithExpiry = vi.fn(async () => ({ cancel: vi.fn() }));
     const outgoing = { cancel: vi.fn(async () => {}) };
     kernel.sendWebSocketFrame = vi.fn((_connection: unknown, frame: { id: string }) => {
@@ -148,7 +156,15 @@ describe("Kernel frame bodies", () => {
       get: () => ({ online: true }),
       canHandle: () => true,
     };
-    kernel.findDeviceConnection = () => ({ id: "device-connection" });
+    const deviceConnection = {
+      id: "device-connection",
+      state: {
+        step: "connected",
+        identity: { role: "driver", device: "device-1" },
+      },
+    };
+    kernel.connections = new Map([[deviceConnection.id, deviceConnection]]);
+    kernel.findDeviceConnection = () => deviceConnection;
     const cancelRoute = vi.fn();
     kernel.registerRouteWithExpiry = vi.fn(async () => ({ cancel: cancelRoute }));
     const outgoing = { cancel: vi.fn(async () => {}) };
@@ -167,7 +183,7 @@ describe("Kernel frame bodies", () => {
     expect(cancelRoute).toHaveBeenCalledOnce();
     expect(outgoing.cancel).toHaveBeenCalledWith(reason);
     expect(kernel.sendWebSocketFrame).toHaveBeenLastCalledWith(
-      { id: "device-connection" },
+      deviceConnection,
       {
         type: "sig",
         signal: "request.cancel",
@@ -228,7 +244,9 @@ describe("Kernel frame bodies", () => {
   it("does not register bodies from an invalid response route", () => {
     const kernel = Object.create(Kernel.prototype) as any;
     kernel.frameBodyChannels = new Map();
-    kernel.routes = { get: () => ({ deviceId: "expected-device" }) };
+    kernel.routes = {
+      get: () => ({ deviceId: "expected-device", driverConnectionId: null }),
+    };
     kernel.isConnectionForDevice = vi.fn(() => false);
 
     kernel.handleRes({ id: "wrong-connection" }, {
@@ -241,10 +259,72 @@ describe("Kernel frame bodies", () => {
     expect(kernel.frameBodyChannels.size).toBe(0);
   });
 
+  it("rejects a response from a different connection for the same device", () => {
+    const route = {
+      deviceId: "device-1",
+      driverConnectionId: "current-connection",
+      origin: { type: "app", id: "req-1" },
+      call: "fs.read",
+      scheduleId: null,
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.routes = {
+      get: vi.fn(() => route),
+      remove: vi.fn(),
+    };
+    kernel.isConnectionForDevice = vi.fn(() => true);
+    kernel.decodeWebSocketFrame = vi.fn();
+
+    kernel.handleRes({ id: "stale-connection" }, {
+      type: "res",
+      id: "req-1",
+      ok: true,
+      data: { content: "stale" },
+    });
+
+    expect(kernel.decodeWebSocketFrame).not.toHaveBeenCalled();
+    expect(kernel.routes.remove).not.toHaveBeenCalled();
+  });
+
+  it("accepts an authoritative response for a route created before connection binding", () => {
+    const route = {
+      deviceId: "device-1",
+      driverConnectionId: null,
+      origin: { type: "app", id: "req-1" },
+      call: "fs.read",
+      scheduleId: null,
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.routes = {
+      get: vi.fn(() => route),
+      remove: vi.fn(() => route),
+    };
+    kernel.routedBodies = new Map();
+    kernel.isConnectionForDevice = vi.fn(() => true);
+    kernel.decodeWebSocketFrame = vi.fn((_connection: unknown, frame: unknown) => frame);
+    kernel.deliverToOrigin = vi.fn();
+
+    kernel.handleRes({ id: "current-connection" }, {
+      type: "res",
+      id: "req-1",
+      ok: true,
+      data: { content: "current" },
+    });
+
+    expect(kernel.routes.remove).toHaveBeenCalledWith("req-1");
+    expect(kernel.deliverToOrigin).toHaveBeenCalledWith(route.origin, {
+      type: "res",
+      id: "req-1",
+      ok: true,
+      data: { content: "current" },
+    });
+  });
+
   it("fails a routed caller immediately when the response body descriptor is invalid", () => {
     const cancelBody = vi.fn(async () => {});
     const route = {
       deviceId: "device-1",
+      driverConnectionId: "device-connection",
       origin: { type: "app", id: "req-1" },
       call: "net.fetch",
       scheduleId: "schedule-1",
@@ -317,6 +397,7 @@ describe("Kernel frame bodies", () => {
     const cancel = vi.fn(async () => {});
     const route = {
       deviceId: "device-1",
+      driverConnectionId: "device-connection",
       origin: { type: "app", id: "req-1" },
       call: "net.fetch",
       scheduleId: null,
@@ -331,7 +412,7 @@ describe("Kernel frame bodies", () => {
     kernel.decodeWebSocketFrame = (_connection: unknown, frame: unknown) => frame;
     kernel.deliverToOrigin = vi.fn();
 
-    kernel.handleRes({}, {
+    kernel.handleRes({ id: "device-connection" }, {
       type: "res",
       id: "req-1",
       ok: true,
@@ -549,6 +630,7 @@ describe("Kernel nested dispatch", () => {
     const driver = {
       id: "driver-connection",
       state: {
+        step: "connected",
         identity: {
           role: "driver",
           device: "workstation",
@@ -571,6 +653,7 @@ describe("Kernel nested dispatch", () => {
           origin: route.origin,
           call: route.call,
           deviceId: route.deviceId,
+          driverConnectionId: route.driverConnectionId,
           scheduleId: null,
         };
         route = null;
@@ -656,6 +739,111 @@ describe("Kernel nested dispatch", () => {
 });
 
 describe("Kernel device connection cleanup", () => {
+  it("makes a replacement authoritative before closing the old connection", () => {
+    const identity = {
+      role: "driver",
+      process: { uid: 1000 },
+      device: "browser",
+    };
+    const oldConnection: any = {
+      id: "old-connection",
+      state: {
+        step: "connected",
+        identity,
+        clientId: "browser",
+      },
+      setState: vi.fn((state) => {
+        oldConnection.state = state;
+      }),
+      close: vi.fn(),
+    };
+    const replacement: any = {
+      id: "new-connection",
+      state: { step: "pending" },
+      setState: vi.fn((state) => {
+        replacement.state = state;
+      }),
+      close: vi.fn(),
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.connections = new Map([[oldConnection.id, oldConnection]]);
+
+    kernel.activateConnection(replacement, {
+      step: "connected",
+      identity,
+      clientId: "browser",
+    });
+
+    expect(kernel.connections.get(replacement.id)).toBe(replacement);
+    expect(kernel.connections.has(oldConnection.id)).toBe(false);
+    expect(oldConnection.state.step).toBe("superseded");
+    expect(oldConnection.close).toHaveBeenCalledWith(1000, "Replaced by newer connection");
+    expect(replacement.setState.mock.invocationCallOrder[0])
+      .toBeLessThan(oldConnection.close.mock.invocationCallOrder[0]);
+  });
+
+  it("does not let a superseded close disconnect its replacement", () => {
+    const oldConnection = {
+      id: "old-connection",
+      state: {
+        step: "superseded",
+        identity: { role: "driver", device: "browser" },
+      },
+    };
+    const replacement = {
+      id: "new-connection",
+      state: {
+        step: "connected",
+        identity: { role: "driver", device: "browser" },
+      },
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.connections = new Map([[replacement.id, replacement]]);
+    kernel.activeRequests = new Map();
+    kernel.closeFrameBodyChannel = vi.fn();
+    kernel.devices = { setOnline: vi.fn() };
+    kernel.broadcastDeviceStatus = vi.fn();
+    kernel.failRoutesForDevice = vi.fn();
+    kernel.failRoutesForDriverConnection = vi.fn();
+    kernel.failRoutesForConnection = vi.fn();
+    kernel.runRoutes = { clearForConnection: vi.fn() };
+
+    kernel.onClose(oldConnection);
+
+    expect(kernel.connections.get(replacement.id)).toBe(replacement);
+    expect(kernel.devices.setOnline).not.toHaveBeenCalled();
+    expect(kernel.broadcastDeviceStatus).not.toHaveBeenCalled();
+    expect(kernel.failRoutesForDevice).not.toHaveBeenCalled();
+    expect(kernel.failRoutesForDriverConnection).toHaveBeenCalledWith(oldConnection.id);
+  });
+
+  it("replies to an authoritative driver ping on the same connection", () => {
+    const connection = {
+      id: "driver-connection",
+      state: {
+        step: "connected",
+        identity: { role: "driver", device: "browser" },
+      },
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.connections = new Map([[connection.id, connection]]);
+    kernel.sendWebSocketFrame = vi.fn();
+
+    kernel.handleSig(connection, {
+      type: "sig",
+      signal: "device.ping",
+      payload: { at: 1234, nonce: "ping-1" },
+      seq: 7,
+    });
+
+    expect(kernel.sendWebSocketFrame).toHaveBeenCalledWith(connection, {
+      type: "sig",
+      signal: "device.pong",
+      payload: { at: 1234, nonce: "ping-1" },
+      seq: 7,
+    });
+  });
+
   it("aborts native requests when their origin disconnects", () => {
     const controller = new AbortController();
     const connection = {
@@ -1153,6 +1341,7 @@ describe("Kernel process device requests", () => {
         id: "search-1",
         origin: { type: "process", id: "proc_1" },
         deviceId: "device-1",
+        driverConnectionId: "driver-connection",
       })),
     };
     kernel.sendDeviceRequestCancel = vi.fn();
@@ -1163,6 +1352,7 @@ describe("Kernel process device requests", () => {
     expect(kernel.cancelProcessRequests("proc_1", ["search-1"], "stopped")).toBe(1);
     expect(kernel.sendDeviceRequestCancel).toHaveBeenCalledWith(
       "device-1",
+      "driver-connection",
       "search-1",
       "stopped",
     );
