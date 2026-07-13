@@ -102,6 +102,7 @@ export type ProcAbortResult =
 export type ProcHilDecision = "approve" | "deny";
 
 export type ProcHilRequest = {
+  pid: string;
   requestId: string;
   runId: string;
   conversationId?: string;

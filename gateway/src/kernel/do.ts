@@ -844,16 +844,15 @@ export class Kernel extends Host<Env> {
 
     if (!isUserProcessSignal(frame.signal)) return;
 
+    const isHilRequest = frame.signal === "proc.run.hil.requested";
+    const route = runId ? this.runRoutes.get(runId) : null;
+
     // Client-facing process signals route by the owning human (owner_uid), not the
     // run-as identity (which may be the personal agent account).
-    if (!runId) {
+    if (isHilRequest || !route) {
       this.broadcastToUserUid(ownerUid, frame.signal, frame.payload);
-      return;
     }
-
-    const route = this.runRoutes.get(runId);
-    if (!route) {
-      this.broadcastToUserUid(ownerUid, frame.signal, frame.payload);
+    if (!runId || !route) {
       return;
     }
 
@@ -863,7 +862,9 @@ export class Kernel extends Host<Env> {
     }
 
     if (route.kind === "connection") {
-      this.deliverSignalToConnection(route, frame, ownerUid);
+      if (!isHilRequest) {
+        this.deliverSignalToConnection(route, frame, ownerUid);
+      }
       if (frame.signal === "proc.run.finished") {
         this.runRoutes.delete(runId);
       }

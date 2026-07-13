@@ -6419,6 +6419,7 @@ describe("Process DO — mechanical", () => {
       expect(history.ok).toBe(true);
       const data = history.data as any;
       expect(data.pendingHil).toMatchObject({
+        pid,
         runId: "run-hil-1",
         callId: "call-hil-1",
         toolName: "Read",

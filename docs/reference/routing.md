@@ -91,7 +91,7 @@ Process DOs emit lifecycle and output signals such as `proc.run.started`,
 
 For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it maps `runId` to the adapter, account id, surface kind, surface id, and optional thread id. Routes expire after 30 minutes.
 
-If a run route is missing, the Kernel falls back to broadcasting the signal to connected clients for the owning uid.
+If a run route is missing, the Kernel falls back to broadcasting the signal to connected clients for the owning uid. HIL requests are always broadcast to every connected user client for the owning uid so another session can answer them. Adapter-originated HIL requests are also delivered back to their adapter surface.
 
 ## Adapter Routing
 

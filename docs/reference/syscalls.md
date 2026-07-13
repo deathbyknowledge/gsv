@@ -556,6 +556,7 @@ type ProcContextFile = { name: string; text: string };
 type ProcSpawnAssignment = { contextFiles: ProcContextFile[]; autoStart?: boolean };
 
 type ProcHilRequest = {
+  pid: string;
   requestId: string;
   runId: string;
   conversationId?: string;

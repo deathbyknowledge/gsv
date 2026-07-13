@@ -949,6 +949,78 @@ describe("Kernel user signal broadcasts", () => {
   });
 });
 
+describe("Kernel process signal routing", () => {
+  function buildKernel(route: Record<string, unknown>) {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
+    kernel.dispatchSignalWatches = vi.fn(async () => {});
+    kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
+    kernel.broadcastToUserUid = vi.fn();
+    kernel.deliverSignalToConnection = vi.fn();
+    kernel.deliverSignalToAdapter = vi.fn(async () => {});
+    return kernel;
+  }
+
+  const connectionRoute = {
+    kind: "connection",
+    runId: "run-1",
+    uid: 1000,
+    connectionId: "connection-1",
+  };
+
+  it("broadcasts connection-routed HIL requests without duplicating the origin", async () => {
+    const kernel = buildKernel(connectionRoute);
+    const frame = {
+      type: "sig",
+      signal: "proc.run.hil.requested",
+      payload: { pid: "proc-1", runId: "run-1", requestId: "hil-1" },
+    };
+
+    await kernel.handleProcessSignal("proc-1", frame);
+
+    expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(1000, frame.signal, frame.payload);
+    expect(kernel.deliverSignalToConnection).not.toHaveBeenCalled();
+    expect(kernel.deliverSignalToAdapter).not.toHaveBeenCalled();
+  });
+
+  it("broadcasts adapter-routed HIL requests and preserves adapter delivery", async () => {
+    const route = {
+      kind: "adapter",
+      runId: "run-1",
+      uid: 1000,
+      adapter: "discord",
+      accountId: "account-1",
+      surfaceKind: "dm",
+      surfaceId: "surface-1",
+    };
+    const kernel = buildKernel(route);
+    const frame = {
+      type: "sig",
+      signal: "proc.run.hil.requested",
+      payload: { pid: "proc-1", runId: "run-1", requestId: "hil-1" },
+    };
+
+    await kernel.handleProcessSignal("proc-1", frame);
+
+    expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(1000, frame.signal, frame.payload);
+    expect(kernel.deliverSignalToAdapter).toHaveBeenCalledWith(route, frame);
+  });
+
+  it("keeps ordinary run signals exclusive to their connection route", async () => {
+    const kernel = buildKernel(connectionRoute);
+    const frame = {
+      type: "sig",
+      signal: "proc.run.stream",
+      payload: { pid: "proc-1", runId: "run-1", event: { type: "text_delta", delta: "hi" } },
+    };
+
+    await kernel.handleProcessSignal("proc-1", frame);
+
+    expect(kernel.broadcastToUserUid).not.toHaveBeenCalled();
+    expect(kernel.deliverSignalToConnection).toHaveBeenCalledWith(connectionRoute, frame, 1000);
+  });
+});
+
 describe("Kernel package invalidations", () => {
   it("broadcasts package changes only within their package scope", () => {
     const kernel = Object.create(Kernel.prototype) as any;

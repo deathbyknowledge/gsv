@@ -5851,6 +5851,7 @@ export class Process extends Host<Env> {
     }
 
     return {
+      pid: this.pid,
       requestId: record.requestId,
       runId: record.runId,
       conversationId: record.conversationId,
