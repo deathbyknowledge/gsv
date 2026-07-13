@@ -17,6 +17,7 @@ import {
   normalizeProcessesPayload,
   normalizeTargetsPayload,
 } from "../domain/consoleNormalization";
+import { avatarConfigKey } from "../domain/agentPresentation";
 import type {
   ConsoleAccount,
   ConsoleAdapter,
@@ -75,6 +76,8 @@ export type CreateConsoleAgentInput = {
   fallbackModel?: string;
   reasoning?: string;
   approval?: string;
+  /** Fixed portrait assigned at creation (see agentPresentation.pickAgentImage). */
+  avatarSrc?: string;
   files: readonly ConsoleAgentContextFileDraft[];
 };
 
@@ -487,7 +490,14 @@ export async function createConsoleAgent(
   const account = result.account;
   const uid = Number(account.uid);
   if (Number.isFinite(uid)) {
-    await saveAgentBehaviorConfig(client, uid, input);
+    const writes: Promise<unknown>[] = [saveAgentBehaviorConfig(client, uid, input)];
+    const avatarSrc = input.avatarSrc?.trim();
+    if (avatarSrc) {
+      // Fixed portrait: persisted once at creation, read back everywhere via
+      // agentPresentation.avatarForAccount.
+      writes.push(client.sys.config.set({ key: avatarConfigKey(uid), value: avatarSrc }));
+    }
+    await Promise.all(writes);
   }
 
   return {

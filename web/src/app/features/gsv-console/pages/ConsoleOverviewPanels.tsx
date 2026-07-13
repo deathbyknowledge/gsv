@@ -19,8 +19,7 @@ import {
 } from "../domain/consoleSettings";
 import type { ConsoleListKind } from "../domain/consoleListTypes";
 import {
-  CREW_HUMAN_IMAGE,
-  agentImageSrcForIndex,
+  avatarForAccount,
   isConsoleAgentAccount,
   isHumanCrewAccount,
   orderedCrewAccounts,
@@ -210,20 +209,23 @@ function accountStatus(account: ConsoleAccount, processes: readonly ConsoleProce
   };
 }
 
-function crewCards(accounts: readonly ConsoleAccount[], processes: readonly ConsoleProcess[]): CrewCard[] {
+function crewCards(
+  accounts: readonly ConsoleAccount[],
+  processes: readonly ConsoleProcess[],
+  config: readonly ConsoleConfigEntry[],
+): CrewCard[] {
   const ordered = orderedCrewAccounts(accounts).slice(0, 3);
-  let agentIndex = 0;
   return ordered.map((account) => {
     const human = isHumanCrewAccount(account);
-    // Human is shown first, online, with the padded orb; agents get the
-    // full-frame portraits.
+    // Human is shown first, online, with the padded orb; agents show their
+    // persisted portrait (legacy position fallback for pre-existing agents).
     const status = human
       ? { meta: "you", statusLabel: "ONLINE", tone: "online" as StatusTone }
       : accountStatus(account, processes);
     return {
       id: String(account.uid),
       accountUid: account.uid,
-      imageSrc: human ? CREW_HUMAN_IMAGE : agentImageSrcForIndex(agentIndex++),
+      imageSrc: avatarForAccount(account, config, accounts),
       cover: !human,
       name: human ? "Defaults" : account.displayName,
       ...status,
@@ -536,16 +538,18 @@ function ShipPanel({
 
 function CrewPanel({
   accounts,
+  config,
   onOpenAgent,
   onOpenSurface,
   processes,
 }: {
   accounts: readonly ConsoleAccount[];
+  config: readonly ConsoleConfigEntry[];
   onOpenAgent?: OpenAgent;
   onOpenSurface?: OpenSurface;
   processes: readonly ConsoleProcess[];
 }) {
-  const cards = crewCards(accounts, processes);
+  const cards = crewCards(accounts, processes, config);
   const humanCount = accounts.filter(isHumanCrewAccount).length;
   const agentCount = accounts.filter(isConsoleAgentAccount).length;
   const crewMeta = `${humanCount} HUMAN${humanCount === 1 ? "" : "S"} / ${agentCount} AGENT${agentCount === 1 ? "" : "S"}`;
@@ -810,6 +814,7 @@ export function SettingsOverviewDashboard({
         />
         <CrewPanel
           accounts={data.accounts}
+          config={data.config}
           onOpenAgent={onOpenAgent}
           onOpenSurface={onOpenSurface}
           processes={data.processes}

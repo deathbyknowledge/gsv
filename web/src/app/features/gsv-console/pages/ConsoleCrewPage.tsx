@@ -21,8 +21,7 @@ import {
   type AgentApprovalAction,
 } from "../domain/consoleAgentBehavior";
 import {
-  CREW_HUMAN_IMAGE,
-  agentImageSrcForIndex,
+  avatarForAccount,
   isConsoleAgentAccount,
   isHumanCrewAccount,
   labelForConsoleAccountRelation,
@@ -100,11 +99,11 @@ function CrewRoster({
   // Humans first; agents keep their existing rank order after.
   const ordered = orderedCrewAccounts(accounts);
   const ownerUid = viewerAccountForCrew(ordered)?.uid ?? null;
-  let agentImageIndex = 0;
   const cards = ordered.map((account) => {
     const human = isHumanCrewAccount(account);
-    // Human keeps the orb; agents cycle the agent portraits.
-    const imageSrc = human ? CREW_HUMAN_IMAGE : agentImageSrcForIndex(agentImageIndex++);
+    // Orb for humans; agents show their persisted portrait (legacy position
+    // fallback for agents created before portraits were fixed).
+    const imageSrc = avatarForAccount(account, config, accounts);
     return buildCrewCard(account, processes, imageSrc, human, config, modelLabels, ownerUid);
   });
   const humanCount = accounts.filter(isHumanCrewAccount).length;
