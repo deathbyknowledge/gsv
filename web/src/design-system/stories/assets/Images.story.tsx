@@ -12,12 +12,15 @@ import "../../assets.css";
  */
 
 // web/public/img/ — agent portraits + human orb.
-// agent-1/2 are reached via AgentImage's `/img/agent-${idx}.png` template;
-// orb via agentPresentation's CREW_HUMAN_IMAGE.
+// All five portraits are reachable via agentPresentation's AGENT_IMAGE_POOL
+// (fixed per-agent assignment) and AgentImage's `/img/agent-${idx}.png`
+// template; orb via CREW_HUMAN_IMAGE.
 const IMG_ASSETS: AssetEntry[] = [
   { path: "/img/agent-0.png", name: "agent-0.png", used: true },
   { path: "/img/agent-1.png", name: "agent-1.png", used: true },
   { path: "/img/agent-2.png", name: "agent-2.png", used: true },
+  { path: "/img/agent-3.png", name: "agent-3.png", used: true },
+  { path: "/img/agent-4.png", name: "agent-4.png", used: true },
   { path: "/img/orb.png", name: "orb.png", used: true },
 ];
 
