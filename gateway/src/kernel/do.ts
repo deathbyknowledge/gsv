@@ -2279,11 +2279,21 @@ export class Kernel extends Host<Env> {
     try {
       frame = this.decodeWebSocketFrame(connection, wireFrame) as ResponseFrame;
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid frame body";
+      this.cancelRoute(wireFrame.id);
+      this.deliverToOrigin(
+        route.origin,
+        errFrame(
+          wireFrame.id,
+          502,
+          `Invalid response from device ${route.deviceId}: ${message}`,
+        ),
+      );
       this.sendError(
         connection,
         wireFrame.id,
         400,
-        error instanceof Error ? error.message : "Invalid frame body",
+        message,
       );
       return;
     }

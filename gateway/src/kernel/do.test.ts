@@ -224,6 +224,54 @@ describe("Kernel frame bodies", () => {
     expect(kernel.frameBodyChannels.size).toBe(0);
   });
 
+  it("fails a routed caller immediately when the response body descriptor is invalid", () => {
+    const cancelBody = vi.fn(async () => {});
+    const route = {
+      deviceId: "device-1",
+      origin: { type: "app", id: "req-1" },
+      call: "net.fetch",
+      scheduleId: "schedule-1",
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.frameBodyChannels = new Map();
+    kernel.routes = {
+      get: vi.fn(() => route),
+      remove: vi.fn(() => route),
+    };
+    kernel.routedBodies = new Map([["req-1", { cancel: cancelBody }]]);
+    kernel.isConnectionForDevice = () => true;
+    kernel.cancelSchedule = vi.fn(async () => {});
+    kernel.deliverToOrigin = vi.fn();
+    const connection = { id: "device-connection", send: vi.fn() };
+
+    kernel.handleRes(connection, {
+      type: "res",
+      id: "req-1",
+      ok: true,
+      body: { streamId: 0, length: 3 },
+    });
+
+    expect(kernel.routes.remove).toHaveBeenCalledWith("req-1");
+    expect(kernel.cancelSchedule).toHaveBeenCalledWith("schedule-1");
+    expect(cancelBody).toHaveBeenCalledWith("Route cancelled");
+    expect(kernel.routedBodies.size).toBe(0);
+    expect(kernel.deliverToOrigin).toHaveBeenCalledWith(route.origin, {
+      type: "res",
+      id: "req-1",
+      ok: false,
+      error: {
+        code: 502,
+        message: "Invalid response from device device-1: Invalid binary stream id: 0",
+      },
+    });
+    expect(JSON.parse(connection.send.mock.calls[0][0])).toEqual({
+      type: "res",
+      id: "req-1",
+      ok: false,
+      error: { code: 400, message: "Invalid binary stream id: 0" },
+    });
+  });
+
   it("cancels a response body that arrives after its route is gone", async () => {
     const sends: ArrayBuffer[] = [];
     const kernel = Object.create(Kernel.prototype) as any;
