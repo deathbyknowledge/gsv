@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(7);
+    expect(KERNEL_MIGRATIONS).toHaveLength(8);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -59,6 +59,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[6]).toMatchObject({
       id: 7,
       name: "remove_cli_mirror",
+    });
+    expect(KERNEL_MIGRATIONS[7]).toMatchObject({
+      id: 8,
+      name: "bind_routes_to_driver_connections",
     });
   });
 
@@ -157,6 +161,13 @@ describe("kernel schema migrations", () => {
     expect(statements).toContain(
       "DELETE FROM config_kv WHERE key LIKE 'config/downloads/cli/%'",
     );
+  });
+
+  it("binds routed requests to the driver connection that received them", () => {
+    expect(normalizedStatements()).toContain(
+      "ALTER TABLE routing_table ADD COLUMN driver_connection_id TEXT",
+    );
+    expect(createTableStatement("routing_table")).not.toContain("driver_connection_id");
   });
 
   it("includes current indexes owned by the kernel stores", () => {

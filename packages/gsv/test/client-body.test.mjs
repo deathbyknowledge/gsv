@@ -23,6 +23,8 @@ class FakeWebSocket extends EventTarget {
   binaryType = "blob";
   readyState = 0;
   sent = [];
+  closeCalls = [];
+  connectSignals = ["device.pong"];
 
   constructor() {
     super();
@@ -48,18 +50,56 @@ class FakeWebSocket extends EventTarget {
           protocol: 2,
           server: { connectionId: "test" },
           identity: { role: "user" },
+          syscalls: [],
+          signals: this.connectSignals,
         },
       })));
     }
   }
 
-  close() {
+  close(code, reason) {
+    this.closeCalls.push({ code, reason });
     this.readyState = 3;
+    this.dispatchEvent(new Event("close"));
   }
 
   receive(data) {
     this.dispatchEvent(new MessageEvent("message", { data }));
   }
+}
+
+class OpeningWebSocket extends EventTarget {
+  static instance;
+
+  binaryType = "blob";
+  readyState = 0;
+  closeCalls = [];
+
+  constructor() {
+    super();
+    OpeningWebSocket.instance = this;
+  }
+
+  send() {}
+
+  close(code, reason) {
+    this.closeCalls.push({ code, reason });
+    this.readyState = 3;
+    this.dispatchEvent(new Event("close"));
+  }
+}
+
+class SignalFailingWebSocket extends FakeWebSocket {
+  send(data) {
+    if (typeof data === "string" && JSON.parse(data).type === "sig") {
+      throw new Error("send failed");
+    }
+    super.send(data);
+  }
+}
+
+class LegacyGatewayWebSocket extends FakeWebSocket {
+  connectSignals = [];
 }
 
 function body(bytes) {
@@ -74,6 +114,22 @@ function body(bytes) {
   };
 }
 
+function trackedAbortController() {
+  const controller = new AbortController();
+  const listeners = new Set();
+  const addEventListener = controller.signal.addEventListener.bind(controller.signal);
+  const removeEventListener = controller.signal.removeEventListener.bind(controller.signal);
+  controller.signal.addEventListener = (type, listener, options) => {
+    if (type === "abort") listeners.add(listener);
+    addEventListener(type, listener, options);
+  };
+  controller.signal.removeEventListener = (type, listener, options) => {
+    if (type === "abort") listeners.delete(listener);
+    removeEventListener(type, listener, options);
+  };
+  return { controller, listeners };
+}
+
 async function connectedClient() {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
   await client.connect({
@@ -83,6 +139,34 @@ async function connectedClient() {
   });
   return { client, socket: FakeWebSocket.instance };
 }
+
+test("closes a WebSocket that is still opening when the connection is cancelled", async () => {
+  const client = new GSVClient({ WebSocket: OpeningWebSocket });
+  const connecting = client.connect({
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  await Promise.resolve();
+
+  client.disconnect("connection settings changed");
+
+  await assert.rejects(connecting, /closed during connect/);
+  assert.deepEqual(OpeningWebSocket.instance.closeCalls, [{
+    code: 1000,
+    reason: "connection settings changed",
+  }]);
+});
+
+test("closes an established WebSocket immediately when it errors", async () => {
+  const { client, socket } = await connectedClient();
+
+  socket.dispatchEvent(new Event("error"));
+
+  assert.equal(client.getStatus().state, "disconnected");
+  assert.equal(client.getStatus().message, "WebSocket error");
+  assert.deepEqual(socket.closeCalls, [{ code: 1000, reason: "WebSocket error" }]);
+});
 
 test("keeps body-bearing syscalls off the data-only namespaces", () => {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
@@ -428,6 +512,122 @@ test("cancels an upload when the request completes early", async () => {
   client.close();
 });
 
+test("does not send a pre-aborted request", async () => {
+  const { client, socket } = await connectedClient();
+  const controller = new AbortController();
+  const reason = new Error("request superseded");
+  let cancelledWith;
+  const stream = new ReadableStream({
+    cancel(value) {
+      cancelledWith = value;
+    },
+  });
+  controller.abort(reason);
+  const sentBefore = socket.sent.length;
+
+  await assert.rejects(
+    client.request("test.echo", {}, { body: { stream }, signal: controller.signal }),
+    /request superseded/,
+  );
+  await Promise.resolve();
+
+  assert.equal(socket.sent.length, sentBefore);
+  assert.equal(cancelledWith, reason);
+  client.close();
+});
+
+test("cancels a pending request and its outgoing body from an abort signal", async () => {
+  const { client, socket } = await connectedClient();
+  const { controller, listeners } = trackedAbortController();
+  const reason = new Error("user changed chats");
+  let cancelledWith;
+  const stream = new ReadableStream({
+    pull: () => new Promise(() => {}),
+    cancel(value) {
+      cancelledWith = value;
+    },
+  });
+  const pending = client.request("test.echo", {}, {
+    body: { stream },
+    signal: controller.signal,
+  });
+  const request = JSON.parse(socket.sent.at(-1));
+  assert.equal(listeners.size, 1);
+
+  controller.abort(reason);
+  await assert.rejects(pending, /user changed chats/);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const cancellation = socket.sent
+    .filter((frame) => typeof frame === "string")
+    .map((frame) => JSON.parse(frame))
+    .find((frame) => frame.type === "sig" && frame.payload?.id === request.id);
+  assert.deepEqual(cancellation, {
+    type: "sig",
+    signal: REQUEST_CANCEL_SIGNAL,
+    payload: { id: request.id, reason: reason.message },
+  });
+  assert.equal(cancelledWith, reason);
+  assert.equal(listeners.size, 0);
+  const terminal = socket.sent
+    .filter((frame) => typeof frame !== "string")
+    .map((frame) => parseBinaryFrame(frame))
+    .find((frame) => frame.streamId === request.body.streamId);
+  assert.equal(terminal.flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
+  client.close();
+});
+
+test("removes request abort listeners on every settlement path", async () => {
+  {
+    const { client, socket } = await connectedClient();
+    const { controller, listeners } = trackedAbortController();
+    const pending = client.request("test.echo", {}, { signal: controller.signal });
+    const request = JSON.parse(socket.sent.at(-1));
+    socket.receive(JSON.stringify({ type: "res", id: request.id, ok: true, data: {} }));
+    await pending;
+    assert.equal(listeners.size, 0, "response");
+    client.close();
+  }
+
+  {
+    const client = new GSVClient({
+      WebSocket: FakeWebSocket,
+      defaultRequestTimeoutMs: 10,
+    });
+    await client.connect({ url: "ws://test", username: "test", password: "test" });
+    const { controller, listeners } = trackedAbortController();
+    await assert.rejects(
+      client.request("test.slow", {}, { signal: controller.signal }),
+      /Request timed out/,
+    );
+    assert.equal(listeners.size, 0, "timeout");
+    client.close();
+  }
+
+  {
+    const { client } = await connectedClient();
+    const { controller, listeners } = trackedAbortController();
+    const stream = body(new Uint8Array([1])).stream;
+    const reader = stream.getReader();
+    await assert.rejects(
+      client.request("test.echo", {}, { body: { stream }, signal: controller.signal }),
+      /locked/i,
+    );
+    assert.equal(listeners.size, 0, "body send failure");
+    reader.releaseLock();
+    client.close();
+  }
+
+  {
+    const { client } = await connectedClient();
+    const { controller, listeners } = trackedAbortController();
+    const pending = client.request("test.slow", {}, { signal: controller.signal });
+    client.disconnect();
+    await assert.rejects(pending, /Disconnected/);
+    assert.equal(listeners.size, 0, "disconnect");
+  }
+});
+
 test("cancels an outbound request before rejecting its timeout", async () => {
   const client = new GSVClient({
     WebSocket: FakeWebSocket,
@@ -502,6 +702,128 @@ test("cancels an inbound driver request without publishing the reserved signal",
     const frame = JSON.parse(data);
     return frame.type === "res" && frame.id === "inbound-1";
   }), false);
+  driver.close();
+});
+
+test("keeps driver acknowledgement checks opt-in", async () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+  const driver = client.driver({ keepalive: { intervalMs: 10 } });
+  driver.implement("shell.exec", async () => ({ data: {} }));
+
+  await driver.connect({
+    deviceId: "test-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const ping = JSON.parse(FakeWebSocket.instance.sent.at(-1));
+  assert.equal(ping.signal, "device.ping");
+  assert.equal(ping.payload.nonce, undefined);
+  driver.close();
+});
+
+test("uses unacknowledged keepalives when the gateway does not advertise pong support", async () => {
+  const client = new GSVClient({ WebSocket: LegacyGatewayWebSocket });
+  const driver = client.driver({
+    keepalive: {
+      intervalMs: 10,
+      acknowledgement: { timeoutMs: 20 },
+    },
+  });
+  driver.implement("shell.exec", async () => ({ data: {} }));
+
+  await driver.connect({
+    deviceId: "test-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  const ping = JSON.parse(LegacyGatewayWebSocket.instance.sent.at(-1));
+  assert.equal(ping.signal, "device.ping");
+  assert.equal(ping.payload.nonce, undefined);
+  assert.equal(client.getStatus().state, "connected");
+  driver.close();
+});
+
+test("disconnects a driver when its keepalive acknowledgement is missing", async () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+  const driver = client.driver({
+    keepalive: {
+      intervalMs: 1_000,
+      acknowledgement: { timeoutMs: 20 },
+    },
+  });
+  driver.implement("shell.exec", async () => ({ data: {} }));
+  await driver.connect({
+    deviceId: "test-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  const socket = FakeWebSocket.instance;
+  const ping = JSON.parse(socket.sent.at(-1));
+
+  socket.receive(JSON.stringify({
+    type: "sig",
+    signal: "device.pong",
+    payload: { nonce: `${ping.payload.nonce}-stale` },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  assert.equal(client.getStatus().state, "disconnected");
+  assert.equal(client.getStatus().message, "device heartbeat timed out");
+  driver.close();
+});
+
+test("disconnects a driver when an acknowledged keepalive cannot be sent", async () => {
+  const client = new GSVClient({ WebSocket: SignalFailingWebSocket });
+  const driver = client.driver({
+    keepalive: { acknowledgement: {} },
+  });
+  driver.implement("shell.exec", async () => ({ data: {} }));
+
+  await driver.connect({
+    deviceId: "test-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+
+  assert.equal(client.getStatus().state, "disconnected");
+  assert.equal(client.getStatus().message, "device heartbeat send failed");
+  driver.close();
+});
+
+test("accepts only the matching driver keepalive acknowledgement", async () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+  const driver = client.driver({
+    keepalive: {
+      intervalMs: 1_000,
+      acknowledgement: { timeoutMs: 20 },
+    },
+  });
+  driver.implement("shell.exec", async () => ({ data: {} }));
+  await driver.connect({
+    deviceId: "test-driver",
+    url: "ws://test",
+    username: "test",
+    password: "test",
+  });
+  const socket = FakeWebSocket.instance;
+  const ping = JSON.parse(socket.sent.at(-1));
+
+  socket.receive(JSON.stringify({
+    type: "sig",
+    signal: "device.pong",
+    payload: { nonce: ping.payload.nonce, at: Date.now() },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  assert.equal(client.getStatus().state, "connected");
   driver.close();
 });
 

@@ -8,6 +8,7 @@ describe("chat live activity", () => {
       ...emptyChatRuntimeState("pid-1", "default"),
       activeRunId: "run-1",
       pendingHil: {
+        pid: "pid-1",
         requestId: "hil-1",
         runId: "run-1",
         conversationId: "default",

@@ -262,6 +262,7 @@ export type AiTextGenerateResult = {
 };
 
 export type AiTranscriptionCreateArgs = {
+  pid?: string;
   audio: {
     mimeType: string;
     filename?: string;

@@ -2,6 +2,7 @@ export type ShellExecArgs = {
   input: string;
   cwd?: string;
   sessionId?: string;
+  /** Maximum runtime in milliseconds for a new command. */
   timeout?: number;
   background?: boolean;
   yieldMs?: number;

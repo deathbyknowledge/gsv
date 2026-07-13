@@ -1,4 +1,5 @@
 import { Bash, defineCommand, type BashExecResult } from "just-bash/browser";
+import { abortable, throwIfAborted } from "./abort";
 import { JustBashFileSystemAdapter } from "./fs-adapter";
 import type {
   BrowserCommand,
@@ -35,11 +36,19 @@ export class BrowserTargetShell {
     this.execQueue = new Promise((resolve) => {
       release = resolve;
     });
-    await previous;
+    let acquired = false;
     try {
+      await abortable(previous, context.abortSignal);
+      acquired = true;
       return await this.execLocked(args, context);
+    } catch (error) {
+      return failedResult(error);
     } finally {
-      release();
+      if (acquired) {
+        release();
+      } else {
+        void previous.then(release);
+      }
     }
   }
 
@@ -61,15 +70,13 @@ export class BrowserTargetShell {
       if (!(await this.fs.exists(cwd))) {
         await this.fs.mkdir(cwd);
       }
+      throwIfAborted(context.abortSignal);
       this.activeExecContext = context;
       const result = await this.requireBash().exec(input, { cwd, signal: context.abortSignal });
+      throwIfAborted(context.abortSignal);
       return toShellResult(result);
     } catch (error) {
-      return {
-        status: "failed",
-        output: "",
-        error: error instanceof Error ? error.message : String(error),
-      };
+      return failedResult(error);
     } finally {
       this.activeExecContext = {};
     }
@@ -162,6 +169,14 @@ function toShellResult(result: BashExecResult): ShellResult {
     output,
     error: result.stderr || `Command exited ${result.exitCode}`,
     exitCode: result.exitCode,
+  };
+}
+
+function failedResult(error: unknown): ShellResult {
+  return {
+    status: "failed",
+    output: "",
+    error: error instanceof Error ? error.message : String(error),
   };
 }
 

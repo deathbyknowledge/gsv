@@ -22,6 +22,10 @@ export const SHELL_EXEC_DEFINITION: ToolDefinition = {
         description:
           "Existing shell session to poll or write stdin to. Omit for a new command.",
       },
+      timeout: {
+        type: "number",
+        description: "Maximum runtime in milliseconds for a new command.",
+      },
     },
     required: ["input"],
   },

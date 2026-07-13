@@ -10,6 +10,9 @@ export function browserTargetHeadline(state: ExtensionUiState): string {
   if (state.connection.state === "connecting") {
     return "Connecting";
   }
+  if (state.connection.reconnectSuppressed) {
+    return "Paused by user";
+  }
   return "Offline";
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_IMAGE_GENERATION_MODEL,
   DEFAULT_OPENAI_IMAGE_MODEL,
@@ -10,6 +10,10 @@ import {
   transcribeAudio,
   type CapabilityFetch,
 } from "./capabilities";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("AI media capability adapters", () => {
   it("routes OpenAI transcription through the audio transcription REST API", async () => {
@@ -46,6 +50,57 @@ describe("AI media capability adapters", () => {
         body: expect.any(FormData),
       }),
     );
+  });
+
+  it("propagates transcription cancellation to OpenAI fetch", async () => {
+    const controller = new AbortController();
+    let fetchSignal: AbortSignal | null | undefined;
+    const fetchFn: CapabilityFetch = vi.fn((_url, init) => {
+      fetchSignal = init?.signal;
+      return new Promise<never>(() => {});
+    });
+
+    const request = transcribeAudio({ fetch: fetchFn }, {
+      provider: "openai",
+      apiKey: "openai-key",
+      data: "AQID",
+      mimeType: "audio/webm",
+      signal: controller.signal,
+    });
+    await Promise.resolve();
+    controller.abort(new Error("caller cancelled"));
+
+    await expect(request).rejects.toThrow("caller cancelled");
+    expect(fetchSignal).toBeDefined();
+    expect(fetchSignal).not.toBe(controller.signal);
+    expect(fetchSignal?.aborted).toBe(true);
+  });
+
+  it("keeps the OpenAI timeout active while reading the response", async () => {
+    vi.useFakeTimers();
+    const fetchFn: CapabilityFetch = vi.fn(async () =>
+      new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"text":"partial'));
+        },
+      }), {
+        headers: { "content-type": "application/json" },
+      })
+    );
+
+    const request = transcribeAudio({ fetch: fetchFn }, {
+      provider: "openai",
+      apiKey: "openai-key",
+      data: "AQID",
+      mimeType: "audio/webm",
+      timeoutMs: 25,
+    });
+    const rejection = expect(request).rejects.toThrow(
+      "OpenAI audio transcription timed out after 25ms",
+    );
+    await vi.advanceTimersByTimeAsync(25);
+
+    await rejection;
   });
 
   it("routes OpenAI speech through the audio speech REST API", async () => {

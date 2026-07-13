@@ -50,6 +50,7 @@ export type StoredProcessMedia = {
 
 export type StoreIncomingProcessMediaOptions = {
   ai?: AudioTranscriptionBinding & ImageReadingBinding;
+  signal?: AbortSignal;
   audioTranscriptionProvider?: string;
   audioTranscriptionModel?: string;
   audioTranscriptionApiKey?: string;
@@ -84,6 +85,7 @@ export async function storeIncomingProcessMedia(
   const stored: StoredProcessMedia[] = [];
 
   for (const item of media) {
+    options.signal?.throwIfAborted();
     const next: StoredProcessMedia = {
       type: item.type,
       mimeType: item.mimeType,
@@ -116,6 +118,7 @@ export async function storeIncomingProcessMedia(
         const stored = await bucket.get(item.key);
         if (stored) {
           bytes = new Uint8Array(await stored.arrayBuffer());
+          options.signal?.throwIfAborted();
           base64 = encodeBase64Bytes(bytes);
         }
       }
@@ -130,6 +133,7 @@ export async function storeIncomingProcessMedia(
         model: options.audioTranscriptionModel,
         mimeType: item.mimeType,
         filename: item.filename,
+        signal: options.signal,
       });
       if (result) {
         next.transcription = result.text;
@@ -148,6 +152,7 @@ export async function storeIncomingProcessMedia(
         inputFormat: options.imageReadingInputFormat,
         maxTokens: options.imageReadingMaxTokens,
         timeoutMs: options.imageReadingTimeoutMs,
+        signal: options.signal,
       });
       if (result) {
         next.description = result.text;
@@ -343,6 +348,7 @@ async function transcribeIncomingAudio(
     model?: string;
     mimeType?: string;
     filename?: string;
+    signal?: AbortSignal;
   },
 ): Promise<{ text: string; duration?: number } | null> {
   try {
@@ -353,11 +359,15 @@ async function transcribeIncomingAudio(
       model: options.model,
       mimeType: options.mimeType,
       filename: options.filename,
+      signal: options.signal,
       mode: "transcribe",
       vadFilter: true,
       conditionOnPreviousText: false,
     });
   } catch (error) {
+    if (options.signal?.aborted) {
+      throw options.signal.reason ?? error;
+    }
     console.warn("[ProcessMedia] audio transcription failed:", error);
     return null;
   }
@@ -375,6 +385,7 @@ async function describeIncomingImage(
     inputFormat?: ImageReadingInputFormat | string;
     maxTokens?: number;
     timeoutMs?: number;
+    signal?: AbortSignal;
   },
 ): Promise<{ text: string } | null> {
   const provider = options.provider?.trim() || "workers-ai";
@@ -403,6 +414,9 @@ async function describeIncomingImage(
       timeoutMs: options.timeoutMs ?? DEFAULT_IMAGE_READING_TIMEOUT_MS,
     });
   } catch (error) {
+    if (options.signal?.aborted) {
+      throw options.signal.reason ?? error;
+    }
     console.warn("[ProcessMedia] image reading failed:", error);
     return null;
   }

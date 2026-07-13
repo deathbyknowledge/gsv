@@ -160,6 +160,42 @@ describe("ProcessStore", () => {
       });
     });
 
+    it("keeps parallel tool exchanges on one side of a compaction boundary", async () => {
+      const stub = await getProcessByPid("conversation-compact-tool-boundary");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        const oldUserId = store.appendMessage("user", "old", { conversationId: "thread" });
+        const assistantId = store.appendMessage("assistant", "checking", {
+          conversationId: "thread",
+          toolCalls: JSON.stringify([
+            { type: "toolCall", id: "call-1", name: "Read", arguments: {} },
+            { type: "toolCall", id: "call-2", name: "Read", arguments: {} },
+          ]),
+        });
+        const eventId = store.appendMessage("system", "still working", { conversationId: "thread" });
+        const secondResultId = store.appendToolResult("call-2", "fs.read", "two", false, "thread");
+        const firstResultId = store.appendToolResult("call-1", "fs.read", "one", false, "thread");
+        store.appendMessage("assistant", "done", { conversationId: "thread" });
+        store.appendMessage("user", "new", { conversationId: "thread" });
+
+        expect(store.getConversationPrefixMessages({
+          conversationId: "thread",
+          keepLast: 3,
+        }).map((message: any) => message.id)).toEqual([oldUserId]);
+
+        expect(store.getConversationPrefixMessages({
+          conversationId: "thread",
+          throughMessageId: assistantId,
+        }).map((message: any) => message.id)).toEqual([
+          oldUserId,
+          assistantId,
+          eventId,
+          secondResultId,
+          firstResultId,
+        ]);
+      });
+    });
+
     it("records conversation archives and lists generation ids", async () => {
       const stub = await getProcessByPid("conversation-archive-store");
       await runInDurableObject(stub, (instance: Process) => {

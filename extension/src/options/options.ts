@@ -200,7 +200,7 @@ async function runAction(action: string): Promise<void> {
       await sendRuntimeAction("open-monitor", openMonitor);
       return;
     case "refresh":
-      await refresh({ applyConfig: !formDirty });
+      await refresh({ applyConfig: !formDirty, reconcile: true });
       setNotice("info", "Refreshed");
       return;
     case "clear-diagnostics":
@@ -267,9 +267,9 @@ async function sendRuntimeAction(
   });
 }
 
-async function refresh(options: { applyConfig?: boolean; silent?: boolean } = {}): Promise<void> {
+async function refresh(options: { applyConfig?: boolean; silent?: boolean; reconcile?: boolean } = {}): Promise<void> {
   try {
-    const response = await sendUiMessage({ type: "status" });
+    const response = await sendUiMessage({ type: options.reconcile ? "refresh" : "status" });
     handleResponse(response, { applyConfig: options.applyConfig });
   } catch (error) {
     if (!options.silent) {

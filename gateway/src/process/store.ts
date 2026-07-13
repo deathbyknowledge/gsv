@@ -346,13 +346,22 @@ export class ProcessStore {
 
     if (opts.keepLast !== undefined) {
       const keepLast = Math.max(0, Math.trunc(opts.keepLast));
-      const compactCount = records.length - keepLast;
+      const compactCount = normalizeCompactionCut(
+        records,
+        records.length - keepLast,
+        "backward",
+      );
       return compactCount > 0 ? records.slice(0, compactCount) : [];
     }
 
     if (opts.throughMessageId !== undefined) {
       const throughMessageId = Math.trunc(opts.throughMessageId);
-      return records.filter((record) => record.id <= throughMessageId);
+      const compactCount = normalizeCompactionCut(
+        records,
+        records.findLastIndex((record) => record.id <= throughMessageId) + 1,
+        "forward",
+      );
+      return records.slice(0, compactCount);
     }
 
     return [];
@@ -1402,6 +1411,40 @@ export class ProcessStore {
     ];
     return rows[0]?.cnt ?? 0;
   }
+}
+
+function normalizeCompactionCut(
+  records: MessageRecord[],
+  requested: number,
+  direction: "backward" | "forward",
+): number {
+  let cut = Math.max(0, Math.min(records.length, requested));
+  for (let start = 0; start < records.length; start += 1) {
+    const record = records[start];
+    if (record?.role !== "assistant") continue;
+    const callIds = new Set(
+      parseAssistantMessageMeta(record.toolCalls).toolCalls?.map((call) => call.id) ?? [],
+    );
+    if (callIds.size === 0) continue;
+
+    const matched = new Set<string>();
+    let end = start + 1;
+    for (let index = start + 1; index < records.length; index += 1) {
+      const candidate = records[index];
+      if (candidate?.role === "toolResult" && candidate.toolCallId && callIds.has(candidate.toolCallId)) {
+        matched.add(candidate.toolCallId);
+        end = index + 1;
+        if (matched.size === callIds.size) break;
+      }
+    }
+    if (matched.size < callIds.size) {
+      end = records.length;
+    }
+    if (cut > start && cut < end) {
+      cut = direction === "backward" ? start : end;
+    }
+  }
+  return cut;
 }
 
 function messageRecordFromRow(row: MessageRow): MessageRecord {

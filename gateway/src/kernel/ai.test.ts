@@ -719,6 +719,7 @@ describe("handleAiConfig", () => {
   });
 
   it("generates text with preset config and explicit generation options", async () => {
+    const requestSignal = new AbortController().signal;
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({
         executor: { kind: "kernel" },
@@ -737,6 +738,7 @@ describe("handleAiConfig", () => {
         maxTokens: 64,
         reasoning: "off",
       });
+      expect(request.signal).toBe(requestSignal);
       return {
         role: "assistant",
         content: [{ type: "text", text: "pong" }],
@@ -780,6 +782,7 @@ describe("handleAiConfig", () => {
     }, {
       ...ctx,
       processId: "task-1",
+      requestSignal,
     });
 
     expect(result).toMatchObject({
@@ -1598,6 +1601,24 @@ describe("handleAiTranscriptionCreate", () => {
     } as unknown as KernelContext;
   }
 
+  function transcriptionFallbackConfig(
+    id: string,
+    values: Record<string, string>,
+  ): Record<string, string> {
+    return {
+      "users/1000/ai/fallback_model_profile": id,
+      "users/1000/ai/model_profiles": JSON.stringify({
+        profiles: [{
+          id,
+          name: id,
+          values,
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+      }),
+    };
+  }
+
   it("transcribes audio through the shared Workers AI path", async () => {
     const ctx = makeTranscriptionContext();
 
@@ -1621,6 +1642,7 @@ describe("handleAiTranscriptionCreate", () => {
         vad_filter: true,
         condition_on_previous_text: false,
       }),
+      { signal: expect.any(AbortSignal) },
     );
   });
 
@@ -1647,7 +1669,247 @@ describe("handleAiTranscriptionCreate", () => {
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
       "@cf/openai/whisper-large-v3-turbo",
       expect.any(Object),
+      { signal: expect.any(AbortSignal) },
     );
+  });
+
+  it("uses the requested same-owner process AI configuration", async () => {
+    const ctx = makeTranscriptionContext({
+      config: {
+        "users/2000/ai/transcription/model": "@cf/agent/transcriber",
+        "users/1000/ai/transcription/model": "@cf/owner/transcriber",
+      },
+    });
+    (ctx as { procs: unknown }).procs = {
+      get: vi.fn(() => ({
+        processId: "proc:agent",
+        uid: 2000,
+        ownerUid: 1000,
+        gid: 2000,
+        gids: [2000],
+        username: "friday",
+        home: "/home/friday",
+        cwd: "/home/friday",
+      })),
+      getOwnerUid: vi.fn(() => 1000),
+    };
+    (ctx as { auth: unknown }).auth = {
+      getPasswdByUid: vi.fn(() => ({
+        uid: 1000,
+        gid: 1000,
+        username: "sam",
+        home: "/home/sam",
+      })),
+      resolveGids: vi.fn(() => [1000]),
+    };
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "proc-ai-config",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc:agent",
+        config: {
+          version: 1,
+          values: {
+            "config/ai/transcription/model": "@cf/process/transcriber",
+          },
+          updatedAt: 1,
+        },
+      },
+    });
+
+    const result = await handleAiTranscriptionCreate({
+      pid: "proc:agent",
+      audio: { mimeType: "audio/webm" },
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
+
+    expect(result.model).toBe("@cf/process/transcriber");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "proc:agent",
+      expect.objectContaining({ call: "proc.ai.config.get" }),
+    );
+  });
+
+  it("rejects cross-owner process configuration access", async () => {
+    const ctx = makeTranscriptionContext();
+    (ctx as { procs: unknown }).procs = {
+      get: vi.fn(() => ({ ownerUid: 2000 })),
+      getOwnerUid: vi.fn(() => 1000),
+    };
+
+    await expect(handleAiTranscriptionCreate({
+      pid: "proc:other",
+      audio: { mimeType: "audio/webm" },
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])))).rejects.toThrow(
+      "Permission denied: cannot access process proc:other",
+    );
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("allows root to use another owner's process configuration", async () => {
+    const ctx = makeTranscriptionContext();
+    ctx.identity!.process.uid = 0;
+    (ctx as { procs: unknown }).procs = {
+      get: vi.fn(() => ({
+        processId: "proc:other",
+        uid: 2000,
+        ownerUid: 1000,
+        gid: 2000,
+        gids: [2000],
+        username: "friday",
+        home: "/home/friday",
+        cwd: "/home/friday",
+      })),
+      getOwnerUid: vi.fn((pid: string) => pid === "proc:other" ? 1000 : 0),
+    };
+    (ctx as { auth: unknown }).auth = {
+      getPasswdByUid: vi.fn(() => ({
+        uid: 1000,
+        gid: 1000,
+        username: "sam",
+        home: "/home/sam",
+      })),
+      resolveGids: vi.fn(() => [1000]),
+    };
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "proc-ai-config",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc:other",
+        config: {
+          version: 1,
+          values: { "config/ai/transcription/model": "@cf/root-selected/transcriber" },
+          updatedAt: 1,
+        },
+      },
+    });
+
+    const result = await handleAiTranscriptionCreate({
+      pid: "proc:other",
+      audio: { mimeType: "audio/webm" },
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
+
+    expect(result.model).toBe("@cf/root-selected/transcriber");
+  });
+
+  it("falls back through an explicitly configured transcription stack", async () => {
+    const primaryModel = "@cf/openai/whisper-large-v3-turbo";
+    const fallbackModel = "@cf/openai/whisper-tiny-en";
+    const ctx = makeTranscriptionContext({
+      config: {
+        "config/ai/transcription/model": primaryModel,
+        ...transcriptionFallbackConfig("safe-stack", {
+          "config/ai/provider": "openai",
+          "config/ai/model": "gpt-5-mini",
+          "config/ai/transcription/provider": "workers-ai",
+          "config/ai/transcription/model": fallbackModel,
+        }),
+      },
+    });
+    vi.mocked(ctx.env.AI.run)
+      .mockResolvedValueOnce({ text: "" })
+      .mockResolvedValueOnce({ text: "fallback transcript" });
+
+    const result = await handleAiTranscriptionCreate({
+      audio: { mimeType: "audio/webm" },
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
+
+    expect(result).toMatchObject({
+      text: "fallback transcript",
+      provider: "workers-ai",
+      model: fallbackModel,
+    });
+    expect(vi.mocked(ctx.env.AI.run).mock.calls.map(([model]) => model)).toEqual([
+      primaryModel,
+      fallbackModel,
+    ]);
+  });
+
+  it("falls back after the primary transcription provider fails", async () => {
+    const fallbackModel = "@cf/openai/whisper-tiny-en";
+    const ctx = makeTranscriptionContext({
+      config: transcriptionFallbackConfig("safe-stack", {
+        "config/ai/transcription/provider": "workers-ai",
+        "config/ai/transcription/model": fallbackModel,
+      }),
+    });
+    vi.mocked(ctx.env.AI.run)
+      .mockRejectedValueOnce(new Error("primary unavailable"))
+      .mockResolvedValueOnce({ text: "fallback transcript" });
+
+    const result = await handleAiTranscriptionCreate({
+      audio: { mimeType: "audio/webm" },
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
+
+    expect(result.model).toBe(fallbackModel);
+    expect(ctx.env.AI.run).toHaveBeenCalledTimes(2);
+  });
+
+  it("deduplicates an identical transcription fallback stack", async () => {
+    const model = "@cf/openai/whisper-large-v3-turbo";
+    const ctx = makeTranscriptionContext({
+      config: {
+        "config/ai/transcription/model": model,
+        ...transcriptionFallbackConfig("same-stack", {
+          "config/ai/transcription/provider": "workers-ai",
+          "config/ai/transcription/model": model,
+        }),
+      },
+      response: { text: "" },
+    });
+
+    await expect(handleAiTranscriptionCreate({
+      audio: { mimeType: "audio/webm" },
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])))).rejects.toThrow("Transcription unavailable");
+    expect(ctx.env.AI.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat a fallback text model as a transcription model", async () => {
+    const ctx = makeTranscriptionContext({
+      config: transcriptionFallbackConfig("text-only", {
+        "config/ai/provider": "openai",
+        "config/ai/model": "gpt-5-mini",
+      }),
+      response: { text: "" },
+    });
+
+    await expect(handleAiTranscriptionCreate({
+      audio: { mimeType: "audio/webm" },
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])))).rejects.toThrow("Transcription unavailable");
+    expect(ctx.env.AI.run).toHaveBeenCalledTimes(1);
+    expect(ctx.env.AI.run).toHaveBeenCalledWith(
+      DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+      expect.any(Object),
+      expect.any(Object),
+    );
+  });
+
+  it("does not start a fallback after caller cancellation", async () => {
+    const controller = new AbortController();
+    const ctx = makeTranscriptionContext({
+      config: transcriptionFallbackConfig("safe-stack", {
+        "config/ai/transcription/provider": "workers-ai",
+        "config/ai/transcription/model": "@cf/openai/whisper-tiny-en",
+      }),
+    });
+    (ctx as { requestSignal?: AbortSignal }).requestSignal = controller.signal;
+    vi.mocked(ctx.env.AI.run).mockImplementation((_model, _input, options) =>
+      new Promise((_resolve, reject) => {
+        options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), { once: true });
+      })
+    );
+
+    const request = handleAiTranscriptionCreate({
+      audio: { mimeType: "audio/webm" },
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
+    await vi.waitFor(() => expect(ctx.env.AI.run).toHaveBeenCalledTimes(1));
+    controller.abort(new Error("user changed conversation"));
+
+    await expect(request).rejects.toThrow("user changed conversation");
+    expect(ctx.env.AI.run).toHaveBeenCalledTimes(1);
   });
 
   it("uses configured transcription model and byte limits", async () => {

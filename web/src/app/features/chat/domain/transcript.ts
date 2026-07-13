@@ -1067,15 +1067,17 @@ function extractThinkingBlocks(value: unknown): string[] {
 
 function normalizeHilRequest(value: unknown): ProcHilRequest | null {
   const record = asRecord(value);
+  const pid = asString(record?.pid);
   const requestId = asString(record?.requestId);
   const runId = asString(record?.runId);
   const callId = asString(record?.callId);
   const toolName = asString(record?.toolName);
   const syscall = asString(record?.syscall);
-  if (!requestId || !runId || !callId || !toolName || !syscall) {
+  if (!pid || !requestId || !runId || !callId || !toolName || !syscall) {
     return null;
   }
   return {
+    pid,
     requestId,
     runId,
     conversationId: asString(record?.conversationId) ?? DEFAULT_CONVERSATION_ID,

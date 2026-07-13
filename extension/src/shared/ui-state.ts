@@ -47,6 +47,7 @@ export type ExtensionUiState = {
     state: "disconnected" | "connecting" | "connected";
     connectionId: string | null;
     message: string | null;
+    reconnectSuppressed: boolean;
   };
   targetId: string;
   gatewayHost: string;
@@ -81,6 +82,7 @@ export type ExtensionUiState = {
 
 export type RuntimeMessage =
   | { type: "status" }
+  | { type: "refresh" }
   | { type: "connect" }
   | { type: "disconnect" }
   | { type: "stop-all" }

@@ -541,8 +541,8 @@ Runtime behavior:
 | `proc.conversation.get` | Process DO | Returns one conversation record for `conversationId` or `default`; unknown conversations return `conversation: null`. |
 | `proc.conversation.close` | Process DO | Marks a conversation closed without deleting history. Future `proc.send` calls to that conversation fail until it is reopened. |
 | `proc.conversation.reset` | Process DO | Archives the selected conversation by default, clears its active messages and queued/runtime state, increments its generation, and reopens it. Other conversations are left intact. |
-| `proc.conversation.policy.get` | Process DO | Returns the visible context-overflow policy for `conversationId` or `default`. Default policy is manual compaction at 90% pressure with 80 live messages retained if auto-compaction is later enabled. |
-| `proc.conversation.policy.set` | Process DO | Sets the visible context-overflow policy. Supported `overflow` values are `manual`, `auto-compact`, and `fail`; automatic execution happens only during the normal process run preflight. |
+| `proc.conversation.policy.get` | Process DO | Returns the context-overflow policy for `conversationId` or `default`. The default is `auto-compact` at 90% pressure while retaining the newest 80 stored messages. |
+| `proc.conversation.policy.set` | Process DO | Sets the context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during normal process-run preflight. |
 | `proc.conversation.compact` | Process DO | Explicitly archives an old prefix of a conversation, inserts a visible system summary marker at the prefix boundary, and records a `compaction` segment. Requires either caller-provided `summary` or `generateSummary: true`, plus exactly one selector: `keepLast` or `throughMessageId`. |
 | `proc.conversation.fork` | Process DO | Branches a live conversation through `throughMessageId`, or restores a compacted `segmentId` into a new process-local conversation. Segment restore includes the live suffix that existed at the compaction boundary unless `includeLiveSuffix: false`. |
 | `proc.conversation.segment.read` | Process DO | Reads paged messages from a compacted segment archive without restoring those messages into the live conversation. |
@@ -556,6 +556,7 @@ type ProcContextFile = { name: string; text: string };
 type ProcSpawnAssignment = { contextFiles: ProcContextFile[]; autoStart?: boolean };
 
 type ProcHilRequest = {
+  pid: string;
   requestId: string;
   runId: string;
   conversationId?: string;
@@ -593,6 +594,14 @@ type ProcConversationSegment = {
   archivePath: string;
   summaryMessageId: number | null;
   createdAt: number;
+};
+
+type ProcConversationContextPolicy = {
+  conversationId: string;
+  overflow: "auto-compact" | "fail";
+  compactAtPressure: number;
+  keepLast: number;
+  updatedAt: number;
 };
 
 type ProcIpcSendArgs = {
@@ -730,7 +739,7 @@ type ProcessSyscalls = {
   };
 
   "proc.conversation.policy.set": {
-    args: { pid?: string; conversationId?: string; overflow?: "manual" | "auto-compact" | "fail"; compactAtPressure?: number; keepLast?: number };
+    args: { pid?: string; conversationId?: string; overflow?: "auto-compact" | "fail"; compactAtPressure?: number; keepLast?: number };
     result: { ok: true; pid: string; policy: ProcConversationContextPolicy } | OperationError;
   };
 
@@ -1145,7 +1154,7 @@ Runtime behavior:
 |---|---|---|
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
 | `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/zai-org/glm-5.2`, fallback profile to `workers-ai-kimi-k2-6`, max tokens to 8192, context window to provider/model metadata or configured fallback, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
-| `ai.transcription.create` | `handleAiTranscriptionCreate` | Requires audio metadata plus an audio request body. Returns transcription text and model metadata in JSON. |
+| `ai.transcription.create` | `handleAiTranscriptionCreate` | Requires audio metadata plus an audio request body. An optional `pid` resolves model configuration for an accessible process. On failure or empty text, an explicitly configured transcription stack in the fallback profile is tried once. Returns transcription text and model metadata in JSON. |
 | `ai.image.read` | `handleAiImageRead` | Requires image metadata plus an image request body. Returns the image description and model metadata in JSON. |
 | `ai.image.generate` | `handleAiImageGenerate` | Accepts a text prompt. Inline generated image bytes use a response body; `data.image` contains MIME type and size, and providers may instead return `url`. |
 | `ai.speech.create` | `handleAiSpeechCreate` | Accepts text and voice options. Synthesized audio uses a response body with MIME type and size in `data.audio`; skipped or empty results have no body. |
@@ -1163,7 +1172,7 @@ type AiSyscalls = {
   };
 
   "ai.transcription.create": {
-    args: { audio: { mimeType: string; filename?: string }; language?: string; prompt?: string; mode?: "transcribe" | "translate" };
+    args: { pid?: string; audio: { mimeType: string; filename?: string }; language?: string; prompt?: string; mode?: "transcribe" | "translate" };
     result: { text: string; language?: string; duration?: number; segments?: unknown[]; provider: string; model: string };
   };
 

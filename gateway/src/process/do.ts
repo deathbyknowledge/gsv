@@ -297,9 +297,10 @@ const CODE_MODE_APPROVAL_TIMEOUT_MS = 55_000;
 const TOOL_DISPATCH_TIMEOUT_MS = 10 * 60_000;
 const MEDIA_PREPARATION_TIMEOUT_MS = 10 * 60_000;
 const COMPACTION_SUMMARY_WINDOW_CHARS = 24_000;
+const COMPACTION_GENERATION_TIMEOUT_MS = 30_000;
 const CONTEXT_PROVIDER_OVERFLOW_REASON = "context.provider_overflow";
 const MAX_RETRYABLE_GENERATION_ATTEMPTS = 3;
-const MAX_CANCELLED_CODE_MODE_REQUESTS = 128;
+const MAX_CANCELLED_REQUESTS = 128;
 
 function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
@@ -717,16 +718,71 @@ function buildCompactionSummaryContext(messages: MessageRecord[]): Context {
 }
 
 function renderCompactionTranscriptWindow(messages: MessageRecord[], maxChars: number): string {
-  const lines = messages.map((message) => JSON.stringify(serializeArchivedMessage(message)));
-  const transcript = lines.join("\n");
-  if (transcript.length <= maxChars) {
-    return transcript;
+  const complete: string[] = [];
+  let completeChars = 0;
+  for (const message of messages) {
+    const remaining = maxChars - completeChars - (complete.length > 0 ? 1 : 0);
+    if (message.content.length > remaining) break;
+    const line = JSON.stringify(serializeArchivedMessage(message));
+    if (line.length > remaining) break;
+    complete.push(line);
+    completeChars += line.length + (complete.length > 1 ? 1 : 0);
+  }
+  if (complete.length === messages.length) {
+    return complete.join("\n");
   }
 
-  const omitted = "\n... middle messages omitted for summary budget ...\n";
-  const headBudget = Math.floor((maxChars - omitted.length) * 0.35);
-  const tailBudget = Math.max(0, maxChars - omitted.length - headBudget);
-  return `${transcript.slice(0, headBudget).trimEnd()}${omitted}${transcript.slice(-tailBudget).trimStart()}`;
+  const omissionBudget = JSON.stringify({ omitted_messages: messages.length }).length + 2;
+  const recordsBudget = Math.max(0, maxChars - omissionBudget);
+  const headBudget = Math.floor(recordsBudget * 0.35);
+  const tailBudget = recordsBudget - headBudget;
+  const head: string[] = [];
+  const tail: string[] = [];
+  let headChars = 0;
+  let tailChars = 0;
+  let firstOmitted = 0;
+  let lastOmitted = messages.length;
+
+  while (firstOmitted < messages.length) {
+    const line = fitCompactionRecord(messages[firstOmitted]!, headBudget - headChars);
+    if (!line) break;
+    head.push(line);
+    headChars += line.length + 1;
+    firstOmitted += 1;
+  }
+  while (lastOmitted > firstOmitted) {
+    const line = fitCompactionRecord(messages[lastOmitted - 1]!, tailBudget - tailChars);
+    if (!line) break;
+    tail.unshift(line);
+    tailChars += line.length + 1;
+    lastOmitted -= 1;
+  }
+
+  const omitted = JSON.stringify({ omitted_messages: lastOmitted - firstOmitted });
+  return [...head, omitted, ...tail].join("\n");
+}
+
+function fitCompactionRecord(message: MessageRecord, maxChars: number): string | null {
+  if (maxChars <= 0) return null;
+  if (message.content.length <= maxChars) {
+    const full = JSON.stringify(serializeArchivedMessage(message));
+    if (full.length <= maxChars) return full;
+  }
+
+  let previewChars = Math.min(message.content.length, Math.floor(maxChars / 6));
+  while (previewChars >= 0) {
+    const preview = JSON.stringify({
+      id: message.id,
+      role: message.role,
+      content_preview: message.content.slice(0, previewChars),
+      content_omitted_chars: message.content.length - previewChars,
+      record_truncated: true,
+    });
+    if (preview.length <= maxChars) return preview;
+    if (previewChars === 0) break;
+    previewChars = Math.floor(previewChars / 2);
+  }
+  return null;
 }
 
 export class Process extends Host<Env> {
@@ -735,8 +791,8 @@ export class Process extends Host<Env> {
   private readonly ripgit: RipgitClient | null;
   private readonly codeModeResponses = new Map<string, CodeModeResponseWaiter>();
   private readonly codeModeApprovals = new Map<string, CodeModeApprovalWaiter>();
-  private readonly codeModeRequestControllers = new Map<string, AbortController>();
-  private readonly cancelledCodeModeRequests = new Map<string, string>();
+  private readonly requestControllers = new Map<string, AbortController>();
+  private readonly cancelledRequests = new Map<string, string>();
   private readonly runAbortControllers = new Map<string, AbortController>();
   private readonly activeTickRunIds = new Set<string>();
   private readonly deferredTickRunIds = new Set<string>();
@@ -982,9 +1038,8 @@ export class Process extends Host<Env> {
           );
           break;
         case "codemode.run":
-          data = await this.handleCancellableCodeModeRun(
-            frame.id,
-            frame.args as CodeModeRunArgs,
+          data = await this.handleCancellableRequest(frame.id, (signal) =>
+            this.handleCodeModeRun(frame.args as CodeModeRunArgs, signal)
           );
           break;
         case "proc.history":
@@ -1057,8 +1112,11 @@ export class Process extends Host<Env> {
           );
           break;
         case "proc.conversation.compact":
-          data = await this.handleConversationCompact(
-            (frame.args ?? {}) as ProcConversationCompactArgs,
+          data = await this.handleCancellableRequest(frame.id, (signal) =>
+            this.handleConversationCompact(
+              (frame.args ?? {}) as ProcConversationCompactArgs,
+              { signal },
+            )
           );
           break;
         case "proc.conversation.fork":
@@ -1290,23 +1348,31 @@ export class Process extends Host<Env> {
     messageId: number,
     input: NonNullable<ProcSendArgs["media"]>,
   ): Promise<void> {
+    const signal = this.runAbortSignal(runId);
     try {
-      const media = await storeIncomingProcessMedia(
-        this.env.STORAGE,
-        this.identity.uid,
-        this.pid,
-        input,
-        await this.resolveMediaProcessingOptions(input),
+      const options = await raceWithAbort(
+        this.resolveMediaProcessingOptions(input),
+        signal,
+      );
+      const media = await raceWithAbort(
+        storeIncomingProcessMedia(
+          this.env.STORAGE,
+          this.identity.uid,
+          this.pid,
+          input,
+          { ...options, signal },
+        ),
+        signal,
       );
       const releaseLifecycle = await this.acquireLifecycleTransition();
       let admitted = false;
       try {
         const run = this.currentRun;
         this.ctx.storage.transactionSync(() => {
-          if (media) {
-            this.store.updateMessageMedia(messageId, runId, media);
-          }
           if (run?.runId === runId && run.pendingMediaMessageId === messageId) {
+            if (media) {
+              this.store.updateMessageMedia(messageId, runId, media);
+            }
             delete run.pendingMediaMessageId;
             this.currentRun = run;
             admitted = true;
@@ -1315,7 +1381,7 @@ export class Process extends Host<Env> {
       } finally {
         releaseLifecycle();
       }
-      if (media) {
+      if (admitted && media) {
         this.ctx.waitUntil(this.emitProcChanged(["messages"], {
           conversationId,
           runId,
@@ -1343,6 +1409,9 @@ export class Process extends Host<Env> {
         });
       }
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       const prefix = processMediaPrefix(this.identity.uid, this.pid);
       const keys = input.flatMap((item) =>
         typeof item.key === "string" && item.key.startsWith(prefix) ? [item.key] : []
@@ -1379,6 +1448,8 @@ export class Process extends Host<Env> {
       if (run?.runId !== runId || run.pendingMediaMessageId !== messageId) {
         return;
       }
+      this.runAbortControllers.get(runId)?.abort(new Error(message));
+      this.runAbortControllers.delete(runId);
       const conversationId = normalizeConversationId(run.conversationId);
       this.store.appendMessage("system", message, { conversationId, runId });
       this.emitRunFinished(run, {
@@ -2241,14 +2312,20 @@ export class Process extends Host<Env> {
 
   private async handleConversationCompact(
     args: ProcConversationCompactArgs,
-    options: { allowActive?: boolean; reason?: string; activeRunId?: string } = {},
+    options: {
+      allowActive?: boolean;
+      reason?: string;
+      activeRunId?: string;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<ProcConversationCompactResult> {
     const pid = this.pid;
     const conversationId = normalizeConversationId(args.conversationId);
     const explicitSummary = normalizeOptionalString(args.summary);
     const generateSummary = args.generateSummary === true;
-    const activeRunStopped = () =>
-      options.activeRunId !== undefined && this.currentRun?.runId !== options.activeRunId;
+    const stopped = () =>
+      options.signal?.aborted === true ||
+      (options.activeRunId !== undefined && this.currentRun?.runId !== options.activeRunId);
     if (!explicitSummary && !generateSummary) {
       return { ok: false, error: "proc.conversation.compact requires summary or generateSummary" };
     }
@@ -2268,27 +2345,44 @@ export class Process extends Host<Env> {
       return { ok: false, error: "proc.conversation.compact throughMessageId must be a positive integer" };
     }
 
-    if (!options.allowActive && this.currentRun?.conversationId === conversationId) {
-      return { ok: false, error: `Conversation is active: ${conversationId}` };
+    let conversation!: ProcessConversationRecord;
+    let selected!: MessageRecord[];
+    let lifecycleEpoch = 0;
+    const releaseSnapshot = await this.acquireLifecycleTransition();
+    try {
+      if (!options.allowActive && this.currentRun?.conversationId === conversationId) {
+        return { ok: false, error: `Conversation is active: ${conversationId}` };
+      }
+      if (stopped()) {
+        return { ok: false, error: "Compaction was cancelled" };
+      }
+      lifecycleEpoch = this.lifecycleEpoch;
+      conversation = this.store.ensureConversation(conversationId);
+      selected = this.store.getConversationPrefixMessages({
+        conversationId,
+        keepLast: hasKeepLast ? args.keepLast : undefined,
+        throughMessageId: hasThroughMessageId ? args.throughMessageId : undefined,
+      });
+      if (selected.length === 0) {
+        return { ok: false, error: "No conversation messages selected for compaction" };
+      }
+    } finally {
+      releaseSnapshot();
     }
 
-    const conversation = this.store.ensureConversation(conversationId);
-    const selected = this.store.getConversationPrefixMessages({
-      conversationId,
-      keepLast: hasKeepLast ? args.keepLast : undefined,
-      throughMessageId: hasThroughMessageId ? args.throughMessageId : undefined,
-    });
-    if (selected.length === 0) {
-      return { ok: false, error: "No conversation messages selected for compaction" };
-    }
-    if (activeRunStopped()) {
-      return { ok: false, error: "Run stopped before compaction completed" };
-    }
+    const signal = options.activeRunId
+      ? options.signal
+        ? AbortSignal.any([options.signal, this.runAbortSignal(options.activeRunId)])
+        : this.runAbortSignal(options.activeRunId)
+      : options.signal;
     let summary = explicitSummary;
     if (!summary) {
       try {
-        summary = await this.generateConversationCompactionSummary(selected);
+        summary = await this.generateConversationCompactionSummary(selected, signal);
       } catch (error) {
+        if (stopped()) {
+          return { ok: false, error: "Compaction was cancelled" };
+        }
         const message = errorMessageFromUnknown(error);
         const formatted = formatProviderErrorMessage(message);
         if (
@@ -2305,41 +2399,94 @@ export class Process extends Host<Env> {
         };
       }
     }
-    if (activeRunStopped()) {
-      return { ok: false, error: "Run stopped before compaction completed" };
+    if (stopped()) {
+      return { ok: false, error: "Compaction was cancelled" };
     }
 
     const fromMessageId = selected[0].id;
     const toMessageId = selected[selected.length - 1].id;
     const segmentId = crypto.randomUUID();
     const archiveKey = `${this.conversationArchiveDir(conversationId)}/${segmentId}.jsonl.gz`;
-    await this.archiveMessageRecords(archiveKey, selected);
-    if (activeRunStopped()) {
-      return { ok: false, error: "Run stopped before compaction completed" };
-    }
-
     const archivedTo = `/${archiveKey}`;
-    const summaryMessageId = this.store.compactConversationPrefix({
-      conversationId,
-      generation: conversation.generation,
-      fromMessageId,
-      toMessageId,
-      summary: formatCompactionSummaryMessage({
-        archivedMessages: selected.length,
-        archivePath: archivedTo,
-        summary,
-      }),
-    });
-    const segment = this.store.recordConversationSegment({
-      id: segmentId,
-      conversationId,
-      generation: conversation.generation,
-      kind: "compaction",
-      fromMessageId,
-      toMessageId,
-      archivePath: archivedTo,
-      summaryMessageId,
-    });
+    let installed = false;
+    let summaryMessageId = 0;
+    let segment!: ReturnType<ProcessStore["recordConversationSegment"]>;
+    try {
+      try {
+        await this.archiveMessageRecords(archiveKey, selected, signal);
+      } catch (error) {
+        if (stopped()) {
+          return { ok: false, error: "Compaction was cancelled" };
+        }
+        throw error;
+      }
+      const releaseInstall = await this.acquireLifecycleTransition();
+      try {
+        const currentConversation = this.store.getConversation(conversationId);
+        const currentRecords = this.store.getConversationPrefixMessages({
+          conversationId,
+          throughMessageId: toMessageId,
+        });
+        const snapshotMatches =
+          this.lifecycleEpoch === lifecycleEpoch &&
+          currentConversation?.generation === conversation.generation &&
+          currentRecords.length === selected.length &&
+          currentRecords.every((message, index) => {
+            const snapshot = selected[index];
+            return snapshot !== undefined &&
+              message.id === snapshot.id &&
+              message.conversationId === snapshot.conversationId &&
+              message.generation === snapshot.generation &&
+              message.runId === snapshot.runId &&
+              message.role === snapshot.role &&
+              message.content === snapshot.content &&
+              message.toolCalls === snapshot.toolCalls &&
+              message.toolCallId === snapshot.toolCallId &&
+              message.media === snapshot.media &&
+              message.origin === snapshot.origin &&
+              message.metadata === snapshot.metadata &&
+              message.createdAt === snapshot.createdAt;
+          });
+        if (
+          stopped() ||
+          (!options.allowActive && this.currentRun?.conversationId === conversationId) ||
+          !snapshotMatches
+        ) {
+          return { ok: false, error: stopped() ? "Compaction was cancelled" : "Conversation changed during compaction" };
+        }
+
+        this.ctx.storage.transactionSync(() => {
+          summaryMessageId = this.store.compactConversationPrefix({
+            conversationId,
+            generation: conversation.generation,
+            fromMessageId,
+            toMessageId,
+            summary: formatCompactionSummaryMessage({
+              archivedMessages: selected.length,
+              archivePath: archivedTo,
+              summary,
+            }),
+          });
+          segment = this.store.recordConversationSegment({
+            id: segmentId,
+            conversationId,
+            generation: conversation.generation,
+            kind: "compaction",
+            fromMessageId,
+            toMessageId,
+            archivePath: archivedTo,
+            summaryMessageId,
+          });
+        });
+        installed = true;
+      } finally {
+        releaseInstall();
+      }
+    } finally {
+      if (!installed) {
+        await this.deleteFailedCompactionArchive(archiveKey);
+      }
+    }
 
     await this.emitProcessLifecycle({
       event: "conversation.compacted",
@@ -2364,9 +2511,12 @@ export class Process extends Host<Env> {
     };
   }
 
-  private async generateConversationCompactionSummary(messages: MessageRecord[]): Promise<string> {
-    const config = await this.resolveCheckpointConfig();
-    if (!config) {
+  private async generateConversationCompactionSummary(
+    messages: MessageRecord[],
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const primary = await this.resolveCheckpointConfig(signal);
+    if (!primary) {
       throw new Error("AI config unavailable");
     }
 
@@ -2374,25 +2524,48 @@ export class Process extends Host<Env> {
     const generationOptions: AiTextGenerateOptions = {
       maxTokens: 768,
       reasoning: "off",
+      timeoutMs: COMPACTION_GENERATION_TIMEOUT_MS,
     };
-    const generated = await this.generateCompactionText({
-      config,
-      context,
-      options: generationOptions,
-      sessionAffinityKey: `${this.pid}:compaction`,
-    })
-      .catch((error: unknown) => {
+    let config = primary;
+    let fallbackIndex = 0;
+    let retriedEmptyResponse = false;
+    while (true) {
+      try {
+        const generated = await this.generateCompactionText({
+          config,
+          context,
+          options: generationOptions,
+          sessionAffinityKey: `${this.pid}:compaction`,
+          signal,
+        });
+        const summary = generated.trim();
+        if (summary) return summary;
+        throw new Error("Generation returned no text");
+      } catch (error) {
+        if (signal?.aborted) {
+          throw signal.reason ?? error;
+        }
         const message = errorMessageFromUnknown(error);
-        throw new Error(formatProviderErrorMessage(message, {
+        if (!retriedEmptyResponse && isRetryableGenerationErrorMessage(message)) {
+          retriedEmptyResponse = true;
+          continue;
+        }
+        const formatted = formatProviderErrorMessage(message, {
           provider: config.provider,
           model: config.model,
-        }) || message);
-      });
-    const summary = generated.trim();
-    if (!summary) {
-      throw new Error("summary generation returned empty text");
+        }) || message;
+        const fallback = nextAiConfigFallback(
+          primary,
+          config,
+          primary.fallbacks ?? [],
+          fallbackIndex,
+        );
+        if (!fallback) throw new Error(formatted);
+        config = fallback.config;
+        fallbackIndex = fallback.nextIndex;
+        retriedEmptyResponse = false;
+      }
     }
-    return summary;
   }
 
   private async handleConversationFork(
@@ -2963,7 +3136,7 @@ export class Process extends Host<Env> {
 
     switch (frame.signal) {
       case REQUEST_CANCEL_SIGNAL:
-        this.cancelCodeModeRequest(frame.payload);
+        this.cancelRequest(frame.payload);
         break;
       case "identity.changed": {
         const identity = (frame.payload as { identity: ProcessIdentity })
@@ -3345,7 +3518,7 @@ export class Process extends Host<Env> {
     // Step 2: Load config + tools (first tick only, cached on run state)
     if (!run.config) {
       run.aiTextGenerateConfig = this.buildAiTextGenerateConfig();
-      run.config = await this.resolveAiConfig();
+      run.config = await this.resolveAiConfig(this.runAbortSignal(runId));
       if (this.handleRunStopped(runId)) {
         return;
       }
@@ -3407,6 +3580,7 @@ export class Process extends Host<Env> {
       messages: [],
       tools: tools.length > 0 ? tools : undefined,
     };
+    let autoCompactionPressure: number | null = null;
     const prepareGenerationContext = async (
       config: AiConfigResult,
     ): Promise<"ready" | "stopped"> => {
@@ -3414,6 +3588,21 @@ export class Process extends Host<Env> {
       const contextState = await this.updateContextState(runId, conversationId, config, context);
       if (this.handleRunStopped(runId)) {
         return "stopped";
+      }
+
+      const policy = this.getConversationContextPolicy(conversationId);
+      if (autoCompactionPressure !== null) {
+        if (contextState.pressure !== null && contextState.pressure >= 1) {
+          await this.finishInsufficientCompactionRun(
+            runId,
+            conversationId,
+            policy,
+            autoCompactionPressure,
+            contextState.pressure,
+          );
+          return "stopped";
+        }
+        return "ready";
       }
 
       const contextPreflight = await this.applyConversationContextPolicy(
@@ -3426,12 +3615,26 @@ export class Process extends Host<Env> {
         return "stopped";
       }
       if (contextPreflight === "compacted") {
+        autoCompactionPressure = contextState.pressure ?? policy.compactAtPressure;
         if (this.handleRunStopped(runId)) {
           return "stopped";
         }
         context = await buildGenerationContext();
-        await this.updateContextState(runId, conversationId, config, context);
+        const compactedState = await this.updateContextState(runId, conversationId, config, context);
         if (this.handleRunStopped(runId)) {
+          return "stopped";
+        }
+        if (
+          compactedState.pressure !== null &&
+          compactedState.pressure >= 1
+        ) {
+          await this.finishInsufficientCompactionRun(
+            runId,
+            conversationId,
+            policy,
+            autoCompactionPressure,
+            compactedState.pressure,
+          );
           return "stopped";
         }
       }
@@ -3811,6 +4014,7 @@ export class Process extends Host<Env> {
     streamSeq?: StreamSeqCounter;
   }): Promise<AssistantMessage | null> {
     const routedFetch = this.createGenerationFetch(options.config, options.runId);
+    const signal = this.runAbortSignal(options.runId);
     const stream = options.config.generationStreaming !== "off" &&
       typeof this.generation.stream === "function"
       // TODO: add ai.text.stream
@@ -3819,6 +4023,7 @@ export class Process extends Host<Env> {
         context: options.context,
         ...(routedFetch ? { fetch: routedFetch } : {}),
         sessionAffinityKey: options.sessionAffinityKey,
+        signal,
       })
       : null;
 
@@ -3828,6 +4033,7 @@ export class Process extends Host<Env> {
         context: options.context,
         ...(routedFetch ? { fetch: routedFetch } : {}),
         sessionAffinityKey: options.sessionAffinityKey,
+        signal,
       });
     }
 
@@ -3857,10 +4063,10 @@ export class Process extends Host<Env> {
     context: Context;
     options: AiTextGenerateOptions;
     sessionAffinityKey: string;
+    signal?: AbortSignal;
   }): Promise<string> {
     const executor = options.config.executor;
     if (executor.kind !== "process" || executor.pid !== this.pid) {
-      const runId = this.currentRun?.runId;
       const result = await this.kernelRpc(
         "ai.text.generate",
         this.buildAiTextGenerateArgs({
@@ -3869,7 +4075,7 @@ export class Process extends Host<Env> {
           sessionAffinityKey: options.sessionAffinityKey,
           target: executor.kind === "device" ? executor.target : undefined,
         }),
-        runId ? this.runAbortSignal(runId) : undefined,
+        options.signal,
       );
       return result.text ?? "";
     }
@@ -3880,6 +4086,7 @@ export class Process extends Host<Env> {
       options: options.options,
       ...(routedFetch ? { fetch: routedFetch } : {}),
       sessionAffinityKey: options.sessionAffinityKey,
+      signal: options.signal,
     });
   }
 
@@ -4014,6 +4221,36 @@ export class Process extends Host<Env> {
       text: null,
       error: message,
     });
+  }
+
+  private async finishInsufficientCompactionRun(
+    runId: string,
+    conversationId: string,
+    policy: ProcConversationContextPolicy,
+    beforePressure: number,
+    afterPressure: number,
+  ): Promise<void> {
+    const message = [
+      "Auto-compaction could not reduce this conversation below its context limit.",
+      `Pressure: ${Math.round(beforePressure * 100)}% before, ${Math.round(afterPressure * 100)}% after.`,
+      `Policy: compact at ${Math.round(policy.compactAtPressure * 100)}% and keep ${policy.keepLast} recent messages.`,
+      "Lower keepLast, compact more history manually, or reset the conversation.",
+    ].join("\n");
+    this.store.appendMessage("system", message, { conversationId, runId });
+    await this.emitProcChanged(["messages"], {
+      conversationId,
+      runId,
+      role: "system",
+      content: message,
+    });
+    if (!this.handleRunStopped(runId)) {
+      await this.finishRun(runId, {
+        reason: "context.auto_compact.insufficient",
+        status: "error",
+        text: null,
+        error: message,
+      });
+    }
   }
 
   private async applyConversationContextPolicy(
@@ -4306,14 +4543,14 @@ export class Process extends Host<Env> {
     );
   }
 
-  private async resolveAiConfig(): Promise<AiConfigResult> {
+  private async resolveAiConfig(signal?: AbortSignal): Promise<AiConfigResult> {
     const snapshot = this.store.getAiConfigSnapshot();
     return await this.kernelRpc("ai.config", snapshot
       ? {
           processOverrides: snapshot.values,
           processProfile: snapshot.profile ?? null,
         }
-      : {});
+      : {}, signal);
   }
 
   /**
@@ -4534,13 +4771,14 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async resolveCheckpointConfig(): Promise<AiConfigResult | null> {
+  private async resolveCheckpointConfig(signal?: AbortSignal): Promise<AiConfigResult | null> {
     if (this.currentRun?.config) {
       return this.currentRun.config;
     }
     try {
-      return await this.resolveAiConfig();
+      return await this.resolveAiConfig(signal);
     } catch (error) {
+      if (signal?.aborted) return null;
       console.warn("[Process] Failed to resolve AI config for compaction:", error);
       return null;
     }
@@ -4661,16 +4899,34 @@ export class Process extends Host<Env> {
     };
   }
 
-  private async archiveMessageRecords(key: string, messages: MessageRecord[]): Promise<void> {
-    const jsonl = messages
-      .map((m) =>
-        JSON.stringify(serializeArchivedMessage(m)),
-      )
-      .join("\n");
-    const compressed = await gzip(jsonl);
-    await this.env.STORAGE.put(key, compressed, {
+  private async archiveMessageRecords(
+    key: string,
+    messages: MessageRecord[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const compressed = await raceWithAbort(
+      new Response(gzipMessageRecords(messages, signal)).arrayBuffer(),
+      signal,
+    );
+    const upload = this.env.STORAGE.put(key, compressed, {
       httpMetadata: { contentType: "application/gzip" },
     });
+    await raceWithAbort(upload, signal, {
+      onAbort: () => {
+        this.ctx.waitUntil(upload.then(
+          () => this.deleteFailedCompactionArchive(key),
+          () => undefined,
+        ));
+      },
+    });
+  }
+
+  private async deleteFailedCompactionArchive(key: string): Promise<void> {
+    try {
+      await this.env.STORAGE.delete(key);
+    } catch (error) {
+      console.warn(`[Process] Failed to delete unreferenced archive ${key}:`, error);
+    }
   }
 
   private async readArchivedMessageRecords(archivePath: string): Promise<ArchivedMessageRecord[]> {
@@ -5056,27 +5312,27 @@ export class Process extends Host<Env> {
     return this.store.markDispatched(dispatchId);
   }
 
-  private async handleCancellableCodeModeRun(
+  private async handleCancellableRequest<T>(
     requestId: string,
-    args: CodeModeRunArgs,
-  ): Promise<CodeModeRunResult> {
+    run: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
     const controller = new AbortController();
-    const cancelled = this.cancelledCodeModeRequests.get(requestId);
-    this.cancelledCodeModeRequests.delete(requestId);
+    const cancelled = this.cancelledRequests.get(requestId);
+    this.cancelledRequests.delete(requestId);
     if (cancelled) {
       controller.abort(new Error(cancelled));
     }
-    this.codeModeRequestControllers.set(requestId, controller);
+    this.requestControllers.set(requestId, controller);
     try {
-      return await this.handleCodeModeRun(args, controller.signal);
+      return await run(controller.signal);
     } finally {
-      if (this.codeModeRequestControllers.get(requestId) === controller) {
-        this.codeModeRequestControllers.delete(requestId);
+      if (this.requestControllers.get(requestId) === controller) {
+        this.requestControllers.delete(requestId);
       }
     }
   }
 
-  private cancelCodeModeRequest(payload: unknown): void {
+  private cancelRequest(payload: unknown): void {
     const value = asPlainRecord(payload);
     const requestId = typeof value?.id === "string" ? value.id : "";
     if (!requestId) {
@@ -5085,18 +5341,18 @@ export class Process extends Host<Env> {
     const reason = typeof value?.reason === "string" && value.reason.trim()
       ? value.reason.trim()
       : "Request cancelled";
-    const controller = this.codeModeRequestControllers.get(requestId);
+    const controller = this.requestControllers.get(requestId);
     if (controller) {
       controller.abort(new Error(reason));
       return;
     }
-    if (this.cancelledCodeModeRequests.size >= MAX_CANCELLED_CODE_MODE_REQUESTS) {
-      const oldest = this.cancelledCodeModeRequests.keys().next().value;
+    if (this.cancelledRequests.size >= MAX_CANCELLED_REQUESTS) {
+      const oldest = this.cancelledRequests.keys().next().value;
       if (oldest) {
-        this.cancelledCodeModeRequests.delete(oldest);
+        this.cancelledRequests.delete(oldest);
       }
     }
-    this.cancelledCodeModeRequests.set(requestId, reason);
+    this.cancelledRequests.set(requestId, reason);
   }
 
   private async handleCodeModeRun(
@@ -5421,10 +5677,10 @@ export class Process extends Host<Env> {
     }
 
     if (runId === null) {
-      for (const controller of this.codeModeRequestControllers.values()) {
+      for (const controller of this.requestControllers.values()) {
         controller.abort(new Error(reason));
       }
-      this.codeModeRequestControllers.clear();
+      this.requestControllers.clear();
       for (const controller of this.runAbortControllers.values()) {
         controller.abort(new Error(reason));
       }
@@ -5595,6 +5851,7 @@ export class Process extends Host<Env> {
     }
 
     return {
+      pid: this.pid,
       requestId: record.requestId,
       runId: record.runId,
       conversationId: record.conversationId,
@@ -6150,11 +6407,29 @@ function approvalRuleKey(rule: ToolApprovalRule): string {
   });
 }
 
-async function gzip(input: string): Promise<ArrayBuffer> {
-  const stream = new Blob([input])
-    .stream()
-    .pipeThrough(new CompressionStream("gzip"));
-  return new Response(stream).arrayBuffer();
+function gzipMessageRecords(
+  messages: MessageRecord[],
+  signal?: AbortSignal,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let index = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (signal?.aborted) {
+        controller.error(signal.reason ?? new Error("Compaction cancelled"));
+        return;
+      }
+      const message = messages[index];
+      if (!message) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(
+        `${index > 0 ? "\n" : ""}${JSON.stringify(serializeArchivedMessage(message))}`,
+      ));
+      index += 1;
+    },
+  }).pipeThrough(new CompressionStream("gzip"));
 }
 
 async function gunzip(input: ArrayBuffer): Promise<string> {

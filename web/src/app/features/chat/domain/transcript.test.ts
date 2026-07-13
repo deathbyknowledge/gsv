@@ -497,7 +497,7 @@ describe("chat transcript rows", () => {
     }, { pid: "pid-1", conversationId: "default" }).state;
 
     expect(state.runState).toBe("awaiting_hil");
-    expect(state.pendingHil?.requestId).toBe("hil-1");
+    expect(state.pendingHil).toMatchObject({ pid: "pid-1", requestId: "hil-1" });
     expect(state.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "assistant", text: "Hello", streaming: true }),
       expect.objectContaining({ role: "tool", toolCallId: "call-1", status: "running" }),

@@ -219,7 +219,10 @@ function CopyButton({
   const label = copyButtonLabel(copied, failed);
 
   return (
-    <Hint text={copied ? "Copied to clipboard" : "Copy message text"}>
+    <Hint
+      text={copied ? "Copied to clipboard" : "Copy message text"}
+      position={role === "user" ? "top-end" : "top"}
+    >
       <button
         type="button"
         class={`gsv-chat-copy${failed ? " is-failed" : ""}`}
@@ -984,7 +987,7 @@ function UserMessage({
           {message.time ? <span>{message.time}</span> : null}
           {origin ? <span title={origin}>{origin}</span> : null}
           {message.messageId && onBranch ? (
-            <Hint text="Branch a new conversation from this message">
+            <Hint text="Branch a new conversation from this message" position="top-end">
               <button type="button" class="gsv-chat-copy" onClick={() => onBranch(message.messageId as number)}>
                 BRANCH
               </button>

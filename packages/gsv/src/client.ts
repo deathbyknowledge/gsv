@@ -64,6 +64,8 @@ type PendingRequest = {
   timeoutId: TimerHandle;
   call: string;
   bodyAbort?: AbortController;
+  abortSignal?: AbortSignal;
+  abortListener?: () => void;
 };
 
 type UnionToIntersection<U> = (U extends unknown ? (value: U) => void : never) extends (
@@ -104,6 +106,7 @@ export type GsvBody = BinaryBody;
 
 export type GsvRequestOptions = {
   body?: GsvBody;
+  signal?: AbortSignal;
 };
 
 export type GsvResponse<T = unknown> = {
@@ -145,6 +148,11 @@ export type GsvDriverHandler<S extends string = string> = (
 ) => Promise<GsvResponse<S extends SyscallName ? ResultOf<S> : unknown>>
   | GsvResponse<S extends SyscallName ? ResultOf<S> : unknown>;
 
+type GsvDriverAcknowledgementOptions = {
+  signal?: string;
+  timeoutMs?: number;
+};
+
 export type GsvDriverOptions = {
   deviceId?: string;
   platform?: string;
@@ -153,7 +161,8 @@ export type GsvDriverOptions = {
   keepalive?: false | {
     intervalMs?: number;
     signal?: string;
-    payload?: () => unknown;
+    payload?: (nonce?: string) => unknown;
+    acknowledgement?: false | GsvDriverAcknowledgementOptions;
   };
 };
 
@@ -213,6 +222,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const LONG_RUNNING_REQUEST_TIMEOUT_MS = 120_000;
 const AI_TEXT_GENERATION_REQUEST_TIMEOUT_MS = 180_000;
 const DEFAULT_DRIVER_KEEPALIVE_MS = 240_000;
+const DEFAULT_DRIVER_ACKNOWLEDGEMENT_TIMEOUT_MS = 10_000;
 const WEBSOCKET_CONNECTING = 0;
 const WEBSOCKET_OPEN = 1;
 
@@ -403,6 +413,7 @@ export class GSVClient {
   private readonly requestTimeoutsMs: Record<string, number>;
   private readonly bodyChannel: BinaryBodyChannel;
   private socket: WebSocket | null = null;
+  private connectingSocket: WebSocket | null = null;
   private socketEpoch = 0;
   private pending = new Map<string, PendingRequest>();
   private inboundRequests = new Map<string, AbortController>();
@@ -538,7 +549,7 @@ export class GSVClient {
 
     let socket: WebSocket;
     try {
-      socket = await this.openSocket(url);
+      socket = await this.openSocket(url, true);
     } catch (error) {
       if (this.socketEpoch === socketEpoch) {
         this.setStatus({
@@ -601,9 +612,14 @@ export class GSVClient {
 
   disconnect(reason = "client disconnect"): void {
     this.socketEpoch += 1;
+    const connectingSocket = this.connectingSocket;
+    this.connectingSocket = null;
     const socket = this.socket;
     this.socket = null;
 
+    if (connectingSocket) {
+      closeSocket(connectingSocket, 1000, reason);
+    }
     if (socket) {
       closeSocket(socket, 1000, reason);
     }
@@ -640,6 +656,11 @@ export class GSVClient {
     args: unknown = {},
     options: GsvRequestOptions = {},
   ): Promise<GsvResponse<T>> {
+    if (options.signal?.aborted) {
+      const error = requestAbortError(options.signal);
+      void options.body?.stream.cancel(error).catch(() => {});
+      throw error;
+    }
     const socket = this.socket;
     if (!socket || socket.readyState !== WEBSOCKET_OPEN) {
       throw new Error("Not connected");
@@ -715,16 +736,23 @@ export class GSVClient {
         return;
       }
 
-      if (this.status.state === "connecting") {
-        this.setStatus({
-          ...this.status,
-          message: "WebSocket error while connecting",
-        });
-      }
+      this.socket = null;
+      closeSocket(socket, 1000, "WebSocket error");
+      const error = new Error("WebSocket error");
+      this.rejectAllPending(error);
+      this.abortAllInbound(error);
+      this.bodyChannel.close(error);
+      this.setStatus({
+        state: "disconnected",
+        url: this.status.url,
+        username: this.status.username,
+        connectionId: null,
+        message: error.message,
+      });
     });
   }
 
-  private async openSocket(url: string): Promise<WebSocket> {
+  private async openSocket(url: string, trackConnection = false): Promise<WebSocket> {
     const WebSocketCtor = this.WebSocketCtor ?? globalThis.WebSocket;
     if (!WebSocketCtor) {
       throw new Error("WebSocket is not available; pass a WebSocket constructor to GSVClient");
@@ -732,8 +760,11 @@ export class GSVClient {
 
     const socket = new WebSocketCtor(url);
     socket.binaryType = "arraybuffer";
+    if (trackConnection) {
+      this.connectingSocket = socket;
+    }
 
-    await new Promise<void>((resolve, reject) => {
+    const opened = new Promise<void>((resolve, reject) => {
       let settled = false;
       const timeoutId = globalThis.setTimeout(() => {
         cleanup();
@@ -772,6 +803,16 @@ export class GSVClient {
       socket.addEventListener("error", onError);
       socket.addEventListener("close", onClose);
     });
+    try {
+      await opened;
+    } catch (error) {
+      closeSocket(socket, 1000, "connection failed");
+      throw error;
+    } finally {
+      if (this.connectingSocket === socket) {
+        this.connectingSocket = null;
+      }
+    }
 
     return socket;
   }
@@ -784,6 +825,7 @@ export class GSVClient {
   ): Promise<GsvResponse<unknown>> {
     const id = makeId();
     const body = options.body;
+    const signal = options.signal;
     const outgoing = body ? this.bodyChannel.prepare(body) : undefined;
     const frame: GsvRequestFrame = {
       type: "req",
@@ -796,11 +838,11 @@ export class GSVClient {
     const bodyAbort = body ? new AbortController() : undefined;
 
     return new Promise((resolve, reject) => {
-      const timeoutId = globalThis.setTimeout(() => {
-        if (!this.pending.delete(id)) {
+      const cancelPending = (error: Error): void => {
+        const pending = this.takePending(id);
+        if (!pending) {
           return;
         }
-        const error = new Error(`Request timed out after ${timeoutMs}ms: ${call}`);
         try {
           socket.send(JSON.stringify({
             type: "sig",
@@ -808,38 +850,54 @@ export class GSVClient {
             payload: { id, reason: error.message },
           } satisfies GsvSignalFrame));
         } catch {}
-        bodyAbort?.abort(error);
-        reject(error);
+        pending.bodyAbort?.abort(error);
+        void outgoing?.cancel(error);
+        pending.reject(error);
+      };
+      const timeoutId = globalThis.setTimeout(() => {
+        const error = new Error(`Request timed out after ${timeoutMs}ms: ${call}`);
+        cancelPending(error);
       }, timeoutMs);
 
-      this.pending.set(id, {
+      const pending: PendingRequest = {
         resolve,
         reject,
         timeoutId,
         call,
         bodyAbort,
-      });
+        abortSignal: signal,
+      };
+      this.pending.set(id, pending);
+      if (signal) {
+        const abortListener = () => cancelPending(requestAbortError(signal));
+        pending.abortListener = abortListener;
+        signal.addEventListener("abort", abortListener, { once: true });
+        if (signal.aborted) {
+          abortListener();
+          return;
+        }
+      }
 
       try {
         socket.send(JSON.stringify(frame));
+        if (!this.pending.has(id)) {
+          return;
+        }
         if (outgoing) {
           void outgoing.send(bodyAbort?.signal).catch((error) => {
-            const pending = this.pending.get(id);
+            const pending = this.takePending(id);
             if (!pending) {
               return;
             }
-            this.pending.delete(id);
-            globalThis.clearTimeout(pending.timeoutId);
             pending.bodyAbort?.abort(error);
             pending.reject(error instanceof Error ? error : new Error("Failed to send request body"));
           });
         }
       } catch (error) {
-        this.pending.delete(id);
-        globalThis.clearTimeout(timeoutId);
-        bodyAbort?.abort(error);
+        const pending = this.takePending(id);
+        pending?.bodyAbort?.abort(error);
         void outgoing?.cancel(error);
-        reject(error instanceof Error ? error : new Error("Failed to send request"));
+        pending?.reject(error instanceof Error ? error : new Error("Failed to send request"));
       }
     });
   }
@@ -954,7 +1012,7 @@ export class GSVClient {
       return;
     }
 
-    const pending = this.pending.get(parsed.id);
+    const pending = this.takePending(parsed.id);
     if (!pending) {
       if (parsed.ok && parsed.body !== undefined) {
         try {
@@ -964,8 +1022,6 @@ export class GSVClient {
       return;
     }
 
-    this.pending.delete(parsed.id);
-    globalThis.clearTimeout(pending.timeoutId);
     pending.bodyAbort?.abort(new Error(`Request completed: ${pending.call}`));
 
     if (parsed.ok) {
@@ -1055,13 +1111,25 @@ export class GSVClient {
     return this.requestTimeoutsMs[call] ?? this.defaultRequestTimeoutMs;
   }
 
+  private takePending(id: string): PendingRequest | null {
+    const pending = this.pending.get(id) ?? null;
+    if (!pending) {
+      return null;
+    }
+    this.pending.delete(id);
+    globalThis.clearTimeout(pending.timeoutId);
+    if (pending.abortSignal && pending.abortListener) {
+      pending.abortSignal.removeEventListener("abort", pending.abortListener);
+    }
+    return pending;
+  }
+
   private rejectAllPending(error: Error): void {
-    for (const pending of this.pending.values()) {
-      globalThis.clearTimeout(pending.timeoutId);
+    for (const id of [...this.pending.keys()]) {
+      const pending = this.takePending(id)!;
       pending.bodyAbort?.abort(error);
       pending.reject(error);
     }
-    this.pending.clear();
   }
 
   private abortAllInbound(error: Error): void {
@@ -1080,7 +1148,10 @@ export class GSVDriver {
   private readonly handlers = new Map<GsvDriverPattern, GsvDriverHandler>();
   private unregisterRequestHandler: (() => void) | null = null;
   private unregisterStatusHandler: (() => void) | null = null;
+  private unregisterSignalHandler: (() => void) | null = null;
   private keepaliveTimer: ReturnType<typeof globalThis.setInterval> | null = null;
+  private acknowledgementTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  private pendingAcknowledgement: string | null = null;
   private connection: ConnectResult | null = null;
   private abortController = new AbortController();
   private locked = false;
@@ -1159,6 +1230,8 @@ export class GSVDriver {
     this.unregisterRequestHandler = null;
     this.unregisterStatusHandler?.();
     this.unregisterStatusHandler = null;
+    this.unregisterSignalHandler?.();
+    this.unregisterSignalHandler = null;
   }
 
   private resolveImplements(connectImplements?: GsvDriverPattern[]): string[] {
@@ -1180,6 +1253,20 @@ export class GSVDriver {
         this.connection = null;
         this.stopKeepalive();
         this.abortController.abort();
+      });
+    }
+    if (!this.unregisterSignalHandler) {
+      this.unregisterSignalHandler = this.client.onSignal((signal, payload) => {
+        const acknowledgement = this.keepaliveAcknowledgement();
+        if (!acknowledgement || signal !== (acknowledgement.signal ?? "device.pong")) {
+          return;
+        }
+        const nonce = acknowledgementNonce(payload);
+        if (!nonce || nonce !== this.pendingAcknowledgement) {
+          return;
+        }
+        this.pendingAcknowledgement = null;
+        this.clearAcknowledgementTimer();
       });
     }
   }
@@ -1237,23 +1324,69 @@ export class GSVDriver {
     const keepalive = this.options.keepalive ?? {};
     const intervalMs = keepalive.intervalMs ?? DEFAULT_DRIVER_KEEPALIVE_MS;
     const signal = keepalive.signal ?? "device.ping";
-    const payload = keepalive.payload ?? (() => ({ at: Date.now() }));
-    this.keepaliveTimer = globalThis.setInterval(() => {
+    const payload = keepalive.payload ?? ((nonce?: string) => ({
+      at: Date.now(),
+      ...(nonce ? { nonce } : {}),
+    }));
+    const sendKeepalive = () => {
       if (!this.client.isConnected()) {
         return;
       }
       try {
-        this.client.sendSignal(signal, payload());
+        const acknowledgement = this.keepaliveAcknowledgement();
+        if (acknowledgement && this.pendingAcknowledgement) {
+          return;
+        }
+        const nonce = acknowledgement ? makeId() : undefined;
+        this.client.sendSignal(signal, payload(nonce));
+        if (acknowledgement && nonce) {
+          this.pendingAcknowledgement = nonce;
+          this.clearAcknowledgementTimer();
+          this.acknowledgementTimer = globalThis.setTimeout(() => {
+            if (this.pendingAcknowledgement !== nonce) {
+              return;
+            }
+            this.disconnect("device heartbeat timed out");
+          }, acknowledgement.timeoutMs ?? DEFAULT_DRIVER_ACKNOWLEDGEMENT_TIMEOUT_MS);
+        }
       } catch {
-        // The status listener will handle socket teardown.
+        this.disconnect("device heartbeat send failed");
       }
-    }, intervalMs);
+    };
+    if (this.keepaliveAcknowledgement()) {
+      sendKeepalive();
+      if (!this.client.isConnected()) {
+        return;
+      }
+    }
+    this.keepaliveTimer = globalThis.setInterval(sendKeepalive, intervalMs);
   }
 
   private stopKeepalive(): void {
     if (this.keepaliveTimer) {
       globalThis.clearInterval(this.keepaliveTimer);
       this.keepaliveTimer = null;
+    }
+    this.pendingAcknowledgement = null;
+    this.clearAcknowledgementTimer();
+  }
+
+  private keepaliveAcknowledgement(): GsvDriverAcknowledgementOptions | false {
+    if (this.options.keepalive === false) {
+      return false;
+    }
+    const acknowledgement = this.options.keepalive?.acknowledgement;
+    if (!acknowledgement) {
+      return false;
+    }
+    const signal = acknowledgement.signal ?? "device.pong";
+    return this.connection?.signals?.includes(signal) ? acknowledgement : false;
+  }
+
+  private clearAcknowledgementTimer(): void {
+    if (this.acknowledgementTimer) {
+      globalThis.clearTimeout(this.acknowledgementTimer);
+      this.acknowledgementTimer = null;
     }
   }
 }
@@ -1294,6 +1427,14 @@ function makeId(): string {
   return `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function acknowledgementNonce(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const nonce = (payload as Record<string, unknown>).nonce;
+  return typeof nonce === "string" ? nonce : null;
+}
+
 function parseFrame(raw: string): GsvFrame | null {
   try {
     const parsed = JSON.parse(raw) as Partial<GsvFrame>;
@@ -1329,6 +1470,13 @@ function errorMessage(value: unknown, fallback: string): string {
     return value;
   }
   return fallback;
+}
+
+function requestAbortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) {
+    return signal.reason;
+  }
+  return new Error(errorMessage(signal.reason, "Request cancelled"));
 }
 
 function errorCode(value: unknown): number {

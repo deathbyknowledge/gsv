@@ -274,7 +274,10 @@ Service connections receive no ambient signals. Adapter workers report state thr
 `proc.run.*` signals are emitted by Process DOs and relayed through run-route tracking. In the current kernel:
 
 - user connections receive routed process signals for their own runs
-- adapter surfaces consume HIL and terminal run signals through their run route
+- `proc.run.hil.requested` is broadcast to every connected user client for the
+  process owner; its payload includes `pid`, and `proc.history` recovers pending
+  requests after reconnects
+- adapter surfaces also consume HIL and terminal run signals through their run route
 
 ### Request cancellation
 

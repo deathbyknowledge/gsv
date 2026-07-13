@@ -83,6 +83,9 @@ export function renderActivityEntry(entry: ActivityEntry): string {
 }
 
 export function connectionText(state: ExtensionUiState): string {
+  if (state.connection.reconnectSuppressed) {
+    return "Paused";
+  }
   switch (state.connection.state) {
     case "connected":
       return "Connected";

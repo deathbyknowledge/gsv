@@ -523,6 +523,7 @@ describe("handleConnect", () => {
         expect(result.identity.capabilities).toEqual([]);
       }
       expect(result.result.syscalls).toEqual([]);
+      expect(result.result.signals).toContain("device.pong");
 
       const device = ctx.devices.get("macbook");
       expect(device).not.toBeNull();

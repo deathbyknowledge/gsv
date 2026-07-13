@@ -40,6 +40,7 @@ import {
   useSetChatProcessAiConfig,
   useSpawnChatProcess,
   useChatAmbientTranscription,
+  type ChatTranscriptionTarget,
   useChatReplySpeech,
   useChatRuntime,
 } from "../hooks";
@@ -375,52 +376,64 @@ export function ChatDock({
   const sendChatDraft = useCallback(async (
     message: string,
     media: ChatMediaUpload[] = [],
-  ): Promise<boolean> => {
-    if ((!hasActiveProcess && !canStartProcess) || sendMessage.isPending || spawnProcess.isPending) {
-      return false;
+    pinnedTarget?: ChatTranscriptionTarget,
+    signal?: AbortSignal,
+    adoptTarget?: (target: ChatTranscriptionTarget) => void,
+  ): Promise<ChatTranscriptionTarget | null> => {
+    signal?.throwIfAborted();
+    let targetPid = pinnedTarget ? pinnedTarget.processId : activeProcessId;
+    let targetConversationId = pinnedTarget ? pinnedTarget.conversationId : selectedConversationId;
+    if ((!targetPid && !canStartProcess) || sendMessage.isPending || spawnProcess.isPending) {
+      return null;
     }
     const trimmedMessage = message.trim();
     if (!trimmedMessage && media.length === 0) {
-      return false;
+      return null;
     }
     const outgoingMessage = trimmedMessage
       || (media.some((attachment) => attachment.type === "audio") ? "Voice message." : "Attached media.");
-    let targetPid = activeProcessId;
-    let targetConversationId = selectedConversationId;
     if (!targetPid) {
       const spawned = await spawnProcess.mutateAsync({
         interactive: true,
         label: outgoingMessage || activeAgent.name,
         ...(startRunAs ? { runAs: startRunAs } : {}),
       });
+      signal?.throwIfAborted();
       targetPid = spawned.pid;
       targetConversationId = "default";
+      adoptTarget?.({ processId: targetPid, conversationId: targetConversationId });
       onProcessStarted?.(spawned);
       onSelectConversation?.("default");
     }
+    signal?.throwIfAborted();
 
-    chatRuntime.appendOptimisticUserMessage(outgoingMessage, media.map((item): ProcMediaInput => ({
-      type: item.type,
-      mimeType: item.mimeType,
-      ...(item.filename ? { filename: item.filename } : {}),
-      size: item.body.size,
-      ...(item.duration !== undefined ? { duration: item.duration } : {}),
-      ...(item.transcription ? { transcription: item.transcription } : {}),
-    })));
+    if (
+      !pinnedTarget ||
+      (targetPid === activeProcessId && targetConversationId === selectedConversationId)
+    ) {
+      chatRuntime.appendOptimisticUserMessage(outgoingMessage, media.map((item): ProcMediaInput => ({
+        type: item.type,
+        mimeType: item.mimeType,
+        ...(item.filename ? { filename: item.filename } : {}),
+        size: item.body.size,
+        ...(item.duration !== undefined ? { duration: item.duration } : {}),
+        ...(item.transcription ? { transcription: item.transcription } : {}),
+      })));
+    }
     setAttachmentError("");
+    signal?.throwIfAborted();
     await sendMessage.mutateAsync({
       message: outgoingMessage,
       pid: targetPid,
       ...(targetConversationId ? { conversationId: targetConversationId } : {}),
       ...(media.length > 0 ? { media } : {}),
     });
-    return true;
+    return { processId: targetPid, conversationId: targetConversationId };
   }, [
     activeAgent.name,
     activeProcessId,
     canStartProcess,
     chatRuntime,
-    hasActiveProcess,
     onProcessStarted,
     onSelectConversation,
     selectedConversationId,
@@ -441,13 +454,14 @@ export function ChatDock({
   const ambientTranscription = useChatAmbientTranscription({
     activeRunCount: canAbortRun ? 1 : 0,
     agentName: activeAgent.name,
+    conversationId: selectedConversationId,
     disabled: inputDisabled || abortProcess.isPending,
     isSpeechOutputPlaying: replySpeech.isSpeaking,
     onDictation: appendDictationDraft,
     onCancelSpeechOutput: replySpeech.cancelSpeech,
-    onTranscript: async (text) => {
-      await sendChatDraft(text);
-    },
+    onTranscript: (text, target, signal, adoptTarget) =>
+      sendChatDraft(text, [], target, signal, adoptTarget),
+    processId: activeProcessId || null,
   });
   const voiceTitle = ambientTranscription.liveActive
     ? ambientTranscription.liveTitle
@@ -565,7 +579,7 @@ export function ChatDock({
       setAttachmentError("");
       setDraftAttachments([]);
     }
-    let sent = false;
+    let sent: ChatTranscriptionTarget | null = null;
     try {
       sent = await sendChatDraft(message, media);
     } catch (error) {

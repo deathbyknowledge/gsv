@@ -42,7 +42,11 @@ import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
 import { DeviceRegistry } from "./devices";
-import { RoutingTable, type RouteOrigin } from "./routing";
+import {
+  RoutingTable,
+  type FailedDeviceRoute,
+  type RouteOrigin,
+} from "./routing";
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import { ProcessRegistry, type ProcessState } from "./processes";
 import { ConversationRegistry } from "./conversations";
@@ -113,7 +117,7 @@ const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
 
 type ConnectionState = {
-  step: "pending" | "connected";
+  step: "pending" | "connected" | "superseded";
   identity?: ConnectionIdentity;
   clientId?: string;
   clientPlatform?: string;
@@ -422,9 +426,13 @@ export class Kernel extends Host<Env> {
     const identity = state.identity;
 
     if (identity?.role === "driver") {
-      this.devices.setOnline(identity.device, false);
-      this.broadcastDeviceStatus(identity.device, "disconnected");
-      this.failRoutesForDevice(identity.device);
+      if (state.step === "connected" && !this.findDeviceConnection(identity.device)) {
+        this.devices.setOnline(identity.device, false);
+        this.broadcastDeviceStatus(identity.device, "disconnected");
+        this.failRoutesForDevice(identity.device);
+      } else {
+        this.failRoutesForDriverConnection(connection.id);
+      }
     }
 
     this.failRoutesForConnection(connection.id);
@@ -836,16 +844,15 @@ export class Kernel extends Host<Env> {
 
     if (!isUserProcessSignal(frame.signal)) return;
 
+    const isHilRequest = frame.signal === "proc.run.hil.requested";
+    const route = runId ? this.runRoutes.get(runId) : null;
+
     // Client-facing process signals route by the owning human (owner_uid), not the
     // run-as identity (which may be the personal agent account).
-    if (!runId) {
+    if (isHilRequest || !route) {
       this.broadcastToUserUid(ownerUid, frame.signal, frame.payload);
-      return;
     }
-
-    const route = this.runRoutes.get(runId);
-    if (!route) {
-      this.broadcastToUserUid(ownerUid, frame.signal, frame.payload);
+    if (!runId || !route) {
       return;
     }
 
@@ -855,7 +862,9 @@ export class Kernel extends Host<Env> {
     }
 
     if (route.kind === "connection") {
-      this.deliverSignalToConnection(route, frame, ownerUid);
+      if (!isHilRequest) {
+        this.deliverSignalToConnection(route, frame, ownerUid);
+      }
       if (frame.signal === "proc.run.finished") {
         this.runRoutes.delete(runId);
       }
@@ -1431,6 +1440,7 @@ export class Kernel extends Host<Env> {
     call: SyscallName;
     origin: RouteOrigin;
     deviceId: string;
+    driverConnectionId: string;
     ttlMs: number;
   }): Promise<{
     cancel: () => void;
@@ -1448,6 +1458,7 @@ export class Kernel extends Host<Env> {
         route.call,
         route.origin,
         route.deviceId,
+        route.driverConnectionId,
         { ttlMs: route.ttlMs, scheduleId },
       );
     } catch (error) {
@@ -1537,7 +1548,12 @@ export class Kernel extends Host<Env> {
     }
     if (route && ownsRoute) {
       if (!internalAppRoute) {
-        this.sendDeviceRequestCancel(route.deviceId, requestId, message);
+        this.sendDeviceRequestCancel(
+          route.deviceId,
+          route.driverConnectionId,
+          requestId,
+          message,
+        );
       }
       this.cancelRoute(requestId);
     }
@@ -1567,9 +1583,16 @@ export class Kernel extends Host<Env> {
     return true;
   }
 
-  private sendDeviceRequestCancel(deviceId: string, requestId: string, reason: string): void {
-    const connection = this.findDeviceConnection(deviceId);
-    if (!connection) {
+  private sendDeviceRequestCancel(
+    deviceId: string,
+    driverConnectionId: string | null,
+    requestId: string,
+    reason: string,
+  ): void {
+    const connection = driverConnectionId
+      ? this.connections.get(driverConnectionId)
+      : this.findDeviceConnection(deviceId);
+    if (!connection || !this.isConnectionForDevice(connection, deviceId)) {
       return;
     }
     try {
@@ -1704,6 +1727,7 @@ export class Kernel extends Host<Env> {
         call: call as SyscallName,
         origin: { type: "app", id },
         deviceId,
+        driverConnectionId: deviceConn.id,
         ttlMs: options.ttlMs ?? 60_000,
       });
       if (options.signal?.aborted) {
@@ -1726,6 +1750,7 @@ export class Kernel extends Host<Env> {
                 if (requestSent) {
                   this.sendDeviceRequestCancel(
                     deviceId,
+                    deviceConn.id,
                     id,
                     normalizeRequestCancelReason(requestAbortError(options.signal?.reason).message),
                   );
@@ -1772,7 +1797,9 @@ export class Kernel extends Host<Env> {
 
   private isConnectionForDevice(connection: Connection<ConnectionState>, deviceId: string): boolean {
     const state = connection.state;
-    return state?.identity?.role === "driver" && state.identity.device === deviceId;
+    return state?.step === "connected" &&
+      state.identity?.role === "driver" &&
+      state.identity.device === deviceId;
   }
 
   private disconnectDeviceConnections(deviceId: string, reason: string): void {
@@ -1839,8 +1866,13 @@ export class Kernel extends Host<Env> {
       const state = connection.state as ConnectionState | undefined;
 
       if (frame.call === "sys.connect") {
-        if (state?.step === "connected") {
-          this.sendError(connection, frame.id, 409, "Already connected");
+        if (state && state.step !== "pending") {
+          this.sendError(
+            connection,
+            frame.id,
+            409,
+            state.step === "superseded" ? "Connection replaced" : "Already connected",
+          );
           return;
         }
         await this.handleSysConnect(connection, frame);
@@ -2165,35 +2197,15 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    const uid = outcome.identity.process.uid;
-    const role = outcome.identity.role;
     const clientId = frame.args?.client?.id?.trim();
     const clientPlatform = frame.args?.client?.platform?.trim();
-    if (clientId) {
-      for (const [connId, existing] of this.connections) {
-        const existingState = existing.state as ConnectionState | undefined;
-        if (
-          existingState?.step === "connected" &&
-          existingState.identity?.process.uid === uid &&
-          existingState.identity.role === role &&
-          existingState.clientId === clientId &&
-          connId !== connection.id &&
-          existing !== connection
-        ) {
-          existing.close(1000, "Replaced by newer connection");
-          this.connections.delete(connId);
-        }
-      }
-    }
-
-    const newState: ConnectionState = {
+    const newState = {
       step: "connected",
       identity: outcome.identity,
       clientId: clientId || undefined,
       clientPlatform: clientPlatform || undefined,
-    };
-    connection.setState(newState);
-    this.connections.set(connection.id, connection);
+    } satisfies ConnectionState & { step: "connected"; identity: ConnectionIdentity };
+    this.activateConnection(connection, newState);
 
     if (outcome.identity.role === "driver") {
       this.broadcastDeviceStatus(outcome.identity.device, "connected");
@@ -2208,13 +2220,44 @@ export class Kernel extends Host<Env> {
     this.sendOk(connection, frame.id, outcome.result);
   }
 
+  private activateConnection(
+    connection: Connection<ConnectionState>,
+    state: ConnectionState & { step: "connected"; identity: ConnectionIdentity },
+  ): void {
+    connection.setState(state);
+    this.connections.set(connection.id, connection);
+
+    if (!state.clientId) {
+      return;
+    }
+    for (const [connectionId, existing] of this.connections) {
+      const existingState = existing.state as ConnectionState | undefined;
+      if (
+        existing !== connection &&
+        existingState?.step === "connected" &&
+        existingState.identity?.process.uid === state.identity.process.uid &&
+        existingState.identity.role === state.identity.role &&
+        existingState.clientId === state.clientId
+      ) {
+        existing.setState({ ...existingState, step: "superseded" });
+        this.connections.delete(connectionId);
+        existing.close(1000, "Replaced by newer connection");
+      }
+    }
+  }
+
   private async handleSysSetup(
     connection: Connection<ConnectionState>,
     frame: RequestFrame<"sys.setup">,
   ): Promise<void> {
     const state = connection.state as ConnectionState | undefined;
-    if (state?.step === "connected") {
-      this.sendError(connection, frame.id, 409, "Already connected");
+    if (state && state.step !== "pending") {
+      this.sendError(
+        connection,
+        frame.id,
+        409,
+        state.step === "superseded" ? "Connection replaced" : "Already connected",
+      );
       return;
     }
 
@@ -2241,8 +2284,13 @@ export class Kernel extends Host<Env> {
     frame: RequestFrame<"sys.setup.assist">,
   ): Promise<void> {
     const state = connection.state as ConnectionState | undefined;
-    if (state?.step === "connected") {
-      this.sendError(connection, frame.id, 409, "Already connected");
+    if (state && state.step !== "pending") {
+      this.sendError(
+        connection,
+        frame.id,
+        409,
+        state.step === "superseded" ? "Connection replaced" : "Already connected",
+      );
       return;
     }
 
@@ -2279,7 +2327,10 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    if (!this.isConnectionForDevice(connection, route.deviceId)) {
+    if (
+      !this.isConnectionForDevice(connection, route.deviceId) ||
+      (route.driverConnectionId !== null && route.driverConnectionId !== connection.id)
+    ) {
       return;
     }
 
@@ -2325,15 +2376,25 @@ export class Kernel extends Host<Env> {
   }
 
   private handleSig(connection: Connection<ConnectionState>, frame: SignalFrame): void {
-    if (frame.signal !== "exec.status") {
-      return;
-    }
-
     const state = connection.state as ConnectionState | undefined;
     const targetId = state?.identity?.role === "driver"
       ? state.identity.device
       : null;
-    if (!targetId) {
+    if (!targetId || !this.isConnectionForDevice(connection, targetId)) {
+      return;
+    }
+
+    if (frame.signal === "device.ping") {
+      this.sendWebSocketFrame(connection, {
+        type: "sig",
+        signal: "device.pong",
+        ...(frame.payload === undefined ? {} : { payload: frame.payload }),
+        ...(frame.seq === undefined ? {} : { seq: frame.seq }),
+      });
+      return;
+    }
+
+    if (frame.signal !== "exec.status") {
       return;
     }
 
@@ -2374,7 +2435,12 @@ export class Kernel extends Host<Env> {
   async onRouteExpired(routeId: string): Promise<void> {
     const expired = this.routes.remove(routeId);
     if (!expired) return;
-    this.sendDeviceRequestCancel(expired.deviceId, routeId, "Request timed out");
+    this.sendDeviceRequestCancel(
+      expired.deviceId,
+      expired.driverConnectionId,
+      routeId,
+      "Request timed out",
+    );
     this.cancelRoutedBody(routeId, "Route expired");
 
     const timeoutFrame: ResponseFrame = {
@@ -2701,7 +2767,14 @@ export class Kernel extends Host<Env> {
 
   private failRoutesForDevice(deviceId: string): void {
     this.shellSessions.failForDevice(deviceId, "Device disconnected");
-    const failed = this.routes.failForDevice(deviceId);
+    this.failDeviceRoutes(this.routes.failForDevice(deviceId));
+  }
+
+  private failRoutesForDriverConnection(connectionId: string): void {
+    this.failDeviceRoutes(this.routes.failForDriverConnection(connectionId));
+  }
+
+  private failDeviceRoutes(failed: FailedDeviceRoute[]): void {
     for (const entry of failed) {
       this.cancelRoutedBody(entry.id, "Device disconnected");
       if (entry.scheduleId) {
@@ -2712,7 +2785,7 @@ export class Kernel extends Host<Env> {
         type: "res",
         id: entry.id,
         ok: false,
-        error: { code: 503, message: `Device disconnected: ${deviceId}` },
+        error: { code: 503, message: `Device disconnected: ${entry.deviceId}` },
       };
       this.deliverToOrigin(entry.origin, errorFrame);
     }
@@ -2721,7 +2794,12 @@ export class Kernel extends Host<Env> {
   private failRoutesForConnection(connectionId: string): void {
     const failed = this.routes.failForConnection(connectionId);
     for (const entry of failed) {
-      this.sendDeviceRequestCancel(entry.deviceId, entry.id, "Origin disconnected");
+      this.sendDeviceRequestCancel(
+        entry.deviceId,
+        entry.driverConnectionId,
+        entry.id,
+        "Origin disconnected",
+      );
       this.cancelRoutedBody(entry.id, "Origin disconnected");
       if (entry.scheduleId) {
         this.cancelSchedule(entry.scheduleId).catch(() => {});

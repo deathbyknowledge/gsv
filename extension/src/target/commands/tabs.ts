@@ -18,6 +18,7 @@ type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 type OpenOptions = {
   input: string;
   contentType?: string;
+  active: boolean;
 };
 
 const TABS_USAGE = [
@@ -25,7 +26,7 @@ const TABS_USAGE = [
   "       tabs list",
   "       tabs active",
   "       tabs get <tabId>",
-  "       tabs open [--mime type] <url|path|->",
+  "       tabs open [--active] [--mime type] <url|path|->",
   "       tabs focus <tabId>",
   "       tabs close <tabId>",
   "       tabs reload <tabId>",
@@ -35,7 +36,8 @@ const TABS_LIST_USAGE = "Usage: tabs list";
 const TABS_ACTIVE_USAGE = "Usage: tabs active";
 const TABS_GET_USAGE = "Usage: tabs get <tabId>";
 const TABS_OPEN_USAGE = [
-  "Usage: tabs open [--mime type] <url|path|->",
+  "Usage: tabs open [--active] [--mime type] <url|path|->",
+  "Tabs open in the background by default. Use --active to switch to the new tab.",
   "Paths must be browser-local paths. Use native cp to copy remote target files into the browser target first.",
   "Use - to render stdin.",
 ].join("\n");
@@ -124,9 +126,9 @@ async function runOpen(args: string[], ctx: CommandContext): Promise<CommandResu
     return commandError(parsed.error);
   }
 
-  const { input, contentType } = parsed.value;
+  const { input, contentType, active } = parsed.value;
   if (isBrowserUrl(input)) {
-    const tab = await createTab(input, true);
+    const tab = await createTab(input, active);
     return commandOk(`opened tab ${tab.id}\n${compactOpenJson({ tab })}\n`);
   }
 
@@ -134,7 +136,7 @@ async function runOpen(args: string[], ctx: CommandContext): Promise<CommandResu
     ? await renderableFromStdin(ctx, contentType)
     : await renderableFromPath(input, ctx, contentType);
   const viewerUrl = viewerUrlFor(renderable.path, renderable.contentType, renderable.label);
-  const tab = await createTab(viewerUrl, true);
+  const tab = await createTab(viewerUrl, active);
   return commandOk(`opened tab ${tab.id}\n${compactOpenJson({
     tab,
     path: renderable.path,
@@ -212,7 +214,8 @@ function tabsUsageFor(subcommand: string): string {
 }
 
 function parseOpenOptions(args: string[]): Parsed<OpenOptions> {
-  const mimeSplit = splitOption(args, "--mime");
+  const active = args.includes("--active");
+  const mimeSplit = splitOption(args.filter((arg) => arg !== "--active"), "--mime");
   if (mimeSplit.value !== null && !isContentType(mimeSplit.value)) {
     return { ok: false, error: `${TABS_OPEN_USAGE}\nmime must look like type/subtype` };
   }
@@ -225,6 +228,7 @@ function parseOpenOptions(args: string[]): Parsed<OpenOptions> {
     value: {
       input,
       contentType: mimeSplit.value ?? undefined,
+      active,
     },
   };
 }

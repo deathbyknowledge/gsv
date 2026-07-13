@@ -245,6 +245,67 @@ describe("createGenerationService", () => {
     }));
     expect(completePiAiSimpleMock).not.toHaveBeenCalled();
   });
+
+  it("combines caller cancellation with the completion timeout signal", async () => {
+    const controller = new AbortController();
+    let providerSignal: AbortSignal | undefined;
+    completePiAiSimpleMock.mockImplementationOnce((
+      _model: unknown,
+      _context: Context,
+      options?: { signal?: AbortSignal },
+    ) => {
+      providerSignal = options?.signal;
+      return new Promise((_resolve, reject) => {
+        providerSignal?.addEventListener("abort", () => reject(providerSignal?.reason), { once: true });
+      });
+    });
+
+    const completion = createGenerationService().generate({
+      config: CONFIG,
+      context: CONTEXT,
+      signal: controller.signal,
+    });
+    const reason = new Error("request cancelled");
+    controller.abort(reason);
+
+    await expect(completion).rejects.toBe(reason);
+    expect(providerSignal).not.toBe(controller.signal);
+    expect(providerSignal?.reason).toBe(reason);
+  });
+
+  it("combines caller cancellation with the stream timeout signal", async () => {
+    const controller = new AbortController();
+    let providerSignal: AbortSignal | undefined;
+    let rejectResult: (reason: unknown) => void = () => {};
+    const result = new Promise<AssistantMessage>((_resolve, reject) => {
+      rejectResult = reject;
+    });
+    const providerStream = {
+      result: vi.fn(() => result),
+    };
+    streamPiAiSimpleMock.mockImplementationOnce((
+      _model: unknown,
+      _context: Context,
+      options?: { signal?: AbortSignal },
+    ) => {
+      providerSignal = options?.signal;
+      providerSignal?.addEventListener("abort", () => rejectResult(providerSignal?.reason), { once: true });
+      return providerStream;
+    });
+
+    const stream = createGenerationService().stream({
+      config: CONFIG,
+      context: CONTEXT,
+      signal: controller.signal,
+    });
+    const reason = new Error("request cancelled");
+    controller.abort(reason);
+
+    expect(stream).toBe(providerStream);
+    await expect(result).rejects.toBe(reason);
+    expect(providerSignal).not.toBe(controller.signal);
+    expect(providerSignal?.reason).toBe(reason);
+  });
 });
 
 describe("extractGeneratedText", () => {

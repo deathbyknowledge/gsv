@@ -1,3 +1,9 @@
+import {
+  acquireDebugger,
+  releaseDebugger,
+  sendDebuggerCommand,
+} from "./debugger";
+
 export type TabSummary = {
   id: number;
   windowId: number;
@@ -50,7 +56,7 @@ export async function getTab(tabId: number): Promise<TabSummary | null> {
   }
 }
 
-export async function createTab(url: string, active = true): Promise<TabSummary> {
+export async function createTab(url: string, active: boolean): Promise<TabSummary> {
   const tab = await chrome.tabs.create({ url, active });
   if (!hasTabIdentity(tab)) {
     throw new Error("Chrome did not return a tab id");
@@ -116,10 +122,23 @@ export async function focusWindow(windowId: number): Promise<WindowSummary> {
   };
 }
 
-export async function captureTabPng(tab: TabSummary): Promise<Uint8Array> {
-  await focusTab(tab.id);
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
-  return dataUrlToBytes(dataUrl);
+export async function captureTabPng(tabId: number): Promise<Uint8Array> {
+  const target = await acquireDebugger(tabId);
+  try {
+    const result = await sendDebuggerCommand<{ data: string }>(target, "Page.captureScreenshot", {
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: false,
+    });
+    if (!result?.data) {
+      throw new Error("Page.captureScreenshot returned no data");
+    }
+    return base64ToBytes(result.data);
+  } finally {
+    await releaseDebugger(tabId).catch((error: unknown) => {
+      console.warn("GSV browser target failed to detach debugger", error);
+    });
+  }
 }
 
 export async function executeInTab<T>(
@@ -156,17 +175,8 @@ function hasTabIdentity(tab: chrome.tabs.Tab): tab is chrome.tabs.Tab & { id: nu
   return typeof tab.id === "number" && typeof tab.windowId === "number";
 }
 
-function dataUrlToBytes(dataUrl: string): Uint8Array {
-  const comma = dataUrl.indexOf(",");
-  if (comma < 0) {
-    throw new Error("Invalid data URL");
-  }
-  const meta = dataUrl.slice(0, comma);
-  const data = dataUrl.slice(comma + 1);
-  if (!/;base64/i.test(meta)) {
-    return new TextEncoder().encode(decodeURIComponent(data));
-  }
-  const binary = atob(data);
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) {
     bytes[i] = binary.charCodeAt(i);

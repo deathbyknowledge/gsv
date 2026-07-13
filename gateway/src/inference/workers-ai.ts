@@ -125,6 +125,7 @@ type WorkersAiRequest = {
   maxTokens: number;
   sessionAffinityKey?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 };
 
 type WorkersAiRunOptions = AiOptions & {
@@ -178,10 +179,11 @@ export async function completeWithWorkersAi(
       primaryInput,
       runOptions,
       request.timeoutMs,
+      request.signal,
     );
     return normalizeWorkersAiResponse(response, request.modelName);
   } catch (error) {
-    if (primaryInput.tools && primaryInput.tools.length > 0 && !shouldSkipNoToolsFallback(error)) {
+    if (primaryInput.tools && primaryInput.tools.length > 0 && !shouldSkipNoToolsFallback(error, request.signal)) {
       const fallbackInput = buildWorkersAiInput(request, { disableTools: true });
       try {
         const fallbackResponse = await runWorkersAiWithTimeout(
@@ -190,9 +192,13 @@ export async function completeWithWorkersAi(
           fallbackInput,
           runOptions,
           request.timeoutMs,
+          request.signal,
         );
         return normalizeWorkersAiResponse(fallbackResponse, request.modelName);
-      } catch {
+      } catch (fallbackError) {
+        if (request.signal?.aborted) {
+          throw fallbackError;
+        }
       }
     }
 
@@ -226,19 +232,19 @@ async function pumpWorkersAiStream(
     await streamWorkersAiResponse(ai, request, primaryInput, runOptions, emitter);
     emitter.finish();
   } catch (error) {
-    if (primaryInput.tools && primaryInput.tools.length > 0 && emitter.eventCount <= 1 && !shouldSkipNoToolsFallback(error)) {
+    if (primaryInput.tools && primaryInput.tools.length > 0 && emitter.eventCount <= 1 && !shouldSkipNoToolsFallback(error, request.signal)) {
       try {
         const fallbackInput = buildWorkersAiInput(request, { disableTools: true });
         await streamWorkersAiResponse(ai, request, fallbackInput, runOptions, emitter);
         emitter.finish();
         return;
       } catch (fallbackError) {
-        pushWorkersAiError(stream, request.modelName, fallbackError);
+        pushWorkersAiError(stream, request.modelName, fallbackError, request.signal?.aborted);
         return;
       }
     }
 
-    pushWorkersAiError(stream, request.modelName, error);
+    pushWorkersAiError(stream, request.modelName, error, request.signal?.aborted);
   }
 }
 
@@ -249,49 +255,47 @@ async function streamWorkersAiResponse(
   options: WorkersAiRunOptions | undefined,
   emitter: WorkersAiPiEventEmitter,
 ): Promise<void> {
-  const controller = new AbortController();
   const timeoutMs = request.timeoutMs ?? 0;
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
-    timeout = setTimeout(() => {
-      controller.abort(new TimeoutError(`Workers AI generation timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  }
+  const abort = createWorkersAiAbort(request.signal, timeoutMs);
 
   try {
     const stream = await runWorkersAiStreamWithTimeout(
       ai,
       request.modelName,
       input,
-      withWorkersAiAbortSignal(options, controller.signal),
+      withWorkersAiAbortSignal(options, abort.signal),
       timeoutMs,
     );
-    await readWorkersAiSse(stream, emitter, controller.signal);
+    await readWorkersAiSse(stream, emitter, abort.signal);
   } finally {
-    if (timeout !== null) {
-      clearTimeout(timeout);
-    }
+    abort.clear();
   }
 }
 
-function shouldSkipNoToolsFallback(error: unknown): boolean {
+function shouldSkipNoToolsFallback(error: unknown, signal?: AbortSignal): boolean {
   return isTimeoutError(error)
+    || signal?.aborted === true
     || (error instanceof Error && error.name === "AbortError");
 }
 
-function runWorkersAiWithTimeout(
+async function runWorkersAiWithTimeout(
   ai: DynamicWorkersAiBinding,
   modelName: string,
   input: WorkersAiRunInput,
   options: WorkersAiRunOptions | undefined,
   timeoutMs: number | undefined,
+  callerSignal?: AbortSignal,
 ): Promise<WorkersAiRunOutput> {
-  const run = ai.run(modelName, input, options);
-  return withTimeout(
-    run,
-    timeoutMs ?? 0,
-    `Workers AI generation timed out after ${timeoutMs}ms`,
-  );
+  const abort = createWorkersAiAbort(callerSignal, timeoutMs ?? 0);
+  try {
+    return await withTimeout(
+      ai.run(modelName, input, withWorkersAiAbortSignal(options, abort.signal)),
+      timeoutMs ?? 0,
+      `Workers AI generation timed out after ${timeoutMs}ms`,
+    );
+  } finally {
+    abort.clear();
+  }
 }
 
 function runWorkersAiStreamWithTimeout(
@@ -778,13 +782,34 @@ function withWorkersAiAbortSignal(
   };
 }
 
+function createWorkersAiAbort(
+  callerSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): { signal: AbortSignal; clear: () => void } {
+  const timeoutController = new AbortController();
+  const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? setTimeout(() => {
+        timeoutController.abort(new TimeoutError(`Workers AI generation timed out after ${timeoutMs}ms`));
+      }, timeoutMs)
+    : null;
+  return {
+    signal: callerSignal
+      ? AbortSignal.any([callerSignal, timeoutController.signal])
+      : timeoutController.signal,
+    clear: () => {
+      if (timeout !== null) clearTimeout(timeout);
+    },
+  };
+}
+
 function pushWorkersAiError(
   stream: AssistantMessageEventStream,
   modelName: string,
   error: unknown,
+  callerAborted = false,
 ): void {
   const message = error instanceof Error ? error.message : String(error);
-  const aborted = error instanceof Error && error.name === "AbortError";
+  const aborted = callerAborted || (error instanceof Error && error.name === "AbortError");
   const assistant: AssistantMessage = {
     role: "assistant",
     content: [],

@@ -134,6 +134,31 @@ describe("process media", () => {
     warn.mockRestore();
   });
 
+  it("cancels in-flight audio transcription with its media run", async () => {
+    const pid = pidForTest("transcribe-cancel");
+    const controller = new AbortController();
+    let bindingSignal: AbortSignal | undefined;
+    const ai: AudioTranscriptionBinding = {
+      run: vi.fn((_model, _input, options) => {
+        bindingSignal = options?.signal;
+        return new Promise<never>(() => {});
+      }),
+    };
+    const request = storeIncomingProcessMedia(
+      env.STORAGE,
+      0,
+      pid,
+      [await storedMedia(pid, { type: "audio", mimeType: "audio/ogg" })],
+      { ai, signal: controller.signal },
+    );
+    await vi.waitFor(() => expect(ai.run).toHaveBeenCalledOnce());
+
+    controller.abort(new Error("media run stopped"));
+
+    await expect(request).rejects.toThrow("media run stopped");
+    expect(bindingSignal).toBe(controller.signal);
+  });
+
   it("does not retranscribe audio that already has a transcript", async () => {
     const pid = pidForTest("existing-transcript");
     const ai: AudioTranscriptionBinding = {
