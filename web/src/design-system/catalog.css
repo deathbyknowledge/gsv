@@ -283,14 +283,3 @@
   color: var(--text-dim);
   margin-top: 3px;
 }
-
-.ds-type-spec {
-  color: var(--text);
-}
-.ds-type-spec .ds-type-row {
-  padding: 10px 0;
-  border-bottom: 1px solid var(--rule-inner);
-}
-.ds-type-spec .ds-type-row:last-child {
-  border-bottom: none;
-}

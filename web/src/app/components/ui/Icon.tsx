@@ -31,7 +31,8 @@ const DOTICON_ALIAS: Record<string, string> = {
   whatsapp: "messenger",
 };
 
-const DOTICON_16_MISSING = new Set(["circleEuro", "preetier", "star", "watch", "wifi"]);
+/** Doticon names that exist only in the 32px set (no 16px SVG). Currently none. */
+const DOTICON_16_MISSING = new Set<string>([]);
 
 function cleanIconName(name: string): string {
   return name.replace(/^\/?icons\//, "").replace(/\.svg$/, "");
