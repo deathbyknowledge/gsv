@@ -214,8 +214,6 @@ import type {
   SysTokenRevokeResult,
   SysUnlinkArgs,
   SysUnlinkResult,
-  SysUpdateArgs,
-  SysUpdateResult,
 } from "./system";
 import type {
   SchedulerAddArgs,
@@ -391,7 +389,6 @@ export type SyscallDomains = {
   "sys.unlink": { args: SysUnlinkArgs; result: SysUnlinkResult };
   "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };
   "sys.link.consume": { args: SysLinkConsumeArgs; result: SysLinkConsumeResult };
-  "sys.update": { args: SysUpdateArgs; result: SysUpdateResult };
 
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };

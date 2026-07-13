@@ -522,7 +522,6 @@ describe("Kernel nested dispatch", () => {
     });
     kernel.sendWebSocketFrame = vi.fn(() => null);
     kernel.requestDevice = vi.fn();
-    kernel.handleSysUpdate = vi.fn();
     const ctx = {
       identity: {
         role: "user",
@@ -888,45 +887,6 @@ describe("Kernel MCP connection cleanup", () => {
         "X-API-Key": "custom-key",
       },
     });
-  });
-});
-
-describe("Kernel CLI download refresh coordination", () => {
-  it("runs explicit refreshes after an in-flight automatic refresh", async () => {
-    const kernel = Object.create(Kernel.prototype) as {
-      cliDownloadsRefresh: Promise<void> | null;
-      withCliDownloadsRefreshSlot<T>(
-        run: () => Promise<T>,
-        options?: { waitForExisting?: boolean },
-      ): Promise<T>;
-    };
-    kernel.cliDownloadsRefresh = null;
-    const order: string[] = [];
-    let releaseAutoRefresh: () => void = () => {};
-
-    const automaticRefresh = kernel.withCliDownloadsRefreshSlot(async () => {
-      order.push("auto:start");
-      await new Promise<void>((resolve) => {
-        releaseAutoRefresh = resolve;
-      });
-      order.push("auto:end");
-    });
-
-    let explicitStarted = false;
-    const explicitRefresh = kernel.withCliDownloadsRefreshSlot(async () => {
-      explicitStarted = true;
-      order.push("explicit");
-      return "updated";
-    }, { waitForExisting: true });
-
-    await Promise.resolve();
-    expect(explicitStarted).toBe(false);
-
-    releaseAutoRefresh();
-
-    await expect(explicitRefresh).resolves.toBe("updated");
-    await automaticRefresh;
-    expect(order).toEqual(["auto:start", "auto:end", "explicit"]);
   });
 });
 

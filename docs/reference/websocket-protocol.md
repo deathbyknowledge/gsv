@@ -185,7 +185,8 @@ The gateway rejects setup-mode connections with error code `425` and details:
   "data": {
     "protocol": 2,
     "server": {
-      "version": "dev",
+      "version": "0.4.0",
+      "release": "dev",
       "connectionId": "conn-123"
     },
     "identity": {

@@ -21,7 +21,6 @@ gsv/
 │   │   ├── syscalls/        # gateway syscall surface and process-local types
 │   │   ├── inference/       # provider/model integration
 │   │   ├── fs/              # filesystem and ripgit integration
-│   │   ├── downloads/       # self-hosted CLI download/install support
 │   │   ├── auth/            # passwords, tokens, setup auth
 │   │   ├── shared/          # worker/DO bridge utilities
 │   │   └── protocol/        # WS and RPC frame types

@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(6);
+    expect(KERNEL_MIGRATIONS).toHaveLength(7);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -55,6 +55,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[5]).toMatchObject({
       id: 6,
       name: "add_ipc_delivery_state",
+    });
+    expect(KERNEL_MIGRATIONS[6]).toMatchObject({
+      id: 7,
+      name: "remove_cli_mirror",
     });
   });
 
@@ -143,6 +147,16 @@ describe("kernel schema migrations", () => {
     );
     expect(statements).toContain("DELETE FROM ipc_calls");
     expect(createTableStatement("ipc_calls")).not.toContain("source_run_id");
+  });
+
+  it("removes retired CLI mirror state", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "DELETE FROM group_capabilities WHERE capability = 'sys.update'",
+    );
+    expect(statements).toContain(
+      "DELETE FROM config_kv WHERE key LIKE 'config/downloads/cli/%'",
+    );
   });
 
   it("includes current indexes owned by the kernel stores", () => {

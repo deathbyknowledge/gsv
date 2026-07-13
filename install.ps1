@@ -167,7 +167,19 @@ function Install-GsvCli {
       }
       [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
       Write-Success "Added $InstallDir to the user PATH"
-      Write-Info "Restart PowerShell if gsv is not found immediately"
+    }
+
+    $processPathEntries = if ([string]::IsNullOrWhiteSpace($env:Path)) {
+      @()
+    } else {
+      $env:Path -split ";" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    }
+    if ($processPathEntries -notcontains $InstallDir) {
+      $env:Path = if ([string]::IsNullOrWhiteSpace($env:Path)) {
+        $InstallDir
+      } else {
+        $InstallDir + ";" + $env:Path
+      }
     }
   } finally {
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
@@ -10,13 +10,14 @@ import { TextInput } from "../../../components/ui/TextInput";
 import { Tile } from "../../../components/ui/Tile";
 import { Toggle } from "../../../components/ui/Toggle";
 import { useSession } from "../../../services/session/SessionProvider";
+import { browserExtensionDownloadUrl } from "../../../domain/cliInstall";
+import { DEVICE_ID_FORMAT_DESCRIPTION, parseDeviceId } from "../../../domain/deviceId";
 import type { IssuedMachineNodeToken } from "../backend/consoleService";
 import { ConnectFlowShell } from "../connect-flows/ConnectFlowShell";
 import type { ConnectFlowDef } from "../connect-flows/connectFlowTypes";
 import type { ConsoleTarget } from "../domain/consoleModels";
 import { useConsoleTargets, useCreateMachineNodeToken } from "../hooks/useConsoleData";
 import {
-  BROWSER_EXTENSION_DOWNLOAD_URL,
   MACHINE_PLATFORM_OPTIONS,
   MACHINE_PROVISION_STEP_LABELS,
   MACHINE_PROVISION_STEPS,
@@ -174,11 +175,11 @@ export function MachineProvisionFlow({
     : MACHINE_PROVISION_STEP_LABELS;
   const knownTarget = targets.targets.find((target) => target.deviceId === deviceId.trim()) ?? null;
   const expires = normalizeExpiresDays(expiresDays);
-  const detailsReady = machineName.trim().length > 0 && deviceId.trim().length > 0;
-  const installCommand = useMemo(
-    () => buildMachineInstallCommand(origin, platform),
-    [origin, platform],
-  );
+  const validDeviceId = parseDeviceId(deviceId);
+  const detailsReady = machineName.trim().length > 0 && validDeviceId !== null;
+  const release = snapshot.server?.release ?? "dev";
+  const installCommand = buildMachineInstallCommand(platform, release);
+  const extensionDownloadUrl = browserExtensionDownloadUrl(release);
   const browserConfig = issuedToken
     ? buildBrowserExtensionConfig({
         origin,
@@ -274,12 +275,12 @@ export function MachineProvisionFlow({
   };
 
   const issueToken = async () => {
-    if (!detailsReady || createToken.isPending) {
+    if (!detailsReady || !validDeviceId || createToken.isPending) {
       return;
     }
     setCheckMessage("");
     const token = await createToken.mutateAsync({
-      deviceId: deviceId.trim(),
+      deviceId: validDeviceId,
       label: machineName.trim(),
       expiresAt: expiresAtFromDays(expires),
     });
@@ -390,8 +391,10 @@ export function MachineProvisionFlow({
                 value={deviceId}
                 placeholder={isBrowserTarget ? "chrome" : "studio-macbook"}
                 clearable
-                status={deviceId.trim() ? "success" : "warning"}
-                message={deviceId.trim() ? (isBrowserTarget ? "Use this exact value in the extension" : "Used by CLI and routing") : "Device id required"}
+                status={validDeviceId ? "success" : "warning"}
+                message={validDeviceId
+                  ? (isBrowserTarget ? "Use this exact value in the extension" : "Used by CLI and routing")
+                  : deviceId.trim() ? DEVICE_ID_FORMAT_DESCRIPTION : "Device id required"}
                 onChange={updateDeviceId}
               />
               <TextInput
@@ -450,7 +453,7 @@ export function MachineProvisionFlow({
                   </div>
                   <a
                     class="machine-download-link"
-                    href={BROWSER_EXTENSION_DOWNLOAD_URL}
+                    href={extensionDownloadUrl}
                     target="_blank"
                     rel="noreferrer"
                     download

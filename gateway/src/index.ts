@@ -67,6 +67,13 @@ export default {
       });
     }
 
+    if (isRetiredCliDownloadPath(url.pathname)) {
+      return new Response("CLI downloads moved to https://install.gsv.space", {
+        status: 410,
+        headers: { "cache-control": "no-store" },
+      });
+    }
+
     const publicAssetMatch = matchPublicAssetPath(url.pathname);
     if (publicAssetMatch) {
       return servePublicAssetRequest(request, createPublicAssetFileSystem(env), publicAssetMatch);
@@ -106,6 +113,13 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
+
+const RETIRED_CLI_DOWNLOAD_PATH = "/public/gsv/downloads/cli";
+
+export function isRetiredCliDownloadPath(pathname: string): boolean {
+  return pathname === RETIRED_CLI_DOWNLOAD_PATH
+    || pathname.startsWith(`${RETIRED_CLI_DOWNLOAD_PATH}/`);
+}
 
 const RUNTIME_THEME_CSS = [
   ":root {",

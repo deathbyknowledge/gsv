@@ -336,7 +336,6 @@ const SYSCALL_NAMES = [
   "sys.unlink",
   "sys.link.list",
   "sys.link.consume",
-  "sys.update",
   "account.create",
   "account.list",
   "sched.list",

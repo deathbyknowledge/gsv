@@ -1,6 +1,7 @@
 import type { GSVClient, GsvConnectOptions } from "@humansandmachines/gsv/client";
 import type {
   ConnectResult,
+  ServerBuild,
   SysBootstrapArgs,
   SysBootstrapResult,
   SysSetupArgs,
@@ -36,6 +37,7 @@ export type SessionSnapshot = {
   url: string;
   username: string;
   connectionId: string | null;
+  server: ServerBuild | null;
   message: string | null;
   setupResult: SysSetupResult | null;
 };
@@ -249,6 +251,7 @@ export function createSessionService(client: GSVClient): SessionService {
     url: deriveGatewayUrlFromOrigin(),
     username: currentSessionToken?.username ?? readStored(STORAGE_USERNAME) ?? "",
     connectionId: null,
+    server: null,
     message: "Booting up...",
     setupResult: null,
   };
@@ -269,8 +272,15 @@ export function createSessionService(client: GSVClient): SessionService {
     }
   };
 
-  const setSnapshot = (next: SessionSnapshot): void => {
-    snapshot = next;
+  const setSnapshot = (
+    next: Omit<SessionSnapshot, "server"> & { server?: ServerBuild | null },
+  ): void => {
+    snapshot = {
+      ...next,
+      server: next.server === undefined && next.phase === "ready"
+        ? snapshot.server
+        : next.server ?? null,
+    };
     emit();
   };
 
@@ -461,7 +471,7 @@ export function createSessionService(client: GSVClient): SessionService {
     });
 
     try {
-      await client.connect({
+      const result = await client.connect({
         url: deriveGatewayUrlFromOrigin(),
         username: token.username,
         token: token.token,
@@ -474,6 +484,7 @@ export function createSessionService(client: GSVClient): SessionService {
 
       storeValue(STORAGE_USERNAME, token.username);
       pendingSetupLogin = null;
+      setSnapshot({ ...snapshot, server: result.server });
       scheduleRefresh(token);
       await drainPendingRevokes("ui session cleanup");
     } catch (error) {
@@ -624,6 +635,7 @@ export function createSessionService(client: GSVClient): SessionService {
           url,
           username,
           connectionId: result.server.connectionId,
+          server: result.server,
           message: null,
           setupResult: null,
         });
@@ -683,6 +695,7 @@ export function createSessionService(client: GSVClient): SessionService {
         url,
         username,
         connectionId: null,
+        server: result.server,
         message: null,
         setupResult: result,
       });
@@ -742,6 +755,7 @@ export function createSessionService(client: GSVClient): SessionService {
         url: status.url ?? url,
         username: status.username ?? username,
         connectionId: status.connectionId,
+        server: setupResult?.server ?? null,
         message: null,
         setupResult: null,
       });
@@ -866,6 +880,7 @@ export function createSessionService(client: GSVClient): SessionService {
         url,
         username: persisted.username,
         connectionId: result.server.connectionId,
+        server: result.server,
         message: null,
         setupResult: null,
       });

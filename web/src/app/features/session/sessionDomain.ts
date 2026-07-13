@@ -4,6 +4,8 @@ import type {
   OnboardingLane,
 } from "@humansandmachines/gsv/protocol";
 import type { SessionSnapshot, SessionSetupInput } from "../../services/session/sessionService";
+import { buildCliInstallCommand, cliReleaseLabel } from "../../domain/cliInstall";
+import { DEVICE_ID_FORMAT_DESCRIPTION, parseDeviceId } from "../../domain/deviceId";
 
 export type PendingAction = "login" | "setup" | "continue" | null;
 export type AdminMode = "same" | "custom";
@@ -163,12 +165,6 @@ export function gatewayWsUrl(origin: string): string {
   return `${origin.replace(/\/+$/g, "")}/ws`;
 }
 
-export function cliInstallCommand(origin: string, platform: InstallPlatform): string {
-  return platform === "windows"
-    ? `$env:GSV_BASE_URL='${origin}'; irm ${origin}/public/gsv/downloads/cli/install.ps1 | iex`
-    : `curl -fsSL ${origin}/public/gsv/downloads/cli/install.sh | bash -s -- ${origin}`;
-}
-
 export function defaultWorkspacePath(platform: InstallPlatform): string {
   return platform === "windows" ? "\"$HOME\"" : "~/";
 }
@@ -178,21 +174,30 @@ function cliExecutableName(platform: InstallPlatform): string {
 }
 
 export function buildNodeBootstrapCommand(
-  origin: string,
-  platform: InstallPlatform,
-  deviceId: string,
-  token: string,
+  input: {
+    origin: string;
+    platform: InstallPlatform;
+    username: string;
+    deviceId: string;
+    token: string;
+    release: string;
+  },
 ): string {
-  const escapedDeviceId = deviceId.replaceAll("\"", "\\\"");
-  const escapedToken = token.replaceAll("\"", "\\\"");
-  const escapedGatewayUrl = gatewayWsUrl(origin).replaceAll("\"", "\\\"");
-  const cli = cliExecutableName(platform);
+  const deviceId = parseDeviceId(input.deviceId);
+  if (!deviceId) {
+    throw new Error(`Invalid device ID. ${DEVICE_ID_FORMAT_DESCRIPTION}`);
+  }
+  const escapedUsername = input.username.replaceAll("\"", "\\\"");
+  const escapedToken = input.token.replaceAll("\"", "\\\"");
+  const escapedGatewayUrl = gatewayWsUrl(input.origin).replaceAll("\"", "\\\"");
+  const cli = cliExecutableName(input.platform);
   return [
-    cliInstallCommand(origin, platform),
+    buildCliInstallCommand(input.platform === "windows" ? "windows" : "unix", input.release),
     `${cli} config --local set gateway.url "${escapedGatewayUrl}"`,
-    `${cli} config --local set node.id "${escapedDeviceId}"`,
+    `${cli} config --local set gateway.username "${escapedUsername}"`,
+    `${cli} config --local set node.id "${deviceId}"`,
     `${cli} config --local set node.token "${escapedToken}"`,
-    `${cli} device install --id "${escapedDeviceId}" --workspace ${defaultWorkspacePath(platform)}`,
+    `${cli} device install --id "${deviceId}" --workspace ${defaultWorkspacePath(input.platform)}`,
   ].join("\n");
 }
 
@@ -277,6 +282,9 @@ export function validateSetupDetails(
       if (advancedSectionsVisible(draft) && draft.device.enabled) {
         if (!draft.device.deviceId.trim()) {
           return { message: "Device ID is required when creating a device setup key.", step };
+        }
+        if (!parseDeviceId(draft.device.deviceId)) {
+          return { message: `Invalid device ID. ${DEVICE_ID_FORMAT_DESCRIPTION}`, step };
         }
         const expiry = draft.device.expiryDays.trim();
         if (expiry && !isPositiveNumber(expiry)) {
@@ -414,12 +422,10 @@ export function setupResultViewModel(
   const result = snapshot.setupResult;
   const origin = gatewayOrigin();
   const platform = detectBrowserInstallPlatform();
-  const defaultChannel = result?.bootstrap?.cli.defaultChannel ?? "stable";
+  const release = result?.server.release ?? "dev";
   const rootLabel = adminMode === "custom" ? "Extra admin security layer" : "Account password";
-  const cliCommand = cliInstallCommand(origin, platform);
-  const cliMeta = platform === "windows"
-    ? `Uses the ${defaultChannel} release channel. The PowerShell installer will report clearly if Windows tools are not available yet.`
-    : `Uses the ${defaultChannel} release channel and picks the right tools for this machine.`;
+  const cliCommand = buildCliInstallCommand(platform === "windows" ? "windows" : "unix", release);
+  const cliMeta = `Installs the matching ${cliReleaseLabel(release)} for this gateway.`;
 
   if (!result) {
     return {
@@ -473,7 +479,14 @@ export function setupResultViewModel(
     node: {
       visible: true,
       label: result.nodeToken.label ?? deviceId,
-      command: buildNodeBootstrapCommand(origin, platform, deviceId, result.nodeToken.token),
+      command: buildNodeBootstrapCommand({
+        origin,
+        platform,
+        username: result.user.username,
+        deviceId,
+        token: result.nodeToken.token,
+        release,
+      }),
       meta: `${deviceId} \u00b7 ${expiresLabel} \u00b7 ${installPlatformLabel(platform)} setup steps shown`,
     },
   };

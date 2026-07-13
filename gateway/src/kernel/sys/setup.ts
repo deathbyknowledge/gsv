@@ -1,5 +1,6 @@
 import { hashPassword, isLocked, makeShadowEntry } from "../../auth/shadow";
 import type { KernelContext } from "../context";
+import { SERVER_RELEASE } from "../../version";
 import type { PasswdEntry } from "../../auth/passwd";
 import type { ProcessIdentity, SysSetupArgs, SysSetupResult, UserIdentity } from "@humansandmachines/gsv/protocol";
 import { handleSysBootstrap } from "./bootstrap";
@@ -357,6 +358,10 @@ export async function handleSysSetup(
     );
 
     return {
+      server: {
+        version: ctx.serverVersion,
+        release: SERVER_RELEASE,
+      },
       user: processIdentity,
       rootLocked,
       bootstrap,

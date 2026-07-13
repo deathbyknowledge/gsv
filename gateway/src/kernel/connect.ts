@@ -20,6 +20,7 @@ import type { AuthTokenRole } from "./auth-store";
 import type { CapabilityStore } from "./capabilities";
 import { isValidCapability } from "./capabilities";
 import type { KernelContext } from "./context";
+import { SERVER_RELEASE } from "../version";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
 import { USER_CONNECTION_SIGNALS } from "./user-signals";
@@ -190,6 +191,7 @@ export async function handleConnect(
     protocol: 2,
     server: {
       version: serverVersion,
+      release: SERVER_RELEASE,
       connectionId: ctx.connection.id,
     },
     identity: connectionIdentity,

@@ -51,7 +51,7 @@ jobs:
               - 'extension/src/target/network-recorder.ts'
               - 'gateway/package.json'
               - 'gateway/package-lock.json'
-              - 'gateway/src/kernel/do.ts'
+              - 'gateway/src/version.ts'
               - 'gateway/src/kernel/config.ts'
               - 'gateway/src/drivers/native/shell.test.ts'
               - 'web/package.json'

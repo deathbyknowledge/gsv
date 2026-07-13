@@ -19,6 +19,7 @@ export default defineConfig({
     }),
   ],
   define: {
+    __GSV_RELEASE__: JSON.stringify("dev"),
     __PRINT_FULL_PROMPT__: JSON.stringify(env.PRINT_FULL_PROMPT === "1"),
     __GSV_TEST_OPENAI_KEY__: JSON.stringify(env.GSV_TEST_OPENAI_KEY ?? ""),
   },

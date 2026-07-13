@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  BROWSER_EXTENSION_DOWNLOAD_URL,
   MACHINE_PLATFORM_OPTIONS,
   buildBrowserExtensionConfig,
   buildMachineBootstrapCommand,
@@ -11,12 +10,21 @@ import {
   machineDeviceIdFromName,
   normalizeExpiresDays,
 } from "./machineProvision";
+import { browserExtensionDownloadUrl } from "../../../domain/cliInstall";
+import { DEVICE_ID_MAX_LENGTH, parseDeviceId } from "../../../domain/deviceId";
 
 describe("machineProvision", () => {
   it("normalizes display names into stable device ids", () => {
     expect(machineDeviceIdFromName("Studio MacBook Pro")).toBe("studio-macbook-pro");
     expect(machineDeviceIdFromName("  Server_01  ")).toBe("server_01");
     expect(machineDeviceIdFromName("!!!")).toBe("machine");
+  });
+
+  it("accepts only narrow shell-safe device ids", () => {
+    expect(parseDeviceId(" node_01 ")).toBe("node_01");
+    expect(parseDeviceId("Node-01")).toBeNull();
+    expect(parseDeviceId("node-$(whoami)")).toBeNull();
+    expect(parseDeviceId(`n${"x".repeat(DEVICE_ID_MAX_LENGTH)}`)).toBeNull();
   });
 
   it("uses a short browser target id by default", () => {
@@ -29,17 +37,25 @@ describe("machineProvision", () => {
       meta: "Browser extension",
       dotIcon: "chrome",
     });
-    expect(BROWSER_EXTENSION_DOWNLOAD_URL).toContain("gsv-browser-extension.zip");
+    expect(browserExtensionDownloadUrl("v0.4.0")).toBe(
+      "https://github.com/deathbyknowledge/gsv/releases/download/v0.4.0/gsv-browser-extension.zip",
+    );
+    expect(browserExtensionDownloadUrl("dev")).toBe(
+      "https://github.com/deathbyknowledge/gsv/releases/download/dev/gsv-browser-extension.zip",
+    );
+    expect(browserExtensionDownloadUrl("unexpected")).toBe(
+      "https://github.com/deathbyknowledge/gsv/releases/download/dev/gsv-browser-extension.zip",
+    );
   });
 
-  it("builds platform install commands from the web origin", () => {
-    expect(buildMachineInstallCommand("https://gsv.example.com/", "linux")).toBe(
-      "curl -fsSL https://gsv.example.com/public/gsv/downloads/cli/install.sh | bash -s -- https://gsv.example.com",
+  it("builds canonical install commands for the gateway release", () => {
+    expect(buildMachineInstallCommand("linux", "v0.4.0")).toBe(
+      "curl -fsSL https://install.gsv.space | GSV_VERSION=v0.4.0 bash",
     );
-    expect(buildMachineInstallCommand("https://gsv.example.com", "windows")).toBe(
-      "$env:GSV_BASE_URL='https://gsv.example.com'; irm https://gsv.example.com/public/gsv/downloads/cli/install.ps1 | iex",
+    expect(buildMachineInstallCommand("windows", "dev")).toBe(
+      "$env:GSV_CHANNEL='dev'; irm https://install.gsv.space/install.ps1 | iex",
     );
-    expect(buildMachineInstallCommand("https://gsv.example.com", "browser")).toBe("");
+    expect(buildMachineInstallCommand("browser", "dev")).toBe("");
   });
 
   it("builds browser extension option values", () => {
@@ -69,6 +85,16 @@ describe("machineProvision", () => {
       "gsv config --local set node.token \"tok\\\"en\"",
       "gsv device install --id \"studio-mac\" --workspace ~/",
     ].join("\n"));
+  });
+
+  it("refuses unsafe device ids in generated commands", () => {
+    expect(() => buildMachineBootstrapCommand({
+      origin: "https://gsv.example.com",
+      platform: "linux",
+      username: "hank",
+      deviceId: "node-$(whoami)",
+      token: "tok",
+    })).toThrow("Invalid device ID");
   });
 
   it("uses the Windows executable name in bootstrap commands", () => {

@@ -27,9 +27,6 @@ import type {
   ScheduleRunResult,
   SchedulerRunArgs,
   SchedulerRunResult,
-  SysCliDownloadsResult,
-  SysUpdateArgs,
-  SysUpdateResult,
 } from "@humansandmachines/gsv/protocol";
 import {
   BinaryBodyChannel,
@@ -78,10 +75,6 @@ import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { buildAppRunnerName } from "../protocol/app-session";
 import { handleSysSetupAssist } from "./sys/setup-assist";
-import {
-  handleSysUpdate as handleSysUpdateDirect,
-  refreshCliDownloads,
-} from "./sys/update";
 import { completeOAuthCallback as completeOAuthCallbackFlow } from "./sys/oauth";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import { installMcpDiscoveryCompatibility } from "./mcp-compat";
@@ -113,12 +106,8 @@ import { ensureDefaultConversationExecutor } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
+import { SERVER_VERSION } from "../version";
 
-const SERVER_VERSION = "0.4.0";
-const CLI_DOWNLOADS_REFRESHED_VERSION_KEY = "config/downloads/cli/refreshed_for_version";
-const CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY = "config/downloads/cli/refresh_attempt_at";
-const CLI_DOWNLOADS_REFRESHED_AT_KEY = "config/downloads/cli/refreshed_at";
-const CLI_DOWNLOADS_REFRESH_RETRY_MS = 15 * 60 * 1000;
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
@@ -221,7 +210,6 @@ export class Kernel extends Host<Env> {
     string,
     { expiresAt: number; reason: string }
   >();
-  private cliDownloadsRefresh: Promise<void> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -1357,7 +1345,6 @@ export class Kernel extends Host<Env> {
       registerRoute: this.registerRouteWithExpiry.bind(this),
       requestDevice: this.requestDevice.bind(this),
       request: this.requestDispatchedFrame.bind(this),
-      handleSysUpdate: this.handleSysUpdate.bind(this),
     };
   }
 
@@ -2208,84 +2195,9 @@ export class Kernel extends Host<Env> {
       const freshIdentity = outcome.identity.process;
       await ensureDefaultConversationExecutor(ctx, freshIdentity);
       this.reconcileOwnedIdentities(freshIdentity.uid);
-      this.scheduleCliDownloadsRefreshForVersion();
     }
 
     this.sendOk(connection, frame.id, outcome.result);
-  }
-
-  private scheduleCliDownloadsRefreshForVersion(): void {
-    if (this.config.get(CLI_DOWNLOADS_REFRESHED_VERSION_KEY) === SERVER_VERSION) {
-      return;
-    }
-    if (this.cliDownloadsRefresh) {
-      return;
-    }
-
-    const lastAttemptAt = Number(this.config.get(CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY) ?? "0");
-    if (Number.isFinite(lastAttemptAt) && Date.now() - lastAttemptAt < CLI_DOWNLOADS_REFRESH_RETRY_MS) {
-      return;
-    }
-
-    this.config.set(CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY, String(Date.now()));
-    const refresh = this.withCliDownloadsRefreshSlot(() => this.refreshCliDownloadsForVersion());
-    this.ctx.waitUntil(refresh);
-  }
-
-  private async handleSysUpdate(
-    args: SysUpdateArgs | undefined,
-    ctx: KernelContext,
-  ): Promise<SysUpdateResult> {
-    const result = await this.withCliDownloadsRefreshSlot(
-      () => handleSysUpdateDirect(args, ctx),
-      { waitForExisting: true },
-    );
-    this.recordCliDownloadsRefresh(result.cli);
-    return result;
-  }
-
-  private async withCliDownloadsRefreshSlot<T>(
-    run: () => Promise<T>,
-    options: { waitForExisting?: boolean } = {},
-  ): Promise<T> {
-    const previousRefresh = options.waitForExisting ? this.cliDownloadsRefresh : null;
-    let releaseSlot: () => void = () => {};
-    const slot = new Promise<void>((resolve) => {
-      releaseSlot = resolve;
-    });
-    const trackedSlot = slot.finally(() => {
-      if (this.cliDownloadsRefresh === trackedSlot) {
-        this.cliDownloadsRefresh = null;
-      }
-    });
-    this.cliDownloadsRefresh = trackedSlot;
-
-    try {
-      if (previousRefresh) {
-        await previousRefresh;
-      }
-      return await run();
-    } finally {
-      releaseSlot();
-    }
-  }
-
-  private recordCliDownloadsRefresh(result: SysCliDownloadsResult): void {
-    this.config.set(CLI_DOWNLOADS_REFRESHED_VERSION_KEY, SERVER_VERSION);
-    this.config.set(CLI_DOWNLOADS_REFRESHED_AT_KEY, String(result.refreshedAt));
-  }
-
-  private async refreshCliDownloadsForVersion(): Promise<void> {
-    try {
-      const result = await refreshCliDownloads(this.env.STORAGE);
-      this.recordCliDownloadsRefresh(result);
-      console.info(
-        `[Kernel] refreshed hosted CLI downloads for ${SERVER_VERSION} channels=${result.mirroredChannels.join(",")} default=${result.defaultChannel}`,
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[Kernel] hosted CLI refresh for ${SERVER_VERSION} failed: ${message}`);
-    }
   }
 
   private async handleSysSetup(

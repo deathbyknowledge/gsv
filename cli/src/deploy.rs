@@ -397,7 +397,6 @@ struct WorkerModuleUpload {
 #[derive(Debug, Clone)]
 pub struct DeployApplyResult {
     pub gateway_url: Option<String>,
-    pub gateway_existed_before_deploy: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2591,9 +2590,6 @@ pub async fn apply_deploy(
     prepared.sort_by_key(|bundle| deploy_order(&bundle.component));
 
     let selected_components: HashSet<String> = components.iter().cloned().collect();
-    let gateway_script_name = instance
-        .script_name(COMPONENT_GATEWAY)
-        .ok_or("Unsupported gateway component")?;
     let ripgit_script_name = instance
         .script_name(COMPONENT_RIPGIT)
         .ok_or("Unsupported ripgit component")?;
@@ -2606,7 +2602,6 @@ pub async fn apply_deploy(
         list_worker_scripts(&client, account_id, api_token).await?;
     let existing_scripts: HashSet<String> =
         existing_scripts_with_migrations.keys().cloned().collect();
-    let gateway_existed_before_deploy = existing_scripts.contains(&gateway_script_name);
     let ripgit_available = selected_components.contains(COMPONENT_RIPGIT)
         || existing_scripts.contains(&ripgit_script_name);
     let assembler_available = selected_components.contains(COMPONENT_ASSEMBLER)
@@ -2821,10 +2816,7 @@ pub async fn apply_deploy(
     };
 
     println!("\nDeploy complete.");
-    Ok(DeployApplyResult {
-        gateway_url,
-        gateway_existed_before_deploy,
-    })
+    Ok(DeployApplyResult { gateway_url })
 }
 
 pub async fn destroy_deploy(

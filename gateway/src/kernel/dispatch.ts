@@ -17,7 +17,6 @@ import type {
   ResponseFrame,
   ResponseOkFrame,
 } from "../protocol/frames";
-import type { SysUpdateArgs, SysUpdateResult } from "@humansandmachines/gsv/protocol";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
@@ -175,7 +174,6 @@ export type DispatchDeps = {
     ctx: KernelContext,
     signal?: AbortSignal,
   ) => Promise<ResponseFrame>;
-  handleSysUpdate: (args: SysUpdateArgs | undefined, ctx: KernelContext) => Promise<SysUpdateResult>;
 };
 
 export type DispatchResult =
@@ -514,9 +512,6 @@ async function dispatchNative(
         return errFrame(frame.id, 400, "sys.setup handled separately");
       case "sys.bootstrap":
         data = await handleSysBootstrap(frame.args, ctx);
-        break;
-      case "sys.update":
-        data = await deps.handleSysUpdate(frame.args, ctx);
         break;
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);

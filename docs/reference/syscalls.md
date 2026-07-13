@@ -963,7 +963,7 @@ Runtime behavior:
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and starts/reconciles the user init process. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
 | `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, and optional system bootstrap. Username, password, and timezone are validated. |
-| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv`, seeds builtin packages, refreshes hosted stable/dev CLI assets, stores default CLI channel, and broadcasts `pkg.changed`. Explicit args win; otherwise `GSV_BOOTSTRAP_UPSTREAM` can override the default `deathbyknowledge/gsv#main`; it accepts `owner/repo`, a git URL, or either form with `#ref`. `GSV_BOOTSTRAP_REF` can set or override the env ref separately. Requires `RIPGIT` and storage. |
+| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv` and `root/gsv-manual`, registers both as public system repositories, and seeds repository skills into the caller's home. By default, stable gateway builds pin `root/gsv` to their matching `vX.Y.Z` release tag; dev and other non-release builds use `main`. Explicit args win, followed by `GSV_BOOTSTRAP_REF` and a ref embedded in `GSV_BOOTSTRAP_UPSTREAM`; the upstream accepts `owner/repo`, a git URL, or either form with `#ref`. The manual remains on its independently configured ref, defaulting to `main`. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
 | `sys.device.list` | `handleSysDeviceList` | Lists devices accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
@@ -986,7 +986,6 @@ Runtime behavior:
 | `sys.unlink` | `handleSysUnlink` | User-role only. Removes an adapter identity link. Missing links return `removed: false`; non-root can unlink only self-owned links. |
 | `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
 | `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase link challenge code for the caller uid, marks the challenge used, and creates/replaces the identity link. Invalid, expired, or used codes throw. |
-| `sys.update` | `handleSysUpdate` | Runs system-managed update work without re-running bootstrap. Today this refreshes hosted stable/dev CLI binaries, checksums, install scripts, and the default CLI channel in storage. If `channel` is omitted, the existing stored default is preserved, falling back to `dev` when missing. The Kernel also schedules this once per server version after an authenticated user connection so old upgrade CLIs can still reseed hosted binaries. |
 
 `sys.connect`, `sys.setup`, and `sys.setup.assist` are special-cased before normal auth/capability dispatch. Other `sys.*` calls require a connected identity and are denied in setup mode.
 
@@ -1004,7 +1003,7 @@ metadata document advertises the same URL as its `client_id`.
 type SystemSyscalls = {
   "sys.connect": {
     args: { protocol: number; client: { id: string; version: string; platform: string; role: "user" | "driver" | "service"; channel?: string }; driver?: { implements: string[] }; auth?: { username: string; password?: string; token?: string } };
-    result: { protocol: number; server: { version: string; connectionId: string }; identity: ConnectionIdentity; syscalls: string[]; signals: string[] };
+    result: { protocol: number; server: { version: string; release: string; connectionId: string }; identity: ConnectionIdentity; syscalls: string[]; signals: string[] };
   };
 
   "sys.setup.assist": {
@@ -1014,17 +1013,12 @@ type SystemSyscalls = {
 
   "sys.setup": {
     args: { username: string; password: string; rootPassword?: string; timezone?: string; bootstrap?: { remoteUrl?: string; repo?: string; ref?: string }; ai?: { provider?: string; model?: string; apiKey?: string }; node?: { deviceId: string; label?: string; expiresAt?: number } };
-    result: { user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; nodeToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node"; label: string | null; allowedRole: "driver" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
+    result: { server: { version: string; release: string }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; nodeToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node"; label: string | null; allowedRole: "driver" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
   };
 
   "sys.bootstrap": {
     args: { remoteUrl?: string; repo?: string; ref?: string };
-    result: { repo: string; remoteUrl: string; ref: string; head: string | null; changed: boolean; cli: { defaultChannel: "stable" | "dev"; mirroredChannels: Array<"stable" | "dev">; assets: string[]; refreshedAt: number }; packages: BootstrapPackageSummary[] };
-  };
-
-  "sys.update": {
-    args: { channel?: "stable" | "dev" };
-    result: { updatedAt: number; cli: { defaultChannel: "stable" | "dev"; mirroredChannels: Array<"stable" | "dev">; assets: string[]; refreshedAt: number } };
+    result: { repo: string; remoteUrl: string; ref: string; head: string | null; changed: boolean; manual: { repo: string; remoteUrl: string; ref: string; head: string | null; changed: boolean } };
   };
 
   "sys.config.get": {

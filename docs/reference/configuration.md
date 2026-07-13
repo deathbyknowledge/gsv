@@ -117,12 +117,17 @@ Default policies:
 |---|---|---|
 | `config/server/name` | `gsv` | Server name used by hostname-style tools and package metadata. |
 | `config/server/timezone` | `UTC` | Runtime timezone value. |
-| `config/server/version` | `0.1.0` | Server version value. |
+| `config/server/version` | current `VERSION` | Semantic server version exposed to runtime tools. |
 | `config/shell/timeout_ms` | `30000` | Default native shell timeout. |
 | `config/shell/network_enabled` | `true` | Enables network tools in native shell execution. |
 | `config/shell/max_output_bytes` | `524288` | Maximum captured shell output. |
 | `config/process/init_label` | `init ({username})` | Default init process label template. |
 | `config/process/max_per_user` | `0` | Maximum processes per user. `0` means unlimited. |
+
+The protocol's `server.version` is this semantic product version. `server.release`
+identifies the deployed build: stable release bundles use their exact `vX.Y.Z` tag,
+while local and dev builds report `dev`. The release identifier is build metadata,
+not a writable configuration key.
 
 ## Package Config
 
