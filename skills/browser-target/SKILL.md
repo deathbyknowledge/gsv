@@ -107,16 +107,25 @@ page js --tab <tabId> 'document.title'
 page js --tab <tabId> 'Array.from(document.querySelectorAll("button")).map((button) => button.textContent)'
 ```
 
-Prefer selector clicks to coordinates. If multiple tabs are open, pass `--tab`
-rather than relying on the active tab.
+Prefer selector clicks to coordinates. Always pass `--tab` for work on an
+agent-opened tab so a user changing their active tab cannot redirect the task.
 
-Use `tabs open` when the user wants to see a website, browser-local file, or
-generated content in a real browser tab:
+`tabs open` creates a background tab and returns its id. Capture that id and
+pass it to every command that operates on the new tab:
 
 ```bash
-tabs open https://example.com
-tabs open /home/browser/screenshots/tab-123.png
-printf '<h1>Report</h1>' | tabs open --mime text/html -
+opened="$(tabs open https://example.com)"
+tab_id="$(printf '%s\n' "$opened" | tail -n 1 | jq -r '.tab.id')"
+page snapshot --tab "$tab_id"
+page click --tab "$tab_id" 'a.more-information'
+```
+
+Use `tabs open --active` only when the user explicitly asks to see or switch to
+new content. For example:
+
+```bash
+tabs open --active /home/browser/screenshots/tab-123.png
+printf '<h1>Report</h1>' | tabs open --active --mime text/html -
 ```
 
 For a remote file, first copy it into `/tmp` or `/tmp/render` on the browser

@@ -272,7 +272,7 @@ async function runScreenshot(args: string[], ctx: CommandContext): Promise<Comma
   }
 
   const tab = await resolveTab(parsed.value.tabId);
-  const png = await captureTabPng(tab);
+  const png = await captureTabPng(tab.id);
   const capturedAt = new Date(ctx.now()).toISOString();
   const path = [
     "/home/browser/screenshots/tab-",
