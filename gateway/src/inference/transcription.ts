@@ -1,7 +1,13 @@
+import { raceWithAbort } from "../shared/abort";
 import { normalizeBase64Data } from "../shared/base64";
+import { TimeoutError } from "./timeout";
 
 export type AudioTranscriptionBinding = {
-  run(model: string, input: Record<string, unknown>): Promise<unknown>;
+  run(
+    model: string,
+    input: Record<string, unknown>,
+    options?: { signal?: AbortSignal },
+  ): Promise<unknown>;
 };
 
 export type TranscriptionMode = "transcribe" | "translate";
@@ -19,6 +25,7 @@ export type AudioTranscriptionRequest = {
   mode?: TranscriptionMode;
   vadFilter?: boolean;
   conditionOnPreviousText?: boolean;
+  signal?: AbortSignal;
 };
 
 export type AudioTranscriptionResult = {
@@ -32,11 +39,15 @@ export type AudioTranscriptionResult = {
 
 export const DEFAULT_AUDIO_TRANSCRIPTION_MODEL = "@cf/openai/whisper-large-v3-turbo";
 export const DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES = 25 * 1024 * 1024;
+export const DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS = 30_000;
 
 export async function transcribeAudioWithWorkersAi(
   ai: AudioTranscriptionBinding | undefined,
   request: AudioTranscriptionRequest,
 ): Promise<AudioTranscriptionResult | null> {
+  if (request.signal?.aborted) {
+    throw request.signal.reason ?? new Error("Transcription cancelled");
+  }
   if (!ai) {
     return null;
   }
@@ -55,9 +66,44 @@ export async function transcribeAudioWithWorkersAi(
     input.initial_prompt = request.prompt;
   }
 
-  const response = await ai.run(model, input);
-  const result = normalizeTranscriptionResponse(response);
-  return result ? { ...result, provider: "workers-ai", model } : null;
+  const timeoutMs = normalizeTranscriptionTimeout(request.timeoutMs);
+  const abort = createTranscriptionAbort(request.signal, timeoutMs);
+  try {
+    const response = abort.signal
+      ? await raceWithAbort(ai.run(model, input, { signal: abort.signal }), abort.signal)
+      : await ai.run(model, input);
+    const result = normalizeTranscriptionResponse(response);
+    return result ? { ...result, provider: "workers-ai", model } : null;
+  } finally {
+    abort.clear();
+  }
+}
+
+function normalizeTranscriptionTimeout(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
+}
+
+function createTranscriptionAbort(
+  callerSignal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+): { signal?: AbortSignal; clear: () => void } {
+  const timeoutController = timeoutMs === undefined ? null : new AbortController();
+  const timeout = timeoutController && timeoutMs !== undefined
+    ? setTimeout(() => {
+      timeoutController.abort(new TimeoutError(`Transcription timed out after ${timeoutMs}ms`));
+    }, timeoutMs)
+    : null;
+  const signals = [callerSignal, timeoutController?.signal].filter(
+    (signal): signal is AbortSignal => signal !== undefined,
+  );
+  return {
+    signal: signals.length > 1 ? AbortSignal.any(signals) : signals[0],
+    clear: () => {
+      if (timeout !== null) clearTimeout(timeout);
+    },
+  };
 }
 
 export function normalizeTranscriptionResponse(value: unknown): Omit<AudioTranscriptionResult, "provider" | "model"> | null {

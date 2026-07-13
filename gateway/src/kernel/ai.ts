@@ -77,6 +77,7 @@ import { shouldUseCustomProvider } from "../inference/custom-provider";
 import { createRoutedFetch, normalizeTarget, type NetFetchDeviceTransport } from "./net";
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+  DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS,
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
 } from "../inference/transcription";
 import { encodeBase64Bytes } from "../shared/base64";
@@ -118,6 +119,7 @@ import {
   PROCESS_AI_CONFIG_SECRET_KEYS,
   processAiModelProfileSecretConfigKey,
 } from "../process/ai-config";
+import { raceWithAbort } from "../shared/abort";
 import { sendFrameToProcess } from "../shared/utils";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
@@ -151,6 +153,11 @@ type AiModelStackConfig = Pick<
   | "contextWindowSource"
   | "generationTimeoutMs"
   | "generationStreaming"
+>;
+
+type AiTranscriptionStack = Pick<
+  NonNullable<AiConfigResult["media"]>,
+  "transcriptionProvider" | "transcriptionModel" | "transcriptionApiKey"
 >;
 
 const ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS = [
@@ -292,28 +299,16 @@ export async function handleAiConfig(
   const generationStreaming = normalizeGenerationStreaming(
     resolveConfig("generation/streaming"),
   );
-  const processFallbackModelProfile = resolveAiProcessConfigValue(processOverrides, "fallback_model_profile");
-  const accountFallbackModelProfile = resolveAiConfigValue(
-    config,
+  const fallbackSelection = resolveAiFallbackSelection(
+    ctx,
     accountConfigUids,
     accountProfileOverrides,
-    "fallback_model_profile",
+    processOverrides,
   );
-  const systemFallbackModelProfile = config.get("config/ai/fallback_model_profile");
-  const fallbackModelProfile =
-    processFallbackModelProfile ??
-    accountFallbackModelProfile ??
-    systemFallbackModelProfile ??
-    "";
-  const fallbackAccountUids = processFallbackModelProfile === null &&
-    accountFallbackModelProfile === null &&
-    systemFallbackModelProfile !== null
-    ? withRootAiProfileScope(accountConfigUids)
-    : accountConfigUids;
   const fallbacks = await resolveAiFallbackConfigs({
     ctx,
-    accountUids: fallbackAccountUids,
-    selector: fallbackModelProfile,
+    accountUids: fallbackSelection?.accountUids ?? [],
+    selector: fallbackSelection?.selector ?? "",
     primary: {
       provider,
       model,
@@ -471,8 +466,10 @@ export async function handleAiTranscriptionCreate(
   ctx: KernelContext,
   body?: FrameBody,
 ): Promise<AiTranscriptionCreateResult> {
-  const media = await resolveAiMediaConfigForContext(ctx);
-  const audio = args.audio;
+  const input = args && typeof args === "object" ? args : ({} as AiTranscriptionCreateArgs);
+  const configContext = resolveAiTranscriptionProcessContext(input.pid, ctx);
+  const { primary, fallback } = await resolveAiTranscriptionStacksForContext(configContext);
+  const audio = input.audio;
   if (!audio || typeof audio !== "object") {
     throw new Error("audio is required");
   }
@@ -480,30 +477,48 @@ export async function handleAiTranscriptionCreate(
     throw new Error("audio.mimeType must be an audio MIME type");
   }
 
-  const bytes = await readAiInputBody(body, media.transcriptionMaxBytes, "audio", ctx.requestSignal);
+  const bytes = await readAiInputBody(body, primary.transcriptionMaxBytes, "audio", ctx.requestSignal);
   const base64 = encodeBase64Bytes(bytes);
 
-  const mode = args.mode === "translate" ? "translate" : "transcribe";
-  const result = await transcribeAudio({
-    workersAi: ctx.env.AI,
-  }, {
-    data: base64,
-    provider: media.transcriptionProvider,
-    apiKey: media.transcriptionApiKey,
-    model: media.transcriptionModel,
-    mimeType: audio.mimeType,
-    filename: audio.filename,
-    mode,
-    language: normalizeOptionalString(args.language),
-    prompt: normalizeOptionalString(args.prompt),
-    vadFilter: true,
-    conditionOnPreviousText: false,
-  });
-  if (!result) {
-    throw new Error("Transcription unavailable");
+  const mode = input.mode === "translate" ? "translate" : "transcribe";
+  let lastError: unknown;
+  for (const stack of [primary, ...(fallback ? [fallback] : [])]) {
+    if (ctx.requestSignal?.aborted) {
+      throw ctx.requestSignal.reason ?? new Error("Transcription cancelled");
+    }
+    try {
+      const result = await transcribeAudio({
+        workersAi: ctx.env.AI,
+      }, {
+        data: base64,
+        provider: stack.transcriptionProvider,
+        apiKey: stack.transcriptionApiKey,
+        model: stack.transcriptionModel,
+        mimeType: audio.mimeType,
+        filename: audio.filename,
+        timeoutMs: DEFAULT_AUDIO_TRANSCRIPTION_TIMEOUT_MS,
+        signal: ctx.requestSignal,
+        mode,
+        language: normalizeOptionalString(input.language),
+        prompt: normalizeOptionalString(input.prompt),
+        vadFilter: true,
+        conditionOnPreviousText: false,
+      });
+      if (result) {
+        return result;
+      }
+    } catch (error) {
+      if (ctx.requestSignal?.aborted) {
+        throw ctx.requestSignal.reason ?? error;
+      }
+      lastError = error;
+    }
   }
 
-  return result;
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error("Transcription unavailable");
 }
 
 export async function handleAiImageRead(
@@ -944,6 +959,32 @@ function createAiConfigValueResolver(
     );
 }
 
+function resolveAiFallbackSelection(
+  ctx: KernelContext,
+  accountUids: number[],
+  accountProfileOverrides: AiAccountProfileOverrides,
+  processOverrides: Record<string, string>,
+): { accountUids: number[]; selector: string } | null {
+  const processSelector = resolveAiProcessConfigValue(processOverrides, "fallback_model_profile");
+  const accountSelector = resolveAiConfigValue(
+    ctx.config,
+    accountUids,
+    accountProfileOverrides,
+    "fallback_model_profile",
+  );
+  const systemSelector = ctx.config.get("config/ai/fallback_model_profile");
+  const selector = normalizeOptionalString(processSelector ?? accountSelector ?? systemSelector);
+  if (!selector) {
+    return null;
+  }
+  return {
+    selector,
+    accountUids: processSelector === null && accountSelector === null && systemSelector !== null
+      ? withRootAiProfileScope(accountUids)
+      : accountUids,
+  };
+}
+
 async function resolveAiFallbackConfigs(options: {
   ctx: KernelContext;
   accountUids: number[];
@@ -1059,7 +1100,126 @@ function isSameAiModelStack(
     (left.openAiCodex?.accountId ?? "") === (right.openAiCodex?.accountId ?? "");
 }
 
+function resolveAiTranscriptionProcessContext(
+  requestedPid: unknown,
+  ctx: KernelContext,
+): KernelContext {
+  if (requestedPid === undefined) {
+    return ctx;
+  }
+  const pid = normalizeOptionalString(requestedPid);
+  if (!pid) {
+    throw new Error("pid must be a non-empty string");
+  }
+  const process = ctx.procs.get(pid);
+  if (!process) {
+    throw new Error(`Process not found: ${pid}`);
+  }
+  const callerOwnerUid = resolveCallerOwnerUid(ctx);
+  if (process.ownerUid !== callerOwnerUid && ctx.identity!.process.uid !== 0) {
+    throw new Error(`Permission denied: cannot access process ${pid}`);
+  }
+  return {
+    ...ctx,
+    processId: pid,
+    identity: {
+      ...ctx.identity!,
+      process: {
+        uid: process.uid,
+        gid: process.gid,
+        gids: process.gids,
+        username: process.username,
+        home: process.home,
+        cwd: process.cwd,
+      },
+    },
+  };
+}
+
+async function resolveAiTranscriptionStacksForContext(ctx: KernelContext): Promise<{
+  primary: NonNullable<AiConfigResult["media"]>;
+  fallback?: AiTranscriptionStack;
+}> {
+  const resolution = await resolveAiMediaContext(ctx);
+  const primary = resolveAiMediaConfig(
+    ctx.config,
+    resolution.accountUids,
+    resolution.accountProfileOverrides,
+    resolution.defaultApiKey,
+    resolution.processOverrides,
+  );
+  const fallbackSelection = resolveAiFallbackSelection(
+    ctx,
+    resolution.accountUids,
+    resolution.accountProfileOverrides,
+    resolution.processOverrides,
+  );
+  if (!fallbackSelection) {
+    return { primary };
+  }
+  const profile = findAiAccountModelProfile(
+    ctx.config,
+    fallbackSelection.accountUids,
+    fallbackSelection.accountUids[0],
+    fallbackSelection.selector,
+  );
+  if (!profile) {
+    return { primary };
+  }
+  const fallbackProvider = normalizeProviderName(
+    resolveAiProcessConfigValue(profile.values, "transcription/provider"),
+  );
+  const fallbackModel = normalizeOptionalString(
+    resolveAiProcessConfigValue(profile.values, "transcription/model"),
+  );
+  if (!fallbackProvider || !fallbackModel) {
+    return { primary };
+  }
+  const fallbackMedia = resolveAiMediaConfig(
+    ctx.config,
+    fallbackSelection.accountUids,
+    new Map(),
+    resolveAiProcessConfigValue(profile.values, "api_key") ?? resolution.defaultApiKey,
+    profile.values,
+  );
+  const fallback: AiTranscriptionStack = {
+    transcriptionProvider: fallbackProvider,
+    transcriptionModel: fallbackModel,
+    transcriptionApiKey: fallbackMedia.transcriptionApiKey,
+  };
+  return isSameAiTranscriptionStack(primary, fallback)
+    ? { primary }
+    : { primary, fallback };
+}
+
+function isSameAiTranscriptionStack(
+  left: AiTranscriptionStack,
+  right: AiTranscriptionStack,
+): boolean {
+  return left.transcriptionProvider.trim().toLowerCase() ===
+      right.transcriptionProvider.trim().toLowerCase() &&
+    left.transcriptionModel.trim().toLowerCase() ===
+      right.transcriptionModel.trim().toLowerCase() &&
+    left.transcriptionApiKey === right.transcriptionApiKey;
+}
+
 async function resolveAiMediaConfigForContext(ctx: KernelContext): Promise<NonNullable<AiConfigResult["media"]>> {
+  const resolution = await resolveAiMediaContext(ctx);
+  return resolveAiMediaConfig(
+    ctx.config,
+    resolution.accountUids,
+    resolution.accountProfileOverrides,
+    resolution.defaultApiKey,
+    resolution.processOverrides,
+  );
+}
+
+async function resolveAiMediaContext(ctx: KernelContext): Promise<{
+  accountUids: number[];
+  accountProfileOverrides: AiAccountProfileOverrides;
+  processOverrides: Record<string, string>;
+  defaultApiKey: string;
+}> {
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
@@ -1070,7 +1230,12 @@ async function resolveAiMediaConfigForContext(ctx: KernelContext): Promise<NonNu
     resolveAiConfigValue(ctx.config, accountConfigUids, accountProfileOverrides, "api_key") ??
     ctx.config.get("config/ai/api_key") ??
     "";
-  return resolveAiMediaConfig(ctx.config, accountConfigUids, accountProfileOverrides, apiKey, processOverrides);
+  return {
+    accountUids: accountConfigUids,
+    accountProfileOverrides,
+    processOverrides,
+    defaultApiKey: apiKey,
+  };
 }
 
 async function resolveAiProcessOverridesForContext(
@@ -1084,13 +1249,19 @@ async function resolveAiProcessOverridesForContext(
 
   let frame: Awaited<ReturnType<typeof sendFrameToProcess>>;
   try {
-    frame = await sendFrameToProcess(ctx.processId, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.ai.config.get",
-      args: { redacted: false },
-    });
-  } catch {
+    frame = await raceWithAbort(
+      sendFrameToProcess(ctx.processId, {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.ai.config.get",
+        args: { redacted: false },
+      }),
+      ctx.requestSignal,
+    );
+  } catch (error) {
+    if (ctx.requestSignal?.aborted) {
+      throw ctx.requestSignal.reason ?? error;
+    }
     return {};
   }
   if (!frame || frame.type !== "res" || !frame.ok) {

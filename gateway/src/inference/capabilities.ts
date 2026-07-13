@@ -21,7 +21,8 @@ import {
   decodeBase64Bytes,
   normalizeBase64Data,
 } from "../shared/base64";
-import { withTimeout } from "./timeout";
+import { raceWithAbort } from "../shared/abort";
+import { TimeoutError, withTimeout } from "./timeout";
 import { isWorkersAiProvider } from "./workers-ai";
 import { sniffImageMimeType } from "./image-mime";
 
@@ -73,11 +74,16 @@ export async function transcribeAudio(
   runtime: AiCapabilityRuntime,
   request: AudioTranscriptionRequest,
 ): Promise<AudioTranscriptionResult | null> {
+  if (request.signal?.aborted) {
+    throw request.signal.reason ?? new Error("Transcription cancelled");
+  }
   const provider = normalizeProvider(request.provider);
+  const timeoutMs = normalizePositiveNumber(request.timeoutMs);
   if (isWorkersAiProvider(provider)) {
     return transcribeAudioWithWorkersAi(runtime.workersAi, {
       ...request,
       model: normalizeOptionalText(request.model) || DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
+      timeoutMs,
     });
   }
   if (isOpenAiProvider(provider)) {
@@ -85,6 +91,7 @@ export async function transcribeAudio(
       ...request,
       provider,
       model: normalizeOptionalText(request.model) || DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
+      timeoutMs,
     });
   }
   throw new Error(`Unsupported audio transcription provider: ${provider}`);
@@ -165,7 +172,7 @@ async function transcribeAudioWithOpenAi(
   const endpoint = request.mode === "translate"
     ? `${OPENAI_API_BASE}/audio/translations`
     : `${OPENAI_API_BASE}/audio/transcriptions`;
-  const response = await withFetchTimeout(
+  const body = await withFetchTimeout(
     fetchFn,
     endpoint,
     {
@@ -177,9 +184,12 @@ async function transcribeAudioWithOpenAi(
     },
     request.timeoutMs,
     "OpenAI audio transcription",
+    async (response) => {
+      await throwIfNotOk(response, "OpenAI audio transcription");
+      return parseResponseBody(response);
+    },
+    request.signal,
   );
-  await throwIfNotOk(response, "OpenAI audio transcription");
-  const body = await parseResponseBody(response);
   const normalized = normalizeOpenAiTranscriptionResponse(body);
   return normalized ? { ...normalized, provider: OPENAI_PROVIDER, model: request.model } : null;
 }
@@ -203,7 +213,7 @@ async function synthesizeSpeechWithOpenAi(
     body.instructions = `Speak in ${normalizeOptionalText(request.language)}.`;
   }
 
-  const response = await withFetchTimeout(
+  const audio = await withFetchTimeout(
     fetchFn,
     `${OPENAI_API_BASE}/audio/speech`,
     {
@@ -216,11 +226,13 @@ async function synthesizeSpeechWithOpenAi(
     },
     timeoutMs,
     "OpenAI speech synthesis",
-  );
-  await throwIfNotOk(response, "OpenAI speech synthesis");
-  const audio = binaryDataFromBytes(
-    await response.arrayBuffer(),
-    response.headers.get("content-type") || mimeTypeForOpenAiSpeechFormat(format),
+    async (response) => {
+      await throwIfNotOk(response, "OpenAI speech synthesis");
+      return binaryDataFromBytes(
+        await response.arrayBuffer(),
+        response.headers.get("content-type") || mimeTypeForOpenAiSpeechFormat(format),
+      );
+    },
   );
   return audio
     ? {
@@ -289,7 +301,7 @@ async function generateImageWithOpenAi(
   }
 
   const timeoutMs = normalizePositiveNumber(request.timeoutMs) ?? DEFAULT_IMAGE_GENERATION_TIMEOUT_MS;
-  const response = await withFetchTimeout(
+  const payload = await withFetchTimeout(
     fetchFn,
     `${OPENAI_API_BASE}/images/generations`,
     {
@@ -302,9 +314,11 @@ async function generateImageWithOpenAi(
     },
     timeoutMs,
     "OpenAI image generation",
+    async (response) => {
+      await throwIfNotOk(response, "OpenAI image generation");
+      return parseResponseBody(response);
+    },
   );
-  await throwIfNotOk(response, "OpenAI image generation");
-  const payload = await parseResponseBody(response);
   const image = await normalizeImageGenerationResponse(payload, mimeTypeForImageFormat(format));
   return image ? { ...image, provider: OPENAI_PROVIDER, model } : null;
 }
@@ -454,19 +468,32 @@ function normalizeImageMimeType(value: unknown): string | undefined {
   return normalized?.startsWith("image/") ? normalized : undefined;
 }
 
-async function withFetchTimeout(
+async function withFetchTimeout<T>(
   fetchFn: CapabilityFetch,
   url: string,
   init: RequestInit,
   timeoutMs: number | undefined,
   label: string,
-): Promise<Response> {
+  consume: (response: Response) => Promise<T>,
+  callerSignal?: AbortSignal,
+): Promise<T> {
   const resolvedTimeoutMs = normalizePositiveNumber(timeoutMs) ?? DEFAULT_IMAGE_GENERATION_TIMEOUT_MS;
-  return withTimeout(
-    fetchFn(url, init),
-    resolvedTimeoutMs,
-    `${label} timed out after ${resolvedTimeoutMs}ms`,
-  );
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => {
+    timeoutController.abort(new TimeoutError(`${label} timed out after ${resolvedTimeoutMs}ms`));
+  }, resolvedTimeoutMs);
+  const signals = [timeoutController.signal];
+  if (callerSignal) signals.unshift(callerSignal);
+  if (init.signal) signals.unshift(init.signal);
+  const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+  try {
+    return await raceWithAbort(
+      fetchFn(url, { ...init, signal }).then(consume),
+      signal,
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function throwIfNotOk(response: Response, label: string): Promise<void> {
