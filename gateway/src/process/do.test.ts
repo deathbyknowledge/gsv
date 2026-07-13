@@ -3258,7 +3258,7 @@ describe("Process DO — mechanical", () => {
             .filter((message: any) => message.role === "user");
           expect(userMessages[0]).toMatchObject({
             runId: first.runId,
-            media: fails ? null : expect.any(String),
+            media: expect.any(String),
           });
           expect(process.currentRun).toMatchObject({ runId: second.runId });
           expect(process.store.getMessages().some((message: any) => (
@@ -7916,9 +7916,11 @@ describe("Process DO — mechanical", () => {
           conversationId: "default",
           pendingMediaMessageId: messageId,
         };
+        const signal = process.runAbortSignal("run-media-timeout");
 
         await process.onMediaPreparationTimeout("run-media-timeout");
 
+        expect(signal.aborted).toBe(true);
         expect(process.currentRun).toBeNull();
         expect(process.store.getMessages()).toEqual(expect.arrayContaining([
           expect.objectContaining({

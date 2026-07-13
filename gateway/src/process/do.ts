@@ -1348,23 +1348,31 @@ export class Process extends Host<Env> {
     messageId: number,
     input: NonNullable<ProcSendArgs["media"]>,
   ): Promise<void> {
+    const signal = this.runAbortSignal(runId);
     try {
-      const media = await storeIncomingProcessMedia(
-        this.env.STORAGE,
-        this.identity.uid,
-        this.pid,
-        input,
-        await this.resolveMediaProcessingOptions(input),
+      const options = await raceWithAbort(
+        this.resolveMediaProcessingOptions(input),
+        signal,
+      );
+      const media = await raceWithAbort(
+        storeIncomingProcessMedia(
+          this.env.STORAGE,
+          this.identity.uid,
+          this.pid,
+          input,
+          { ...options, signal },
+        ),
+        signal,
       );
       const releaseLifecycle = await this.acquireLifecycleTransition();
       let admitted = false;
       try {
         const run = this.currentRun;
         this.ctx.storage.transactionSync(() => {
-          if (media) {
-            this.store.updateMessageMedia(messageId, runId, media);
-          }
           if (run?.runId === runId && run.pendingMediaMessageId === messageId) {
+            if (media) {
+              this.store.updateMessageMedia(messageId, runId, media);
+            }
             delete run.pendingMediaMessageId;
             this.currentRun = run;
             admitted = true;
@@ -1373,7 +1381,7 @@ export class Process extends Host<Env> {
       } finally {
         releaseLifecycle();
       }
-      if (media) {
+      if (admitted && media) {
         this.ctx.waitUntil(this.emitProcChanged(["messages"], {
           conversationId,
           runId,
@@ -1401,6 +1409,9 @@ export class Process extends Host<Env> {
         });
       }
     } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
       const prefix = processMediaPrefix(this.identity.uid, this.pid);
       const keys = input.flatMap((item) =>
         typeof item.key === "string" && item.key.startsWith(prefix) ? [item.key] : []
@@ -1437,6 +1448,8 @@ export class Process extends Host<Env> {
       if (run?.runId !== runId || run.pendingMediaMessageId !== messageId) {
         return;
       }
+      this.runAbortControllers.get(runId)?.abort(new Error(message));
+      this.runAbortControllers.delete(runId);
       const conversationId = normalizeConversationId(run.conversationId);
       this.store.appendMessage("system", message, { conversationId, runId });
       this.emitRunFinished(run, {
