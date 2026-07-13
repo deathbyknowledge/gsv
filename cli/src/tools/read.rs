@@ -5,6 +5,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+const MIME_SNIFF_BYTES: u64 = 8192;
 
 pub struct ReadTool {
     workspace: PathBuf,
@@ -118,12 +121,23 @@ impl Tool for ReadTool {
         }
 
         let size = metadata.len();
-        let content_type = infer_content_type(&resolved);
+        let mut file = tokio::fs::File::open(&resolved)
+            .await
+            .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
+        let mut header = Vec::new();
+        (&mut file)
+            .take(MIME_SNIFF_BYTES)
+            .read_to_end(&mut header)
+            .await
+            .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
+        file.rewind()
+            .await
+            .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
+        let content_type = infer::get(&header)
+            .map(|kind| kind.mime_type())
+            .unwrap_or_else(|| infer_content_type(&resolved));
 
         if content_type.starts_with("image/") && !is_text_content_type(content_type) {
-            let file = tokio::fs::File::open(&resolved)
-                .await
-                .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
             return Ok(ToolOutput::with_body(
                 json!({
                     "ok": true,
@@ -146,7 +160,8 @@ impl Tool for ReadTool {
         if !is_text_content_type(content_type) {
             return Err(binary_error());
         }
-        let bytes = tokio::fs::read(&resolved)
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
             .await
             .map_err(|e| format!("Failed to read '{}': {}", resolved.display(), e))?;
         let content = String::from_utf8(bytes).map_err(|_error| binary_error())?;
@@ -236,26 +251,26 @@ fn is_text_content_type(content_type: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::AsyncReadExt;
 
     #[tokio::test]
-    async fn returns_raw_image_bytes_as_a_body() {
+    async fn detects_raw_images_from_content() {
         let root = std::env::temp_dir().join(format!("gsv-read-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         let bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-        fs::write(root.join("image.png"), &bytes).unwrap();
+        for name in ["image.png", "image", "image.txt"] {
+            fs::write(root.join(name), &bytes).unwrap();
+            let result = ReadTool::new(root.clone())
+                .execute(json!({ "path": name }))
+                .await
+                .unwrap();
 
-        let result = ReadTool::new(root.clone())
-            .execute(json!({ "path": "image.png" }))
-            .await
-            .unwrap();
-
-        assert_eq!(result.data["contentType"], "image/png");
-        let mut body = result.body.unwrap();
-        assert_eq!(body.length, Some(bytes.len() as u64));
-        let mut actual = Vec::new();
-        body.reader.read_to_end(&mut actual).await.unwrap();
-        assert_eq!(actual, bytes);
+            assert_eq!(result.data["contentType"], "image/png");
+            let mut body = result.body.unwrap();
+            assert_eq!(body.length, Some(bytes.len() as u64));
+            let mut actual = Vec::new();
+            body.reader.read_to_end(&mut actual).await.unwrap();
+            assert_eq!(actual, bytes);
+        }
 
         fs::remove_dir_all(root).unwrap();
     }
