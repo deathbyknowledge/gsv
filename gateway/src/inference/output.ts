@@ -63,6 +63,7 @@ export function isRetryableGenerationErrorMessage(message: string): boolean {
   const normalized = message.toLowerCase();
   return normalized.includes("reasoning but no final response") ||
     normalized.includes("malformed tool call markup") ||
+    normalized.includes("generation returned no text") ||
     normalized.includes("returned an empty response") ||
     normalized.includes("returned empty response") ||
     normalized.includes("empty response body");

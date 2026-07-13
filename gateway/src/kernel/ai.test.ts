@@ -719,6 +719,7 @@ describe("handleAiConfig", () => {
   });
 
   it("generates text with preset config and explicit generation options", async () => {
+    const requestSignal = new AbortController().signal;
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({
         executor: { kind: "kernel" },
@@ -737,6 +738,7 @@ describe("handleAiConfig", () => {
         maxTokens: 64,
         reasoning: "off",
       });
+      expect(request.signal).toBe(requestSignal);
       return {
         role: "assistant",
         content: [{ type: "text", text: "pong" }],
@@ -780,6 +782,7 @@ describe("handleAiConfig", () => {
     }, {
       ...ctx,
       processId: "task-1",
+      requestSignal,
     });
 
     expect(result).toMatchObject({

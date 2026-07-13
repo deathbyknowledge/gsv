@@ -38,6 +38,7 @@ type GenerateRequest = {
   options?: AiTextGenerateOptions;
   fetch?: typeof fetch;
   sessionAffinityKey?: string;
+  signal?: AbortSignal;
 };
 
 type GenerationService = {
@@ -78,6 +79,7 @@ export function createGenerationService(
         maxTokens: options.maxTokens,
         sessionAffinityKey: request.sessionAffinityKey,
         timeoutMs: generationTimeoutMs,
+        signal: request.signal,
       });
     }
     if (
@@ -88,10 +90,7 @@ export function createGenerationService(
         providerStyle: options.providerStyle,
       })
     ) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => {
-        controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
-      }, generationTimeoutMs);
+      const abort = createGenerationAbort(request.signal, generationTimeoutMs);
       const result = streamWithCustomProvider({
         provider: options.modelProvider,
         model: options.modelName,
@@ -105,23 +104,20 @@ export function createGenerationService(
         options: {
           reasoning: options.reasoning,
           maxTokens: options.maxTokens,
-          signal: controller.signal,
+          signal: abort.signal,
           timeoutMs: generationTimeoutMs,
         },
       });
       void result.result().then(
-        () => clearTimeout(timeout),
-        () => clearTimeout(timeout),
+        abort.clear,
+        abort.clear,
       );
       return result;
     }
 
     assertOpenAiCodexCredential(options.modelProvider, options.apiKey);
     const model = resolvePiAiModel(options.modelProvider, options.modelName);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => {
-      controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
-    }, generationTimeoutMs);
+    const abort = createGenerationAbort(request.signal, generationTimeoutMs);
     const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
       ? options.fetch ?? serviceOptions.fetch ?? fetch
       : undefined;
@@ -135,14 +131,14 @@ export function createGenerationService(
           ...(options.openAiCodexAccountId ? { openAiCodexAccountId: options.openAiCodexAccountId } : {}),
           reasoning: options.reasoning,
           maxTokens: options.maxTokens,
-          signal: controller.signal,
+          signal: abort.signal,
           timeoutMs: generationTimeoutMs,
           ...resolvePiAiTransportOptions(options.modelProvider, request.sessionAffinityKey),
         },
       });
       void result.result().then(
-        () => clearTimeout(timeout),
-        () => clearTimeout(timeout),
+        abort.clear,
+        abort.clear,
       );
       return result;
     }
@@ -150,7 +146,7 @@ export function createGenerationService(
       apiKey: options.apiKey,
       reasoning: options.reasoning,
       maxTokens: options.maxTokens,
-      signal: controller.signal,
+      signal: abort.signal,
       timeoutMs: generationTimeoutMs,
       ...resolvePiAiTransportOptions(options.modelProvider, request.sessionAffinityKey),
       headers: {
@@ -158,8 +154,8 @@ export function createGenerationService(
       },
     });
     void result.result().then(
-      () => clearTimeout(timeout),
-      () => clearTimeout(timeout),
+      abort.clear,
+      abort.clear,
     );
     return result;
   };
@@ -175,6 +171,7 @@ export function createGenerationService(
         maxTokens: options.maxTokens,
         sessionAffinityKey: request.sessionAffinityKey,
         timeoutMs: generationTimeoutMs,
+        signal: request.signal,
       });
     }
     if (
@@ -185,10 +182,7 @@ export function createGenerationService(
         providerStyle: options.providerStyle,
       })
     ) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => {
-        controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
-      }, generationTimeoutMs);
+      const abort = createGenerationAbort(request.signal, generationTimeoutMs);
       try {
         return await withTimeout(
           completeWithCustomProvider({
@@ -204,7 +198,7 @@ export function createGenerationService(
             options: {
               reasoning: options.reasoning,
               maxTokens: options.maxTokens,
-              signal: controller.signal,
+              signal: abort.signal,
               timeoutMs: generationTimeoutMs,
             },
           }),
@@ -212,16 +206,13 @@ export function createGenerationService(
           generationTimeoutMessage(generationTimeoutMs),
         );
       } finally {
-        clearTimeout(timeout);
+        abort.clear();
       }
     }
 
     assertOpenAiCodexCredential(options.modelProvider, options.apiKey);
     const model = resolvePiAiModel(options.modelProvider, options.modelName);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => {
-      controller.abort(new Error(generationTimeoutMessage(generationTimeoutMs)));
-    }, generationTimeoutMs);
+    const abort = createGenerationAbort(request.signal, generationTimeoutMs);
     const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
       ? options.fetch ?? serviceOptions.fetch ?? fetch
       : undefined;
@@ -237,7 +228,7 @@ export function createGenerationService(
               ...(options.openAiCodexAccountId ? { openAiCodexAccountId: options.openAiCodexAccountId } : {}),
               reasoning: options.reasoning,
               maxTokens: options.maxTokens,
-              signal: controller.signal,
+              signal: abort.signal,
               timeoutMs: generationTimeoutMs,
               ...resolvePiAiTransportOptions(options.modelProvider, request.sessionAffinityKey),
             },
@@ -251,7 +242,7 @@ export function createGenerationService(
           apiKey: options.apiKey,
           reasoning: options.reasoning,
           maxTokens: options.maxTokens,
-          signal: controller.signal,
+          signal: abort.signal,
           timeoutMs: generationTimeoutMs,
           ...resolvePiAiTransportOptions(options.modelProvider, request.sessionAffinityKey),
           headers: {
@@ -262,7 +253,7 @@ export function createGenerationService(
         generationTimeoutMessage(generationTimeoutMs),
       );
     } finally {
-      clearTimeout(timeout);
+      abort.clear();
     }
   };
 
@@ -421,4 +412,20 @@ function generationReasoningFromLevel(level: ReturnType<typeof resolveModelThink
 
 function generationTimeoutMessage(timeoutMs: number): string {
   return `Model generation timed out after ${timeoutMs}ms`;
+}
+
+function createGenerationAbort(
+  callerSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): { signal: AbortSignal; clear: () => void } {
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => {
+    timeoutController.abort(new Error(generationTimeoutMessage(timeoutMs)));
+  }, timeoutMs);
+  return {
+    signal: callerSignal
+      ? AbortSignal.any([callerSignal, timeoutController.signal])
+      : timeoutController.signal,
+    clear: () => clearTimeout(timeout),
+  };
 }

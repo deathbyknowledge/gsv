@@ -590,7 +590,9 @@ export async function forwardToProcess(
       : frame;
   const responsePromise = sendFrameToProcess(pid, processFrame);
   let cancellation: Promise<unknown> | undefined;
-  const signal = frame.call === "codemode.run" ? ctx.requestSignal : undefined;
+  const signal = frame.call === "codemode.run" || frame.call === "proc.conversation.compact"
+    ? ctx.requestSignal
+    : undefined;
   let response: Awaited<ReturnType<typeof sendFrameToProcess>>;
   try {
     response = await raceWithAbort(responsePromise, signal, {

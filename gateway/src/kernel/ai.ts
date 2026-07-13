@@ -399,6 +399,7 @@ export async function handleAiTextGenerate(
     context,
     ...(options ? { options } : {}),
     sessionAffinityKey: normalizeOptionalString(input.sessionAffinityKey),
+    signal: ctx.requestSignal,
   });
   const text = extractGeneratedText(response);
   return {

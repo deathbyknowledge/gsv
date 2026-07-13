@@ -1638,13 +1638,13 @@ describe("Process DO — mechanical", () => {
           },
         };
 
-        process.store.appendMessage("user", `old context A ${"x".repeat(200)}`);
-        process.store.appendMessage("assistant", `old context B ${"y".repeat(200)}`);
+        process.store.appendMessage("user", `old context A ${"x".repeat(4000)}`);
+        process.store.appendMessage("assistant", `old context B ${"y".repeat(4000)}`);
         process.store.appendMessage("user", "Context that must stay live.");
         process.store.setValue("conversationPolicy:default", JSON.stringify({
           conversationId: "default",
           overflow: "auto-compact",
-          compactAtPressure: 0.01,
+          compactAtPressure: 0.5,
           keepLast: 1,
           updatedAt: Date.now(),
         }));
@@ -4990,6 +4990,7 @@ describe("Process DO — mechanical", () => {
     it("can generate the compaction summary from selected messages", async () => {
       const pid = "mech-conversation-compact-generated";
       const stub = await initProcess(pid, ROOT_IDENTITY);
+      const models: string[] = [];
 
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
@@ -5009,6 +5010,15 @@ describe("Process DO — mechanical", () => {
             apiKey: "",
             reasoning: "off",
             maxTokens: 4096,
+            fallbacks: [{
+              provider: "openrouter",
+              model: "fallback-model",
+              apiKey: "fallback-key",
+              maxTokens: 4096,
+              contextWindowTokens: 32768,
+              contextWindowSource: "config",
+              generationTimeoutMs: 180000,
+            }],
           },
         };
         process.generation = {
@@ -5016,8 +5026,16 @@ describe("Process DO — mechanical", () => {
             throw new Error("unexpected chat generation");
           },
           async generateText(request: any) {
-            expect(request.options).toMatchObject({ maxTokens: 768, reasoning: "off" });
+            models.push(request.config.model);
+            expect(request.options).toMatchObject({
+              maxTokens: 768,
+              reasoning: "off",
+              timeoutMs: 30000,
+            });
             expect(request.context.messages[0].content).toContain("old user goal");
+            if (request.config.model === "@cf/test/model") {
+              throw new Error("primary unavailable");
+            }
             return "Generated compact summary.";
           },
         };
@@ -5036,12 +5054,215 @@ describe("Process DO — mechanical", () => {
         conversationId: "thread",
         archivedMessages: 2,
       });
+      expect(models).toEqual(["@cf/test/model", "fallback-model"]);
 
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
         const messages = process.store.getMessages({ conversationId: "thread" });
         expect(messages[0].content).toContain("Generated compact summary.");
         process.currentRun = null;
+      });
+    });
+
+    it("builds bounded compaction input from complete JSON records", async () => {
+      const pid = "mech-conversation-compact-jsonl";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      let transcript = "";
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        const store = process.store;
+        for (let index = 0; index < 5; index += 1) {
+          store.appendMessage("user", `${index}:${"x".repeat(index === 0 ? 50_000 : 10_000)}`, {
+            conversationId: "thread",
+          });
+        }
+        store.appendMessage("user", "keep", { conversationId: "thread" });
+        process.currentRun = {
+          runId: "config-source",
+          conversationId: "other",
+          config: {
+            executor: { kind: "process", pid },
+            provider: "workers-ai",
+            model: "@cf/test/model",
+            apiKey: "",
+            maxTokens: 4096,
+          },
+        };
+        process.generation = {
+          async generateText(request: any) {
+            const content = request.context.messages[0].content as string;
+            transcript = content
+              .slice("Conversation segment JSONL:\n".length)
+              .split("\n\nWrite the replacement summary", 1)[0];
+            return "Summary.";
+          },
+        };
+      });
+
+      const response = await stub.recvFrame(makeReq("proc.conversation.compact", {
+        conversationId: "thread",
+        keepLast: 1,
+        generateSummary: true,
+      })) as ResponseOkFrame;
+      expect(response.data).toMatchObject({ ok: true, archivedMessages: 5 });
+      expect(transcript.length).toBeLessThanOrEqual(24_000);
+      const records = transcript.split("\n").map((line) => JSON.parse(line));
+      expect(records).toEqual(expect.arrayContaining([
+        expect.objectContaining({ record_truncated: true }),
+        expect.objectContaining({ omitted_messages: expect.any(Number) }),
+      ]));
+
+      await runInDurableObject(stub, (instance: Process) => {
+        (instance as any).currentRun = null;
+      });
+    });
+
+    it("discards a generated compaction when its conversation changes", async () => {
+      const pid = "mech-conversation-compact-stale";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("user", "old", { conversationId: "thread" });
+        process.store.appendMessage("user", "keep", { conversationId: "thread" });
+        process.currentRun = {
+          runId: "config-source",
+          conversationId: "other",
+          config: {
+            executor: { kind: "process", pid },
+            provider: "workers-ai",
+            model: "@cf/test/model",
+            apiKey: "",
+            maxTokens: 4096,
+          },
+        };
+        process.generation = {
+          async generateText() {
+            process.store.resetConversation("thread");
+            return "Stale summary.";
+          },
+        };
+      });
+
+      const archivesBefore = (await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+        .objects.map((object) => object.key);
+      const response = await stub.recvFrame(makeReq("proc.conversation.compact", {
+        conversationId: "thread",
+        keepLast: 1,
+        generateSummary: true,
+      })) as ResponseOkFrame;
+      expect(response.data).toEqual({ ok: false, error: "Conversation changed during compaction" });
+      expect((await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+        .objects.map((object) => object.key)).toEqual(archivesBefore);
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        expect(process.store.listConversationSegments("thread")).toHaveLength(0);
+        process.currentRun = null;
+      });
+    });
+
+    it("rejects a concurrent compaction after another summary replaces its prefix", async () => {
+      const pid = "mech-conversation-compact-concurrent";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const archivesBefore = (await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+        .objects.map((object) => object.key);
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let generationCalls = 0;
+        let releaseFirst!: () => void;
+        let markFirstStarted!: () => void;
+        const firstBlocked = new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        const firstStarted = new Promise<void>((resolve) => {
+          markFirstStarted = resolve;
+        });
+        process.store.appendMessage("user", "old", { conversationId: "thread" });
+        process.store.appendMessage("user", "keep", { conversationId: "thread" });
+        process.currentRun = {
+          runId: "config-source",
+          conversationId: "other",
+          config: {
+            executor: { kind: "process", pid },
+            provider: "workers-ai",
+            model: "@cf/test/model",
+            apiKey: "",
+            maxTokens: 4096,
+          },
+        };
+        process.generation = {
+          async generateText() {
+            generationCalls += 1;
+            if (generationCalls === 1) {
+              markFirstStarted();
+              await firstBlocked;
+              return "First summary.";
+            }
+            return "Second summary.";
+          },
+        };
+
+        const first = process.recvFrame(makeReq("proc.conversation.compact", {
+          conversationId: "thread",
+          keepLast: 1,
+          generateSummary: true,
+        }));
+        await firstStarted;
+        const second = await process.recvFrame(makeReq("proc.conversation.compact", {
+          conversationId: "thread",
+          keepLast: 1,
+          generateSummary: true,
+        })) as ResponseOkFrame;
+        releaseFirst();
+        const stale = await first as ResponseOkFrame;
+        const messages = process.store.getMessages({ conversationId: "thread" });
+        const segments = process.store.listConversationSegments("thread");
+        process.currentRun = null;
+        return { second, stale, messages, segments };
+      });
+
+      expect(result.second.data).toMatchObject({ ok: true, archivedMessages: 1 });
+      expect(result.stale.data).toEqual({ ok: false, error: "Conversation changed during compaction" });
+      expect(result.messages[0].content).toContain("Second summary.");
+      expect(result.segments).toHaveLength(1);
+      expect((await env.STORAGE.list({ prefix: "root/conversations/thread/" })).objects
+        .filter((object) => !archivesBefore.includes(object.key)))
+        .toHaveLength(1);
+    });
+
+    it("rolls back the summary when recording its segment fails", async () => {
+      const pid = "mech-conversation-compact-transaction";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("user", "old", { conversationId: "thread" });
+        store.appendMessage("user", "keep", { conversationId: "thread" });
+        store.recordConversationSegment = () => {
+          throw new Error("segment insert failed");
+        };
+      });
+
+      const archivesBefore = (await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+        .objects.map((object) => object.key);
+      const response = await stub.recvFrame(makeReq("proc.conversation.compact", {
+        conversationId: "thread",
+        keepLast: 1,
+        summary: "Summary.",
+      })) as ResponseFrame;
+      expect(response).toMatchObject({
+        ok: false,
+        error: { message: "segment insert failed" },
+      });
+      expect((await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+        .objects.map((object) => object.key)).toEqual(archivesBefore);
+      await runInDurableObject(stub, (instance: Process) => {
+        expect((instance as any).store.getMessages({ conversationId: "thread" }))
+          .toEqual(expect.arrayContaining([
+            expect.objectContaining({ role: "user", content: "old" }),
+            expect.objectContaining({ role: "user", content: "keep" }),
+          ]));
       });
     });
 
@@ -5353,6 +5574,53 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("cancels manual archive upload by request id", async () => {
+      const pid = "mech-conversation-compact-cancel";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let markStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+          markStarted = resolve;
+        });
+        process.store.appendMessage("user", "old", { conversationId: "thread" });
+        process.store.appendMessage("user", "keep", { conversationId: "thread" });
+        process.archiveMessageRecords = async (
+          _key: string,
+          _messages: unknown[],
+          signal: AbortSignal,
+        ) => {
+          markStarted();
+          await new Promise<void>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        };
+
+        const requestId = "compact-cancel-1";
+        const execution = process.recvFrame({
+          type: "req",
+          id: requestId,
+          call: "proc.conversation.compact",
+          args: { conversationId: "thread", keepLast: 1, summary: "Summary." },
+        });
+        await started;
+        await process.recvFrame({
+          type: "sig",
+          signal: REQUEST_CANCEL_SIGNAL,
+          payload: { id: requestId, reason: "new user message" },
+        });
+
+        await expect(execution).resolves.toMatchObject({
+          type: "res",
+          id: requestId,
+          ok: true,
+          data: { ok: false, error: "Compaction was cancelled" },
+        });
+        expect(process.store.listConversationSegments("thread")).toHaveLength(0);
+      });
+    });
+
     it("gets and sets visible conversation context policy", async () => {
       const pid = "mech-conversation-policy";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -5406,7 +5674,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("auto-compacts before the model call when policy threshold is crossed", async () => {
+    it("auto-compacts once before falling back while the rebuilt context still fits", async () => {
       const pid = "mech-conversation-auto-compact";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -5416,18 +5684,35 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = async (signal: string, payload: unknown) => {
           emitted.push({ signal, payload });
         };
+        process.updateContextState = async () => ({ pressure: 0.95 });
+        let generationCalls = 0;
+        let summaryCalls = 0;
         process.generation = {
           async generate(request: any) {
+            generationCalls += 1;
             const serialized = JSON.stringify(request.context);
             expect(serialized).toContain("Context that must stay live.");
             expect(serialized).toContain("Auto compact summary.");
             expect(serialized).not.toContain("old context A");
+            if (generationCalls === 1) {
+              return {
+                role: "assistant",
+                content: [],
+                api: "test",
+                provider: request.config.provider,
+                model: request.config.model,
+                stopReason: "error",
+                errorMessage: "Custom provider HTTP 403: not authenticated",
+                usage: testUsage(1, 0),
+                timestamp: Date.now(),
+              };
+            }
             return {
               role: "assistant",
               content: [{ type: "text", text: "after compaction" }],
               api: "test",
-              provider: "test",
-              model: "test",
+              provider: request.config.provider,
+              model: request.config.model,
               usage: {
                 input: 100,
                 output: 10,
@@ -5447,6 +5732,7 @@ describe("Process DO — mechanical", () => {
             };
           },
           async generateText(request: any) {
+            summaryCalls += 1;
             expect(request.options).toMatchObject({ maxTokens: 768, reasoning: "off" });
             expect(JSON.stringify(request.context)).toContain("old context A");
             return "Auto compact summary.";
@@ -5459,7 +5745,7 @@ describe("Process DO — mechanical", () => {
         process.store.setValue("conversationPolicy:default", JSON.stringify({
           conversationId: "default",
           overflow: "auto-compact",
-          compactAtPressure: 0.01,
+          compactAtPressure: 0.9,
           keepLast: 1,
           updatedAt: Date.now(),
         }));
@@ -5477,6 +5763,15 @@ describe("Process DO — mechanical", () => {
             contextWindowTokens: 1000,
             contextWindowSource: "config",
             maxContextBytes: 32768,
+            fallbacks: [{
+              provider: "openrouter",
+              model: "fallback-model",
+              apiKey: "fallback-key",
+              maxTokens: 100,
+              contextWindowTokens: 1000,
+              contextWindowSource: "config",
+              generationTimeoutMs: 180000,
+            }],
           },
           tools: [],
           devices: [],
@@ -5486,11 +5781,15 @@ describe("Process DO — mechanical", () => {
         await process.runTick("run-auto-compact");
         return {
           emitted,
+          generationCalls,
+          summaryCalls,
           messages: process.store.getMessages(),
           segments: process.store.listConversationSegments(),
         };
       });
 
+      expect(emitted.generationCalls).toBe(2);
+      expect(emitted.summaryCalls).toBe(1);
       expect(emitted.messages.map((message: any) => [message.role, message.content])).toEqual([
         ["system", expect.stringContaining("Auto compact summary.")],
         ["user", "Context that must stay live."],
@@ -5508,6 +5807,80 @@ describe("Process DO — mechanical", () => {
         "conversation.compacted",
         "conversation.auto_compacted",
       ]);
+    });
+
+    it("stops when the retained tail is still too large after auto-compaction", async () => {
+      const pid = "mech-conversation-auto-compact-insufficient";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        let generated = false;
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            generated = true;
+            throw new Error("chat generation should not run");
+          },
+          async generateText() {
+            return "Compact summary.";
+          },
+        };
+        process.store.appendMessage("user", "old context");
+        process.store.appendMessage("user", `retained ${"x".repeat(4000)}`);
+        process.store.setValue("conversationPolicy:default", JSON.stringify({
+          conversationId: "default",
+          overflow: "auto-compact",
+          compactAtPressure: 0.5,
+          keepLast: 1,
+          updatedAt: Date.now(),
+        }));
+        process.currentRun = {
+          runId: "run-auto-compact-insufficient",
+          conversationId: "default",
+          config: {
+            executor: { kind: "process", pid },
+            provider: "workers-ai",
+            model: "@cf/test/model",
+            apiKey: "",
+            maxTokens: 100,
+            contextWindowTokens: 1000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.runTick("run-auto-compact-insufficient");
+        return {
+          emitted,
+          generated,
+          currentRun: process.currentRun,
+          messages: process.store.getMessages(),
+          segments: process.store.listConversationSegments(),
+        };
+      });
+
+      expect(result.generated).toBe(false);
+      expect(result.currentRun).toBeNull();
+      expect(result.segments).toHaveLength(1);
+      expect(result.messages.at(-1)?.content).toContain(
+        "Auto-compaction could not reduce this conversation below its context limit.",
+      );
+      expect(result.emitted).toEqual(expect.arrayContaining([
+        {
+          signal: "proc.run.finished",
+          payload: expect.objectContaining({
+            status: "error",
+            reason: "context.auto_compact.insufficient",
+          }),
+        },
+      ]));
     });
 
     it("surfaces provider account failures during auto-compaction", async () => {

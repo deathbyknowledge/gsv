@@ -288,7 +288,11 @@ describe("completeWithWorkersAi", () => {
 
   it("does not retry timed-out tool requests without tools", async () => {
     vi.useFakeTimers();
-    const run = vi.fn(() => new Promise(() => {}));
+    let bindingSignal: AbortSignal | undefined;
+    const run = vi.fn((_model: string, _input: unknown, options?: { signal?: AbortSignal }) => {
+      bindingSignal = options?.signal;
+      return new Promise(() => {});
+    });
     (env as unknown as { AI: { run: typeof run } }).AI = { run };
 
     try {
@@ -306,9 +310,41 @@ describe("completeWithWorkersAi", () => {
       await vi.advanceTimersByTimeAsync(10);
       await rejection;
       expect(run).toHaveBeenCalledTimes(1);
+      expect(bindingSignal?.aborted).toBe(true);
+      expect(bindingSignal?.reason).toMatchObject({
+        name: "TimeoutError",
+        message: "Workers AI generation timed out after 10ms",
+      });
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("cancels the binding and skips the tool fallback when the caller aborts", async () => {
+    const controller = new AbortController();
+    let bindingSignal: AbortSignal | undefined;
+    const run = vi.fn((_model: string, _input: unknown, options?: { signal?: AbortSignal }) => {
+      bindingSignal = options?.signal;
+      return new Promise((_resolve, reject) => {
+        bindingSignal?.addEventListener("abort", () => reject(bindingSignal?.reason), { once: true });
+      });
+    });
+    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+
+    const completion = completeWithWorkersAi({
+      modelName: DEFAULT_WORKERS_AI_MODEL,
+      maxTokens: 128,
+      timeoutMs: 1000,
+      signal: controller.signal,
+      context: toolContext(),
+    });
+    const reason = new Error("request cancelled");
+    controller.abort(reason);
+
+    await expect(completion).rejects.toBe(reason);
+    expect(bindingSignal).not.toBe(controller.signal);
+    expect(bindingSignal?.reason).toBe(reason);
+    expect(run).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -428,6 +464,43 @@ describe("streamWithWorkersAi", () => {
     expect(response.content).toEqual([
       { type: "thinking", thinking: "thinking only" },
     ]);
+  });
+
+  it("cancels an active stream when the caller aborts", async () => {
+    const controller = new AbortController();
+    let bindingSignal: AbortSignal | undefined;
+    let cancelledWith: unknown;
+    const body = new ReadableStream<Uint8Array>({
+      cancel(reason) {
+        cancelledWith = reason;
+      },
+    });
+    const run = vi.fn((_model: string, _input: unknown, options?: { signal?: AbortSignal }) => {
+      bindingSignal = options?.signal;
+      return Promise.resolve(body);
+    });
+    (env as unknown as { AI: { run: typeof run } }).AI = { run };
+
+    const stream = streamWithWorkersAi({
+      modelName: DEFAULT_WORKERS_AI_MODEL,
+      maxTokens: 128,
+      timeoutMs: 1000,
+      signal: controller.signal,
+      context: {
+        messages: [{ role: "user", content: "keep going", timestamp: 1 }],
+      },
+    });
+    const reason = new Error("request cancelled");
+    controller.abort(reason);
+
+    const response = await stream.result();
+    expect(bindingSignal).not.toBe(controller.signal);
+    expect(bindingSignal?.reason).toBe(reason);
+    expect(cancelledWith).toBe(reason);
+    expect(response).toMatchObject({
+      stopReason: "aborted",
+      errorMessage: "request cancelled",
+    });
   });
 });
 

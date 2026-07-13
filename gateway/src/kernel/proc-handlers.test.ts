@@ -343,7 +343,14 @@ describe("proc handlers", () => {
     );
   });
 
-  it("forwards codemode.run cancellation to the Process request", async () => {
+  it.each([
+    { call: "codemode.run", id: "codemode-1", args: { pid: "proc-1", code: "return 1" } },
+    {
+      call: "proc.conversation.compact",
+      id: "compact-1",
+      args: { pid: "proc-1", keepLast: 1, generateSummary: true },
+    },
+  ])("forwards $call cancellation to the Process request", async ({ call, id, args }) => {
     const controller = new AbortController();
     sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
       if (frame.type === "sig") {
@@ -365,9 +372,9 @@ describe("proc handlers", () => {
     } as unknown as KernelContext;
     const request = forwardToProcess({
       type: "req",
-      id: "codemode-1",
-      call: "codemode.run",
-      args: { pid: "proc-1", code: "return 1" },
+      id,
+      call,
+      args,
     } as RequestFrame, ctx);
     await vi.waitFor(() => expect(sendFrameToProcessMock).toHaveBeenCalledOnce());
 
@@ -377,7 +384,7 @@ describe("proc handlers", () => {
     expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(2, "proc-1", {
       type: "sig",
       signal: "request.cancel",
-      payload: { id: "codemode-1", reason: "new user message" },
+      payload: { id, reason: "new user message" },
     });
   });
 
