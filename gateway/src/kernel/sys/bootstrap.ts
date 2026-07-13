@@ -7,7 +7,7 @@ import { SERVER_RELEASE } from "../../version";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = /^v\d+\.\d+\.\d+$/.test(SERVER_RELEASE)
-  ? SERVER_RELEASE
+  ? `refs/tags/${SERVER_RELEASE}`
   : "main";
 const DEFAULT_GSV_MANUAL_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv-manual";
 const DEFAULT_GSV_MANUAL_UPSTREAM_REF = "main";
