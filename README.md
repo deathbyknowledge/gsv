@@ -39,7 +39,7 @@ Under the hood it's a distributed OS: agents are durable processes with identiti
 
 ```bash
 # Install the CLI
-curl -sSL https://install.gsv.space | bash
+curl -fsSL https://install.gsv.space | bash
 # Deploy all components into your own Cloudflare account
 gsv infra deploy --api-token <CLOUDFLARE-API-TOKEN>
 ```
