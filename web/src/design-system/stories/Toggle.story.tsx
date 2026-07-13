@@ -32,6 +32,8 @@ const story: Story = {
           <Toggle on label="WITH DESCRIPTION" description="Keeps the agent running after you close the session." />
           <Toggle on={false} status="error" message="Could not enable" label="ERROR" />
           <Toggle on status="success" message="Enabled" label="SUCCESS" />
+          <Toggle on status="info" message="Takes effect next run" label="INFO" />
+          <Toggle on status="warning" message="Keeps the agent billing" label="WARNING" />
         </div>
       </div>
     </div>

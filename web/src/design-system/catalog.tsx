@@ -61,6 +61,7 @@ import confirmModal from "./stories/ConfirmModal.story";
 import agentCard from "./stories/AgentCard.story";
 import crewTile from "./stories/CrewTile.story";
 import agentEditor from "./stories/AgentEditor.story";
+import agentToolsPanel from "./stories/AgentToolsPanel.story";
 import authLayout from "./stories/AuthLayout.story";
 import link from "./stories/Link.story";
 
@@ -121,6 +122,7 @@ const STORIES: Story[] = [
   agentCard,
   crewTile,
   agentEditor,
+  agentToolsPanel,
   // Templates
   settingsDashboard,
   crewPage,

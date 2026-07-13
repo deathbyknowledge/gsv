@@ -32,6 +32,19 @@ const story: Story = {
           />
         </div>
       </div>
+      <div class="ds-cell">
+        <div class="ds-label">Back enabled + close (onBack · onClose)</div>
+        <div class="ds-row">
+          <ConsoleHeader
+            c0="FLEET"
+            c1="PRIMARY NODE"
+            c2=""
+            tail="GSV · PRIMARY NODE"
+            onBack={() => {}}
+            onClose={() => {}}
+          />
+        </div>
+      </div>
     </div>
   ),
 };

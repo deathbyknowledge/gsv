@@ -31,6 +31,7 @@ const story: Story = {
         <div class="ds-label">Status</div>
         <div class="ds-row">
           <ObjectCard label="BUILD NODE" type="COMPUTE HOST" status="error" blurb="Lost contact 4m ago. Last heartbeat failed." />
+          <ObjectCard label="RELAY NODE" type="COMPUTE HOST" status="warn" blurb="Running hot. Throttling background jobs." />
           <ObjectCard label="EDGE NODE" type="EDGE NODE" status="idle" blurb="Powered down overnight. Wakes on schedule." />
         </div>
       </div>

@@ -30,6 +30,8 @@ const story: Story = {
           <Radio label="MODE" requirement="optional" description="Choose how the agent handles tool calls." value={1} />
           <Radio label="MODE" status="error" message="Selection required" value={0} />
           <Radio label="MODE" status="success" message="Locked in" value={2} />
+          <Radio label="MODE" status="info" message="ASK is the default" value={1} />
+          <Radio label="MODE" status="warning" message="DENY blocks all tools" value={2} />
           <Radio disabled value={1} />
         </div>
       </div>

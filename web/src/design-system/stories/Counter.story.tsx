@@ -30,6 +30,7 @@ const story: Story = {
           <Counter label="REPLICAS" value={3} unit="x" step={1} />
           <Counter label="MEMORY" value={4} unit="GB" min={1} max={64} step={2} />
           <Counter label="REQUIRED" requirement="required" value={1} />
+          <Counter label="OPTIONAL" requirement="optional" value={1} />
           <Counter
             label="WITH DESCRIPTION"
             description="Number of parallel workers to spin up."
@@ -37,6 +38,8 @@ const story: Story = {
           />
           <Counter label="ERROR" status="error" message="Exceeds quota" value={100} />
           <Counter label="SUCCESS" status="success" message="Within limits" value={8} />
+          <Counter label="INFO" status="info" message="Defaults to 4 when unset" value={4} />
+          <Counter label="WARNING" status="warning" message="High counts slow startup" value={32} />
           <Counter label="DISABLED" disabled value={5} />
         </div>
       </div>

@@ -4,7 +4,7 @@ import type { Story } from "../story";
 const story: Story = {
   title: "Button",
   group: "Forms",
-  blurb: "primary · secondary · danger · dangerGhost · link",
+  blurb: "primary · secondary · success · danger · dangerGhost · link",
   render: () => (
     <div class="ds-col">
       <div class="ds-cell">
