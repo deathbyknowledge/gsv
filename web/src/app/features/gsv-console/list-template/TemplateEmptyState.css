@@ -51,8 +51,8 @@
 }
 
 .gsv-template-empty-hint .gsv-space-hint-min {
-  /* size normalized to .gsv-section (14px); tracking kept as a local override */
-  font-size: 0.875rem;
+  /* size from .gsv-section (16px); tracking kept as a local override */
+  font-size: 1rem;
   letter-spacing: 0.16em;
   opacity: 1;
 }

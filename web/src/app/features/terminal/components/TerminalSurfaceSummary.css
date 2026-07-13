@@ -168,7 +168,7 @@
 }
 
 .terminal-host-menu-head {
-  /* size from .gsv-sublabel (10px); tracking kept */
+  /* size from .gsv-sublabel (12px); tracking kept */
   padding: 10px 14px;
   border-bottom: 1px solid var(--rule-inner);
   background: var(--header-bar);
@@ -186,7 +186,7 @@
 }
 
 .terminal-host-state {
-  /* size from .gsv-sublabel (10px); tracking kept */
+  /* size from .gsv-sublabel (12px); tracking kept */
   display: flex;
   align-items: center;
   gap: 8px;

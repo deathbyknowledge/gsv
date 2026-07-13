@@ -76,7 +76,7 @@
   outline: none;
 }
 .gsv-guide-kicker {
-  /* size + family from .gsv-sublabel (10px, up from 9px); tracking kept wider.
+  /* size + family from .gsv-sublabel (12px); tracking kept wider.
      Inverted light surface — literal colors kept intentionally (not tokens). */
   margin: 0;
   letter-spacing: 0.28em;
@@ -119,7 +119,7 @@
   border-color: #bdb6ea;
 }
 .gsv-guide-msg-who {
-  /* size + family from .gsv-sublabel (10px, up from 8.5px); tracking matches */
+  /* size + family from .gsv-sublabel (12px); tracking matches */
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: #6a6498;

@@ -36,7 +36,7 @@
 }
 
 .gsv-sm-meta {
-  /* size + family from .gsv-sublabel (10px, up from 9px sub-floor); tracking kept */
+  /* size + family from .gsv-sublabel (12px); tracking kept */
   display: flex;
   align-items: center;
   gap: 10px;

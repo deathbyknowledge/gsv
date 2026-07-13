@@ -38,7 +38,7 @@
   color: var(--accent-bright);
 }
 .gsv-provision-kicker {
-  /* size + family from .gsv-sublabel (10px, up from 9px); tracking kept wider */
+  /* size + family from .gsv-sublabel (12px); tracking kept wider */
   letter-spacing: 0.28em;
   text-transform: uppercase;
   color: var(--text-dim);
@@ -67,7 +67,7 @@
   background: var(--panel-2);
 }
 .gsv-provision-note strong {
-  /* size + family from .gsv-sublabel (10px, up from 9px); tracking matches */
+  /* size + family from .gsv-sublabel (12px); tracking matches */
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--accent-bright);

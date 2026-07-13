@@ -129,7 +129,7 @@
   border-radius: 1px;
 }
 .gsv-cb-msg {
-  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor) */
+  /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.1em;
 }
 .gsv-cb-fld.is-error .gsv-cb-msg {

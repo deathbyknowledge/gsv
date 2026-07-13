@@ -31,7 +31,7 @@
 }
 
 .gsv-setup-mode-kicker {
-  /* size + family from .gsv-sublabel (10px, up from 8.5px); tracking kept wider */
+  /* size + family from .gsv-sublabel (12px); tracking kept wider */
   display: block;
   letter-spacing: 0.26em;
   text-transform: uppercase;
@@ -43,7 +43,7 @@
 }
 
 .gsv-setup-mode-card strong {
-  /* size + family from .gsv-section (14px uppercase heading); tracking kept narrower */
+  /* size + family from .gsv-section (16px uppercase heading); tracking kept narrower */
   display: block;
   font-weight: 600;
   letter-spacing: 0.14em;

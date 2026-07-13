@@ -99,7 +99,7 @@
 }
 
 .gsv-messenger-card-name {
-  /* size + family from .gsv-section (14px); bold + tighter tracking kept intentionally */
+  /* size + family from .gsv-section (16px); bold + tighter tracking kept intentionally */
   min-width: 0;
   overflow-wrap: anywhere;
   font-weight: 700;
@@ -131,7 +131,7 @@
 }
 
 .gsv-messenger-card-bots-label {
-  /* size + family from .gsv-sublabel (10px, up from 9.5px sub-floor); .22em tracking kept */
+  /* size + family from .gsv-sublabel (12px); .22em tracking kept */
   letter-spacing: 0.22em;
   color: var(--meta);
   padding-bottom: 2px;
@@ -142,7 +142,7 @@
 }
 
 .gsv-messenger-card-hint {
-  /* size from .gsv-label (11px); tracking kept intentionally */
+  /* size from .gsv-label (13px); tracking kept intentionally */
   letter-spacing: 0.06em;
   color: var(--text-dim);
 }
@@ -158,7 +158,7 @@
   background: transparent;
   border: none;
   border-top: 1px solid var(--rule-inner);
-  /* size + family from .gsv-label (11px); tracking kept intentionally */
+  /* size + family from .gsv-label (13px); tracking kept intentionally */
   letter-spacing: 0.04em;
   color: var(--link);
   cursor: pointer;

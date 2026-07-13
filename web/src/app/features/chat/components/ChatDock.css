@@ -119,7 +119,7 @@
   align-items: center;
   gap: 6px;
   color: #b6b1ff;
-  font-size: 0.625rem; /* 10px, size from .gsv-sublabel */
+  font-size: 0.75rem; /* 12px, size from .gsv-sublabel */
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -181,7 +181,7 @@
 }
 
 .gsv-chat-empty strong {
-  /* size + family from .gsv-listitem (12px); bold weight + tracking + case kept */
+  /* size + family from .gsv-listitem (14px); bold weight + tracking + case kept */
   color: var(--text);
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -251,7 +251,7 @@
 }
 
 .gsv-chat-min small {
-  /* size + family from .gsv-label (11px); italic, weight + tracking kept */
+  /* size + family from .gsv-label (13px); italic, weight + tracking kept */
   color: var(--accent-bright);
   font-weight: 400;
   font-style: italic;
@@ -395,7 +395,7 @@
   gap: 7px;
   max-width: 100%;
   margin-top: 7px;
-  /* size + family from .gsv-sublabel (10px); tracking, weight + line-height kept */
+  /* size + family from .gsv-sublabel (12px); tracking, weight + line-height kept */
   font-weight: 400;
   letter-spacing: 0.12em;
   line-height: 1.2;
@@ -521,7 +521,7 @@
   color: #b6b1ff;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -717,7 +717,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-title);
-  font-size: 0.6875rem; /* 10.5px → size from .gsv-label (11px) */
+  font-size: 0.8125rem; /* size from .gsv-label (13px) */
   letter-spacing: 0.16em;
   text-overflow: ellipsis;
   text-transform: uppercase;
@@ -727,7 +727,7 @@
 .gsv-chat-popover header small {
   flex: none;
   color: #7d78b8;
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
@@ -759,7 +759,7 @@
 .gsv-chat-popover-label,
 .gsv-chat-context-grid span {
   color: var(--text-dim);
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.2em;
   text-transform: uppercase;
 }
@@ -770,7 +770,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--node-label);
-  font-size: 0.6875rem; /* 11px, size from .gsv-label */
+  font-size: 0.8125rem; /* 13px, size from .gsv-label */
   font-weight: 500;
   letter-spacing: 0.04em;
   text-overflow: ellipsis;
@@ -859,7 +859,7 @@
 .gsv-chat-model-row small {
   flex: none;
   color: #7d78b8;
-  font-size: 0.625rem; /* 7.5px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
 }
 
@@ -878,14 +878,14 @@
 
 .gsv-chat-model-label strong {
   color: var(--node-label);
-  font-size: 0.6875rem; /* 11px, size from .gsv-label */
+  font-size: 0.8125rem; /* 13px, size from .gsv-label */
   font-style: normal;
   font-weight: 500;
 }
 
 .gsv-chat-model-label em {
   color: #7d78b8;
-  font-size: 0.625rem; /* 8px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   font-style: normal;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -896,7 +896,7 @@
   display: grid;
   place-items: center;
   color: #7d78b8;
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.14em;
 }
 
@@ -915,7 +915,7 @@
   color: #9aa4b8;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.1em;
 }
 
@@ -975,7 +975,7 @@ button.gsv-chat-task-row:focus-visible {
   min-width: 0;
   overflow: hidden;
   color: var(--text);
-  font-size: 0.6875rem; /* 11px, size from .gsv-label */
+  font-size: 0.8125rem; /* 13px, size from .gsv-label */
   letter-spacing: 0.03em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -984,7 +984,7 @@ button.gsv-chat-task-row:focus-visible {
 .gsv-chat-task-row small {
   flex: none;
   color: #9a95cf;
-  font-size: 0.625rem; /* 8px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
 }
 
@@ -1107,7 +1107,7 @@ button.gsv-chat-task-row:focus-visible {
   overflow: hidden;
   color: var(--text);
   font-family: var(--gsv-font-mono);
-  font-size: 0.6875rem; /* 11px, size from .gsv-label */
+  font-size: 0.8125rem; /* 13px, size from .gsv-label */
   font-weight: 500;
   letter-spacing: 0.04em;
   line-height: 1.2;
@@ -1119,7 +1119,7 @@ button.gsv-chat-task-row:focus-visible {
 .gsv-chat-agent-crew-tile > span:last-child {
   color: #a8a2dc;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
@@ -1171,7 +1171,7 @@ button.gsv-chat-task-row:focus-visible {
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 5px;
-  /* size + family from .gsv-sublabel (10px, up from 9px); weight + tracking kept */
+  /* size + family from .gsv-sublabel (12px); weight + tracking kept */
   font-weight: 400;
   letter-spacing: 0.1em;
   color: var(--text-dim);
@@ -1208,7 +1208,7 @@ button.gsv-chat-task-row:focus-visible {
   gap: 8px;
   min-width: 0;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 10px, size from .gsv-sublabel */
+  font-size: 0.75rem; /* 12px, size from .gsv-sublabel */
   letter-spacing: 0.06em;
   line-height: 1.5;
   color: #7d78b8;
@@ -1235,7 +1235,7 @@ button.gsv-chat-task-row:focus-visible {
   margin-top: 8px;
   color: var(--text-dim);
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.1em;
 }
 
@@ -1380,7 +1380,7 @@ button.gsv-chat-task-row:focus-visible {
 .gsv-chat-hil small {
   color: var(--text-dim);
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -1433,7 +1433,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 0 12px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
 }
 
@@ -1515,7 +1515,7 @@ button.gsv-chat-task-row:focus-visible {
 .gsv-chat-archive-segments button,
 .gsv-chat-archive-empty {
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -1529,7 +1529,7 @@ button.gsv-chat-task-row:focus-visible {
 
 .gsv-chat-archive > header strong {
   color: #e6e4ff;
-  font-size: 0.625rem; /* 10px, size from .gsv-sublabel */
+  font-size: 0.75rem; /* 12px, size from .gsv-sublabel */
   font-weight: 500;
 }
 
@@ -1637,7 +1637,7 @@ button.gsv-chat-task-row:focus-visible {
   gap: 8px;
   flex-wrap: wrap;
   color: #a8a2dc;
-  /* size + family from .gsv-sublabel (10px, up from 8.5px); weight + tracking kept */
+  /* size + family from .gsv-sublabel (12px); weight + tracking kept */
   font-weight: 400;
   letter-spacing: 0.12em;
 }
@@ -1814,7 +1814,7 @@ button.gsv-chat-task-row:focus-visible {
   border-bottom: 1px solid var(--rule-inner);
   color: #9aa4b8;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -1958,7 +1958,7 @@ button.gsv-chat-task-row:focus-visible {
   background: #0c0a22;
   color: #cdd2e0;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 10px, size from .gsv-sublabel */
+  font-size: 0.75rem; /* 12px, size from .gsv-sublabel */
   letter-spacing: 0.04em;
 }
 
@@ -2130,7 +2130,7 @@ button.gsv-chat-task-row:focus-visible {
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  /* size + family from .gsv-sublabel (10px, up from 9px); weight + tracking kept */
+  /* size + family from .gsv-sublabel (12px); weight + tracking kept */
   font-weight: 400;
   letter-spacing: 0.1em;
   color: var(--text-dim);
@@ -2323,7 +2323,7 @@ button.gsv-chat-task-row:focus-visible {
   flex: none;
   color: var(--online);
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.14em;
 }
 
@@ -2349,7 +2349,7 @@ button.gsv-chat-task-row:focus-visible {
   border-bottom: 1px solid var(--rule-inner);
   color: var(--text-dim);
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
@@ -2397,7 +2397,7 @@ button.gsv-chat-task-row:focus-visible {
   align-items: center;
   color: #9a94ff;
   cursor: pointer;
-  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.16em;
 }
 
@@ -2405,7 +2405,7 @@ button.gsv-chat-task-row:focus-visible {
   display: block;
   margin: 8px 0 4px;
   color: #7d78b8;
-  font-size: 0.625rem; /* 8px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.16em;
 }
 
@@ -2427,7 +2427,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 8px 14px 12px;
   color: var(--text-dim);
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.1em;
 }
 
@@ -2505,7 +2505,7 @@ button.gsv-chat-task-row:focus-visible {
 .gsv-chat-tool-group-head small {
   color: var(--online);
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.14em;
 }
 
@@ -2563,7 +2563,7 @@ button.gsv-chat-task-row:focus-visible {
   border-bottom: 1px solid var(--rule-inner);
   color: var(--text-dim);
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
@@ -2669,7 +2669,7 @@ button.gsv-chat-task-row:focus-visible {
   color: #9a94ff;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.16em;
   padding: 0;
 }
@@ -2705,7 +2705,7 @@ button.gsv-chat-task-row:focus-visible {
   display: block;
   margin: 7px 0 4px;
   color: #7d78b8;
-  font-size: 0.625rem; /* 8px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.16em;
 }
 
@@ -2762,7 +2762,7 @@ button.gsv-chat-task-row:focus-visible {
   align-items: center;
   color: #9a94ff;
   cursor: pointer;
-  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.16em;
 }
 
@@ -2770,7 +2770,7 @@ button.gsv-chat-task-row:focus-visible {
   display: block;
   margin: 7px 0 4px;
   color: #7d78b8;
-  font-size: 0.625rem; /* 8px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.16em;
 }
 
@@ -2827,7 +2827,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 0 12px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42);
 }
@@ -2848,7 +2848,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 0 12px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
 }
 
@@ -2888,7 +2888,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 0 11px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
 }
 
@@ -2942,7 +2942,7 @@ button.gsv-chat-task-row:focus-visible {
 
   .gsv-shell-root .gsv-chat-agent-model {
     gap: 5px;
-    font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
+    font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   }
 
   .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control {

@@ -108,7 +108,7 @@
   cursor: pointer;
   color: #c7c2ee;
   font-family: var(--gsv-font-mono);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem; /* size from .gsv-label (13px) */
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -116,7 +116,7 @@
 
 .gsv-console-advanced-summary span:last-child {
   color: #8f89c6;
-  font-size: 0.625rem;
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
 }
 
 .gsv-console-advanced-fields-grid {
@@ -144,7 +144,7 @@
   margin: 0;
   color: var(--update);
   font-family: var(--gsv-font-mono);
-  font-size: 0.875rem;
+  font-size: 1rem; /* size from .gsv-section (16px) */
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -160,7 +160,7 @@
 }
 
 .gsv-console-settings-status {
-  /* size + family from .gsv-sublabel (10px); tracking + transform kept */
+  /* size + family from .gsv-sublabel (12px); tracking + transform kept */
   min-width: 0;
   color: #9a95cf;
   letter-spacing: 0.14em;
@@ -191,7 +191,7 @@
 }
 
 .gsv-console-secret-label {
-  /* size + family from .gsv-sublabel (10px); tracking + transform kept */
+  /* size + family from .gsv-sublabel (12px); tracking + transform kept */
   color: var(--text-hi);
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -216,7 +216,7 @@
 .gsv-console-secret-state span {
   color: var(--online);
   font-family: var(--gsv-font-mono);
-  font-size: 0.6875rem; /* 11px, normalized to .gsv-label */
+  font-size: 0.8125rem; /* size from .gsv-label (13px) */
   font-weight: 700;
   letter-spacing: 0.14em;
 }
@@ -228,7 +228,7 @@
 .gsv-console-secret-state small {
   color: #8f89c6;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px, normalized up to .gsv-sublabel floor */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.1em;
   text-align: right;
   text-transform: uppercase;

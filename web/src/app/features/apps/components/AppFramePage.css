@@ -55,7 +55,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-hi);
-  font-size: 0.75rem; /* size from .gsv-listitem (12px) */
+  font-size: 0.875rem; /* size from .gsv-listitem (14px) */
   font-weight: 700;
   letter-spacing: 0.12em;
   text-overflow: ellipsis;
@@ -68,7 +68,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-dim);
-  font-size: 0.625rem; /* size from .gsv-sublabel (10px, up from 9px sub-floor) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.14em;
   text-overflow: ellipsis;
   text-transform: uppercase;
@@ -111,7 +111,7 @@
 .gsv-app-frame-empty h2 {
   margin: 0;
   color: var(--text-hi);
-  font-size: 1.1875rem; /* size from .gsv-title (19px, up from 18px) */
+  font-size: 1.3125rem; /* size from .gsv-title (21px) */
   line-height: 1.1;
   letter-spacing: 0.08em;
 }

@@ -41,13 +41,13 @@
 }
 
 .gsv-objcard-cat {
-  /* size + tracking from .gsv-sublabel (10px, up from 8px sub-floor) */
+  /* size + tracking from .gsv-sublabel (12px) */
   text-transform: uppercase;
   color: var(--text-dim);
 }
 
 .gsv-objcard-name {
-  /* size + family from .gsv-listitem (12px); semibold + tracking kept intentionally */
+  /* size + family from .gsv-listitem (14px); semibold + tracking kept intentionally */
   letter-spacing: 0.08em;
   font-weight: 500;
   color: var(--accent-bright);

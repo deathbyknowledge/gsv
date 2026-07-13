@@ -127,7 +127,7 @@
   border: 1px solid var(--rule-inner);
   background: color-mix(in srgb, var(--field) 76%, transparent);
   color: var(--text-muted);
-  /* size + family from .gsv-sublabel (10px); line-height + tracking kept */
+  /* size + family from .gsv-sublabel (12px); line-height + tracking kept */
   line-height: 1;
   letter-spacing: 0.1em;
   white-space: nowrap;
@@ -480,13 +480,13 @@
 
 .repositories-search-path,
 .repositories-commit-message {
-  /* size from .gsv-label (11px) */
+  /* size from .gsv-label (13px) */
   color: var(--text);
 }
 
 .repositories-search-line,
 .repositories-commit-hash {
-  /* size from .gsv-sublabel (10px, up from 9px); tracking + transform kept */
+  /* size from .gsv-sublabel (12px); tracking + transform kept */
   color: var(--accent);
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -516,7 +516,7 @@
 .repositories-state-copy strong {
   color: var(--text);
   font-family: var(--gsv-font-mono);
-  font-size: 0.75rem; /* value-normalized from 12px (.gsv-listitem scale) */
+  font-size: 0.875rem; /* size from .gsv-listitem (14px) */
   letter-spacing: 0.14em;
 }
 
@@ -546,7 +546,7 @@
 
 .repositories-file-meta small {
   color: var(--text-muted);
-  font-size: 0.6875rem; /* value-normalized from 11px (.gsv-label scale) */
+  font-size: 0.8125rem; /* size from .gsv-label (13px) */
 }
 
 .repositories-code-block {
@@ -626,13 +626,13 @@
   white-space: nowrap;
   color: var(--text);
   font-family: var(--gsv-font-mono);
-  font-size: 0.75rem; /* value-normalized from 12px (.gsv-listitem scale) */
+  font-size: 0.875rem; /* size from .gsv-listitem (14px) */
   letter-spacing: 0;
 }
 
 .repositories-diff-head span {
   color: var(--text-muted);
-  font-size: 0.6875rem; /* value-normalized from 11px (.gsv-label scale) */
+  font-size: 0.8125rem; /* size from .gsv-label (13px) */
 }
 
 .repositories-diff-file {
@@ -691,7 +691,7 @@
 }
 
 .repositories-empty-inline {
-  /* size + family from .gsv-sublabel (10px); tracking kept */
+  /* size + family from .gsv-sublabel (12px); tracking kept */
   padding: 18px 14px;
   /* Reading-width: full-width inline notice inside the results region. */
   padding-inline: max(14px, var(--gsv-gutter));

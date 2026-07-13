@@ -80,7 +80,7 @@
   font-weight: 600;
 }
 .gsv-ti-affix {
-  /* size from .gsv-label (11px); tracking kept */
+  /* size from .gsv-label (13px); tracking kept */
   flex: none;
   letter-spacing: 0.1em;
   color: #7d78b8;
@@ -94,7 +94,7 @@
   border: 0;
   background: transparent;
   font: inherit;
-  /* size + family from .gsv-sublabel (10px, up from 9px sub-floor); tracking kept */
+  /* size + family from .gsv-sublabel (12px); tracking kept */
   letter-spacing: 0.16em;
   color: #7d78b8;
   cursor: pointer;
@@ -132,7 +132,7 @@
   outline: none;
 }
 .gsv-ti-counter {
-  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor); tracking kept */
+  /* size from .gsv-sublabel (12px); tracking kept */
   letter-spacing: 0.1em;
   color: #565199;
 }
@@ -152,13 +152,13 @@
   min-height: 13px;
 }
 .gsv-fld-lab-t {
-  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor); tracking + transform kept */
+  /* size from .gsv-sublabel (12px); tracking + transform kept */
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: #b3aee2;
 }
 .gsv-fld-req {
-  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor); tracking kept */
+  /* size from .gsv-sublabel (12px); tracking kept */
   color: #7d78b8;
   letter-spacing: 0.14em;
 }
@@ -184,7 +184,7 @@
   border-radius: 1px;
 }
 .gsv-fld-msg {
-  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor); tracking kept */
+  /* size from .gsv-sublabel (12px); tracking kept */
   letter-spacing: 0.1em;
 }
 .gsv-fld.is-error .gsv-fld-msg {

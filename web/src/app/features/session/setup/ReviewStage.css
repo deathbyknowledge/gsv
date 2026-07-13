@@ -50,7 +50,7 @@
 }
 /* Label — Meta / HUD type, label colour. */
 .review-row-k {
-  /* size + family from .gsv-label (11px); weight 400 + wide tracking kept */
+  /* size + family from .gsv-label (13px); weight 400 + wide tracking kept */
   font-weight: 400;
   letter-spacing: 0.32em;
   text-transform: uppercase;
@@ -64,7 +64,7 @@
   min-width: 0;
 }
 .review-row-v {
-  /* size + family + tracking from .gsv-listitem (12px, up from 11px) */
+  /* size + family + tracking from .gsv-listitem (14px) */
   color: var(--text);
   text-align: right;
   text-decoration: underline dashed #6b62c4;
@@ -85,7 +85,7 @@
   border-top: 1px solid var(--border);
 }
 .gsv-setup-review-notes strong {
-  /* size + family from .gsv-sublabel (10px, up from 9px); tracking matches */
+  /* size + family from .gsv-sublabel (12px); tracking matches */
   display: block;
   letter-spacing: 0.2em;
   text-transform: uppercase;

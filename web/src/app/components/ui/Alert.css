@@ -31,7 +31,7 @@
   min-width: 0;
 }
 .gsv-alert-title {
-  /* size + family from .gsv-label (11px); weight 600 + .14em tracking kept intentionally */
+  /* size + family from .gsv-label (13px); weight 600 + .14em tracking kept intentionally */
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;

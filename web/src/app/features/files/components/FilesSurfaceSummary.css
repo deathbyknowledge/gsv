@@ -152,7 +152,7 @@
 
 .files-field > span {
   color: var(--label);
-  font-size: 0.625rem; /* value-normalized from 9.5px (.gsv-sublabel scale) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.18em;
   text-transform: uppercase;
 }
@@ -291,12 +291,12 @@
 }
 
 .files-search-path {
-  /* size from .gsv-label (11px) */
+  /* size from .gsv-label (13px) */
   color: var(--text);
 }
 
 .files-search-line {
-  /* size from .gsv-sublabel (10px, up from 9px); tracking kept */
+  /* size from .gsv-sublabel (12px); tracking kept */
   color: var(--accent);
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -308,7 +308,7 @@
 }
 
 .files-search-truncated {
-  /* size from .gsv-sublabel (10px); tracking kept */
+  /* size from .gsv-sublabel (12px); tracking kept */
   padding: 12px 14px;
   color: var(--warn);
   letter-spacing: 0.12em;
@@ -338,7 +338,7 @@
 
 .files-state-copy strong {
   color: var(--text-title);
-  font-size: 0.6875rem; /* value-normalized from 11px (.gsv-label scale) */
+  font-size: 0.8125rem; /* size from .gsv-label (13px) */
   font-weight: 500;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -401,7 +401,7 @@
 
 .files-inline-copy strong {
   color: var(--text-title);
-  font-size: 0.625rem; /* value-normalized from 10px (.gsv-sublabel scale) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -437,7 +437,7 @@
 }
 
 .files-editor-status {
-  /* size from .gsv-sublabel (10px); tracking + transform kept */
+  /* size from .gsv-sublabel (12px); tracking + transform kept */
   min-width: 0;
   display: inline-flex;
   align-items: center;
@@ -455,7 +455,7 @@
 
 .files-editor-status small {
   color: #6f69ad;
-  font-size: 0.625rem; /* value-normalized from 9px (.gsv-sublabel scale) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.08em;
 }
 
@@ -483,7 +483,7 @@
 }
 
 .files-file-meta {
-  /* size from .gsv-sublabel (10px); tracking kept (0) */
+  /* size from .gsv-sublabel (12px); tracking kept (0) */
   position: sticky;
   top: 0;
   z-index: 1;
@@ -500,7 +500,7 @@
 
 .files-file-meta small {
   color: var(--text-muted);
-  font-size: 0.625rem; /* value-normalized from 10px (.gsv-sublabel scale) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
