@@ -4,6 +4,12 @@
   "description": "Expose this browser profile as a Unix-looking GSV target.",
   "version": "0.4.0",
   "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/gsv-16.png",
+    "32": "icons/gsv-32.png",
+    "48": "icons/gsv-48.png",
+    "128": "icons/gsv-128.png"
+  },
   "permissions": [
     "activeTab",
     "alarms",
@@ -40,6 +46,11 @@
     "default_path": "sidepanel.html"
   },
   "action": {
+    "default_icon": {
+      "16": "icons/gsv-16.png",
+      "24": "icons/gsv-24.png",
+      "32": "icons/gsv-32.png"
+    },
     "default_title": "GSV Browser Target",
     "default_popup": "popup.html"
   }
