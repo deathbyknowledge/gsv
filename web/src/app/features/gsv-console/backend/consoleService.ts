@@ -494,8 +494,14 @@ export async function createConsoleAgent(
     const avatarSrc = input.avatarSrc?.trim();
     if (avatarSrc) {
       // Fixed portrait: persisted once at creation, read back everywhere via
-      // agentPresentation.avatarForAccount.
-      writes.push(client.sys.config.set({ key: avatarConfigKey(uid), value: avatarSrc }));
+      // agentPresentation.avatarForAccount. Non-fatal — the account exists by
+      // now, and a cosmetic pref must not fail creation; on failure the agent
+      // just falls back to the legacy position-derived portrait.
+      writes.push(
+        client.sys.config.set({ key: avatarConfigKey(uid), value: avatarSrc }).catch((error) => {
+          console.warn("agent avatar persist failed; using fallback portrait", error);
+        }),
+      );
     }
     await Promise.all(writes);
   }
