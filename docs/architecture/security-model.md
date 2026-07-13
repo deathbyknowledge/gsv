@@ -111,10 +111,11 @@ pause for human approval.
 ## Devices
 
 Devices register with a hardware descriptor: device id, owner uid, platform,
-version, and an `implements` list such as `["fs.*", "shell.exec"]`.
+version, and an `implements` list such as
+`["fs.*", "shell.exec", "net.fetch"]`.
 
-Only `fs.*` and `shell.exec` are hardware-routable. `target: "gsv"` runs the
-native implementation. A device target is forwarded only when:
+`fs.*`, `shell.exec`, and `net.fetch` are hardware-routable. `target: "gsv"`
+runs the native implementation. A device target is forwarded only when:
 
 - The caller can access the device by root, owner uid, or device group ACL.
 - The device is online.

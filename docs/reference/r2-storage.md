@@ -9,7 +9,7 @@ GSV uses several storage planes. The Kernel chooses the plane based on whether t
 | Kernel SQLite | Kernel Durable Object SQL | Users, groups, tokens, OAuth accounts, config, devices, routing tables, process registry, workspaces, packages, adapter links, automation, notifications. |
 | Process SQLite | Process Durable Object SQL | Active messages, pending tool calls, message queue, HIL state, process-local metadata. |
 | AppRunner SQLite/KV | AppRunner Durable Object storage | Package runtime SQL, daemon schedules, loaded package runtime props. |
-| R2 `STORAGE` bucket | Cloudflare R2 | Ordinary virtual filesystem files, process media, process archives, package artifacts, CLI download mirrors. |
+| R2 `STORAGE` bucket | Cloudflare R2 | Ordinary virtual filesystem files, process media, process archives, and package artifacts. |
 | ripgit | `RIPGIT` binding | Versioned home knowledge, workspaces, package source repositories, and source trees. |
 
 ## Virtual Filesystem Mapping

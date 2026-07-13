@@ -11,10 +11,11 @@
 [![Docs](https://img.shields.io/badge/docs-gsv.space-111)](https://gsv.space)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/deathbyknowledge/gsv)
 
-**🟢🚀 Public beta is here! Issues and PRs very welcome.**
+**🚀 Public beta is here! Issues and PRs very welcome.**
 
-Most personal AI agents run on one host you pick and keep alive — a laptop, a VPS, a container. GSV turns all your devices into a single computer. It spans your laptop, server, and phone at once, lets an agent act on whichever one fits, and runs on the edge in your own Cloudflare account; your keys, your data, no host to provision or babysit. From ~$5/mo infra plus your own model costs.
+**GSV is an open-source, user-owned personal intelligence system.** It gives you one intelligence layer with durable memory, processes, permissions, and the ability to act across all your machines while remaining under your control.
 
+Most personal AI agents run on one host you pick and keep alive — a laptop, VPS, or container. GSV instead deploys a lightweight, always-reachable control plane into your own Cloudflare account and turns your laptop, server, phone, and browser into one computer. Your GSV control plane and state remain in infrastructure you control; the model provider you configure necessarily receives the inference data routed to it. From about $5/month in infrastructure plus model usage.
 
 ## What you can do
 
@@ -25,11 +26,11 @@ Most personal AI agents run on one host you pick and keep alive — a laptop, a 
 - Host your own packages and share apps between GSV instances through a built-in git remote.
 - Hand your agent the browser. The web extension lets it drive your real browser — your tabs and logged-in sessions — so it works the sites you already use, not just the public web.
 
-Under the hood it's a distributed OS: agents are durable processes with identities, history, permissions, and a syscall surface, plus an SDK for building apps. Named after the sentient ships from Iain M. Banks' Culture series, GSV (General Systems Vehicle) is a foundation for personal AI that lives across the edge.
+Under the hood, GSV is a distributed operating environment: agents are durable processes with identities, history, permissions, and a capability-gated syscall surface. Named after the sentient ships from Iain M. Banks' Culture series, GSV (General Systems Vehicle) is a foundation for personal intelligence that lives across the edge and the machines you already own.
 
 ## Quick Start
 
-**Prerequisites:** a [Cloudflare account](https://dash.cloudflare.com/sign-up) on the Workers Paid plan ($5/mo), and an API key for whatever model provider you want to run. Your model usage is billed separately by that provider.
+**Prerequisites:** a [Cloudflare account](https://dash.cloudflare.com/sign-up) on the Workers Paid plan ($5/month), plus any credentials required by your chosen model provider. Model usage is billed separately by that provider.
 
 ### 1. Deploy
 
@@ -61,29 +62,31 @@ To connect a messenger (Discord / Telegram / WhatsApp), add more devices, and se
 Connected devices are reachable by your agents from anywhere — outbound-only, so no open ports, no inbound connections, no VPN. Add one via **GSV > Devices** in the Web UI, or the CLI:
 
 ```bash
-gsv auth token create --device macbook --label Macbook   # note the token
-gsv config --local set node.token <token>
-gsv device install --id macbook --workspace ~/           # background service
+gsv auth token create --kind device --device macbook --label Macbook  # note the token
+gsv config --local set device.token <token>
+gsv device install --id macbook --workspace ~/  # background service
 gsv device status
 ```
 
 Now GSV can use the shell and read/write files on that machine. Set up adapters under **GSV > Integrations**.
 
-## OS Model
+## How GSV Works
 
-Linux-like by design, so agents can reason with familiar patterns (mental model, not POSIX).
+GSV uses Linux as a design model (not POSIX, though). Familiar, composable primitives make the system understandable to both people and models.
 
-- **Kernel** — the Gateway runs on Cloudflare, exposing authenticated syscalls (`proc.*`, `pkg.*`, `sys.*`).
-- **Processes** — agents are durable processes with PIDs (`gsv proc list|spawn|send|kill`).
-- **Devices** — connected machines act as execution nodes, scoped to a workspace.
-- **Messengers** — Discord/Telegram/Whatsapp workers act like device drivers for external chat.
+- **Cloud computer** — a small, globally reachable hub running in your Cloudflare account. It coordinates identity, state, routing, packages, schedules, and agent loops rather than performing heavy local computation.
+- **Kernel and syscalls** — humans, agents, apps, and the CLI use the same capability-gated primitives for processes, files, shells, networking, packages, and configuration. The public SDK exposes those contracts to apps and other clients.
+- **Processes** — agents are durable processes with PIDs, histories, permissions, pending work, and subprocesses (`gsv proc list|spawn|send|kill`).
+- **Targets** — the cloud runtime and connected devices implement the same targetable filesystem, shell, and network contracts. The browser extension exposes the browser through the same filesystem and shell shape. Changing the target changes where work runs, not what the syscall means.
+- **Agent tools** — models see a deliberately small surface: Read, Write, Edit, Delete, Search, Shell, and CodeMode. Devices and integrations extend the system underneath those tools instead of making the tool list grow forever.
+- **Messengers** — Discord, Telegram, and WhatsApp workers translate external chat platforms into stable GSV identities and process messages.
 
 ## Development
 
 ```bash
-./scripts/setup-deps.sh       # install JS deps across workspace, adapters, ripgit
-cd web && npm run build    # build web app
-cd .. && npm run dev           # local multi-worker dev stack
+./scripts/setup-deps.sh        # install workspace and worker dependencies
+npm run build --workspace web  # build assets served by the gateway
+npm run dev                    # start the local multi-worker stack
 ```
 
 Requires [Rust](https://rustup.rs) and [Node.js + npm](https://nodejs.org).

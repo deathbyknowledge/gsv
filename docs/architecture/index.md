@@ -83,8 +83,7 @@ Different path families are backed by different stores:
 - Kernel SQLite backs control-plane paths such as `/sys`, `/proc`, `/dev`, and
   auth/config overlays in `/etc`.
 - Process SQLite backs active conversation and run state.
-- R2 stores ordinary bytes, process media, archives, package artifacts, and CLI
-  download mirrors.
+- R2 stores ordinary bytes, process media, archives, and package artifacts.
 - ripgit stores versioned home knowledge, workspace trees, package source, and
   repository content.
 
@@ -101,14 +100,16 @@ device driver connects over WebSocket with a hardware descriptor containing its
 device id, platform, version, owner, and `implements` list such as:
 
 ```json
-{ "deviceId": "macbook", "implements": ["fs.*", "shell.exec"] }
+{ "deviceId": "macbook", "implements": ["fs.*", "shell.exec", "net.fetch"] }
 ```
 
 Agents always see the same tool names: `Read`, `Write`, `Edit`, `Delete`,
-`Search`, and `Shell`. The `target` argument selects where the syscall runs.
+`Search`, `Shell`, and `CodeMode`. The `target` argument selects where the
+syscall runs.
 `target: "gsv"` uses the native cloud implementation inside the Worker sandbox.
-`target: "macbook"` routes the same `fs.*` or `shell.exec` syscall to that
-device after ownership, group ACL, online-state, and capability checks.
+`target: "macbook"` routes the same `fs.*`, `shell.exec`, or `net.fetch`
+syscall to that device after ownership, group ACL, online-state, and capability
+checks.
 
 This is the hardware abstraction layer. Devices can be laptops, servers, or any
 CLI-run machine, but agents do not need a different API for each one.
@@ -145,12 +146,13 @@ GSV uses repositories for more than source control:
 
 - `{username}/home` stores user-global knowledge and context.
 - `{username}/{workspaceId}` stores workspace files and checkpoints.
-- `root/gsv` can mirror the deployed GSV source.
+- `root/gsv` stores the bootstrapped GSV source at the configured release ref.
 - Package source repositories provide installable apps and CLI commands.
 
-This is how GSV can host its own source, install packages from repos, and expose
-public package metadata to other GSVs. Distribution is repository-based rather
-than registry-only: a package is source plus manifest plus assembled artifact.
+This is how GSV keeps its own source inspectable, installs packages from repos,
+and exposes public package metadata to other GSVs. Distribution is
+repository-based rather than registry-only: a package is source plus manifest
+plus assembled artifact.
 
 ## How Requests Move
 
