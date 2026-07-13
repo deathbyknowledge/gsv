@@ -52,6 +52,9 @@ import dashboardTemplate from "./stories/templates/Dashboard.story";
 import filesTemplate from "./stories/templates/Files.story";
 import libraryTemplate from "./stories/templates/Library.story";
 import authTemplate from "./stories/templates/Auth.story";
+import assetImages from "./stories/assets/Images.story";
+import assetDoticons from "./stories/assets/Doticons.story";
+import assetAnimations from "./stories/assets/Animations.story";
 import consoleHeader from "./stories/ConsoleHeader.story";
 import breadcrumbs from "./stories/Breadcrumbs.story";
 import statusBar from "./stories/StatusBar.story";
@@ -132,6 +135,10 @@ const STORIES: Story[] = [
   filesTemplate,
   libraryTemplate,
   authTemplate,
+  // Assets — usage-audited inventory of images, icon sets, and animations
+  assetImages,
+  assetDoticons,
+  assetAnimations,
 ];
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -178,11 +185,12 @@ function useScrollSpy(slugs: string[]): string {
   return active;
 }
 
-type Tab = "components" | "templates";
+type Tab = "components" | "templates" | "assets";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "components", label: "Components" },
   { id: "templates", label: "Templates" },
+  { id: "assets", label: "Assets" },
 ];
 
 export function Catalog() {
@@ -190,7 +198,7 @@ export function Catalog() {
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
 
-  const noun = tab === "templates" ? "templates" : "components";
+  const noun = tab;
 
   // Case-insensitive match across the searchable fields of a story.
   const q = query.trim().toLowerCase();
@@ -200,10 +208,14 @@ export function Catalog() {
     s.group.toLowerCase().includes(q) ||
     (s.blurb?.toLowerCase().includes(q) ?? false);
 
-  // Templates live in their own tab; everything else is the Components tab.
-  // Search narrows within the active tab.
+  // Templates and Assets live in their own tabs; everything else is the
+  // Components tab. Search narrows within the active tab.
   const tabStories = STORIES.filter((s) =>
-    tab === "templates" ? s.group === "Templates" : s.group !== "Templates",
+    tab === "templates"
+      ? s.group === "Templates"
+      : tab === "assets"
+        ? s.group === "Assets"
+        : s.group !== "Templates" && s.group !== "Assets",
   ).filter(matchesQuery);
 
   const byGroup = new Map<StoryGroup, Story[]>();
