@@ -18,11 +18,36 @@ import type { PresenceState } from "../../presence/types";
 type ChatAmbientTranscriptionArgs = {
   activeRunCount?: number;
   agentName: string;
+  conversationId: string;
   disabled?: boolean;
   isSpeechOutputPlaying?: () => boolean;
   onDictation: (text: string) => void;
   onCancelSpeechOutput?: () => void;
-  onTranscript: (text: string) => Promise<void> | void;
+  onTranscript: (
+    text: string,
+    target: ChatTranscriptionTarget,
+    signal: AbortSignal,
+    adoptTarget: (target: ChatTranscriptionTarget) => void,
+  ) => Promise<ChatTranscriptionTarget | null> | ChatTranscriptionTarget | null;
+  processId?: string | null;
+};
+
+export type ChatTranscriptionTarget = {
+  conversationId: string;
+  processId: string | null;
+};
+
+type LiveTranscriptionSession = {
+  controller: AbortController;
+  pending: number;
+  queue: Promise<void>;
+  target: ChatTranscriptionTarget;
+};
+
+type DictationSession = {
+  controller: AbortController;
+  deliver: ChatAmbientTranscriptionArgs["onDictation"];
+  target: ChatTranscriptionTarget;
 };
 
 type ChatVoiceInputMode = "dictation" | "idle" | "live";
@@ -53,6 +78,12 @@ function formatVoiceError(error: unknown): string {
     return error;
   }
   return "Unknown error";
+}
+
+function cancellationError(message: string): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
 }
 
 function ambientTitle(state: PresenceState, note: string): string {
@@ -103,11 +134,13 @@ function isLiveState(state: PresenceState): boolean {
 export function useChatAmbientTranscription({
   activeRunCount = 0,
   agentName,
+  conversationId,
   disabled = false,
   isSpeechOutputPlaying,
   onDictation,
   onCancelSpeechOutput,
   onTranscript,
+  processId = null,
 }: ChatAmbientTranscriptionArgs): ChatAmbientTranscription {
   const { client, connected } = useGateway();
   const [state, setStateValue] = useState<PresenceState>(() => canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
@@ -125,6 +158,10 @@ export function useChatAmbientTranscription({
   const isSpeechOutputPlayingRef = useRef(isSpeechOutputPlaying);
   const onCancelSpeechOutputRef = useRef(onCancelSpeechOutput);
   const recorderRef = useRef<PresenceRecorder | null>(null);
+  const liveSessionRef = useRef<LiveTranscriptionSession | null>(null);
+  const dictationSessionRef = useRef<DictationSession | null>(null);
+  const targetRef = useRef<ChatTranscriptionTarget>({ conversationId, processId });
+  targetRef.current = { conversationId, processId };
 
   useEffect(() => {
     stateRef.current = state;
@@ -164,9 +201,7 @@ export function useChatAmbientTranscription({
     if (message !== undefined) {
       setNoteValue(message);
     }
-    if (nextState !== "error") {
-      setError("");
-    }
+    setError(nextState === "error" ? message || "Voice input failed" : "");
   }, []);
 
   const setMode = useCallback((nextMode: ChatVoiceInputMode) => {
@@ -174,17 +209,37 @@ export function useChatAmbientTranscription({
     setModeValue(nextMode);
   }, []);
 
+  const cancelLiveSession = useCallback((reason: string) => {
+    const session = liveSessionRef.current;
+    liveSessionRef.current = null;
+    pendingJobsRef.current = 0;
+    if (session && !session.controller.signal.aborted) {
+      session.controller.abort(cancellationError(reason));
+    }
+  }, []);
+
+  const cancelDictationSession = useCallback((reason: string) => {
+    const session = dictationSessionRef.current;
+    dictationSessionRef.current = null;
+    if (session && !session.controller.signal.aborted) {
+      session.controller.abort(cancellationError(reason));
+    }
+  }, []);
+
   const transcribeBlob = useCallback(async (
     blob: Blob,
     mimeType: string,
     startedAt = Date.now(),
+    target?: ChatTranscriptionTarget,
+    signal?: AbortSignal,
   ): Promise<AiTranscriptionCreateResult> => {
     const result = await requestAudioTranscription(client, {
       audio: {
         mimeType,
         filename: presenceRecordingFilename(mimeType, startedAt),
       },
-    }, blob);
+      ...(target?.processId ? { pid: target.processId } : {}),
+    }, blob, signal);
     const text = typeof result.text === "string" ? result.text.trim() : "";
     if (!text) {
       throw new Error("No speech was transcribed");
@@ -192,54 +247,152 @@ export function useChatAmbientTranscription({
     return { ...result, text };
   }, [client]);
 
-  const processAmbientSegment = useCallback(async (segment: AmbientSegment) => {
+  const processAmbientSegment = useCallback(async (
+    segment: AmbientSegment,
+    session: LiveTranscriptionSession,
+  ) => {
+    const active = () =>
+      liveSessionRef.current === session && !session.controller.signal.aborted;
     const durationMs = segment.stoppedAt - segment.startedAt;
     if (durationMs < AMBIENT_MIN_SEGMENT_MS || totalBlobSize(segment.chunks) < AMBIENT_MIN_SEGMENT_BYTES) {
-      setNoteValue("Listening");
-      setRecorderState(pendingJobsRef.current > 0 ? "transcribing" : "listening");
+      if (active()) {
+        setNoteValue("Listening");
+        setRecorderState("listening");
+      }
       return;
     }
 
-    pendingJobsRef.current += 1;
     const blob = new Blob(segment.chunks, { type: segment.mimeType });
     try {
+      if (!active()) return;
       setNoteValue("Transcribing speech");
       setRecorderState("transcribing");
-      const result = await transcribeBlob(blob, segment.mimeType, segment.startedAt);
+      const result = await transcribeBlob(
+        blob,
+        segment.mimeType,
+        segment.startedAt,
+        session.target,
+        session.controller.signal,
+      );
+      if (!active()) return;
       const text = result.text.trim();
       if (!text) {
         throw new Error("No speech was transcribed");
       }
+      const currentTarget = targetRef.current;
+      if (
+        session.target.processId !== currentTarget.processId ||
+        session.target.conversationId !== currentTarget.conversationId
+      ) {
+        cancelLiveSession("Chat changed during live transcription");
+        recorderRef.current?.stopAmbient();
+        setMode("idle");
+        return;
+      }
       setNoteValue("Sending transcript");
       setRecorderState("sending");
-      await onTranscriptRef.current(text);
+      const target = await onTranscriptRef.current(
+        text,
+        session.target,
+        session.controller.signal,
+        (nextTarget) => {
+          if (!active()) {
+            throw session.controller.signal.reason ?? cancellationError("Live transcription stopped");
+          }
+          const latestTarget = targetRef.current;
+          if (
+            session.target.processId !== latestTarget.processId ||
+            session.target.conversationId !== latestTarget.conversationId
+          ) {
+            const reason = "Chat changed during live transcription";
+            cancelLiveSession(reason);
+            recorderRef.current?.stopAmbient();
+            setMode("idle");
+            throw cancellationError(reason);
+          }
+          session.target = nextTarget;
+          targetRef.current = nextTarget;
+        },
+      );
+      if (!active()) return;
+      if (!target?.processId) {
+        throw new Error("Transcript was not sent");
+      }
+      session.target = target;
+      const currentTargetAfterSend = targetRef.current;
+      if (
+        currentTargetAfterSend.processId !== target.processId ||
+        currentTargetAfterSend.conversationId !== target.conversationId
+      ) {
+        cancelLiveSession("Chat changed during live transcription");
+        recorderRef.current?.stopAmbient();
+        setMode("idle");
+        return;
+      }
       setNoteValue("Listening");
       setRecorderState("listening");
     } catch (segmentError) {
+      if (!active()) return;
       const message = formatVoiceError(segmentError);
+      cancelLiveSession(message);
       recorderRef.current?.stopAmbient();
       setMode("idle");
       setError(message);
       setNoteValue(message);
       setRecorderState("error", message);
-    } finally {
-      pendingJobsRef.current = Math.max(0, pendingJobsRef.current - 1);
-      if (!destroyedRef.current && connectedRef.current && stateRef.current !== "error" && modeRef.current === "live") {
-        setNoteValue(pendingJobsRef.current > 0 ? `Processing ${pendingJobsRef.current}` : "Listening");
-        setRecorderState(pendingJobsRef.current > 0 ? "transcribing" : "listening");
-      }
     }
-  }, [setMode, setRecorderState, transcribeBlob]);
+  }, [cancelLiveSession, setMode, setRecorderState, transcribeBlob]);
+
+  const queueAmbientSegment = useCallback((segment: AmbientSegment): Promise<void> | void => {
+    const session = liveSessionRef.current;
+    if (!session || session.controller.signal.aborted) {
+      return;
+    }
+    session.pending += 1;
+    pendingJobsRef.current = session.pending;
+    session.queue = session.queue
+      .then(() => processAmbientSegment(segment, session))
+      .finally(() => {
+        session.pending = Math.max(0, session.pending - 1);
+        if (
+          liveSessionRef.current === session &&
+          !destroyedRef.current &&
+          connectedRef.current &&
+          stateRef.current !== "error" &&
+          modeRef.current === "live"
+        ) {
+          pendingJobsRef.current = session.pending;
+          setNoteValue(session.pending > 0 ? `Processing ${session.pending}` : "Listening");
+          setRecorderState(session.pending > 0 ? "transcribing" : "listening");
+        }
+      });
+    return session.queue;
+  }, [processAmbientSegment, setRecorderState]);
 
   const handlePushTranscribed = useCallback((result: AiTranscriptionCreateResult) => {
-    const text = result.text.trim();
-    if (text) {
-      onDictationRef.current(text);
+    const session = dictationSessionRef.current;
+    if (!session || session.controller.signal.aborted) {
+      return;
     }
+    const text = result.text.trim();
+    const currentTarget = targetRef.current;
+    if (
+      session.target.processId !== currentTarget.processId ||
+      session.target.conversationId !== currentTarget.conversationId
+    ) {
+      cancelDictationSession("Chat changed during dictation");
+      setMode("idle");
+      setRecorderState(canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
+      return;
+    }
+    if (text) {
+      session.deliver(text);
+    }
+    dictationSessionRef.current = null;
     setMode("idle");
     setNoteValue(text ? "Transcribed" : "");
     setRecorderState("idle", text ? "Transcribed" : undefined);
-  }, [setMode, setRecorderState]);
+  }, [cancelDictationSession, setMode, setRecorderState]);
 
   const recorder = useMemo(() => createPresenceRecorder({
     isConnected: () => connectedRef.current,
@@ -255,10 +408,38 @@ export function useChatAmbientTranscription({
     setNote: setNoteValue,
     getState: () => stateRef.current,
     setState: setRecorderState,
-    transcribe: transcribeBlob,
+    transcribe: async (blob, mimeType, startedAt) => {
+      const session = dictationSessionRef.current;
+      if (!session) {
+        throw new Error("Dictation was cancelled");
+      }
+      try {
+        return await transcribeBlob(
+          blob,
+          mimeType,
+          startedAt,
+          session.target,
+          session.controller.signal,
+        );
+      } catch (error) {
+        if (dictationSessionRef.current === session) {
+          cancelDictationSession(formatVoiceError(error));
+          setMode("idle");
+        }
+        throw error;
+      }
+    },
     onPushTranscribed: handlePushTranscribed,
-    onAmbientSegment: processAmbientSegment,
-  }), [agentName, handlePushTranscribed, processAmbientSegment, setRecorderState, transcribeBlob]);
+    onAmbientSegment: queueAmbientSegment,
+  }), [
+    agentName,
+    cancelDictationSession,
+    handlePushTranscribed,
+    queueAmbientSegment,
+    setMode,
+    setRecorderState,
+    transcribeBlob,
+  ]);
 
   useEffect(() => {
     recorderRef.current = recorder;
@@ -273,23 +454,66 @@ export function useChatAmbientTranscription({
     destroyedRef.current = false;
     return () => {
       destroyedRef.current = true;
+      cancelLiveSession("Live transcription closed");
+      cancelDictationSession("Dictation closed");
       recorder.destroy();
     };
-  }, [recorder]);
+  }, [cancelDictationSession, cancelLiveSession, recorder]);
 
   useEffect(() => {
-    if (!connected && recorder.isAmbientActive()) {
+    if (!connected && (liveSessionRef.current || recorder.isAmbientActive())) {
+      cancelLiveSession("Gateway disconnected");
       recorder.stopAmbient();
+      setMode("idle");
     }
     if (!connected && modeRef.current === "dictation") {
+      cancelDictationSession("Gateway disconnected");
       recorder.cleanupPushRecorder();
       setMode("idle");
       setRecorderState(canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
     }
-  }, [connected, recorder]);
+  }, [cancelDictationSession, cancelLiveSession, connected, recorder, setMode, setRecorderState]);
+
+  useEffect(() => {
+    const live = liveSessionRef.current;
+    if (
+      live &&
+      (
+        live.target.conversationId !== conversationId ||
+        live.target.processId !== processId
+      )
+    ) {
+      cancelLiveSession("Chat changed during live transcription");
+      recorder.stopAmbient();
+      setMode("idle");
+    }
+
+    const dictation = dictationSessionRef.current;
+    if (
+      dictation &&
+      (
+        dictation.target.processId !== processId ||
+        dictation.target.conversationId !== conversationId
+      )
+    ) {
+      cancelDictationSession("Chat changed during dictation");
+      recorder.cleanupPushRecorder();
+      setMode("idle");
+      setRecorderState(canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
+    }
+  }, [
+    cancelDictationSession,
+    cancelLiveSession,
+    conversationId,
+    processId,
+    recorder,
+    setMode,
+    setRecorderState,
+  ]);
 
   const toggleLive = useCallback(() => {
-    if (recorder.isAmbientActive()) {
+    if (modeRef.current === "live" || liveSessionRef.current) {
+      cancelLiveSession("Live transcription stopped");
       recorder.stopAmbient();
       setMode("idle");
       return;
@@ -302,24 +526,51 @@ export function useChatAmbientTranscription({
       return;
     }
     if (modeRef.current === "dictation") {
+      cancelDictationSession("Switched to live transcription");
       recorder.cleanupPushRecorder();
     }
+    const session: LiveTranscriptionSession = {
+      controller: new AbortController(),
+      pending: 0,
+      queue: Promise.resolve(),
+      target: { ...targetRef.current },
+    };
+    liveSessionRef.current = session;
+    pendingJobsRef.current = 0;
     setMode("live");
-    void recorder.startAmbient();
-  }, [disabled, recorder, setMode, setRecorderState]);
+    void recorder.startAmbient().then(() => {
+      if (liveSessionRef.current === session && !recorder.isAmbientActive()) {
+        cancelLiveSession("Live transcription did not start");
+        setMode("idle");
+      }
+    });
+  }, [cancelDictationSession, cancelLiveSession, disabled, recorder, setMode, setRecorderState]);
 
   const toggleDictation = useCallback(() => {
     if (modeRef.current === "dictation") {
       if (stateRef.current === "recording") {
-        recorder.stopPushRecording();
+        if (recorder.isPushActive()) {
+          recorder.stopPushRecording();
+        } else {
+          cancelDictationSession("Dictation stopped");
+          recorder.cleanupPushRecorder();
+          setMode("idle");
+          setRecorderState(canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
+        }
         return;
       }
       if (stateRef.current === "transcribing") {
+        cancelDictationSession("Dictation stopped");
+        recorder.cleanupPushRecorder();
+        setMode("idle");
+        setRecorderState(canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
         return;
       }
+      cancelDictationSession("Dictation stopped");
       recorder.cleanupPushRecorder();
       setMode("idle");
       setRecorderState(canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
+      return;
     }
     if (disabled || !connectedRef.current) {
       return;
@@ -328,12 +579,24 @@ export function useChatAmbientTranscription({
       setRecorderState("unsupported");
       return;
     }
-    if (recorder.isAmbientActive()) {
+    if (liveSessionRef.current || recorder.isAmbientActive()) {
+      cancelLiveSession("Switched to dictation");
       recorder.stopAmbient();
     }
+    const session: DictationSession = {
+      controller: new AbortController(),
+      deliver: onDictationRef.current,
+      target: { ...targetRef.current },
+    };
+    dictationSessionRef.current = session;
     setMode("dictation");
-    void recorder.startPushRecording();
-  }, [disabled, recorder, setMode, setRecorderState]);
+    void recorder.startPushRecording().then(() => {
+      if (dictationSessionRef.current === session && stateRef.current === "error") {
+        cancelDictationSession("Dictation did not start");
+        setMode("idle");
+      }
+    });
+  }, [cancelDictationSession, cancelLiveSession, disabled, recorder, setMode, setRecorderState]);
 
   const dictationActive = mode === "dictation" && (state === "recording" || state === "transcribing");
   const liveActive = (mode === "live" && isLiveState(state)) || recorder.isAmbientActive();

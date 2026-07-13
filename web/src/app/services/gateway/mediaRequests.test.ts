@@ -15,13 +15,14 @@ describe("gateway media requests", () => {
       },
     }));
     const audio = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
+    const controller = new AbortController();
 
     const result = await requestAudioTranscription({ request } as unknown as MediaRequestClient, {
       audio: {
         mimeType: "audio/webm",
         filename: "voice.webm",
       },
-    }, audio);
+    }, audio, controller.signal);
 
     expect(result.text).toBe("hello");
     expect(request).toHaveBeenCalledWith(
@@ -32,7 +33,10 @@ describe("gateway media requests", () => {
           filename: "voice.webm",
         },
       },
-      { body: expect.objectContaining({ length: 3 }) },
+      {
+        body: expect.objectContaining({ length: 3 }),
+        signal: controller.signal,
+      },
     );
     const options = request.mock.calls[0]?.[2] as { body?: GsvBody } | undefined;
     const body = options?.body;

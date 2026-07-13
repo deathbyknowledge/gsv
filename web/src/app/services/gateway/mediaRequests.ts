@@ -18,9 +18,11 @@ export async function requestAudioTranscription(
   client: MediaRequestClient,
   args: AiTranscriptionCreateArgs,
   audio: Blob,
+  signal?: AbortSignal,
 ): Promise<AiTranscriptionCreateResult> {
   const response = await client.request("ai.transcription.create", args, {
     body: frameBodyFromBlob(audio),
+    signal,
   });
   await response.body?.stream.cancel("Transcription response body is unsupported").catch(() => {});
   return response.data;

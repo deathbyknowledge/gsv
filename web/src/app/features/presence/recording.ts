@@ -47,6 +47,7 @@ type PresenceRecorderOptions = {
 export type PresenceRecorder = {
   isAmbientActive(): boolean;
   isAmbientCapturing(): boolean;
+  isPushActive(): boolean;
   startPushRecording(): Promise<void>;
   stopPushRecording(): void;
   cleanupPushRecorder(): void;
@@ -61,6 +62,7 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
   let pushChunks: Blob[] = [];
   let pushStartedAt = 0;
   let pushTimer: number | null = null;
+  let pushGeneration = 0;
 
   let ambientStream: MediaStream | null = null;
   let ambientMimeType = "audio/webm";
@@ -75,6 +77,7 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
   let ambientSpeechMs = 0;
   let ambientLastVoiceAt = 0;
   let ambientSegmentStartedAt = 0;
+  let ambientGeneration = 0;
 
   function isAmbientActive(): boolean {
     return ambientStream !== null;
@@ -84,6 +87,10 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
     return ambientSpeechActive;
   }
 
+  function isPushActive(): boolean {
+    return pushRecorder !== null;
+  }
+
   async function startPushRecording(): Promise<void> {
     if (!canUseBrowserVoiceRecorder() || !options.isConnected()) {
       options.setState(canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
@@ -91,12 +98,13 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
     }
     options.cancelSpeechOutput();
     cleanupPushRecorder();
+    const generation = pushGeneration;
     options.setPanelOpen(true);
     options.setNote("");
     options.setState("recording", "Requesting microphone");
     try {
       const stream = await requestVoiceStream();
-      if (options.isDestroyed()) {
+      if (options.isDestroyed() || generation !== pushGeneration || !options.isConnected()) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
@@ -105,8 +113,8 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
       if (mimeType) {
         recorderOptions.mimeType = mimeType;
       }
-      pushRecorder = new MediaRecorder(stream, recorderOptions);
       pushStream = stream;
+      pushRecorder = new MediaRecorder(stream, recorderOptions);
       pushChunks = [];
       pushStartedAt = Date.now();
 
@@ -135,6 +143,9 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
       options.setNote("Recording 0:00");
       options.setState("recording");
     } catch (error) {
+      if (generation !== pushGeneration) {
+        return;
+      }
       cleanupPushRecorder();
       options.setNote("");
       options.setState("error", "Microphone failed: " + formatError(error));
@@ -175,6 +186,9 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
       const result = await options.transcribe(blob, mimeType);
       options.onPushTranscribed(result);
     } catch (error) {
+      if (options.isDestroyed() || (error instanceof Error && error.name === "AbortError")) {
+        return;
+      }
       options.setNote("");
       options.setState("error", "Transcription failed: " + formatError(error));
     }
@@ -186,12 +200,13 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
       return;
     }
     stopAmbient();
+    const generation = ambientGeneration;
     options.setPanelOpen(true);
     options.setNote("Requesting microphone");
     options.setState("listening");
     try {
       const stream = await requestVoiceStream();
-      if (options.isDestroyed()) {
+      if (options.isDestroyed() || generation !== ambientGeneration || !options.isConnected()) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
@@ -209,6 +224,9 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
       options.setNote("Mind is listening");
       options.setState("listening", "Listening");
     } catch (error) {
+      if (generation !== ambientGeneration) {
+        return;
+      }
       stopAmbient();
       options.setNote("");
       options.setState("error", "Microphone failed: " + formatError(error));
@@ -216,6 +234,7 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
   }
 
   function stopAmbient(): void {
+    ambientGeneration += 1;
     options.cancelSpeechOutput();
     clearAmbientTimer();
     stopAmbientSegment("stop");
@@ -337,13 +356,30 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
     const recorder = ambientSegmentRecorder;
     ambientSpeechActive = false;
     ambientSpeechMs = 0;
-    if (!recorder || recorder.state === "inactive") {
+    if (!recorder) {
+      return;
+    }
+    if (reason === "stop") {
+      recorder.ondataavailable = null;
+      recorder.onerror = null;
+      recorder.onstop = null;
+      ambientSegmentRecorder = null;
+      ambientSegmentChunks = [];
+      ambientSegmentStartedAt = 0;
+      if (recorder.state !== "inactive") {
+        try {
+          recorder.stop();
+        } catch {
+          // Recorder state can change between the state check and stop call.
+        }
+      }
+      return;
+    }
+    if (recorder.state === "inactive") {
       return;
     }
     if (reason === "max") {
       options.setNote("Segment reached time limit");
-    } else if (reason === "stop") {
-      options.setNote("Stopping ambient");
     } else {
       options.setNote("Speech ended");
     }
@@ -357,19 +393,22 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
   }
 
   function cleanupPushRecorder(): void {
+    pushGeneration += 1;
     clearPushTimer();
     const current = pushRecorder;
     pushRecorder = null;
     pushChunks = [];
     pushStartedAt = 0;
-    if (current && current.state !== "inactive") {
+    if (current) {
       current.ondataavailable = null;
       current.onerror = null;
       current.onstop = null;
-      try {
-        current.stop();
-      } catch {
-        // Recorder state can change between the state check and stop call.
+      if (current.state !== "inactive") {
+        try {
+          current.stop();
+        } catch {
+          // Recorder state can change between the state check and stop call.
+        }
       }
     }
     const stream = pushStream;
@@ -394,6 +433,7 @@ export function createPresenceRecorder(options: PresenceRecorderOptions): Presen
   return {
     isAmbientActive,
     isAmbientCapturing,
+    isPushActive,
     startPushRecording,
     stopPushRecording,
     cleanupPushRecorder,
