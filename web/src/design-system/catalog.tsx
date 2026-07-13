@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { STORY_GROUP_ORDER, type Story, type StoryGroup } from "./story";
 import { Search } from "../app/components/ui/Search";
 
@@ -42,15 +42,16 @@ import iconButton from "./stories/IconButton.story";
 import lineGlyphs from "./stories/LineGlyphs.story";
 import sectionHeader from "./stories/SectionHeader.story";
 import addAction from "./stories/AddAction.story";
-import settingsDashboard from "./stories/SettingsDashboard.story";
-import crewPage from "./stories/CrewPage.story";
-import agentDetail from "./stories/AgentDetail.story";
-import settingsList from "./stories/SettingsList.story";
-import objectDetail from "./stories/ObjectDetail.story";
-import consoleDetailHeader from "./stories/ConsoleDetailHeader.story";
-import filesRedesign from "./stories/FilesRedesign.story";
 import iconMenu from "./stories/IconMenu.story";
 import desktopHint from "./stories/DesktopHint.story";
+import listTemplate from "./stories/templates/List.story";
+import cardListTemplate from "./stories/templates/CardList.story";
+import detailTemplate from "./stories/templates/Detail.story";
+import editorTemplate from "./stories/templates/Editor.story";
+import dashboardTemplate from "./stories/templates/Dashboard.story";
+import filesTemplate from "./stories/templates/Files.story";
+import libraryTemplate from "./stories/templates/Library.story";
+import authTemplate from "./stories/templates/Auth.story";
 import consoleHeader from "./stories/ConsoleHeader.story";
 import breadcrumbs from "./stories/Breadcrumbs.story";
 import statusBar from "./stories/StatusBar.story";
@@ -62,7 +63,6 @@ import agentCard from "./stories/AgentCard.story";
 import crewTile from "./stories/CrewTile.story";
 import agentEditor from "./stories/AgentEditor.story";
 import agentToolsPanel from "./stories/AgentToolsPanel.story";
-import authLayout from "./stories/AuthLayout.story";
 import link from "./stories/Link.story";
 
 const STORIES: Story[] = [
@@ -115,7 +115,6 @@ const STORIES: Story[] = [
   messageInput,
   systemMessage,
   tabs,
-  authLayout,
   link,
   // Composite
   confirmModal,
@@ -123,14 +122,16 @@ const STORIES: Story[] = [
   crewTile,
   agentEditor,
   agentToolsPanel,
-  // Templates
-  settingsDashboard,
-  crewPage,
-  agentDetail,
-  settingsList,
-  objectDetail,
-  consoleDetailHeader,
-  filesRedesign,
+  // Templates — generic page archetypes: wireframe + live preview of the real
+  // component at /design/preview/<id> (see previews.tsx)
+  listTemplate,
+  cardListTemplate,
+  detailTemplate,
+  editorTemplate,
+  dashboardTemplate,
+  filesTemplate,
+  libraryTemplate,
+  authTemplate,
 ];
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -187,6 +188,7 @@ const TABS: { id: Tab; label: string }[] = [
 export function Catalog() {
   const [tab, setTab] = useState<Tab>("components");
   const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const noun = tab === "templates" ? "templates" : "components";
 
@@ -215,14 +217,16 @@ export function Catalog() {
 
   const selectTab = (id: Tab) => {
     setTab(id);
-    window.scrollTo(0, 0);
+    // `.ds-root` is its own scroll container (inside the fixed-height #app),
+    // so resetting the window scroll position would be a no-op.
+    rootRef.current?.scrollTo(0, 0);
   };
 
   return (
-    <div class="ds-root">
+    <div class="ds-root" ref={rootRef}>
       <header class="ds-topbar">
         <h1>GSV Design System</h1>
-        <span class="ds-sub">migration preview · web/ port</span>
+        <span class="ds-sub">component catalog</span>
         <div class="ds-search">
           <Search
             value={query}
