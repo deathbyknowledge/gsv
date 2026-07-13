@@ -1672,31 +1672,33 @@ export class Kernel extends Host<Env> {
       signal?: AbortSignal;
     } = {},
   ): Promise<Extract<ResponseFrame, { ok: true }>> {
-    if (options.signal?.aborted) {
-      await options.body?.stream.cancel(options.signal.reason).catch(() => {});
-      throw requestAbortError(options.signal.reason);
-    }
-    const device = this.devices.get(deviceId);
-    if (!device || !device.online) {
-      throw new Error(`Device offline: ${deviceId}`);
-    }
-    if (!this.devices.canHandle(deviceId, call)) {
-      throw new Error(`Device ${deviceId} does not implement ${call}`);
-    }
-
-    const deviceConn = this.findDeviceConnection(deviceId);
-    if (!deviceConn) {
-      throw new Error(`No active connection for device: ${deviceId}`);
-    }
-
     const id = options.id ?? crypto.randomUUID();
-    const pending = this.createPendingAppResponse(id);
+    let cleanupPending: (() => void) | null = null;
     let route: { cancel: () => void } | null = null;
     let outgoing: OutgoingBinaryBody | null = null;
     let onAbort: (() => void) | null = null;
     let requestSent = false;
+    let completionReason: unknown = "Device request completed";
 
     try {
+      if (options.signal?.aborted) {
+        throw requestAbortError(options.signal.reason);
+      }
+      const device = this.devices.get(deviceId);
+      if (!device || !device.online) {
+        throw new Error(`Device offline: ${deviceId}`);
+      }
+      if (!this.devices.canHandle(deviceId, call)) {
+        throw new Error(`Device ${deviceId} does not implement ${call}`);
+      }
+
+      const deviceConn = this.findDeviceConnection(deviceId);
+      if (!deviceConn) {
+        throw new Error(`No active connection for device: ${deviceId}`);
+      }
+
+      const pending = this.createPendingAppResponse(id);
+      cleanupPending = pending.cleanup;
       route = await this.registerRouteWithExpiry({
         id,
         call: call as SyscallName,
@@ -1741,15 +1743,21 @@ export class Kernel extends Host<Env> {
         throw new Error(frame.error.message);
       }
       return frame;
+    } catch (error) {
+      completionReason = error;
+      throw error;
     } finally {
       if (onAbort) {
         options.signal?.removeEventListener("abort", onAbort);
       }
-      pending.cleanup();
+      cleanupPending?.();
       route?.cancel();
-      await outgoing?.cancel(
-        options.signal?.aborted ? options.signal.reason : "Device request completed",
-      );
+      const reason = options.signal?.aborted ? options.signal.reason : completionReason;
+      if (outgoing) {
+        await outgoing.cancel(reason);
+      } else {
+        await options.body?.stream.cancel(reason).catch(() => {});
+      }
     }
   }
 

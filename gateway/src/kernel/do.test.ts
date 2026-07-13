@@ -124,6 +124,23 @@ describe("Kernel frame bodies", () => {
     expect(outgoing.cancel).toHaveBeenCalledWith("Device request completed");
   });
 
+  it("cancels a request body when device routing fails before send", async () => {
+    const cancel = vi.fn();
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.devices = { get: () => null };
+
+    await expect(kernel.requestDevice("offline-device", "fs.transfer.receive", {}, {
+      body: {
+        stream: new ReadableStream({ cancel }),
+        length: 1,
+      },
+    })).rejects.toThrow("Device offline: offline-device");
+
+    expect(cancel).toHaveBeenCalledWith(expect.objectContaining({
+      message: "Device offline: offline-device",
+    }));
+  });
+
   it("cancels the route and upload when a device request is aborted", async () => {
     const kernel = Object.create(Kernel.prototype) as any;
     kernel.pendingAppResponses = new Map();
