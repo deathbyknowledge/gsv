@@ -58,12 +58,15 @@ export async function handleShellExec(
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
+    const signal = ctx.requestSignal
+      ? AbortSignal.any([controller.signal, ctx.requestSignal])
+      : controller.signal;
 
     let result: BashExecResult;
     try {
       result = await bash.exec(command, {
         cwd,
-        signal: controller.signal,
+        signal,
       });
     } finally {
       clearTimeout(timer);
@@ -101,6 +104,15 @@ export async function handleShellExec(
       stderr,
     };
   } catch (err) {
+    if (ctx.requestSignal?.aborted) {
+      return {
+        status: "failed",
+        output: "",
+        error: ctx.requestSignal.reason instanceof Error
+          ? ctx.requestSignal.reason.message
+          : "Request cancelled",
+      };
+    }
     if (err instanceof Error && err.name === "AbortError") {
       return { status: "failed", output: "", error: `Command timed out after ${timeout}ms` };
     }

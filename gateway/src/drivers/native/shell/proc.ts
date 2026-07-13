@@ -3,14 +3,15 @@ import type { ExecResult } from "just-bash";
 import type { KernelContext } from "../../../kernel/context";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
 import {
+  forwardToProcess,
   handleProcIpcCall,
   handleProcIpcSend,
   handleProcSpawn,
 } from "../../../kernel/proc-handlers";
 import { handleAccountList } from "../../../kernel/agents";
-import type { SyscallName } from "../../../syscalls";
+import type { ArgsOf, ResultOf, SyscallName } from "../../../syscalls";
 import type { ProcSpawnArgs } from "@humansandmachines/gsv/protocol";
-import type { Frame } from "../../../protocol/frames";
+import type { Frame, RequestFrame } from "../../../protocol/frames";
 import { sendFrameToProcess } from "../../../shared/utils";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
 
@@ -91,6 +92,38 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
           result.label ? `label=${quoteShellField(result.label)}` : "",
           `cwd=${quoteShellField(result.cwd)}`,
         ].filter(Boolean).join(" ") + "\n",
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "reset": {
+      requireCommandCapability(ctx, "proc.reset");
+      const result = await runProcLifecycleSyscall(
+        ctx,
+        "proc.reset",
+        parseProcResetCommand(rest, ctx),
+      );
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc reset: ${result.error}\n`, exitCode: 1 };
+      }
+      return {
+        stdout: formatProcLifecycleResult(result),
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "kill": {
+      requireCommandCapability(ctx, "proc.kill");
+      const result = await runProcLifecycleSyscall(
+        ctx,
+        "proc.kill",
+        parseProcKillCommand(rest),
+      );
+      if (!result.ok) {
+        return { stdout: "", stderr: `proc kill: ${result.error}\n`, exitCode: 1 };
+      }
+      return {
+        stdout: formatProcLifecycleResult(result),
         stderr: "",
         exitCode: 0,
       };
@@ -321,6 +354,23 @@ async function runProcConversationSyscall(
   return response.data;
 }
 
+type ProcLifecycleCall = "proc.reset" | "proc.kill";
+
+async function runProcLifecycleSyscall<S extends ProcLifecycleCall>(
+  ctx: KernelContext,
+  call: S,
+  args: ArgsOf<S>,
+): Promise<ResultOf<S>> {
+  const frame = {
+    type: "req",
+    id: crypto.randomUUID(),
+    call,
+    args,
+  } as RequestFrame;
+  const response = await forwardToProcess(frame, ctx);
+  return response.data as ResultOf<S>;
+}
+
 function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   let runAs: string | undefined;
   let label: string | undefined;
@@ -334,7 +384,10 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
     if (current === "--json") {
-      return JSON.parse(requireShellOptionValue(args[index + 1], current)) as ProcSpawnArgs;
+      return {
+        ...JSON.parse(requireShellOptionValue(args[index + 1], current)) as ProcSpawnArgs,
+        fresh: true,
+      };
     }
     if (current === "--as" || current === "--run-as") {
       index += 1;
@@ -379,6 +432,7 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   const positionalPrompt = positional.join(" ").trim();
   const finalPrompt = prompt ?? (positionalPrompt || undefined);
   return {
+    fresh: true,
     ...(runAs ? { runAs } : {}),
     ...(label ? { label } : {}),
     ...(finalPrompt ? { prompt: finalPrompt } : {}),
@@ -389,8 +443,57 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   };
 }
 
+function parseProcResetCommand(
+  args: string[],
+  ctx: KernelContext,
+): ArgsOf<"proc.reset"> {
+  let pid = ctx.processId;
+  for (let index = 0; index < args.length; index += 1) {
+    const current = args[index];
+    if (current === "--pid") {
+      index += 1;
+      pid = normalizeProcPid(requireShellOptionValue(args[index], current));
+      continue;
+    }
+    throw new Error(`unexpected argument: ${current}`);
+  }
+  return pid ? { pid } : {};
+}
+
+function parseProcKillCommand(args: string[]): ArgsOf<"proc.kill"> {
+  let archive = true;
+  const positional: string[] = [];
+  for (const current of args) {
+    if (current === "--no-archive") {
+      archive = false;
+      continue;
+    }
+    positional.push(current);
+  }
+  const pid = positional.shift();
+  if (!pid) {
+    throw new Error("missing pid");
+  }
+  if (positional.length > 0) {
+    throw new Error(`unexpected argument: ${positional[0]}`);
+  }
+  return { pid: normalizeProcPid(pid), archive };
+}
+
 function quoteShellField(value: string): string {
   return JSON.stringify(value);
+}
+
+function formatProcLifecycleResult(result: {
+  pid: string;
+  archivedMessages: number;
+  archivedTo?: string;
+}): string {
+  return [
+    `pid=${result.pid}`,
+    `archived=${result.archivedMessages}`,
+    result.archivedTo ? `archive=${quoteShellField(result.archivedTo)}` : "",
+  ].filter(Boolean).join(" ") + "\n";
 }
 
 function parseProcSegmentsCommand(args: string[], ctx: KernelContext): {
@@ -1041,6 +1144,8 @@ function procUsage(): string {
     "  proc agents [--json]",
     "  proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] <prompt>",
     "  proc spawn --json JSON",
+    "  proc reset [--pid PID]",
+    "  proc kill PID [--no-archive]",
     "  proc delegate [--as ACCOUNT] [--label LABEL] [--parent PID] [--cwd PATH] [--timeout 10m] <task>",
     "  proc segments [--pid PID] [--conversation id]",
     "  proc policy [--pid PID] [--conversation id] [--overflow auto-compact|fail] [--compact-at N] [--keep-last N]",

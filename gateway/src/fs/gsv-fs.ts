@@ -32,6 +32,7 @@ import type {
   OpenFileRangeRequest,
   OpenFileOptions,
   OpenFileResult,
+  WriteFileOptions,
   WriteFileStreamOptions,
   WriteFileStreamResult,
 } from "./mount";
@@ -41,6 +42,7 @@ import { isAccountHomeReservedPath } from "./backends/account-home";
 import { isPackageMountPath } from "./backends/packages";
 import { isProcessSourcePath } from "./backends/process-sources";
 import { normalizePath } from "./utils";
+import { bindStreamToAbort } from "../shared/streams";
 
 const MAX_SYMLINK_DEPTH = 16;
 
@@ -87,7 +89,10 @@ export class GsvFs implements IFileSystem {
     const p = await this.resolveFinalPath(path);
     const backend = this.backendForPath(p);
     if (backend.openFile) {
-      return backend.openFile(p, options);
+      const opened = await backend.openFile(p, options);
+      if (opened) {
+        return opened;
+      }
     }
     const stat = await backend.stat(p);
     if (!stat.isFile) {
@@ -111,18 +116,20 @@ export class GsvFs implements IFileSystem {
     const body = range
       ? bytes.subarray(range.offset, range.offset + range.length)
       : bytes;
+    const size = body.byteLength;
     return {
       body: bytesToStream(body),
-      size: body.byteLength,
+      size,
       totalSize: stat.size,
       mtime: stat.mtime,
       status: range ? 206 : 200,
+      contentType: stat.contentType,
       etag,
       ...(range ? { range } : {}),
     };
   }
 
-  async writeFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void> {
+  async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
     await this.backendForPath(p).writeFile(p, content, options);
   }
@@ -133,14 +140,21 @@ export class GsvFs implements IFileSystem {
     options: WriteFileStreamOptions,
   ): Promise<WriteFileStreamResult> {
     assertExpectedSize(options?.expectedSize);
+    options.signal?.throwIfAborted();
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
+    options.signal?.throwIfAborted();
     const backend = this.backendForPath(p);
     if (backend.writeFileStream) {
-      return backend.writeFileStream(p, content, options);
+      const result = await backend.writeFileStream(p, content, options);
+      if (result) {
+        return result;
+      }
     }
 
-    const bytes = await streamToBytes(content, options.expectedSize);
-    await backend.writeFile(p, bytes);
+    const bytes = await streamToBytes(content, options.expectedSize, options.signal);
+    await backend.writeFile(p, bytes, {
+      contentType: options.contentType,
+    });
     return {
       size: bytes.byteLength,
       streamed: false,
@@ -348,13 +362,20 @@ export class GsvFs implements IFileSystem {
     return [];
   }
 
-  async search(path: string, query: string, include?: string): Promise<FsSearchBackendResult> {
+  async search(
+    path: string,
+    query: string,
+    include?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult> {
+    signal?.throwIfAborted();
     const p = await this.resolveFinalPath(path);
+    signal?.throwIfAborted();
     const backend = this.backendForPath(p);
     if (!backend.search) {
       throw new Error(`ENOSYS: search is not supported for '${p}'`);
     }
-    return backend.search(p, query, include);
+    return backend.search(p, query, include, signal);
   }
 
   private async resolveFinalPath(
@@ -508,12 +529,16 @@ export class GsvFs implements IFileSystem {
 }
 
 function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
+  const source: UnderlyingByteSource = {
+    type: "bytes",
     start(controller) {
-      controller.enqueue(bytes);
+      if (bytes.byteLength > 0) {
+        controller.enqueue(bytes);
+      }
       controller.close();
     },
-  });
+  };
+  return new ReadableStream(source);
 }
 
 function resolveOpenFileRange(range: OpenFileRangeRequest, total: number): OpenFileRange {
@@ -542,8 +567,12 @@ function assertExpectedSize(size: unknown): asserts size is number {
   }
 }
 
-async function streamToBytes(stream: ReadableStream<Uint8Array>, expectedSize: number): Promise<Uint8Array> {
-  const reader = stream.getReader();
+async function streamToBytes(
+  stream: ReadableStream<Uint8Array>,
+  expectedSize: number,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  const reader = (signal ? bindStreamToAbort(stream, signal) : stream).getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
 
@@ -555,10 +584,13 @@ async function streamToBytes(stream: ReadableStream<Uint8Array>, expectedSize: n
       }
       size += value.byteLength;
       if (size > expectedSize) {
-        throw new Error(`EFBIG: stream exceeds expectedSize ${expectedSize}`);
+        const error = new Error(`EFBIG: stream exceeds expectedSize ${expectedSize}`);
+        await reader.cancel(error).catch(() => {});
+        throw error;
       }
       chunks.push(value);
     }
+    signal?.throwIfAborted();
   } finally {
     reader.releaseLock();
   }

@@ -2,8 +2,8 @@ import { getAgentByName } from "agents";
 import { Kernel } from "../kernel/do";
 import { env } from "cloudflare:workers";
 import { Process } from "../process/do";
-import type { Frame } from "../protocol/frames";
-import type { NetFetchArgs, NetFetchResult } from "@humansandmachines/gsv/protocol";
+import type { Frame, FrameBody, ResponseOkFrame } from "../protocol/frames";
+import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 
 export const isWebSocketRequest = (request: Request) =>
   request.method === "GET" && request.headers.get("upgrade") === "websocket";
@@ -15,6 +15,8 @@ type KernelPtr = DurableObjectStub<Kernel>;
 export type RequestProcessNetFetchOptions = {
   ttlMs?: number;
   internalPurpose?: "model-transport";
+  body?: FrameBody;
+  requestId?: string;
 };
 
 export async function getKernelPtr(): Promise<KernelPtr> {
@@ -38,9 +40,18 @@ export async function requestProcessNetFetch(
   target: string,
   args: NetFetchArgs,
   options: RequestProcessNetFetchOptions = {},
-): Promise<NetFetchResult> {
+): Promise<ResponseOkFrame<"net.fetch">> {
   const kernel = await getKernelPtr();
   return kernel.requestProcessNetFetch(processId, target, args, options);
+}
+
+export async function cancelProcessRequests(
+  processId: string,
+  requestIds: string[],
+  reason?: string,
+): Promise<number> {
+  const kernel = await getKernelPtr();
+  return kernel.cancelProcessRequests(processId, requestIds, reason);
 }
 
 export async function sendFrameToProcess(

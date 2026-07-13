@@ -7,7 +7,6 @@ import {
   handleAiTranscriptionCreate,
 } from "../../../kernel/ai";
 import type { KernelContext } from "../../../kernel/context";
-import { decodeBase64Bytes, encodeBase64Bytes } from "../../../shared/base64";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
 
 type ParsedArgs = {
@@ -64,25 +63,31 @@ async function runImg2Txt(
   }
 
   const path = resolvePath(shellCtx, parsed.positionals[0]);
-  const bytes = await fs.readFileBuffer(path);
-  const mimeType = optionValue(parsed, "mime") ?? inferImageMimeType(path);
-  if (!mimeType) {
-    throw new Error(`cannot infer image MIME type for ${path}; pass --mime image/...`);
-  }
   const maxTokens = parsePositiveIntOption(optionValue(parsed, "max-tokens"), "--max-tokens");
-
-  const result = await handleAiImageRead({
-    image: {
-      data: encodeBase64Bytes(bytes),
-      mimeType,
-      filename: pathName(path),
-      size: bytes.byteLength,
-    },
-    prompt: optionValue(parsed, "prompt"),
-    model: optionValue(parsed, "model"),
-    inputFormat: normalizeInputFormatOption(optionValue(parsed, "input-format")),
-    ...(maxTokens !== undefined ? { maxTokens } : {}),
-  }, ctx);
+  const requestCtx = withShellSignal(ctx, shellCtx);
+  const opened = await fs.openFile(path);
+  const stream = opened.body;
+  if (!stream) {
+    throw new Error(`cannot read image data for ${path}`);
+  }
+  const result = await usingStream(stream, async () => {
+    const mimeType = optionValue(parsed, "mime")
+      ?? storedMediaMimeType(opened.contentType, "image")
+      ?? inferImageMimeType(path);
+    if (!mimeType) {
+      throw new Error(`cannot infer image MIME type for ${path}; pass --mime image/...`);
+    }
+    return handleAiImageRead({
+      image: {
+        mimeType,
+        filename: pathName(path),
+      },
+      prompt: optionValue(parsed, "prompt"),
+      model: optionValue(parsed, "model"),
+      inputFormat: normalizeInputFormatOption(optionValue(parsed, "input-format")),
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
+    }, requestCtx, { stream, length: opened.size });
+  });
 
   if (hasOption(parsed, "json")) {
     return okJson(result);
@@ -109,22 +114,32 @@ async function runTxt2Img(
   const prompt = readTextArgument(parsed.positionals, shellCtx, "prompt");
   const timeoutMs = parsePositiveIntOption(optionValue(parsed, "timeout-ms"), "--timeout-ms");
 
-  const result = await handleAiImageGenerate({
+  const requestCtx = withShellSignal(ctx, shellCtx);
+  const response = await handleAiImageGenerate({
     prompt,
     model: optionValue(parsed, "model"),
     size: optionValue(parsed, "size"),
     quality: optionValue(parsed, "quality"),
     format: optionValue(parsed, "format"),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-  }, ctx);
-  if (!result.image.data || result.image.size <= 0) {
+  }, requestCtx);
+  const result = response.data;
+  const body = response.body;
+  if (!body || result.image.size <= 0) {
+    await body?.stream.cancel().catch(() => {});
     throw new Error(result.url
       ? `image generation returned a URL instead of inline image data: ${result.url}`
       : "image generation returned no image data");
   }
-
-  const outputPath = resolvePath(shellCtx, out);
-  await fs.writeFile(outputPath, base64ToBytes(result.image.data));
+  const outputPath = await usingStream(body.stream, async () => {
+    const path = resolvePath(shellCtx, out);
+    await fs.writeFileStream(path, body.stream, {
+      expectedSize: result.image.size,
+      contentType: result.image.mimeType,
+      signal: requestCtx.requestSignal,
+    });
+    return path;
+  });
 
   if (hasOption(parsed, "json")) {
     return okJson({
@@ -159,23 +174,29 @@ async function runStt(
   }
 
   const path = resolvePath(shellCtx, parsed.positionals[0]);
-  const bytes = await fs.readFileBuffer(path);
-  const mimeType = optionValue(parsed, "mime") ?? inferAudioMimeType(path);
-  if (!mimeType) {
-    throw new Error(`cannot infer audio MIME type for ${path}; pass --mime audio/...`);
+  const requestCtx = withShellSignal(ctx, shellCtx);
+  const opened = await fs.openFile(path);
+  const stream = opened.body;
+  if (!stream) {
+    throw new Error(`cannot read audio data for ${path}`);
   }
-
-  const result = await handleAiTranscriptionCreate({
-    audio: {
-      data: encodeBase64Bytes(bytes),
-      mimeType,
-      filename: pathName(path),
-      size: bytes.byteLength,
-    },
-    language: optionValue(parsed, "language"),
-    prompt: optionValue(parsed, "prompt"),
-    mode: hasOption(parsed, "translate") ? "translate" : "transcribe",
-  }, ctx);
+  const result = await usingStream(stream, async () => {
+    const mimeType = optionValue(parsed, "mime")
+      ?? storedMediaMimeType(opened.contentType, "audio")
+      ?? inferAudioMimeType(path);
+    if (!mimeType) {
+      throw new Error(`cannot infer audio MIME type for ${path}; pass --mime audio/...`);
+    }
+    return handleAiTranscriptionCreate({
+      audio: {
+        mimeType,
+        filename: pathName(path),
+      },
+      language: optionValue(parsed, "language"),
+      prompt: optionValue(parsed, "prompt"),
+      mode: hasOption(parsed, "translate") ? "translate" : "transcribe",
+    }, requestCtx, { stream, length: opened.size });
+  });
 
   if (hasOption(parsed, "json")) {
     return okJson(result);
@@ -204,7 +225,8 @@ async function runTts(
   const bitRate = parsePositiveIntOption(optionValue(parsed, "bit-rate"), "--bit-rate");
   const encoding = optionValue(parsed, "encoding") ?? optionValue(parsed, "format");
 
-  const result = await handleAiSpeechCreate({
+  const requestCtx = withShellSignal(ctx, shellCtx);
+  const response = await handleAiSpeechCreate({
     text,
     textFormat: hasOption(parsed, "plain") ? "plain" : hasOption(parsed, "markdown") ? "markdown" : undefined,
     model: optionValue(parsed, "model"),
@@ -214,18 +236,27 @@ async function runTts(
     container: optionValue(parsed, "container"),
     ...(sampleRate !== undefined ? { sampleRate } : {}),
     ...(bitRate !== undefined ? { bitRate } : {}),
-  }, ctx);
+  }, requestCtx);
+  const result = response.data;
   if (result.skipped) {
     return hasOption(parsed, "json")
       ? okJson({ output: null, skipped: true, provider: result.provider, model: result.model })
       : ok("skipped\n");
   }
-  if (!result.audio.data || result.audio.size <= 0) {
+  const body = response.body;
+  if (!body || result.audio.size <= 0) {
+    await body?.stream.cancel().catch(() => {});
     throw new Error("speech synthesis returned no audio data");
   }
-
-  const outputPath = resolvePath(shellCtx, out);
-  await fs.writeFile(outputPath, base64ToBytes(result.audio.data));
+  const outputPath = await usingStream(body.stream, async () => {
+    const path = resolvePath(shellCtx, out);
+    await fs.writeFileStream(path, body.stream, {
+      expectedSize: result.audio.size,
+      contentType: result.audio.mimeType,
+      signal: requestCtx.requestSignal,
+    });
+    return path;
+  });
 
   if (hasOption(parsed, "json")) {
     return okJson({
@@ -344,11 +375,6 @@ function resolvePath(ctx: CommandContext, path: string): string {
   return ctx.fs.resolvePath(ctx.cwd, path);
 }
 
-function base64ToBytes(value: string): Uint8Array {
-  const base64 = value.includes(",") ? value.slice(value.indexOf(",") + 1) : value;
-  return decodeBase64Bytes(base64);
-}
-
 function inferImageMimeType(path: string): string | undefined {
   const lower = path.toLowerCase();
   if (lower.endsWith(".png")) return "image/png";
@@ -369,6 +395,27 @@ function inferAudioMimeType(path: string): string | undefined {
   if (lower.endsWith(".webm")) return "audio/webm";
   if (lower.endsWith(".flac")) return "audio/flac";
   return undefined;
+}
+
+function storedMediaMimeType(value: string | undefined, type: "image" | "audio"): string | undefined {
+  const normalized = value?.trim();
+  return normalized?.toLowerCase().startsWith(`${type}/`) ? normalized : undefined;
+}
+
+function withShellSignal(ctx: KernelContext, shellCtx: CommandContext): KernelContext {
+  return shellCtx.signal && shellCtx.signal !== ctx.requestSignal
+    ? { ...ctx, requestSignal: shellCtx.signal }
+    : ctx;
+}
+
+async function usingStream<T>(stream: ReadableStream<Uint8Array>, use: () => Promise<T>): Promise<T> {
+  try {
+    return await use();
+  } finally {
+    if (!stream.locked) {
+      await stream.cancel().catch(() => {});
+    }
+  }
 }
 
 function pathName(path: string): string {

@@ -18,7 +18,7 @@ const PLATFORMS = [
 const SELECTED_PLATFORM = "mac";
 
 const INSTALL_COMMAND =
-  "curl -fsSL https://gsv.studio/public/gsv/downloads/cli/install.sh | bash -s -- https://gsv.studio";
+  "curl -fsSL https://install.gsv.space | GSV_CHANNEL=dev bash";
 
 const CONNECT_COMMAND = [
   'gsv config --local set gateway.url "wss://gsv.studio/ws"',

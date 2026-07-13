@@ -12,7 +12,14 @@
  */
 
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
+import type { FrameBody } from "../protocol/frames";
 import type { Context, Message, Tool } from "@earendil-works/pi-ai";
+import {
+  bodyFromBytes,
+  bodyToBytes,
+  normalizeSpeechText,
+  normalizeSpeechTextFormat,
+} from "@humansandmachines/gsv/protocol";
 import type {
   ProcessIdentity,
   AiToolsResult,
@@ -72,7 +79,7 @@ import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
 } from "../inference/transcription";
-import { base64DecodedLength, normalizeBase64Data } from "../shared/base64";
+import { encodeBase64Bytes } from "../shared/base64";
 import {
   DEFAULT_IMAGE_READING_MAX_TOKENS,
   DEFAULT_IMAGE_READING_INPUT_FORMAT,
@@ -100,10 +107,7 @@ import {
   synthesizeSpeech,
   transcribeAudio,
 } from "../inference/capabilities";
-import {
-  normalizeSpeechText,
-  normalizeSpeechTextFormat,
-} from "@humansandmachines/gsv/protocol";
+import { isVectorImageMimeType } from "../inference/image-mime";
 import { collectPromptSkillIndex } from "./skills";
 import { listVisibleTargets, targetToAiDevice } from "./targets";
 import {
@@ -148,6 +152,7 @@ type AiModelStackConfig = Pick<
   | "generationTimeoutMs"
   | "generationStreaming"
 >;
+
 const ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS = [
   "provider",
   "base_url",
@@ -443,31 +448,39 @@ function normalizeAiProcessOverrideValues(
   return values;
 }
 
+async function readAiInputBody(
+  body: FrameBody | undefined,
+  maxBytes: number,
+  label: "audio" | "image",
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  if (!body) {
+    throw new Error(`${label} request body is required`);
+  }
+
+  const bytes = await bodyToBytes(body, maxBytes, signal);
+  if (bytes.byteLength === 0) {
+    throw new Error(`${label} request body is empty`);
+  }
+  return bytes;
+}
+
 export async function handleAiTranscriptionCreate(
   args: AiTranscriptionCreateArgs,
   ctx: KernelContext,
+  body?: FrameBody,
 ): Promise<AiTranscriptionCreateResult> {
   const media = await resolveAiMediaConfigForContext(ctx);
   const audio = args.audio;
   if (!audio || typeof audio !== "object") {
     throw new Error("audio is required");
   }
-  if (typeof audio.data !== "string" || audio.data.trim().length === 0) {
-    throw new Error("audio.data is required");
-  }
   if (typeof audio.mimeType !== "string" || !audio.mimeType.trim().toLowerCase().startsWith("audio/")) {
     throw new Error("audio.mimeType must be an audio MIME type");
   }
 
-  const base64 = normalizeBase64Data(audio.data.trim());
-  const byteLength = base64DecodedLength(base64);
-  const maxBytes = media.transcriptionMaxBytes;
-  if (byteLength <= 0) {
-    throw new Error("audio.data is empty");
-  }
-  if (byteLength > maxBytes) {
-    throw new Error(`audio.data exceeds transcription limit (${maxBytes} bytes)`);
-  }
+  const bytes = await readAiInputBody(body, media.transcriptionMaxBytes, "audio", ctx.requestSignal);
+  const base64 = encodeBase64Bytes(bytes);
 
   const mode = args.mode === "translate" ? "translate" : "transcribe";
   const result = await transcribeAudio({
@@ -495,6 +508,7 @@ export async function handleAiTranscriptionCreate(
 export async function handleAiImageRead(
   args: AiImageReadArgs,
   ctx: KernelContext,
+  body?: FrameBody,
 ): Promise<AiImageReadResult> {
   const input = args && typeof args === "object" ? args : ({} as AiImageReadArgs);
   const media = await resolveAiMediaConfigForContext(ctx);
@@ -502,22 +516,15 @@ export async function handleAiImageRead(
   if (!image || typeof image !== "object") {
     throw new Error("image is required");
   }
-  if (typeof image.data !== "string" || image.data.trim().length === 0) {
-    throw new Error("image.data is required");
-  }
   if (typeof image.mimeType !== "string" || !image.mimeType.trim().toLowerCase().startsWith("image/")) {
     throw new Error("image.mimeType must be an image MIME type");
   }
+  if (isVectorImageMimeType(image.mimeType)) {
+    throw new Error("SVG image reading requires rasterization");
+  }
 
-  const base64 = normalizeBase64Data(image.data.trim());
-  const byteLength = base64DecodedLength(base64);
-  const maxBytes = media.imageReadingMaxBytes;
-  if (byteLength <= 0) {
-    throw new Error("image.data is empty");
-  }
-  if (byteLength > maxBytes) {
-    throw new Error(`image.data exceeds image reading limit (${maxBytes} bytes)`);
-  }
+  const bytes = await readAiInputBody(body, media.imageReadingMaxBytes, "image", ctx.requestSignal);
+  const base64 = encodeBase64Bytes(bytes);
 
   const model = normalizeOptionalString(input.model) ?? media.imageReadingModel;
   const request = {
@@ -544,7 +551,7 @@ export async function handleAiImageRead(
 export async function handleAiImageGenerate(
   args: AiImageGenerateArgs,
   ctx: KernelContext,
-): Promise<AiImageGenerateResult> {
+): Promise<{ data: AiImageGenerateResult; body?: FrameBody }> {
   const input = args && typeof args === "object" ? args : ({} as AiImageGenerateArgs);
   const media = await resolveAiMediaConfigForContext(ctx);
   const prompt = normalizeOptionalString(input.prompt);
@@ -569,22 +576,24 @@ export async function handleAiImageGenerate(
   }
 
   return {
-    image: {
-      data: result.data,
-      mimeType: result.mimeType,
-      size: result.size,
+    data: {
+      image: {
+        mimeType: result.mimeType,
+        size: result.bytes?.byteLength ?? 0,
+      },
+      provider: result.provider,
+      model: result.model,
+      ...(result.revisedPrompt ? { revisedPrompt: result.revisedPrompt } : {}),
+      ...(result.url ? { url: result.url } : {}),
     },
-    provider: result.provider,
-    model: result.model,
-    ...(result.revisedPrompt ? { revisedPrompt: result.revisedPrompt } : {}),
-    ...(result.url ? { url: result.url } : {}),
+    ...(result.bytes ? { body: bodyFromBytes(result.bytes) } : {}),
   };
 }
 
 export async function handleAiSpeechCreate(
   args: AiSpeechCreateArgs,
   ctx: KernelContext,
-): Promise<AiSpeechCreateResult> {
+): Promise<{ data: AiSpeechCreateResult; body?: FrameBody }> {
   const input = args && typeof args === "object" ? args : ({} as AiSpeechCreateArgs);
   const media = await resolveAiMediaConfigForContext(ctx);
   const rawText = normalizeOptionalString(input.text);
@@ -594,14 +603,15 @@ export async function handleAiSpeechCreate(
   const text = normalizeSpeechText(rawText, normalizeSpeechTextFormat(input.textFormat));
   if (!text) {
     return {
-      audio: {
-        data: "",
-        mimeType: "",
-        size: 0,
+      data: {
+        audio: {
+          mimeType: "",
+          size: 0,
+        },
+        provider: "none",
+        model: "none",
+        skipped: true,
       },
-      provider: "none",
-      model: "none",
-      skipped: true,
     };
   }
 
@@ -638,16 +648,18 @@ export async function handleAiSpeechCreate(
   }
 
   return {
-    audio: {
-      data: result.data,
-      mimeType: result.mimeType,
-      size: result.size,
+    data: {
+      audio: {
+        mimeType: result.mimeType,
+        size: result.bytes.byteLength,
+      },
+      provider: result.provider,
+      model: result.model,
+      ...(result.voice ? { voice: result.voice } : {}),
+      ...(result.encoding ? { encoding: result.encoding } : {}),
+      ...(result.container ? { container: result.container } : {}),
     },
-    provider: result.provider,
-    model: result.model,
-    ...(result.voice ? { voice: result.voice } : {}),
-    ...(result.encoding ? { encoding: result.encoding } : {}),
-    ...(result.container ? { container: result.container } : {}),
+    body: bodyFromBytes(result.bytes),
   };
 }
 

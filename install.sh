@@ -4,7 +4,7 @@
 # Installs the GSV CLI.
 #
 # Usage:
-#   curl -sSL https://install.gsv.space | bash
+#   curl -fsSL https://install.gsv.space | bash
 #
 # Windows:
 #   irm https://install.gsv.space/install.ps1 | iex
@@ -152,6 +152,33 @@ resolve_release_ref() {
     printf '%s\n' "$DEV_RELEASE_TAG"
 }
 
+download_file() {
+    local url="$1"
+    local output="$2"
+
+    if command -v curl > /dev/null 2>&1; then
+        curl -fsSL -o "$output" "$url"
+    elif command -v wget > /dev/null 2>&1; then
+        wget -q -O "$output" "$url"
+    else
+        error "curl or wget required"
+        return 1
+    fi
+}
+
+sha256_file() {
+    if command -v sha256sum > /dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum > /dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    elif command -v openssl > /dev/null 2>&1; then
+        openssl dgst -sha256 "$1" | awk '{print $NF}'
+    else
+        error "sha256sum, shasum, or openssl required" >&2
+        return 1
+    fi
+}
+
 # ============================================================================
 # CLI Installation
 # ============================================================================
@@ -163,31 +190,42 @@ download_cli() {
     local url
     url="$(release_asset_url "$release_ref" "$BINARY_NAME")"
     url="$(cache_bust_url_if_mutable "$release_ref" "$url")"
-    local tmp_dir=$(mktemp -d)
+    local checksum_url
+    checksum_url="$(release_asset_url "$release_ref" "checksums.txt")"
+    checksum_url="$(cache_bust_url_if_mutable "$release_ref" "$checksum_url")"
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
     local tmp_file="${tmp_dir}/gsv"
+    local checksum_file="${tmp_dir}/checksums.txt"
     
     info "Downloading CLI (${release_ref}) for ${OS}-${ARCH}..."
     
-    if command -v curl > /dev/null 2>&1; then
-        HTTP_CODE=$(curl -sSL -w "%{http_code}" -o "$tmp_file" "$url" 2>/dev/null)
-        if [ "$HTTP_CODE" != "200" ]; then
-            error "Download failed (HTTP ${HTTP_CODE})"
-            error "URL: $url"
-            rm -rf "$tmp_dir"
-            exit 1
-        fi
-    elif command -v wget > /dev/null 2>&1; then
-        wget -q -O "$tmp_file" "$url" || {
-            error "Download failed"
-            rm -rf "$tmp_dir"
-            exit 1
-        }
-    else
-        error "curl or wget required"
+    if ! download_file "$url" "$tmp_file" || ! download_file "$checksum_url" "$checksum_file"; then
+        error "Download failed"
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+
+    local expected_sum
+    expected_sum="$(awk -v name="$BINARY_NAME" '$2 == name || $2 == "*" name { print tolower($1); exit }' "$checksum_file")"
+    if [ -z "$expected_sum" ]; then
+        error "Could not locate checksum for ${BINARY_NAME}"
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+
+    local actual_sum
+    if ! actual_sum="$(sha256_file "$tmp_file")"; then
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+    if [ "$(printf '%s' "$actual_sum" | tr '[:upper:]' '[:lower:]')" != "$expected_sum" ]; then
+        error "Checksum verification failed for ${BINARY_NAME}"
+        rm -rf "$tmp_dir"
         exit 1
     fi
     
-    success "Downloaded CLI binary"
+    success "Downloaded and verified CLI binary"
     
     # Install
     chmod +x "$tmp_file"

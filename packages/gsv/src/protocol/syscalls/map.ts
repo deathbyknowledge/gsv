@@ -88,6 +88,10 @@ import type {
   ProcListResult,
   ProcMediaReadArgs,
   ProcMediaReadResult,
+  ProcMediaDeleteArgs,
+  ProcMediaDeleteResult,
+  ProcMediaWriteArgs,
+  ProcMediaWriteResult,
   ProcResetArgs,
   ProcResetResult,
   ProcSendArgs,
@@ -210,8 +214,6 @@ import type {
   SysTokenRevokeResult,
   SysUnlinkArgs,
   SysUnlinkResult,
-  SysUpdateArgs,
-  SysUpdateResult,
 } from "./system";
 import type {
   SchedulerAddArgs,
@@ -311,6 +313,8 @@ export type SyscallDomains = {
   "proc.ai.config.get": { args: ProcAiConfigGetArgs; result: ProcAiConfigGetResult };
   "proc.ai.config.set": { args: ProcAiConfigSetArgs; result: ProcAiConfigSetResult };
   "proc.media.read": { args: ProcMediaReadArgs; result: ProcMediaReadResult };
+  "proc.media.write": { args: ProcMediaWriteArgs; result: ProcMediaWriteResult };
+  "proc.media.delete": { args: ProcMediaDeleteArgs; result: ProcMediaDeleteResult };
   "proc.conversation.open": { args: ProcConversationOpenArgs; result: ProcConversationOpenResult };
   "proc.conversation.list": { args: ProcConversationListArgs; result: ProcConversationListResult };
   "proc.conversation.get": { args: ProcConversationGetArgs; result: ProcConversationGetResult };
@@ -385,7 +389,6 @@ export type SyscallDomains = {
   "sys.unlink": { args: SysUnlinkArgs; result: SysUnlinkResult };
   "sys.link.list": { args: SysLinkListArgs; result: SysLinkListResult };
   "sys.link.consume": { args: SysLinkConsumeArgs; result: SysLinkConsumeResult };
-  "sys.update": { args: SysUpdateArgs; result: SysUpdateResult };
 
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };

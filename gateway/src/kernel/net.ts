@@ -1,14 +1,16 @@
 import type { KernelContext } from "./context";
 import { getVisibleTarget } from "./targets";
 import type { NetFetchArgs, NetFetchResult } from "@humansandmachines/gsv/protocol";
+import type { FrameBody, ResponseOkFrame } from "../protocol/frames";
+import { abortError, bindStreamToAbort } from "../shared/streams";
 
 export type NetFetchDeviceTransport = {
   requestDevice: (
     deviceId: string,
     call: string,
     args: unknown,
-    ttlMs?: number,
-  ) => Promise<unknown>;
+    options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
+  ) => Promise<ResponseOkFrame>;
 };
 
 export type RoutedFetch = typeof fetch;
@@ -17,17 +19,24 @@ type NetFetchRedirect = NonNullable<NetFetchArgs["redirect"]>;
 
 const NET_FETCH_CALL = "net.fetch";
 const DEFAULT_NET_FETCH_TIMEOUT_MS = 60_000;
+export const MAX_NET_FETCH_TIMEOUT_MS = 10 * 60_000;
+export const MAX_NET_FETCH_REQUEST_BYTES = 32 * 1024 * 1024;
 export const MAX_NET_FETCH_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 export async function handleNetFetch(
   args: NetFetchArgs,
-  _ctx: KernelContext,
-): Promise<NetFetchResult> {
-  const request = await normalizeNetFetchRequest(args);
+  ctx: KernelContext,
+  body?: FrameBody,
+): Promise<{ data: NetFetchResult; body?: FrameBody }> {
+  const request = await normalizeNetFetchRequest(args, body);
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     controller.abort(new Error(`net.fetch timed out after ${request.timeoutMs}ms`));
   }, request.timeoutMs);
+  const signal = ctx.requestSignal
+    ? AbortSignal.any([controller.signal, ctx.requestSignal])
+    : controller.signal;
+  let bodyOwnsTimeout = false;
 
   try {
     const redirect = request.redirect === "error" ? "manual" : request.redirect;
@@ -36,14 +45,18 @@ export async function handleNetFetch(
       headers: request.headers,
       body: request.body,
       redirect,
-      signal: controller.signal,
+      signal,
     });
     if (request.redirect === "error" && isRedirectStatus(response.status)) {
       throw new TypeError("net.fetch encountered a redirect with redirect mode error");
     }
-    return netFetchResultFromResponse(response);
+    const result = netFetchResultFromResponse(response, () => clearTimeout(timeout));
+    bodyOwnsTimeout = Boolean(result.body);
+    return result;
   } finally {
-    clearTimeout(timeout);
+    if (!bodyOwnsTimeout) {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -69,17 +82,28 @@ export function createRoutedFetch(
     const requestedRedirect = normalizeRedirect(
       init?.redirect ?? (input instanceof Request ? input.redirect : undefined),
     );
-    const request = new Request(input, requestedRedirect === "error"
-      ? { ...init, redirect: "manual" }
-      : init);
-    const args = await requestToNetFetchArgs(request, requestedRedirect);
+    const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const signal = ctx.requestSignal && callerSignal
+      ? AbortSignal.any([ctx.requestSignal, callerSignal])
+      : ctx.requestSignal ?? callerSignal;
+    const request = new Request(input, {
+      ...init,
+      ...(requestedRedirect === "error" ? { redirect: "manual" } : {}),
+      ...(signal ? { signal } : {}),
+    });
+    const outbound = requestToNetFetchArgs(request, requestedRedirect);
     const timeoutMs = normalizeNetFetchTimeoutMs((init as RoutedFetchInit | undefined)?.timeoutMs);
-    args.timeoutMs = timeoutMs;
-    const result = await withAbortSignal(
-      transport.requestDevice(normalizedTarget, NET_FETCH_CALL, args, timeoutMs),
+    outbound.args.timeoutMs = timeoutMs;
+    const response = await requestNetFetchWithSignal(
+      () => transport.requestDevice(normalizedTarget, NET_FETCH_CALL, outbound.args, {
+        ttlMs: timeoutMs,
+        signal: request.signal,
+        ...(outbound.body ? { body: outbound.body } : {}),
+      }),
       request.signal,
+      outbound.body,
     );
-    return responseFromNetFetchResult(result);
+    return responseFromNetFetchResult(response.data, response.body, request.signal);
   };
 }
 
@@ -88,11 +112,14 @@ export function normalizeTarget(value: string | undefined): string {
   return normalized && normalized !== "worker" ? normalized : "gsv";
 }
 
-async function normalizeNetFetchRequest(args: NetFetchArgs): Promise<{
+async function normalizeNetFetchRequest(
+  args: NetFetchArgs,
+  frameBody?: FrameBody,
+): Promise<{
   url: string;
   method: string;
   headers: Headers;
-  body?: Uint8Array | string;
+  body?: BodyInit;
   redirect: NetFetchRedirect;
   timeoutMs: number;
 }> {
@@ -106,171 +133,261 @@ async function normalizeNetFetchRequest(args: NetFetchArgs): Promise<{
     }
   }
 
-  const body = input.bodyBase64 !== undefined
-    ? base64ToBytes(String(input.bodyBase64))
-    : input.body;
-  if ((method === "GET" || method === "HEAD") && body !== undefined && String(body).length > 0) {
+  const legacyInput = input as NetFetchArgs & { body?: unknown; bodyBase64?: unknown };
+  const legacyField = legacyInput.body !== undefined
+    ? "body"
+    : legacyInput.bodyBase64 !== undefined
+      ? "bodyBase64"
+      : null;
+  if (legacyField) {
+    if (frameBody) {
+      await frameBody.stream.cancel().catch(() => {});
+    }
+    throw new Error(`net.fetch args.${legacyField} was removed; use a request body`);
+  }
+  if ((method === "GET" || method === "HEAD") && frameBody) {
+    if (frameBody) {
+      await frameBody.stream.cancel().catch(() => {});
+    }
     throw new Error(`${method} requests cannot include a body`);
   }
+  if (frameBody?.length !== undefined && frameBody.length > MAX_NET_FETCH_REQUEST_BYTES) {
+    const error = new Error(formatNetFetchBodySizeError(
+      "request",
+      frameBody.length,
+      MAX_NET_FETCH_REQUEST_BYTES,
+    ));
+    await frameBody.stream.cancel(error).catch(() => {});
+    throw error;
+  }
+  const body = frameBody
+    ? limitNetFetchRequestBody(frameBody.stream, MAX_NET_FETCH_REQUEST_BYTES)
+    : undefined;
 
   return {
     url,
     method,
     headers,
-    ...(body !== undefined ? { body } : {}),
+    ...(body ? { body } : {}),
     redirect: normalizeRedirect(input.redirect),
     timeoutMs: normalizeNetFetchTimeoutMs(input.timeoutMs),
   };
 }
 
-export async function requestToNetFetchArgs(
+export function limitNetFetchRequestBody(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes = MAX_NET_FETCH_REQUEST_BYTES,
+): ReadableStream<Uint8Array> {
+  return limitNetFetchBody(stream, "request", maxBytes);
+}
+
+export function requestToNetFetchArgs(
   request: Request,
   redirect: NetFetchArgs["redirect"] = normalizeRedirect(request.redirect),
-): Promise<NetFetchArgs> {
+): { args: NetFetchArgs; body?: FrameBody } {
   const headers: Record<string, string> = {};
   request.headers.forEach((value, key) => {
     headers[key] = value;
   });
 
-  let bodyBase64: string | undefined;
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    const bodyBytes = new Uint8Array(await request.arrayBuffer());
-    if (bodyBytes.byteLength > 0) {
-      bodyBase64 = bytesToBase64(bodyBytes);
-    }
-  }
+  const contentLength = parseContentLength(request.headers.get("content-length"));
+  const body = request.method !== "GET" && request.method !== "HEAD" && request.body
+    ? {
+        stream: request.body,
+        ...(contentLength === null ? {} : { length: contentLength }),
+      }
+    : undefined;
 
   return {
-    url: request.url,
-    method: request.method,
-    headers,
-    ...(bodyBase64 ? { bodyBase64 } : {}),
-    redirect,
+    args: {
+      url: request.url,
+      method: request.method,
+      headers,
+      redirect,
+    },
+    ...(body ? { body } : {}),
   };
 }
 
-async function netFetchResultFromResponse(response: Response): Promise<NetFetchResult> {
-  const bodyBytes = await readNetFetchResponseBody(response);
+function netFetchResultFromResponse(
+  response: Response,
+  onBodyDone: () => void,
+): { data: NetFetchResult; body?: FrameBody } {
   const headers: Record<string, string> = {};
   response.headers.forEach((value, key) => {
     headers[key] = value;
   });
-  const bodyText = decodeUtf8(bodyBytes);
+  const body = response.body
+    ? limitNetFetchResponseBody(response.body, response.headers, onBodyDone)
+    : undefined;
   return {
-    ok: response.ok,
-    url: response.url,
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-    redirected: response.redirected,
-    bodyBase64: bytesToBase64(bodyBytes),
-    ...(bodyText !== null ? { bodyText } : {}),
-    bodyBytes: bodyBytes.byteLength,
+    data: {
+      ok: response.ok,
+      url: response.url,
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+      redirected: response.redirected,
+    },
+    ...(body ? { body: { stream: body } } : {}),
   };
 }
 
-export async function readNetFetchResponseBody(
-  response: Response,
+export function limitNetFetchResponseBody(
+  stream: ReadableStream<Uint8Array>,
+  headers: Headers,
+  onDone: () => void,
   maxBytes = MAX_NET_FETCH_RESPONSE_BYTES,
-): Promise<Uint8Array> {
-  if (!response.body) {
-    return new Uint8Array();
-  }
-  const contentLength = parseContentLength(response.headers.get("content-length"));
+): ReadableStream<Uint8Array> {
+  const contentLength = parseContentLength(headers.get("content-length"));
   if (contentLength !== null && contentLength > maxBytes) {
-    throw new Error(formatNetFetchResponseSizeError(contentLength, maxBytes));
+    const error = new Error(formatNetFetchBodySizeError("response", contentLength, maxBytes));
+    void stream.cancel(error).catch(() => {});
+    throw error;
   }
 
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      if (!value || value.byteLength === 0) {
-        continue;
-      }
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel(formatNetFetchResponseSizeError(total, maxBytes)).catch(() => {});
-        throw new Error(formatNetFetchResponseSizeError(total, maxBytes));
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-
-  if (chunks.length === 0) {
-    return new Uint8Array();
-  }
-  if (chunks.length === 1) {
-    return chunks[0];
-  }
-
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
+  return limitNetFetchBody(stream, "response", maxBytes, onDone);
 }
 
-async function withAbortSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+function limitNetFetchBody(
+  stream: ReadableStream<Uint8Array>,
+  direction: "request" | "response",
+  maxBytes: number,
+  onDone: () => void = () => {},
+): ReadableStream<Uint8Array> {
+  const reader = stream.getReader();
+  let total = 0;
+  let finished = false;
+  const finish = () => {
+    if (!finished) {
+      finished = true;
+      reader.releaseLock();
+      onDone();
+    }
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          finish();
+          controller.close();
+          return;
+        }
+        if (!value || value.byteLength === 0) {
+          return;
+        }
+        total += value.byteLength;
+        if (total > maxBytes) {
+          const error = new Error(formatNetFetchBodySizeError(direction, total, maxBytes));
+          await reader.cancel(error).catch(() => {});
+          finish();
+          controller.error(error);
+          return;
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        await reader.cancel(error).catch(() => {});
+        finish();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason).catch(() => {});
+      finish();
+    },
+  });
+}
+
+export async function requestNetFetchWithSignal(
+  start: () => Promise<ResponseOkFrame>,
+  signal: AbortSignal,
+  requestBody?: FrameBody,
+  cancelRequest?: (reason: unknown) => void | Promise<void>,
+): Promise<ResponseOkFrame> {
+  const cancel = (reason: unknown) => {
+    try {
+      void requestBody?.stream.cancel(reason).catch(() => {});
+    } catch {}
+    try {
+      void Promise.resolve(cancelRequest?.(reason)).catch(() => {});
+    } catch {}
+  };
   if (signal.aborted) {
+    cancel(signal.reason);
     throw abortError(signal.reason);
   }
-  return await new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(abortError(signal.reason));
+
+  const request = start();
+  return await new Promise((resolve, reject) => {
+    let aborted = false;
+    const onAbort = () => {
+      aborted = true;
+      cancel(signal.reason);
+      reject(abortError(signal.reason));
+    };
     signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(
+    request.then(
       (value) => {
         signal.removeEventListener("abort", onAbort);
+        if (aborted) {
+          void value.body?.stream.cancel(signal.reason).catch(() => {});
+          return;
+        }
         resolve(value);
       },
       (error) => {
         signal.removeEventListener("abort", onAbort);
-        reject(error);
+        if (!aborted) {
+          reject(error);
+        }
       },
     );
   });
 }
 
-function abortError(reason: unknown): Error {
-  return reason instanceof Error ? reason : new Error("The operation was aborted");
-}
-
-export function responseFromNetFetchResult(raw: unknown): Response {
-  if (!raw || typeof raw !== "object") {
-    throw new Error("net.fetch returned an invalid response");
+export function responseFromNetFetchResult(
+  raw: unknown,
+  frameBody?: FrameBody,
+  signal?: AbortSignal,
+): Response {
+  try {
+    if (!raw || typeof raw !== "object") {
+      throw new Error("net.fetch returned an invalid response");
+    }
+    const result = raw as Partial<NetFetchResult>;
+    const status = typeof result.status === "number" ? result.status : 0;
+    if (!Number.isInteger(status) || status < 200 || status > 599) {
+      throw new Error("net.fetch returned an invalid HTTP status");
+    }
+    const nullBody = isNullBodyStatus(status);
+    if (nullBody && frameBody) {
+      void frameBody.stream.cancel().catch(() => {});
+    }
+    const stream = !nullBody && frameBody
+      ? signal
+        ? bindStreamToAbort(frameBody.stream, signal)
+        : frameBody.stream
+      : null;
+    const response = new Response(stream, {
+      status,
+      statusText: typeof result.statusText === "string" ? result.statusText : "",
+      headers: result.headers && typeof result.headers === "object"
+        ? result.headers as Record<string, string>
+        : undefined,
+    });
+    if (typeof result.url === "string" && result.url.length > 0) {
+      try {
+        Object.defineProperty(response, "url", { value: result.url });
+        Object.defineProperty(response, "redirected", { value: result.redirected === true });
+      } catch {}
+    }
+    return response;
+  } catch (error) {
+    void frameBody?.stream.cancel(error).catch(() => {});
+    throw error;
   }
-  const result = raw as Partial<NetFetchResult>;
-  const status = typeof result.status === "number" ? result.status : 0;
-  if (!Number.isInteger(status) || status < 100 || status > 599) {
-    throw new Error("net.fetch returned an invalid HTTP status");
-  }
-  const bodyBytes = typeof result.bodyBase64 === "string"
-    ? base64ToBytes(result.bodyBase64)
-    : new Uint8Array();
-  const body: BodyInit | null = isNullBodyStatus(status) ? null : bodyBytes;
-  const response = new Response(body, {
-    status,
-    statusText: typeof result.statusText === "string" ? result.statusText : "",
-    headers: result.headers && typeof result.headers === "object"
-      ? result.headers as Record<string, string>
-      : undefined,
-  });
-  if (typeof result.url === "string" && result.url.length > 0) {
-    try {
-      Object.defineProperty(response, "url", { value: result.url });
-      Object.defineProperty(response, "redirected", { value: result.redirected === true });
-    } catch {}
-  }
-  return response;
 }
 
 function normalizeHttpUrl(value: unknown): string {
@@ -311,7 +428,7 @@ function normalizeRedirect(value: unknown): NetFetchRedirect {
 
 export function normalizeNetFetchTimeoutMs(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? Math.floor(value)
+    ? Math.min(Math.floor(value), MAX_NET_FETCH_TIMEOUT_MS)
     : DEFAULT_NET_FETCH_TIMEOUT_MS;
 }
 
@@ -331,33 +448,10 @@ function parseContentLength(value: string | null): number | null {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
-function formatNetFetchResponseSizeError(actualBytes: number, maxBytes: number): string {
-  return `net.fetch response body exceeds limit (${actualBytes} bytes, max ${maxBytes})`;
-}
-
-function decodeUtf8(bytes: Uint8Array): string | null {
-  try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
-  } catch {
-    return null;
-  }
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    const chunk = bytes.subarray(offset, offset + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
-}
-
-function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
+function formatNetFetchBodySizeError(
+  direction: "request" | "response",
+  actualBytes: number,
+  maxBytes: number,
+): string {
+  return `net.fetch ${direction} body exceeds limit (${actualBytes} bytes, max ${maxBytes})`;
 }

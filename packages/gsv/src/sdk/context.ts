@@ -1,3 +1,5 @@
+import type { BinaryBody } from "../protocol";
+
 export type PackageMetaBinding = {
   packageName: string;
   packageId: string;
@@ -20,6 +22,11 @@ export type PackageAppSessionBinding = {
 
 export type KernelClientLike = {
   request<T = unknown>(call: string, args?: unknown): Promise<T>;
+  requestFrame<T = unknown>(
+    call: string,
+    args?: unknown,
+    options?: { body?: BinaryBody },
+  ): Promise<{ data: T; body?: BinaryBody }>;
 };
 
 export type PackageSqlBindingValue =

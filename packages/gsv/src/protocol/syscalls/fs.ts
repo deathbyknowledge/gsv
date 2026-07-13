@@ -4,15 +4,12 @@ export type FsReadArgs = {
   limit?: number;
 };
 
-export type FsImageContent =
-  | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string };
-
 export type FsReadResult =
   | {
       ok: true;
-      content: string | FsImageContent[];
       path: string;
+      kind: "text" | "image";
+      contentType: string;
       lines?: number;
       size: number;
     }
@@ -100,8 +97,6 @@ export type FsTransferStatResult =
 
 export type FsTransferSendArgs = {
   path: string;
-  streamId?: number;
-  chunkSize?: number;
 };
 
 export type FsTransferSendResult =
@@ -109,16 +104,13 @@ export type FsTransferSendResult =
       ok: true;
       path: string;
       size: number;
-      bytesSent: number;
       contentType?: string;
     }
   | { ok: false; error: string };
 
 export type FsTransferReceiveArgs = {
   path: string;
-  expectedSize: number;
   contentType?: string;
-  streamId?: number;
 };
 
 export type FsTransferReceiveResult =

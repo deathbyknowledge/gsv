@@ -3,6 +3,7 @@ import type { KernelContext } from "./context";
 import type { DeviceRecord } from "./devices";
 import type { OAuthAccountRecord } from "./oauth-store";
 import { sendFrameToProcess } from "../shared/utils";
+import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
 
 const generateMock = vi.hoisted(() => vi.fn());
 const createGenerationServiceMock = vi.hoisted(() => vi.fn((_options?: unknown) => ({
@@ -1602,11 +1603,10 @@ describe("handleAiTranscriptionCreate", () => {
 
     const result = await handleAiTranscriptionCreate({
       audio: {
-        data: "data:audio/webm;base64,AQID",
         mimeType: "audio/webm",
       },
       prompt: "short command",
-    }, ctx);
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
 
     expect(result.text).toBe("turn on the office lights");
     expect(result.duration).toBe(1.25);
@@ -1632,10 +1632,9 @@ describe("handleAiTranscriptionCreate", () => {
 
     const result = await handleAiTranscriptionCreate({
       audio: {
-        data: "AQID",
         mimeType: "audio/ogg",
       },
-    }, ctx);
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
 
     expect(result.model).toBe("@cf/openai/whisper-large-v3-turbo");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
@@ -1661,10 +1660,9 @@ describe("handleAiTranscriptionCreate", () => {
 
     await expect(handleAiTranscriptionCreate({
       audio: {
-        data: "AQID",
         mimeType: "audio/ogg",
       },
-    }, ctx)).rejects.toThrow("exceeds transcription limit");
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])))).rejects.toThrow("exceeds limit");
   });
 
   it("rejects non-audio payloads", async () => {
@@ -1672,10 +1670,16 @@ describe("handleAiTranscriptionCreate", () => {
 
     await expect(handleAiTranscriptionCreate({
       audio: {
-        data: "AQID",
         mimeType: "text/plain",
       },
-    }, ctx)).rejects.toThrow("audio MIME type");
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])))).rejects.toThrow("audio MIME type");
+
+    await expect(handleAiTranscriptionCreate({
+      audio: {
+        mimeType: "audio/ogg",
+        ...({ data: "AQID" } as object),
+      },
+    }, ctx)).rejects.toThrow("audio request body is required");
   });
 });
 
@@ -1705,7 +1709,11 @@ describe("handleAiImageRead", () => {
       env: {
         AI: {
           run: vi.fn(async () => options.response ?? ({
-            response: "A small terminal window with green text.",
+            choices: [{
+              message: {
+                content: "A small terminal window with green text.",
+              },
+            }],
           })),
         },
       },
@@ -1717,20 +1725,19 @@ describe("handleAiImageRead", () => {
 
     const result = await handleAiImageRead({
       image: {
-        data: "data:image/png;base64,AQID",
         mimeType: "image/png",
       },
       prompt: "read this screenshot",
-    }, ctx);
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
 
     expect(result.text).toBe("A small terminal window with green text.");
     expect(result.model).toBe(DEFAULT_IMAGE_READING_MODEL);
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
       DEFAULT_IMAGE_READING_MODEL,
-      expect.objectContaining({
+      {
         max_completion_tokens: DEFAULT_IMAGE_READING_MAX_TOKENS,
         messages: expect.any(Array),
-      }),
+      },
     );
   });
 
@@ -1742,10 +1749,9 @@ describe("handleAiImageRead", () => {
 
     const result = await handleAiImageRead({
       image: {
-        data: "AQID",
         mimeType: "image/png",
       },
-    }, ctx);
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
 
     expect(result.model).toBe("@cf/llava-hf/llava-1.5-7b-hf");
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
@@ -1765,17 +1771,46 @@ describe("handleAiImageRead", () => {
 
     await expect(handleAiImageRead({
       image: {
-        data: "AQID",
         mimeType: "image/png",
       },
-    }, ctx)).rejects.toThrow("exceeds image reading limit");
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])))).rejects.toThrow("exceeds limit");
 
     await expect(handleAiImageRead({
       image: {
-        data: "AQ==",
         mimeType: "text/plain",
       },
-    }, makeImageReadContext())).rejects.toThrow("image MIME type");
+    }, makeImageReadContext(), bodyFromBytes(new Uint8Array([1])))).rejects.toThrow("image MIME type");
+
+    await expect(handleAiImageRead({
+      image: {
+        mimeType: "image/svg+xml",
+      },
+    }, makeImageReadContext(), bodyFromBytes(new Uint8Array([1])))).rejects.toThrow(
+      "SVG image reading requires rasterization",
+    );
+  });
+
+  it("cancels image body reads with the request", async () => {
+    const controller = new AbortController();
+    const reason = new Error("request cancelled");
+    let cancelled: unknown;
+    const ctx = makeImageReadContext();
+    ctx.requestSignal = controller.signal;
+    controller.abort(reason);
+
+    const read = handleAiImageRead({
+      image: { mimeType: "image/png" },
+    }, ctx, {
+      length: 1,
+      stream: new ReadableStream({
+        cancel(value) {
+          cancelled = value;
+        },
+      }),
+    });
+
+    await expect(read).rejects.toBe(reason);
+    expect(cancelled).toBe(reason);
   });
 });
 
@@ -1815,12 +1850,12 @@ describe("handleAiImageGenerate", () => {
 
     const result = await handleAiImageGenerate({ prompt: "a green terminal" }, ctx);
 
-    expect(result.image).toEqual({
-      data: "data:image/png;base64,AQID",
-      mimeType: "image/png",
+    expect(result.data.image).toEqual({
+      mimeType: "image/jpeg",
       size: 3,
     });
-    expect(result.model).toBe(DEFAULT_IMAGE_GENERATION_MODEL);
+    expect(result.body && [...await bodyToBytes(result.body)]).toEqual([1, 2, 3]);
+    expect(result.data.model).toBe(DEFAULT_IMAGE_GENERATION_MODEL);
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
       DEFAULT_IMAGE_GENERATION_MODEL,
       { prompt: "a green terminal" },
@@ -1834,7 +1869,7 @@ describe("handleAiImageGenerate", () => {
 
     const result = await handleAiImageGenerate({ prompt: "a blue terminal" }, ctx);
 
-    expect(result.model).toBe("@cf/black-forest-labs/flux-1-schnell");
+    expect(result.data.model).toBe("@cf/black-forest-labs/flux-1-schnell");
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
       "@cf/black-forest-labs/flux-1-schnell",
       { prompt: "a blue terminal" },
@@ -1863,7 +1898,7 @@ describe("handleAiImageGenerate", () => {
     try {
       const result = await handleAiImageGenerate({ prompt: "a profile terminal" }, ctx);
 
-      expect(result.provider).toBe("openai");
+      expect(result.data.provider).toBe("openai");
       expect(fetchSpy).toHaveBeenCalledWith(
         expect.stringContaining("/images/generations"),
         expect.objectContaining({
@@ -1891,7 +1926,7 @@ describe("handleAiImageGenerate", () => {
 
     const result = await handleAiImageGenerate({ prompt: "a fallback terminal" }, ctx);
 
-    expect(result.model).toBe("@cf/example/fallback-image");
+    expect(result.data.model).toBe("@cf/example/fallback-image");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
       "proc:missing",
       expect.objectContaining({
@@ -1950,14 +1985,14 @@ describe("handleAiSpeechCreate", () => {
 
     const result = await handleAiSpeechCreate({ text: "Hello GSV" }, ctx);
 
-    expect(result.audio).toEqual({
-      data: "data:audio/mpeg;base64,AQID",
+    expect(result.data.audio).toEqual({
       mimeType: "audio/mpeg",
       size: 3,
     });
-    expect(result.provider).toBe("workers-ai");
-    expect(result.model).toBe(DEFAULT_AUDIO_SPEECH_MODEL);
-    expect(result.voice).toBe(DEFAULT_AUDIO_SPEECH_SPEAKER);
+    expect(result.body && [...await bodyToBytes(result.body)]).toEqual([1, 2, 3]);
+    expect(result.data.provider).toBe("workers-ai");
+    expect(result.data.model).toBe(DEFAULT_AUDIO_SPEECH_MODEL);
+    expect(result.data.voice).toBe(DEFAULT_AUDIO_SPEECH_SPEAKER);
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
       DEFAULT_AUDIO_SPEECH_MODEL,
       expect.objectContaining({
@@ -1977,8 +2012,8 @@ describe("handleAiSpeechCreate", () => {
 
     const result = await handleAiSpeechCreate({ text: "Hello GSV" }, ctx);
 
-    expect(result.model).toBe("@cf/deepgram/aura-1");
-    expect(result.voice).toBe("orpheus");
+    expect(result.data.model).toBe("@cf/deepgram/aura-1");
+    expect(result.data.voice).toBe("orpheus");
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
       "@cf/deepgram/aura-1",
       expect.objectContaining({
@@ -2046,14 +2081,15 @@ describe("handleAiSpeechCreate", () => {
     const result = await handleAiSpeechCreate({ text: "```." }, ctx);
 
     expect(result).toEqual({
-      audio: {
-        data: "",
-        mimeType: "",
-        size: 0,
+      data: {
+        audio: {
+          mimeType: "",
+          size: 0,
+        },
+        provider: "none",
+        model: "none",
+        skipped: true,
       },
-      provider: "none",
-      model: "none",
-      skipped: true,
     });
     expect(ctx.env.AI.run).not.toHaveBeenCalled();
   });
@@ -2071,8 +2107,8 @@ describe("handleAiSpeechCreate", () => {
 
     const result = await handleAiSpeechCreate({ text: "test" }, ctx);
 
-    expect(result.voice).toBe("asteria");
-    expect(result.audio.data).toBe("data:audio/mpeg;base64,AQID");
+    expect(result.data.voice).toBe("asteria");
+    expect(result.body && [...await bodyToBytes(result.body)]).toEqual([1, 2, 3]);
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
       "@cf/deepgram/aura-2-en",
       expect.objectContaining({

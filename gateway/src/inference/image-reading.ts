@@ -39,7 +39,7 @@ export const DEFAULT_IMAGE_READING_PROMPT =
   "Describe this image for an AI assistant that cannot see it. Include visible text, UI details, objects, people, layout, and any information needed to answer follow-up questions.";
 export const DEFAULT_IMAGE_READING_INPUT_FORMAT: ImageReadingInputFormat = "auto";
 export const DEFAULT_MAX_IMAGE_READING_BYTES = 10 * 1024 * 1024;
-export const DEFAULT_IMAGE_READING_MAX_TOKENS = 512;
+export const DEFAULT_IMAGE_READING_MAX_TOKENS = 8192;
 export const DEFAULT_IMAGE_READING_TIMEOUT_MS = 30_000;
 
 export async function readImageWithWorkersAi(
@@ -231,6 +231,7 @@ function firstText(value: unknown): string | null {
   for (const candidate of [
     record.description,
     record.response,
+    record.content,
     record.text,
     record.output,
     record.result,

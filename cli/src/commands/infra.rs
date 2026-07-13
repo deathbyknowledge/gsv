@@ -4,8 +4,6 @@ use cliclack::{intro, log, multiselect, note, outro_cancel, select};
 use gsv::config::CliConfig;
 use gsv::deploy;
 use gsv::device_service;
-use gsv::kernel_client::{GatewayAuth, KernelClient};
-use serde_json::{json, Value};
 
 use crate::auth_flow::{can_prompt_interactively, prompt_secret, prompt_yes_no};
 use crate::cli::{DeviceServiceAction, InfraAction};
@@ -255,95 +253,6 @@ fn normalize_release_channel(value: &str) -> Option<String> {
     }
 }
 
-fn gateway_http_url_to_ws_url(gateway_url: &str) -> String {
-    let mut ws_url = if let Some(rest) = gateway_url.strip_prefix("https://") {
-        format!("wss://{}", rest)
-    } else if let Some(rest) = gateway_url.strip_prefix("http://") {
-        format!("ws://{}", rest)
-    } else {
-        gateway_url.to_string()
-    };
-
-    if !ws_url.ends_with("/ws") {
-        ws_url = ws_url.trim_end_matches('/').to_string();
-        ws_url.push_str("/ws");
-    }
-
-    ws_url
-}
-
-fn gateway_url_for_cli_refresh(
-    apply_result: &deploy::DeployApplyResult,
-    cfg: &CliConfig,
-) -> String {
-    apply_result
-        .gateway_url
-        .clone()
-        .unwrap_or_else(|| cfg.gateway_url())
-}
-
-fn silent_gateway_auth(cfg: &CliConfig) -> Option<GatewayAuth> {
-    let username = cfg.gateway_username()?;
-    let token = cfg
-        .gateway_session_token()
-        .or_else(|| cfg.gateway_token())?;
-    Some(GatewayAuth {
-        username: Some(username),
-        password: None,
-        token: Some(token),
-    })
-}
-
-async fn refresh_hosted_cli_downloads_after_gateway_deploy(
-    cfg: &CliConfig,
-    apply_result: &deploy::DeployApplyResult,
-    default_channel: Option<&str>,
-) {
-    if !apply_result.gateway_existed_before_deploy {
-        return;
-    }
-
-    let Some(auth) = silent_gateway_auth(cfg) else {
-        println!(
-            "Warning: skipped hosted CLI refresh because no gateway user token is configured. Run `gsv auth login`, then `gsv infra upgrade` again if hosted CLI downloads need refreshing."
-        );
-        return;
-    };
-
-    let gateway_url = gateway_url_for_cli_refresh(apply_result, cfg);
-    let ws_url = gateway_http_url_to_ws_url(&gateway_url);
-    let client = match KernelClient::connect_user(&ws_url, auth, |_| {}).await {
-        Ok(client) => client,
-        Err(error) => {
-            println!("Warning: skipped hosted CLI refresh: {}", error);
-            return;
-        }
-    };
-
-    let args = default_channel.map(|channel| json!({ "channel": channel }));
-    match client.request_ok("sys.update", args).await {
-        Ok(payload) => {
-            let cli_update = payload.get("cli");
-            let default_channel = cli_update
-                .and_then(|cli| cli.get("defaultChannel"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            let channel_count = cli_update
-                .and_then(|cli| cli.get("mirroredChannels"))
-                .and_then(Value::as_array)
-                .map(Vec::len)
-                .unwrap_or(0);
-            println!(
-                "Refreshed hosted CLI downloads ({} channels, default {}).",
-                channel_count, default_channel
-            );
-        }
-        Err(error) => {
-            println!("Warning: hosted CLI refresh failed: {}", error);
-        }
-    }
-}
-
 fn release_channel_from_env() -> Option<String> {
     std::env::var("GSV_CHANNEL")
         .ok()
@@ -514,7 +423,6 @@ async fn apply_deploy(
     let deploying_gateway = components.iter().any(|c| c == "gateway");
     let deploying_discord = components.iter().any(|c| c == "channel-discord");
     let deploying_telegram = components.iter().any(|c| c == "channel-telegram");
-    let hosted_cli_default_channel = normalize_release_channel(&version);
 
     let bundle_version = if bundle_dir.is_some() {
         deploy::local_bundle_version_label(&version)
@@ -580,15 +488,6 @@ async fn apply_deploy(
                 "Tip: rerun deploy with --telegram-bot-token (or TELEGRAM_BOT_TOKEN env) before `gsv adapter connect --adapter telegram`."
             );
         }
-    }
-
-    if deploying_gateway {
-        refresh_hosted_cli_downloads_after_gateway_deploy(
-            cfg,
-            &apply_result,
-            hosted_cli_default_channel.as_deref(),
-        )
-        .await;
     }
 
     println!();

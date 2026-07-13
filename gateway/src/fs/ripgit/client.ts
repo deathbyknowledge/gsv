@@ -365,9 +365,11 @@ export class RipgitClient {
     repo: RipgitRepoRef,
     query: string,
     prefix?: string,
+    signal?: AbortSignal,
   ): Promise<{ matches: RipgitSearchMatch[]; truncated?: boolean }> {
     const response = await this.binding.fetch(this.makeSearchUrl(repo, query, prefix), {
       headers: this.makeInternalHeaders(),
+      signal,
     });
     if (!response.ok) {
       throw new Error(await this.readError(response, `search '${repo.owner}/${repo.repo}'`));

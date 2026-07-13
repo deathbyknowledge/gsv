@@ -14,6 +14,7 @@ function snapshot(phase: SessionPhase): SessionSnapshot {
     url: "ws://localhost/ws",
     username: "root",
     connectionId: phase === "ready" ? "connection-id" : null,
+    server: null,
     message: null,
     setupResult: null,
   };
@@ -103,21 +104,48 @@ describe("validateSetupDetails", () => {
     });
     expect(result.message).not.toContain("^[a-z_]");
   });
+
+  it("rejects unsafe device ids", () => {
+    const draft = setupDraft();
+    draft.lane = "advanced";
+    draft.detailStep = "system";
+    draft.device.enabled = true;
+    draft.device.deviceId = "node-$(touch-pwned)";
+
+    expect(validateSetupDetails(draft, true)).toEqual({
+      message: "Invalid device ID. Use 1-48 lowercase letters, numbers, underscores, or hyphens, starting with a letter or number.",
+      step: "system",
+    });
+  });
 });
 
 describe("buildNodeBootstrapCommand", () => {
   it("uses gsv.exe for Windows follow-up commands", () => {
-    expect(buildNodeBootstrapCommand(
-      "https://gsv.example.com",
-      "windows",
-      "studio-pc",
-      "tok",
-    )).toBe([
-      "$env:GSV_BASE_URL='https://gsv.example.com'; irm https://gsv.example.com/public/gsv/downloads/cli/install.ps1 | iex",
+    expect(buildNodeBootstrapCommand({
+      origin: "https://gsv.example.com",
+      platform: "windows",
+      username: "hank",
+      deviceId: "studio-pc",
+      token: "tok",
+      release: "dev",
+    })).toBe([
+      "$env:GSV_CHANNEL='dev'; irm https://install.gsv.space/install.ps1 | iex",
       "gsv.exe config --local set gateway.url \"wss://gsv.example.com/ws\"",
+      "gsv.exe config --local set gateway.username \"hank\"",
       "gsv.exe config --local set node.id \"studio-pc\"",
       "gsv.exe config --local set node.token \"tok\"",
       "gsv.exe device install --id \"studio-pc\" --workspace \"$HOME\"",
     ].join("\n"));
+  });
+
+  it("refuses unsafe device ids in copied commands", () => {
+    expect(() => buildNodeBootstrapCommand({
+      origin: "https://gsv.example.com",
+      platform: "linux",
+      username: "hank",
+      deviceId: "node-`whoami`",
+      token: "tok",
+      release: "dev",
+    })).toThrow("Invalid device ID");
   });
 });

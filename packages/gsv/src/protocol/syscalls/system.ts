@@ -49,10 +49,14 @@ export type ConnectArgs = {
   };
 };
 
+export type ServerBuild = {
+  version: string;
+  release: string;
+};
+
 export type ConnectResult = {
   protocol: number;
-  server: {
-    version: string;
+  server: ServerBuild & {
     connectionId: string;
   };
   identity: ConnectionIdentity;
@@ -226,6 +230,7 @@ export type SysSetupAssistResult = {
 };
 
 export type SysSetupResult = {
+  server: ServerBuild;
   user: ProcessIdentity;
   rootLocked: boolean;
   bootstrap?: SysBootstrapResult;
@@ -249,24 +254,6 @@ export type SysBootstrapArgs = {
   ref?: string;
 };
 
-export type SysCliReleaseChannel = "stable" | "dev";
-
-export type SysCliDownloadsResult = {
-  defaultChannel: SysCliReleaseChannel;
-  mirroredChannels: SysCliReleaseChannel[];
-  assets: string[];
-  refreshedAt: number;
-};
-
-export type SysUpdateArgs = {
-  channel?: SysCliReleaseChannel;
-};
-
-export type SysUpdateResult = {
-  updatedAt: number;
-  cli: SysCliDownloadsResult;
-};
-
 export type SysBootstrapResult = {
   repo: string;
   remoteUrl: string;
@@ -280,36 +267,6 @@ export type SysBootstrapResult = {
     head: string | null;
     changed: boolean;
   };
-  cli: SysCliDownloadsResult;
-  packages: Array<{
-    packageId: string;
-    name: string;
-    description: string;
-    version: string;
-    runtime: "dynamic-worker" | "node" | "web-ui";
-    enabled: boolean;
-    source: {
-      repo: string;
-      ref: string;
-      subdir: string;
-      resolvedCommit: string | null;
-    };
-    entrypoints: Array<{
-      name: string;
-      kind: "command" | "ui";
-      description?: string;
-      command?: string;
-      route?: string;
-      icon?: string;
-      syscalls?: string[];
-      windowDefaults?: {
-        width: number;
-        height: number;
-        minWidth: number;
-        minHeight: number;
-      };
-    }>;
-  }>;
 };
 
 export type SysConfigGetArgs = {

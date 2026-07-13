@@ -4,7 +4,14 @@ import { runInDurableObject, runDurableObjectAlarm } from "cloudflare:test";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Process } from "./do";
 import { Kernel } from "../kernel/do";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import {
+  bodyFromBytes,
+  bodyFromText,
+  bodyToBytes,
+  bodyToText,
+  REQUEST_CANCEL_SIGNAL,
+  type ProcessIdentity,
+} from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/frames";
 import { getProcessByPid, getKernelPtr } from "../shared/utils";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
@@ -2624,9 +2631,13 @@ describe("Process DO — mechanical", () => {
 
       const result = await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        const kernelCalls: Array<{ call: string; args: any }> = [];
-        process.kernelRpc = async (call: string, args: any) => {
-          kernelCalls.push({ call, args });
+        const kernelCalls: Array<{ call: string; args: any; runSignal: boolean }> = [];
+        process.kernelRpc = async (call: string, args: any, signal?: AbortSignal) => {
+          kernelCalls.push({
+            call,
+            args,
+            runSignal: signal === process.runAbortSignal("run-chat-device-executor"),
+          });
           return {
             message: {
               role: "assistant",
@@ -2686,6 +2697,7 @@ describe("Process DO — mechanical", () => {
       expect(result.kernelCalls).toHaveLength(1);
       expect(result.kernelCalls[0]).toMatchObject({
         call: "ai.text.generate",
+        runSignal: true,
         args: {
           target: "local-gpu",
           systemPrompt: "Test system prompt.",
@@ -2712,9 +2724,14 @@ describe("Process DO — mechanical", () => {
         process.kernelRpc = async (call: string, args: any) => {
           throw new Error(`unexpected synchronous kernel syscall: ${call}`);
         };
-        process.requestKernelNetFetch = async (target: string, args: any, ttlMs?: number) => {
+        process.requestKernelNetFetch = async (
+          target: string,
+          args: any,
+          ttlMs?: number,
+          requestBody?: any,
+        ) => {
           deviceRequests.push({ target, call: "net.fetch", args, ttlMs });
-          const requestBody = atob(String(args.bodyBase64 ?? ""));
+          const requestText = requestBody ? await bodyToText(requestBody) : "";
           expect(target).toBe("linux-machine");
           expect(ttlMs).toBe(180000);
           expect(args).toMatchObject({
@@ -2722,7 +2739,7 @@ describe("Process DO — mechanical", () => {
             method: "POST",
             timeoutMs: 180000,
           });
-          expect(JSON.parse(requestBody)).toMatchObject({
+          expect(JSON.parse(requestText)).toMatchObject({
             model: "local-chat",
             stream: true,
           });
@@ -2740,15 +2757,18 @@ describe("Process DO — mechanical", () => {
             "data: [DONE]\n\n",
           ].join("");
           return {
+            type: "res",
+            id: "device-fetch",
             ok: true,
-            url: args.url,
-            status: 200,
-            statusText: "OK",
-            headers: { "content-type": "text/event-stream" },
-            redirected: false,
-            bodyBase64: btoa(body),
-            bodyText: body,
-            bodyBytes: body.length,
+            data: {
+              ok: true,
+              url: args.url,
+              status: 200,
+              statusText: "OK",
+              headers: { "content-type": "text/event-stream" },
+              redirected: false,
+            },
+            body: bodyFromText(body),
           };
         };
 
@@ -3096,13 +3116,23 @@ describe("Process DO — mechanical", () => {
 
         releaseDispatch();
         await ticking;
+        let lateBodyCancelled = false;
         await process.handleRes({
           type: "res",
           id: oldDispatchId,
           ok: true,
           data: { content: "late" },
+          body: {
+            stream: new ReadableStream({
+              cancel() {
+                lateBodyCancelled = true;
+              },
+            }),
+            length: 4,
+          },
         });
 
+        expect(lateBodyCancelled).toBe(true);
         expect(process.store.getResults("run-live-tools")).toEqual([]);
         expect(process.dispatchSyscall).toHaveBeenCalledTimes(1);
         expect(process.currentRun).toMatchObject({ runId: nextRunId });
@@ -3141,10 +3171,44 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("rejects out-of-scope media before changing the active run", async () => {
+      const pid = "mech-send-foreign-media";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const foreignKey = `var/media/0/another-process/${crypto.randomUUID()}`;
+      await env.STORAGE.put(foreignKey, new Uint8Array([1, 2, 3]));
+
+      try {
+        const result = await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          process.currentRun = { runId: "run-existing", conversationId: "default" };
+          const response = await process.handleProcSend({
+            message: "read this",
+            media: [{ type: "image", mimeType: "image/png", key: foreignKey }],
+            origin: { kind: "client", connectionId: "client-1" },
+          });
+          return {
+            response,
+            currentRun: process.currentRun,
+            messages: process.store.getMessages(),
+          };
+        });
+
+        expect(result).toEqual({
+          response: { ok: false, error: "media key is outside this process" },
+          currentRun: { runId: "run-existing", conversationId: "default" },
+          messages: [],
+        });
+        expect(await env.STORAGE.head(foreignKey)).not.toBeNull();
+      } finally {
+        await env.STORAGE.delete(foreignKey);
+      }
+    });
+
     it.each([false, true])(
       "keeps a newer user run authoritative when earlier media fails=%s",
       async (fails) => {
-        const stub = await initProcess(`mech-send-media-race-${fails}`, ROOT_IDENTITY);
+        const pid = `mech-send-media-race-${fails}`;
+        const stub = await initProcess(pid, ROOT_IDENTITY);
 
         await runInDurableObject(stub, async (instance: Process) => {
           const process = instance as any;
@@ -3167,10 +3231,14 @@ describe("Process DO — mechanical", () => {
             }
             return { ai: process.env.AI };
           });
+          const mediaKey = `var/media/0/${pid}/race.png`;
+          await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
+            httpMetadata: { contentType: "image/png" },
+          });
 
           const first = await process.handleProcSend({
             message: "first with media",
-            media: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+            media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
             origin: { kind: "client", connectionId: "client-1" },
           });
           await mediaStarted;
@@ -3215,10 +3283,14 @@ describe("Process DO — mechanical", () => {
         });
         process.resolveMediaProcessingOptions = vi.fn(async () => ({ ai: process.env.AI }));
         const prepareMedia = vi.spyOn(process, "prepareRunMedia");
+        const mediaKey = `var/media/0/${pid}/schedule.png`;
+        await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
+          httpMetadata: { contentType: "image/png" },
+        });
 
         const result = await process.handleProcSend({
           message: "attachment",
-          media: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+          media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
           origin: { kind: "client", connectionId: "client-1" },
         });
         await (prepareMedia.mock.results[0]?.value as Promise<void>);
@@ -3265,10 +3337,14 @@ describe("Process DO — mechanical", () => {
           return { ai: process.env.AI };
         });
         process.currentRun = { runId: "run-busy", conversationId: "default" };
+        const mediaKey = `var/media/0/${pid}/fifo.png`;
+        await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
+          httpMetadata: { contentType: "image/png" },
+        });
 
         const first = process.handleProcSend({
           message: "first process message",
-          media: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+          media: [{ type: "image", mimeType: "image/png", key: mediaKey }],
           origin: { kind: "process", sourcePid: "child-1" },
         });
         await mediaStarted;
@@ -3293,17 +3369,25 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess(pid, ROOT_IDENTITY);
       let mediaKey = "";
 
+      const upload = (await stub.recvFrame({
+        ...makeReq("proc.media.write", {
+          type: "image",
+          mimeType: "image/png",
+          filename: "proof.png",
+        }),
+        body: bodyFromBytes(new Uint8Array([1, 2, 3])),
+      })) as ResponseFrame<"proc.media.write">;
+      if (!upload.ok) {
+        throw new Error(upload.error.message);
+      }
+      expect(upload.data).toMatchObject({ ok: true, media: { size: 3 } });
+      const uploadedMedia = upload.data?.ok ? upload.data.media : null;
+      expect(uploadedMedia).not.toBeNull();
+
       const res = (await stub.recvFrame(
         makeReq("proc.send", {
           message: "Describe this image.",
-          media: [
-            {
-              type: "image",
-              mimeType: "image/png",
-              data: "AQID",
-              filename: "proof.png",
-            },
-          ],
+          media: [uploadedMedia],
         }),
       )) as ResponseOkFrame;
 
@@ -3340,36 +3424,230 @@ describe("Process DO — mechanical", () => {
       });
 
       const read = (await stub.recvFrame(
-        makeReq("proc.media.read", { key: mediaKey, mimeType: "image/png" }),
+        makeReq("proc.media.read", { key: mediaKey }),
       )) as ResponseOkFrame;
       expect(read.ok).toBe(true);
       expect(read.data).toMatchObject({
         ok: true,
         key: mediaKey,
         mimeType: "image/png",
-        dataUrl: "data:image/png;base64,AQID",
+      });
+      expect(read.body && [...await bodyToBytes(read.body)]).toEqual([1, 2, 3]);
+
+      const referenced = (await stub.recvFrame(
+        makeReq("proc.media.delete", { key: mediaKey }),
+      )) as ResponseOkFrame;
+      expect(referenced.data).toEqual({
+        ok: false,
+        error: "media is referenced by process history",
+      });
+      expect(await env.STORAGE.head(mediaKey)).not.toBeNull();
+
+      const unusedUpload = (await stub.recvFrame({
+        ...makeReq("proc.media.write", {
+          type: "document",
+          mimeType: "application/octet-stream",
+        }),
+        body: bodyFromBytes(new Uint8Array([4, 5, 6])),
+      })) as ResponseOkFrame<"proc.media.write">;
+      const unusedKey = unusedUpload.data?.ok ? unusedUpload.data.media.key : "";
+      expect(unusedKey).toBeTruthy();
+      const deleted = (await stub.recvFrame(
+        makeReq("proc.media.delete", { key: unusedKey }),
+      )) as ResponseOkFrame;
+      expect(deleted.data).toEqual({ ok: true, key: unusedKey });
+      const deletedAgain = (await stub.recvFrame(
+        makeReq("proc.media.delete", { key: unusedKey }),
+      )) as ResponseOkFrame;
+      expect(deletedAgain.data).toEqual({ ok: true, key: unusedKey });
+      expect(await env.STORAGE.head(unusedKey)).toBeNull();
+
+      const outside = (await stub.recvFrame(
+        makeReq("proc.media.delete", { key: "var/media/0/another-process/file" }),
+      )) as ResponseOkFrame;
+      expect(outside.data).toEqual({ ok: false, error: "media key is outside this process" });
+      const withBody = (await stub.recvFrame({
+        ...makeReq("proc.media.delete", { key: unusedKey }),
+        body: bodyFromBytes(new Uint8Array()),
+      })) as ResponseOkFrame;
+      expect(withBody.data).toEqual({ ok: false, error: "proc.media.delete does not accept a body" });
+    });
+
+    it("keeps SVG attachments out of raster model image blocks", async () => {
+      const stub = await initProcess("mech-svg-context", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        const get = vi.fn();
+        process.store.appendMessage("user", "Review this diagram.", {
+          media: JSON.stringify([{
+            type: "image",
+            mimeType: "image/svg+xml",
+            key: "var/media/0/mech-svg-context/diagram.svg",
+            filename: "diagram.svg",
+          }]),
+        });
+        process.env = { ...originalEnv, STORAGE: { get } };
+
+        try {
+          const messages = await process.buildContextMessages("default");
+          expect(get).not.toHaveBeenCalled();
+          expect(messages[0].content).toEqual([
+            { type: "text", text: "Review this diagram." },
+            { type: "text", text: "Attached image \"diagram.svg\" [image/svg+xml]" },
+          ]);
+        } finally {
+          process.env = originalEnv;
+        }
+      });
+    });
+
+    it("only deletes process-scoped media after preparation fails", async () => {
+      const pid = "mech-media-preparation-cleanup";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const ownKey = `var/media/0/${pid}/${crypto.randomUUID()}`;
+      const foreignKey = `var/media/0/another-process/${crypto.randomUUID()}`;
+      await env.STORAGE.put(ownKey, new Uint8Array([1]));
+      await env.STORAGE.put(foreignKey, new Uint8Array([2]));
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          const runId = "run-media-cleanup";
+          const media = [
+            { type: "document", mimeType: "application/octet-stream", key: ownKey },
+            { type: "document", mimeType: "application/octet-stream", key: foreignKey },
+          ];
+          const messageId = process.store.appendMessage("user", "attachments", {
+            runId,
+            media: JSON.stringify(media),
+          });
+          process.currentRun = {
+            runId,
+            conversationId: "default",
+            pendingMediaMessageId: messageId,
+          };
+          process.sendSignal = vi.fn(async () => {});
+          process.resolveMediaProcessingOptions = vi.fn(async () => ({ ai: process.env.AI }));
+
+          await process.prepareRunMedia(runId, "default", messageId, media);
+        });
+
+        expect(await env.STORAGE.head(ownKey)).toBeNull();
+        expect(await env.STORAGE.head(foreignKey)).not.toBeNull();
+      } finally {
+        await env.STORAGE.delete([ownKey, foreignKey]);
+      }
+    });
+
+    it("requires the media body descriptor length", async () => {
+      const stub = await initProcess("mech-media-length", ROOT_IDENTITY);
+      const response = (await stub.recvFrame({
+        ...makeReq("proc.media.write", {
+          type: "image",
+          mimeType: "image/png",
+        }),
+        body: {
+          stream: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array([1, 2, 3]));
+              controller.close();
+            },
+          }),
+        },
+      })) as ResponseOkFrame;
+
+      expect(response.data).toEqual({
+        ok: false,
+        error: "proc.media.write requires an exact body length",
+      });
+    });
+
+    it("deletes an upload that finishes after a process reset", async () => {
+      const pid = "mech-media-reset-race";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        const objects = new Map<string, Uint8Array>();
+        let releasePut!: () => void;
+        let markPutStarted!: () => void;
+        const putBlocked = new Promise<void>((resolve) => {
+          releasePut = resolve;
+        });
+        const putStarted = new Promise<void>((resolve) => {
+          markPutStarted = resolve;
+        });
+        const deleteObject = vi.fn(async (key: string | string[]) => {
+          for (const item of Array.isArray(key) ? key : [key]) {
+            objects.delete(item);
+          }
+        });
+        process.env = {
+          ...originalEnv,
+          STORAGE: {
+            put: vi.fn(async (key: string, stream: ReadableStream<Uint8Array>) => {
+              markPutStarted();
+              await putBlocked;
+              const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+              objects.set(key, bytes);
+              return { key, size: bytes.byteLength };
+            }),
+            list: vi.fn(async ({ prefix }: { prefix: string }) => ({
+              objects: [...objects.entries()]
+                .filter(([key]) => key.startsWith(prefix))
+                .map(([key, bytes]) => ({ key, size: bytes.byteLength })),
+              truncated: false,
+            })),
+            delete: deleteObject,
+          },
+        };
+
+        try {
+          const writing = process.handleProcMediaWrite(
+            { type: "image", mimeType: "image/png" },
+            bodyFromBytes(new Uint8Array([1, 2, 3])),
+          );
+          await putStarted;
+          await process.handleProcReset();
+          releasePut();
+
+          await expect(writing).resolves.toEqual({
+            ok: false,
+            error: "Process reset during media upload",
+          });
+          expect(objects.size).toBe(0);
+          expect(deleteObject).toHaveBeenCalledWith(expect.stringContaining(`/0/${pid}/`));
+        } finally {
+          process.env = originalEnv;
+          releasePut();
+        }
       });
     });
 
     it("bounds media materialized while building model context", async () => {
-      const stub = await initProcess("mech-bounded-context-media", ROOT_IDENTITY);
+      const pid = "mech-bounded-context-media";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         const originalEnv = process.env;
         const arrayBuffer = vi.fn(async () => new Uint8Array([1]).buffer);
+        const prefix = `var/media/0/${pid}/`;
         process.store.appendMessage("user", "Review these images.", {
           media: JSON.stringify([
-            { type: "image", mimeType: "image/png", key: "oversized" },
-            { type: "image", mimeType: "image/png", key: "first" },
-            { type: "image", mimeType: "image/png", key: "second" },
+            { type: "image", mimeType: "image/png", key: `${prefix}oversized` },
+            { type: "image", mimeType: "image/png", key: `${prefix}first` },
+            { type: "image", mimeType: "image/png", key: `${prefix}second` },
           ]),
         });
         process.env = {
           ...originalEnv,
           STORAGE: {
             get: vi.fn(async (key: string) => ({
-              size: key === "oversized" ? 25 * 1024 * 1024 + 1 : 15 * 1024 * 1024,
+              size: key.endsWith("oversized") ? 25 * 1024 * 1024 + 1 : 15 * 1024 * 1024,
               arrayBuffer,
             })),
           },
@@ -3380,6 +3658,40 @@ describe("Process DO — mechanical", () => {
           expect(arrayBuffer).toHaveBeenCalledTimes(1);
           expect(messages[0].content).toEqual(expect.arrayContaining([
             expect.objectContaining({ type: "image", data: "AQ==" }),
+          ]));
+        } finally {
+          process.env = originalEnv;
+        }
+      });
+    });
+
+    it("does not hydrate out-of-scope media from persisted history", async () => {
+      const stub = await initProcess("mech-foreign-context-media", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        const get = vi.fn(async () => ({
+          size: 3,
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        }));
+        process.store.appendMessage("user", "Legacy attachment", {
+          media: JSON.stringify([{
+            type: "image",
+            mimeType: "image/png",
+            key: "var/media/0/another-process/secret.png",
+          }]),
+        });
+        process.env = {
+          ...originalEnv,
+          STORAGE: { get },
+        };
+
+        try {
+          const messages = await process.buildContextMessages("default");
+          expect(get).not.toHaveBeenCalled();
+          expect(messages[0].content).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: "image" }),
           ]));
         } finally {
           process.env = originalEnv;
@@ -3780,7 +4092,7 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess("mech-ipc-killed-source", ROOT_IDENTITY);
 
       await stub.recvFrame(makeReq("proc.kill", { archive: false }));
-      await stub.recvFrame({
+      const late = await stub.recvFrame({
         type: "sig",
         signal: "ipc.timeout",
         payload: {
@@ -3794,12 +4106,17 @@ describe("Process DO — mechanical", () => {
           error: "IPC call timed out",
         },
       });
+      expect(late).toBeNull();
 
-      await runInDurableObject(stub, (instance: Process) => {
-        const process = instance as any;
-        expect(process.store.getMessages()).toEqual([]);
-        expect(process.currentRun).toBeNull();
-        expect(process.store.getValue("pid")).toBeNull();
+      await runInDurableObject(stub, (_instance: Process, state) => {
+        const tables = state.storage.sql.exec<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'table'",
+        ).toArray().map((row) => row.name);
+        expect(tables).not.toEqual(expect.arrayContaining([
+          "conversations",
+          "messages",
+          "process_kv",
+        ]));
       });
     });
 
@@ -5514,6 +5831,148 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("cancels pending tool, CodeMode, and provider requests", async () => {
+      const pid = "mech-abort-cancels-requests";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const cancelSpy = vi
+        .spyOn(Kernel.prototype as any, "cancelProcessRequests")
+        .mockReturnValue(3);
+
+      try {
+        await runInDurableObject(stub, (instance: Process) => {
+          const process = instance as any;
+          process.currentRun = { runId: "run-1", conversationId: "default" };
+          process.store.register(
+            "dispatch-1",
+            "call-1",
+            "run-1",
+            "fs.search",
+            { query: "needle" },
+          );
+          process.store.markDispatched("dispatch-1");
+          process.codeModeResponses.set("nested-1", {
+            runId: "run-1",
+            call: "net.fetch",
+            args: {},
+            resolve: vi.fn(),
+            reject: vi.fn(),
+            timeoutId: setTimeout(() => {}, 60_000),
+          });
+          const provider = new AbortController();
+          process.runAbortControllers.set("run-1", provider);
+          process.providerAbortSignal = provider.signal;
+        });
+
+        await stub.recvFrame(makeReq("proc.abort", {}));
+
+        await vi.waitFor(() => expect(cancelSpy).toHaveBeenCalledWith(
+          pid,
+          expect.arrayContaining(["dispatch-1", "nested-1"]),
+          "User interrupted tool execution",
+        ));
+        await runInDurableObject(stub, (instance: Process) => {
+          const process = instance as any;
+          expect(process.providerAbortSignal.reason).toEqual(
+            new Error("User interrupted tool execution"),
+          );
+          expect(process.runAbortControllers.size).toBe(0);
+        });
+      } finally {
+        cancelSpy.mockRestore();
+      }
+    });
+
+    it("returns early and cancels a remote generation request", async () => {
+      const pid = "mech-abort-remote-generation";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      let releaseRequest!: () => void;
+      const requestBlocked = new Promise<void>((resolve) => {
+        releaseRequest = resolve;
+      });
+      const recvSpy = vi
+        .spyOn(Kernel.prototype as any, "recvFrame")
+        .mockImplementation(async (_processId: string, frame: RequestFrame) => {
+          await requestBlocked;
+          return { type: "res", id: frame.id, ok: true, data: {} };
+        });
+      const cancelSpy = vi
+        .spyOn(Kernel.prototype as any, "cancelProcessRequests")
+        .mockReturnValue(1);
+
+      try {
+        const result = await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          const controller = new AbortController();
+          const request = process.kernelRpc(
+            "ai.text.generate",
+            {},
+            controller.signal,
+          );
+          controller.abort(new Error("User interrupted generation"));
+          try {
+            await request;
+            return "resolved";
+          } catch (error) {
+            return error instanceof Error ? error.message : String(error);
+          }
+        });
+
+        expect(result).toBe("User interrupted generation");
+        await vi.waitFor(() => expect(cancelSpy).toHaveBeenCalledWith(
+          pid,
+          [expect.any(String)],
+          "User interrupted generation",
+        ));
+      } finally {
+        releaseRequest();
+        recvSpy.mockRestore();
+        cancelSpy.mockRestore();
+      }
+    });
+
+    it("returns without waiting for request cancellation cleanup", async () => {
+      const pid = "mech-abort-nonblocking-request-cancel";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = { runId: "run-1", conversationId: "default" };
+        process.store.register("dispatch-1", "call-1", "run-1", "fs.search", {});
+        process.store.markDispatched("dispatch-1");
+      });
+
+      let releaseCancellation!: () => void;
+      const cancellationBlocked = new Promise<void>((resolve) => {
+        releaseCancellation = resolve;
+      });
+      const cancelSpy = vi
+        .spyOn(Kernel.prototype as any, "cancelProcessRequests")
+        .mockImplementation(async () => {
+          await cancellationBlocked;
+          return 1;
+        });
+
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const response = await Promise.race([
+          stub.recvFrame(makeReq("proc.abort", {})),
+          new Promise<never>((_resolve, reject) => {
+            timeoutId = setTimeout(
+              () => reject(new Error("proc.abort waited for request cancellation")),
+              150,
+            );
+          }),
+        ]) as ResponseOkFrame;
+        expect(response.data).toMatchObject({ ok: true, aborted: true, runId: "run-1" });
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        releaseCancellation();
+        await cancellationBlocked;
+        cancelSpy.mockRestore();
+      }
+    });
+
     it("returns without waiting for signal fanout delivery", async () => {
       const pid = "mech-abort-nonblocking-signal";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -5613,6 +6072,7 @@ describe("Process DO — mechanical", () => {
             rules: [{ match: "fs.read", action: "ask" }],
           },
         };
+        process.scheduleTick = vi.fn(async () => {});
         registerToolBlock(process, "run-hil-2", [
           { type: "toolCall", id: "call-hil-2", name: "Read", arguments: { path: "/root/secret.txt" } },
         ]);
@@ -6180,6 +6640,127 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("cancels a direct codemode.run and blocks later tool side effects", async () => {
+      const pid = "mech-codemode-run-cancel";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const calls: string[] = [];
+        let markStarted!: () => void;
+        let release!: () => void;
+        const started = new Promise<void>((resolve) => {
+          markStarted = resolve;
+        });
+        const blocked = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        process.getCodeModeMcpToolBindings = async () => [];
+        process.executeCodeModeSyscall = async (
+          _context: unknown,
+          call: string,
+        ) => {
+          calls.push(call);
+          if (call === "shell.exec") {
+            markStarted();
+            await blocked;
+            return { status: "completed", output: "", exitCode: 0 };
+          }
+          return { ok: true };
+        };
+        const requestId = "codemode-cancel-1";
+        const execution = process.recvFrame({
+          type: "req",
+          id: requestId,
+          call: "codemode.run",
+          args: {
+            code: [
+              "try { await shell('wait'); } catch {}",
+              "try { await fs.write({ path: '/tmp/too-late', content: 'bad' }); } catch {}",
+              "return 'done';",
+            ].join("\n"),
+          },
+        });
+
+        await started;
+        await process.recvFrame({
+          type: "sig",
+          signal: REQUEST_CANCEL_SIGNAL,
+          payload: { id: requestId, reason: "new user message" },
+        });
+        const response = await execution;
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 25));
+
+        expect(response).toMatchObject({
+          type: "res",
+          id: requestId,
+          ok: true,
+          data: { status: "failed", error: "new user message" },
+        });
+        expect(calls).toEqual(["shell.exec"]);
+      });
+    });
+
+    it("cancels a direct codemode.run when the process resets", async () => {
+      const pid = "mech-codemode-run-reset";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const calls: string[] = [];
+        let markStarted!: () => void;
+        let release!: () => void;
+        const started = new Promise<void>((resolve) => {
+          markStarted = resolve;
+        });
+        const blocked = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        process.getCodeModeMcpToolBindings = async () => [];
+        process.executeCodeModeSyscall = async (
+          _context: unknown,
+          call: string,
+        ) => {
+          calls.push(call);
+          if (call === "shell.exec") {
+            markStarted();
+            await blocked;
+            return { status: "completed", output: "", exitCode: 0 };
+          }
+          return { ok: true };
+        };
+        const execution = process.recvFrame({
+          type: "req",
+          id: "codemode-reset-1",
+          call: "codemode.run",
+          args: {
+            code: [
+              "try { await shell('wait'); } catch {}",
+              "try { await fs.write({ path: '/tmp/too-late', content: 'bad' }); } catch {}",
+              "return 'done';",
+            ].join("\n"),
+          },
+        });
+
+        await started;
+        const reset = await process.recvFrame(makeReq("proc.reset", {}));
+        const response = await execution;
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 25));
+
+        expect(reset).toMatchObject({ ok: true, data: { ok: true, pid } });
+        expect(response).toMatchObject({
+          ok: true,
+          data: {
+            status: "failed",
+            error: "Process execution was reset: process.reset",
+          },
+        });
+        expect(calls).toEqual(["shell.exec"]);
+      });
+    });
+
     it("gates CodeMode fetches through tool approval", async () => {
       const pid = "mech-codemode-fetch-approval";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -6625,51 +7206,117 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.kill", () => {
-    it("clears conversation and runtime state so next send is not queued", async () => {
+    it("can dispose an executor whose identity initialization never completed", async () => {
+      const pid = "mech-kill-uninitialized";
+      const stub = await getProcessByPid(pid);
+
+      const killed = await stub.recvFrame(makeReq("proc.kill", { pid, archive: false }));
+      expect(killed).toMatchObject({
+        ok: true,
+        data: { ok: true, pid, archivedMessages: 0, archives: [] },
+      });
+      await expect(stub.recvFrame(
+        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY }),
+      )).resolves.toMatchObject({
+        ok: false,
+        error: { code: 410 },
+      });
+    });
+
+    it("does not tear down an active executor when run-finish delivery fails", async () => {
+      const pid = "mech-kill-finish-failure";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = { runId: "run-kill-failure", conversationId: "default" };
+        process.sendSignal = vi.fn(async () => {
+          throw new Error("finish route unavailable");
+        });
+
+        const response = await process.recvFrame(makeReq("proc.kill", { archive: false }));
+        expect(response).toMatchObject({
+          ok: false,
+          error: { message: "finish route unavailable" },
+        });
+        expect(process.isInitialized()).toBe(true);
+        expect(process.currentRun).toMatchObject({ runId: "run-kill-failure" });
+      });
+    });
+
+    it("finishes the active run and leaves the executor empty and dead", async () => {
       const pid = "mech-kill-runtime";
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const runId = "run-kill-runtime";
 
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.setValue("currentRun", JSON.stringify({ runId }));
-        store.register("dispatch-kill-1", "call-kill-1", runId, "fs.read", { path: "/tmp/test.txt" });
-        store.enqueue(runId, "queued before kill");
-        store.appendMessage("user", "hello before kill");
+      const killed = await runInDurableObject(stub, async (instance: Process, state) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = vi.fn(async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        });
+        process.currentRun = { runId, conversationId: "default" };
+        process.store.register(
+          "dispatch-kill-1",
+          "call-kill-1",
+          runId,
+          "fs.read",
+          { path: "/tmp/test.txt" },
+        );
+        process.store.enqueue("queued-kill", "queued before kill");
+        process.store.appendMessage("user", "hello before kill");
+        await state.storage.setAlarm(Date.now() + 60_000);
+
+        const response = await process.recvFrame(
+          makeReq("proc.kill", { archive: false }),
+        );
+        const tables = state.storage.sql.exec<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'table'",
+        ).toArray().map((row) => row.name);
+        return {
+          response,
+          emitted,
+          alarm: await state.storage.getAlarm(),
+          tables,
+          keys: [...(await state.storage.list()).keys()],
+        };
       });
 
-      const killRes = (await stub.recvFrame(
-        makeReq("proc.kill", { archive: false }),
-      )) as ResponseOkFrame;
-      expect(killRes.ok).toBe(true);
-      expect(killRes.data).toMatchObject({
+      expect(killed.response).toMatchObject({
         ok: true,
-        pid,
-        archivedMessages: 0,
-        archives: [],
+        data: {
+          ok: true,
+          pid,
+          archivedMessages: 0,
+          archives: [],
+        },
       });
-
-      // Kill wipes the executor entirely (the DO is fungible): no leftover run,
-      // queue, results, identity, or messages remain.
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        expect(store.getValue("currentRun")).toBeNull();
-        expect(store.queueSize()).toBe(0);
-        expect(store.getResults(runId)).toHaveLength(0);
-        expect(store.messageCount()).toBe(0);
-        expect(store.getValue("identity")).toBeNull();
+      expect(killed.emitted).toContainEqual({
+        signal: "proc.run.finished",
+        payload: expect.objectContaining({
+          pid,
+          runId,
+          status: "aborted",
+          reason: "process.kill",
+          aborted: true,
+          queuedCount: 0,
+        }),
       });
+      expect(killed.alarm).toBeNull();
+      expect(killed.keys).toEqual([]);
+      expect(killed.tables).not.toEqual(expect.arrayContaining([
+        "conversations",
+        "messages",
+        "process_kv",
+      ]));
 
-      // A fresh executor is established (as the kernel would on resume), then a
-      // send starts cleanly rather than being queued behind stale runtime state.
-      await stub.recvFrame(
-        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY, profile: DEFAULT_PROFILE }),
+      const reuse = await stub.recvFrame(
+        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY }),
       );
-      const sendRes = (await stub.recvFrame(
-        makeReq("proc.send", { message: "first after kill" }),
-      )) as ResponseOkFrame;
-      const sendData = sendRes.data as { queued?: boolean };
-      expect(sendData.queued).toBeUndefined();
+      expect(reuse).toMatchObject({
+        ok: false,
+        error: { code: 410, message: "Process no longer exists" },
+      });
     });
 
     it("archives all conversations before clearing killed process history", async () => {
@@ -6705,16 +7352,6 @@ describe("Process DO — mechanical", () => {
         expect(obj).not.toBeNull();
       }
 
-      // Kill wipes the executor: the DO storage is pristine afterwards (the
-      // durable transcript bytes live in the agent home, checked above). The
-      // default conversation is freshly re-initialised and the ad-hoc "build"
-      // conversation no longer exists in the wiped executor.
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        expect(store.totalMessageCount()).toBe(0);
-        expect(store.getConversation("default").generation).toBe(1);
-        expect(store.getConversation("build")).toBeNull();
-      });
     });
   });
 
@@ -7245,6 +7882,109 @@ describe("Process DO — mechanical", () => {
         ok: true,
         data: { content: "hello" },
       } as any);
+    });
+
+    it("adds line numbers to agent filesystem results", async () => {
+      const pid = "mech-res-sync-body";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const originalRecvFrame = Kernel.prototype.recvFrame;
+      const recvSpy = vi.spyOn(Kernel.prototype as any, "recvFrame").mockImplementation(
+        async function (this: Kernel, processId: string, frame: any) {
+          if (frame?.type === "req" && frame.id === "dispatch-sync-body") {
+            return {
+              type: "res",
+              id: frame.id,
+              ok: true,
+              data: {
+                ok: true,
+                path: "/tmp/note.txt",
+                kind: "text",
+                contentType: "text/plain",
+                size: 5,
+                lines: 1,
+              },
+              body: bodyFromText("hello"),
+            } as ResponseFrame;
+          }
+          return originalRecvFrame.call(this, processId, frame);
+        },
+      );
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          process.currentRun = { runId: "run-sync-body", conversationId: "default" };
+          process.store.register(
+            "dispatch-sync-body",
+            "call-sync-body",
+            "run-sync-body",
+            "fs.read",
+            { path: "/tmp/note.txt", offset: 1 },
+          );
+
+          await process.dispatchSyscall(
+            "run-sync-body",
+            "dispatch-sync-body",
+            "fs.read",
+            { path: "/tmp/note.txt", offset: 1 },
+          );
+
+          expect(process.store.getResults("run-sync-body")).toMatchObject([{
+            status: "completed",
+            result: { content: "     2\thello" },
+          }]);
+          process.currentRun = null;
+        });
+      } finally {
+        recvSpy.mockRestore();
+      }
+    });
+
+    it("stops response body materialization when its run is aborted", async () => {
+      const pid = "mech-res-body-abort";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.currentRun = { runId: "run-body-abort", conversationId: "default" };
+        process.store.register(
+          "dispatch-body-abort",
+          "call-body-abort",
+          "run-body-abort",
+          "fs.read",
+          { path: "/tmp/note.txt" },
+        );
+        process.store.markDispatched("dispatch-body-abort");
+        let cancelled: unknown;
+        const response = process.handleRes({
+          type: "res",
+          id: "dispatch-body-abort",
+          ok: true,
+          data: {
+            ok: true,
+            path: "/tmp/note.txt",
+            kind: "text",
+            contentType: "text/plain",
+            size: 1,
+            lines: 1,
+          },
+          body: {
+            stream: new ReadableStream({
+              pull: () => new Promise(() => {}),
+              cancel: (reason) => {
+                cancelled = reason;
+              },
+            }),
+          },
+        });
+        expect(process.runAbortControllers.has("run-body-abort")).toBe(true);
+
+        await process.handleProcAbort({});
+        await response;
+
+        expect(cancelled).toEqual(new Error("User interrupted tool execution"));
+        expect(process.runAbortControllers.size).toBe(0);
+      });
     });
 
     it("does not continue the run until all tool calls in a batch are dispatched", async () => {

@@ -1,13 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
+import { Bash } from "just-bash";
 import { handleShellExec } from "./shell";
-import { handleFsCopy, handleFsRead, handleFsTransferReceive, handleFsTransferSend, handleFsWrite } from "./fs";
-import { parseBinaryFrame } from "@humansandmachines/gsv/protocol";
+import {
+  handleFsCopy,
+  handleFsRead,
+  handleFsTransferReceive,
+  handleFsTransferSend,
+  handleFsTransferStat,
+  handleFsWrite,
+} from "./fs";
 import { sendFrameToProcess } from "../../shared/utils";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import {
+  bodyFromText,
+  bodyToBytes,
+  bodyToText,
+  type ProcessIdentity,
+} from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
+import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
 
 const generateMock = vi.hoisted(() => vi.fn());
 
@@ -35,6 +48,11 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
 beforeEach(() => {
   sendFrameToProcessMock.mockReset();
+  sendFrameToProcessMock.mockImplementation(async (_pid, frame) => (
+    frame.type === "req" && frame.call === "proc.setidentity"
+      ? { type: "res", id: frame.id, ok: true, data: { ok: true } }
+      : null
+  ));
   generateMock.mockReset();
 });
 
@@ -209,7 +227,9 @@ function makeContext(options?: {
     } as never,
     conversations: {
       create: vi.fn(() => ({ conversationId: "conv-1" })),
-      setActivePid: vi.fn(),
+      setActivePid: vi.fn(() => true),
+      clearActivePid: vi.fn(),
+      remove: vi.fn(() => true),
       getByActivePid: vi.fn(() => null),
     } as unknown as KernelContext["conversations"],
     packages: {
@@ -314,16 +334,98 @@ describe("native shell execution", () => {
     });
 
     await handleShellExec({ input: `printf 'from shell' > ${path}` }, ctx);
-    await expect(handleFsRead({ path }, ctx)).resolves.toMatchObject({
-      ok: true,
-      content: expect.stringContaining("from shell"),
-    });
+    const read = await handleFsRead({ path }, ctx);
+    expect(read.data).toMatchObject({ ok: true, kind: "text" });
+    expect(read.body && await bodyToText(read.body)).toContain("from shell");
   });
 
   it("preserves filesystem errors from fs.read", async () => {
     const result = await handleFsRead({ path: "/tmp/does-not-exist" }, makeContext());
 
-    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("ENOENT") });
+    expect(result.data).toMatchObject({ ok: false, error: expect.stringContaining("ENOENT") });
+  });
+
+  it("returns exact text ranges in frame bodies", async () => {
+    const ctx = makeContext();
+    const path = "/tmp/fs-read-range.txt";
+    await handleFsWrite({ path, content: "zero\né\nlast\n" }, ctx);
+
+    const read = await handleFsRead({ path, offset: 1, limit: 3 }, ctx);
+
+    expect(read.data).toMatchObject({
+      ok: true,
+      kind: "text",
+      contentType: "text/plain",
+      lines: 3,
+      size: 13,
+    });
+    expect(read.body && await bodyToText(read.body)).toBe("é\nlast\n");
+  });
+
+  it("uses stored MIME types for reads and transfer metadata", async () => {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    await env.STORAGE.put("tmp/fs-read-image", bytes, {
+      httpMetadata: { contentType: "image/png" },
+    });
+
+    const ctx = makeContext();
+    const read = await handleFsRead({ path: "/tmp/fs-read-image" }, ctx);
+    const stat = await handleFsTransferStat({ path: "/tmp/fs-read-image" }, ctx);
+
+    expect(read.data).toMatchObject({
+      ok: true,
+      kind: "image",
+      contentType: "image/png",
+      size: bytes.byteLength,
+    });
+    expect(read.body && await bodyToBytes(read.body)).toEqual(bytes);
+    expect(stat).toMatchObject({
+      ok: true,
+      contentType: "image/png",
+      size: bytes.byteLength,
+    });
+  });
+
+  it("reads SVG images as text", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>hello</text></svg>';
+    await env.STORAGE.put("tmp/fs-read-vector", svg, {
+      httpMetadata: { contentType: "image/svg+xml" },
+    });
+
+    const read = await handleFsRead({ path: "/tmp/fs-read-vector" }, makeContext());
+
+    expect(read.data).toMatchObject({
+      ok: true,
+      kind: "text",
+      contentType: "image/svg+xml",
+    });
+    expect(read.body && await bodyToText(read.body)).toBe(svg);
+  });
+
+  it("rejects invalid UTF-8 in text-classified files", async () => {
+    await env.STORAGE.put("tmp/fs-read-invalid", new Uint8Array([0xff]));
+
+    const read = await handleFsRead({ path: "/tmp/fs-read-invalid" }, makeContext());
+
+    expect(read.data).toMatchObject({ ok: false, error: expect.stringContaining("Binary file") });
+    expect(read.body).toBeUndefined();
+  });
+
+  it("writes network output files as raw bytes", async () => {
+    const bytes = new Uint8Array([0, 0xff, 1]);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(bytes)));
+    const ctx = makeContext();
+    try {
+      const result = await handleShellExec({
+        input: "gsv-fetch -o /tmp/fetched.bin https://example.test/file",
+      }, ctx);
+      const stored = await handleFsTransferSend({ path: "/tmp/fetched.bin" }, ctx);
+
+      expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+      expect(stored.body && await bodyToBytes(stored.body)).toEqual(bytes);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("uses the owning human's package scopes for agent-backed fs", async () => {
@@ -376,17 +478,17 @@ describe("native shell execution", () => {
     });
 
     const sourceList = await handleFsRead({ path: "/src/repos/root" }, ctx);
-    expect(sourceList.ok).toBe(true);
-    if (sourceList.ok) {
-      expect(sourceList.directories).toContain("human-tools");
-      expect(sourceList.directories).not.toContain("agent-tools");
+    expect(sourceList.data.ok).toBe(true);
+    if (sourceList.data.ok && "directories" in sourceList.data) {
+      expect(sourceList.data.directories).toContain("human-tools");
+      expect(sourceList.data.directories).not.toContain("agent-tools");
     }
 
     const binList = await handleFsRead({ path: "/usr/local/bin" }, ctx);
-    expect(binList.ok).toBe(true);
-    if (binList.ok) {
-      expect(binList.files).toContain("human-tool");
-      expect(binList.files).not.toContain("agent-tool");
+    expect(binList.data.ok).toBe(true);
+    if (binList.data.ok && "files" in binList.data) {
+      expect(binList.data.files).toContain("human-tool");
+      expect(binList.data.files).not.toContain("agent-tool");
     }
   });
 });
@@ -655,6 +757,39 @@ describe("media native commands", () => {
     expect(result.stdout).toContain("out.png");
     expect(result.stdout).toContain("speech.mp3");
   });
+
+  it("preserves generated image MIME when the output extension differs", async () => {
+    const key = "home/sam/generated-jpeg.png";
+    let imageReadInput: Record<string, unknown> | undefined;
+    await env.STORAGE.delete(key);
+
+    const result = await handleShellExec(
+      {
+        input: "txt2img -o generated-jpeg.png green-square; img2txt generated-jpeg.png",
+      },
+      makeContext({
+        capabilities: ["ai.image.read", "ai.image.generate"],
+        aiRun: vi.fn(async (_model, input) => {
+          if (Array.isArray(input.messages)) {
+            imageReadInput = input;
+            return { response: "a green square" };
+          }
+          if (typeof input.prompt === "string") {
+            return { image: "/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==" };
+          }
+          return null;
+        }),
+      }),
+    );
+
+    const stored = await env.STORAGE.get(key);
+    expect(result).toMatchObject({ ok: true, exitCode: 0 });
+    expect(result.stdout).toContain("a green square");
+    expect(stored?.httpMetadata?.contentType).toBe("image/jpeg");
+    expect([...new Uint8Array(await stored!.arrayBuffer()).subarray(0, 4)])
+      .toEqual([0xff, 0xd8, 0xff, 0xe0]);
+    expect(JSON.stringify(imageReadInput)).toContain("data:image/jpeg;base64,");
+  });
 });
 
 describe("targets native command", () => {
@@ -734,6 +869,44 @@ describe("targets native command", () => {
 });
 
 describe("proc native command", () => {
+  function makeLifecycleContext(capability: "proc.reset" | "proc.kill") {
+    const process = {
+      processId: "proc:child",
+      uid: IDENTITY.uid,
+      ownerUid: IDENTITY.uid,
+      activeRunId: "run-child",
+    };
+    const kill = vi.fn();
+    const cancelBySourcePid = vi.fn();
+    const failIpcCallsByTarget = vi.fn();
+    const deleteRunRoute = vi.fn();
+    const clearActivePid = vi.fn();
+    const ctx = makeContext({
+      capabilities: [capability],
+      procs: {
+        get: vi.fn((pid: string) => pid === process.processId ? process : null),
+        getOwnerUid: vi.fn(() => IDENTITY.uid),
+        kill,
+      } as Partial<KernelContext["procs"]>,
+      ipcCalls: {
+        cancelBySourcePid,
+      } as unknown as KernelContext["ipcCalls"],
+    });
+    Object.assign(ctx, {
+      failIpcCallsByTarget,
+      runRoutes: { delete: deleteRunRoute },
+    });
+    Object.assign(ctx.conversations, { clearActivePid });
+    return {
+      ctx,
+      kill,
+      cancelBySourcePid,
+      failIpcCallsByTarget,
+      deleteRunRoute,
+      clearActivePid,
+    };
+  }
+
   it("lists runnable accounts", async () => {
     const passwd = [
       { username: "sam", uid: 1000, gid: 1000, gecos: "Sam", home: "/home/sam", shell: "/bin/init" },
@@ -802,6 +975,133 @@ describe("proc native command", () => {
         cwd: "/home/sam/src",
       }),
     );
+  });
+
+  it("spawns a fresh process by default from a top-level native shell", async () => {
+    const spawn = vi.fn();
+    const rootIdentity: ProcessIdentity = {
+      uid: 0,
+      gid: 0,
+      gids: [0],
+      username: "root",
+      home: "/root",
+      cwd: "/root",
+    };
+    const ctx = makeContext({
+      identity: rootIdentity,
+      capabilities: ["proc.spawn"],
+      procs: { spawn } as Partial<KernelContext["procs"]>,
+    });
+    ctx.processId = undefined;
+
+    const result = await handleShellExec(
+      { input: 'proc spawn --label manual-child --prompt "do work"' },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain('label="manual-child"');
+    expect(spawn).toHaveBeenCalledWith(
+      expect.stringMatching(/^proc:/),
+      expect.objectContaining({ username: "root" }),
+      expect.objectContaining({
+        interactive: true,
+        label: "manual-child",
+      }),
+    );
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^proc:/),
+      expect.objectContaining({ call: "proc.send", args: expect.objectContaining({ message: "do work" }) }),
+    );
+
+    const jsonResult = await handleShellExec(
+      { input: `proc spawn --json '{"fresh":false,"label":"json-child"}'` },
+      ctx,
+    );
+    expect(jsonResult.ok).toBe(true);
+    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(spawn).toHaveBeenLastCalledWith(
+      expect.stringMatching(/^proc:/),
+      expect.anything(),
+      expect.objectContaining({ label: "json-child" }),
+    );
+  });
+
+  it("resets a process through the kernel lifecycle path", async () => {
+    const { ctx, cancelBySourcePid, failIpcCallsByTarget } = makeLifecycleContext("proc.reset");
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "reset-child",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc:child",
+        archivedMessages: 3,
+        archivedTo: "/home/sam/archive.jsonl.gz",
+        archives: [],
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "proc reset --pid proc:child" },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe('pid=proc:child archived=3 archive="/home/sam/archive.jsonl.gz"\n');
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "proc:child",
+      expect.objectContaining({ call: "proc.reset", args: { pid: "proc:child" } }),
+    );
+    expect(cancelBySourcePid).toHaveBeenCalledWith({ uid: IDENTITY.uid, sourcePid: "proc:child" });
+    expect(failIpcCallsByTarget).toHaveBeenCalledWith(
+      IDENTITY.uid,
+      "proc:child",
+      "Target process was reset",
+    );
+  });
+
+  it("kills a process without archiving through the kernel lifecycle path", async () => {
+    const {
+      ctx,
+      kill,
+      cancelBySourcePid,
+      failIpcCallsByTarget,
+      deleteRunRoute,
+      clearActivePid,
+    } = makeLifecycleContext("proc.kill");
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "kill-child",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc:child",
+        archivedMessages: 0,
+        archives: [],
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "proc kill proc:child --no-archive" },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("pid=proc:child archived=0\n");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "proc:child",
+      expect.objectContaining({ call: "proc.kill", args: { pid: "proc:child", archive: false } }),
+    );
+    expect(cancelBySourcePid).toHaveBeenCalledWith({ uid: IDENTITY.uid, sourcePid: "proc:child" });
+    expect(failIpcCallsByTarget).toHaveBeenCalledWith(
+      IDENTITY.uid,
+      "proc:child",
+      "Target process was killed",
+    );
+    expect(deleteRunRoute).toHaveBeenCalledWith("run-child");
+    expect(kill).toHaveBeenCalledWith("proc:child");
+    expect(clearActivePid).toHaveBeenCalledWith("proc:child");
   });
 
   it("delegates bounded work through a new child process", async () => {
@@ -1054,30 +1354,19 @@ describe("fs copy", () => {
       customMetadata: { uid: "1000", gid: "1000", mode: "644" },
     });
 
-    const sent: unknown[] = [];
     const ctx = makeContext();
-    ctx.connection = {
-      send(message: unknown) {
-        sent.push(message);
-      },
-    } as never;
 
-    const result = await handleFsTransferSend({
+    const response = await handleFsTransferSend({
       path: "/home/sam/copy-test/stream-source.txt",
-      streamId: 123,
-    }, ctx);
+    }, ctx, "transfer-1");
 
-    expect(result).toMatchObject({
+    expect(response.data).toMatchObject({
       ok: true,
       path: "/home/sam/copy-test/stream-source.txt",
       size: "stream source".length,
-      bytesSent: "stream source".length,
     });
-    expect(sent).toHaveLength(2);
-    const frame = parseBinaryFrame(sent[0] as ArrayBuffer);
-    expect(frame).toMatchObject({ streamId: 123 });
-    expect(new TextDecoder().decode(frame?.payload)).toBe("stream source");
-    expect(parseBinaryFrame(sent[1] as ArrayBuffer)?.flags).toBe(2);
+    expect(response.body?.length).toBe("stream source".length);
+    expect(await new Response(response.body?.stream).text()).toBe("stream source");
   });
 
   it("receives native transfer streams", async () => {
@@ -1093,9 +1382,7 @@ describe("fs copy", () => {
 
     const result = await handleFsTransferReceive({
       path: "/home/sam/copy-test/native-transfer-receive.txt",
-      expectedSize: 11,
-      streamId: 123,
-    }, makeContext(), stream);
+    }, makeContext(), { stream, length: 11 });
 
     expect(result).toMatchObject({
       ok: true,
@@ -1123,7 +1410,7 @@ describe("fs copy", () => {
     expect(result).toMatchObject({
       ok: true,
       size: "copied data".length,
-      contentType: "text/plain",
+      contentType: "text/plain; charset=utf-8",
     });
     expect(await (await env.STORAGE.get(destinationKey))?.text()).toBe("copied data");
   });
@@ -1160,42 +1447,33 @@ describe("fs copy", () => {
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     } as never;
-    const frames: Array<{ flags: number; payload?: Uint8Array }> = [];
+    let received = "";
 
     const result = await handleFsCopy({
       source: { target: "gsv", path: "/home/sam/copy-test/device-source.txt" },
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call, args) {
+      async requestDevice(deviceId, call, args, options) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
           throw new Error("No such file or directory: /tmp/device-destination.txt");
         }
+        if (call === "fs.transfer.receive") {
+          expect(args).toMatchObject({ path: "/tmp/device-destination.txt" });
+          expect(options?.body?.length).toBe("to device".length);
+          received = await new Response(options?.body?.stream).text();
+          return {
+            type: "res",
+            id: "receive-1",
+            ok: true,
+            data: {
+              ok: true,
+              path: "/tmp/device-destination.txt",
+              bytesWritten: received.length,
+            },
+          };
+        }
         throw new Error(`unexpected call ${call}`);
-      },
-      allocateBinaryStreamId() {
-        return 99;
-      },
-      async startDeviceRequest(deviceId, call, args) {
-        expect(deviceId).toBe("rearden");
-        expect(call).toBe("fs.transfer.receive");
-        expect(args).toMatchObject({
-          path: "/tmp/device-destination.txt",
-          streamId: 99,
-          expectedSize: "to device".length,
-        });
-        return {
-          requestId: "receive-1",
-          promise: Promise.resolve({ ok: true, path: "/tmp/device-destination.txt", bytesWritten: "to device".length }),
-          cancel: vi.fn(),
-        };
-      },
-      registerBinaryRelay: vi.fn(),
-      receiveDeviceBinaryStream: vi.fn(),
-      sendDeviceBinaryFrame(deviceId, streamId, flags, payload) {
-        expect(deviceId).toBe("rearden");
-        expect(streamId).toBe(99);
-        frames.push({ flags, payload });
       },
     });
 
@@ -1204,15 +1482,42 @@ describe("fs copy", () => {
       size: "to device".length,
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
     });
-    const payload = frames
-      .filter((frame) => (frame.flags & 1) !== 0)
-      .map((frame) => new TextDecoder().decode(frame.payload))
-      .join("");
-    expect(payload).toBe("to device");
-    expect(frames.at(-1)?.flags).toBe(2);
+    expect(received).toBe("to device");
   });
 
-  it("cleans up device receives when gsv-to-device send fails", async () => {
+  it("cancels a device copy request", async () => {
+    const controller = new AbortController();
+    const ctx = makeContext() as KernelContext;
+    ctx.requestSignal = controller.signal;
+    ctx.devices = {
+      canAccess: vi.fn(() => true),
+      canHandle: vi.fn(() => true),
+    } as never;
+    let requestSignal: AbortSignal | undefined;
+    const request = handleFsCopy({
+      source: { target: "gsv", path: "/tmp/source.txt" },
+      destination: { target: "rearden", path: "/tmp/destination.txt" },
+    }, ctx, {
+      async requestDevice(_deviceId, _call, _args, options) {
+        requestSignal = options?.signal;
+        return await new Promise((_resolve, reject) => {
+          requestSignal?.addEventListener(
+            "abort",
+            () => reject(requestSignal?.reason),
+            { once: true },
+          );
+        });
+      },
+    });
+    await vi.waitFor(() => expect(requestSignal).toBe(controller.signal));
+    const reason = new Error("copy cancelled");
+
+    controller.abort(reason);
+
+    await expect(request).resolves.toEqual({ ok: false, error: "copy cancelled" });
+  });
+
+  it("returns device receive failures when copying from gsv", async () => {
     const sourceKey = "home/sam/copy-test/device-send-fail.txt";
     await env.STORAGE.delete(sourceKey);
     await env.STORAGE.put(sourceKey, "to failing device", {
@@ -1224,11 +1529,6 @@ describe("fs copy", () => {
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     } as never;
-    const cancelReceive = vi.fn();
-    const sendDeviceBinaryFrame = vi.fn(() => {
-      throw new Error("destination disconnected");
-    });
-
     const result = await handleFsCopy({
       source: { target: "gsv", path: "/home/sam/copy-test/device-send-fail.txt" },
       destination: { target: "rearden", path: "/tmp/device-destination.txt" },
@@ -1236,30 +1536,21 @@ describe("fs copy", () => {
       async requestDevice(deviceId, call) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
-          return { ok: false, error: "not found" };
+          return {
+            type: "res",
+            id: "stat-1",
+            ok: true,
+            data: { ok: false, error: "not found" },
+          };
+        }
+        if (call === "fs.transfer.receive") {
+          throw new Error("destination disconnected");
         }
         throw new Error(`unexpected call ${call}`);
       },
-      allocateBinaryStreamId() {
-        return 103;
-      },
-      async startDeviceRequest(deviceId, call) {
-        expect(deviceId).toBe("rearden");
-        expect(call).toBe("fs.transfer.receive");
-        return {
-          requestId: "receive-send-fail",
-          promise: new Promise(() => {}),
-          cancel: cancelReceive,
-        };
-      },
-      registerBinaryRelay: vi.fn(),
-      receiveDeviceBinaryStream: vi.fn(),
-      sendDeviceBinaryFrame,
     });
 
     expect(result).toMatchObject({ ok: false, error: "destination disconnected" });
-    expect(sendDeviceBinaryFrame).toHaveBeenCalledTimes(2);
-    expect(cancelReceive).toHaveBeenCalledOnce();
   });
 
   it("streams device files to gsv", async () => {
@@ -1275,43 +1566,36 @@ describe("fs copy", () => {
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "gsv", path: "/home/sam/copy-test/from-device.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call) {
+      async requestDevice(deviceId, call, args) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
-          return { ok: true, path: "/tmp/source.txt", size: 11, isFile: true, isDirectory: false, contentType: "text/plain" };
+          return {
+            type: "res",
+            id: "stat-1",
+            ok: true,
+            data: { ok: true, path: "/tmp/source.txt", size: 11, isFile: true, isDirectory: false, contentType: "text/plain" },
+          };
+        }
+        if (call === "fs.transfer.send") {
+          expect(args).toMatchObject({ path: "/tmp/source.txt" });
+          return {
+            type: "res",
+            id: "send-1",
+            ok: true,
+            data: { ok: true, path: "/tmp/source.txt", size: 11 },
+            body: {
+              length: 11,
+              stream: new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("hello world"));
+                  controller.close();
+                },
+              }),
+            },
+          };
         }
         throw new Error(`unexpected call ${call}`);
       },
-      allocateBinaryStreamId() {
-        return 100;
-      },
-      async startDeviceRequest(deviceId, call, args) {
-        expect(deviceId).toBe("rearden");
-        expect(call).toBe("fs.transfer.send");
-        expect(args).toMatchObject({ path: "/tmp/source.txt", streamId: 100 });
-        return {
-          requestId: "send-1",
-          promise: Promise.resolve({ ok: true, path: "/tmp/source.txt", size: 11, bytesSent: 11 }),
-          cancel: vi.fn(),
-        };
-      },
-      registerBinaryRelay: vi.fn(),
-      receiveDeviceBinaryStream(route) {
-        expect(route).toMatchObject({
-          streamId: 100,
-          sourceDeviceId: "rearden",
-        });
-        return {
-          stream: new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode("hello world"));
-              controller.close();
-            },
-          }),
-          cancel: vi.fn(),
-        };
-      },
-      sendDeviceBinaryFrame: vi.fn(),
     });
 
     expect(result).toMatchObject({
@@ -1322,14 +1606,12 @@ describe("fs copy", () => {
     expect(await (await env.STORAGE.get(destinationKey))?.text()).toBe("hello world");
   });
 
-  it("cleans up native receive streams when device send setup fails", async () => {
+  it("returns device send failures when copying to gsv", async () => {
     const ctx = makeContext() as KernelContext;
     ctx.devices = {
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     } as never;
-    const cancelReceive = vi.fn();
-
     const result = await handleFsCopy({
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "gsv", path: "/home/sam/copy-test/from-device-fail.txt" },
@@ -1337,78 +1619,84 @@ describe("fs copy", () => {
       async requestDevice(deviceId, call) {
         expect(deviceId).toBe("rearden");
         if (call === "fs.transfer.stat") {
-          return { ok: true, path: "/tmp/source.txt", size: 11, isFile: true, isDirectory: false, contentType: "text/plain" };
+          return {
+            type: "res",
+            id: "stat-1",
+            ok: true,
+            data: { ok: true, path: "/tmp/source.txt", size: 11, isFile: true, isDirectory: false, contentType: "text/plain" },
+          };
+        }
+        if (call === "fs.transfer.send") {
+          throw new Error("source disconnected");
         }
         throw new Error(`unexpected call ${call}`);
       },
-      allocateBinaryStreamId() {
-        return 101;
-      },
-      async startDeviceRequest() {
-        throw new Error("source disconnected");
-      },
-      registerBinaryRelay: vi.fn(),
-      receiveDeviceBinaryStream: vi.fn(() => ({
-        stream: new ReadableStream<Uint8Array>(),
-        cancel: cancelReceive,
-      })),
-      sendDeviceBinaryFrame: vi.fn(),
     });
 
     expect(result).toMatchObject({ ok: false, error: "source disconnected" });
-    expect(cancelReceive).toHaveBeenCalledOnce();
   });
 
-  it("cleans up device relay state when source send setup fails", async () => {
+  it("streams device files directly to another device", async () => {
     const ctx = makeContext() as KernelContext;
     ctx.devices = {
       canAccess: vi.fn(() => true),
       canHandle: vi.fn(() => true),
     } as never;
-    const cancelReceive = vi.fn();
-    const cancelRelay = vi.fn();
-    const sendErrorFrame = vi.fn();
+    let received = "";
 
     const result = await handleFsCopy({
       source: { target: "rearden", path: "/tmp/source.txt" },
       destination: { target: "browser", path: "/tmp/destination.txt" },
     }, ctx, {
-      async requestDevice(deviceId, call) {
+      async requestDevice(deviceId, call, _args, options) {
         if (call === "fs.transfer.stat" && deviceId === "browser") {
-          return { ok: false, error: "not found" };
+          return {
+            type: "res",
+            id: "destination-stat",
+            ok: true,
+            data: { ok: false, error: "not found" },
+          };
         }
         if (call === "fs.transfer.stat" && deviceId === "rearden") {
-          return { ok: true, path: "/tmp/source.txt", size: 11, isFile: true, isDirectory: false, contentType: "text/plain" };
+          return {
+            type: "res",
+            id: "source-stat",
+            ok: true,
+            data: { ok: true, path: "/tmp/source.txt", size: 11, isFile: true, isDirectory: false, contentType: "text/plain" },
+          };
+        }
+        if (call === "fs.transfer.send" && deviceId === "rearden") {
+          return {
+            type: "res",
+            id: "source-send",
+            ok: true,
+            data: { ok: true, path: "/tmp/source.txt", size: 11 },
+            body: {
+              length: 11,
+              stream: new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("hello world"));
+                  controller.close();
+                },
+              }),
+            },
+          };
+        }
+        if (call === "fs.transfer.receive" && deviceId === "browser") {
+          received = await new Response(options?.body?.stream).text();
+          return {
+            type: "res",
+            id: "destination-receive",
+            ok: true,
+            data: { ok: true, path: "/tmp/destination.txt", bytesWritten: received.length },
+          };
         }
         throw new Error(`unexpected call ${call}`);
       },
-      allocateBinaryStreamId() {
-        return 102;
-      },
-      async startDeviceRequest(deviceId, call) {
-        if (deviceId === "browser" && call === "fs.transfer.receive") {
-          return {
-            requestId: "receive-2",
-            promise: new Promise(() => {}),
-            cancel: cancelReceive,
-          };
-        }
-        throw new Error("source route failed");
-      },
-      registerBinaryRelay: vi.fn(() => ({ cancel: cancelRelay })),
-      receiveDeviceBinaryStream: vi.fn(),
-      sendDeviceBinaryFrame: sendErrorFrame,
     });
 
-    expect(result).toMatchObject({ ok: false, error: "source route failed" });
-    expect(cancelRelay).toHaveBeenCalledOnce();
-    expect(cancelReceive).toHaveBeenCalledOnce();
-    expect(sendErrorFrame).toHaveBeenCalledWith(
-      "browser",
-      102,
-      6,
-      expect.any(Uint8Array),
-    );
+    expect(result).toMatchObject({ ok: true, size: 11 });
+    expect(received).toBe("hello world");
   });
 
 });
@@ -1423,6 +1711,151 @@ describe("pkg shell command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("codemode <script.js>");
     expect(result.stderr).toBe("");
+  });
+
+  it("runs codemode directly with the invoking cwd and MCP bindings", async () => {
+    const request = vi.fn(async (
+      frame: RequestFrame,
+      signal?: AbortSignal,
+    ): Promise<ResponseFrame> => {
+      expect(signal).toBeInstanceOf(AbortSignal);
+      if (frame.call === "sys.mcp.list") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            servers: [{
+              serverId: "server-1",
+              uid: IDENTITY.uid,
+              name: "Search",
+              url: "https://mcp.example.com/mcp",
+              transport: "auto",
+              state: "ready",
+              authUrl: null,
+              error: null,
+              instructions: null,
+              capabilities: null,
+              tools: [{
+                name: "lookup-record",
+                description: "Look up a record",
+                inputSchema: { type: "object" },
+                outputSchema: { type: "object" },
+              }],
+              resourceCount: 0,
+              promptCount: 0,
+              createdAt: 1,
+              updatedAt: 2,
+            }],
+          },
+        };
+      }
+      if (frame.call === "fs.read") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            kind: "text",
+            path: (frame.args as { path: string }).path,
+            size: 5,
+            contentType: "text/plain; charset=utf-8",
+          },
+          body: bodyFromText("hello"),
+        };
+      }
+      if (frame.call === "sys.mcp.call") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { structuredContent: { title: "GSV" } },
+        };
+      }
+      throw new Error(`unexpected call: ${frame.call}`);
+    });
+    const ctx = makeContext({ capabilities: ["codemode.run"] });
+    ctx.processId = undefined;
+    Object.assign(ctx.env, { LOADER: env.LOADER });
+
+    const result = await handleShellExec(
+      {
+        input: "codemode -e 'const note = await fs.read({ path: \"note.txt\" }); return { note: note.content, match: await lookup_record({ query: \"gsv\" }) };'",
+        cwd: "/tmp",
+      },
+      ctx,
+      { request },
+    );
+
+    expect(result).toMatchObject({
+      status: "completed",
+      exitCode: 0,
+    });
+    expect(result.stdout).toContain('"note": "hello"');
+    expect(result.stdout).toContain('"title": "GSV"');
+    expect(request.mock.calls.map(([frame]) => ({
+      call: frame.call,
+      args: frame.args,
+    }))).toEqual([
+      {
+        call: "sys.mcp.list",
+        args: {},
+      },
+      {
+        call: "fs.read",
+        args: { path: "/tmp/note.txt" },
+      },
+      {
+        call: "sys.mcp.call",
+        args: {
+          serverId: "server-1",
+          name: "lookup-record",
+          arguments: { query: "gsv" },
+        },
+      },
+    ]);
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("releases a CodeMode response body when cancellation wins after dispatch", async () => {
+    const controller = new AbortController();
+    const cancel = vi.fn();
+    const body = {
+      length: 4,
+      stream: new ReadableStream<Uint8Array>({ cancel }),
+    };
+    const request = vi.fn(async (frame: RequestFrame): Promise<ResponseFrame> => {
+      if (frame.call === "sys.mcp.list") {
+        return { type: "res", id: frame.id, ok: true, data: { servers: [] } };
+      }
+      controller.abort(new Error("request cancelled"));
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: true,
+          kind: "text",
+          path: "/tmp/note.txt",
+          size: 4,
+          contentType: "text/plain",
+        },
+        body,
+      };
+    });
+    const ctx = makeContext({ capabilities: ["codemode.run"] });
+    ctx.requestSignal = controller.signal;
+    Object.assign(ctx.env, { LOADER: env.LOADER });
+
+    const result = await handleShellExec(
+      { input: "codemode -e 'return await fs.read({ path: \"/tmp/note.txt\" })'" },
+      ctx,
+      { request },
+    );
+
+    expect(result).toMatchObject({ status: "failed", error: "request cancelled" });
+    expect(cancel).toHaveBeenCalledWith("CodeMode response completed");
   });
 
   it("shows mcp command usage", async () => {
@@ -1527,6 +1960,8 @@ describe("pkg shell command", () => {
 
   it("calls MCP tools through the native shell command", async () => {
     const ctx = makeContext({ capabilities: ["sys.mcp.call"] }) as KernelContext;
+    const controller = new AbortController();
+    ctx.requestSignal = controller.signal;
     const callMcpTool = vi.fn(async () => ({
       content: [{ type: "text", text: "found" }],
     }));
@@ -1568,7 +2003,12 @@ describe("pkg shell command", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(callMcpTool).toHaveBeenCalledWith("server-1", "lookup", { query: "gsv" });
+    expect(callMcpTool).toHaveBeenCalledWith(
+      "server-1",
+      "lookup",
+      { query: "gsv" },
+      controller.signal,
+    );
     expect(result.stdout).toBe("found\n");
     expect(result.stderr).toBe("");
   });
@@ -1581,6 +2021,8 @@ describe("pkg shell command", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("proc self");
+    expect(result.stdout).toContain("proc reset [--pid PID]");
+    expect(result.stdout).toContain("proc kill PID [--no-archive]");
     expect(result.stdout).toContain("proc send <pid>");
     expect(result.stdout).toContain("proc call <pid>");
     expect(result.stderr).toBe("");
@@ -2561,5 +3003,33 @@ describe("pkg shell command", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout).not.toContain("shadowed wiki command");
     expect(calls).toHaveLength(0);
+  });
+
+  it("aborts native shell execution with its request", async () => {
+    const controller = new AbortController();
+    const ctx = makeContext();
+    ctx.requestSignal = controller.signal;
+    const exec = vi.spyOn(Bash.prototype, "exec").mockImplementation(
+      async (_command, options) => await new Promise((_resolve, reject) => {
+        options?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      }),
+    );
+
+    try {
+      const request = handleShellExec({ input: "slow command" }, ctx);
+      await vi.waitFor(() => expect(exec).toHaveBeenCalledOnce());
+      controller.abort(new Error("User interrupted"));
+
+      await expect(request).resolves.toMatchObject({
+        status: "failed",
+        error: "User interrupted",
+      });
+    } finally {
+      exec.mockRestore();
+    }
   });
 });

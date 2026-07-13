@@ -136,6 +136,7 @@ export async function handleSysMcpCall(
     serverId,
     toolName,
     isRecord(args.arguments) ? args.arguments : {},
+    ctx.requestSignal,
   ) as {
     content?: unknown;
     structuredContent?: unknown;

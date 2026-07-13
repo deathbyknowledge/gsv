@@ -140,6 +140,7 @@ function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackag
     packages: {
       list: vi.fn(() => overrides?.packages ?? []),
     } as unknown as KernelContext["packages"],
+    serverVersion: "0.0.1-test",
   } as KernelContext;
 
   return { ctx, auth, config, storage, usersGroup, passwd, groups };
@@ -161,12 +162,6 @@ describe("handleSysSetup", () => {
         head: "manual123",
         changed: true,
       },
-      cli: {
-        defaultChannel: "dev",
-        mirroredChannels: ["stable", "dev"],
-        assets: ["gsv-linux-x64"],
-      },
-      packages: [],
     });
     seedRepoSkillsToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
   });
@@ -210,6 +205,7 @@ describe("handleSysSetup", () => {
       expect.any(Object),
     );
     expect(result.user.username).toBe("alice");
+    expect(result.server).toEqual({ version: "0.0.1-test", release: "dev" });
     expect(result.nodeToken?.allowedDeviceId).toBe("macbook");
   });
 

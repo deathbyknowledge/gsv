@@ -175,6 +175,8 @@ jobs:
   build-cloudflare-bundles:
     needs: [resolve]
     runs-on: ubuntu-latest
+    env:
+      GSV_RELEASE_REF: ${{ needs.resolve.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -296,12 +298,12 @@ jobs:
         run: |
           if [ "$KIND" = "stable" ]; then
             TITLE="${RELEASE_NAME}"
-            INSTALL_CMD='curl -sSL https://install.gsv.space | bash'
+            INSTALL_CMD='curl -fsSL https://install.gsv.space | bash'
             INSTALL_CMD_PS='irm https://install.gsv.space/install.ps1 | iex'
             DEV_CHANNEL_NOTE=""
           else
             TITLE="${RELEASE_NAME}"
-            INSTALL_CMD='curl -sSL https://install.gsv.space | GSV_CHANNEL=dev bash'
+            INSTALL_CMD='curl -fsSL https://install.gsv.space | GSV_CHANNEL=dev bash'
             INSTALL_CMD_PS='$env:GSV_CHANNEL="dev"; irm https://install.gsv.space/install.ps1 | iex'
             DEV_CHANNEL_NOTE=$(cat <<'DEV_NOTE'
           ### Dev Channel
@@ -331,7 +333,7 @@ jobs:
           Pin a specific release tag:
 
           \`\`\`bash
-          curl -sSL https://install.gsv.space | GSV_VERSION=${RELEASE_TAG} bash
+          curl -fsSL https://install.gsv.space | GSV_VERSION=${RELEASE_TAG} bash
           \`\`\`
 
           \`\`\`powershell

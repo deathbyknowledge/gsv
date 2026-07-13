@@ -7,7 +7,7 @@ import type {
 } from "just-bash";
 import type { FsSearchMatch } from "../syscalls/search";
 
-export type ExtendedMountStat = FsStat & { uid: number; gid: number };
+export type ExtendedMountStat = FsStat & { uid: number; gid: number; contentType?: string };
 
 export type FsSearchBackendResult = {
   matches: FsSearchMatch[];
@@ -56,6 +56,12 @@ export type WriteFileStreamOptions = {
   contentType?: string;
   cacheControl?: string;
   contentDisposition?: string;
+  signal?: AbortSignal;
+};
+
+export type WriteFileOptions = {
+  encoding?: BufferEncoding;
+  contentType?: string;
 };
 
 export type WriteFileStreamResult = {
@@ -67,13 +73,15 @@ export interface MountBackend {
   handles(path: string): boolean;
   readFile(path: string, options?: { encoding?: BufferEncoding | null } | BufferEncoding): Promise<string>;
   readFileBuffer(path: string): Promise<Uint8Array>;
-  openFile?(path: string, options?: OpenFileOptions): Promise<OpenFileResult>;
-  writeFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void>;
+  /** Return undefined to use GsvFs's buffered fallback. */
+  openFile?(path: string, options?: OpenFileOptions): Promise<OpenFileResult | undefined>;
+  writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void>;
+  /** Return undefined without consuming content to use GsvFs's buffered fallback. */
   writeFileStream?(
     path: string,
     content: ReadableStream<Uint8Array>,
     options: WriteFileStreamOptions,
-  ): Promise<WriteFileStreamResult>;
+  ): Promise<WriteFileStreamResult | undefined>;
   appendFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<ExtendedMountStat>;
@@ -83,7 +91,12 @@ export interface MountBackend {
   rm(path: string, options?: RmOptions): Promise<void>;
   symlink?(target: string, linkPath: string): Promise<void>;
   readlink?(path: string): Promise<string>;
-  search?(path: string, query: string, include?: string): Promise<FsSearchBackendResult>;
+  search?(
+    path: string,
+    query: string,
+    include?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult>;
   chmod?(path: string, mode: number): Promise<void>;
   chown?(path: string, uid?: number, gid?: number): Promise<void>;
   utimes?(path: string, atime: Date, mtime: Date): Promise<void>;

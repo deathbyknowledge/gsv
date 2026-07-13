@@ -1,5 +1,5 @@
 use crate::protocol::ToolDefinition;
-use crate::tools::Tool;
+use crate::tools::{Tool, ToolOutput};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -54,7 +54,7 @@ impl Tool for WriteTool {
         }
     }
 
-    async fn execute(&self, args: Value) -> Result<Value, String> {
+    async fn execute(&self, args: Value) -> Result<ToolOutput, String> {
         let args: WriteArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
@@ -69,10 +69,10 @@ impl Tool for WriteTool {
         fs::write(&resolved, &args.content)
             .map_err(|e| format!("Failed to write '{}': {}", resolved.display(), e))?;
 
-        Ok(json!({
+        Ok(ToolOutput::json(json!({
             "ok": true,
             "path": resolved.display().to_string(),
             "size": args.content.len()
-        }))
+        })))
     }
 }

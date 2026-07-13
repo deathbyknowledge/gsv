@@ -43,7 +43,9 @@ const SPAWN_PARENT = {
 function spawnConversationsMock() {
   return {
     create: vi.fn(() => ({ conversationId: "conv-1" })),
-    setActivePid: vi.fn(),
+    setActivePid: vi.fn(() => true),
+    clearActivePid: vi.fn(),
+    remove: vi.fn(() => true),
   };
 }
 
@@ -57,6 +59,12 @@ function makeStorageBucket() {
 describe("proc handlers", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => ({
+      type: "res",
+      id: frame.type === "req" ? frame.id : "signal",
+      ok: true,
+      data: { ok: true },
+    } as ResponseFrame));
   });
 
   it("cleans up pending IPC call when delivery returns an error response", async () => {
@@ -333,6 +341,44 @@ describe("proc handlers", () => {
         }),
       }),
     );
+  });
+
+  it("forwards codemode.run cancellation to the Process request", async () => {
+    const controller = new AbortController();
+    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+      if (frame.type === "sig") {
+        return null;
+      }
+      return await new Promise(() => {});
+    });
+    const ctx = {
+      callerOwnerUid: IDENTITY.uid,
+      identity: {
+        role: "user",
+        process: IDENTITY,
+        capabilities: ["codemode.run"],
+      },
+      requestSignal: controller.signal,
+      procs: {
+        get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })),
+      },
+    } as unknown as KernelContext;
+    const request = forwardToProcess({
+      type: "req",
+      id: "codemode-1",
+      call: "codemode.run",
+      args: { pid: "proc-1", code: "return 1" },
+    } as RequestFrame, ctx);
+    await vi.waitFor(() => expect(sendFrameToProcessMock).toHaveBeenCalledOnce());
+
+    controller.abort(new Error("new user message"));
+
+    await expect(request).rejects.toThrow("new user message");
+    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(2, "proc-1", {
+      type: "sig",
+      signal: "request.cancel",
+      payload: { id: "codemode-1", reason: "new user message" },
+    });
   });
 
   it("routes proc.send results by the target process owner", async () => {
@@ -880,6 +926,94 @@ describe("proc handlers", () => {
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       call: "proc.setidentity",
     }));
+  });
+
+  it.each(["null", "error", "throw"] as const)(
+    "rolls back a fresh spawn when proc.setidentity returns %s",
+    async (failure) => {
+      if (failure === "null") {
+        sendFrameToProcessMock.mockResolvedValueOnce(null);
+      } else if (failure === "error") {
+        sendFrameToProcessMock.mockImplementationOnce(async (_pid, frame) => ({
+          type: "res",
+          id: (frame as RequestFrame).id,
+          ok: false,
+          error: { code: 500, message: "identity rejected" },
+        }));
+      } else {
+        sendFrameToProcessMock.mockRejectedValueOnce(new Error("process unavailable"));
+      }
+
+      const conversations = spawnConversationsMock();
+      const procs = {
+        get: vi.fn(() => SPAWN_PARENT),
+        spawn: vi.fn(),
+        kill: vi.fn(() => true),
+      };
+      const ctx = {
+        processId: SPAWN_PARENT.processId,
+        callerOwnerUid: IDENTITY.uid,
+        identity: {
+          process: IDENTITY,
+          capabilities: ["proc.spawn"],
+        },
+        procs,
+        conversations,
+      } as unknown as KernelContext;
+
+      const result = await handleProcSpawn({ fresh: true }, ctx);
+      const pid = procs.spawn.mock.calls[0]?.[0];
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("Failed to initialize process"),
+      });
+      expect(pid).toEqual(expect.any(String));
+      expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(pid, expect.objectContaining({
+        call: "proc.kill",
+        args: { pid, archive: false },
+      }));
+      expect(conversations.clearActivePid).toHaveBeenCalledWith(pid);
+      expect(conversations.remove).toHaveBeenCalledWith("conv-1");
+      expect(procs.kill).toHaveBeenCalledWith(pid);
+    },
+  );
+
+  it("keeps a failed spawn registered when Process rollback fails", async () => {
+    sendFrameToProcessMock
+      .mockResolvedValueOnce(null)
+      .mockImplementationOnce(async (_pid, frame) => ({
+        type: "res",
+        id: (frame as RequestFrame).id,
+        ok: false,
+        error: { code: 500, message: "finish route unavailable" },
+      }));
+    const conversations = spawnConversationsMock();
+    const procs = {
+      get: vi.fn(() => SPAWN_PARENT),
+      spawn: vi.fn(),
+      kill: vi.fn(() => true),
+    };
+    const ctx = {
+      processId: SPAWN_PARENT.processId,
+      callerOwnerUid: IDENTITY.uid,
+      identity: {
+        process: IDENTITY,
+        capabilities: ["proc.spawn"],
+      },
+      procs,
+      conversations,
+    } as unknown as KernelContext;
+
+    const result = await handleProcSpawn({ fresh: true }, ctx);
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("rollback failed: finish route unavailable"),
+    });
+    expect(conversations.clearActivePid).not.toHaveBeenCalled();
+    expect(conversations.remove).not.toHaveBeenCalled();
+    expect(procs.kill).not.toHaveBeenCalled();
   });
 
   it("spawns a fresh interactive worker for a parented spawn", async () => {

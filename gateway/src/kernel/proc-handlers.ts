@@ -6,7 +6,8 @@
  * proc.send/kill/history/reset — forwarded to the Process DO via recvFrame.
  */
 
-import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { FrameBody, RequestFrame, ResponseFrame } from "../protocol/frames";
+import type { ResultOf, SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import type {
@@ -25,7 +26,9 @@ import type {
   ProcSpawnResult,
   ProcSendArgs,
 } from "@humansandmachines/gsv/protocol";
+import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../shared/utils";
+import { raceWithAbort } from "../shared/abort";
 import { resolveUserPath } from "../fs";
 import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
@@ -194,38 +197,68 @@ export async function handleProcSpawn(
 
   const interactive = args.interactive ?? true;
 
-  ctx.procs.spawn(pid, spawnIdentity, {
-    parentPid: parentPid ?? undefined,
-    ownerUid,
-    interactive,
-    label: args.label,
-    cwd: spawnIdentity.cwd,
-    contextFiles: args.assignment?.contextFiles ?? [],
-  });
-
-  // Each spawned process gets its own durable conversation so its transcript
-  // persists in the run-as agent's home, addressable independent of this
-  // (fungible) executor.
-  const conversation = ctx.conversations.create({
-    ownerUid,
-    agentUid: spawnIdentity.uid,
-    agentHome: spawnIdentity.home,
-    title: args.label ?? null,
-  });
-  ctx.conversations.setActivePid(conversation.conversationId, pid);
-
-  await sendFrameToProcess(pid, {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.setidentity",
-    args: {
-      pid,
-      identity: spawnIdentity,
+  let conversationId: string | null = null;
+  try {
+    ctx.procs.spawn(pid, spawnIdentity, {
+      parentPid: parentPid ?? undefined,
+      ownerUid,
       interactive,
-      assignment: args.assignment as ProcSpawnAssignment | undefined,
-      conversationId: conversation.conversationId,
-    },
-  });
+      label: args.label,
+      cwd: spawnIdentity.cwd,
+      contextFiles: args.assignment?.contextFiles ?? [],
+    });
+
+    // Each spawned process gets its own durable conversation so its transcript
+    // persists in the run-as agent's home, addressable independent of this
+    // (fungible) executor.
+    const conversation = ctx.conversations.create({
+      ownerUid,
+      agentUid: spawnIdentity.uid,
+      agentHome: spawnIdentity.home,
+      title: args.label ?? null,
+    });
+    conversationId = conversation.conversationId;
+    if (!ctx.conversations.setActivePid(conversationId, pid)) {
+      throw new Error("Failed to bind process conversation");
+    }
+
+    const requestId = crypto.randomUUID();
+    const response = await sendFrameToProcess(pid, {
+      type: "req",
+      id: requestId,
+      call: "proc.setidentity",
+      args: {
+        pid,
+        identity: spawnIdentity,
+        interactive,
+        assignment: args.assignment as ProcSpawnAssignment | undefined,
+        conversationId,
+      },
+    });
+    if (!response || response.type !== "res" || response.id !== requestId) {
+      throw new Error("proc.setidentity returned no valid response");
+    }
+    if (!response.ok) {
+      throw new Error(response.error.message);
+    }
+    if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
+      throw new Error("proc.setidentity rejected initialization");
+    }
+  } catch (error) {
+    try {
+      await rollbackSpawn(ctx, pid, conversationId);
+    } catch (rollbackError) {
+      return {
+        ok: false,
+        error: `Failed to initialize process: ${error instanceof Error ? error.message : String(error)}; `
+          + `rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+      };
+    }
+    return {
+      ok: false,
+      error: `Failed to initialize process: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 
   if (args.prompt) {
     const origin = interactionOriginForContext(ctx);
@@ -247,6 +280,34 @@ export async function handleProcSpawn(
     label: args.label,
     cwd: spawnIdentity.cwd,
   };
+}
+
+async function rollbackSpawn(
+  ctx: KernelContext,
+  pid: string,
+  conversationId: string | null,
+): Promise<void> {
+  const requestId = crypto.randomUUID();
+  const response = await sendFrameToProcess(pid, {
+    type: "req",
+    id: requestId,
+    call: "proc.kill",
+    args: { pid, archive: false },
+  });
+  if (!response || response.type !== "res" || response.id !== requestId) {
+    throw new Error("proc.kill returned no valid response");
+  }
+  if (!response.ok) {
+    throw new Error(response.error.message);
+  }
+  if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
+    throw new Error("proc.kill rejected rollback");
+  }
+  ctx.conversations.clearActivePid(pid);
+  if (conversationId) {
+    ctx.conversations.remove(conversationId);
+  }
+  ctx.procs.kill(pid);
 }
 
 /**
@@ -499,7 +560,7 @@ export async function handleProcIpcCall(
 export async function forwardToProcess(
   frame: RequestFrame,
   ctx: KernelContext,
-): Promise<unknown> {
+): Promise<{ data?: ResultOf<SyscallName>; body?: FrameBody }> {
   const identity = ctx.identity!;
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const args = frame.args as { pid?: string };
@@ -527,7 +588,33 @@ export async function forwardToProcess(
     : frame.call === "proc.ai.config.set"
       ? withProcAiConfigProfile(frame as RequestFrame<"proc.ai.config.set">, ctx, proc.ownerUid)
       : frame;
-  const response = await sendFrameToProcess(pid, processFrame);
+  const responsePromise = sendFrameToProcess(pid, processFrame);
+  let cancellation: Promise<unknown> | undefined;
+  const signal = frame.call === "codemode.run" ? ctx.requestSignal : undefined;
+  let response: Awaited<ReturnType<typeof sendFrameToProcess>>;
+  try {
+    response = await raceWithAbort(responsePromise, signal, {
+      abortReason: () => signal?.reason ?? new Error("Request cancelled"),
+      onAbort: () => {
+        const reason = signal?.reason instanceof Error
+          ? signal.reason.message
+          : "Request cancelled";
+        cancellation = sendFrameToProcess(pid, {
+          type: "sig",
+          signal: REQUEST_CANCEL_SIGNAL,
+          payload: { id: frame.id, reason },
+        });
+      },
+      onLateResolve: (late) => {
+        if (late?.type === "res" && late.ok && late.body && !late.body.stream.locked) {
+          void late.body.stream.cancel("Request was cancelled");
+        }
+      },
+    });
+  } catch (error) {
+    await cancellation?.catch(() => {});
+    throw error;
+  }
 
   if (response && response.type === "res") {
     const res = response as ResponseFrame;
@@ -573,22 +660,28 @@ export async function forwardToProcess(
         }
         ctx.conversations.clearActivePid(pid);
       }
-      const data = (res as { data?: { runId?: unknown } }).data;
+      const responseData = res.data;
+      const runData = responseData as { runId?: unknown } | undefined;
       if (
         frame.call === "proc.send"
         && identity.role === "user"
         && ctx.connection
-        && typeof data?.runId === "string"
+        && typeof runData?.runId === "string"
       ) {
-        ctx.runRoutes.setConnectionRoute(data.runId, proc.ownerUid, ctx.connection.id);
+        ctx.runRoutes.setConnectionRoute(runData.runId, proc.ownerUid, ctx.connection.id);
       }
-      return data;
+      return {
+        data: responseData,
+        ...(res.body ? { body: res.body } : {}),
+      };
     } else {
       throw new Error((res as { error: { message: string } }).error.message);
     }
   }
 
-  return { ok: true, status: "delivered" };
+  return {
+    data: { ok: true, status: "delivered" } as ResultOf<SyscallName>,
+  };
 }
 
 function withRedactedProcAiConfigGet(

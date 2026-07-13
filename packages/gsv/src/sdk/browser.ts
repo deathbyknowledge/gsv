@@ -1,5 +1,20 @@
 import type { HostBackendCloseEvent, HostBackendSocket, HostClient } from "./host";
-import type { GsvClientCall, GsvClientNamespaces } from "../client";
+import type {
+  GsvClientCall,
+  GsvClientNamespaces,
+  GsvRequestOptions,
+  GsvResponse,
+} from "../client";
+import {
+  BODY_SYSCALL_NAMES,
+  BinaryBodyChannel,
+  type ArgsOf,
+  type BinaryBody,
+  type BinaryFrameDescriptor,
+  type OutgoingBinaryBody,
+  type ResultOf,
+  type SyscallName,
+} from "../protocol";
 
 export type PackageAppBoot = {
   packageId: string;
@@ -17,6 +32,7 @@ type AppRequestFrame = {
   id: string;
   call: string;
   args?: unknown;
+  body?: BinaryFrameDescriptor;
 };
 
 type AppResponseFrame =
@@ -25,6 +41,7 @@ type AppResponseFrame =
       id: string;
       ok: true;
       data?: unknown;
+      body?: BinaryFrameDescriptor;
     }
   | {
       type: "res";
@@ -46,8 +63,9 @@ type AppSignalFrame = {
 type AppSocketFrame = AppResponseFrame | AppSignalFrame;
 
 type PendingBackendRequest = {
-  resolve(value: unknown): void;
+  resolve(value: GsvResponse<unknown>): void;
   reject(error: unknown): void;
+  bodyAbort?: AbortController;
 };
 
 type RemoteBackend = {
@@ -61,7 +79,8 @@ type BackendConnection = {
   broken: boolean;
   reconnectOnClose: boolean;
   pending: Map<string, PendingBackendRequest>;
-  request<T = unknown>(call: string, args?: unknown): Promise<T>;
+  bodyChannel: BinaryBodyChannel;
+  request<T = unknown>(call: string, args?: unknown, options?: GsvRequestOptions): Promise<GsvResponse<T>>;
 };
 
 type BackendTransportCloseEvent = {
@@ -71,7 +90,7 @@ type BackendTransportCloseEvent = {
 
 type BackendTransport = {
   readonly readyState: "connecting" | "open" | "closing" | "closed";
-  send(data: string): Promise<void>;
+  send(data: string | ArrayBuffer): Promise<void>;
   close(): void;
   addEventListener(type: "message", listener: (data: unknown) => void): void;
   addEventListener(type: "close", listener: (event: BackendTransportCloseEvent) => void): void;
@@ -93,10 +112,23 @@ type ResolvedBackendTransportOptions = {
 
 export type PackageGsvClient = GsvClientNamespaces & {
   call: GsvClientCall;
-  request: GsvClientCall;
+  request: PackageGsvRequest;
   backend<T = unknown>(): Promise<T>;
   getBackend<T = unknown>(): Promise<T>;
   boot(): PackageAppBoot;
+};
+
+export type PackageGsvRequest = {
+  <S extends SyscallName>(
+    call: S,
+    args: ArgsOf<S>,
+    options?: GsvRequestOptions,
+  ): Promise<GsvResponse<ResultOf<S>>>;
+  <T = unknown>(
+    call: string,
+    args?: unknown,
+    options?: GsvRequestOptions,
+  ): Promise<GsvResponse<T>>;
 };
 
 export type AppEventListener = (event: string, payload: unknown) => void;
@@ -146,6 +178,7 @@ const BACKEND_RECONNECT_DELAYS_MS = [0, 500, 1_000, 2_000, 5_000, 10_000, 30_000
 let backendReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let backendReconnectAttempts = 0;
 const CONNECTED_READY_FALLBACK_MS = 650;
+const BODY_SYSCALLS = new Set<string>(BODY_SYSCALL_NAMES);
 
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -348,7 +381,8 @@ function createHostBackendTransport(socket: HostBackendSocket): BackendTransport
     },
     addEventListener: (type, listener) => {
       if (type === "message") {
-        socket.addEventListener("message", listener as (data: string) => void);
+        const onMessage = listener as (data: unknown) => void;
+        socket.addEventListener("message", (data) => onMessage(data));
         return;
       }
       if (type === "close") {
@@ -492,6 +526,7 @@ async function connectHostBackendTransport(boot: PackageAppBoot): Promise<Backen
 
 async function connectDirectBackendTransport(boot: PackageAppBoot): Promise<BackendTransport> {
   const socket = new WebSocket(buildRpcWebSocketUrl(boot.rpcBase));
+  socket.binaryType = "arraybuffer";
   try {
     await waitForWebSocketOpen(socket);
   } catch (error) {
@@ -527,6 +562,7 @@ function resetBackendConnection(): void {
       connection.reconnectOnClose = false;
       connection.broken = true;
       rejectPendingBackendRequests(connection, new BackendTransportClosedError("client reconnect"));
+      connection.bodyChannel.close(new BackendTransportClosedError("client reconnect"));
       closeBackendTransport(connection.transport);
     })
     .catch(() => {});
@@ -577,6 +613,7 @@ function createRequestId(): string {
 
 function rejectPendingBackendRequests(connection: BackendConnection, error: unknown): void {
   for (const pending of connection.pending.values()) {
+    pending.bodyAbort?.abort(error);
     pending.reject(error);
   }
   connection.pending.clear();
@@ -586,34 +623,66 @@ function sendBackendRequest<T = unknown>(
   connection: BackendConnection,
   call: string,
   args?: unknown,
-): Promise<T> {
+  options: GsvRequestOptions = {},
+): Promise<GsvResponse<T>> {
   if (connection.broken || connection.transport.readyState !== "open") {
     return Promise.reject(new BackendTransportClosedError("package backend socket is closed"));
   }
 
   const id = createRequestId();
+  const body = options.body;
+  let outgoing: OutgoingBinaryBody | undefined;
+  try {
+    outgoing = body ? connection.bodyChannel.prepare(body) : undefined;
+  } catch (error) {
+    return Promise.reject(error);
+  }
   const frame: AppRequestFrame = {
     type: "req",
     id,
     call,
     ...(args === undefined ? {} : { args }),
+    ...(outgoing ? { body: outgoing.descriptor } : {}),
   };
+  const bodyAbort = body ? new AbortController() : undefined;
 
   return new Promise((resolve, reject) => {
     connection.pending.set(id, {
-      resolve: (value) => resolve(value as T),
+      resolve: (value) => resolve(value as GsvResponse<T>),
       reject,
+      bodyAbort,
     });
-    void connection.transport.send(JSON.stringify(frame)).catch((error) => {
+    void (async () => {
+      await connection.transport.send(JSON.stringify(frame));
+      if (outgoing) {
+        await outgoing.send(bodyAbort?.signal);
+      }
+    })().catch((error) => {
+      const pending = connection.pending.get(id);
+      if (!pending) {
+        return;
+      }
       connection.pending.delete(id);
-      reject(new BackendTransportClosedError(error));
+      pending.bodyAbort?.abort(error);
+      void outgoing?.cancel(error);
+      pending.reject(new BackendTransportClosedError(error));
     });
   });
 }
 
-function handleBackendFrame(connection: BackendConnection, raw: unknown): void {
+async function handleBackendFrame(connection: BackendConnection, raw: unknown): Promise<void> {
   if (typeof raw !== "string") {
-    console.warn("[gsv-package] ignored non-text app frame");
+    const data = raw instanceof ArrayBuffer
+      ? raw
+      : ArrayBuffer.isView(raw)
+        ? raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer
+        : typeof Blob !== "undefined" && raw instanceof Blob
+          ? await raw.arrayBuffer()
+          : null;
+    if (!data || !connection.bodyChannel.handleFrame(data)) {
+      console.warn("[gsv-package] ignored invalid binary app frame");
+      return;
+    }
     return;
   }
 
@@ -637,11 +706,24 @@ function handleBackendFrame(connection: BackendConnection, raw: unknown): void {
 
   const pending = connection.pending.get(parsed.id);
   if (!pending) {
+    if (parsed.ok && parsed.body) {
+      try {
+        await connection.bodyChannel.receive(parsed.body).stream.cancel("Package response is no longer pending");
+      } catch {}
+    }
     return;
   }
   connection.pending.delete(parsed.id);
+  pending.bodyAbort?.abort(new Error("Package request completed"));
   if (parsed.ok) {
-    pending.resolve(parsed.data);
+    try {
+      pending.resolve({
+        data: parsed.data ?? {},
+        ...(parsed.body ? { body: connection.bodyChannel.receive(parsed.body) } : {}),
+      });
+    } catch (error) {
+      pending.reject(error);
+    }
     return;
   }
   pending.reject(new BackendRpcError(
@@ -825,6 +907,9 @@ async function connectBackendTransport(options: BackendTransportOptions = {}): P
       boot = await refreshAppSession(boot);
     }
     const transport = await connectBackendFrameTransport(boot);
+    const bodyChannel = new BinaryBodyChannel({
+      sendFrame: (frame) => transport.send(frame),
+    });
     let connection: BackendConnection;
     const isCurrentConnection = () => backendConnectionPromise === ready;
     const markTransportBroken = (cause: unknown) => {
@@ -834,6 +919,7 @@ async function connectBackendTransport(options: BackendTransportOptions = {}): P
         clearAppSessionRefreshTimer();
       }
       rejectPendingBackendRequests(connection, new BackendTransportClosedError(cause));
+      connection.bodyChannel.close(new BackendTransportClosedError(cause));
       if (backendConnectionPromise === ready) {
         resetBackendConnection();
         if (shouldReconnect) {
@@ -845,8 +931,13 @@ async function connectBackendTransport(options: BackendTransportOptions = {}): P
     };
     connection = {
       backend: {
-        invoke(method: string, args?: unknown) {
-          return connection.request("backend.invoke", { method, args });
+        async invoke(method: string, args?: unknown) {
+          const response = await connection.request("backend.invoke", { method, args });
+          if (response.body) {
+            await response.body.stream.cancel("backend.invoke does not support response bodies").catch(() => {});
+            throw new Error("backend.invoke returned an unsupported response body");
+          }
+          return response.data;
         },
       },
       transport,
@@ -854,12 +945,19 @@ async function connectBackendTransport(options: BackendTransportOptions = {}): P
       broken: transport.readyState === "closing" || transport.readyState === "closed",
       reconnectOnClose: true,
       pending: new Map(),
-      request<T = unknown>(call: string, args?: unknown): Promise<T> {
-        return sendBackendRequest<T>(connection, call, args);
+      bodyChannel,
+      request<T = unknown>(
+        call: string,
+        args?: unknown,
+        requestOptions?: GsvRequestOptions,
+      ): Promise<GsvResponse<T>> {
+        return sendBackendRequest<T>(connection, call, args, requestOptions);
       },
     };
     transport.addEventListener("message", (data) => {
-      handleBackendFrame(connection, data);
+      void handleBackendFrame(connection, data).catch((error) => {
+        markTransportBroken(error);
+      });
     });
     transport.addEventListener("close", (event) => {
       markTransportBroken(`package backend socket closed (${event.code})`);
@@ -934,13 +1032,17 @@ function createBackendProxy<T = unknown>(): T {
   return backendProxy as T;
 }
 
-async function requestKernel<T = unknown>(call: string, args?: unknown): Promise<T> {
+async function requestKernel<T = unknown>(
+  call: string,
+  args?: unknown,
+  options: GsvRequestOptions = {},
+): Promise<GsvResponse<T>> {
   let connection: BackendConnection | null = null;
   try {
     connection = await connectBackendTransport({ requireBackend: false });
-    return await connection.request<T>("kernel.request", { call, args });
+    return await connection.request<T>("kernel.request", { call, args }, options);
   } catch (error) {
-    if (!shouldRetryBackendCall(connection, error)) {
+    if (options.body || !shouldRetryBackendCall(connection, error)) {
       throw error;
     }
   }
@@ -951,6 +1053,16 @@ async function requestKernel<T = unknown>(call: string, args?: unknown): Promise
   return await nextConnection.request<T>("kernel.request", { call, args });
 }
 
+const packageRequest = requestKernel as PackageGsvRequest;
+const packageCall = (async (call: string, args?: unknown) => {
+  const response = await requestKernel(call, args);
+  if (response.body) {
+    await response.body.stream.cancel(`${call} returned a body; use request()`).catch(() => {});
+    throw new Error(`${call} returned a body; use gsv.request()`);
+  }
+  return response.data;
+}) as GsvClientCall;
+
 function createNamespaceProxy(path: string[]): unknown {
   return new Proxy(() => undefined, {
     get(_target, prop) {
@@ -960,10 +1072,14 @@ function createNamespaceProxy(path: string[]): unknown {
       if (typeof prop !== "string") {
         return undefined;
       }
-      return createNamespaceProxy([...path, prop]);
+      const nextPath = [...path, prop];
+      if (BODY_SYSCALLS.has(nextPath.join("."))) {
+        return undefined;
+      }
+      return createNamespaceProxy(nextPath);
     },
     apply(_target, _thisArg, args) {
-      return requestKernel(path.join("."), args[0]);
+      return packageCall(path.join("."), args[0]);
     },
   });
 }
@@ -977,8 +1093,11 @@ export function getGsvClient(): PackageGsvClient {
       if (prop === "then") {
         return undefined;
       }
-      if (prop === "call" || prop === "request") {
-        return requestKernel;
+      if (prop === "call") {
+        return packageCall;
+      }
+      if (prop === "request") {
+        return packageRequest;
       }
       if (prop === "backend" || prop === "getBackend") {
         return getBackend;

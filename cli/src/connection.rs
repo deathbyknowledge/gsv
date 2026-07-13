@@ -1,7 +1,7 @@
 use crate::build_info;
 use crate::protocol::{
     AuthInfo, ClientInfo, ConnectArgs, ConnectResult, DriverInfo, ErrorShape, Frame, RequestFrame,
-    ResponseFrame,
+    ResponseFrame, PROTOCOL_VERSION,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -95,6 +95,7 @@ async fn fail_all_pending_requests(pending: &PendingRequests, code: i32, message
                 details: None,
                 retryable: Some(true),
             }),
+            body: None,
         });
     }
 }
@@ -291,7 +292,7 @@ impl Connection {
         };
 
         let connect_args = ConnectArgs {
-            protocol: 1,
+            protocol: PROTOCOL_VERSION,
             client: ClientInfo {
                 id,
                 version: build_info::BUILD_VERSION.to_string(),
@@ -320,9 +321,7 @@ impl Connection {
             return Err(Box::new(rpc_error));
         }
 
-        if let Some(ref data) = res.data {
-            self.connect_result = serde_json::from_value(data.clone()).ok();
-        }
+        self.connect_result = Some(parse_connect_result(res.data)?);
 
         Ok(())
     }
@@ -388,6 +387,19 @@ impl Connection {
     }
 }
 
+fn parse_connect_result(data: Option<Value>) -> Result<ConnectResult, String> {
+    let result: ConnectResult =
+        serde_json::from_value(data.ok_or_else(|| "sys.connect returned no data".to_string())?)
+            .map_err(|error| format!("Invalid sys.connect response: {}", error))?;
+    if result.protocol != PROTOCOL_VERSION {
+        return Err(format!(
+            "Gateway selected protocol {}, expected {}",
+            result.protocol, PROTOCOL_VERSION
+        ));
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,5 +420,19 @@ mod tests {
         assert_eq!(error.code, 503);
         assert_eq!(error.message, "Connection closed");
         assert!(pending.lock().await.is_empty());
+    }
+
+    #[test]
+    fn connect_result_requires_protocol_2() {
+        let data = serde_json::json!({
+            "protocol": 1,
+            "server": { "version": "test", "connectionId": "conn-1" },
+            "identity": {},
+            "syscalls": [],
+            "signals": []
+        });
+
+        let error = parse_connect_result(Some(data)).unwrap_err();
+        assert_eq!(error, "Gateway selected protocol 1, expected 2");
     }
 }

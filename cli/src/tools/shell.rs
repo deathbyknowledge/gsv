@@ -1,5 +1,5 @@
 use crate::protocol::{DeviceExecEventParams, ToolDefinition};
-use crate::tools::Tool;
+use crate::tools::{Tool, ToolOutput};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -337,19 +337,12 @@ fn format_shell_spawn_error(_shell: &str, error: &std::io::Error) -> String {
 async fn terminate_pid(pid: u32, force: bool) {
     #[cfg(unix)]
     {
-        if force {
-            let _ = Command::new("kill")
-                .arg("-KILL")
-                .arg(pid.to_string())
-                .status()
-                .await;
+        let Ok(group) = i32::try_from(pid) else {
             return;
-        }
-        let _ = Command::new("kill")
-            .arg("-TERM")
-            .arg(pid.to_string())
-            .status()
-            .await;
+        };
+        let signal = if force { libc::SIGKILL } else { libc::SIGTERM };
+        // SAFETY: the negative, checked PID targets only the child-owned process group.
+        let _ = unsafe { libc::kill(-group, signal) };
     }
     #[cfg(windows)]
     {
@@ -364,6 +357,72 @@ async fn terminate_pid(pid: u32, force: bool) {
     {
         let _ = pid;
         let _ = force;
+    }
+}
+
+fn force_terminate_pid(pid: u32) {
+    #[cfg(unix)]
+    {
+        let Ok(group) = i32::try_from(pid) else {
+            return;
+        };
+        // SAFETY: the negative, checked PID targets only the child-owned process group.
+        let _ = unsafe { libc::kill(-group, libc::SIGKILL) };
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .arg("/PID")
+            .arg(pid.to_string())
+            .args(["/T", "/F"])
+            .status();
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+    }
+}
+
+async fn terminate_process(handle: &ProcessHandle) {
+    let pid = {
+        let state = handle.state.lock().await;
+        state.ended_at.is_none().then_some(state.pid).flatten()
+    };
+    let Some(pid) = pid else {
+        return;
+    };
+    terminate_pid(pid, false).await;
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    terminate_pid(pid, true).await;
+}
+
+struct ForegroundProcessGuard {
+    pid: Option<u32>,
+    session_id: String,
+}
+
+impl ForegroundProcessGuard {
+    fn new(pid: Option<u32>, session_id: String) -> Self {
+        Self { pid, session_id }
+    }
+
+    fn disarm(&mut self) {
+        self.pid = None;
+    }
+}
+
+impl Drop for ForegroundProcessGuard {
+    fn drop(&mut self) {
+        let Some(pid) = self.pid.take() else {
+            return;
+        };
+        force_terminate_pid(pid);
+        let session_id = self.session_id.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                remove_process(&session_id).await;
+            });
+        }
     }
 }
 
@@ -413,7 +472,7 @@ async fn launch_managed_process(
     command: String,
     cwd: PathBuf,
     timeout_ms: u64,
-) -> Result<ProcessHandle, String> {
+) -> Result<(ProcessHandle, ForegroundProcessGuard), String> {
     let shell = resolve_shell_program();
     let mut cmd = Command::new(&shell.executable);
     cmd.args(&shell.launch_args).arg(&command);
@@ -421,6 +480,8 @@ async fn launch_managed_process(
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    #[cfg(unix)]
+    cmd.process_group(0);
 
     let mut child = cmd
         .spawn()
@@ -456,6 +517,7 @@ async fn launch_managed_process(
         state: state.clone(),
         stdin: Arc::new(AsyncMutex::new(stdin)),
     };
+    let foreground = ForegroundProcessGuard::new(pid, session_id);
 
     if let Some(stdout) = stdout {
         tokio::spawn(pump_stream(stdout, state.clone(), OutputStream::Stdout));
@@ -465,22 +527,20 @@ async fn launch_managed_process(
     }
 
     if timeout_ms > 0 {
-        let state_for_timeout = state.clone();
+        let handle_for_timeout = handle.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(timeout_ms)).await;
-            let pid_to_kill = {
-                let mut lock = state_for_timeout.lock().await;
+            let should_terminate = {
+                let mut lock = handle_for_timeout.state.lock().await;
                 if lock.ended_at.is_some() {
-                    None
+                    false
                 } else {
                     lock.timed_out = true;
-                    lock.pid
+                    true
                 }
             };
-            if let Some(pid) = pid_to_kill {
-                terminate_pid(pid, false).await;
-                tokio::time::sleep(Duration::from_millis(250)).await;
-                terminate_pid(pid, true).await;
+            if should_terminate {
+                terminate_process(&handle_for_timeout).await;
             }
         });
     }
@@ -554,7 +614,7 @@ async fn launch_managed_process(
 
     store_process(handle.clone()).await;
 
-    Ok(handle)
+    Ok((handle, foreground))
 }
 
 pub struct ShellTool {
@@ -649,7 +709,7 @@ impl Tool for ShellTool {
         }
     }
 
-    async fn execute(&self, args: Value) -> Result<Value, String> {
+    async fn execute(&self, args: Value) -> Result<ToolOutput, String> {
         let args: ShellArgs =
             serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
 
@@ -677,7 +737,9 @@ impl Tool for ShellTool {
                     .await
                     .map_err(|e| format!("Failed to flush stdin: {}", e))?;
             }
-            return Ok(wait_for_shell_result(&handle, normalize_yield_ms(args.yield_ms)).await);
+            return Ok(ToolOutput::json(
+                wait_for_shell_result(&handle, normalize_yield_ms(args.yield_ms)).await,
+            ));
         }
 
         let command = args.input.unwrap_or_default();
@@ -692,13 +754,173 @@ impl Tool for ShellTool {
             .unwrap_or_else(|| self.workspace.clone());
 
         let timeout_ms = args.timeout.unwrap_or(DEFAULT_TIMEOUT_MS);
-        let handle = launch_managed_process(command, cwd, timeout_ms).await?;
+        let (handle, mut foreground) = launch_managed_process(command, cwd, timeout_ms).await?;
 
         if args.background == Some(true) {
             let snapshot = mark_backgrounded(&handle, None).await;
-            return Ok(running_result(&snapshot));
+            foreground.disarm();
+            return Ok(ToolOutput::json(running_result(&snapshot)));
         }
 
-        Ok(wait_for_shell_result(&handle, normalize_yield_ms(args.yield_ms)).await)
+        let result = wait_for_shell_result(&handle, normalize_yield_ms(args.yield_ms)).await;
+        foreground.disarm();
+        Ok(ToolOutput::json(result))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    fn process_exists(pid: u32) -> bool {
+        let Ok(pid) = i32::try_from(pid) else {
+            return false;
+        };
+        // SAFETY: signal 0 only checks whether the test-owned process still exists.
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    async fn wait_for_file(path: &Path) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !path.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("shell did not write child PID");
+    }
+
+    #[tokio::test]
+    async fn dropping_foreground_request_terminates_its_process_tree() {
+        let pid_file = std::env::temp_dir().join(format!("gsv-shell-{}.pid", Uuid::new_v4()));
+        let command = format!(
+            "trap \"\" TERM; sh -c 'trap \"\" TERM; echo $$ > {}; exec sleep 30' & wait",
+            pid_file.display()
+        );
+        let request = tokio::spawn(async move {
+            ShellTool::new(std::env::temp_dir())
+                .execute(json!({ "input": command, "yieldMs": 30_000 }))
+                .await
+        });
+        wait_for_file(&pid_file).await;
+        let child_pid = tokio::fs::read_to_string(&pid_file)
+            .await
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(process_exists(child_pid));
+
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while process_exists(child_pid) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("foreground child survived request cancellation");
+        let _ = tokio::fs::remove_file(pid_file).await;
+    }
+
+    #[tokio::test]
+    async fn termination_escalates_after_the_shell_leader_exits() {
+        let pid_file = std::env::temp_dir().join(format!("gsv-shell-{}.pid", Uuid::new_v4()));
+        let command = format!(
+            "sh -c 'trap \"\" TERM; echo $$ > {}; exec sleep 30' & wait",
+            pid_file.display()
+        );
+        let (handle, mut foreground) =
+            launch_managed_process(command, std::env::temp_dir(), 30_000)
+                .await
+                .unwrap();
+        foreground.disarm();
+        wait_for_file(&pid_file).await;
+        let child_pid = tokio::fs::read_to_string(&pid_file)
+            .await
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+
+        terminate_process(&handle).await;
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while process_exists(child_pid) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("foreground child survived SIGKILL escalation");
+        let _ = tokio::fs::remove_file(pid_file).await;
+    }
+
+    #[test]
+    fn runtime_shutdown_still_terminates_foreground_processes() {
+        let pid_file = std::env::temp_dir().join(format!("gsv-shell-{}.pid", Uuid::new_v4()));
+        let command = format!(
+            "sh -c 'trap \"\" TERM; echo $$ > {}; exec sleep 30' & wait",
+            pid_file.display()
+        );
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (request, child_pid) = runtime.block_on(async {
+            let request = tokio::spawn(async move {
+                ShellTool::new(std::env::temp_dir())
+                    .execute(json!({ "input": command, "yieldMs": 30_000 }))
+                    .await
+            });
+            wait_for_file(&pid_file).await;
+            let child_pid = tokio::fs::read_to_string(&pid_file)
+                .await
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            (request, child_pid)
+        });
+        assert!(process_exists(child_pid));
+
+        request.abort();
+        drop(runtime);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while process_exists(child_pid) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!process_exists(child_pid));
+        let _ = std::fs::remove_file(pid_file);
+    }
+
+    #[tokio::test]
+    async fn dropping_session_poll_does_not_terminate_background_process() {
+        let tool = ShellTool::new(std::env::temp_dir());
+        let started = tool
+            .execute(json!({
+                "input": "sleep 30",
+                "background": true,
+                "timeout": 30_000,
+            }))
+            .await
+            .unwrap();
+        let session_id = started.data["sessionId"].as_str().unwrap().to_string();
+        let handle = get_process(&session_id).await.unwrap();
+        let pid = started.data["pid"].as_u64().unwrap() as u32;
+
+        let poll = tokio::spawn(async move {
+            ShellTool::new(std::env::temp_dir())
+                .execute(json!({
+                    "sessionId": session_id,
+                    "input": "",
+                    "yieldMs": 30_000,
+                }))
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        poll.abort();
+        assert!(poll.await.unwrap_err().is_cancelled());
+        assert!(handle.state.lock().await.ended_at.is_none());
+        assert!(process_exists(pid));
+
+        terminate_process(&handle).await;
     }
 }

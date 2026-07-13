@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -10,10 +10,13 @@ use gsv::device_service;
 use gsv::kernel_client::{GatewayAuth, KernelClient};
 use gsv::logger;
 use gsv::protocol::{
-    DeviceExecEventParams, ErrorShape, Frame, RequestFrame, ResponseFrame, SignalFrame,
+    DeviceExecEventParams, ErrorShape, Frame, FrameBodyDescriptor, RequestFrame, ResponseFrame,
+    SignalFrame, REQUEST_CANCEL_SIGNAL,
 };
-use gsv::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool};
+use gsv::tools::{all_tools_with_workspace_for_device, subscribe_exec_events, Tool, ToolOutput};
+use serde::Deserialize;
 use serde_json::json;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, info_span, warn, Instrument};
 
 use crate::cli::DeviceServiceAction;
@@ -22,6 +25,96 @@ mod transfer;
 
 const MAX_DEVICE_EXEC_EVENT_OUTBOX: usize = 2048;
 const DEVICE_DRIVER_IMPLEMENTS: &[&str] = &["fs.*", "shell.exec", "net.fetch"];
+
+#[derive(Clone, Default)]
+struct ActiveRequests(Arc<Mutex<HashMap<String, ActiveRequest>>>);
+
+struct ActiveRequest {
+    cancellation: Arc<CancellationToken>,
+    body: Option<FrameBodyDescriptor>,
+}
+
+#[derive(Deserialize)]
+struct RequestCancel {
+    id: String,
+    reason: Option<String>,
+}
+
+impl ActiveRequests {
+    fn register(
+        &self,
+        request: &RequestFrame,
+        binary_inbox: &transfer::BinaryFrameInbox,
+    ) -> Arc<CancellationToken> {
+        let cancellation = Arc::new(CancellationToken::new());
+        let previous = {
+            let mut requests = self.0.lock().expect("active request mutex poisoned");
+            binary_inbox.register(request.body);
+            requests.insert(
+                request.id.clone(),
+                ActiveRequest {
+                    cancellation: cancellation.clone(),
+                    body: request.body,
+                },
+            )
+        };
+        if let Some(previous) = previous {
+            Self::stop(previous, "Duplicate request id", binary_inbox);
+        }
+        cancellation
+    }
+
+    fn cancel(
+        &self,
+        cancellation: RequestCancel,
+        binary_inbox: &transfer::BinaryFrameInbox,
+    ) -> bool {
+        let Some(request) = self
+            .0
+            .lock()
+            .expect("active request mutex poisoned")
+            .remove(&cancellation.id)
+        else {
+            return false;
+        };
+        let reason = cancellation
+            .reason
+            .as_deref()
+            .unwrap_or("Request cancelled");
+        Self::stop(request, reason, binary_inbox);
+        true
+    }
+
+    fn cancel_all(&self, reason: &str, binary_inbox: &transfer::BinaryFrameInbox) {
+        let requests = self
+            .0
+            .lock()
+            .expect("active request mutex poisoned")
+            .drain()
+            .map(|(_, request)| request)
+            .collect::<Vec<_>>();
+        for request in requests {
+            Self::stop(request, reason, binary_inbox);
+        }
+    }
+
+    fn stop(request: ActiveRequest, reason: &str, binary_inbox: &transfer::BinaryFrameInbox) {
+        if let Some(body) = request.body {
+            binary_inbox.cancel_incoming(body.stream_id, reason);
+        }
+        request.cancellation.cancel();
+    }
+
+    fn finish(&self, id: &str, cancellation: &Arc<CancellationToken>) {
+        let mut requests = self.0.lock().expect("active request mutex poisoned");
+        if requests
+            .get(id)
+            .is_some_and(|request| Arc::ptr_eq(&request.cancellation, cancellation))
+        {
+            requests.remove(id);
+        }
+    }
+}
 
 #[cfg(unix)]
 async fn wait_for_shutdown_signal() -> &'static str {
@@ -352,6 +445,7 @@ async fn handle_driver_request(
     workspace: &Path,
     req: &RequestFrame,
     binary_inbox: &transfer::BinaryFrameInbox,
+    cancellation: &CancellationToken,
 ) {
     let args = req.args.clone().unwrap_or(serde_json::Value::Null);
 
@@ -375,31 +469,54 @@ async fn handle_driver_request(
     }
 
     let result = if let Some(transfer_result) =
-        transfer::handle_transfer_syscall(call, args.clone(), workspace, conn, binary_inbox).await
+        transfer::handle_transfer_syscall(call, args.clone(), req.body, workspace, binary_inbox)
+            .await
     {
         transfer_result
     } else if let Some(tool_name) = syscall_to_tool_name(call) {
-        execute_tool_by_name(tools, tool_name, args).await
+        execute_tool_by_name(
+            tools,
+            call,
+            tool_name,
+            args,
+            req.body,
+            binary_inbox,
+            cancellation,
+        )
+        .await
+        .map(|output| {
+            let body = output
+                .body
+                .map(|body| transfer::OutgoingBody::tool_body(binary_inbox, body));
+            (output.data, body)
+        })
     } else {
+        if let Some(body) = req.body {
+            binary_inbox.cancel_incoming(body.stream_id, "Unknown syscall");
+        }
         Err(format!("unknown syscall: {}", call))
     };
 
+    let mut outgoing_body = None;
     let response = match result {
-        Ok(data) => {
+        Ok((data, body)) => {
+            let body_descriptor = body.as_ref().map(|body| body.descriptor());
             if call == "net.fetch" {
                 info!(
                     event = "net.fetch.ok",
                     request_id = %req.id,
                     status = ?data.get("status").and_then(|value| value.as_u64()),
                     ok = ?data.get("ok").and_then(|value| value.as_bool()),
-                    body_bytes = ?data.get("bodyBytes").and_then(|value| value.as_u64()),
+                    body_bytes = ?body_descriptor.and_then(|body| body.length),
                 );
             }
+            outgoing_body = body;
             Frame::Res(ResponseFrame {
                 id: req.id.clone(),
                 ok: true,
                 data: Some(data),
                 error: None,
+                body: body_descriptor,
             })
         }
         Err(message) => {
@@ -419,6 +536,7 @@ async fn handle_driver_request(
                         "error": message,
                     })),
                     error: None,
+                    body: None,
                 })
             } else {
                 Frame::Res(ResponseFrame {
@@ -431,6 +549,7 @@ async fn handle_driver_request(
                         details: None,
                         retryable: None,
                     }),
+                    body: None,
                 })
             }
         }
@@ -445,6 +564,17 @@ async fn handle_driver_request(
                     call = %req.call,
                     error = %e,
                 );
+                return;
+            }
+            if let Some(body) = outgoing_body {
+                if let Err(e) = body.send(conn).await {
+                    error!(
+                        event = "driver.response.body_send_failed",
+                        request_id = %req.id,
+                        call = %req.call,
+                        error = %e,
+                    );
+                }
             }
         }
         Err(e) => {
@@ -471,15 +601,49 @@ fn redact_url_for_log(raw_url: &str) -> String {
 
 async fn execute_tool_by_name(
     tools: &[Box<dyn Tool>],
+    call: &str,
     name: &str,
     args: serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    for tool in tools {
-        if tool.definition().name == name {
-            return tool.execute(args).await;
+    body: Option<FrameBodyDescriptor>,
+    binary_inbox: &transfer::BinaryFrameInbox,
+    cancellation: &CancellationToken,
+) -> Result<ToolOutput, String> {
+    let Some(tool) = tools.iter().find(|tool| tool.definition().name == name) else {
+        if let Some(body) = body {
+            binary_inbox.cancel_incoming(body.stream_id, "Tool not found");
         }
+        return Err(format!("tool not found: {}", name));
+    };
+
+    let timeout = tool.timeout(&args);
+    let deadline = timeout.map(|duration| tokio::time::Instant::now() + duration);
+    let execution = async {
+        let body = match body {
+            Some(body) => {
+                let limit = match tool.request_body_limit(&args) {
+                    Ok(limit) => limit,
+                    Err(error) => {
+                        binary_inbox.cancel_incoming(body.stream_id, &error);
+                        return Err(error);
+                    }
+                };
+                Some(binary_inbox.read_body(body, limit).await?)
+            }
+            None => None,
+        };
+        tool.execute_with_body_cancellable(args, body, cancellation)
+            .await
+    };
+    let mut output = match (timeout, deadline) {
+        (Some(timeout), Some(deadline)) => tokio::time::timeout_at(deadline, execution)
+            .await
+            .map_err(|_elapsed| format!("{} timed out after {}ms", call, timeout.as_millis()))?,
+        _ => execution.await,
+    }?;
+    if let Some(body) = output.body.as_mut() {
+        body.deadline = deadline;
     }
-    Err(format!("tool not found: {}", name))
+    Ok(output)
 }
 
 pub(crate) async fn run_shell(
@@ -682,7 +846,14 @@ pub(crate) async fn run_device(
             info!(event = "connect.ok", implements = ?DEVICE_DRIVER_IMPLEMENTS);
 
             let conn = Arc::new(conn);
-            let binary_inbox = transfer::BinaryFrameInbox::new();
+            let weak_conn = Arc::downgrade(&conn);
+            let binary_inbox = transfer::BinaryFrameInbox::with_sender(move |frame| {
+                if let Some(conn) = weak_conn.upgrade() {
+                    tokio::spawn(async move {
+                        let _ = conn.send_binary(frame).await;
+                    });
+                }
+            });
             let binary_inbox_for_handler = binary_inbox.clone();
             conn.set_binary_handler(move |data| {
                 binary_inbox_for_handler.push(data);
@@ -693,26 +864,52 @@ pub(crate) async fn run_device(
             let tools_clone = tools_for_handler.clone();
             let workspace_clone = workspace.clone();
             let binary_inbox_clone = binary_inbox.clone();
+            let active_requests = ActiveRequests::default();
+            let active_requests_for_handler = active_requests.clone();
             let request_span = tracing::Span::current();
 
             // In the new OS architecture, the kernel sends req frames directly to
             // the driver. We dispatch based on `call` and respond with a res frame.
-            conn.set_frame_handler(move |frame| {
-                let conn = conn_clone.clone();
-                let tools = tools_clone.clone();
-                let workspace = workspace_clone.clone();
-                let binary_inbox = binary_inbox_clone.clone();
-                let request_span = request_span.clone();
+            conn.set_frame_handler(move |frame| match frame {
+                Frame::Req(req) => {
+                    let cancellation =
+                        active_requests_for_handler.register(&req, &binary_inbox_clone);
+                    let requests = active_requests_for_handler.clone();
+                    let conn = conn_clone.clone();
+                    let tools = tools_clone.clone();
+                    let workspace = workspace_clone.clone();
+                    let binary_inbox = binary_inbox_clone.clone();
+                    let request_span = request_span.clone();
+                    let id = req.id.clone();
 
-                tokio::spawn(
-                    async move {
-                        if let Frame::Req(req) = frame {
-                            handle_driver_request(&conn, &tools, &workspace, &req, &binary_inbox)
-                                .await;
+                    tokio::spawn(
+                        async move {
+                            tokio::select! {
+                                biased;
+                                _ = cancellation.cancelled() => {}
+                                _ = handle_driver_request(
+                                    &conn,
+                                    &tools,
+                                    &workspace,
+                                    &req,
+                                    &binary_inbox,
+                                    &cancellation,
+                                ) => {}
+                            }
+                            requests.finish(&id, &cancellation);
                         }
+                        .instrument(request_span),
+                    );
+                }
+                Frame::Sig(signal) if signal.signal == REQUEST_CANCEL_SIGNAL => {
+                    let cancellation = signal
+                        .payload
+                        .and_then(|payload| serde_json::from_value(payload).ok());
+                    if let Some(cancellation) = cancellation {
+                        active_requests_for_handler.cancel(cancellation, &binary_inbox_clone);
                     }
-                    .instrument(request_span),
-                );
+                }
+                _ => {}
             })
             .await;
 
@@ -737,10 +934,12 @@ pub(crate) async fn run_device(
             loop {
                 tokio::select! {
                     signal = &mut shutdown => {
+                        active_requests.cancel_all("Device shutting down", &binary_inbox);
                         shutdown_device!(signal);
                     }
                     _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {
                         if conn.is_disconnected() {
+                            active_requests.cancel_all("Device disconnected", &binary_inbox);
                             warn!(
                                 event = "connect.lost",
                                 retry_seconds = 3,
@@ -764,7 +963,10 @@ pub(crate) async fn run_device(
                         if tokio::time::Instant::now() >= next_keepalive_at {
                             let payload = b"gsv-keepalive".to_vec();
                             let keepalive = tokio::select! {
-                                signal = &mut shutdown => shutdown_device!(signal),
+                                signal = &mut shutdown => {
+                                    active_requests.cancel_all("Device shutting down", &binary_inbox);
+                                    shutdown_device!(signal)
+                                },
                                 result = tokio::time::timeout(keepalive_timeout, conn.send_ping(payload)) => result,
                             };
 
@@ -773,6 +975,7 @@ pub(crate) async fn run_device(
                                     next_keepalive_at = tokio::time::Instant::now() + keepalive_interval;
                                 }
                                 Ok(Err(e)) => {
+                                    active_requests.cancel_all("Device disconnected", &binary_inbox);
                                     warn!(
                                         event = "keepalive.request_error",
                                         error = %e,
@@ -785,6 +988,7 @@ pub(crate) async fn run_device(
                                     break;
                                 }
                                 Err(_) => {
+                                    active_requests.cancel_all("Device keepalive timed out", &binary_inbox);
                                     warn!(
                                         event = "keepalive.timeout",
                                         timeout_seconds = 10,
@@ -801,6 +1005,7 @@ pub(crate) async fn run_device(
                     }
                 }
             }
+            active_requests.cancel_all("Device disconnected", &binary_inbox);
         }
     };
 
@@ -809,6 +1014,8 @@ pub(crate) async fn run_device(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gsv::protocol::{parse_binary_frame, BINARY_FRAME_CANCEL, BINARY_FRAME_END};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn test_exec_event(index: usize) -> DeviceExecEventParams {
         DeviceExecEventParams {
@@ -822,6 +1029,122 @@ mod tests {
             started_at: Some(1),
             ended_at: Some(2),
         }
+    }
+
+    async fn pending_body_error(call: &str, args: serde_json::Value) -> String {
+        let inbox = transfer::BinaryFrameInbox::new();
+        let body = FrameBodyDescriptor {
+            stream_id: 41,
+            length: Some(1),
+        };
+        inbox.register(Some(body));
+        let tools =
+            all_tools_with_workspace_for_device(std::env::temp_dir(), "test-device".to_string());
+        let tool_name = syscall_to_tool_name(call).unwrap();
+
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            execute_tool_by_name(
+                &tools,
+                call,
+                tool_name,
+                args,
+                Some(body),
+                &inbox,
+                &CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("request did not finish promptly")
+        .unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn request_cancel_aborts_before_poll_and_cancels_body_once() {
+        let frames = Arc::new(Mutex::new(Vec::new()));
+        let sent = frames.clone();
+        let inbox = transfer::BinaryFrameInbox::with_sender(move |frame| {
+            sent.lock().unwrap().push(frame);
+        });
+        let body = FrameBodyDescriptor {
+            stream_id: 41,
+            length: Some(1),
+        };
+        let request = RequestFrame {
+            id: "request-1".to_string(),
+            call: "net.fetch".to_string(),
+            args: None,
+            body: Some(body),
+        };
+        let requests = ActiveRequests::default();
+        let cancellation = requests.register(&request, &inbox);
+        let ran = Arc::new(AtomicBool::new(false));
+        let ran_in_request = ran.clone();
+
+        assert!(requests.cancel(
+            serde_json::from_value(json!({
+                "id": request.id.clone(),
+                "reason": "superseded",
+            }))
+            .unwrap(),
+            &inbox,
+        ));
+        assert!(!requests.cancel(
+            RequestCancel {
+                id: request.id,
+                reason: None,
+            },
+            &inbox,
+        ));
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => {}
+            _ = async move { ran_in_request.store(true, Ordering::SeqCst) } => {}
+        }
+        assert!(cancellation.is_cancelled());
+        assert!(!ran.load(Ordering::SeqCst));
+
+        let frames = frames.lock().unwrap();
+        assert_eq!(frames.len(), 1);
+        let (_, flags, payload) = parse_binary_frame(&frames[0]).unwrap();
+        assert_eq!(flags, BINARY_FRAME_CANCEL | BINARY_FRAME_END);
+        assert_eq!(payload, b"superseded");
+    }
+
+    #[test]
+    fn duplicate_request_id_cancels_replaced_request() {
+        let requests = ActiveRequests::default();
+        let inbox = transfer::BinaryFrameInbox::new();
+        let request = RequestFrame::new("fs.search", None);
+        let first = requests.register(&request, &inbox);
+        let second = requests.register(&request, &inbox);
+
+        assert!(first.is_cancelled());
+        assert!(!second.is_cancelled());
+        requests.finish(&request.id, &first);
+        assert_eq!(requests.0.lock().unwrap().len(), 1);
+        assert!(requests.cancel(
+            RequestCancel {
+                id: request.id,
+                reason: None,
+            },
+            &inbox,
+        ));
+        assert!(second.is_cancelled());
+    }
+
+    #[test]
+    fn connection_teardown_cancels_all_requests() {
+        let requests = ActiveRequests::default();
+        let inbox = transfer::BinaryFrameInbox::new();
+        let first = requests.register(&RequestFrame::new("fs.search", None), &inbox);
+        let second = requests.register(&RequestFrame::new("net.fetch", None), &inbox);
+
+        requests.cancel_all("Connection closed", &inbox);
+
+        assert!(first.is_cancelled());
+        assert!(second.is_cancelled());
+        assert!(requests.0.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -864,5 +1187,42 @@ mod tests {
             queue.front().map(|event| event.event_id.as_str()),
             Some("event-1")
         );
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_request_bodies_before_waiting_for_frames() {
+        assert_eq!(
+            pending_body_error("fs.read", json!({ "path": "missing.txt" })).await,
+            "Read does not accept a request body"
+        );
+        assert!(pending_body_error(
+            "net.fetch",
+            json!({ "url": "https://example.test/", "body": "text" }),
+        )
+        .await
+        .contains("unknown field `body`"));
+        assert_eq!(
+            pending_body_error(
+                "net.fetch",
+                json!({ "url": "https://example.test/", "method": "GET" }),
+            )
+            .await,
+            "GET requests cannot include a body"
+        );
+    }
+
+    #[tokio::test]
+    async fn net_fetch_timeout_includes_request_body_receipt() {
+        let result = pending_body_error(
+            "net.fetch",
+            json!({
+                "url": "https://example.test/",
+                "method": "POST",
+                "timeoutMs": 5,
+            }),
+        )
+        .await;
+
+        assert_eq!(result, "net.fetch timed out after 5ms");
     }
 }

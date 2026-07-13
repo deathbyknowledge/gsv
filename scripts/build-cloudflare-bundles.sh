@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${ROOT_DIR}/dist/cloudflare"
 OUT_DIR="${1:-${ROOT_DIR}/release/local}"
+GSV_RELEASE_REF="${GSV_RELEASE_REF:-dev}"
+GSV_RELEASE_DEFINE="$(node -p 'JSON.stringify(process.argv[1])' "${GSV_RELEASE_REF}")"
 
 # Prevent macOS tar/cp from emitting AppleDouble sidecar files in bundles.
 export COPYFILE_DISABLE=1
@@ -56,7 +58,7 @@ mkdir -p "${DIST_DIR}/channel-telegram/worker"
 )
 (
   cd "${ROOT_DIR}/gateway"
-  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --outdir "${DIST_DIR}/gateway/worker"
+  npm exec --workspaces=false -- wrangler deploy --minify --dry-run --define "__GSV_RELEASE__:${GSV_RELEASE_DEFINE}" --outdir "${DIST_DIR}/gateway/worker"
 )
 (
   cd "${ROOT_DIR}/ripgit"

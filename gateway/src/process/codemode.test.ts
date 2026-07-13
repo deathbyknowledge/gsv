@@ -52,6 +52,44 @@ describe.sequential("CodeMode executor", () => {
     });
   });
 
+  it("returns on cancellation and blocks later tool requests", async () => {
+    const controller = new AbortController();
+    const calls: string[] = [];
+    let shellStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      shellStarted = resolve;
+    });
+    const execution = executeCodeMode(
+      env,
+      `
+        try { await shell("wait"); } catch {}
+        try { await fs.write({ path: "/tmp/too-late", content: "bad" }); } catch {}
+        return "done";
+      `,
+      async (call) => {
+        calls.push(call);
+        if (call !== "shell.exec") {
+          return { ok: true };
+        }
+        shellStarted();
+        return await new Promise((_resolve, reject) => {
+          const abort = () => reject(controller.signal.reason);
+          controller.signal.addEventListener("abort", abort, { once: true });
+          if (controller.signal.aborted) abort();
+        });
+      },
+      { signal: controller.signal },
+    );
+
+    await started;
+    controller.abort(new Error("new user message"));
+    const result = await execution;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(result).toEqual({ status: "failed", error: "new user message" });
+    expect(calls).toEqual(["shell.exec"]);
+  });
+
   it("routes sandboxed fetch through the canonical syscall shape", async () => {
     const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
     const result = await executeCodeMode(

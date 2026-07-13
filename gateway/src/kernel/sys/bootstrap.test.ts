@@ -1,26 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import { handleSysBootstrap } from "./bootstrap";
-import { handleSysUpdate } from "./update";
 
 const { importFromUpstreamMock, readPathMock, applyMock } = vi.hoisted(() => ({
   importFromUpstreamMock: vi.fn(),
   readPathMock: vi.fn(),
   applyMock: vi.fn(),
-}));
-
-const {
-  inferDefaultCliChannelMock,
-  mirrorCliChannelMock,
-  readDefaultCliChannelMock,
-  storeCliInstallScriptsMock,
-  storeDefaultCliChannelMock,
-} = vi.hoisted(() => ({
-  inferDefaultCliChannelMock: vi.fn(),
-  mirrorCliChannelMock: vi.fn(),
-  readDefaultCliChannelMock: vi.fn(),
-  storeCliInstallScriptsMock: vi.fn(),
-  storeDefaultCliChannelMock: vi.fn(),
 }));
 
 vi.mock("../../fs/ripgit/client", () => ({
@@ -29,17 +14,6 @@ vi.mock("../../fs/ripgit/client", () => ({
     readPath = readPathMock;
     apply = applyMock;
   },
-}));
-
-vi.mock("../../downloads/cli", () => ({
-  CLI_BINARY_ASSETS: ["gsv-darwin-arm64", "gsv-linux-x64"],
-  CLI_RELEASE_CHANNELS: ["stable", "dev"],
-  inferDefaultCliChannel: inferDefaultCliChannelMock,
-  mirrorCliChannel: mirrorCliChannelMock,
-  parseCliReleaseChannel: (value: unknown) => value === "stable" || value === "dev" ? value : null,
-  readDefaultCliChannel: readDefaultCliChannelMock,
-  storeCliInstallScripts: storeCliInstallScriptsMock,
-  storeDefaultCliChannel: storeDefaultCliChannelMock,
 }));
 
 function makeContext(): KernelContext {
@@ -125,11 +99,6 @@ describe("handleSysBootstrap", () => {
       return { kind: "missing" };
     });
     applyMock.mockResolvedValue({ head: "home123" });
-    inferDefaultCliChannelMock.mockReturnValue("dev");
-    mirrorCliChannelMock.mockResolvedValue(undefined);
-    readDefaultCliChannelMock.mockResolvedValue("dev");
-    storeDefaultCliChannelMock.mockResolvedValue(undefined);
-    storeCliInstallScriptsMock.mockResolvedValue(undefined);
   });
 
   it("bootstraps root/gsv from the default upstream without seeding builtin packages", async () => {
@@ -176,10 +145,6 @@ describe("handleSysBootstrap", () => {
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv/visibility", "public");
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/description", "GSV Manual");
     expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/visibility", "public");
-    expect(inferDefaultCliChannelMock).toHaveBeenCalledWith("main");
-    expect(mirrorCliChannelMock).toHaveBeenCalledTimes(2);
-    expect(storeDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "dev");
-    expect(storeCliInstallScriptsMock).toHaveBeenCalledWith(ctx.env.STORAGE);
     expect(result).toEqual({
       repo: "root/gsv",
       remoteUrl: "https://github.com/deathbyknowledge/gsv",
@@ -193,14 +158,38 @@ describe("handleSysBootstrap", () => {
         head: "abc123",
         changed: true,
       },
-      cli: {
-        defaultChannel: "dev",
-        mirroredChannels: ["stable", "dev"],
-        assets: ["gsv-darwin-arm64", "gsv-linux-x64"],
-        refreshedAt: expect.any(Number),
-      },
-      packages: [],
     });
+  });
+
+  it("pins the default root/gsv source to a stable gateway release", async () => {
+    vi.resetModules();
+    vi.doMock("../../version", () => ({ SERVER_RELEASE: "v0.4.0" }));
+
+    try {
+      const { handleSysBootstrap: handleStableBootstrap } = await import("./bootstrap");
+
+      await handleStableBootstrap(undefined, makeContext());
+
+      expect(importFromUpstreamMock).toHaveBeenCalledWith(
+        { owner: "root", repo: "gsv", branch: "main" },
+        "root",
+        "root@gsv.local",
+        "bootstrap root/gsv from https://github.com/deathbyknowledge/gsv#v0.4.0",
+        "https://github.com/deathbyknowledge/gsv",
+        "v0.4.0",
+      );
+      expect(importFromUpstreamMock).toHaveBeenCalledWith(
+        { owner: "root", repo: "gsv-manual", branch: "main" },
+        "root",
+        "root@gsv.local",
+        "bootstrap root/gsv-manual from https://github.com/deathbyknowledge/gsv-manual#main",
+        "https://github.com/deathbyknowledge/gsv-manual",
+        "main",
+      );
+    } finally {
+      vi.doUnmock("../../version");
+      vi.resetModules();
+    }
   });
 
   it("accepts repo shorthand and custom ref", async () => {
@@ -216,6 +205,25 @@ describe("handleSysBootstrap", () => {
       "https://github.com/example/custom-gsv",
       "feature/main",
     );
+  });
+
+  it("does not seed user files when the manual import fails", async () => {
+    importFromUpstreamMock.mockImplementation((repo: { repo: string }) => {
+      if (repo.repo === "gsv-manual") {
+        return Promise.reject(new Error("manual unavailable"));
+      }
+      return Promise.resolve({
+        remoteUrl: "https://github.com/deathbyknowledge/gsv",
+        remoteRef: "main",
+        head: "abc123",
+        changed: true,
+      });
+    });
+
+    await expect(handleSysBootstrap(undefined, makeContext())).rejects.toThrow(
+      "manual unavailable",
+    );
+    expect(applyMock).not.toHaveBeenCalled();
   });
 
   it("uses the configured upstream env when args are omitted", async () => {
@@ -305,50 +313,5 @@ describe("handleSysBootstrap", () => {
     await expect(handleSysBootstrap(undefined, ctx)).rejects.toThrow(
       "RIPGIT binding is required for system bootstrap",
     );
-  });
-});
-
-describe("handleSysUpdate", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mirrorCliChannelMock.mockResolvedValue(undefined);
-    readDefaultCliChannelMock.mockResolvedValue("dev");
-    storeDefaultCliChannelMock.mockResolvedValue(undefined);
-    storeCliInstallScriptsMock.mockResolvedValue(undefined);
-  });
-
-  it("updates mirrored CLI artifacts without bootstrapping source repos", async () => {
-    const ctx = makeContext();
-
-    const result = await handleSysUpdate({ channel: "stable" }, ctx);
-
-    expect(importFromUpstreamMock).not.toHaveBeenCalled();
-    expect(applyMock).not.toHaveBeenCalled();
-    expect(readDefaultCliChannelMock).not.toHaveBeenCalled();
-    expect(mirrorCliChannelMock).toHaveBeenCalledTimes(2);
-    expect(mirrorCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "stable");
-    expect(mirrorCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "dev");
-    expect(storeDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "stable");
-    expect(storeCliInstallScriptsMock).toHaveBeenCalledWith(ctx.env.STORAGE);
-    expect(result).toEqual({
-      updatedAt: expect.any(Number),
-      cli: {
-        defaultChannel: "stable",
-        mirroredChannels: ["stable", "dev"],
-        assets: ["gsv-darwin-arm64", "gsv-linux-x64"],
-        refreshedAt: expect.any(Number),
-      },
-    });
-  });
-
-  it("preserves the existing default CLI channel when omitted", async () => {
-    const ctx = makeContext();
-    readDefaultCliChannelMock.mockResolvedValue("stable");
-
-    const result = await handleSysUpdate(undefined, ctx);
-
-    expect(readDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE);
-    expect(storeDefaultCliChannelMock).toHaveBeenCalledWith(ctx.env.STORAGE, "stable");
-    expect(result.cli.defaultChannel).toBe("stable");
   });
 });

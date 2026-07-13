@@ -353,10 +353,10 @@ describe("handleConnect", () => {
     sql = createMockSql();
   });
 
-  it("rejects unsupported protocol", async () => {
+  it("rejects protocol 1 clients", async () => {
     const ctx = makeCtx(sql);
     const result = await handleConnect(
-      { protocol: 99, client: { id: "c1", version: "1", platform: "test", role: "user" } },
+      { protocol: 1, client: { id: "c1", version: "1", platform: "test", role: "user" } },
       ctx,
     );
     expect(result.ok).toBe(false);
@@ -366,7 +366,7 @@ describe("handleConnect", () => {
   it("rejects invalid role", async () => {
     const ctx = makeCtx(sql);
     const result = await handleConnect(
-      { protocol: 1, client: { id: "c1", version: "1", platform: "test", role: "invalid" as any } },
+      { protocol: 2, client: { id: "c1", version: "1", platform: "test", role: "invalid" as any } },
       ctx,
     );
     expect(result.ok).toBe(false);
@@ -376,7 +376,7 @@ describe("handleConnect", () => {
   it("returns setup-required details on first boot", async () => {
     const ctx = makeCtx(sql);
     const result = await handleConnect(
-      { protocol: 1, client: { id: "c1", version: "1", platform: "test", role: "user" } },
+      { protocol: 2, client: { id: "c1", version: "1", platform: "test", role: "user" } },
       ctx,
     );
 
@@ -396,7 +396,7 @@ describe("handleConnect", () => {
     await ctx.auth.setPassword("root", hash);
 
     const result = await handleConnect(
-      { protocol: 1, client: { id: "c1", version: "1", platform: "test", role: "user" } },
+      { protocol: 2, client: { id: "c1", version: "1", platform: "test", role: "user" } },
       ctx,
     );
     expect(result.ok).toBe(false);
@@ -413,7 +413,7 @@ describe("handleConnect", () => {
 
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "c1", version: "1", platform: "test", role: "user" },
         auth: { username: "root", token: issued.token },
       },
@@ -424,7 +424,7 @@ describe("handleConnect", () => {
     if (result.ok) {
       expect(result.identity.process.uid).toBe(0);
       expect(result.identity.capabilities).toContain("*");
-      expect(result.result.protocol).toBe(1);
+      expect(result.result.protocol).toBe(2);
     }
   });
 
@@ -437,7 +437,7 @@ describe("handleConnect", () => {
 
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "c1", version: "1", platform: "test", role: "user" },
         auth: { username: "root", token: "wrong-token" },
       },
@@ -455,7 +455,7 @@ describe("handleConnect", () => {
 
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "c1", version: "1", platform: "test", role: "user" },
         auth: { username: "nobody", token: "anything" },
       },
@@ -478,7 +478,7 @@ describe("handleConnect", () => {
     });
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "macbook", version: "1", platform: "darwin", role: "driver" },
         auth: { username: "root", token: issued.token },
       },
@@ -506,7 +506,7 @@ describe("handleConnect", () => {
 
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "macbook", version: "1", platform: "darwin-arm64", role: "driver" },
         driver: { implements: ["fs.*", "proc.*"] },
         auth: { username: "root", token: issued.token },
@@ -545,7 +545,7 @@ describe("handleConnect", () => {
 
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "macbook", version: "1", platform: "darwin-arm64", role: "driver" },
         driver: { implements: ["fs.*", "shell.exec"] },
         auth: { username: "root", token: issued.token },
@@ -580,7 +580,7 @@ describe("handleConnect", () => {
     });
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "macbook", version: "1", platform: "darwin", role: "driver" },
         driver: { implements: ["not valid!"] },
         auth: { username: "root", token: issued.token },
@@ -599,7 +599,7 @@ describe("handleConnect", () => {
     const issued = await ctx.auth.issueToken({ uid: 0, kind: "service", label: "svc" });
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "wa-1", version: "1", platform: "worker", role: "service" },
         auth: { username: "root", token: issued.token },
       },
@@ -623,7 +623,7 @@ describe("handleConnect", () => {
 
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "wa-1", version: "1", platform: "worker", role: "service", channel: "whatsapp" },
         auth: { username: "root", token: issued.token },
       },
@@ -652,7 +652,7 @@ describe("handleConnect", () => {
 
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "c1", version: "1", platform: "test", role: "user" },
         auth: { username: "root", password: "hunter2" },
       },
@@ -674,7 +674,7 @@ describe("handleConnect", () => {
 
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "macbook", version: "1", platform: "darwin", role: "driver" },
         driver: { implements: ["fs.*"] },
         auth: { username: "root", password: "hunter2" },
@@ -696,7 +696,7 @@ describe("handleConnect", () => {
 
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "macbook", version: "1", platform: "darwin", role: "driver" },
         driver: { implements: ["fs.*"] },
         auth: { username: "root", password: "hunter2" },
@@ -717,7 +717,7 @@ describe("handleConnect", () => {
 
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "c1", version: "1", platform: "test", role: "user" },
         auth: { username: "root", password: "root-password", token: issued.token },
       },
@@ -743,7 +743,7 @@ describe("handleConnect", () => {
 
     const result = await handleConnect(
       {
-        protocol: 1,
+        protocol: 2,
         client: { id: "server", version: "1", platform: "linux", role: "driver" },
         driver: { implements: ["fs.*"] },
         auth: { username: "root", token: issued.token },

@@ -129,9 +129,9 @@ function syncSourceVersions(version) {
     `version = "${version}"`,
   );
   replaceInFile(
-    "gateway/src/kernel/do.ts",
-    /const SERVER_VERSION = "[^"]+";/,
-    `const SERVER_VERSION = "${version}";`,
+    "gateway/src/version.ts",
+    /export const SERVER_VERSION = "[^"]+";/,
+    `export const SERVER_VERSION = "${version}";`,
   );
   replaceInFile(
     "gateway/src/kernel/config.ts",
@@ -243,7 +243,7 @@ function managedFiles() {
     "cli/Cargo.lock",
     "ripgit/Cargo.toml",
     "ripgit/Cargo.lock",
-    "gateway/src/kernel/do.ts",
+    "gateway/src/version.ts",
     "gateway/src/kernel/config.ts",
     "gateway/src/drivers/native/shell.test.ts",
     "web/src/app/services/gateway/GatewayProvider.tsx",

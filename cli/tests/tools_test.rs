@@ -93,9 +93,9 @@ async fn test_shell_tool_execution() {
         .await
         .unwrap();
 
-    assert_eq!(result["status"], "completed");
-    assert_eq!(result["exitCode"], 0);
-    assert!(result["output"].as_str().unwrap().contains("hello"));
+    assert_eq!(result.data["status"], "completed");
+    assert_eq!(result.data["exitCode"], 0);
+    assert!(result.data["output"].as_str().unwrap().contains("hello"));
 }
 
 #[tokio::test]
@@ -118,12 +118,12 @@ async fn test_shell_tool_cwd() {
         .await
         .unwrap();
 
-    assert_eq!(result["status"], "completed");
-    assert_eq!(result["exitCode"], 0);
+    assert_eq!(result.data["status"], "completed");
+    assert_eq!(result.data["exitCode"], 0);
     assert!(
-        output_matches_cwd(result["output"].as_str().unwrap(), &custom_cwd),
+        output_matches_cwd(result.data["output"].as_str().unwrap(), &custom_cwd),
         "expected `{}` to resolve to `{}`",
-        result["output"].as_str().unwrap().trim(),
+        result.data["output"].as_str().unwrap().trim(),
         custom_cwd.display()
     );
 
@@ -146,8 +146,8 @@ async fn test_shell_background_returns_session_id() {
         .await
         .unwrap();
 
-    assert_eq!(start["status"], "running");
-    let session_id = start["sessionId"].as_str().unwrap().to_string();
+    assert_eq!(start.data["status"], "running");
+    let session_id = start.data["sessionId"].as_str().unwrap().to_string();
     assert!(!session_id.is_empty());
 }
 
@@ -167,7 +167,7 @@ async fn test_shell_session_poll_returns_new_output() {
         .await
         .unwrap();
 
-    let session_id = start["sessionId"].as_str().unwrap().to_string();
+    let session_id = start.data["sessionId"].as_str().unwrap().to_string();
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
 
     let poll = shell
@@ -178,8 +178,11 @@ async fn test_shell_session_poll_returns_new_output() {
         .await
         .unwrap();
 
-    assert_eq!(poll["status"], "completed");
-    assert!(poll["output"].as_str().unwrap().contains("async-finished"));
+    assert_eq!(poll.data["status"], "completed");
+    assert!(poll.data["output"]
+        .as_str()
+        .unwrap()
+        .contains("async-finished"));
 }
 
 #[tokio::test]
@@ -198,7 +201,7 @@ async fn test_shell_session_is_removed_after_final_poll() {
         .await
         .unwrap();
 
-    let session_id = start["sessionId"].as_str().unwrap().to_string();
+    let session_id = start.data["sessionId"].as_str().unwrap().to_string();
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
 
     let poll = shell
@@ -209,10 +212,10 @@ async fn test_shell_session_is_removed_after_final_poll() {
         .await
         .unwrap();
 
-    assert_eq!(poll["status"], "completed");
+    assert_eq!(poll.data["status"], "completed");
     let err = shell
         .execute(json!({
-            "sessionId": poll["sessionId"].as_str().unwrap(),
+            "sessionId": poll.data["sessionId"].as_str().unwrap(),
             "input": ""
         }))
         .await
@@ -226,12 +229,13 @@ async fn test_read_tool() {
     use gsv::tools::{ReadTool, Tool};
     use serde_json::json;
     use std::io::Write;
+    use tokio::io::AsyncReadExt;
 
     let workspace = std::env::temp_dir();
     let tool = ReadTool::new(workspace.clone());
 
     // Create a test file
-    let test_file = workspace.join("gsv_test_read.txt");
+    let test_file = workspace.join("gsv_test_read.bin");
     {
         let mut f = std::fs::File::create(&test_file).unwrap();
         writeln!(f, "line 1").unwrap();
@@ -247,10 +251,13 @@ async fn test_read_tool() {
         .await
         .unwrap();
 
-    let content = result["content"].as_str().unwrap();
-    assert!(content.contains("line 1"));
-    assert!(content.contains("line 2"));
-    assert_eq!(result["lines"], 3);
+    assert_eq!(result.data["contentType"], "text/plain");
+    assert_eq!(result.data["lines"], 4);
+    let mut body = result.body.unwrap();
+    let mut bytes = Vec::new();
+    body.reader.read_to_end(&mut bytes).await.unwrap();
+    let content = String::from_utf8(bytes).unwrap();
+    assert_eq!(content, "line 1\nline 2\nline 3\n");
 
     // Cleanup
     let _ = std::fs::remove_file(&test_file);
@@ -274,9 +281,9 @@ async fn test_read_tool_directory() {
         .await
         .unwrap();
 
-    assert_eq!(result["ok"], true);
-    assert_eq!(result["directories"][0], "nested");
-    assert_eq!(result["files"][0], "file.txt");
+    assert_eq!(result.data["ok"], true);
+    assert_eq!(result.data["directories"][0], "nested");
+    assert_eq!(result.data["files"][0], "file.txt");
 
     let _ = std::fs::remove_dir_all(&workspace);
 }
@@ -286,6 +293,7 @@ async fn test_read_tool_with_offset_limit() {
     use gsv::tools::{ReadTool, Tool};
     use serde_json::json;
     use std::io::Write;
+    use tokio::io::AsyncReadExt;
 
     let workspace = std::env::temp_dir();
     let tool = ReadTool::new(workspace.clone());
@@ -309,13 +317,12 @@ async fn test_read_tool_with_offset_limit() {
         .await
         .unwrap();
 
-    let content = result["content"].as_str().unwrap();
-    assert!(content.contains("line 3"));
-    assert!(content.contains("line 4"));
-    assert!(content.contains("line 5"));
-    assert!(!content.contains("line 1"));
-    assert!(!content.contains("line 6"));
-    assert_eq!(result["lines"], 3);
+    assert_eq!(result.data["lines"], 3);
+    let mut body = result.body.unwrap();
+    let mut bytes = Vec::new();
+    body.reader.read_to_end(&mut bytes).await.unwrap();
+    let content = String::from_utf8(bytes).unwrap();
+    assert_eq!(content, "line 3\nline 4\nline 5");
 
     // Cleanup
     let _ = std::fs::remove_file(&test_file);
@@ -340,8 +347,8 @@ async fn test_write_tool() {
         .await
         .unwrap();
 
-    assert_eq!(result["ok"], true);
-    assert_eq!(result["size"], 19); // "test content\nline 2" = 19 bytes
+    assert_eq!(result.data["ok"], true);
+    assert_eq!(result.data["size"], 19); // "test content\nline 2" = 19 bytes
 
     // Verify content
     let content = std::fs::read_to_string(&test_file).unwrap();
@@ -378,7 +385,7 @@ async fn test_edit_tool() {
         .await
         .unwrap();
 
-    assert_eq!(result["replacements"], 1);
+    assert_eq!(result.data["replacements"], 1);
 
     // Verify content
     let content = std::fs::read_to_string(&test_file).unwrap();
@@ -423,7 +430,7 @@ async fn test_search_tool() {
         .await
         .unwrap();
 
-    let matches = result["matches"].as_array().unwrap();
+    let matches = result.data["matches"].as_array().unwrap();
     assert_eq!(matches.len(), 2); // Found in both files
 
     let literal_result = tool
@@ -434,7 +441,7 @@ async fn test_search_tool() {
         .await
         .unwrap();
 
-    let literal_matches = literal_result["matches"].as_array().unwrap();
+    let literal_matches = literal_result.data["matches"].as_array().unwrap();
     assert_eq!(literal_matches.len(), 1);
     assert_eq!(literal_matches[0]["content"], "a.c");
 

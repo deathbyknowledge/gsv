@@ -1,7 +1,8 @@
 # WebSocket Protocol Reference
 
 Gateway control requests, responses, and signals use JSON text frames over
-`GET /ws`; transfer payloads may use binary frames.
+`GET /ws`. Requests and successful responses may attach a byte stream carried
+by binary frames.
 
 The current protocol is syscall-based:
 
@@ -12,6 +13,7 @@ The current protocol is syscall-based:
 The source of truth is:
 
 - `gateway/src/protocol/frames.ts`
+- `packages/gsv/src/protocol/request-cancel.ts`
 - `packages/gsv/src/protocol/syscalls/system.ts`
 - `gateway/src/kernel/connect.ts`
 - `gateway/src/kernel/dispatch.ts`
@@ -39,6 +41,7 @@ For syscall arguments, result shapes, and domain behavior, see [Syscalls Referen
 | `id` | `string` | Yes | Request/response correlation ID |
 | `call` | `string` | Yes | Syscall name |
 | `args` | `object` | No | Syscall arguments |
+| `body` | `BodyDescriptor` | No | Attached request byte stream |
 
 ### Response Frame
 
@@ -74,6 +77,7 @@ Error:
 | `ok` | `boolean` | Yes | Success flag |
 | `data` | `unknown` | No | Present when `ok` is `true` |
 | `error` | `ErrorShape` | No | Present when `ok` is `false` |
+| `body` | `BodyDescriptor` | No | Attached byte stream; only valid when `ok` is `true` |
 
 ### Signal Frame
 
@@ -143,7 +147,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
   "id": "uuid",
   "call": "sys.connect",
   "args": {
-    "protocol": 1,
+    "protocol": 2,
     "client": {
       "id": "client-123",
       "version": "0.1.0",
@@ -160,7 +164,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `protocol` | `number` | Yes | Must currently be `1` |
+| `protocol` | `number` | Yes | Must currently be `2` |
 | `client.id` | `string` | Yes | Client identifier |
 | `client.version` | `string` | Yes | Client version |
 | `client.platform` | `string` | Yes | Platform string |
@@ -179,9 +183,10 @@ The gateway rejects setup-mode connections with error code `425` and details:
   "id": "uuid",
   "ok": true,
   "data": {
-    "protocol": 1,
+    "protocol": 2,
     "server": {
-      "version": "dev",
+      "version": "0.4.0",
+      "release": "dev",
       "connectionId": "conn-123"
     },
     "identity": {
@@ -224,7 +229,8 @@ The websocket protocol is uniform: every operation is a `req` frame with a sysca
 | `proc.*` | Kernel and Process DO control plane |
 | `pkg.*`, `repo.*`, `sys.*`, `sched.*`, `notification.*`, `signal.*` | Kernel-handled |
 | `adapter.*` | Service-binding / adapter control path |
-| `ai.*` | Kernel-internal process bootstrap path |
+| `ai.tools`, `ai.config` | Kernel-internal process bootstrap path |
+| Other `ai.*` | Capability-gated inference and media operations |
 
 For routed `fs.*` and initial `shell.exec` requests, the gateway strips `args.target` before forwarding the request frame to the driver. Shell continuations use `args.sessionId`; the gateway looks up the session owner and forwards the same `shell.exec` frame to that device.
 
@@ -270,19 +276,106 @@ Service connections receive no ambient signals. Adapter workers report state thr
 - user connections receive routed process signals for their own runs
 - adapter surfaces consume HIL and terminal run signals through their run route
 
+### Request cancellation
+
+`request.cancel` is a reserved one-way control signal for cancelling an entire
+request:
+
+```json
+{
+  "type": "sig",
+  "signal": "request.cancel",
+  "payload": {
+    "id": "request-uuid",
+    "reason": "User interrupted tool execution"
+  }
+}
+```
+
+The `id` is the original request ID. The optional reason is diagnostic only;
+request ownership is determined from the authenticated connection or Process
+route. The gateway removes matching routes and body pumps before forwarding the
+signal to a driver. Drivers stop the active handler and suppress late responses.
+Unknown, duplicate, and post-completion cancellation signals have no effect.
+
+Process abort, reset, kill, user supersession, route expiry, client timeout, and
+origin disconnect use this mechanism. Cancellation is best effort for handlers
+that have already crossed an irreversible boundary. A `shell.exec` request that
+already returned a running session is complete; controlling that session is a
+separate operation.
+
 ---
 
-## Binary Frames
+## Frame Bodies
 
-Binary transfers use this format:
+A request or successful response announces its body in the JSON frame before
+the binary chunks:
+
+```json
+{
+  "body": {
+    "streamId": 42,
+    "length": 1048576
+  }
+}
+```
+
+`streamId` is a non-zero unsigned 32-bit integer chosen by the sender.
+`length` is optional in the protocol, but operations that require an exact
+size may require it. Error responses and signals cannot carry bodies.
+
+Each following binary frame uses this format:
+
 
 ```text
 [4 bytes little-endian stream id][1 byte flags][raw chunk bytes]
 ```
 
-Flags identify data, end, and error frames. `fs.transfer.send` and
-`fs.transfer.receive` establish public binary streams; ordinary request,
-response, and signal traffic remains JSON text frames.
+The stream ID links each chunk to its JSON descriptor. Flags identify data,
+end, and error frames:
+
+| Flag | Value | Meaning |
+|---|---:|---|
+| `DATA` | `1` | The payload contains body bytes |
+| `END` | `2` | This is the final frame for the stream |
+| `ERROR` | `4` | The sender terminated its own stream; the payload contains a UTF-8 error message |
+| `CANCEL` | `8` | The receiver no longer wants the sender's stream; the payload may contain a UTF-8 reason |
+
+Flags may be combined; failures normally use `ERROR | END` (`6`). The sender
+emits the JSON descriptor first, then zero or more data frames, and finally an
+end or error frame. Stream IDs are scoped to the WebSocket connection; a sender
+must not reuse an ID until that stream has ended.
+
+Receiver cancellation uses `CANCEL | END` (`10`). The original sender stops its
+matching outgoing pump without treating the cancellation as a frame for an
+unrelated incoming stream that happens to use the same numeric ID.
+
+Body cancellation stops only the byte pump. Cancelling the whole syscall uses
+the `request.cancel` control signal above. The two mechanisms are independent:
+a request may have no body, and a completed request may leave a response body
+that its consumer can still cancel.
+
+The current body-bearing syscalls are:
+
+| Syscall | Request body | Response body |
+|---|---|---|
+| `fs.read` | No | Always for a successful file read; raw UTF-8 text or image bytes. Directory listings and operation errors remain JSON-only. |
+| `fs.transfer.receive` | Required file bytes | No |
+| `fs.transfer.send` | No | Successful file bytes |
+| `net.fetch` | Optional HTTP request bytes | HTTP response bytes when the response has a body |
+| `proc.media.read` | No | Successful stored media bytes |
+| `proc.media.write` | Required media bytes with an exact descriptor length | No |
+| `ai.transcription.create` | Required audio bytes | No |
+| `ai.image.read` | Required image bytes | No |
+| `ai.image.generate` | No | Generated image bytes when returned inline |
+| `ai.speech.create` | No | Synthesized audio bytes unless the result is skipped or empty |
+
+The JSON `args` and `data` carry metadata; the top-level body carries bytes.
+This avoids syscall-specific stream identifiers and JSON/base64 expansion. In
+the JavaScript SDK, use `client.request()` for these calls and consume or cancel
+the returned body. `client.call()` and generated namespace methods are
+data-only, and body-bearing calls are intentionally omitted from those
+namespaces.
 
 ## See also
 

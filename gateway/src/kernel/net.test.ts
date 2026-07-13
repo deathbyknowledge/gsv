@@ -1,11 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { bodyFromText, bodyToText } from "@humansandmachines/gsv/protocol";
 import {
+  createRoutedFetch,
   handleNetFetch,
+  limitNetFetchRequestBody,
+  limitNetFetchResponseBody,
+  MAX_NET_FETCH_REQUEST_BYTES,
   MAX_NET_FETCH_RESPONSE_BYTES,
-  readNetFetchResponseBody,
+  MAX_NET_FETCH_TIMEOUT_MS,
+  normalizeNetFetchTimeoutMs,
+  requestNetFetchWithSignal,
   requestToNetFetchArgs,
   responseFromNetFetchResult,
 } from "./net";
+import type { ResponseOkFrame } from "../protocol/frames";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -20,8 +28,6 @@ describe("responseFromNetFetchResult", () => {
       statusText: "OK",
       headers: {},
       redirected: true,
-      bodyBase64: "",
-      bodyBytes: 0,
     });
 
     expect(response.url).toBe("https://example.test/final");
@@ -37,13 +43,49 @@ describe("responseFromNetFetchResult", () => {
         statusText: status === 304 ? "Not Modified" : "No Content",
         headers: {},
         redirected: false,
-        bodyBase64: "",
-        bodyBytes: 0,
       });
 
       expect(response.status).toBe(status);
       expect(await response.text()).toBe("");
     }
+  });
+
+  it("cancels bodies attached to invalid responses", async () => {
+    const cancelled: unknown[] = [];
+    const body = {
+      stream: new ReadableStream<Uint8Array>({
+        cancel(reason) {
+          cancelled.push(reason);
+        },
+      }),
+    };
+
+    expect(() => responseFromNetFetchResult({ status: 101 }, body)).toThrow(
+      "net.fetch returned an invalid HTTP status",
+    );
+    await vi.waitFor(() => expect(cancelled).toHaveLength(1));
+  });
+
+  it("keeps the routed response body bound to its abort signal", async () => {
+    const controller = new AbortController();
+    let cancelled: unknown;
+    const response = responseFromNetFetchResult(
+      { status: 200, headers: {} },
+      {
+        stream: new ReadableStream<Uint8Array>({
+          cancel(reason) {
+            cancelled = reason;
+          },
+        }),
+      },
+      controller.signal,
+    );
+    const reason = new Error("stop reading");
+
+    controller.abort(reason);
+
+    await expect(response.arrayBuffer()).rejects.toThrow("stop reading");
+    await vi.waitFor(() => expect(cancelled).toBe(reason));
   });
 
   it("preserves manual redirect mode", async () => {
@@ -83,10 +125,13 @@ describe("responseFromNetFetchResult", () => {
     const fetchMock = vi.fn<typeof fetch>(async () => new Response("ok"));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(handleNetFetch({
+    const result = await handleNetFetch({
       url: "https://example.test/data",
       redirect: "error",
-    }, {} as never)).resolves.toMatchObject({ status: 200 });
+    }, {} as never);
+
+    expect(result.data.status).toBe(200);
+    expect(result.body && await bodyToText(result.body)).toBe("ok");
   });
 
   it("rejects invalid redirect modes", async () => {
@@ -99,11 +144,68 @@ describe("responseFromNetFetchResult", () => {
   });
 
   it("serializes the redirect mode for routed fetches", async () => {
-    const args = await requestToNetFetchArgs(new Request("https://example.test/redirect", {
+    const request = requestToNetFetchArgs(new Request("https://example.test/redirect", {
       redirect: "manual",
     }));
 
-    expect(args.redirect).toBe("manual");
+    expect(request.args.redirect).toBe("manual");
+  });
+
+  it("sends request and response bytes through frame bodies", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (_url, init) => {
+      expect(await new Response(init?.body).text()).toBe("request bytes");
+      return new Response("response bytes");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await handleNetFetch(
+      { url: "https://example.test/data", method: "POST" },
+      {} as never,
+      bodyFromText("request bytes"),
+    );
+
+    expect(result.body && await bodyToText(result.body)).toBe("response bytes");
+  });
+
+  it("rejects legacy inline request bodies", async () => {
+    for (const field of ["body", "bodyBase64"] as const) {
+      await expect(handleNetFetch(
+        { url: "https://example.test/data", method: "POST", [field]: "inline" } as never,
+        {} as never,
+      )).rejects.toThrow(`args.${field} was removed`);
+    }
+  });
+
+  it("rejects declared oversized gateway request bodies before fetch", async () => {
+    let cancelled = false;
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(handleNetFetch(
+      { url: "https://example.test/data", method: "POST" },
+      {} as never,
+      {
+        length: MAX_NET_FETCH_REQUEST_BYTES + 1,
+        stream: new ReadableStream({ cancel: () => { cancelled = true; } }),
+      },
+    )).rejects.toThrow("net.fetch request body exceeds limit");
+
+    expect(cancelled).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects streamed gateway request bodies over the cap", async () => {
+    const stream = limitNetFetchRequestBody(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2]));
+        controller.enqueue(new Uint8Array([3, 4]));
+        controller.close();
+      },
+    }), 3);
+
+    await expect(bodyToText({ stream })).rejects.toThrow(
+      "net.fetch request body exceeds limit (4 bytes, max 3)",
+    );
   });
 
   it("rejects declared oversized gateway fetch responses", async () => {
@@ -124,13 +226,17 @@ describe("responseFromNetFetchResult", () => {
   });
 
   it("allows no-body responses with large declared content lengths", async () => {
-    const response = new Response(null, {
-      headers: {
-        "content-length": String(MAX_NET_FETCH_RESPONSE_BYTES + 1),
-      },
-    });
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(null, {
+      headers: { "content-length": String(MAX_NET_FETCH_RESPONSE_BYTES + 1) },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
 
-    await expect(readNetFetchResponseBody(response)).resolves.toHaveLength(0);
+    const result = await handleNetFetch({
+      url: "https://example.test/no-body",
+    }, {} as never);
+
+    expect(result.data.status).toBe(200);
+    expect(result.body).toBeUndefined();
   });
 
   it("rejects streamed responses that exceed the response cap", async () => {
@@ -141,9 +247,200 @@ describe("responseFromNetFetchResult", () => {
         controller.close();
       },
     }));
+    const stream = limitNetFetchResponseBody(response.body!, response.headers, () => {}, 3);
 
-    await expect(readNetFetchResponseBody(response, 3)).rejects.toThrow(
+    await expect(bodyToText({ stream })).rejects.toThrow(
       "net.fetch response body exceeds limit (4 bytes, max 3)",
     );
+  });
+});
+
+describe("handleNetFetch", () => {
+  it("aborts native fetches when their request is cancelled", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+      const signal = init?.signal;
+      return await new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = handleNetFetch(
+      { url: "https://example.test/slow" },
+      { requestSignal: controller.signal } as never,
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    controller.abort(new Error("User interrupted"));
+
+    await expect(request).rejects.toThrow("User interrupted");
+  });
+});
+
+describe("createRoutedFetch", () => {
+  it("passes request cancellation to the device transport", async () => {
+    const controller = new AbortController();
+    const requestDevice = vi.fn(async (
+      _deviceId: string,
+      _call: string,
+      _args: unknown,
+      options?: { signal?: AbortSignal },
+    ) => await new Promise<ResponseOkFrame>((_resolve, reject) => {
+      options?.signal?.addEventListener(
+        "abort",
+        () => reject(options.signal?.reason),
+        { once: true },
+      );
+    }));
+    const routedFetch = createRoutedFetch({
+      requestSignal: controller.signal,
+      identity: {
+        process: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "sam",
+          home: "/home/sam",
+          cwd: "/home/sam",
+        },
+      },
+      auth: {
+        getPasswdByUid: () => ({ username: "sam" }),
+      },
+      devices: {
+        canAccess: () => true,
+        get: () => ({
+          device_id: "workstation",
+          owner_uid: 1000,
+          label: "Workstation",
+          description: "",
+          implements: ["net.fetch"],
+          platform: "linux",
+          version: "1",
+          online: true,
+          first_seen_at: 1,
+          last_seen_at: 1,
+          connected_at: 1,
+          disconnected_at: null,
+        }),
+      },
+    } as never, { requestDevice }, "workstation");
+    const request = routedFetch("https://example.test/slow");
+    await vi.waitFor(() => expect(requestDevice).toHaveBeenCalledOnce());
+    const reason = new Error("User interrupted generation");
+
+    controller.abort(reason);
+
+    await expect(request).rejects.toBe(reason);
+    expect(requestDevice.mock.calls[0][3]?.signal?.aborted).toBe(true);
+  });
+});
+
+describe("requestNetFetchWithSignal", () => {
+  it("does not start pre-aborted requests", async () => {
+    const controller = new AbortController();
+    const reason = new Error("already stopped");
+    let started = false;
+    let cancelled: unknown;
+    controller.abort(reason);
+
+    await expect(requestNetFetchWithSignal(
+      async () => {
+        started = true;
+        throw new Error("unexpected request");
+      },
+      controller.signal,
+      {
+        stream: new ReadableStream<Uint8Array>({
+          cancel(value) {
+            cancelled = value;
+          },
+        }),
+      },
+    )).rejects.toBe(reason);
+
+    expect(started).toBe(false);
+    expect(cancelled).toBe(reason);
+  });
+
+  it("cancels a response that arrives after abort", async () => {
+    const controller = new AbortController();
+    let resolveRequest!: (frame: ResponseOkFrame<"net.fetch">) => void;
+    const request = new Promise<ResponseOkFrame<"net.fetch">>((resolve) => {
+      resolveRequest = resolve;
+    });
+    let responseCancelled: unknown;
+    const result = requestNetFetchWithSignal(() => request, controller.signal);
+    const reason = new Error("request abandoned");
+
+    controller.abort(reason);
+    await expect(result).rejects.toBe(reason);
+    resolveRequest({
+      type: "res",
+      id: "late",
+      ok: true,
+      data: {
+        ok: true,
+        url: "https://example.test",
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        redirected: false,
+      },
+      body: {
+        stream: new ReadableStream<Uint8Array>({
+          cancel(value) {
+            responseCancelled = value;
+          },
+        }),
+      },
+    });
+
+    await vi.waitFor(() => expect(responseCancelled).toBe(reason));
+  });
+
+  it("cancels the routed request when aborted", async () => {
+    const controller = new AbortController();
+    const cancelRequest = vi.fn(async () => {});
+    const pending = new Promise<ResponseOkFrame<"net.fetch">>(() => {});
+    const result = requestNetFetchWithSignal(
+      () => pending,
+      controller.signal,
+      undefined,
+      cancelRequest,
+    );
+    const reason = new Error("stop request");
+
+    controller.abort(reason);
+
+    await expect(result).rejects.toBe(reason);
+    expect(cancelRequest).toHaveBeenCalledWith(reason);
+  });
+
+  it("rejects immediately when cancellation cleanup stalls", async () => {
+    const controller = new AbortController();
+    const request = requestNetFetchWithSignal(
+      () => new Promise<ResponseOkFrame<"net.fetch">>(() => {}),
+      controller.signal,
+      undefined,
+      () => new Promise<void>(() => {}),
+    );
+    const reason = new Error("take back control");
+
+    controller.abort(reason);
+
+    await expect(Promise.race([
+      request,
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error("abort stayed pending")),
+        50,
+      )),
+    ])).rejects.toBe(reason);
+  });
+});
+
+describe("normalizeNetFetchTimeoutMs", () => {
+  it("caps device work at the tool dispatch ceiling", () => {
+    expect(normalizeNetFetchTimeoutMs(Number.MAX_SAFE_INTEGER)).toBe(MAX_NET_FETCH_TIMEOUT_MS);
   });
 });

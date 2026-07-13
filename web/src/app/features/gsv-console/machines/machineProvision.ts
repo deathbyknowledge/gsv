@@ -1,3 +1,10 @@
+import { buildCliInstallCommand } from "../../../domain/cliInstall";
+import {
+  DEVICE_ID_FORMAT_DESCRIPTION,
+  DEVICE_ID_MAX_LENGTH,
+  parseDeviceId,
+} from "../../../domain/deviceId";
+
 export type MachineProvisionPlatform = "mac" | "windows" | "linux" | "browser";
 
 export type MachineProvisionStep = "platform" | "details" | "install" | "connect" | "success";
@@ -25,9 +32,6 @@ export const MACHINE_PROVISION_STEP_LABELS = [
   "CONNECT",
   "SUCCESS",
 ] as const;
-
-export const BROWSER_EXTENSION_DOWNLOAD_URL =
-  "https://github.com/deathbyknowledge/gsv/releases/latest/download/gsv-browser-extension.zip";
 
 export const MACHINE_PLATFORM_OPTIONS: MachineProvisionPlatformOption[] = [
   {
@@ -88,8 +92,8 @@ export function machineDeviceIdFromName(name: string): string {
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
+    .replace(/^[-_]+|[-_]+$/g, "")
+    .slice(0, DEVICE_ID_MAX_LENGTH);
 
   return base || "machine";
 }
@@ -106,15 +110,11 @@ export function expiresAtFromDays(days: number, now = Date.now()): number {
   return now + normalizeExpiresDays(String(days)) * 24 * 60 * 60 * 1000;
 }
 
-export function buildMachineInstallCommand(origin: string, platform: MachineProvisionPlatform): string {
+export function buildMachineInstallCommand(platform: MachineProvisionPlatform, release: string): string {
   if (platform === "browser") {
     return "";
   }
-  const normalizedOrigin = trimTrailingSlash(origin);
-  if (platform === "windows") {
-    return `$env:GSV_BASE_URL='${normalizedOrigin}'; irm ${normalizedOrigin}/public/gsv/downloads/cli/install.ps1 | iex`;
-  }
-  return `curl -fsSL ${normalizedOrigin}/public/gsv/downloads/cli/install.sh | bash -s -- ${normalizedOrigin}`;
+  return buildCliInstallCommand(platform === "windows" ? "windows" : "unix", release);
 }
 
 export function buildBrowserExtensionConfig(input: {
@@ -128,11 +128,12 @@ export function buildBrowserExtensionConfig(input: {
   token: string;
   deviceId: string;
 } {
+  const deviceId = requireDeviceId(input.deviceId);
   return {
     gatewayUrl: buildGatewayWsUrl(input.origin),
     username: input.username.trim() || "root",
     token: input.token.trim(),
-    deviceId: input.deviceId.trim(),
+    deviceId,
   };
 }
 
@@ -145,7 +146,7 @@ export function buildMachineBootstrapCommand(input: {
 }): string {
   const gatewayWs = escapeCliValue(buildGatewayWsUrl(input.origin));
   const username = escapeCliValue(input.username.trim() || "root");
-  const deviceId = escapeCliValue(input.deviceId.trim());
+  const deviceId = requireDeviceId(input.deviceId);
   const token = escapeCliValue(input.token.trim());
   const workspace = input.platform === "windows" ? "\"$HOME\"" : "~/";
   const cli = cliExecutableName(input.platform);
@@ -167,7 +168,7 @@ export function buildMachineRunCommand(input: {
 }): string {
   const gatewayWs = escapeCliValue(buildGatewayWsUrl(input.origin));
   const username = escapeCliValue(input.username.trim() || "root");
-  const deviceId = escapeCliValue(input.deviceId.trim());
+  const deviceId = requireDeviceId(input.deviceId);
   const token = escapeCliValue(input.token.trim());
   const workspace = input.platform === "windows" ? "\"$HOME\"" : "~/";
   const cli = cliExecutableName(input.platform);
@@ -196,4 +197,12 @@ function trimTrailingSlash(value: string): string {
 
 function escapeCliValue(value: string): string {
   return value.replaceAll("\"", "\\\"");
+}
+
+function requireDeviceId(value: string): string {
+  const deviceId = parseDeviceId(value);
+  if (!deviceId) {
+    throw new Error(`Invalid device ID. ${DEVICE_ID_FORMAT_DESCRIPTION}`);
+  }
+  return deviceId;
 }

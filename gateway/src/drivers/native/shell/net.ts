@@ -35,38 +35,58 @@ export function buildNetCommands(
         return { stdout: fetchUsage(name), stderr: "", exitCode: 0 };
       }
       const options = parseFetchArgs(normalizedArgs, name);
-      const response = await fetchFromOptions(ctx, transport, options);
-      if (options.json) {
-        const bodyBase64 = encodeBase64Bytes(await response.arrayBuffer());
-        return {
-          stdout: `${JSON.stringify({
-            ok: response.ok,
-            url: response.url,
-            status: response.status,
-            statusText: response.statusText,
-            headers: Object.fromEntries(response.headers.entries()),
-            bodyBase64,
-          }, null, 2)}\n`,
-          stderr: "",
-          exitCode: 0,
-        };
-      }
+      const controller = new AbortController();
+      const timeout = options.timeoutMs
+        ? setTimeout(() => controller.abort(new Error(`fetch timed out after ${options.timeoutMs}ms`)), options.timeoutMs)
+        : null;
+      const shellSignal = commandCtx.signal ?? ctx.requestSignal;
+      const signal = shellSignal
+        ? AbortSignal.any([controller.signal, shellSignal])
+        : controller.signal;
+      try {
+        const response = await fetchFromOptions(ctx, transport, options, signal);
+        if (options.json) {
+          const bodyBase64 = encodeBase64Bytes(await response.arrayBuffer());
+          return {
+            stdout: `${JSON.stringify({
+              ok: response.ok,
+              url: response.url,
+              status: response.status,
+              statusText: response.statusText,
+              headers: Object.fromEntries(response.headers.entries()),
+              bodyBase64,
+            }, null, 2)}\n`,
+            stderr: "",
+            exitCode: 0,
+          };
+        }
 
-      const headers = options.includeHeaders || options.headOnly
-        ? formatResponseHeaders(response)
-        : "";
-      const body = options.headOnly ? "" : await response.text();
-      const stdout = headers + body;
-      if (options.outputFile) {
-        const path = commandCtx.fs.resolvePath(commandCtx.cwd, options.outputFile);
-        await commandCtx.fs.writeFile(path, stdout);
-        return { stdout: "", stderr: "", exitCode: 0 };
+        const headers = options.includeHeaders || options.headOnly
+          ? formatResponseHeaders(response)
+          : "";
+        if (options.outputFile) {
+          const path = commandCtx.fs.resolvePath(commandCtx.cwd, options.outputFile);
+          const body = options.headOnly
+            ? new Uint8Array()
+            : new Uint8Array(await response.arrayBuffer());
+          const prefix = new TextEncoder().encode(headers);
+          const output = new Uint8Array(prefix.byteLength + body.byteLength);
+          output.set(prefix);
+          output.set(body, prefix.byteLength);
+          await commandCtx.fs.writeFile(path, output);
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        const stdout = headers + (options.headOnly ? "" : await response.text());
+        return {
+          stdout,
+          stderr: "",
+          exitCode: response.ok ? 0 : 22,
+        };
+      } finally {
+        if (timeout !== null) {
+          clearTimeout(timeout);
+        }
       }
-      return {
-        stdout,
-        stderr: "",
-        exitCode: response.ok ? 0 : 22,
-      };
     } catch (error) {
       return {
         stdout: "",
@@ -86,30 +106,21 @@ async function fetchFromOptions(
   ctx: KernelContext,
   transport: NetFetchDeviceTransport | undefined,
   options: FetchCommandOptions,
+  signal: AbortSignal,
 ): Promise<Response> {
   const fetch = createRoutedFetch(ctx, transport, options.target);
-  const controller = new AbortController();
-  const timeout = options.timeoutMs
-    ? setTimeout(() => controller.abort(new Error(`fetch timed out after ${options.timeoutMs}ms`)), options.timeoutMs)
-    : null;
-  try {
-    const headers = new Headers();
-    for (const [key, value] of options.headers) {
-      headers.append(key, value);
-    }
-    const init: RoutedRequestInit = {
-      method: options.headOnly ? "HEAD" : options.method,
-      headers,
-      ...(options.body !== undefined ? { body: options.body } : {}),
-      signal: controller.signal,
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-    };
-    return await fetch(options.url, init);
-  } finally {
-    if (timeout !== null) {
-      clearTimeout(timeout);
-    }
+  const headers = new Headers();
+  for (const [key, value] of options.headers) {
+    headers.append(key, value);
   }
+  const init: RoutedRequestInit = {
+    method: options.headOnly ? "HEAD" : options.method,
+    headers,
+    ...(options.body !== undefined ? { body: options.body } : {}),
+    signal,
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+  };
+  return await fetch(options.url, init);
 }
 
 function parseFetchArgs(args: string[], commandName: string): FetchCommandOptions {

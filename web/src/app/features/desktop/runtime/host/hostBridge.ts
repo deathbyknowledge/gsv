@@ -41,7 +41,7 @@ type HostBackendMessage =
   | {
       type: "backend-message";
       connectionId: string;
-      data: string;
+      data: string | ArrayBuffer;
     }
   | {
       type: "backend-close";
@@ -115,8 +115,12 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function postMessage(port: MessagePort, message: HostPortMessage): void {
-  port.postMessage(message);
+function postMessage(
+  port: MessagePort,
+  message: HostPortMessage,
+  transfer: Transferable[] = [],
+): void {
+  port.postMessage(message, transfer);
 }
 
 function appClientRouteBase(sessionId: string, clientId: string): string {
@@ -346,10 +350,15 @@ async function handleRpc(
       const session = validateSessionPayload(appSession, message.payload);
       const connectionId = `backend:${session.sessionId}:${session.clientId}:${crypto.randomUUID()}`;
       const socket = new WebSocket(buildRpcWebSocketUrl(session.rpcBase));
+      socket.binaryType = "arraybuffer";
       backendConnections.set(connectionId, { socket });
       socket.addEventListener("message", (event) => {
-        if (typeof event.data === "string") {
-          postMessage(port, { type: "backend-message", connectionId, data: event.data });
+        if (typeof event.data === "string" || event.data instanceof ArrayBuffer) {
+          postMessage(
+            port,
+            { type: "backend-message", connectionId, data: event.data },
+            event.data instanceof ArrayBuffer ? [event.data] : [],
+          );
         }
       });
       socket.addEventListener("close", (event) => {
@@ -383,7 +392,9 @@ async function handleRpc(
     case "backend.send": {
       const payload = asRecord(message.payload);
       const connectionId = asString(payload?.connectionId);
-      const data = asString(payload?.data);
+      const data = typeof payload?.data === "string" || payload?.data instanceof ArrayBuffer
+        ? payload.data
+        : null;
       if (!connectionId || data === null) {
         throw new Error("Invalid backend frame");
       }

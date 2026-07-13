@@ -1,20 +1,20 @@
 import type { KernelContext } from "../context";
 import type { SysBootstrapArgs, SysBootstrapResult } from "@humansandmachines/gsv/protocol";
 import { RipgitClient, type RipgitRepoRef } from "../../fs/ripgit/client";
-import { inferDefaultCliChannel } from "../../downloads/cli";
 import { seedRepoSkillsToHome } from "./skills-seed";
 import { setRepoVisibility } from "../repo-visibility";
-import { allSettledOrThrow, refreshCliDownloads } from "./update";
+import { SERVER_RELEASE } from "../../version";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
-const DEFAULT_GSV_UPSTREAM_REF = "main";
+const DEFAULT_GSV_UPSTREAM_REF = /^v\d+\.\d+\.\d+$/.test(SERVER_RELEASE)
+  ? SERVER_RELEASE
+  : "main";
 const DEFAULT_GSV_MANUAL_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv-manual";
 const DEFAULT_GSV_MANUAL_UPSTREAM_REF = "main";
 const GSV_BOOTSTRAP_UPSTREAM_ENV = "GSV_BOOTSTRAP_UPSTREAM";
 const GSV_BOOTSTRAP_REF_ENV = "GSV_BOOTSTRAP_REF";
 const GSV_MANUAL_BOOTSTRAP_UPSTREAM_ENV = "GSV_MANUAL_BOOTSTRAP_UPSTREAM";
 const GSV_MANUAL_BOOTSTRAP_REF_ENV = "GSV_MANUAL_BOOTSTRAP_REF";
-const BOOTSTRAP_OUTBOUND_SLOTS = 5;
 const ROOT_GSV_REPO: RipgitRepoRef = {
   owner: "root",
   repo: "gsv",
@@ -51,54 +51,6 @@ function formatBootstrapTimings(timings: BootstrapTiming[]): string {
   return timings.map((timing) => `${timing.label}=${timing.ms}ms`).join(", ");
 }
 
-function createBootstrapLimiter(maxSlots: number) {
-  type QueuedTask<T> = {
-    slots: number;
-    run: () => T | Promise<T>;
-    resolve: (value: T) => void;
-    reject: (error: unknown) => void;
-  };
-
-  const queue: Array<QueuedTask<unknown>> = [];
-  let activeSlots = 0;
-  const capacity = Math.max(1, Math.floor(maxSlots));
-
-  function pump(): void {
-    for (;;) {
-      const index = queue.findIndex((task) => activeSlots + task.slots <= capacity);
-      if (index === -1) {
-        return;
-      }
-
-      const [task] = queue.splice(index, 1);
-      activeSlots += task.slots;
-      Promise.resolve()
-        .then(task.run)
-        .then(task.resolve, task.reject)
-        .finally(() => {
-          activeSlots -= task.slots;
-          pump();
-        });
-    }
-  }
-
-  return async function limitBootstrap<T>(
-    slots: number,
-    run: () => T | Promise<T>,
-  ): Promise<T> {
-    const taskSlots = Math.max(1, Math.min(capacity, Math.floor(slots)));
-    return new Promise<T>((resolve, reject) => {
-      queue.push({
-        slots: taskSlots,
-        run,
-        resolve: resolve as (value: unknown) => void,
-        reject,
-      });
-      pump();
-    });
-  };
-}
-
 export async function handleSysBootstrap(
   args: SysBootstrapArgs | undefined,
   ctx: KernelContext,
@@ -119,8 +71,7 @@ export async function handleSysBootstrap(
   const timings: BootstrapTiming[] = [];
 
   try {
-    const limitBootstrap = createBootstrapLimiter(BOOTSTRAP_OUTBOUND_SLOTS);
-    const rootImportPromise = limitBootstrap(1, async () => {
+    const rootImportPromise = (async () => {
       const importedRoot = await timeBootstrapStep(timings, "import-root-gsv", () => ripgit.importFromUpstream(
         ROOT_GSV_REPO,
         actorName,
@@ -132,8 +83,8 @@ export async function handleSysBootstrap(
       registerBootstrapRepo(ctx, ROOT_GSV_REPO, "GSV System Source");
       setPublicRepo(ctx, ROOT_GSV_REPO);
       return importedRoot;
-    });
-    const manualImportPromise = limitBootstrap(1, async () => {
+    })();
+    const manualImportPromise = (async () => {
       const importedManual = await timeBootstrapStep(timings, "import-gsv-manual", () => ripgit.importFromUpstream(
         ROOT_GSV_MANUAL_REPO,
         actorName,
@@ -145,7 +96,7 @@ export async function handleSysBootstrap(
       registerBootstrapRepo(ctx, ROOT_GSV_MANUAL_REPO, "GSV Manual");
       setPublicRepo(ctx, ROOT_GSV_MANUAL_REPO);
       return importedManual;
-    });
+    })();
     let imported: Awaited<typeof rootImportPromise>;
     try {
       imported = await rootImportPromise;
@@ -153,32 +104,17 @@ export async function handleSysBootstrap(
       await Promise.allSettled([manualImportPromise]);
       throw error;
     }
-    const defaultCliChannel = inferDefaultCliChannel(imported.remoteRef);
-    const storage = ctx.env.STORAGE;
     const importedRepo = {
       ...ROOT_GSV_REPO,
       branch: imported.head ?? imported.remoteRef,
     };
 
-    const seedSkillsPromise = limitBootstrap(1, () =>
-      timeBootstrapStep(timings, "seed-skills", () => seedRepoSkillsToHome(
-        ripgit,
-        importedRepo,
-        ctx.identity!.process,
-      ))
-    );
-
-    const refreshCliPromise = refreshCliDownloads(storage, {
-      defaultChannel: defaultCliChannel,
-      limit: (run) => limitBootstrap(1, run),
-      step: (label, run) => timeBootstrapStep(timings, label, run),
-    });
-
-    const [, cli, importedManual] = await allSettledOrThrow([
-      seedSkillsPromise,
-      refreshCliPromise,
-      manualImportPromise,
-    ]);
+    const importedManual = await manualImportPromise;
+    await timeBootstrapStep(timings, "seed-skills", () => seedRepoSkillsToHome(
+      ripgit,
+      importedRepo,
+      ctx.identity!.process,
+    ));
 
     console.info(
       `[sys.bootstrap] ${remoteUrl}#${ref} completed in ${Date.now() - startedAt}ms (${formatBootstrapTimings(timings)})`,
@@ -197,8 +133,6 @@ export async function handleSysBootstrap(
         head: importedManual.head ?? null,
         changed: importedManual.changed,
       },
-      cli,
-      packages: [],
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

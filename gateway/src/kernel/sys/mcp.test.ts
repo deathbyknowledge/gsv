@@ -308,11 +308,13 @@ describe("sys.mcp handlers", () => {
       arguments: { query: "test" },
     }, ctx);
 
-    expect(ctx.callMcpTool).toHaveBeenCalledWith("server-1", "lookup", { query: "test" });
+    expect(ctx.callMcpTool).toHaveBeenCalledWith("server-1", "lookup", { query: "test" }, undefined);
   });
 
   it("calls only caller-owned MCP tools", async () => {
     const ctx = makeContext(1000, mcpServers);
+    const controller = new AbortController();
+    ctx.requestSignal = controller.signal;
     mcpServers.upsert({
       serverId: "server-1",
       uid: 1000,
@@ -325,7 +327,12 @@ describe("sys.mcp handlers", () => {
       arguments: { query: "test" },
     }, ctx);
 
-    expect(ctx.callMcpTool).toHaveBeenCalledWith("server-1", "lookup", { query: "test" });
+    expect(ctx.callMcpTool).toHaveBeenCalledWith(
+      "server-1",
+      "lookup",
+      { query: "test" },
+      controller.signal,
+    );
     expect(result.content).toEqual([{ type: "text", text: "ok" }]);
     await expect(handleSysMcpCall({
       serverId: "missing",

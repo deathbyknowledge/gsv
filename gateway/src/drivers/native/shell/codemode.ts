@@ -3,10 +3,19 @@ import type { ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import { resolveUserPath } from "../../../fs";
 import type { KernelContext } from "../../../kernel/context";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import { sendFrameToProcess } from "../../../shared/utils";
-import { ensureDefaultConversationExecutor } from "../../../kernel/agents";
-import { CODEMODE_RUN } from "../../../syscalls/constants";
+import type {
+  ProcessIdentity,
+  SysMcpListResult,
+} from "@humansandmachines/gsv/protocol";
+import type { RequestFrame, ResponseFrame } from "../../../protocol/frames";
+import type { SyscallName } from "../../../syscalls";
+import { createCodeModeRequest } from "../../../codemode/request";
+import {
+  buildCodeModeMcpToolBindings,
+  executeCodeMode,
+} from "../../../process/codemode";
+import { materializeToolResponse } from "../../../process/tool-response";
+import { CODEMODE_RUN, SYS_MCP_LIST } from "../../../syscalls/constants";
 import type { CodeModeRunResult } from "../../../syscalls/codemode";
 import { requireCommandCapability } from "./common";
 
@@ -20,7 +29,17 @@ type CodeModeCommandOptions = {
   argv: string[];
 };
 
-export function buildCodeModeCommand(fs: GsvFs, identity: ProcessIdentity, kernelCtx: KernelContext) {
+type NativeShellRequest = (
+  frame: RequestFrame,
+  signal?: AbortSignal,
+) => Promise<ResponseFrame>;
+
+export function buildCodeModeCommand(
+  fs: GsvFs,
+  identity: ProcessIdentity,
+  kernelCtx: KernelContext,
+  request?: NativeShellRequest,
+) {
   return defineCommand("codemode", async (commandArgs, bashCtx): Promise<ExecResult> => {
     try {
       const options = parseCodeModeCommandArgs(commandArgs);
@@ -31,43 +50,79 @@ export function buildCodeModeCommand(fs: GsvFs, identity: ProcessIdentity, kerne
 
       requireCommandCapability(kernelCtx, CODEMODE_RUN);
       const code = options.code ?? await readCodeModeScript(fs, bashCtx.cwd, options.file!);
-      const pid = await ensureCodeModeProcess(identity, kernelCtx);
+      if (!request) {
+        throw new Error("direct syscall transport is unavailable");
+      }
+
+      const requestTool = (call: SyscallName, args: Record<string, unknown>) =>
+        requestCodeModeTool(request, call, args, bashCtx.signal);
       const cwd = resolveCodeModeCwd(options.cwd, options.target, bashCtx.cwd, identity);
-      const response = await sendFrameToProcess(pid, {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: CODEMODE_RUN,
-        args: {
-          pid,
-          code,
-          target: options.target,
-          cwd,
-          argv: options.argv,
-          args: options.args,
-        },
+      const result = await executeCodeMode(kernelCtx.env, code, requestTool, {
+        defaultTarget: options.target,
+        defaultCwd: cwd,
+        argv: options.argv,
+        args: options.args,
+        mcpToolBindings: await loadMcpToolBindings(requestTool, bashCtx.signal),
+        signal: bashCtx.signal,
       });
-
-      if (!response || response.type !== "res") {
-        return {
-          stdout: "",
-          stderr: "codemode: process did not return a response\n",
-          exitCode: 1,
-        };
-      }
-      if (!response.ok) {
-        return {
-          stdout: "",
-          stderr: `codemode: ${response.error.message}\n`,
-          exitCode: 1,
-        };
-      }
-
-      return formatCodeModeCommandResult(response.data as CodeModeRunResult, options.json);
+      return formatCodeModeCommandResult(result, options.json);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { stdout: "", stderr: `codemode: ${message}\n`, exitCode: 1 };
     }
   });
+}
+
+async function requestCodeModeTool(
+  request: NativeShellRequest,
+  call: SyscallName,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  signal?.throwIfAborted();
+  const prepared = createCodeModeRequest(call, args);
+  const frame = {
+    type: "req",
+    id: crypto.randomUUID(),
+    call,
+    args: prepared.args,
+    ...(prepared.body ? { body: prepared.body } : {}),
+  } as RequestFrame;
+  let response: ResponseFrame | undefined;
+
+  try {
+    response = await request(frame, signal);
+    signal?.throwIfAborted();
+    if (!response.ok) {
+      throw new Error(response.error.message);
+    }
+    return await materializeToolResponse(
+      call,
+      response.data ?? null,
+      response.body,
+      signal,
+    );
+  } finally {
+    if (response?.ok && response.body && !response.body.stream.locked) {
+      await response.body.stream.cancel("CodeMode response completed").catch(() => {});
+    }
+    if (prepared.body && !prepared.body.stream.locked) {
+      await prepared.body.stream.cancel("CodeMode request completed").catch(() => {});
+    }
+  }
+}
+
+async function loadMcpToolBindings(
+  request: (call: SyscallName, args: Record<string, unknown>) => Promise<unknown>,
+  signal?: AbortSignal,
+) {
+  try {
+    const result = await request(SYS_MCP_LIST, {}) as SysMcpListResult;
+    return buildCodeModeMcpToolBindings(result.servers);
+  } catch {
+    signal?.throwIfAborted();
+    return [];
+  }
 }
 
 function parseCodeModeCommandArgs(args: string[]): CodeModeCommandOptions {
@@ -158,13 +213,6 @@ function mergeCodeModeArg(existing: unknown, spec: string): Record<string, unkno
 async function readCodeModeScript(fs: GsvFs, cwd: string, file: string): Promise<string> {
   const path = fs.resolvePath(cwd, file);
   return await fs.readFile(path);
-}
-
-async function ensureCodeModeProcess(
-  identity: ProcessIdentity,
-  ctx: KernelContext,
-): Promise<string> {
-  return ensureDefaultConversationExecutor(ctx, identity);
 }
 
 function resolveCodeModeCwd(

@@ -56,6 +56,7 @@ export type KernelContext = {
   identity?: ConnectionIdentity;
   processId?: string;
   processRunId?: string;
+  requestSignal?: AbortSignal;
   callerOwnerUid?: number;
   appFrame?: AppFrameContext;
   serverVersion: string;
@@ -73,7 +74,12 @@ export type KernelContext = {
   addMcpServerConnection: (input: McpAddConnectionInput) => Promise<McpAddConnectionResult>;
   removeMcpServerConnection: (serverId: string) => Promise<void>;
   refreshMcpServerConnection: (serverId: string) => Promise<void>;
-  callMcpTool: (serverId: string, toolName: string, args: Record<string, unknown>) => Promise<unknown>;
+  callMcpTool: (
+    serverId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) => Promise<unknown>;
 };
 
 /**

@@ -11,11 +11,12 @@
  */
 
 import type { Connection } from "agents";
-import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import type {
-  SysUpdateArgs,
-  SysUpdateResult,
-} from "@humansandmachines/gsv/protocol";
+  FrameBody,
+  RequestFrame,
+  ResponseFrame,
+  ResponseOkFrame,
+} from "../protocol/frames";
 import { isRoutableSyscall, type SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import type { RouteOrigin } from "./routing";
@@ -51,7 +52,7 @@ import {
 import { handleAccountCreate, handleAccountList } from "./agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
-import { handleNetFetch } from "./net";
+import { handleNetFetch, normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
@@ -148,55 +149,31 @@ import {
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
   connections: Map<string, Connection>;
+  sendFrame: (
+    connection: Connection,
+    frame: RequestFrame | ResponseFrame,
+  ) => { cancel(reason?: unknown): Promise<void> } | null;
   registerRoute: (route: {
     id: string;
     call: SyscallName;
     origin: RouteOrigin;
     deviceId: string;
     ttlMs: number;
-  }) => Promise<{ cancel: () => void }>;
-  registerBinaryRoute: (route: {
-    requestId: string;
-    streamId: number;
-    origin: RouteOrigin;
-    deviceId: string;
-    ttlMs: number;
-    kind?: "relay" | "native-stream";
-  }) => { cancel: () => void };
-  requestDevice: (deviceId: string, call: string, args: unknown, ttlMs?: number) => Promise<unknown>;
-  allocateBinaryStreamId: () => number;
-  startDeviceRequest: (
+  }) => Promise<{
+    cancel: () => void;
+    attachBody: (body: { cancel(reason?: unknown): Promise<void> }) => void;
+  }>;
+  requestDevice: (
     deviceId: string,
     call: string,
     args: unknown,
-    ttlMs?: number,
-  ) => Promise<{ requestId: string; promise: Promise<unknown>; cancel: () => void }>;
-  registerBinaryRelay: (route: {
-    requestId: string;
-    streamId: number;
-    sourceDeviceId: string;
-    destinationDeviceId: string;
-    ttlMs?: number;
-  }) => { cancel: () => void };
-  receiveDeviceBinaryStream: (route: {
-    requestId: string;
-    streamId: number;
-    sourceDeviceId: string;
-    ttlMs?: number;
-  }) => { stream: ReadableStream<Uint8Array>; cancel: () => void };
-  receiveBinaryStream: (route: {
-    requestId: string;
-    streamId: number;
-    origin: RouteOrigin;
-    ttlMs: number;
-  }) => { stream: ReadableStream<Uint8Array>; cancel: () => void };
-  sendDeviceBinaryFrame: (
-    deviceId: string,
-    streamId: number,
-    flags: number,
-    payload?: Uint8Array,
-  ) => void;
-  handleSysUpdate: (args: SysUpdateArgs | undefined, ctx: KernelContext) => Promise<SysUpdateResult>;
+    options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
+  ) => Promise<ResponseOkFrame>;
+  request: (
+    frame: RequestFrame,
+    ctx: KernelContext,
+    signal?: AbortSignal,
+  ) => Promise<ResponseFrame>;
 };
 
 export type DispatchResult =
@@ -211,6 +188,12 @@ export async function dispatch(
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<DispatchResult> {
+  if (ctx.requestSignal?.aborted) {
+    return {
+      handled: true,
+      response: errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal)),
+    };
+  }
   const raw = frame.args as Record<string, unknown>;
   const target = raw.target as string | undefined;
   const sessionId = frame.call === "shell.exec" && typeof raw.sessionId === "string"
@@ -291,8 +274,12 @@ async function dispatchNative(
 
     switch (frame.call) {
       case "fs.read":
-        data = await handleFsRead(frame.args, ctx);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleFsRead(frame.args, ctx),
+        };
       case "fs.write":
         data = await handleFsWrite(frame.args, ctx);
         break;
@@ -312,22 +299,26 @@ async function dispatchNative(
         data = await handleFsTransferStat(frame.args, ctx);
         break;
       case "fs.transfer.send":
-        data = await handleFsTransferSend(frame.args, ctx);
-        break;
+        return await handleFsTransferSend(frame.args, ctx, frame.id);
       case "fs.transfer.receive":
-        data = await handleNativeFsTransferReceive(frame, origin, ctx, deps);
+        data = await handleFsTransferReceive(frame.args, ctx, frame.body);
         break;
 
       case "shell.exec":
         data = await handleShellExec(frame.args, ctx, {
           fsCopyTransport: deps,
           netFetchTransport: deps,
+          request: (request, signal) => deps.request(request, ctx, signal),
         });
         break;
 
       case "net.fetch":
-        data = await handleNetFetch(frame.args, ctx);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleNetFetch(frame.args, ctx, frame.body),
+        };
 
       case "app.open":
         data = await handleAppOpen(frame.args, ctx);
@@ -346,8 +337,12 @@ async function dispatchNative(
         break;
 
       case "codemode.run":
-        data = await forwardToProcess(frame, ctx);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await forwardToProcess(frame, ctx),
+        };
 
       case "proc.list":
         data = handleProcList(frame.args, ctx);
@@ -369,6 +364,8 @@ async function dispatchNative(
       case "proc.ai.config.get":
       case "proc.ai.config.set":
       case "proc.media.read":
+      case "proc.media.write":
+      case "proc.media.delete":
       case "proc.conversation.open":
       case "proc.conversation.list":
       case "proc.conversation.get":
@@ -384,8 +381,12 @@ async function dispatchNative(
       case "proc.conversation.generations":
       case "proc.conversation.generation.manifest":
       case "proc.reset":
-        data = await forwardToProcess(frame, ctx);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await forwardToProcess(frame, ctx),
+        };
       case "proc.ipc.deliver":
         return errFrame(frame.id, 403, "proc.ipc.deliver is kernel-only");
       case "proc.setidentity":
@@ -481,17 +482,25 @@ async function dispatchNative(
         data = await handleAiTextGenerate(frame.args, ctx, deps);
         break;
       case "ai.transcription.create":
-        data = await handleAiTranscriptionCreate(frame.args, ctx);
+        data = await handleAiTranscriptionCreate(frame.args, ctx, frame.body);
         break;
       case "ai.image.read":
-        data = await handleAiImageRead(frame.args, ctx);
+        data = await handleAiImageRead(frame.args, ctx, frame.body);
         break;
       case "ai.image.generate":
-        data = await handleAiImageGenerate(frame.args, ctx);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleAiImageGenerate(frame.args, ctx),
+        };
       case "ai.speech.create":
-        data = await handleAiSpeechCreate(frame.args, ctx);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleAiSpeechCreate(frame.args, ctx),
+        };
 
       // --- sys.* ---
       case "sys.connect":
@@ -503,9 +512,6 @@ async function dispatchNative(
         return errFrame(frame.id, 400, "sys.setup handled separately");
       case "sys.bootstrap":
         data = await handleSysBootstrap(frame.args, ctx);
-        break;
-      case "sys.update":
-        data = await deps.handleSysUpdate(frame.args, ctx);
         break;
       case "sys.config.get":
         data = handleSysConfigGet(frame.args, ctx);
@@ -651,44 +657,14 @@ async function dispatchNative(
 
     return { type: "res", id: frame.id, ok: true, data } as ResponseFrame;
   } catch (err) {
+    if (ctx.requestSignal?.aborted) {
+      return errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal));
+    }
     if (err instanceof AppSyscallError) {
       return errFrame(frame.id, err.status, err.message);
     }
     const message = err instanceof Error ? err.message : String(err);
     return errFrame(frame.id, 500, message);
-  }
-}
-
-async function handleNativeFsTransferReceive(
-  frame: RequestFrame<"fs.transfer.receive">,
-  origin: RouteOrigin,
-  ctx: KernelContext,
-  deps: DispatchDeps,
-): Promise<unknown> {
-  const streamId = transferStreamId(frame.call, frame.args);
-  if (streamId === null) {
-    return { ok: false, error: "fs.transfer.receive requires streamId" };
-  }
-
-  let pending: { stream: ReadableStream<Uint8Array>; cancel: () => void };
-  try {
-    pending = deps.receiveBinaryStream({
-      requestId: frame.id,
-      streamId,
-      origin,
-      ttlMs: DEFAULT_DEVICE_TTL_MS,
-    });
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-
-  try {
-    return await handleFsTransferReceive(frame.args, ctx, pending.stream);
-  } finally {
-    pending.cancel();
   }
 }
 
@@ -725,8 +701,10 @@ async function routeToTarget(
     };
   }
 
-  let route: { cancel: () => void } | null = null;
-  let binaryRoute: { cancel: () => void } | null = null;
+  let route: {
+    cancel: () => void;
+    attachBody: (body: { cancel(reason?: unknown): Promise<void> }) => void;
+  } | null = null;
   const ttlMs = routedFrameTtlMs(frame);
   try {
     route = await deps.registerRoute({
@@ -736,15 +714,12 @@ async function routeToTarget(
       deviceId: target.targetId,
       ttlMs,
     });
-    const streamId = transferStreamId(frame.call, frame.args);
-    if (streamId !== null) {
-      binaryRoute = deps.registerBinaryRoute({
-        requestId: frame.id,
-        streamId,
-        origin,
-        deviceId: target.targetId,
-        ttlMs,
-      });
+    if (ctx.requestSignal?.aborted) {
+      route.cancel();
+      return {
+        handled: true,
+        response: errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal)),
+      };
     }
   } catch (error) {
     route?.cancel();
@@ -756,15 +731,18 @@ async function routeToTarget(
   }
 
   try {
-    deviceConn.send(JSON.stringify({
+    const outgoing = deps.sendFrame(deviceConn, {
       type: "req",
       id: frame.id,
       call: frame.call,
       args: frame.args,
-    }));
+      ...(frame.body ? { body: frame.body } : {}),
+    } as RequestFrame);
+    if (outgoing) {
+      route.attachBody(outgoing);
+    }
   } catch (error) {
     route.cancel();
-    binaryRoute?.cancel();
     const message = error instanceof Error ? error.message : String(error);
     return {
       handled: true,
@@ -779,28 +757,10 @@ function routedFrameTtlMs(frame: RequestFrame): number {
   if (frame.call !== "net.fetch") {
     return DEFAULT_DEVICE_TTL_MS;
   }
-  if (!frame.args || typeof frame.args !== "object") {
-    return DEFAULT_DEVICE_TTL_MS;
-  }
-  const timeoutMs = (frame.args as { timeoutMs?: unknown }).timeoutMs;
-  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return DEFAULT_DEVICE_TTL_MS;
-  }
-  return Math.max(1, Math.floor(timeoutMs));
-}
-
-function transferStreamId(call: string, args: unknown): number | null {
-  if (call !== "fs.transfer.send" && call !== "fs.transfer.receive") {
-    return null;
-  }
-  if (!args || typeof args !== "object") {
-    return null;
-  }
-  const value = (args as { streamId?: unknown }).streamId;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > 0xffffffff) {
-    return null;
-  }
-  return value;
+  const timeoutMs = frame.args && typeof frame.args === "object"
+    ? (frame.args as { timeoutMs?: unknown }).timeoutMs
+    : undefined;
+  return normalizeNetFetchTimeoutMs(timeoutMs);
 }
 
 async function routeToAdapterShell(
@@ -841,6 +801,10 @@ function findDeviceConnection(
 
 function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
+}
+
+function requestCancelMessage(signal: AbortSignal): string {
+  return signal.reason instanceof Error ? signal.reason.message : "Request cancelled";
 }
 
 function failedShellSessionFrame(id: string, session: ShellSessionRecord): ResponseFrame {

@@ -20,6 +20,7 @@ import type {
   ProcHistoryResult,
   ProcListEntry,
   ProcMediaInput,
+  ProcMediaWriteArgs,
   ProcSendArgs,
 } from "@humansandmachines/gsv/protocol";
 
@@ -77,8 +78,14 @@ export type ChatSendDraft = {
   pid?: string;
   conversationId?: string;
   message: string;
-  media?: ProcMediaInput[];
+  media?: ChatMediaUpload[];
 };
+
+export type ChatMediaUpload = Omit<ProcMediaWriteArgs, "pid"> & {
+  body: Blob;
+};
+
+export const MAX_CHAT_PROCESS_MEDIA_BYTES = 25 * 1024 * 1024;
 
 export type ChatSendPayload = ProcSendArgs;
 export type ChatHilDecision = ProcHilDecision;
@@ -290,7 +297,9 @@ export function normalizeHistory(result: Extract<ProcHistoryResult, { ok: true }
   };
 }
 
-export function normalizeSendPayload(draft: ChatSendDraft): ChatSendPayload {
+export function normalizeSendPayload(
+  draft: Omit<ChatSendDraft, "media"> & { media?: ProcMediaInput[] },
+): ChatSendPayload {
   const message = draft.message.trim();
   const pid = cleanOptionalString(draft.pid);
   const conversationId = cleanOptionalString(draft.conversationId);

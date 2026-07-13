@@ -171,6 +171,15 @@ function createPersonalAgentBackend() {
   });
 }
 
+function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
 describe("AccountHomeMountBackend delegated routing", () => {
   beforeEach(async () => {
     await clearHomeStorage();
@@ -222,6 +231,40 @@ describe("AccountHomeMountBackend delegated routing", () => {
     );
 
     expect(new Uint8Array(applied)).toEqual(new Uint8Array([0xff, 0x00, 0x80, 0xfe, 0x61]));
+  });
+
+  it("streams normal home files through R2", async () => {
+    const fs = new GsvFs(
+      env.STORAGE,
+      ALICE,
+      undefined,
+      undefined,
+      null,
+      createDelegatingBackend(),
+    );
+    const bytes = new TextEncoder().encode("streamed home data");
+
+    const written = await fs.writeFileStream(
+      "/home/alice/archive.bin",
+      bytesToStream(bytes),
+      {
+        expectedSize: bytes.byteLength,
+        contentType: "application/x-test",
+      },
+    );
+    const opened = await fs.openFile("/home/alice/archive.bin", {
+      range: { offset: 2, length: 4 },
+    });
+
+    expect(written).toEqual({ size: bytes.byteLength, streamed: true });
+    expect(opened).toMatchObject({
+      status: 206,
+      size: 4,
+      totalSize: bytes.byteLength,
+      contentType: "application/x-test",
+    });
+    expect(new Uint8Array(await new Response(opened.body).arrayBuffer()))
+      .toEqual(bytes.subarray(2, 6));
   });
 
   it("lists virtual overlay roots from an authorized agent home", async () => {
@@ -280,6 +323,16 @@ describe("AccountHomeMountBackend delegated routing", () => {
       .rejects
       .toThrow("EACCES");
     await expect(fs.writeFile("/home/wiki-builder/conversations/default/history", "changed"))
+      .rejects
+      .toThrow("EACCES");
+    await expect(fs.openFile("/home/wiki-builder/conversations/default/history"))
+      .rejects
+      .toThrow("EACCES");
+    await expect(fs.writeFileStream(
+      "/home/wiki-builder/conversations/default/history",
+      bytesToStream(new Uint8Array([1])),
+      { expectedSize: 1 },
+    ))
       .rejects
       .toThrow("EACCES");
   });

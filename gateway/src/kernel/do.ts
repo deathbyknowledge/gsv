@@ -10,28 +10,29 @@ import {
   type AgentMcpOAuthProvider,
 } from "agents/mcp/do-oauth-client-provider";
 import type { MCPConnectionResult } from "agents/mcp/client";
-import type { Frame, RequestFrame, ResponseFrame, SignalFrame } from "../protocol/frames";
+import type {
+  Frame,
+  FrameBody,
+  RequestFrame,
+  ResponseOkFrame,
+  ResponseFrame,
+  SignalFrame,
+} from "../protocol/frames";
 import type {
   ConnectionIdentity,
   NetFetchArgs,
-  NetFetchResult,
   PkgPublicListResult,
   ProcessIdentity,
   ScheduleRecord,
   ScheduleRunResult,
   SchedulerRunArgs,
   SchedulerRunResult,
-  SysCliDownloadsResult,
-  SysUpdateArgs,
-  SysUpdateResult,
 } from "@humansandmachines/gsv/protocol";
 import {
-  BINARY_FRAME_DATA,
-  BINARY_FRAME_END,
-  BINARY_FRAME_ERROR,
-  buildBinaryFrame,
-  parseBinaryFrame,
-  type BinaryFrame,
+  BinaryBodyChannel,
+  REQUEST_CANCEL_SIGNAL,
+  type BinaryFrameDescriptor,
+  type OutgoingBinaryBody,
 } from "@humansandmachines/gsv/protocol";
 import type { SyscallName } from "../syscalls";
 import type {
@@ -67,15 +68,13 @@ import {
   SETUP_REQUIRED_ERROR_CODE,
 } from "./connect";
 import { dispatch, type DispatchDeps } from "./dispatch";
+import { bindStreamToAbort } from "../shared/streams";
+import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { buildAppRunnerName } from "../protocol/app-session";
 import { handleSysSetupAssist } from "./sys/setup-assist";
-import {
-  handleSysUpdate as handleSysUpdateDirect,
-  refreshCliDownloads,
-} from "./sys/update";
 import { completeOAuthCallback as completeOAuthCallbackFlow } from "./sys/oauth";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 import { installMcpDiscoveryCompatibility } from "./mcp-compat";
@@ -107,13 +106,11 @@ import { ensureDefaultConversationExecutor } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
+import { SERVER_VERSION } from "../version";
 
-const SERVER_VERSION = "0.4.0";
-const KERNEL_BINARY_DEVICE_ID = "__gsv_kernel__";
-const CLI_DOWNLOADS_REFRESHED_VERSION_KEY = "config/downloads/cli/refreshed_for_version";
-const CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY = "config/downloads/cli/refresh_attempt_at";
-const CLI_DOWNLOADS_REFRESHED_AT_KEY = "config/downloads/cli/refreshed_at";
-const CLI_DOWNLOADS_REFRESH_RETRY_MS = 15 * 60 * 1000;
+const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
+const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
+const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
 
 type ConnectionState = {
   step: "pending" | "connected";
@@ -122,21 +119,11 @@ type ConnectionState = {
   clientPlatform?: string;
 };
 
-type BinaryRoute = {
-  requestId: string;
-  origin: RouteOrigin;
-  deviceId: string;
-  kind: "relay" | "native-stream";
-};
-
-type PendingBinaryStream = {
-  controller: ReadableStreamDefaultController<Uint8Array>;
-  timeoutId: ReturnType<typeof setTimeout>;
-};
-
 type ProcessNetFetchOptions = {
   ttlMs?: number;
   internalPurpose?: "model-transport";
+  body?: FrameBody;
+  requestId?: string;
 };
 
 type ResolvePackageAppRpcInput = {
@@ -210,10 +197,19 @@ export class Kernel extends Host<Env> {
   private readonly connections = new Map<string, Connection<ConnectionState>>();
   private readonly pendingAppResponses = new Map<string, (frame: ResponseFrame) => void>();
   private readonly pendingProcessSignals = new Map<string, Promise<void>>();
-  private readonly binaryRoutes = new Map<number, BinaryRoute>();
-  private readonly binaryRoutesByRequest = new Map<string, Set<number>>();
-  private readonly pendingBinaryStreams = new Map<number, PendingBinaryStream>();
-  private cliDownloadsRefresh: Promise<void> | null = null;
+  private readonly frameBodyChannels = new Map<string, BinaryBodyChannel>();
+  private readonly routedBodies = new Map<
+    string,
+    { cancel(reason?: unknown): Promise<void> }
+  >();
+  private readonly activeRequests = new Map<
+    string,
+    { origin: RouteOrigin; controller: AbortController }
+  >();
+  private readonly cancelledProcessRequests = new Map<
+    string,
+    { expiresAt: number; reason: string }
+  >();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -411,10 +407,17 @@ export class Kernel extends Host<Env> {
   }
 
   onClose(connection: Connection): void {
+    this.closeFrameBodyChannel(connection.id);
     const state = connection.state as ConnectionState | undefined;
     if (!state) return;
 
     this.connections.delete(connection.id);
+    const origin: RouteOrigin = { type: "connection", id: connection.id };
+    for (const [requestId, request] of this.activeRequests) {
+      if (sameRouteOrigin(request.origin, origin)) {
+        this.cancelRequest(origin, requestId, "Origin disconnected", false);
+      }
+    }
 
     const identity = state.identity;
 
@@ -434,30 +437,65 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    let frame: Frame;
+    let parsed: Frame;
     try {
-      frame = JSON.parse(message);
+      const value = JSON.parse(message) as unknown;
+      if (!value || typeof value !== "object") {
+        throw new Error("Invalid frame");
+      }
+      parsed = value as Frame;
     } catch {
       this.sendError(connection, "?", 400, "Malformed JSON");
       return;
     }
 
-    if (!frame.type || !["req", "res", "sig"].includes(frame.type)) {
-      this.sendError(connection, "?", 400, "Invalid frame type");
+    const valid = parsed.type === "req"
+      ? typeof parsed.id === "string" && typeof parsed.call === "string"
+      : parsed.type === "res"
+        ? typeof parsed.id === "string" && typeof parsed.ok === "boolean"
+        : parsed.type === "sig" && typeof parsed.signal === "string";
+    if (!valid) {
+      this.sendError(connection, "?", 400, "Invalid frame");
       return;
     }
 
-    switch (frame.type) {
+    switch (parsed.type) {
       case "req":
-        await this.handleReq(connection, frame);
+        await this.handleReq(connection, parsed);
         break;
       case "res":
-        this.handleRes(connection, frame);
+        this.handleRes(connection, parsed);
         break;
       case "sig":
-        this.handleSig(connection, frame);
+        if ((parsed as unknown as { body?: unknown }).body !== undefined) {
+          this.sendError(connection, "?", 400, "Signals cannot carry bodies");
+          return;
+        }
+        if (parsed.signal === REQUEST_CANCEL_SIGNAL) {
+          this.handleRequestCancel(connection, parsed);
+        } else {
+          this.handleSig(connection, parsed);
+        }
         break;
     }
+  }
+
+  private handleRequestCancel(
+    connection: Connection<ConnectionState>,
+    frame: SignalFrame,
+  ): void {
+    if (connection.state?.step !== "connected") {
+      return;
+    }
+    const payload = asRecord(frame.payload);
+    const requestId = typeof payload?.id === "string" ? payload.id : "";
+    const reason = typeof payload?.reason === "string" ? payload.reason : undefined;
+    this.cancelRequest(
+      { type: "connection", id: connection.id },
+      requestId,
+      reason,
+      false,
+    );
   }
 
   /**
@@ -469,7 +507,11 @@ export class Kernel extends Host<Env> {
    */
   async recvFrame(processId: string, frame: Frame): Promise<Frame | null> {
     if (frame.type === "req") {
-      return this.handleProcessReq(processId, frame);
+      try {
+        return await this.handleProcessReq(processId, frame);
+      } finally {
+        await cancelUnlockedBody(frame.body, "Process request completed");
+      }
     }
 
     if (frame.type === "sig") {
@@ -480,8 +522,11 @@ export class Kernel extends Host<Env> {
         }
         return null;
       }
-      this.enqueueProcessSignal(processId, frame);
+      const delivered = this.enqueueProcessSignal(processId, frame);
       this.completeIpcCallsForProcessSignal(processId, frame);
+      if (frame.signal === "proc.run.finished") {
+        await delivered;
+      }
       return null;
     }
 
@@ -493,31 +538,63 @@ export class Kernel extends Host<Env> {
     target: string,
     args: NetFetchArgs,
     options: ProcessNetFetchOptions = {},
-  ): Promise<NetFetchResult> {
-    const ctx = this.buildProcessContext(processId);
-    if (!ctx) {
-      throw new Error("Unknown process");
-    }
-    if (
-      options.internalPurpose !== "model-transport" &&
-      !hasCapability(ctx.identity!.capabilities, "net.fetch")
-    ) {
-      throw new Error("Permission denied: net.fetch");
-    }
+  ): Promise<ResponseOkFrame<"net.fetch">> {
+    let controller: AbortController | null = null;
+    const origin: RouteOrigin = { type: "process", id: processId };
+    try {
+      const ctx = this.buildProcessContext(processId);
+      if (!ctx) {
+        throw new Error("Unknown process");
+      }
+      if (
+        options.internalPurpose !== "model-transport" &&
+        !hasCapability(ctx.identity!.capabilities, "net.fetch")
+      ) {
+        throw new Error("Permission denied: net.fetch");
+      }
 
-    const device = getVisibleTarget(ctx, target, { includeOffline: true });
-    if (!device) {
-      throw new Error(`Access denied to device: ${target}`);
+      const device = getVisibleTarget(ctx, target, { includeOffline: true });
+      if (!device) {
+        throw new Error(`Access denied to device: ${target}`);
+      }
+      if (device.providerId !== "device" || device.route.kind !== "connection") {
+        throw new Error(`Target does not support device requests: ${target}`);
+      }
+      if (options.requestId) {
+        controller = this.registerActiveRequest(origin, options.requestId);
+      }
+      const response = await this.requestDevice(
+        device.targetId,
+        "net.fetch",
+        args,
+        {
+          ttlMs: options.ttlMs,
+          ...(options.body ? { body: options.body } : {}),
+          ...(options.requestId ? { id: options.requestId } : {}),
+          ...(controller ? { signal: controller.signal } : {}),
+        },
+      );
+      return response as ResponseOkFrame<"net.fetch">;
+    } finally {
+      if (options.requestId && controller) {
+        this.finishActiveRequest(options.requestId, controller);
+      }
+      await cancelUnlockedBody(options.body, "Process net.fetch completed");
     }
-    if (device.providerId !== "device" || device.route.kind !== "connection") {
-      throw new Error(`Target does not support device requests: ${target}`);
+  }
+
+  cancelProcessRequests(processId: string, requestIds: string[], reason?: string): number {
+    if (!processId || !Array.isArray(requestIds)) {
+      return 0;
     }
-    return await this.requestDevice(
-      device.targetId,
-      "net.fetch",
-      args,
-      options.ttlMs,
-    ) as NetFetchResult;
+    const origin: RouteOrigin = { type: "process", id: processId };
+    let cancelled = 0;
+    for (const requestId of new Set(requestIds)) {
+      if (this.cancelRequest(origin, requestId, reason, true)) {
+        cancelled += 1;
+      }
+    }
+    return cancelled;
   }
 
   /**
@@ -529,10 +606,22 @@ export class Kernel extends Host<Env> {
       return null;
     }
 
-    return this.handleServiceReq(frame);
+    try {
+      return await this.handleServiceReq(frame);
+    } finally {
+      await cancelUnlockedBody(frame.body, "Service request completed");
+    }
   }
 
   async appRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame> {
+    try {
+      return await this.handleAppRequest(appFrame, frame);
+    } finally {
+      await cancelUnlockedBody(frame.body, "App request completed");
+    }
+  }
+
+  private async handleAppRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame> {
     if (isAppFrameContextExpired(appFrame)) {
       return errFrame(frame.id, 401, "App frame expired");
     }
@@ -570,15 +659,17 @@ export class Kernel extends Host<Env> {
     const ctx = this.buildKernelContext({ identity, appFrame });
     const origin: RouteOrigin = { type: "app", id: frame.id };
     const pending = this.createPendingAppResponse(frame.id);
-    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+    try {
+      const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+      if (!result.handled) {
+        return await pending.promise;
+      }
 
-    if (!result.handled) {
-      return await pending.promise;
+      this.applyPostDispatchEffects(frame, result.response);
+      return result.response;
+    } finally {
+      pending.cleanup();
     }
-
-    pending.cleanup();
-    this.applyPostDispatchEffects(frame, result.response);
-    return result.response;
   }
 
   async resolvePackageAppRpcSession(input: ResolvePackageAppRpcInput): Promise<ResolvePackageAppRpcResult> {
@@ -868,10 +959,10 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private enqueueProcessSignal(processId: string, frame: SignalFrame): void {
+  private enqueueProcessSignal(processId: string, frame: SignalFrame): Promise<void> {
     const previous = this.pendingProcessSignals.get(processId) ?? Promise.resolve();
-    const queued = previous
-      .then(() => this.handleProcessSignal(processId, frame))
+    const delivery = previous.then(() => this.handleProcessSignal(processId, frame));
+    const queued = delivery
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[Kernel] process signal dispatch failed for ${processId}/${frame.signal}: ${message}`);
@@ -882,6 +973,7 @@ export class Kernel extends Host<Env> {
         }
       });
     this.pendingProcessSignals.set(processId, queued);
+    return delivery;
   }
 
   private completeIpcCallsForProcessSignal(processId: string, frame: SignalFrame): void {
@@ -1096,7 +1188,24 @@ export class Kernel extends Host<Env> {
     }
 
     const origin: RouteOrigin = { type: "process", id: processId };
-    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+    let controller: AbortController;
+    try {
+      controller = this.registerActiveRequest(origin, frame.id);
+    } catch (error) {
+      return errFrame(frame.id, 499, error instanceof Error ? error.message : String(error));
+    }
+    let result;
+    try {
+      frame = this.bindRequestBodyCancellation(frame, controller.signal);
+      result = await dispatch(
+        frame,
+        origin,
+        { ...ctx, requestSignal: controller.signal },
+        this.buildDispatchDeps(),
+      );
+    } finally {
+      this.finishActiveRequest(frame.id, controller);
+    }
 
     if (result.handled) {
       this.applyPostDispatchEffects(frame, result.response);
@@ -1168,6 +1277,7 @@ export class Kernel extends Host<Env> {
     identity?: ConnectionIdentity;
     processId?: string;
     processRunId?: string;
+    requestSignal?: AbortSignal;
     callerOwnerUid?: number;
     appFrame?: AppFrameContext;
   }): KernelContext {
@@ -1195,6 +1305,7 @@ export class Kernel extends Host<Env> {
       identity: options.identity,
       processId: options.processId,
       processRunId: options.processRunId,
+      requestSignal: options.requestSignal,
       callerOwnerUid: options.callerOwnerUid,
       appFrame: options.appFrame,
       serverVersion: SERVER_VERSION,
@@ -1210,11 +1321,15 @@ export class Kernel extends Host<Env> {
       addMcpServerConnection: this.addMcpServerConnection.bind(this),
       removeMcpServerConnection: this.removeMcpServer.bind(this),
       refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),
-      callMcpTool: (serverId, toolName, args) => this.mcp.callTool({
-        serverId,
-        name: toolName,
-        arguments: args,
-      }),
+      callMcpTool: (serverId, toolName, args, signal) => this.mcp.callTool(
+        {
+          serverId,
+          name: toolName,
+          arguments: args,
+        },
+        undefined,
+        signal ? { signal } : undefined,
+      ),
     };
   }
 
@@ -1226,17 +1341,89 @@ export class Kernel extends Host<Env> {
     return {
       shellSessions: this.shellSessions,
       connections: this.connections,
+      sendFrame: this.sendWebSocketFrame.bind(this),
       registerRoute: this.registerRouteWithExpiry.bind(this),
-      registerBinaryRoute: this.registerBinaryRoute.bind(this),
       requestDevice: this.requestDevice.bind(this),
-      allocateBinaryStreamId: this.allocateBinaryStreamId.bind(this),
-      startDeviceRequest: this.startDeviceRequest.bind(this),
-      registerBinaryRelay: this.registerBinaryRelay.bind(this),
-      receiveDeviceBinaryStream: this.receiveDeviceBinaryStream.bind(this),
-      receiveBinaryStream: this.receiveBinaryStream.bind(this),
-      sendDeviceBinaryFrame: this.sendDeviceBinaryFrame.bind(this),
-      handleSysUpdate: this.handleSysUpdate.bind(this),
+      request: this.requestDispatchedFrame.bind(this),
     };
+  }
+
+  private async requestDispatchedFrame(
+    frame: RequestFrame,
+    ctx: KernelContext,
+    signal?: AbortSignal,
+  ): Promise<ResponseFrame> {
+    if (isInternalOnlySyscall(frame.call)) {
+      await cancelUnlockedBody(frame.body, "Dispatched request rejected");
+      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    }
+    if (!hasCapability(ctx.identity?.capabilities ?? [], frame.call)) {
+      await cancelUnlockedBody(frame.body, "Dispatched request rejected");
+      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
+    }
+
+    const requestSignal = ctx.requestSignal && signal && ctx.requestSignal !== signal
+      ? AbortSignal.any([ctx.requestSignal, signal])
+      : signal ?? ctx.requestSignal;
+    if (requestSignal?.aborted) {
+      await cancelUnlockedBody(frame.body, "Request cancelled");
+      throw requestAbortError(requestSignal.reason);
+    }
+
+    const origin: RouteOrigin = { type: "app", id: frame.id };
+    const pending = this.createPendingAppResponse(frame.id);
+    const cancel = () => {
+      this.cancelRequest(
+        origin,
+        frame.id,
+        requestAbortError(requestSignal?.reason).message,
+        false,
+      );
+    };
+
+    try {
+      if (requestSignal) {
+        frame = this.bindRequestBodyCancellation(frame, requestSignal);
+      }
+      const result = await raceWithAbort(
+        dispatch(
+          frame,
+          origin,
+          { ...ctx, requestSignal },
+          this.buildDispatchDeps(),
+        ),
+        requestSignal,
+        {
+          abortReason: () => requestAbortError(requestSignal?.reason),
+          onAbort: cancel,
+          onLateResolve: (late) => {
+            if (late.handled && late.response.ok) {
+              void cancelUnlockedBody(late.response.body, "Request was cancelled");
+            }
+          },
+        },
+      );
+      const response = result.handled
+        ? result.response
+        : await raceWithAbort(
+            pending.promise,
+            requestSignal,
+            {
+              abortReason: () => requestAbortError(requestSignal?.reason),
+              onAbort: cancel,
+              onLateResolve: (late) => {
+                if (late.ok) {
+                  void cancelUnlockedBody(late.body, "Request was cancelled");
+                }
+              },
+            },
+          );
+      this.applyPostDispatchEffects(frame, response);
+      return response;
+    } finally {
+      pending.cleanup();
+      await cancelUnlockedBody(frame.body, "Dispatched request completed");
+    }
   }
 
   private async registerRouteWithExpiry(route: {
@@ -1245,7 +1432,10 @@ export class Kernel extends Host<Env> {
     origin: RouteOrigin;
     deviceId: string;
     ttlMs: number;
-  }): Promise<{ cancel: () => void }> {
+  }): Promise<{
+    cancel: () => void;
+    attachBody: (body: { cancel(reason?: unknown): Promise<void> }) => void;
+  }> {
     const scheduleId = (await this.schedule(
       route.ttlMs / 1000,
       "onRouteExpired",
@@ -1267,7 +1457,128 @@ export class Kernel extends Host<Env> {
 
     return {
       cancel: () => this.cancelRoute(route.id),
+      attachBody: (body) => {
+        const previous = this.routedBodies.get(route.id);
+        this.routedBodies.set(route.id, body);
+        void previous?.cancel("Routed body replaced");
+      },
     };
+  }
+
+  private registerActiveRequest(origin: RouteOrigin, requestId: string): AbortController {
+    if (!requestId || this.activeRequests.has(requestId) || this.routes.get(requestId)) {
+      throw new Error(`Duplicate request: ${requestId}`);
+    }
+    if (origin.type === "process") {
+      const key = `${origin.id}\0${requestId}`;
+      const cancellation = this.cancelledProcessRequests.get(key);
+      this.cancelledProcessRequests.delete(key);
+      if (cancellation && cancellation.expiresAt > Date.now()) {
+        throw new Error(cancellation.reason);
+      }
+    }
+    const controller = new AbortController();
+    this.activeRequests.set(requestId, { origin, controller });
+    return controller;
+  }
+
+  private bindRequestBodyCancellation(
+    frame: RequestFrame,
+    signal: AbortSignal,
+  ): RequestFrame {
+    if (!frame.body) {
+      return frame;
+    }
+    const body = frame.body;
+    frame.body = {
+      ...body,
+      stream: bindStreamToAbort(body.stream, signal),
+    };
+    return frame;
+  }
+
+  private finishActiveRequest(requestId: string, controller: AbortController): void {
+    if (this.activeRequests.get(requestId)?.controller === controller) {
+      this.activeRequests.delete(requestId);
+    }
+  }
+
+  private cancelRequest(
+    origin: RouteOrigin,
+    requestId: string,
+    reason: string | undefined,
+    rememberMissing: boolean,
+  ): boolean {
+    if (!requestId) {
+      return false;
+    }
+    const active = this.activeRequests.get(requestId);
+    const ownsActive = active !== undefined && sameRouteOrigin(active.origin, origin);
+    if (active && !ownsActive) {
+      return false;
+    }
+
+    const route = this.routes.get(requestId);
+    const internalAppRoute = route !== null
+      && ownsActive
+      && route.origin.type === "app"
+      && route.origin.id === requestId;
+    const ownsRoute = route !== null && (
+      sameRouteOrigin(route.origin, origin)
+      || internalAppRoute
+    );
+    if (route && !ownsRoute) {
+      return false;
+    }
+
+    const message = normalizeRequestCancelReason(reason);
+    if (ownsActive) {
+      active.controller.abort(new Error(message));
+    }
+    if (route && ownsRoute) {
+      if (!internalAppRoute) {
+        this.sendDeviceRequestCancel(route.deviceId, requestId, message);
+      }
+      this.cancelRoute(requestId);
+    }
+    if (ownsActive || ownsRoute) {
+      return true;
+    }
+    if (!rememberMissing || origin.type !== "process") {
+      return false;
+    }
+
+    const now = Date.now();
+    for (const [key, cancellation] of this.cancelledProcessRequests) {
+      if (cancellation.expiresAt <= now) {
+        this.cancelledProcessRequests.delete(key);
+      }
+    }
+    if (this.cancelledProcessRequests.size >= MAX_PROCESS_REQUEST_CANCELLATIONS) {
+      const oldest = this.cancelledProcessRequests.keys().next().value;
+      if (oldest) {
+        this.cancelledProcessRequests.delete(oldest);
+      }
+    }
+    this.cancelledProcessRequests.set(`${origin.id}\0${requestId}`, {
+      expiresAt: now + PROCESS_REQUEST_CANCEL_TTL_MS,
+      reason: message,
+    });
+    return true;
+  }
+
+  private sendDeviceRequestCancel(deviceId: string, requestId: string, reason: string): void {
+    const connection = this.findDeviceConnection(deviceId);
+    if (!connection) {
+      return;
+    }
+    try {
+      this.sendWebSocketFrame(connection, {
+        type: "sig",
+        signal: REQUEST_CANCEL_SIGNAL,
+        payload: { id: requestId, reason },
+      });
+    } catch {}
   }
 
   private cancelRoute(routeId: string): void {
@@ -1275,313 +1586,179 @@ export class Kernel extends Host<Env> {
     if (route?.scheduleId) {
       this.cancelSchedule(route.scheduleId).catch(() => {});
     }
-    this.clearBinaryRoutesForRequest(routeId);
+    this.cancelRoutedBody(routeId, "Route cancelled");
   }
 
-  private registerBinaryRoute(route: {
-    requestId: string;
-    streamId: number;
-    origin: RouteOrigin;
-    deviceId: string;
-    ttlMs: number;
-    kind?: "relay" | "native-stream";
-  }): { cancel: () => void } {
-    if (this.binaryRoutes.has(route.streamId)) {
-      throw new Error(`Binary stream id already active: ${route.streamId}`);
-    }
-    this.binaryRoutes.set(route.streamId, {
-      requestId: route.requestId,
-      origin: route.origin,
-      deviceId: route.deviceId,
-      kind: route.kind ?? "relay",
-    });
-
-    const streamIds = this.binaryRoutesByRequest.get(route.requestId) ?? new Set<number>();
-    streamIds.add(route.streamId);
-    this.binaryRoutesByRequest.set(route.requestId, streamIds);
-
-    return {
-      cancel: () => this.clearBinaryRoute(route.streamId),
-    };
-  }
-
-  private clearBinaryRoute(streamId: number): void {
-    const route = this.binaryRoutes.get(streamId);
-    if (!route) {
+  private cancelRoutedBody(routeId: string, reason: string): void {
+    const body = this.routedBodies.get(routeId);
+    if (!body) {
       return;
     }
-    this.binaryRoutes.delete(streamId);
-    const streamIds = this.binaryRoutesByRequest.get(route.requestId);
-    if (streamIds) {
-      streamIds.delete(streamId);
-      if (streamIds.size === 0) {
-        this.binaryRoutesByRequest.delete(route.requestId);
-      }
-    }
-    this.rejectPendingBinaryStream(streamId, new Error("Binary transfer route closed"));
+    this.routedBodies.delete(routeId);
+    void body.cancel(reason);
   }
 
-  private clearBinaryRoutesForRequest(requestId: string): void {
-    const streamIds = this.binaryRoutesByRequest.get(requestId);
-    if (!streamIds) {
-      return;
+  private decodeWebSocketFrame(
+    connection: Connection<ConnectionState>,
+    frame: Frame,
+  ): Frame {
+    const descriptor = (frame as unknown as { body?: BinaryFrameDescriptor }).body;
+    if (descriptor === undefined) {
+      return frame;
     }
-    for (const streamId of [...streamIds]) {
-      this.clearBinaryRoute(streamId);
+    if (frame.type === "sig" || (frame.type === "res" && !frame.ok)) {
+      throw new Error("This frame type cannot carry a body");
     }
-  }
-
-  private allocateBinaryStreamId(): number {
-    const values = new Uint32Array(1);
-    for (let attempt = 0; attempt < 16; attempt += 1) {
-      crypto.getRandomValues(values);
-      const streamId = values[0];
-      if (
-        streamId > 0 &&
-        !this.binaryRoutes.has(streamId) &&
-        !this.pendingBinaryStreams.has(streamId)
-      ) {
-        return streamId;
-      }
-    }
-    throw new Error("Unable to allocate binary stream id");
-  }
-
-  private createPendingBinaryStream(streamId: number, ttlMs: number): {
-    stream: ReadableStream<Uint8Array>;
-    cleanup: () => void;
-  } {
-    if (this.pendingBinaryStreams.has(streamId)) {
-      throw new Error(`Binary stream id already waiting: ${streamId}`);
-    }
-
-    let settled = false;
-    const stream = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        const timeoutId = setTimeout(() => {
-          settled = true;
-          this.rejectPendingBinaryStream(
-            streamId,
-            new Error(`Binary transfer timed out: ${streamId}`),
-          );
-          this.clearBinaryRoute(streamId);
-        }, ttlMs);
-        this.pendingBinaryStreams.set(streamId, { controller, timeoutId });
-      },
-      cancel: () => {
-        if (!settled) {
-          this.clearPendingBinaryStream(streamId);
-          this.clearBinaryRoute(streamId);
-        }
-      },
-    });
-
     return {
-      stream,
-      cleanup: () => {
-        if (!settled) {
-          this.rejectPendingBinaryStream(streamId, new Error("Binary transfer cancelled"));
-          this.clearBinaryRoute(streamId);
-        }
-      },
-    };
+      ...frame,
+      body: this.receiveFrameBody(connection, descriptor),
+    } as Frame;
   }
 
-  private clearPendingBinaryStream(streamId: number): PendingBinaryStream | null {
-    const pending = this.pendingBinaryStreams.get(streamId);
-    if (!pending) {
+  private receiveFrameBody(
+    connection: Connection<ConnectionState>,
+    descriptor: BinaryFrameDescriptor,
+  ): FrameBody {
+    return this.frameBodyChannel(connection).receive(descriptor);
+  }
+
+  private sendWebSocketFrame(connection: Connection, frame: Frame): OutgoingBinaryBody | null {
+    const body = frame.type === "sig" || (frame.type === "res" && !frame.ok)
+      ? undefined
+      : frame.body;
+    if (!body) {
+      connection.send(JSON.stringify(frame));
       return null;
     }
-    this.pendingBinaryStreams.delete(streamId);
-    clearTimeout(pending.timeoutId);
-    return pending;
-  }
 
-  private closePendingBinaryStream(streamId: number): void {
-    const pending = this.clearPendingBinaryStream(streamId);
-    if (pending) {
-      pending.controller.close();
-    }
-  }
-
-  private rejectPendingBinaryStream(streamId: number, error: Error): void {
-    const pending = this.clearPendingBinaryStream(streamId);
-    if (pending) {
-      pending.controller.error(error);
-    }
-  }
-
-  private receiveBinaryStream(route: {
-    requestId: string;
-    streamId: number;
-    origin: RouteOrigin;
-    ttlMs: number;
-  }): { stream: ReadableStream<Uint8Array>; cancel: () => void } {
-    if (route.origin.type !== "connection") {
-      throw new Error("Native binary transfer requires an active WebSocket connection");
-    }
-
-    const pending = this.createPendingBinaryStream(route.streamId, route.ttlMs);
-    let binaryRoute: { cancel: () => void };
+    const outgoing: OutgoingBinaryBody = this.frameBodyChannel(connection).prepare(body);
     try {
-      binaryRoute = this.registerBinaryRoute({
-        requestId: route.requestId,
-        streamId: route.streamId,
-        origin: route.origin,
-        deviceId: KERNEL_BINARY_DEVICE_ID,
-        ttlMs: route.ttlMs,
-        kind: "native-stream",
-      });
+      connection.send(JSON.stringify({
+        ...frame,
+        body: outgoing.descriptor,
+      }));
     } catch (error) {
-      pending.cleanup();
+      void outgoing.cancel(error);
       throw error;
     }
+    this.ctx.waitUntil(outgoing.send().catch(() => {}));
+    return outgoing;
+  }
 
-    return {
-      stream: pending.stream,
-      cancel: () => {
-        pending.cleanup();
-        binaryRoute.cancel();
-      },
-    };
+  private frameBodyChannel(connection: Connection): BinaryBodyChannel {
+    let channel = this.frameBodyChannels.get(connection.id);
+    if (!channel) {
+      channel = new BinaryBodyChannel({
+        sendFrame: (binary) => connection.send(binary),
+      });
+      this.frameBodyChannels.set(connection.id, channel);
+    }
+    return channel;
+  }
+
+  private closeFrameBodyChannel(connectionId: string): void {
+    this.frameBodyChannels.get(connectionId)?.close(new Error("Connection closed"));
+    this.frameBodyChannels.delete(connectionId);
   }
 
   private async requestDevice(
     deviceId: string,
     call: string,
     args: unknown,
-    ttlMs = 60_000,
-  ): Promise<unknown> {
-    const request = await this.startDeviceRequest(deviceId, call, args, ttlMs);
-    return await request.promise;
-  }
-
-  private async startDeviceRequest(
-    deviceId: string,
-    call: string,
-    args: unknown,
-    ttlMs = 60_000,
-  ): Promise<{ requestId: string; promise: Promise<unknown>; cancel: () => void }> {
-    const device = this.devices.get(deviceId);
-    if (!device || !device.online) {
-      throw new Error(`Device offline: ${deviceId}`);
-    }
-    if (!this.devices.canHandle(deviceId, call)) {
-      throw new Error(`Device ${deviceId} does not implement ${call}`);
-    }
-
-    const deviceConn = this.findDeviceConnection(deviceId);
-    if (!deviceConn) {
-      throw new Error(`No active connection for device: ${deviceId}`);
-    }
-
-    const id = crypto.randomUUID();
-    const pending = this.createPendingAppResponse(id);
+    options: {
+      ttlMs?: number;
+      body?: FrameBody;
+      id?: string;
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<Extract<ResponseFrame, { ok: true }>> {
+    const id = options.id ?? crypto.randomUUID();
+    let cleanupPending: (() => void) | null = null;
     let route: { cancel: () => void } | null = null;
+    let outgoing: OutgoingBinaryBody | null = null;
+    let onAbort: (() => void) | null = null;
+    let requestSent = false;
+    let completionReason: unknown = "Device request completed";
 
     try {
+      if (options.signal?.aborted) {
+        throw requestAbortError(options.signal.reason);
+      }
+      const device = this.devices.get(deviceId);
+      if (!device || !device.online) {
+        throw new Error(`Device offline: ${deviceId}`);
+      }
+      if (!this.devices.canHandle(deviceId, call)) {
+        throw new Error(`Device ${deviceId} does not implement ${call}`);
+      }
+
+      const deviceConn = this.findDeviceConnection(deviceId);
+      if (!deviceConn) {
+        throw new Error(`No active connection for device: ${deviceId}`);
+      }
+
+      const pending = this.createPendingAppResponse(id);
+      cleanupPending = pending.cleanup;
       route = await this.registerRouteWithExpiry({
         id,
         call: call as SyscallName,
         origin: { type: "app", id },
         deviceId,
-        ttlMs,
+        ttlMs: options.ttlMs ?? 60_000,
       });
+      if (options.signal?.aborted) {
+        throw requestAbortError(options.signal.reason);
+      }
 
-      deviceConn.send(JSON.stringify({
+      outgoing = this.sendWebSocketFrame(deviceConn, {
         type: "req",
         id,
         call,
         args,
-      }));
-    } catch (error) {
-      route?.cancel();
-      pending.cleanup();
-      throw error;
-    }
-
-    const promise = pending.promise.then((frame) => {
+        ...(options.body ? { body: options.body } : {}),
+      } as RequestFrame);
+      requestSent = true;
+      const frame = options.signal
+        ? await Promise.race([
+            pending.promise,
+            new Promise<never>((_, reject) => {
+              onAbort = () => {
+                if (requestSent) {
+                  this.sendDeviceRequestCancel(
+                    deviceId,
+                    id,
+                    normalizeRequestCancelReason(requestAbortError(options.signal?.reason).message),
+                  );
+                }
+                reject(requestAbortError(options.signal?.reason));
+              };
+              options.signal?.addEventListener("abort", onAbort, { once: true });
+              if (options.signal?.aborted) {
+                onAbort();
+              }
+            }),
+          ])
+        : await pending.promise;
       if (!frame.ok) {
         throw new Error(frame.error.message);
       }
-      return frame.data ?? {};
-    }).finally(() => {
-      pending.cleanup();
-    });
-
-    return {
-      requestId: id,
-      promise,
-      cancel: () => {
-        route?.cancel();
-        pending.cleanup();
-      },
-    };
-  }
-
-  private registerBinaryRelay(route: {
-    requestId: string;
-    streamId: number;
-    sourceDeviceId: string;
-    destinationDeviceId: string;
-    ttlMs?: number;
-  }): { cancel: () => void } {
-    const destinationConn = this.findDeviceConnection(route.destinationDeviceId);
-    if (!destinationConn) {
-      throw new Error(`No active connection for device: ${route.destinationDeviceId}`);
-    }
-    return this.registerBinaryRoute({
-      requestId: route.requestId,
-      streamId: route.streamId,
-      origin: { type: "connection", id: destinationConn.id },
-      deviceId: route.sourceDeviceId,
-      ttlMs: route.ttlMs ?? 60_000,
-    });
-  }
-
-  private receiveDeviceBinaryStream(route: {
-    requestId: string;
-    streamId: number;
-    sourceDeviceId: string;
-    ttlMs?: number;
-  }): { stream: ReadableStream<Uint8Array>; cancel: () => void } {
-    const ttlMs = route.ttlMs ?? 60_000;
-    const pending = this.createPendingBinaryStream(route.streamId, ttlMs);
-    let binaryRoute: { cancel: () => void };
-    try {
-      binaryRoute = this.registerBinaryRoute({
-        requestId: route.requestId,
-        streamId: route.streamId,
-        origin: { type: "app", id: route.requestId },
-        deviceId: route.sourceDeviceId,
-        ttlMs,
-        kind: "native-stream",
-      });
+      return frame;
     } catch (error) {
-      pending.cleanup();
+      completionReason = error;
       throw error;
+    } finally {
+      if (onAbort) {
+        options.signal?.removeEventListener("abort", onAbort);
+      }
+      cleanupPending?.();
+      route?.cancel();
+      const reason = options.signal?.aborted ? options.signal.reason : completionReason;
+      if (outgoing) {
+        await outgoing.cancel(reason);
+      } else {
+        await options.body?.stream.cancel(reason).catch(() => {});
+      }
     }
-
-    return {
-      stream: pending.stream,
-      cancel: () => {
-        pending.cleanup();
-        binaryRoute.cancel();
-      },
-    };
-  }
-
-  private sendDeviceBinaryFrame(
-    deviceId: string,
-    streamId: number,
-    flags: number,
-    payload?: Uint8Array,
-  ): void {
-    const deviceConn = this.findDeviceConnection(deviceId);
-    if (!deviceConn) {
-      throw new Error(`No active connection for device: ${deviceId}`);
-    }
-    deviceConn.send(buildBinaryFrame(streamId, flags, payload));
   }
 
   private findDeviceConnection(deviceId: string): Connection<ConnectionState> | null {
@@ -1641,63 +1818,98 @@ export class Kernel extends Host<Env> {
     return sched.id;
   }
 
-  private async handleReq(connection: Connection<ConnectionState>, frame: RequestFrame): Promise<void> {
-    const state = connection.state as ConnectionState | undefined;
+  private async handleReq(
+    connection: Connection<ConnectionState>,
+    wireFrame: RequestFrame,
+  ): Promise<void> {
+    let frame: RequestFrame;
+    try {
+      frame = this.decodeWebSocketFrame(connection, wireFrame) as RequestFrame;
+    } catch (error) {
+      this.sendError(
+        connection,
+        wireFrame.id,
+        400,
+        error instanceof Error ? error.message : "Invalid frame body",
+      );
+      return;
+    }
 
-    if (frame.call === "sys.connect") {
-      if (state?.step === "connected") {
-        this.sendError(connection, frame.id, 409, "Already connected");
+    try {
+      const state = connection.state as ConnectionState | undefined;
+
+      if (frame.call === "sys.connect") {
+        if (state?.step === "connected") {
+          this.sendError(connection, frame.id, 409, "Already connected");
+          return;
+        }
+        await this.handleSysConnect(connection, frame);
         return;
       }
-      await this.handleSysConnect(connection, frame);
-      return;
-    }
 
-    if (frame.call === "sys.setup.assist") {
-      await this.handleSysSetupAssist(connection, frame as RequestFrame<"sys.setup.assist">);
-      return;
-    }
+      if (frame.call === "sys.setup.assist") {
+        await this.handleSysSetupAssist(connection, frame as RequestFrame<"sys.setup.assist">);
+        return;
+      }
 
-    if (frame.call === "sys.setup") {
-      await this.handleSysSetup(connection, frame as RequestFrame<"sys.setup">);
-      return;
-    }
+      if (frame.call === "sys.setup") {
+        await this.handleSysSetup(connection, frame as RequestFrame<"sys.setup">);
+        return;
+      }
 
-    if (!state || state.step !== "connected" || !state.identity) {
-      if (this.auth.isSetupMode()) {
-        this.sendError(
-          connection,
-          frame.id,
-          SETUP_REQUIRED_ERROR_CODE,
-          "Setup required",
-          setupRequiredDetails(),
+      if (!state || state.step !== "connected" || !state.identity) {
+        if (this.auth.isSetupMode()) {
+          this.sendError(
+            connection,
+            frame.id,
+            SETUP_REQUIRED_ERROR_CODE,
+            "Setup required",
+            setupRequiredDetails(),
+          );
+          return;
+        }
+        this.sendError(connection, frame.id, 403, "Must call sys.connect first");
+        return;
+      }
+
+      if (isInternalOnlySyscall(frame.call)) {
+        this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
+        return;
+      }
+
+      if (!hasCapability(state.identity.capabilities, frame.call)) {
+        this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
+        return;
+      }
+
+      const origin: RouteOrigin = { type: "connection", id: connection.id };
+      let controller: AbortController;
+      try {
+        controller = this.registerActiveRequest(origin, frame.id);
+      } catch (error) {
+        this.sendError(connection, frame.id, 409, error instanceof Error ? error.message : String(error));
+        return;
+      }
+      let result;
+      try {
+        frame = this.bindRequestBodyCancellation(frame, controller.signal);
+        result = await dispatch(
+          frame,
+          origin,
+          { ...this.buildContext(connection), requestSignal: controller.signal },
+          this.buildDispatchDeps(),
         );
-        return;
+      } finally {
+        this.finishActiveRequest(frame.id, controller);
       }
-      this.sendError(connection, frame.id, 403, "Must call sys.connect first");
-      return;
+      if (result.handled) {
+        this.applyPostDispatchEffects(frame, result.response);
+        this.sendWebSocketFrame(connection, result.response);
+      }
+      // Routed responses arrive asynchronously through handleRes.
+    } finally {
+      await cancelUnlockedBody(frame.body, "WebSocket request completed");
     }
-
-    if (isInternalOnlySyscall(frame.call)) {
-      this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
-      return;
-    }
-
-    if (!hasCapability(state.identity.capabilities, frame.call)) {
-      this.sendError(connection, frame.id, 403, `Permission denied: ${frame.call}`);
-      return;
-    }
-
-    const ctx = this.buildContext(connection);
-    const origin: RouteOrigin = { type: "connection", id: connection.id };
-    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
-
-    if (result.handled) {
-      this.applyPostDispatchEffects(frame, result.response);
-      connection.send(JSON.stringify(result.response));
-    }
-    // If not handled, request was forwarded to a device.
-    // Response will come back via handleRes when the device responds.
   }
 
   private buildServiceBindingIdentity(frame: RequestFrame): ConnectionIdentity | null {
@@ -1991,84 +2203,9 @@ export class Kernel extends Host<Env> {
       const freshIdentity = outcome.identity.process;
       await ensureDefaultConversationExecutor(ctx, freshIdentity);
       this.reconcileOwnedIdentities(freshIdentity.uid);
-      this.scheduleCliDownloadsRefreshForVersion();
     }
 
     this.sendOk(connection, frame.id, outcome.result);
-  }
-
-  private scheduleCliDownloadsRefreshForVersion(): void {
-    if (this.config.get(CLI_DOWNLOADS_REFRESHED_VERSION_KEY) === SERVER_VERSION) {
-      return;
-    }
-    if (this.cliDownloadsRefresh) {
-      return;
-    }
-
-    const lastAttemptAt = Number(this.config.get(CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY) ?? "0");
-    if (Number.isFinite(lastAttemptAt) && Date.now() - lastAttemptAt < CLI_DOWNLOADS_REFRESH_RETRY_MS) {
-      return;
-    }
-
-    this.config.set(CLI_DOWNLOADS_REFRESH_ATTEMPT_KEY, String(Date.now()));
-    const refresh = this.withCliDownloadsRefreshSlot(() => this.refreshCliDownloadsForVersion());
-    this.ctx.waitUntil(refresh);
-  }
-
-  private async handleSysUpdate(
-    args: SysUpdateArgs | undefined,
-    ctx: KernelContext,
-  ): Promise<SysUpdateResult> {
-    const result = await this.withCliDownloadsRefreshSlot(
-      () => handleSysUpdateDirect(args, ctx),
-      { waitForExisting: true },
-    );
-    this.recordCliDownloadsRefresh(result.cli);
-    return result;
-  }
-
-  private async withCliDownloadsRefreshSlot<T>(
-    run: () => Promise<T>,
-    options: { waitForExisting?: boolean } = {},
-  ): Promise<T> {
-    const previousRefresh = options.waitForExisting ? this.cliDownloadsRefresh : null;
-    let releaseSlot: () => void = () => {};
-    const slot = new Promise<void>((resolve) => {
-      releaseSlot = resolve;
-    });
-    const trackedSlot = slot.finally(() => {
-      if (this.cliDownloadsRefresh === trackedSlot) {
-        this.cliDownloadsRefresh = null;
-      }
-    });
-    this.cliDownloadsRefresh = trackedSlot;
-
-    try {
-      if (previousRefresh) {
-        await previousRefresh;
-      }
-      return await run();
-    } finally {
-      releaseSlot();
-    }
-  }
-
-  private recordCliDownloadsRefresh(result: SysCliDownloadsResult): void {
-    this.config.set(CLI_DOWNLOADS_REFRESHED_VERSION_KEY, SERVER_VERSION);
-    this.config.set(CLI_DOWNLOADS_REFRESHED_AT_KEY, String(result.refreshedAt));
-  }
-
-  private async refreshCliDownloadsForVersion(): Promise<void> {
-    try {
-      const result = await refreshCliDownloads(this.env.STORAGE);
-      this.recordCliDownloadsRefresh(result);
-      console.info(
-        `[Kernel] refreshed hosted CLI downloads for ${SERVER_VERSION} channels=${result.mirroredChannels.join(",")} default=${result.defaultChannel}`,
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[Kernel] hosted CLI refresh for ${SERVER_VERSION} failed: ${message}`);
-    }
   }
 
   private async handleSysSetup(
@@ -2126,9 +2263,19 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private handleRes(connection: Connection<ConnectionState>, frame: ResponseFrame): void {
-    const route = this.routes.get(frame.id);
+  private handleRes(connection: Connection<ConnectionState>, wireFrame: ResponseFrame): void {
+    const route = this.routes.get(wireFrame.id);
     if (!route) {
+      if (wireFrame.ok) {
+        const descriptor = (wireFrame as unknown as { body?: BinaryFrameDescriptor }).body;
+        if (descriptor) {
+          try {
+            void this.receiveFrameBody(connection, descriptor).stream.cancel("Request is no longer pending");
+          } catch {
+            // The response is already stale; malformed descriptors have no consumer to fail.
+          }
+        }
+      }
       return;
     }
 
@@ -2136,9 +2283,31 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    this.routes.remove(frame.id);
+    let frame: ResponseFrame;
+    try {
+      frame = this.decodeWebSocketFrame(connection, wireFrame) as ResponseFrame;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid frame body";
+      this.cancelRoute(wireFrame.id);
+      this.deliverToOrigin(
+        route.origin,
+        errFrame(
+          wireFrame.id,
+          502,
+          `Invalid response from device ${route.deviceId}: ${message}`,
+        ),
+      );
+      this.sendError(
+        connection,
+        wireFrame.id,
+        400,
+        message,
+      );
+      return;
+    }
 
-    this.clearBinaryRoutesForRequest(frame.id);
+    this.routes.remove(frame.id);
+    this.cancelRoutedBody(frame.id, "Device response received");
 
     if (route.scheduleId) {
       this.cancelSchedule(route.scheduleId).catch(() => {});
@@ -2152,81 +2321,7 @@ export class Kernel extends Host<Env> {
   }
 
   private handleBinaryMessage(connection: Connection<ConnectionState>, message: WSMessage): void {
-    const frame = parseBinaryFrame(message as ArrayBuffer | ArrayBufferView);
-    if (!frame) {
-      return;
-    }
-
-    const route = this.binaryRoutes.get(frame.streamId);
-    if (!route) {
-      return;
-    }
-
-    if (route.kind === "native-stream") {
-      this.deliverBinaryToNativeStream(connection, route, frame);
-      return;
-    }
-
-    if (this.isConnectionForDevice(connection, route.deviceId)) {
-      this.deliverBinaryFromDevice(route, frame);
-      return;
-    }
-
-    if (route.origin.type === "connection" && route.origin.id === connection.id) {
-      const deviceConn = this.findDeviceConnection(route.deviceId);
-      if (deviceConn) {
-        deviceConn.send(buildBinaryFrame(frame.streamId, frame.flags, frame.payload));
-      }
-    }
-  }
-
-  private deliverBinaryToNativeStream(
-    connection: Connection<ConnectionState>,
-    route: BinaryRoute,
-    frame: BinaryFrame,
-  ): void {
-    const fromOriginConnection =
-      route.deviceId === KERNEL_BINARY_DEVICE_ID &&
-      route.origin.type === "connection" &&
-      route.origin.id === connection.id;
-    const fromDeviceConnection =
-      route.deviceId !== KERNEL_BINARY_DEVICE_ID &&
-      this.isConnectionForDevice(connection, route.deviceId);
-
-    if (!fromOriginConnection && !fromDeviceConnection) {
-      return;
-    }
-
-    const pending = this.pendingBinaryStreams.get(frame.streamId);
-    if (!pending) {
-      return;
-    }
-
-    if ((frame.flags & BINARY_FRAME_ERROR) !== 0) {
-      const message = new TextDecoder().decode(frame.payload) || "Binary transfer failed";
-      this.rejectPendingBinaryStream(frame.streamId, new Error(message));
-      this.clearBinaryRoute(frame.streamId);
-      return;
-    }
-
-    if ((frame.flags & BINARY_FRAME_DATA) !== 0 && frame.payload.byteLength > 0) {
-      pending.controller.enqueue(frame.payload);
-    }
-
-    if ((frame.flags & BINARY_FRAME_END) !== 0) {
-      this.closePendingBinaryStream(frame.streamId);
-      this.clearBinaryRoute(frame.streamId);
-    }
-  }
-
-  private deliverBinaryFromDevice(route: BinaryRoute, frame: BinaryFrame): void {
-    if (route.origin.type === "connection") {
-      const conn = this.connections.get(route.origin.id);
-      if (conn) {
-        conn.send(buildBinaryFrame(frame.streamId, frame.flags, frame.payload));
-      }
-      return;
-    }
+    this.frameBodyChannel(connection).handleFrame(message as ArrayBuffer | ArrayBufferView);
   }
 
   private handleSig(connection: Connection<ConnectionState>, frame: SignalFrame): void {
@@ -2279,7 +2374,8 @@ export class Kernel extends Host<Env> {
   async onRouteExpired(routeId: string): Promise<void> {
     const expired = this.routes.remove(routeId);
     if (!expired) return;
-    this.clearBinaryRoutesForRequest(routeId);
+    this.sendDeviceRequestCancel(expired.deviceId, routeId, "Request timed out");
+    this.cancelRoutedBody(routeId, "Route expired");
 
     const timeoutFrame: ResponseFrame = {
       type: "res",
@@ -2428,11 +2524,20 @@ export class Kernel extends Host<Env> {
       if (!hasCapability(ctx.identity?.capabilities ?? [], "shell.exec")) {
         throw new Error("Permission denied: shell.exec");
       }
-      const result = await handleShellExec({
-        input: target.command,
-        cwd: target.cwd,
-        timeout: target.timeoutMs,
-      }, ctx);
+      const deps = this.buildDispatchDeps();
+      const result = await handleShellExec(
+        {
+          input: target.command,
+          cwd: target.cwd,
+          timeout: target.timeoutMs,
+        },
+        ctx,
+        {
+          fsCopyTransport: deps,
+          netFetchTransport: deps,
+          request: (frame, signal) => deps.request(frame, ctx, signal),
+        },
+      );
       if (result.status !== "completed") {
         throw new Error(result.status === "failed" ? result.error : `Command ${result.status}`);
       }
@@ -2542,16 +2647,20 @@ export class Kernel extends Host<Env> {
   }
 
   private deliverToOrigin(origin: RouteOrigin, frame: ResponseFrame): void {
+    const body = frame.ok ? frame.body : undefined;
     if (origin.type === "connection") {
       const conn = this.connections.get(origin.id);
       if (conn) {
-        conn.send(JSON.stringify(frame));
+        this.sendWebSocketFrame(conn, frame);
+      } else {
+        void body?.stream.cancel("Origin disconnected").catch(() => {});
       }
       return;
     }
 
     if (origin.type === "process") {
       sendFrameToProcess(origin.id, frame).catch((err: unknown) => {
+        void body?.stream.cancel(err).catch(() => {});
         console.error(`[Kernel] Failed to deliver frame to process ${origin.id}:`, err);
       });
       return;
@@ -2562,6 +2671,8 @@ export class Kernel extends Host<Env> {
       if (resolve) {
         this.pendingAppResponses.delete(origin.id);
         resolve(frame);
+      } else {
+        void body?.stream.cancel("Request was cancelled").catch(() => {});
       }
     }
   }
@@ -2592,7 +2703,7 @@ export class Kernel extends Host<Env> {
     this.shellSessions.failForDevice(deviceId, "Device disconnected");
     const failed = this.routes.failForDevice(deviceId);
     for (const entry of failed) {
-      this.clearBinaryRoutesForRequest(entry.id);
+      this.cancelRoutedBody(entry.id, "Device disconnected");
       if (entry.scheduleId) {
         this.cancelSchedule(entry.scheduleId).catch(() => {});
       }
@@ -2610,7 +2721,8 @@ export class Kernel extends Host<Env> {
   private failRoutesForConnection(connectionId: string): void {
     const failed = this.routes.failForConnection(connectionId);
     for (const entry of failed) {
-      this.clearBinaryRoutesForRequest(entry.id);
+      this.sendDeviceRequestCancel(entry.deviceId, entry.id, "Origin disconnected");
+      this.cancelRoutedBody(entry.id, "Origin disconnected");
       if (entry.scheduleId) {
         this.cancelSchedule(entry.scheduleId).catch(() => {});
       }
@@ -2824,8 +2936,27 @@ export function findAppFrameEntrypoint(
   }) ?? null;
 }
 
+async function cancelUnlockedBody(body: FrameBody | undefined, reason: string): Promise<void> {
+  if (body && !body.stream.locked) {
+    await body.stream.cancel(reason).catch(() => {});
+  }
+}
+
 function errFrame(id: string, code: number, message: string): ResponseFrame {
   return { type: "res", id, ok: false, error: { code, message } };
+}
+
+function requestAbortError(reason: unknown): Error {
+  return reason instanceof Error ? reason : new Error("Device request cancelled");
+}
+
+function sameRouteOrigin(left: RouteOrigin, right: RouteOrigin): boolean {
+  return left.type === right.type && left.id === right.id;
+}
+
+function normalizeRequestCancelReason(reason: string | undefined): string {
+  const normalized = reason?.trim();
+  return (normalized || "Request cancelled").slice(0, MAX_REQUEST_CANCEL_REASON_LENGTH);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
