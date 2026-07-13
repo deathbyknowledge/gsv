@@ -114,6 +114,22 @@ function body(bytes) {
   };
 }
 
+function trackedAbortController() {
+  const controller = new AbortController();
+  const listeners = new Set();
+  const addEventListener = controller.signal.addEventListener.bind(controller.signal);
+  const removeEventListener = controller.signal.removeEventListener.bind(controller.signal);
+  controller.signal.addEventListener = (type, listener, options) => {
+    if (type === "abort") listeners.add(listener);
+    addEventListener(type, listener, options);
+  };
+  controller.signal.removeEventListener = (type, listener, options) => {
+    if (type === "abort") listeners.delete(listener);
+    removeEventListener(type, listener, options);
+  };
+  return { controller, listeners };
+}
+
 async function connectedClient() {
   const client = new GSVClient({ WebSocket: FakeWebSocket });
   await client.connect({
@@ -494,6 +510,122 @@ test("cancels an upload when the request completes early", async () => {
   assert.equal(terminal.streamId, request.body.streamId);
   assert.equal(terminal.flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
   client.close();
+});
+
+test("does not send a pre-aborted request", async () => {
+  const { client, socket } = await connectedClient();
+  const controller = new AbortController();
+  const reason = new Error("request superseded");
+  let cancelledWith;
+  const stream = new ReadableStream({
+    cancel(value) {
+      cancelledWith = value;
+    },
+  });
+  controller.abort(reason);
+  const sentBefore = socket.sent.length;
+
+  await assert.rejects(
+    client.request("test.echo", {}, { body: { stream }, signal: controller.signal }),
+    /request superseded/,
+  );
+  await Promise.resolve();
+
+  assert.equal(socket.sent.length, sentBefore);
+  assert.equal(cancelledWith, reason);
+  client.close();
+});
+
+test("cancels a pending request and its outgoing body from an abort signal", async () => {
+  const { client, socket } = await connectedClient();
+  const { controller, listeners } = trackedAbortController();
+  const reason = new Error("user changed chats");
+  let cancelledWith;
+  const stream = new ReadableStream({
+    pull: () => new Promise(() => {}),
+    cancel(value) {
+      cancelledWith = value;
+    },
+  });
+  const pending = client.request("test.echo", {}, {
+    body: { stream },
+    signal: controller.signal,
+  });
+  const request = JSON.parse(socket.sent.at(-1));
+  assert.equal(listeners.size, 1);
+
+  controller.abort(reason);
+  await assert.rejects(pending, /user changed chats/);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const cancellation = socket.sent
+    .filter((frame) => typeof frame === "string")
+    .map((frame) => JSON.parse(frame))
+    .find((frame) => frame.type === "sig" && frame.payload?.id === request.id);
+  assert.deepEqual(cancellation, {
+    type: "sig",
+    signal: REQUEST_CANCEL_SIGNAL,
+    payload: { id: request.id, reason: reason.message },
+  });
+  assert.equal(cancelledWith, reason);
+  assert.equal(listeners.size, 0);
+  const terminal = socket.sent
+    .filter((frame) => typeof frame !== "string")
+    .map((frame) => parseBinaryFrame(frame))
+    .find((frame) => frame.streamId === request.body.streamId);
+  assert.equal(terminal.flags, BINARY_FRAME_ERROR | BINARY_FRAME_END);
+  client.close();
+});
+
+test("removes request abort listeners on every settlement path", async () => {
+  {
+    const { client, socket } = await connectedClient();
+    const { controller, listeners } = trackedAbortController();
+    const pending = client.request("test.echo", {}, { signal: controller.signal });
+    const request = JSON.parse(socket.sent.at(-1));
+    socket.receive(JSON.stringify({ type: "res", id: request.id, ok: true, data: {} }));
+    await pending;
+    assert.equal(listeners.size, 0, "response");
+    client.close();
+  }
+
+  {
+    const client = new GSVClient({
+      WebSocket: FakeWebSocket,
+      defaultRequestTimeoutMs: 10,
+    });
+    await client.connect({ url: "ws://test", username: "test", password: "test" });
+    const { controller, listeners } = trackedAbortController();
+    await assert.rejects(
+      client.request("test.slow", {}, { signal: controller.signal }),
+      /Request timed out/,
+    );
+    assert.equal(listeners.size, 0, "timeout");
+    client.close();
+  }
+
+  {
+    const { client } = await connectedClient();
+    const { controller, listeners } = trackedAbortController();
+    const stream = body(new Uint8Array([1])).stream;
+    const reader = stream.getReader();
+    await assert.rejects(
+      client.request("test.echo", {}, { body: { stream }, signal: controller.signal }),
+      /locked/i,
+    );
+    assert.equal(listeners.size, 0, "body send failure");
+    reader.releaseLock();
+    client.close();
+  }
+
+  {
+    const { client } = await connectedClient();
+    const { controller, listeners } = trackedAbortController();
+    const pending = client.request("test.slow", {}, { signal: controller.signal });
+    client.disconnect();
+    await assert.rejects(pending, /Disconnected/);
+    assert.equal(listeners.size, 0, "disconnect");
+  }
 });
 
 test("cancels an outbound request before rejecting its timeout", async () => {

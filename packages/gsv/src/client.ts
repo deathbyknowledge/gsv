@@ -64,6 +64,8 @@ type PendingRequest = {
   timeoutId: TimerHandle;
   call: string;
   bodyAbort?: AbortController;
+  abortSignal?: AbortSignal;
+  abortListener?: () => void;
 };
 
 type UnionToIntersection<U> = (U extends unknown ? (value: U) => void : never) extends (
@@ -104,6 +106,7 @@ export type GsvBody = BinaryBody;
 
 export type GsvRequestOptions = {
   body?: GsvBody;
+  signal?: AbortSignal;
 };
 
 export type GsvResponse<T = unknown> = {
@@ -653,6 +656,11 @@ export class GSVClient {
     args: unknown = {},
     options: GsvRequestOptions = {},
   ): Promise<GsvResponse<T>> {
+    if (options.signal?.aborted) {
+      const error = requestAbortError(options.signal);
+      void options.body?.stream.cancel(error).catch(() => {});
+      throw error;
+    }
     const socket = this.socket;
     if (!socket || socket.readyState !== WEBSOCKET_OPEN) {
       throw new Error("Not connected");
@@ -817,6 +825,7 @@ export class GSVClient {
   ): Promise<GsvResponse<unknown>> {
     const id = makeId();
     const body = options.body;
+    const signal = options.signal;
     const outgoing = body ? this.bodyChannel.prepare(body) : undefined;
     const frame: GsvRequestFrame = {
       type: "req",
@@ -829,11 +838,11 @@ export class GSVClient {
     const bodyAbort = body ? new AbortController() : undefined;
 
     return new Promise((resolve, reject) => {
-      const timeoutId = globalThis.setTimeout(() => {
-        if (!this.pending.delete(id)) {
+      const cancelPending = (error: Error): void => {
+        const pending = this.takePending(id);
+        if (!pending) {
           return;
         }
-        const error = new Error(`Request timed out after ${timeoutMs}ms: ${call}`);
         try {
           socket.send(JSON.stringify({
             type: "sig",
@@ -841,38 +850,54 @@ export class GSVClient {
             payload: { id, reason: error.message },
           } satisfies GsvSignalFrame));
         } catch {}
-        bodyAbort?.abort(error);
-        reject(error);
+        pending.bodyAbort?.abort(error);
+        void outgoing?.cancel(error);
+        pending.reject(error);
+      };
+      const timeoutId = globalThis.setTimeout(() => {
+        const error = new Error(`Request timed out after ${timeoutMs}ms: ${call}`);
+        cancelPending(error);
       }, timeoutMs);
 
-      this.pending.set(id, {
+      const pending: PendingRequest = {
         resolve,
         reject,
         timeoutId,
         call,
         bodyAbort,
-      });
+        abortSignal: signal,
+      };
+      this.pending.set(id, pending);
+      if (signal) {
+        const abortListener = () => cancelPending(requestAbortError(signal));
+        pending.abortListener = abortListener;
+        signal.addEventListener("abort", abortListener, { once: true });
+        if (signal.aborted) {
+          abortListener();
+          return;
+        }
+      }
 
       try {
         socket.send(JSON.stringify(frame));
+        if (!this.pending.has(id)) {
+          return;
+        }
         if (outgoing) {
           void outgoing.send(bodyAbort?.signal).catch((error) => {
-            const pending = this.pending.get(id);
+            const pending = this.takePending(id);
             if (!pending) {
               return;
             }
-            this.pending.delete(id);
-            globalThis.clearTimeout(pending.timeoutId);
             pending.bodyAbort?.abort(error);
             pending.reject(error instanceof Error ? error : new Error("Failed to send request body"));
           });
         }
       } catch (error) {
-        this.pending.delete(id);
-        globalThis.clearTimeout(timeoutId);
-        bodyAbort?.abort(error);
+        const pending = this.takePending(id);
+        pending?.bodyAbort?.abort(error);
         void outgoing?.cancel(error);
-        reject(error instanceof Error ? error : new Error("Failed to send request"));
+        pending?.reject(error instanceof Error ? error : new Error("Failed to send request"));
       }
     });
   }
@@ -987,7 +1012,7 @@ export class GSVClient {
       return;
     }
 
-    const pending = this.pending.get(parsed.id);
+    const pending = this.takePending(parsed.id);
     if (!pending) {
       if (parsed.ok && parsed.body !== undefined) {
         try {
@@ -997,8 +1022,6 @@ export class GSVClient {
       return;
     }
 
-    this.pending.delete(parsed.id);
-    globalThis.clearTimeout(pending.timeoutId);
     pending.bodyAbort?.abort(new Error(`Request completed: ${pending.call}`));
 
     if (parsed.ok) {
@@ -1088,13 +1111,25 @@ export class GSVClient {
     return this.requestTimeoutsMs[call] ?? this.defaultRequestTimeoutMs;
   }
 
+  private takePending(id: string): PendingRequest | null {
+    const pending = this.pending.get(id) ?? null;
+    if (!pending) {
+      return null;
+    }
+    this.pending.delete(id);
+    globalThis.clearTimeout(pending.timeoutId);
+    if (pending.abortSignal && pending.abortListener) {
+      pending.abortSignal.removeEventListener("abort", pending.abortListener);
+    }
+    return pending;
+  }
+
   private rejectAllPending(error: Error): void {
-    for (const pending of this.pending.values()) {
-      globalThis.clearTimeout(pending.timeoutId);
+    for (const id of [...this.pending.keys()]) {
+      const pending = this.takePending(id)!;
       pending.bodyAbort?.abort(error);
       pending.reject(error);
     }
-    this.pending.clear();
   }
 
   private abortAllInbound(error: Error): void {
@@ -1435,6 +1470,13 @@ function errorMessage(value: unknown, fallback: string): string {
     return value;
   }
   return fallback;
+}
+
+function requestAbortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) {
+    return signal.reason;
+  }
+  return new Error(errorMessage(signal.reason, "Request cancelled"));
 }
 
 function errorCode(value: unknown): number {
