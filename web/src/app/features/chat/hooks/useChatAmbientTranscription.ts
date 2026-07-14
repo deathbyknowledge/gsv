@@ -14,6 +14,12 @@ import {
 } from "../../presence/constants";
 import { createPresenceRecorder, type AmbientSegment, type PresenceRecorder } from "../../presence/recording";
 import type { PresenceState } from "../../presence/types";
+import {
+  dictationTitle,
+  formatVoiceInputAlert,
+  liveTranscriptionTitle,
+  normalizeTranscriptionRequestError,
+} from "../domain/voiceFeedback";
 
 type ChatAmbientTranscriptionArgs = {
   activeRunCount?: number;
@@ -84,44 +90,6 @@ function cancellationError(message: string): Error {
   const error = new Error(message);
   error.name = "AbortError";
   return error;
-}
-
-function ambientTitle(state: PresenceState, note: string): string {
-  if (state === "listening") {
-    return note || "Stop live transcription";
-  }
-  if (state === "capturing") {
-    return note || "Capturing speech";
-  }
-  if (state === "transcribing") {
-    return note || "Transcribing speech";
-  }
-  if (state === "sending") {
-    return note || "Sending transcript";
-  }
-  if (state === "unsupported") {
-    return "Live transcription is unavailable in this browser";
-  }
-  if (state === "error") {
-    return note || "Live transcription needs attention";
-  }
-  return "Start live transcription";
-}
-
-function dictationTitle(state: PresenceState, note: string): string {
-  if (state === "recording") {
-    return note || "Stop dictation";
-  }
-  if (state === "transcribing") {
-    return note || "Transcribing dictation";
-  }
-  if (state === "unsupported") {
-    return "Dictation is unavailable in this browser";
-  }
-  if (state === "error") {
-    return note || "Dictation needs attention";
-  }
-  return "Dictate message";
 }
 
 function isLiveState(state: PresenceState): boolean {
@@ -198,10 +166,12 @@ export function useChatAmbientTranscription({
   const setRecorderState = useCallback((nextState: PresenceState, message?: string) => {
     stateRef.current = nextState;
     setStateValue(nextState);
-    if (message !== undefined) {
+    if (nextState === "error") {
+      setNoteValue("");
+    } else if (message !== undefined) {
       setNoteValue(message);
     }
-    setError(nextState === "error" ? message || "Voice input failed" : "");
+    setError(nextState === "error" ? formatVoiceInputAlert(message) : "");
   }, []);
 
   const setMode = useCallback((nextMode: ChatVoiceInputMode) => {
@@ -233,18 +203,22 @@ export function useChatAmbientTranscription({
     target?: ChatTranscriptionTarget,
     signal?: AbortSignal,
   ): Promise<AiTranscriptionCreateResult> => {
-    const result = await requestAudioTranscription(client, {
-      audio: {
-        mimeType,
-        filename: presenceRecordingFilename(mimeType, startedAt),
-      },
-      ...(target?.processId ? { pid: target.processId } : {}),
-    }, blob, signal);
-    const text = typeof result.text === "string" ? result.text.trim() : "";
-    if (!text) {
-      throw new Error("No speech was transcribed");
+    try {
+      const result = await requestAudioTranscription(client, {
+        audio: {
+          mimeType,
+          filename: presenceRecordingFilename(mimeType, startedAt),
+        },
+        ...(target?.processId ? { pid: target.processId } : {}),
+      }, blob, signal);
+      const text = typeof result.text === "string" ? result.text.trim() : "";
+      if (!text) {
+        throw new Error("No speech was transcribed");
+      }
+      return { ...result, text };
+    } catch (error) {
+      throw normalizeTranscriptionRequestError(error);
     }
-    return { ...result, text };
   }, [client]);
 
   const processAmbientSegment = useCallback(async (
@@ -337,8 +311,6 @@ export function useChatAmbientTranscription({
       cancelLiveSession(message);
       recorderRef.current?.stopAmbient();
       setMode("idle");
-      setError(message);
-      setNoteValue(message);
       setRecorderState("error", message);
     }
   }, [cancelLiveSession, setMode, setRecorderState, transcribeBlob]);
@@ -604,7 +576,7 @@ export function useChatAmbientTranscription({
   const liveUnavailable = !liveActive && (disabled || !connected || !canUseAmbientMode());
   const dictationUnavailable = !dictationActive && (disabled || !connected || !canUseBrowserVoiceRecorder());
   const currentDictationTitle = dictationTitle(state, note);
-  const currentLiveTitle = ambientTitle(state, note);
+  const currentLiveTitle = liveTranscriptionTitle(state, note);
   const title = liveActive ? currentLiveTitle : currentDictationTitle;
 
   return {
