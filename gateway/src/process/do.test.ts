@@ -6313,82 +6313,80 @@ describe("Process DO — mechanical", () => {
         process.store.markDispatched("dispatch-1");
       });
 
-      let releaseCancellation!: () => void;
-      const cancellationBlocked = new Promise<void>((resolve) => {
-        releaseCancellation = resolve;
-      });
       const cancelSpy = vi
         .spyOn(Kernel.prototype as any, "cancelProcessRequests")
-        .mockImplementation(async () => {
-          await cancellationBlocked;
+        .mockImplementation(async function (this: Kernel) {
+          const kernel = this as any;
+          await new Promise<void>((resolve) => {
+            kernel.releaseTestCancellation = resolve;
+          });
+          kernel.testCancellationFinished = true;
           return 1;
         });
+      const kernel = await getKernelPtr();
 
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
       try {
-        const response = await Promise.race([
-          stub.recvFrame(makeReq("proc.abort", {})),
-          new Promise<never>((_resolve, reject) => {
-            timeoutId = setTimeout(
-              () => reject(new Error("proc.abort waited for request cancellation")),
-              150,
-            );
-          }),
-        ]) as ResponseOkFrame;
+        const response = await runInDurableObject(stub, async (instance: Process) => {
+          return await (instance as any).recvFrame(makeReq("proc.abort", {}));
+        }) as ResponseOkFrame;
+        await vi.waitFor(() => expect(cancelSpy).toHaveBeenCalledOnce());
         expect(response.data).toMatchObject({ ok: true, aborted: true, runId: "run-1" });
       } finally {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-        releaseCancellation();
-        await cancellationBlocked;
         cancelSpy.mockRestore();
+        const released = await runInDurableObject(kernel, (instance: Kernel) => {
+          const release = (instance as any).releaseTestCancellation;
+          if (typeof release !== "function") {
+            return false;
+          }
+          release();
+          return true;
+        });
+        if (released) {
+          await vi.waitFor(async () => {
+            const finished = await runInDurableObject(kernel, (instance: Kernel) => {
+              return (instance as any).testCancellationFinished === true;
+            });
+            expect(finished).toBe(true);
+          });
+        }
       }
     });
 
-    it("returns without waiting for signal fanout delivery", async () => {
-      const pid = "mech-abort-nonblocking-signal";
+    it("returns without waiting for run-finish delivery", async () => {
+      const pid = "mech-abort-nonblocking-finish";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
-      await runInDurableObject(stub, (instance: Process) => {
+      const res = await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         process.currentRun = { runId: "run-1" };
-      });
-
-      let releaseSignalDispatch!: () => void;
-      const signalDispatchBlocked = new Promise<void>((resolve) => {
-        releaseSignalDispatch = resolve;
-      });
-      const signalSpy = vi
-        .spyOn(Kernel.prototype as never, "handleProcessSignal" as never)
-        .mockImplementation(async () => {
+        let releaseSignalDispatch!: () => void;
+        const signalDispatchBlocked = new Promise<void>((resolve) => {
+          releaseSignalDispatch = resolve;
+        });
+        const delivery = vi.fn(async () => {
           await signalDispatchBlocked;
         });
+        process.onRunFinishDelivery = delivery;
 
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const res = await Promise.race([
-          stub.recvFrame(makeReq("proc.abort", {})),
-          new Promise<never>((_resolve, reject) => {
-            timeoutId = setTimeout(() => reject(new Error("proc.abort timed out waiting for signal delivery")), 150);
-          }),
-        ]) as ResponseOkFrame;
-
-        expect(res.ok).toBe(true);
-        expect(res.data).toMatchObject({
-          ok: true,
-          pid,
-          aborted: true,
-          runId: "run-1",
-        });
-      } finally {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
+        try {
+          const response = await process.recvFrame(makeReq("proc.abort", {}));
+          expect(delivery).toHaveBeenCalledOnce();
+          return response;
+        } finally {
+          releaseSignalDispatch();
+          for (const result of delivery.mock.results) {
+            await result.value;
+          }
         }
-        releaseSignalDispatch();
-        await signalDispatchBlocked;
-        signalSpy.mockRestore();
-      }
+      }) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      expect(res.data).toMatchObject({
+        ok: true,
+        pid,
+        aborted: true,
+        runId: "run-1",
+      });
     });
   });
 
