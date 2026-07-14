@@ -52,6 +52,9 @@ libc = "0.2"
 # Only needed when rustls feature is enabled
 rustls_crate = { package = "rustls", version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [profile.release]
 strip = true
 lto = true

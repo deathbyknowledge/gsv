@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -52,6 +52,10 @@ const DEV_RELEASE_TAG: &str = "dev";
 const WORKERS_SUBDOMAIN_API_DATE: &str = "2025-08-01";
 const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
 const CLOUDFLARE_RETRY_BASE_MS: u64 = 400;
+const WORKERS_DEV_SCRIPT_NAME_MAX_LEN: usize = 63;
+const R2_BUCKET_NAME_MAX_LEN: usize = 63;
+const DEPLOY_LEASE_SCHEMA_VERSION: u32 = 1;
+const DEPLOY_STATUS_SCHEMA_VERSION: u32 = 1;
 const MAX_SOURCE_MAP_UPLOAD_BYTES: usize = 2 * 1024 * 1024;
 static DEPLOY_NOTIFICATION_MODE: AtomicBool = AtomicBool::new(false);
 
@@ -63,7 +67,9 @@ pub struct DeployInstance {
 impl DeployInstance {
     pub fn parse(raw: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let name = normalize_instance_name(raw)?;
-        Ok(Self { name })
+        let instance = Self { name };
+        instance.validate_resource_names()?;
+        Ok(instance)
     }
 
     pub fn name(&self) -> &str {
@@ -113,6 +119,38 @@ impl DeployInstance {
                 .unwrap_or_else(|| service.to_string()),
             _ => service.to_string(),
         }
+    }
+
+    fn validate_resource_names(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let bucket_name = self.storage_bucket_name();
+        if bucket_name.len() > R2_BUCKET_NAME_MAX_LEN {
+            return Err(format!(
+                "GSV instance '{}' produces R2 bucket name '{}' with {} characters; the maximum is {}",
+                self.name,
+                bucket_name,
+                bucket_name.len(),
+                R2_BUCKET_NAME_MAX_LEN
+            )
+            .into());
+        }
+
+        for component in available_components() {
+            let script_name = self
+                .script_name(component)
+                .ok_or_else(|| format!("Unsupported component '{}'", component))?;
+            if script_name.len() > WORKERS_DEV_SCRIPT_NAME_MAX_LEN {
+                return Err(format!(
+                    "GSV instance '{}' produces Worker name '{}' with {} characters; workers.dev names have a maximum of {}",
+                    self.name,
+                    script_name,
+                    script_name.len(),
+                    WORKERS_DEV_SCRIPT_NAME_MAX_LEN
+                )
+                .into());
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -406,6 +444,213 @@ struct WorkerModuleUpload {
 #[derive(Debug, Clone)]
 pub struct DeployApplyResult {
     pub gateway_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeployLeaseManifest {
+    pub schema_version: u32,
+    pub instance: String,
+    pub release: String,
+    pub components: Vec<String>,
+    pub workers: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r2_bucket: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gateway_url: Option<String>,
+}
+
+impl DeployLeaseManifest {
+    pub fn new(
+        instance: &DeployInstance,
+        release: &str,
+        components: &[String],
+        gateway_url: Option<String>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        if components.is_empty() {
+            return Err("Cannot create a deployment lease without components".into());
+        }
+
+        let components = normalize_components(components)?;
+        let mut workers = BTreeMap::new();
+        for component in &components {
+            let script_name = instance
+                .script_name(component)
+                .ok_or_else(|| format!("Unsupported component '{}'", component))?;
+            workers.insert(component.clone(), script_name);
+        }
+        let includes_gateway = components
+            .iter()
+            .any(|component| component == COMPONENT_GATEWAY);
+
+        Ok(Self {
+            schema_version: DEPLOY_LEASE_SCHEMA_VERSION,
+            instance: instance.name().to_string(),
+            release: release.to_string(),
+            components,
+            workers,
+            r2_bucket: includes_gateway.then(|| instance.storage_bucket_name()),
+            gateway_url: if includes_gateway { gateway_url } else { None },
+        })
+    }
+}
+
+pub fn write_deploy_lease_manifest(
+    path: &Path,
+    manifest: &DeployLeaseManifest,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let explicit_parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    if let Some(parent) = explicit_parent {
+        fs::create_dir_all(parent)?;
+    }
+    let parent = explicit_parent.unwrap_or_else(|| Path::new("."));
+    let file_name = path.file_name().ok_or_else(|| {
+        format!(
+            "Deployment lease path '{}' has no file name",
+            path.display()
+        )
+    })?;
+    let mut temporary_file_name = file_name.to_os_string();
+    temporary_file_name.push(format!(".{}.tmp", uuid::Uuid::new_v4()));
+    let temporary_path = parent.join(temporary_file_name);
+    let encoded = serde_json::to_string_pretty(manifest)?;
+    let write_result = (|| -> Result<(), std::io::Error> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)?;
+        file.write_all(encoded.as_bytes())?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        drop(file);
+        replace_file_atomically(&temporary_path, path)
+    })();
+
+    if let Err(error) = write_result {
+        let cleanup_result = fs::remove_file(&temporary_path);
+        if let Err(cleanup_error) = cleanup_result {
+            if cleanup_error.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!(
+                    "Failed to write deployment lease {}: {}; also failed to remove temporary file {}: {}",
+                    path.display(),
+                    error,
+                    temporary_path.display(),
+                    cleanup_error
+                )
+                .into());
+            }
+        }
+        return Err(format!(
+            "Failed to write deployment lease {}: {}",
+            path.display(),
+            error
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_file_atomically(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn replace_file_atomically(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: both paths are NUL-terminated UTF-16 buffers that remain alive for the call.
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeployState {
+    Absent,
+    Partial,
+    Deployed,
+}
+
+impl std::fmt::Display for DeployState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            Self::Absent => "absent",
+            Self::Partial => "partial",
+            Self::Deployed => "deployed",
+        };
+        formatter.write_str(value)
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeployWorkerStatus {
+    pub component: String,
+    pub name: String,
+    pub deployed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migration_tag: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeployBucketStatus {
+    pub name: String,
+    pub exists: bool,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeployStatus {
+    pub schema_version: u32,
+    pub instance: String,
+    pub state: DeployState,
+    pub workers: Vec<DeployWorkerStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r2_bucket: Option<DeployBucketStatus>,
+}
+
+fn deploy_state(
+    workers: &[DeployWorkerStatus],
+    r2_bucket: Option<&DeployBucketStatus>,
+) -> DeployState {
+    let resource_states = workers
+        .iter()
+        .map(|worker| worker.deployed)
+        .chain(r2_bucket.into_iter().map(|bucket| bucket.exists))
+        .collect::<Vec<_>>();
+    if resource_states.is_empty() {
+        DeployState::Absent
+    } else if resource_states.iter().all(|exists| *exists) {
+        DeployState::Deployed
+    } else if resource_states.iter().any(|exists| *exists) {
+        DeployState::Partial
+    } else {
+        DeployState::Absent
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1103,7 +1348,7 @@ where
                 let status = response.status();
                 if is_retryable_cloudflare_status(status) && attempt < CLOUDFLARE_MAX_ATTEMPTS {
                     let delay = retry_delay_ms(attempt);
-                    println!(
+                    eprintln!(
                         "Warning: {} returned {} (attempt {}/{}). Retrying in {}ms...",
                         action, status, attempt, CLOUDFLARE_MAX_ATTEMPTS, delay
                     );
@@ -1115,7 +1360,7 @@ where
             Err(error) => {
                 if is_retryable_transport_error(&error) && attempt < CLOUDFLARE_MAX_ATTEMPTS {
                     let delay = retry_delay_ms(attempt);
-                    println!(
+                    eprintln!(
                         "Warning: {} transport error on attempt {}/{}: {}. Retrying in {}ms...",
                         action, attempt, CLOUDFLARE_MAX_ATTEMPTS, error, delay
                     );
@@ -1786,6 +2031,18 @@ fn deploy_order(component: &str) -> usize {
         COMPONENT_CHANNEL_DISCORD => 3,
         COMPONENT_CHANNEL_TELEGRAM => 4,
         COMPONENT_GATEWAY => 10,
+        _ => 100,
+    }
+}
+
+fn teardown_order(component: &str) -> usize {
+    match component {
+        COMPONENT_CHANNEL_WHATSAPP => 0,
+        COMPONENT_CHANNEL_DISCORD => 1,
+        COMPONENT_CHANNEL_TELEGRAM => 2,
+        COMPONENT_GATEWAY => 10,
+        COMPONENT_ASSEMBLER => 20,
+        COMPONENT_RIPGIT => 21,
         _ => 100,
     }
 }
@@ -2838,6 +3095,7 @@ pub async fn destroy_deploy(
     components: &[String],
     delete_bucket_resource: bool,
     purge_bucket_resource: bool,
+    verify_destroyed_resources: bool,
     instance: &DeployInstance,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if components.is_empty() {
@@ -2845,7 +3103,7 @@ pub async fn destroy_deploy(
     }
 
     let mut component_order = components.to_vec();
-    component_order.sort_by_key(|component| deploy_order(component));
+    component_order.sort_by_key(|component| teardown_order(component));
 
     let mut scripts_to_delete = Vec::new();
     for component in &component_order {
@@ -2871,7 +3129,9 @@ pub async fn destroy_deploy(
     }
 
     if delete_bucket_resource {
-        if purge_bucket_resource {
+        let bucket_exists =
+            r2_bucket_exists(&client, account_id, api_token, &storage_bucket_name, None).await?;
+        if bucket_exists && purge_bucket_resource {
             println!(
                 "Purging objects from R2 bucket {} before deletion...",
                 storage_bucket_name
@@ -2889,30 +3149,35 @@ pub async fn destroy_deploy(
             }
         }
 
-        let delete_result =
-            delete_r2_bucket(&client, account_id, api_token, &storage_bucket_name, None).await?;
-        match delete_result {
-            DeleteBucketResult::Deleted => {
-                println!("Deleted R2 bucket {}", storage_bucket_name);
-            }
-            DeleteBucketResult::NotFound => {
-                println!("R2 bucket {} was already absent", storage_bucket_name);
-            }
-            DeleteBucketResult::NotEmpty => {
-                println!(
-                    "R2 bucket {} was not deleted because it is not empty.",
-                    storage_bucket_name
-                );
-                if purge_bucket_resource {
+        if bucket_exists {
+            let delete_result =
+                delete_r2_bucket(&client, account_id, api_token, &storage_bucket_name, None)
+                    .await?;
+            match delete_result {
+                DeleteBucketResult::Deleted => {
+                    println!("Deleted R2 bucket {}", storage_bucket_name);
+                }
+                DeleteBucketResult::NotFound => {
+                    println!("R2 bucket {} was already absent", storage_bucket_name);
+                }
+                DeleteBucketResult::NotEmpty => {
                     println!(
-                        "Warning: bucket still reported non-empty after purge. Retry shortly; R2 can be eventually consistent."
+                        "R2 bucket {} was not deleted because it is not empty.",
+                        storage_bucket_name
                     );
-                } else {
-                    println!(
-                        "Tip: rerun with `--purge-bucket` to delete objects automatically before removing the bucket."
-                    );
+                    if purge_bucket_resource {
+                        println!(
+                            "Warning: bucket still reported non-empty after purge. Retry shortly; R2 can be eventually consistent."
+                        );
+                    } else {
+                        println!(
+                            "Tip: rerun with `--purge-bucket` to delete objects automatically before removing the bucket."
+                        );
+                    }
                 }
             }
+        } else {
+            println!("R2 bucket {} was already absent", storage_bucket_name);
         }
     } else if selected_components.contains(COMPONENT_GATEWAY) {
         println!(
@@ -2921,16 +3186,165 @@ pub async fn destroy_deploy(
         );
     }
 
+    if verify_destroyed_resources {
+        println!("\nVerifying teardown...");
+        verify_deploy_destroyed(
+            &client,
+            account_id,
+            api_token,
+            components,
+            delete_bucket_resource,
+            purge_bucket_resource,
+            instance,
+        )
+        .await?;
+        println!("Verified selected infrastructure is absent.");
+    }
+
     println!("\nTeardown complete.");
     Ok(())
 }
 
-pub async fn print_deploy_status(
+async fn verify_deploy_destroyed(
+    client: &reqwest::Client,
+    account_id: &str,
+    api_token: &str,
+    components: &[String],
+    verify_bucket_absent: bool,
+    purge_bucket_resource: bool,
+    instance: &DeployInstance,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let storage_bucket_name = instance.storage_bucket_name();
+    let mut remaining_workers = Vec::new();
+    let mut bucket_exists = false;
+
+    for attempt in 1..=CLOUDFLARE_MAX_ATTEMPTS {
+        remaining_workers = get_deploy_worker_statuses_with_client(
+            client, account_id, api_token, components, instance,
+        )
+        .await?
+        .into_iter()
+        .filter(|worker| worker.deployed)
+        .map(|worker| format!("{} ({})", worker.component, worker.name))
+        .collect();
+
+        bucket_exists = if verify_bucket_absent {
+            r2_bucket_exists(client, account_id, api_token, &storage_bucket_name, None).await?
+        } else {
+            false
+        };
+
+        if bucket_exists {
+            if purge_bucket_resource {
+                let deleted_objects = purge_r2_bucket_objects(
+                    client,
+                    account_id,
+                    api_token,
+                    &storage_bucket_name,
+                    None,
+                )
+                .await?;
+                if deleted_objects > 0 {
+                    println!(
+                        "Purged {} additional object(s) from R2 bucket {} during verification",
+                        deleted_objects, storage_bucket_name
+                    );
+                }
+            }
+
+            let _ =
+                delete_r2_bucket(client, account_id, api_token, &storage_bucket_name, None).await?;
+            bucket_exists =
+                r2_bucket_exists(client, account_id, api_token, &storage_bucket_name, None).await?;
+        }
+
+        if remaining_workers.is_empty() && !bucket_exists {
+            return Ok(());
+        }
+
+        if attempt < CLOUDFLARE_MAX_ATTEMPTS {
+            let delay = retry_delay_ms(attempt);
+            eprintln!(
+                "Warning: teardown residue remains (attempt {}/{}). Retrying in {}ms...",
+                attempt, CLOUDFLARE_MAX_ATTEMPTS, delay
+            );
+            sleep(Duration::from_millis(delay)).await;
+        }
+    }
+
+    let mut residue = Vec::new();
+    if !remaining_workers.is_empty() {
+        residue.push(format!("Workers: {}", remaining_workers.join(", ")));
+    }
+    if bucket_exists {
+        residue.push(format!("R2 bucket: {}", storage_bucket_name));
+    }
+
+    Err(format!(
+        "Teardown verification failed after {} attempts; remaining resources: {}",
+        CLOUDFLARE_MAX_ATTEMPTS,
+        residue.join("; ")
+    )
+    .into())
+}
+
+pub async fn get_deploy_status(
     account_id: &str,
     api_token: &str,
     components: &[String],
     instance: &DeployInstance,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<DeployStatus, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    get_deploy_status_with_client(&client, account_id, api_token, components, instance).await
+}
+
+async fn get_deploy_status_with_client(
+    client: &reqwest::Client,
+    account_id: &str,
+    api_token: &str,
+    components: &[String],
+    instance: &DeployInstance,
+) -> Result<DeployStatus, Box<dyn std::error::Error>> {
+    if components.is_empty() {
+        return Err("No components requested for status".into());
+    }
+
+    let workers =
+        get_deploy_worker_statuses_with_client(client, account_id, api_token, components, instance)
+            .await?;
+    let r2_bucket = if components
+        .iter()
+        .any(|component| component == COMPONENT_GATEWAY)
+    {
+        let storage_bucket_name = instance.storage_bucket_name();
+        let exists =
+            r2_bucket_exists(client, account_id, api_token, &storage_bucket_name, None).await?;
+        Some(DeployBucketStatus {
+            name: storage_bucket_name,
+            exists,
+        })
+    } else {
+        None
+    };
+
+    let state = deploy_state(&workers, r2_bucket.as_ref());
+
+    Ok(DeployStatus {
+        schema_version: DEPLOY_STATUS_SCHEMA_VERSION,
+        instance: instance.name().to_string(),
+        state,
+        workers,
+        r2_bucket,
+    })
+}
+
+async fn get_deploy_worker_statuses_with_client(
+    client: &reqwest::Client,
+    account_id: &str,
+    api_token: &str,
+    components: &[String],
+    instance: &DeployInstance,
+) -> Result<Vec<DeployWorkerStatus>, Box<dyn std::error::Error>> {
     if components.is_empty() {
         return Err("No components requested for status".into());
     }
@@ -2938,8 +3352,7 @@ pub async fn print_deploy_status(
     let mut component_order = components.to_vec();
     component_order.sort_by_key(|component| deploy_order(component));
 
-    let client = reqwest::Client::new();
-    let scripts = list_worker_scripts(&client, account_id, api_token).await?;
+    let scripts = list_worker_scripts(client, account_id, api_token).await?;
     let configured_gateway_script_name = instance
         .script_name(COMPONENT_GATEWAY)
         .ok_or("Unsupported gateway component")?;
@@ -2952,7 +3365,7 @@ pub async fn print_deploy_status(
         configured_gateway_script_name
     };
 
-    println!("\nWorkers:");
+    let mut workers = Vec::with_capacity(component_order.len());
     for component in &component_order {
         let script_name = if component == COMPONENT_GATEWAY {
             gateway_script_name.clone()
@@ -2962,33 +3375,45 @@ pub async fn print_deploy_status(
                 .ok_or_else(|| format!("Unsupported component '{}'", component))?
         };
 
-        if let Some(migration_tag) = scripts.get(&script_name) {
-            if let Some(tag) = migration_tag.as_deref() {
+        let migration_tag = scripts.get(&script_name).cloned().flatten();
+        workers.push(DeployWorkerStatus {
+            component: component.clone(),
+            name: script_name.clone(),
+            deployed: scripts.contains_key(&script_name),
+            migration_tag,
+        });
+    }
+
+    Ok(workers)
+}
+
+pub fn print_deploy_status(status: &DeployStatus) {
+    println!("\nWorkers:");
+    for worker in &status.workers {
+        if worker.deployed {
+            if let Some(tag) = worker.migration_tag.as_deref() {
                 println!(
                     "  {:<18} {:<24} deployed (migration: {})",
-                    component, script_name, tag
+                    worker.component, worker.name, tag
                 );
             } else {
-                println!("  {:<18} {:<24} deployed", component, script_name);
+                println!("  {:<18} {:<24} deployed", worker.component, worker.name);
             }
         } else {
-            println!("  {:<18} {:<24} missing", component, script_name);
+            println!("  {:<18} {:<24} missing", worker.component, worker.name);
         }
     }
 
-    if component_order.iter().any(|c| c == COMPONENT_GATEWAY) {
+    if let Some(bucket) = &status.r2_bucket {
         println!("\nShared infrastructure:");
-        let storage_bucket_name = instance.storage_bucket_name();
-        let bucket_exists =
-            r2_bucket_exists(&client, account_id, api_token, &storage_bucket_name, None).await?;
         println!(
             "  r2 bucket {:<26} {}",
-            storage_bucket_name,
-            if bucket_exists { "exists" } else { "missing" }
+            bucket.name,
+            if bucket.exists { "exists" } else { "missing" }
         );
     }
 
-    Ok(())
+    println!("\nState: {}", status.state);
 }
 
 fn gateway_http_url_to_ws_url(gateway_url: &str) -> String {
@@ -3356,6 +3781,32 @@ mod tests {
     }
 
     #[test]
+    fn teardown_orders_adapters_before_gateway_and_backing_workers() {
+        let mut components = vec![
+            COMPONENT_RIPGIT,
+            COMPONENT_GATEWAY,
+            COMPONENT_CHANNEL_TELEGRAM,
+            COMPONENT_ASSEMBLER,
+            COMPONENT_CHANNEL_WHATSAPP,
+            COMPONENT_CHANNEL_DISCORD,
+        ];
+
+        components.sort_by_key(|component| teardown_order(component));
+
+        assert_eq!(
+            components,
+            vec![
+                COMPONENT_CHANNEL_WHATSAPP,
+                COMPONENT_CHANNEL_DISCORD,
+                COMPONENT_CHANNEL_TELEGRAM,
+                COMPONENT_GATEWAY,
+                COMPONENT_ASSEMBLER,
+                COMPONENT_RIPGIT,
+            ]
+        );
+    }
+
+    #[test]
     fn deploy_instance_default_preserves_legacy_names() {
         let instance = DeployInstance::parse("gsv").unwrap();
 
@@ -3420,8 +3871,169 @@ mod tests {
             );
         }
 
-        assert!(DeployInstance::parse(DEFAULT_DEPLOY_INSTANCE).is_ok());
-        assert!(DeployInstance::parse("team-channel").is_ok());
+        DeployInstance::parse(DEFAULT_DEPLOY_INSTANCE).unwrap();
+        DeployInstance::parse("team-channel").unwrap();
+    }
+
+    #[test]
+    fn deploy_instance_validates_derived_cloudflare_name_lengths() {
+        let longest_worker_suffix = "-channel-whatsapp";
+        let maximum_instance_length = WORKERS_DEV_SCRIPT_NAME_MAX_LEN - longest_worker_suffix.len();
+        DeployInstance::parse(&"a".repeat(maximum_instance_length)).unwrap();
+
+        let worker_error = DeployInstance::parse(&"a".repeat(maximum_instance_length + 1))
+            .unwrap_err()
+            .to_string();
+        assert!(worker_error.contains("Worker name"));
+        assert!(worker_error.contains("channel-whatsapp"));
+        assert!(worker_error.contains("maximum of 63"));
+
+        let bucket_error = DeployInstance::parse(&"a".repeat(R2_BUCKET_NAME_MAX_LEN))
+            .unwrap_err()
+            .to_string();
+        assert!(bucket_error.contains("R2 bucket name"));
+        assert!(bucket_error.contains("maximum is 63"));
+    }
+
+    #[test]
+    fn deploy_lease_manifest_contains_only_resource_inventory() {
+        let instance = DeployInstance::parse("gsv-e2e-42").unwrap();
+        let components = vec![
+            COMPONENT_RIPGIT.to_string(),
+            COMPONENT_ASSEMBLER.to_string(),
+            COMPONENT_GATEWAY.to_string(),
+        ];
+        let manifest = DeployLeaseManifest::new(
+            &instance,
+            "local-sha-123",
+            &components,
+            Some("https://gsv-e2e-42.example.workers.dev".to_string()),
+        )
+        .unwrap();
+        let value = serde_json::to_value(&manifest).unwrap();
+
+        assert_eq!(value["schema_version"], DEPLOY_LEASE_SCHEMA_VERSION);
+        assert_eq!(value["instance"], "gsv-e2e-42");
+        assert_eq!(value["release"], "local-sha-123");
+        assert_eq!(value["r2_bucket"], "gsv-e2e-42-storage");
+        assert_eq!(value["workers"][COMPONENT_GATEWAY], "gsv-e2e-42");
+        assert_eq!(value["workers"][COMPONENT_RIPGIT], "gsv-e2e-42-ripgit");
+        assert_eq!(
+            value["gateway_url"],
+            "https://gsv-e2e-42.example.workers.dev"
+        );
+        assert!(value.get("api_token").is_none());
+        assert!(value.get("account_id").is_none());
+    }
+
+    #[test]
+    fn deploy_lease_writer_creates_parent_and_omits_gateway_resources() {
+        let root = temp_test_dir("lease-manifest");
+        let path = root.join("nested").join("lease.json");
+        let instance = DeployInstance::parse("gsv-e2e-43").unwrap();
+        let manifest = DeployLeaseManifest::new(
+            &instance,
+            "v0.4.0",
+            &[COMPONENT_RIPGIT.to_string()],
+            Some("https://ignored.example".to_string()),
+        )
+        .unwrap();
+
+        write_deploy_lease_manifest(&path, &manifest).unwrap();
+        let decoded: DeployLeaseManifest =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+
+        assert_eq!(decoded, manifest);
+        assert!(decoded.r2_bucket.is_none());
+        assert!(decoded.gateway_url.is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deploy_lease_writer_atomically_replaces_existing_manifest() {
+        let root = temp_test_dir("lease-replace");
+        let path = root.join("lease.json");
+        let instance = DeployInstance::parse("gsv-e2e-45").unwrap();
+        let planned =
+            DeployLeaseManifest::new(&instance, "sha-123", &[COMPONENT_GATEWAY.to_string()], None)
+                .unwrap();
+        let completed = DeployLeaseManifest::new(
+            &instance,
+            "sha-123",
+            &[COMPONENT_GATEWAY.to_string()],
+            Some("https://gsv-e2e-45.example.workers.dev".to_string()),
+        )
+        .unwrap();
+
+        write_deploy_lease_manifest(&path, &planned).unwrap();
+        write_deploy_lease_manifest(&path, &completed).unwrap();
+
+        let decoded: DeployLeaseManifest =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(decoded, completed);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deploy_lease_writer_cleans_temporary_file_after_replace_failure() {
+        let root = temp_test_dir("lease-cleanup");
+        let path = root.join("lease.json");
+        fs::create_dir(&path).unwrap();
+        let instance = DeployInstance::parse("gsv-e2e-46").unwrap();
+        let manifest =
+            DeployLeaseManifest::new(&instance, "sha-456", &[COMPONENT_GATEWAY.to_string()], None)
+                .unwrap();
+
+        assert!(write_deploy_lease_manifest(&path, &manifest).is_err());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deploy_status_state_covers_absent_partial_and_deployed_inventory() {
+        let mut workers = vec![DeployWorkerStatus {
+            component: COMPONENT_RIPGIT.to_string(),
+            name: "gsv-e2e-ripgit".to_string(),
+            deployed: false,
+            migration_tag: None,
+        }];
+        let mut bucket = DeployBucketStatus {
+            name: "gsv-e2e-storage".to_string(),
+            exists: false,
+        };
+
+        assert_eq!(deploy_state(&workers, Some(&bucket)), DeployState::Absent);
+        workers[0].deployed = true;
+        assert_eq!(deploy_state(&workers, Some(&bucket)), DeployState::Partial);
+        bucket.exists = true;
+        assert_eq!(deploy_state(&workers, Some(&bucket)), DeployState::Deployed);
+    }
+
+    #[test]
+    fn absent_deploy_status_serializes_as_machine_readable_success_state() {
+        let status = DeployStatus {
+            schema_version: DEPLOY_STATUS_SCHEMA_VERSION,
+            instance: "gsv-e2e-44".to_string(),
+            state: DeployState::Absent,
+            workers: vec![DeployWorkerStatus {
+                component: COMPONENT_GATEWAY.to_string(),
+                name: "gsv-e2e-44".to_string(),
+                deployed: false,
+                migration_tag: None,
+            }],
+            r2_bucket: Some(DeployBucketStatus {
+                name: "gsv-e2e-44-storage".to_string(),
+                exists: false,
+            }),
+        };
+        let value = serde_json::to_value(status).unwrap();
+
+        assert_eq!(value["schema_version"], DEPLOY_STATUS_SCHEMA_VERSION);
+        assert_eq!(value["state"], "absent");
+        assert_eq!(value["workers"][0]["deployed"], false);
+        assert_eq!(value["r2_bucket"]["exists"], false);
+        assert!(value["workers"][0].get("migration_tag").is_none());
     }
 
     #[test]

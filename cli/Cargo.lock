@@ -636,6 +636,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "whoami",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

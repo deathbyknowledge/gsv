@@ -166,6 +166,10 @@ pub(crate) enum InfraAction {
         #[arg(long)]
         bundle_dir: Option<PathBuf>,
 
+        /// Write a secret-free JSON lease manifest for this deployment
+        #[arg(long, value_name = "PATH")]
+        lease_manifest: Option<PathBuf>,
+
         /// Cloudflare API token (falls back to config `cloudflare.api_token`)
         #[arg(long, env = "CF_API_TOKEN")]
         api_token: Option<String>,
@@ -209,6 +213,10 @@ pub(crate) enum InfraAction {
         #[arg(long)]
         bundle_dir: Option<PathBuf>,
 
+        /// Write a secret-free JSON lease manifest for this deployment
+        #[arg(long, value_name = "PATH")]
+        lease_manifest: Option<PathBuf>,
+
         /// Cloudflare API token (falls back to config `cloudflare.api_token`)
         #[arg(long, env = "CF_API_TOKEN")]
         api_token: Option<String>,
@@ -224,6 +232,33 @@ pub(crate) enum InfraAction {
         /// Telegram bot token to upload as worker secret (`TELEGRAM_BOT_TOKEN`)
         #[arg(long, env = "TELEGRAM_BOT_TOKEN")]
         telegram_bot_token: Option<String>,
+    },
+
+    /// Show deployed infrastructure status
+    Status {
+        /// Component to inspect (repeat for multiple). Defaults to all when omitted.
+        #[arg(short = 'c', long = "component")]
+        component: Vec<String>,
+
+        /// Inspect all components
+        #[arg(long)]
+        all: bool,
+
+        /// Deployment instance prefix for Worker and bucket names
+        #[arg(long, env = "GSV_INSTANCE", default_value = "gsv")]
+        instance: String,
+
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Cloudflare API token (falls back to config `cloudflare.api_token`)
+        #[arg(long, env = "CF_API_TOKEN")]
+        api_token: Option<String>,
+
+        /// Cloudflare account ID override (falls back to config `cloudflare.account_id`)
+        #[arg(long, env = "CF_ACCOUNT_ID")]
+        account_id: Option<String>,
     },
 
     /// Destroy deployed infrastructure and optionally keep local device daemon
@@ -247,6 +282,10 @@ pub(crate) enum InfraAction {
         /// Purge all objects from the shared R2 bucket before deleting it (requires --delete-bucket)
         #[arg(long)]
         purge_bucket: bool,
+
+        /// Verify selected Workers, and a requested bucket, are absent after teardown
+        #[arg(long)]
+        verify: bool,
 
         /// Run interactive teardown wizard
         #[arg(long)]

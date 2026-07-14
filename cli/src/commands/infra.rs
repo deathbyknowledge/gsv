@@ -16,10 +16,20 @@ struct DeployCommandOptions {
     instance: String,
     force_fetch: bool,
     bundle_dir: Option<PathBuf>,
+    lease_manifest: Option<PathBuf>,
     api_token: Option<String>,
     account_id: Option<String>,
     discord_bot_token: Option<String>,
     telegram_bot_token: Option<String>,
+}
+
+struct StatusCommandOptions {
+    component: Vec<String>,
+    all: bool,
+    instance: String,
+    json: bool,
+    api_token: Option<String>,
+    account_id: Option<String>,
 }
 
 struct DestroyCommandOptions {
@@ -28,6 +38,7 @@ struct DestroyCommandOptions {
     instance: String,
     delete_bucket: bool,
     purge_bucket: bool,
+    verify: bool,
     wizard: bool,
     api_token: Option<String>,
     account_id: Option<String>,
@@ -40,6 +51,7 @@ struct DestroyDeployOptions {
     instance: String,
     delete_bucket: bool,
     purge_bucket: bool,
+    verify: bool,
     wizard: bool,
     api_token: Option<String>,
     account_id: Option<String>,
@@ -57,6 +69,7 @@ pub(crate) async fn run_infra(
             instance,
             force_fetch,
             bundle_dir,
+            lease_manifest,
             api_token,
             account_id,
             discord_bot_token,
@@ -71,6 +84,7 @@ pub(crate) async fn run_infra(
                     instance,
                     force_fetch,
                     bundle_dir,
+                    lease_manifest,
                     api_token,
                     account_id,
                     discord_bot_token,
@@ -86,6 +100,7 @@ pub(crate) async fn run_infra(
             instance,
             force_fetch,
             bundle_dir,
+            lease_manifest,
             api_token,
             account_id,
             discord_bot_token,
@@ -100,10 +115,32 @@ pub(crate) async fn run_infra(
                     instance,
                     force_fetch,
                     bundle_dir,
+                    lease_manifest,
                     api_token,
                     account_id,
                     discord_bot_token,
                     telegram_bot_token,
+                },
+            )
+            .await
+        }
+        InfraAction::Status {
+            component,
+            all,
+            instance,
+            json,
+            api_token,
+            account_id,
+        } => {
+            run_status_command(
+                cfg,
+                StatusCommandOptions {
+                    component,
+                    all,
+                    instance,
+                    json,
+                    api_token,
+                    account_id,
                 },
             )
             .await
@@ -114,6 +151,7 @@ pub(crate) async fn run_infra(
             instance,
             delete_bucket,
             purge_bucket,
+            verify,
             wizard,
             api_token,
             account_id,
@@ -127,6 +165,7 @@ pub(crate) async fn run_infra(
                     instance,
                     delete_bucket,
                     purge_bucket,
+                    verify,
                     wizard,
                     api_token,
                     account_id,
@@ -329,6 +368,7 @@ async fn run_destroy_command(
         instance,
         delete_bucket,
         purge_bucket,
+        verify,
         wizard,
         api_token,
         account_id,
@@ -348,6 +388,7 @@ async fn run_destroy_command(
             instance,
             delete_bucket,
             purge_bucket,
+            verify,
             wizard,
             api_token,
             account_id,
@@ -377,6 +418,55 @@ async fn run_destroy_command(
     )
 }
 
+async fn run_status_command(
+    cfg: &CliConfig,
+    options: StatusCommandOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let StatusCommandOptions {
+        component,
+        all,
+        instance,
+        json,
+        api_token,
+        account_id,
+    } = options;
+    deploy::set_notification_output(false);
+    let instance = deploy::DeployInstance::parse(&instance)?;
+
+    if all && !component.is_empty() {
+        return Err("Use either --all or one/more --component values, not both".into());
+    }
+
+    let components = if all {
+        deploy::available_components()
+            .iter()
+            .map(|component| (*component).to_string())
+            .collect::<Vec<_>>()
+    } else {
+        deploy::normalize_components(&component)?
+    };
+    let token = resolve_cloudflare_token_for_deploy(cfg, api_token, false, false)?;
+    let configured_account_id = account_id
+        .or_else(|| cfg.cloudflare.account_id.clone())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let resolved_account_id =
+        resolve_cloudflare_account_id_for_deploy(&token, configured_account_id, false, false)
+            .await?;
+    let status =
+        deploy::get_deploy_status(&resolved_account_id, &token, &components, &instance).await?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&status)?);
+    } else {
+        println!("Cloudflare account ID: {}", resolved_account_id);
+        println!("GSV instance: {}", instance.name());
+        deploy::print_deploy_status(&status);
+    }
+
+    Ok(())
+}
+
 async fn apply_deploy(
     cfg: &CliConfig,
     options: DeployCommandOptions,
@@ -388,6 +478,7 @@ async fn apply_deploy(
         instance,
         force_fetch,
         bundle_dir,
+        lease_manifest,
         api_token,
         account_id,
         discord_bot_token,
@@ -442,6 +533,12 @@ async fn apply_deploy(
         "Preparation complete. Applying deploy from version {}.",
         bundle_version
     );
+    if let Some(path) = lease_manifest.as_deref() {
+        let manifest =
+            deploy::DeployLeaseManifest::new(&instance, &bundle_version, &components, None)?;
+        deploy::write_deploy_lease_manifest(path, &manifest)?;
+        println!("Deployment lease: {}", path.display());
+    }
     let apply_result = deploy::apply_deploy(
         cfg,
         &resolved_account_id,
@@ -451,6 +548,16 @@ async fn apply_deploy(
         &instance,
     )
     .await?;
+
+    if let Some(path) = lease_manifest.as_deref() {
+        let manifest = deploy::DeployLeaseManifest::new(
+            &instance,
+            &bundle_version,
+            &components,
+            apply_result.gateway_url.clone(),
+        )?;
+        deploy::write_deploy_lease_manifest(path, &manifest)?;
+    }
 
     if deploying_discord {
         if let Some(bot_token) = discord_bot_token.as_deref() {
@@ -516,6 +623,7 @@ async fn destroy_deploy(
         instance,
         delete_bucket,
         purge_bucket,
+        verify,
         wizard,
         api_token,
         account_id,
@@ -603,11 +711,12 @@ async fn destroy_deploy(
         }
 
         let summary = format!(
-            "Account: {}\nComponents: {}\nDelete bucket: {}\nPurge bucket objects: {}",
+            "Account: {}\nComponents: {}\nDelete bucket: {}\nPurge bucket objects: {}\nVerify absence: {}",
             resolved_account_id,
             components.join(", "),
             if delete_bucket_resource { "yes" } else { "no" },
-            if purge_bucket_resource { "yes" } else { "no" }
+            if purge_bucket_resource { "yes" } else { "no" },
+            if verify { "yes" } else { "no" }
         );
         note("Teardown summary", summary)?;
         if !prompt_yes_no("Proceed with teardown?", false)? {
@@ -626,6 +735,7 @@ async fn destroy_deploy(
         &components,
         delete_bucket_resource,
         purge_bucket_resource,
+        verify,
         &instance,
     )
     .await

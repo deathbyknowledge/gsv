@@ -223,9 +223,10 @@ gsv packages sync <package> [--ref REF]
 ## Infrastructure Commands
 
 ```bash
-gsv infra deploy [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
-gsv infra upgrade [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
-gsv infra destroy [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
+gsv infra deploy [--version REF] [-c COMPONENT ... | --all] [--instance NAME] [--force-fetch] [--lease-manifest PATH]
+gsv infra upgrade [--version REF] [-c COMPONENT ... | --all] [--instance NAME] [--force-fetch] [--lease-manifest PATH]
+gsv infra status [-c COMPONENT ... | --all] [--instance NAME] [--json]
+gsv infra destroy [-c COMPONENT ... | --all] [--instance NAME] [--delete-bucket] [--purge-bucket] [--verify]
 ```
 
 Valid components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`,
@@ -239,10 +240,23 @@ Both accept `--bundle-dir PATH` for local bundles, `--api-token` or
 `CF_API_TOKEN`, `--account-id` or `CF_ACCOUNT_ID`, and `--discord-bot-token` or
 `DISCORD_BOT_TOKEN`.
 
+`--instance` scopes every generated Worker and R2 name, which allows isolated
+deployments to coexist in one Cloudflare account. `--lease-manifest` writes a
+schema-versioned JSON inventory before Cloudflare mutation begins, then
+atomically adds the gateway URL after a successful apply. The manifest contains
+resource names and release provenance, never credentials.
+
+`status` reports the selected instance as `absent`, `partial`, or `deployed`.
+With `--json`, stdout contains only the schema-versioned status document; an
+absent instance is a successful result, while authentication and API failures
+remain nonzero.
+
 `destroy` tears down Workers. If no component or `--all` is supplied, it targets
 all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`
 must be combined with it. Unless `--keep-device` is passed, `destroy` also
-attempts to uninstall the local device service.
+attempts to uninstall the local device service. `--verify` polls the selected
+Workers and any requested bucket, retries eventually consistent R2 cleanup, and
+returns nonzero if owned resources remain.
 
 ## Version
 
