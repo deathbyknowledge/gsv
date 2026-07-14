@@ -174,9 +174,9 @@ describe("handleSysBootstrap", () => {
         { owner: "root", repo: "gsv", branch: "main" },
         "root",
         "root@gsv.local",
-        "bootstrap root/gsv from https://github.com/deathbyknowledge/gsv#v0.4.0",
+        "bootstrap root/gsv from https://github.com/deathbyknowledge/gsv#refs/tags/v0.4.0",
         "https://github.com/deathbyknowledge/gsv",
-        "v0.4.0",
+        "refs/tags/v0.4.0",
       );
       expect(importFromUpstreamMock).toHaveBeenCalledWith(
         { owner: "root", repo: "gsv-manual", branch: "main" },

@@ -566,6 +566,7 @@ fn parse_upload_request(data: &[u8]) -> UploadRequest {
 
 fn parse_advertised_refs(data: &[u8]) -> AdvertisedRefs {
     let mut refs = AdvertisedRefs::default();
+    let mut peeled_refs = HashMap::new();
     let mut pos = 0;
     let mut saw_first_ref = false;
 
@@ -598,7 +599,7 @@ fn parse_advertised_refs(data: &[u8]) -> AdvertisedRefs {
                 let mut parts = text.splitn(2, ' ');
                 let hash = parts.next().unwrap_or("");
                 let ref_name = parts.next().unwrap_or("");
-                if hash.len() != 40 || ref_name.is_empty() || ref_name.ends_with("^{}") {
+                if hash.len() != 40 || ref_name.is_empty() {
                     continue;
                 }
 
@@ -606,12 +607,17 @@ fn parse_advertised_refs(data: &[u8]) -> AdvertisedRefs {
                     refs.capabilities = capabilities;
                     saw_first_ref = true;
                 }
-                refs.refs.insert(ref_name.to_string(), hash.to_string());
+                if let Some(ref_name) = ref_name.strip_suffix("^{}") {
+                    peeled_refs.insert(ref_name.to_string(), hash.to_string());
+                } else {
+                    refs.refs.insert(ref_name.to_string(), hash.to_string());
+                }
             }
             None => break,
         }
     }
 
+    refs.refs.extend(peeled_refs);
     refs
 }
 
@@ -1426,6 +1432,39 @@ mod tests {
         assert!(request.capabilities.contains("multi_ack_detailed"));
         assert!(request.capabilities.contains("no-done"));
         assert!(request.capabilities.contains("ofs-delta"));
+    }
+
+    #[test]
+    fn parse_advertised_refs_peels_annotated_tags() {
+        let mut body = Vec::new();
+        pkt_line_bytes(&mut body, b"# service=git-upload-pack\n");
+        body.extend_from_slice(b"0000");
+        pkt_line_bytes(
+            &mut body,
+            b"1111111111111111111111111111111111111111 refs/tags/v0.4.0\0multi_ack ofs-delta\n",
+        );
+        pkt_line_bytes(
+            &mut body,
+            b"2222222222222222222222222222222222222222 refs/tags/v0.4.0^{}\n",
+        );
+        pkt_line_bytes(
+            &mut body,
+            b"3333333333333333333333333333333333333333 refs/heads/main\n",
+        );
+
+        let advertised = parse_advertised_refs(&body);
+
+        assert_eq!(
+            advertised.refs.get("refs/tags/v0.4.0").map(String::as_str),
+            Some("2222222222222222222222222222222222222222")
+        );
+        assert_eq!(
+            advertised.refs.get("refs/heads/main").map(String::as_str),
+            Some("3333333333333333333333333333333333333333")
+        );
+        assert!(!advertised.refs.contains_key("refs/tags/v0.4.0^{}"));
+        assert!(advertised.capabilities.contains("multi_ack"));
+        assert!(advertised.capabilities.contains("ofs-delta"));
     }
 
     #[test]

@@ -3,7 +3,7 @@ use crate::connection::Connection;
 use base64::Engine;
 use reqwest::{multipart, StatusCode};
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -299,6 +299,15 @@ struct WranglerConfig {
     ai: Option<WranglerAiBinding>,
     assets: Option<WranglerAssetsConfig>,
     observability: Option<Value>,
+    limits: Option<WranglerLimits>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+struct WranglerLimits {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cpu_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subrequests: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -2554,6 +2563,10 @@ fn build_upload_metadata(
         metadata["observability"] = observability.clone();
     }
 
+    if let Some(limits) = &bundle.wrangler.limits {
+        metadata["limits"] = serde_json::to_value(limits)?;
+    }
+
     if let Some(uploaded_assets) = options.uploaded_assets {
         metadata["assets"] = json!({
             "jwt": uploaded_assets.jwt,
@@ -3421,6 +3434,9 @@ compatibility_date = "2026-03-18"
 
 [durable_objects]
 bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
+
+[limits]
+cpu_ms = 300000
 "#,
         )
         .unwrap();
@@ -3432,6 +3448,10 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
                 .as_ref()
                 .map(|config| config.bindings.len()),
             Some(1)
+        );
+        assert_eq!(
+            config.limits.and_then(|limits| limits.cpu_ms),
+            Some(300_000)
         );
     }
 
@@ -3457,7 +3477,7 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
     }
 
     #[test]
-    fn build_upload_metadata_includes_worker_loader_bindings() {
+    fn build_upload_metadata_includes_worker_config() {
         let instance = DeployInstance::default();
         let bundle = PreparedBundle {
             bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
@@ -3477,6 +3497,10 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
                 worker_loaders: vec![WranglerWorkerLoaderBinding {
                     binding: "LOADER".to_string(),
                 }],
+                limits: Some(WranglerLimits {
+                    cpu_ms: Some(300_000),
+                    subrequests: Some(1_000),
+                }),
                 ..WranglerConfig::default()
             },
             script_name: SCRIPT_GATEWAY.to_string(),
@@ -3506,6 +3530,8 @@ bindings = [{ name = "REPOSITORY", class_name = "Repository" }]
         assert!(bindings
             .iter()
             .any(|binding| { binding["name"] == "LOADER" && binding["type"] == "worker_loader" }));
+        assert_eq!(metadata["limits"]["cpu_ms"], 300_000);
+        assert_eq!(metadata["limits"]["subrequests"], 1_000);
     }
 
     #[test]
