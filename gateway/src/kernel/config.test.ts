@@ -163,10 +163,11 @@ describe("ConfigStore", () => {
     expect(orchestration).toContain("target: \"gsv\"");
     expect(orchestration).toContain("proc agents");
     expect(orchestration).toContain("proc spawn");
-    expect(orchestration).toContain("proc spawn --non-interactive");
+    expect(orchestration).toContain("For scheduled background work, pass `--non-interactive`");
     expect(orchestration).toContain("--as <account>");
+    expect(orchestration).toContain("Choose the scheduling mechanism by its delivery contract");
     expect(orchestration).toContain("sched add --here");
-    expect(orchestration).toContain("any resulting reply should be visible");
+    expect(orchestration).toContain("must re-enter the current process conversation");
     expect(orchestration).toContain("event admission, not completion");
     expect(orchestration).toContain("does not preserve an external adapter route");
     expect(orchestration).toContain("Delegation requires a process-backed caller");
