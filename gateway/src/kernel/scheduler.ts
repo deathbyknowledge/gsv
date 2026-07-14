@@ -460,6 +460,7 @@ export async function handleSchedulerAdd(
   const store = ctx.schedules;
   const now = Date.now();
   const expression = normalizeScheduleExpression(args.expression, ctx);
+  assertSchedulableAtExpression(expression, args.enabled !== false, now);
   const target = normalizeScheduleTarget(args.target);
   validateScheduleTargetAccess(target, ctx);
 
@@ -497,6 +498,15 @@ export async function handleSchedulerUpdate(
     : normalizeScheduleTarget(args.patch.target);
   validateScheduleTargetAccess(nextTarget, ctx);
 
+  const now = Date.now();
+  const nextExpression = args.patch.expression === undefined
+    ? existing.expression
+    : normalizeScheduleExpression(args.patch.expression, ctx);
+  const nextEnabled = args.patch.enabled ?? existing.enabled;
+  if (args.patch.expression !== undefined || args.patch.enabled === true) {
+    assertSchedulableAtExpression(nextExpression, nextEnabled, now);
+  }
+
   const patch = {
     name: args.patch.name === undefined
       ? undefined
@@ -505,11 +515,9 @@ export async function handleSchedulerUpdate(
       ? undefined
       : normalizeOptionalText(args.patch.description ?? undefined) ?? null,
     enabled: args.patch.enabled,
-    expression: args.patch.expression === undefined
-      ? undefined
-      : normalizeScheduleExpression(args.patch.expression, ctx),
+    expression: args.patch.expression === undefined ? undefined : nextExpression,
     target: nextTarget,
-    now: Date.now(),
+    now,
   };
 
   const previousWakeId = existing.wakeScheduleId;
@@ -593,6 +601,16 @@ export function computeNextRunAt(expression: ScheduleExpression, afterMs: number
       return computeEveryNextRunAt(expression, afterMs);
     case "cron":
       return computeCronNextRunAt(expression, afterMs);
+  }
+}
+
+function assertSchedulableAtExpression(
+  expression: ScheduleExpression,
+  enabled: boolean,
+  now: number,
+): void {
+  if (enabled && expression.kind === "at" && expression.atMs <= now) {
+    throw new Error("schedule atMs must be in the future");
   }
 }
 

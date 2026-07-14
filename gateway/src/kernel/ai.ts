@@ -364,7 +364,7 @@ export async function handleAiConfig(
     },
     skillIndex,
     accountApprovalPolicy,
-    capabilities: [...ctx.identity!.capabilities],
+    capabilities: [...(ctx.identity?.capabilities ?? [])],
     maxContextBytes,
     generationTimeoutMs,
     generationStreaming,

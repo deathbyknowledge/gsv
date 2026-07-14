@@ -531,6 +531,15 @@ describe("handleAiConfig", () => {
     expect(result.capabilities).toEqual(["codemode.run", "net.fetch"]);
   });
 
+  it("returns no capabilities for the pre-auth setup assistant", async () => {
+    const ctx = makeAiConfigContext();
+    delete ctx.identity;
+
+    const result = await handleAiConfig({}, ctx);
+
+    expect(result.capabilities).toEqual([]);
+  });
+
   it("uses a stored OpenAI Codex OAuth account when the provider key is blank", async () => {
     const ctx = makeAiConfigContext({
       "users/1000/ai/provider": "openai-codex",

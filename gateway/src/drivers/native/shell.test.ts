@@ -1027,6 +1027,66 @@ describe("proc native command", () => {
     );
   });
 
+  it("rejects unknown proc spawn options instead of appending them to the prompt", async () => {
+    const spawn = vi.fn();
+    const result = await handleShellExec(
+      { input: 'proc spawn --label facts "Generate a fact" --timeout 1m' },
+      makeContext({
+        capabilities: ["proc.spawn"],
+        procs: { spawn } as Partial<KernelContext["procs"]>,
+      }),
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.stderr).toContain("unexpected option: --timeout");
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("accepts dash-prefixed proc spawn prompts after the option delimiter", async () => {
+    const parent = {
+      processId: "task:pkg",
+      uid: IDENTITY.uid,
+      ownerUid: IDENTITY.uid,
+      gid: IDENTITY.gid,
+      gids: IDENTITY.gids,
+      username: IDENTITY.username,
+      home: IDENTITY.home,
+      cwd: IDENTITY.cwd,
+      state: "running",
+      activeRunId: null,
+      activeConversationId: null,
+      queuedCount: 0,
+      lastActiveAt: null,
+      interactive: true,
+      parentPid: null,
+      label: null,
+      contextFiles: [],
+      createdAt: 1,
+    };
+    const spawn = vi.fn();
+    const result = await handleShellExec(
+      { input: "proc spawn -- --timeout 1m" },
+      makeContext({
+        capabilities: ["proc.spawn"],
+        procs: {
+          get: vi.fn((pid: string) => pid === parent.processId ? parent : null),
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+          spawn,
+        } as Partial<KernelContext["procs"]>,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^proc:/),
+      expect.objectContaining({
+        call: "proc.send",
+        args: expect.objectContaining({ message: "--timeout 1m" }),
+      }),
+    );
+  });
+
   it("resets a process through the kernel lifecycle path", async () => {
     const { ctx, cancelBySourcePid, failIpcCallsByTarget } = makeLifecycleContext("proc.reset");
     sendFrameToProcessMock.mockResolvedValueOnce({
@@ -1212,6 +1272,191 @@ describe("proc native command", () => {
     }));
     const callId = createdCall.callId;
     expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(callId, createdCall.deadlineAt);
+  });
+
+  it("rejects delegation from a top-level shell before spawning", async () => {
+    const spawn = vi.fn();
+    const ctx = makeContext({
+      capabilities: ["proc.spawn", "proc.ipc.call"],
+      procs: { spawn } as Partial<KernelContext["procs"]>,
+    });
+    ctx.processId = undefined;
+
+    const result = await handleShellExec(
+      { input: "proc delegate investigate the schedule" },
+      ctx,
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.stderr).toContain("proc.ipc.call requires a process caller");
+    expect(spawn).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "IPC delivery returns an error",
+      throws: false,
+      error: "delivery failed",
+      removesConversation: true,
+      lookupError: null,
+    },
+    {
+      label: "IPC setup throws",
+      throws: true,
+      error: "IPC store unavailable",
+      removesConversation: true,
+      lookupError: null,
+    },
+    {
+      label: "conversation cleanup fails",
+      throws: false,
+      error: "delivery failed",
+      removesConversation: false,
+      lookupError: null,
+    },
+    {
+      label: "conversation lookup throws",
+      throws: false,
+      error: "delivery failed",
+      removesConversation: true,
+      lookupError: "conversation registry unavailable",
+    },
+  ])("rolls back a fresh delegated child when $label", async ({
+    throws,
+    error,
+    removesConversation,
+    lookupError,
+  }) => {
+    const children: string[] = [];
+    const parent = {
+      processId: "task:pkg",
+      uid: IDENTITY.uid,
+      ownerUid: IDENTITY.uid,
+      gid: IDENTITY.gid,
+      gids: IDENTITY.gids,
+      username: IDENTITY.username,
+      home: IDENTITY.home,
+      cwd: IDENTITY.cwd,
+      state: "running",
+      activeRunId: "parent-run",
+      activeConversationId: "ops",
+      queuedCount: 0,
+      lastActiveAt: 1,
+      interactive: true,
+      parentPid: null,
+      label: "parent",
+      contextFiles: [],
+      createdAt: 1,
+    };
+    const spawn = vi.fn((pid: string) => children.push(pid));
+    const kill = vi.fn();
+    const ipcCalls = {
+      create: throws
+        ? vi.fn(() => { throw new Error(error); })
+        : vi.fn(),
+      remove: vi.fn(),
+      cancelBySourcePid: vi.fn(),
+    };
+    const removeConversation = vi.fn(() => removesConversation);
+    const ctx = makeContext({
+      capabilities: ["proc.spawn", "proc.ipc.call"],
+      procs: {
+        get: vi.fn((pid: string) => {
+          if (pid === parent.processId) return parent;
+          if (pid === children[0]) {
+            return {
+              ...parent,
+              processId: pid,
+              parentPid: parent.processId,
+              activeRunId: null,
+              activeConversationId: null,
+              interactive: false,
+              label: "investigate the schedule",
+            };
+          }
+          return null;
+        }),
+        getOwnerUid: vi.fn(() => IDENTITY.uid),
+        spawn,
+        kill,
+      } as unknown as KernelContext["procs"],
+      ipcCalls: ipcCalls as unknown as KernelContext["ipcCalls"],
+      scheduleIpcCallTimeout: vi.fn(async () => "timeout-schedule"),
+      processRunId: "parent-run",
+    });
+    Object.assign(ctx, {
+      failIpcCallsByTarget: vi.fn(),
+      runRoutes: { delete: vi.fn() },
+    });
+    Object.assign(ctx.conversations, {
+      getByActivePid: vi.fn(() => {
+        if (lookupError) {
+          throw new Error(lookupError);
+        }
+        return {
+          conversationId: "conv-1",
+          archiveBase: "/home/sam/conversations/conv-1",
+        };
+      }),
+      remove: removeConversation,
+    });
+    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+      const req = frame as RequestFrame;
+      if (req.call === "proc.setidentity") {
+        return { type: "res", id: req.id, ok: true, data: { ok: true } };
+      }
+      if (req.call === "proc.ipc.deliver" && !throws) {
+        return {
+          type: "res",
+          id: req.id,
+          ok: false,
+          error: { code: "DELIVERY_FAILED", message: "delivery failed" },
+        };
+      }
+      if (req.call === "proc.kill") {
+        return {
+          type: "res",
+          id: req.id,
+          ok: true,
+          data: {
+            ok: true,
+            pid: children[0],
+            archivedMessages: 0,
+            archives: [],
+          },
+        };
+      }
+      throw new Error(`unexpected process frame: ${req.call}`);
+    });
+
+    const result = await handleShellExec(
+      { input: "proc delegate investigate the schedule" },
+      ctx,
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.stderr).toContain(`proc delegate: ${error}`);
+    if (lookupError) {
+      expect(result.stderr).toContain(`rollback failed: conversation lookup failed: ${lookupError}`);
+    } else if (removesConversation) {
+      expect(result.stderr).not.toContain("rollback failed");
+    } else {
+      expect(result.stderr).toContain("rollback failed: failed to remove conversation conv-1");
+    }
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      children[0],
+      expect.objectContaining({
+        call: "proc.kill",
+        args: { pid: children[0], archive: false },
+      }),
+    );
+    expect(kill).toHaveBeenCalledWith(children[0]);
+    if (lookupError) {
+      expect(removeConversation).not.toHaveBeenCalled();
+    } else {
+      expect(removeConversation).toHaveBeenCalledWith("conv-1");
+    }
   });
 
   it("rejects legacy profile selection in proc spawn", async () => {
@@ -2046,6 +2291,7 @@ describe("pkg shell command", () => {
     );
 
     expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("sched add --here");
     expect(result.stdout).toContain("sched add --json JSON");
     expect(result.stdout).toContain("Use crontab");
     expect(result.stdout).toContain("--all includes disabled schedules");
@@ -2436,6 +2682,246 @@ describe("pkg shell command", () => {
       },
     }));
     expect(setWakeScheduleId).toHaveBeenCalledWith("sched-2", "wake-1");
+  });
+
+  it("schedules an event into the caller's active conversation", async () => {
+    const wake = vi.fn(async () => "wake-here");
+    const setWakeScheduleId = vi.fn();
+    const create = vi.fn((input) => ({
+      id: "sched-here",
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      name: input.name,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+      overlapPolicy: "skip",
+      createdAtMs: input.now,
+      updatedAtMs: input.now,
+      state: {
+        nextRunAtMs: input.now + input.expression.everyMs,
+        runningAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runCount: 0,
+      },
+    }));
+    const caller = {
+      processId: "task:pkg",
+      uid: IDENTITY.uid,
+      ownerUid: IDENTITY.uid,
+      activeConversationId: "ops",
+    };
+
+    const result = await handleShellExec(
+      {
+        input: 'sched add --here --name "animal facts" --every 2m --message "Send a niche animal fact."',
+      },
+      makeContext({
+        capabilities: ["sched.add", "proc.send"],
+        procs: {
+          get: vi.fn((pid: string) => pid === caller.processId ? caller : null),
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+        } as Partial<KernelContext["procs"]>,
+        schedules: {
+          create,
+          setWakeScheduleId,
+        } as unknown as KernelContext["schedules"],
+        scheduleScheduleWake: wake,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("schedule_id=sched-here");
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      name: "animal facts",
+      expression: { kind: "every", everyMs: 120_000 },
+      target: {
+        kind: "process.event",
+        pid: "task:pkg",
+        conversationId: "ops",
+        message: "Send a niche animal fact.",
+      },
+    }));
+    expect(setWakeScheduleId).toHaveBeenCalledWith("sched-here", "wake-here");
+  });
+
+  it.each([
+    {
+      label: "cron with the configured timezone",
+      options: '--cron "*/5 * * * *"',
+      config: { "config/server/timezone": "Europe/Amsterdam" },
+      expectedExpression: {
+        kind: "cron",
+        expr: "*/5 * * * *",
+        timezone: "Europe/Amsterdam",
+      },
+      expectedConversation: "default",
+    },
+    {
+      label: "cron with an explicit timezone and conversation",
+      options: '--cron "0 9 * * *" --timezone Asia/Tokyo --conversation reviews',
+      config: {},
+      expectedExpression: {
+        kind: "cron",
+        expr: "0 9 * * *",
+        timezone: "Asia/Tokyo",
+      },
+      expectedConversation: "reviews",
+    },
+    {
+      label: "a relative one-shot delay",
+      options: "--after 15m",
+      config: {},
+      expectedExpression: { kind: "after", afterMs: 900_000 },
+      expectedConversation: "default",
+    },
+    {
+      label: "an absolute one-shot timestamp",
+      options: "--at 2099-01-02T03:04:05Z",
+      config: {},
+      expectedExpression: {
+        kind: "at",
+        atMs: Date.parse("2099-01-02T03:04:05Z"),
+      },
+      expectedConversation: "default",
+    },
+  ])("supports sched add --here with $label", async ({
+    options,
+    config,
+    expectedExpression,
+    expectedConversation,
+  }) => {
+    const create = vi.fn((input) => ({
+      id: "sched-expression",
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      name: input.name,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+      overlapPolicy: "skip",
+      createdAtMs: input.now,
+      updatedAtMs: input.now,
+      state: {
+        nextRunAtMs: input.now + 60_000,
+        runningAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runCount: 0,
+      },
+    }));
+    const result = await handleShellExec(
+      {
+        input: `sched add --here --name reminder ${options} --message "Check in."`,
+      },
+      makeContext({
+        capabilities: ["sched.add", "proc.send"],
+        config,
+        procs: {
+          get: vi.fn(() => ({
+            processId: "task:pkg",
+            uid: IDENTITY.uid,
+            ownerUid: IDENTITY.uid,
+            activeConversationId: null,
+          })),
+          getOwnerUid: vi.fn(() => IDENTITY.uid),
+        } as Partial<KernelContext["procs"]>,
+        schedules: {
+          create,
+          setWakeScheduleId: vi.fn(),
+        } as unknown as KernelContext["schedules"],
+        scheduleScheduleWake: vi.fn(async () => "wake-expression"),
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      expression: expectedExpression,
+      target: {
+        kind: "process.event",
+        pid: "task:pkg",
+        conversationId: expectedConversation,
+        message: "Check in.",
+      },
+    }));
+  });
+
+  it("rejects sched add --here from a top-level shell", async () => {
+    const create = vi.fn();
+    const ctx = makeContext({
+      capabilities: ["sched.add", "proc.send"],
+      schedules: { create } as Partial<KernelContext["schedules"]> as KernelContext["schedules"],
+    });
+    ctx.processId = undefined;
+
+    const result = await handleShellExec(
+      {
+        input: 'sched add --here --name "animal facts" --every 2m --message "Send a fact."',
+      },
+      ctx,
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.stderr).toContain("sched add --here requires a process caller");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects ambiguous and invalid sched add --here options", async () => {
+    const create = vi.fn();
+    const ctx = makeContext({
+      capabilities: ["sched.add", "proc.send"],
+      schedules: { create } as Partial<KernelContext["schedules"]> as KernelContext["schedules"],
+    });
+
+    const ambiguous = await handleShellExec(
+      {
+        input: 'sched add --here --name test --every 2m --after 1h --message "Run."',
+      },
+      ctx,
+    );
+    const misplacedTimezone = await handleShellExec(
+      {
+        input: 'sched add --here --name test --every 2m --timezone UTC --message "Run."',
+      },
+      ctx,
+    );
+    const unknown = await handleShellExec(
+      {
+        input: 'sched add --here --name test --every 2m --message "Run." --wat',
+      },
+      ctx,
+    );
+    const timezoneLessAt = await handleShellExec(
+      {
+        input: 'sched add --here --name test --at "2099-01-02 03:04:05" --message "Run."',
+      },
+      ctx,
+    );
+    const pastAt = await handleShellExec(
+      {
+        input: 'sched add --here --name test --at 2020-01-02T03:04:05Z --message "Run."',
+      },
+      ctx,
+    );
+
+    expect(ambiguous.status).toBe("failed");
+    expect(ambiguous.stderr).toContain("requires exactly one");
+    expect(misplacedTimezone.status).toBe("failed");
+    expect(misplacedTimezone.stderr).toContain("--timezone is only valid with --cron");
+    expect(unknown.status).toBe("failed");
+    expect(unknown.stderr).toContain("unexpected argument: --wat");
+    expect(timezoneLessAt.status).toBe("failed");
+    expect(timezoneLessAt.stderr).toContain("requires an ISO timestamp with Z or a UTC offset");
+    expect(pastAt.status).toBe("failed");
+    expect(pastAt.stderr).toContain("schedule atMs must be in the future");
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("shows schedule last status and error in sched list", async () => {

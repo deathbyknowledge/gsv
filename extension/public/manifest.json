@@ -8,7 +8,10 @@
     "16": "icons/gsv-16.png",
     "32": "icons/gsv-32.png",
     "48": "icons/gsv-48.png",
-    "128": "icons/gsv-128.png"
+    "64": "icons/gsv-64.png",
+    "96": "icons/gsv-96.png",
+    "128": "icons/gsv-128.png",
+    "256": "icons/gsv-256.png"
   },
   "permissions": [
     "activeTab",
@@ -49,7 +52,9 @@
     "default_icon": {
       "16": "icons/gsv-16.png",
       "24": "icons/gsv-24.png",
-      "32": "icons/gsv-32.png"
+      "32": "icons/gsv-32.png",
+      "48": "icons/gsv-48.png",
+      "64": "icons/gsv-64.png"
     },
     "default_title": "GSV Browser Target",
     "default_popup": "popup.html"

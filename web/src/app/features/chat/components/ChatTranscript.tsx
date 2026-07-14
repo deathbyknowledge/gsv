@@ -15,6 +15,17 @@ import {
   type VirtualTranscriptSource,
 } from "../hooks/useVirtualTranscript";
 import { ChatMediaAttachment } from "./ChatMediaAttachment";
+import {
+  chatTranscriptToolGroupTone,
+  chatTranscriptToolStatusLabel,
+  chatTranscriptToolTone,
+  type ChatTranscriptToolTone,
+} from "./ChatTranscriptToolStatus";
+import {
+  chatTranscriptIsAtBottom,
+  chatTranscriptShouldPauseFollowForWheel,
+  nextChatTranscriptBottomFollow,
+} from "./ChatTranscriptScrollPolicy";
 
 export type ChatDockMessageRole = ChatTranscriptRowRole;
 export type ChatDockMessage = ChatTranscriptRow;
@@ -465,25 +476,12 @@ function toolSyscall(message: ChatDockMessage): string | null {
   return inferToolSyscall(message.toolName, message.toolSyscall);
 }
 
-function toolEntryTone(message: ChatDockMessage): "done" | "error" | "running" {
-  if (message.isError || message.status === "error") {
-    return "error";
-  }
-  if (message.role === "toolResult" || message.status === "done") {
-    return "done";
-  }
-  return "running";
+function toolEntryTone(message: ChatDockMessage): ChatTranscriptToolTone {
+  return chatTranscriptToolTone(message);
 }
 
 function toolStatusLabel(message: ChatDockMessage): string {
-  const tone = toolEntryTone(message);
-  if (tone === "error") {
-    return "ERROR";
-  }
-  if (tone === "done") {
-    return "DONE";
-  }
-  return message.status === "planning" ? "PREPARING" : "RUNNING";
+  return chatTranscriptToolStatusLabel(message);
 }
 
 function toolPathTarget(message: ChatDockMessage): string | null {
@@ -665,24 +663,34 @@ function toolActivityTitle(message: ChatDockMessage): string {
   const tone = toolEntryTone(message);
   const running = tone === "running";
   const failed = tone === "error";
+  const warning = tone === "warning";
+  const denied = message.toolOutcome === "denied";
 
   if (syscall === "fs.read") {
+    if (warning) return denied ? `Read access denied for ${target}` : `Stopped reading ${target}`;
     return failed ? `Could not read ${target}` : running ? `Reading ${target}` : `Read ${target}`;
   }
   if (syscall === "fs.write") {
+    if (warning) return denied ? `Write access denied for ${target}` : `Stopped writing ${target}`;
     return failed ? `Could not write ${target}` : running ? `Writing ${target}` : `Wrote ${target}`;
   }
   if (syscall === "fs.edit") {
+    if (warning) return denied ? `Edit access denied for ${target}` : `Stopped editing ${target}`;
     return failed ? `Could not edit ${target}` : running ? `Editing ${target}` : `Edited ${target}`;
   }
   if (syscall === "fs.delete") {
+    if (warning) return denied ? `Delete access denied for ${target}` : `Stopped deleting ${target}`;
     return failed ? `Could not delete ${target}` : running ? `Deleting ${target}` : `Deleted ${target}`;
   }
   if (syscall === "fs.search") {
+    if (warning) return denied ? "Search access denied" : "Stopped searching files";
     return failed ? "Search failed" : running ? "Searching files" : "Searched files";
   }
   if (syscall === "shell.exec") {
     const input = shellInputText(message);
+    if (warning) {
+      return denied ? "Command access denied" : "Command cancelled";
+    }
     if (failed) {
       return input ? `Failed ${truncateInline(input, 72)}` : "Command failed";
     }
@@ -692,13 +700,16 @@ function toolActivityTitle(message: ChatDockMessage): string {
     return input ? `Ran ${truncateInline(input, 72)}` : "Ran shell input";
   }
   if (syscall === "codemode.exec" || syscall === "codemode.run") {
+    if (warning) return denied ? "CodeMode access denied" : "CodeMode cancelled";
     return failed ? "CodeMode failed" : running ? "Running CodeMode script" : "Ran CodeMode script";
   }
   if (syscall === "sys.mcp.call") {
+    if (warning) return denied ? "MCP tool access denied" : "MCP tool cancelled";
     return failed ? "MCP tool failed" : running ? "Calling MCP tool" : "Called MCP tool";
   }
 
   const name = toolDisplayName(message);
+  if (warning) return `${name} ${denied ? "denied" : "cancelled"}`;
   return failed ? `${name} failed` : running ? `Using ${name}` : `Used ${name}`;
 }
 
@@ -720,6 +731,9 @@ function toolActivityPreview(message: ChatDockMessage): string {
   if (tone === "error") {
     const output = asRecord(message.toolOutput);
     return message.text || asString(output?.error) || "Tool call failed.";
+  }
+  if (tone === "warning") {
+    return message.text || (message.toolOutcome === "denied" ? "Tool access denied." : "Tool call cancelled.");
   }
 
   const output = message.toolOutput;
@@ -769,14 +783,8 @@ function toolActivityPreview(message: ChatDockMessage): string {
   return "Completed.";
 }
 
-function toolGroupStatus(tools: readonly ChatDockMessage[]): "done" | "error" | "running" {
-  if (tools.some((message) => toolEntryTone(message) === "error")) {
-    return "error";
-  }
-  if (tools.some((message) => toolEntryTone(message) === "running")) {
-    return "running";
-  }
-  return "done";
+function toolGroupStatus(tools: readonly ChatDockMessage[]): ChatTranscriptToolTone {
+  return chatTranscriptToolGroupTone(tools);
 }
 
 function toolGroupTitle(tools: readonly ChatDockMessage[]): string {
@@ -784,6 +792,10 @@ function toolGroupTitle(tools: readonly ChatDockMessage[]): string {
   if (status === "error") {
     const failed = [...tools].reverse().find((message) => toolEntryTone(message) === "error");
     return failed ? lowercaseFirst(toolActivityTitle(failed)) : "activity needs attention";
+  }
+  if (status === "warning") {
+    const expected = [...tools].reverse().find((message) => toolEntryTone(message) === "warning");
+    return expected ? lowercaseFirst(toolActivityTitle(expected)) : "activity stopped";
   }
   const running = tools.find((message) => toolEntryTone(message) === "running");
   if (running) {
@@ -906,11 +918,11 @@ function estimateRenderItemHeight(item: TranscriptRenderItem): number {
 function estimateKeyForRenderItem(item: TranscriptRenderItem): string {
   if (item.kind === "activityGroup") {
     const signature = item.entries
-      .map((entry) => `${entry.kind}:${entry.message.id}:${entry.message.status ?? ""}:${entry.message.text.length}:${reasoningText(entry.message).length}:${entry.message.backupModel ? "backup" : ""}`)
+      .map((entry) => `${entry.kind}:${entry.message.id}:${entry.message.status ?? ""}:${entry.message.toolOutcome ?? ""}:${entry.message.text.length}:${reasoningText(entry.message).length}:${entry.message.backupModel ? "backup" : ""}`)
       .join("|");
     return `${item.id}:${signature}`;
   }
-  return `${item.id}:${item.message.status ?? ""}:${item.message.text.length}:${reasoningText(item.message).length}:${item.message.backupModel ? "backup" : ""}:${item.message.media?.length ?? 0}`;
+  return `${item.id}:${item.message.status ?? ""}:${item.message.toolOutcome ?? ""}:${item.message.text.length}:${reasoningText(item.message).length}:${item.message.backupModel ? "backup" : ""}:${item.message.media?.length ?? 0}`;
 }
 
 function buildVirtualEntries({
@@ -1059,9 +1071,8 @@ function ToolResultMessage({
   onCopy: () => void;
 }) {
   const title = message.toolName?.trim() || "Tool result";
-  const status = message.role === "tool"
-    ? message.status === "planning" ? "PLANNING" : "RUNNING"
-    : message.isError ? "ERROR" : "DONE";
+  const tone = toolEntryTone(message);
+  const status = toolStatusLabel(message);
   const identifier = message.toolCallId || message.runId || message.id;
   const output = message.role === "tool" && message.status === "planning"
     ? "Preparing tool call."
@@ -1071,7 +1082,7 @@ function ToolResultMessage({
   const hasDetails = Boolean(argsText.trim() || outputText.trim());
 
   return (
-    <article class={`gsv-chat-tool-card${message.isError ? " is-error" : ""}${message.role === "tool" ? " is-pending" : ""}`}>
+    <article class={`gsv-chat-tool-card is-${tone}${message.role === "tool" ? " is-pending" : ""}`}>
       <span class="gsv-chat-tool-corner is-top-left" aria-hidden="true" />
       <span class="gsv-chat-tool-corner is-top-right" aria-hidden="true" />
       <span class="gsv-chat-tool-corner is-bottom-left" aria-hidden="true" />
@@ -1122,7 +1133,7 @@ function ToolResultMessage({
   );
 }
 
-function activityGroupStatus(entries: readonly TranscriptActivityEntry[]): "done" | "error" | "running" {
+function activityGroupStatus(entries: readonly TranscriptActivityEntry[]): ChatTranscriptToolTone {
   const tools = entries.filter((entry) => entry.kind === "tool").map((entry) => entry.message);
   if (tools.length > 0) {
     return toolGroupStatus(tools);
@@ -1287,7 +1298,16 @@ function RunActivityCard({ entries }: { entries: readonly TranscriptActivityEntr
   const wasRunningRef = useRef(status === "running");
   const runId = entries.find((entry) => entry.message.runId)?.message.runId;
   const title = activityGroupTitle(entries);
-  const statusLabel = status === "error" ? "ERROR" : status === "running" ? "RUNNING" : "DONE";
+  const warningTool = status === "warning"
+    ? [...entries].reverse().find((entry) => entry.kind === "tool" && toolEntryTone(entry.message) === "warning")
+    : null;
+  const statusLabel = status === "error"
+    ? "ERROR"
+    : status === "running"
+      ? "RUNNING"
+      : warningTool
+        ? toolStatusLabel(warningTool.message)
+        : "DONE";
 
   useEffect(() => {
     if (status === "running" && !wasRunningRef.current) {
@@ -1586,6 +1606,22 @@ function TranscriptState({
   );
 }
 
+function nestedScrollerCanScrollUp(target: EventTarget | null, boundary: HTMLElement): boolean {
+  let element = target instanceof Element ? target : null;
+  while (element && element !== boundary) {
+    const overflowY = window.getComputedStyle(element).overflowY;
+    if (
+      (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay")
+      && element.scrollHeight > element.clientHeight
+      && element.scrollTop > 0
+    ) {
+      return true;
+    }
+    element = element.parentElement;
+  }
+  return false;
+}
+
 export function ChatTranscript({
   action,
   emptyDescription = "Process history will appear here when a conversation is available.",
@@ -1604,6 +1640,7 @@ export function ChatTranscript({
   const copyResetTimer = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
   const scrollAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
   const lastTranscriptIdentityRef = useRef("");
   const [showJumpLatest, setShowJumpLatest] = useState(false);
@@ -1641,6 +1678,7 @@ export function ChatTranscript({
   const setTranscriptRef = useCallback((node: HTMLDivElement | null) => {
     transcriptRef.current = node;
     if (node) {
+      lastScrollTopRef.current = node.scrollTop;
       updateViewportForNode(node);
     }
   }, [updateViewportForNode]);
@@ -1685,6 +1723,7 @@ export function ChatTranscript({
       return;
     }
     node.scrollTop = node.scrollHeight;
+    lastScrollTopRef.current = node.scrollTop;
     stickToBottomRef.current = true;
     setShowJumpLatest(false);
     updateViewportForNode(node);
@@ -1698,13 +1737,46 @@ export function ChatTranscript({
     setViewport((current) => current.scrollTop === node.scrollTop
       ? current
       : { ...current, scrollTop: node.scrollTop });
-    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
-    const nearBottom = distanceFromBottom < 96;
-    stickToBottomRef.current = nearBottom;
-    setShowJumpLatest(!nearBottom);
+    const userScrolledUp = node.scrollTop < lastScrollTopRef.current;
+    lastScrollTopRef.current = node.scrollTop;
+    const atBottom = chatTranscriptIsAtBottom(node);
+    stickToBottomRef.current = nextChatTranscriptBottomFollow({
+      atBottom,
+      following: stickToBottomRef.current,
+      userScrolledUp,
+    });
+    setShowJumpLatest(!atBottom);
     if (hasOlderMessages && !loadingOlderMessages && node.scrollTop <= 96 && onLoadOlder) {
       loadOlderWithAnchor();
     }
+  };
+
+  const handleWheel = (event: WheelEvent) => {
+    const node = transcriptRef.current;
+    if (!node || !chatTranscriptShouldPauseFollowForWheel({
+      defaultPrevented: event.defaultPrevented,
+      deltaY: event.deltaY,
+      nestedScrollerCanScrollUp: nestedScrollerCanScrollUp(event.target, node),
+      transcript: node,
+    })) {
+      return;
+    }
+    const previousScrollTop = node.scrollTop;
+    stickToBottomRef.current = nextChatTranscriptBottomFollow({
+      atBottom: chatTranscriptIsAtBottom(node),
+      following: stickToBottomRef.current,
+      userScrolledUp: true,
+    });
+    requestAnimationFrame(() => {
+      const currentNode = transcriptRef.current;
+      if (
+        currentNode === node
+        && currentNode.scrollTop === previousScrollTop
+        && chatTranscriptIsAtBottom(currentNode)
+      ) {
+        stickToBottomRef.current = true;
+      }
+    });
   };
 
   const loadOlderWithAnchor = () => {
@@ -1747,6 +1819,7 @@ export function ChatTranscript({
           return;
         }
         anchoredNode.scrollTop = anchoredNode.scrollHeight - anchor.scrollHeight + anchor.scrollTop;
+        lastScrollTopRef.current = anchoredNode.scrollTop;
         updateViewportForNode(anchoredNode);
       });
       return () => cancelAnimationFrame(frame);
@@ -1757,6 +1830,7 @@ export function ChatTranscript({
     }
 
     node.scrollTop = node.scrollHeight;
+    lastScrollTopRef.current = node.scrollTop;
     setShowJumpLatest(false);
     updateViewportForNode(node);
     const frame = requestAnimationFrame(() => {
@@ -1765,6 +1839,7 @@ export function ChatTranscript({
         return;
       }
       latestNode.scrollTop = latestNode.scrollHeight;
+      lastScrollTopRef.current = latestNode.scrollTop;
       setShowJumpLatest(false);
       updateViewportForNode(latestNode);
     });
@@ -1772,7 +1847,13 @@ export function ChatTranscript({
   }, [messages.length, tailKey, transcriptIdentity, updateViewportForNode, virtual.totalHeight]);
 
   return (
-    <div class="gsv-chat-transcript" aria-live="polite" ref={setTranscriptRef} onScroll={handleScroll}>
+    <div
+      class="gsv-chat-transcript"
+      aria-live="polite"
+      ref={setTranscriptRef}
+      onScroll={handleScroll}
+      onWheel={handleWheel}
+    >
       {state === "loading" ? (
         <TranscriptState
           title="Loading process history"

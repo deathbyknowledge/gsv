@@ -490,20 +490,29 @@ describe("ProcessStore", () => {
   // ---------- toolResult role ----------
 
   describe("appendToolResult", () => {
-    it("stores toolName and isError in tool_calls column", async () => {
+    it("stores tool result presentation metadata in tool_calls column", async () => {
       const stub = await getProcessByPid("tool-result-1");
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.appendToolResult("call_1", "fs.read", "file contents here", false, "default", "run-tool-1");
+        store.appendToolResult(
+          "call_1",
+          "fs.read",
+          "Error: User interrupted tool execution",
+          true,
+          "default",
+          "run-tool-1",
+          "cancelled",
+        );
         const msgs = store.getMessages();
         expect(msgs).toHaveLength(1);
         expect(msgs[0].role).toBe("toolResult");
-        expect(msgs[0].content).toBe("file contents here");
+        expect(msgs[0].content).toBe("Error: User interrupted tool execution");
         expect(msgs[0].toolCallId).toBe("call_1");
         expect(msgs[0].runId).toBe("run-tool-1");
         const meta = JSON.parse(msgs[0].toolCalls!);
         expect(meta.toolName).toBe("Read");
-        expect(meta.isError).toBe(false);
+        expect(meta.isError).toBe(true);
+        expect(meta.outcome).toBe("cancelled");
       });
     });
 
@@ -769,6 +778,7 @@ describe("ProcessStore", () => {
         expect(results).toHaveLength(1);
         expect(results[0].status).toBe("completed");
         expect(results[0].result).toEqual({ content: "gsv" });
+        expect(results[0].outcome).toBe("completed");
       });
     });
 
@@ -795,6 +805,44 @@ describe("ProcessStore", () => {
         const results = store.getResults("run_2");
         expect(results[0].status).toBe("error");
         expect(results[0].error).toBe("EPERM");
+        expect(results[0].outcome).toBe("failed");
+      });
+    });
+
+    it("persists an explicit user-controlled outcome", async () => {
+      const stub = await getProcessByPid("tc-denied");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.register("dispatch_denied", "call_denied", "run_denied", "fs.read", {});
+        store.fail("dispatch_denied", "Tool execution denied by user", "denied");
+
+        expect(store.getResults("run_denied")).toMatchObject([{
+          status: "error",
+          outcome: "denied",
+        }]);
+      });
+    });
+
+    it("classifies a resolved failure envelope as failed", async () => {
+      const stub = await getProcessByPid("tc-resolved-failure");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.register(
+          "dispatch_resolved_failure",
+          "call_resolved_failure",
+          "run_resolved_failure",
+          "shell.exec",
+          {},
+        );
+        store.resolve("dispatch_resolved_failure", {
+          status: "failed",
+          error: "command could not start",
+        });
+
+        expect(store.getResults("run_resolved_failure")).toMatchObject([{
+          status: "completed",
+          outcome: "failed",
+        }]);
       });
     });
 

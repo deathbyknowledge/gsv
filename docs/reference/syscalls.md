@@ -532,7 +532,7 @@ Runtime behavior:
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
 | `proc.kill` | Process DO | Optionally archives every non-empty conversation under the run-as agent's home, clears process media, and wipes Process DO state. After success the Kernel removes the process registry entry and detaches its conversation executor. |
-| `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, cursor flags, truncation status, timestamps, pending HIL, and the latest context-pressure state when available. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content. |
+| `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, cursor flags, truncation status, timestamps, pending HIL, and the latest context-pressure state when available. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content; tool results classify completed, failed, user-cancelled, and user-denied outcomes. |
 | `proc.media.read` | Process DO | Reads one process-scoped media object. A successful result returns key, MIME type, and size in `data` and always attaches the media bytes as a response body. |
 | `proc.media.write` | Process DO | Streams one request body directly into process-scoped R2 storage. The body descriptor must declare its exact length so R2 receives a fixed-length stream. Returns a stable media reference for `proc.send`. |
 | `proc.media.delete` | Process DO | Idempotently deletes one unreferenced process-scoped media object. Keys outside the target process or already referenced by process history are rejected. Used to roll back uploads that are not admitted by `proc.send`. |
@@ -565,6 +565,26 @@ type ProcHilRequest = {
   syscall: string;
   args: Record<string, unknown>;
   createdAt: number;
+};
+
+type ProcToolResultOutcome = "completed" | "failed" | "cancelled" | "denied";
+type ProcHistoryToolResultContent = {
+  toolName: string;
+  isError: boolean;
+  outcome: ProcToolResultOutcome;
+  toolCallId: string | null;
+  output: unknown;
+};
+type ProcHistoryMessageBase = {
+  id?: number;
+  runId?: string;
+  timestamp?: number;
+  origin?: InteractionOrigin;
+  metadata?: ProcMessageMetadata;
+};
+type ProcHistoryMessage = ProcHistoryMessageBase & {
+  role: "user" | "assistant" | "system" | "toolResult";
+  content: unknown; // ProcHistoryToolResultContent when role is "toolResult"
 };
 
 type ProcConversation = {
@@ -690,7 +710,7 @@ type ProcessSyscalls = {
 
   "proc.history": {
     args: { pid?: string; conversationId?: string; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
-    result: { ok: true; pid: string; conversationId?: string; messages: Array<{ id?: number; role: "user" | "assistant" | "system" | "toolResult"; content: unknown; timestamp?: number }>; messageCount: number; truncated?: boolean; hasMoreBefore?: boolean; hasMoreAfter?: boolean; pendingHil?: ProcHilRequest | null; context?: ProcContextState | null } | OperationError;
+    result: { ok: true; pid: string; conversationId?: string; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean; hasMoreBefore?: boolean; hasMoreAfter?: boolean; pendingHil?: ProcHilRequest | null; context?: ProcContextState | null } | OperationError;
   };
 
   "proc.media.read": {
@@ -1303,11 +1323,25 @@ Scheduler syscalls are Kernel-owned. Schedule records live in Kernel SQLite,
 GSV computes timezone-aware next fire times, and Cloudflare Agent schedules are
 used only as concrete wake-ups.
 
-The normal user-facing interface for recurring shell-command jobs is `crontab`
-or `/var/spool/cron/<user>`. Cron files are desired state: installing or
-rewriting a crontab removes and recreates the linked `sched.*` records, so
-crontab-backed schedule ids are operational ids, not stable cron identifiers.
-Use `sched.list` for status, last result, source, and low-level control.
+The user-facing interface depends on the delivery contract. From a
+process-backed shell, use the following form when each firing should enter the
+current process conversation. The event and any resulting reply are visible in
+its matching Web chat:
+
+```bash
+sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]
+```
+
+The shell resolves `--here` into a typed `process.event` target for the current
+process and active conversation. The target remains bound to that process id;
+it does not preserve an external adapter route. `--at` requires a future ISO
+timestamp with `Z` or an explicit numeric UTC offset. Use `crontab` or
+`/var/spool/cron/<user>` for recurring background shell commands. Cron files
+are desired state: installing or rewriting a crontab removes and recreates the
+linked `sched.*` records, so crontab-backed schedule ids are operational ids,
+not stable cron identifiers.
+Cron commands have no process-backed caller, so `proc delegate` is not valid in
+a crontab. Use `sched.list` for status, last result, source, and control.
 
 Runtime behavior:
 
@@ -1318,6 +1352,15 @@ Runtime behavior:
 | `sched.update` | `handleSchedulerUpdate` | Updates schedule metadata, expression, enabled state, or target, then re-arms the wake. |
 | `sched.remove` | `handleSchedulerRemove` | Removes a schedule and cancels its pending wake when present. |
 | `sched.run` | `handleSchedulerRun` | Runs due schedules or force-runs one schedule. `force` requires `id`. |
+
+Schedule status reports completion of target dispatch, not an implied
+end-to-end delivery contract. For `process.event`, `ok` means the event was
+accepted into the target process conversation, not that a model turn or reply
+completed. For `process.spawn`, or a
+`command.exec` target that invokes `proc spawn`, `ok` means the spawn was
+accepted; it does not mean the child completed or delivered its answer. Child
+answers remain in the child process history unless another mechanism consumes
+them.
 
 ```ts
 type ScheduleExpression =

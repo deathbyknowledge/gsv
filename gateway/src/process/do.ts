@@ -47,6 +47,7 @@ import type {
   ProcHistoryArgs,
   ProcHistoryResult,
   ProcHistoryMessage,
+  ProcHistoryToolResultContent,
   ProcMediaDeleteArgs,
   ProcMediaDeleteResult,
   ProcMediaReadArgs,
@@ -92,12 +93,18 @@ import type {
   ProcContextState,
   ProcUsageCostSource,
   ProcUsageState,
+  ProcToolResultOutcome,
   ProcResetResult,
   ProcKillResult,
   ProcSpawnAssignment,
 } from "@humansandmachines/gsv/protocol";
 import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { AdapterSurface } from "../adapter-interface";
+import type {
+  ProcessInboundFrame,
+  ProcessRequestFrame,
+  ProcessScheduleDeliverArgs,
+} from "../protocol/process-frames";
 import type {
   AssistantMessage,
   AssistantMessageEvent,
@@ -247,6 +254,7 @@ type CodeModeResponseWaiter = {
 
 type CodeModeApprovalWaiter = {
   runId: string;
+  dispatchId: string;
   resolve: (approved: boolean) => void;
   timeoutId: ReturnType<typeof setTimeout>;
 };
@@ -272,11 +280,16 @@ type ArchivedMessageRecord = {
   toolCallId?: string;
   toolName?: string;
   isError?: boolean;
+  outcome?: ProcToolResultOutcome;
   media?: unknown;
   origin?: InteractionOrigin;
   metadata?: MessageMetadata;
   createdAt?: number;
 };
+
+type RuntimeEventAdmission =
+  | { ok: true }
+  | { ok: false; error: string };
 
 const TOOL_APPROVAL_OVERRIDES_KEY = "toolApprovalOverrides";
 const HANDLED_IPC_CALLS_KEY = "handledIpcCalls";
@@ -287,8 +300,10 @@ const IPC_TOMBSTONE_LIMIT = 256;
 const SHELL_SESSION_TARGET_KEY_PREFIX = "shellSessionTarget:";
 const UNKNOWN_SHELL_SESSION_TARGET_MESSAGE =
   "Shell session continuation requires an explicit target because this process does not know which device owns the session";
+const USER_INTERRUPTED_TOOL_MESSAGE = "User interrupted tool execution";
 const USER_SUPERSEDED_TOOL_MESSAGE =
   "Cancelled for this agent run because a newer user message arrived; the underlying operation may still complete";
+const TOOL_EXECUTION_DENIED_BY_USER_MESSAGE = "Tool execution denied by user";
 const RUNTIME_EVENT_WAKE_MESSAGE =
   "A runtime event arrived while you were busy. Review the process event above and continue.";
 const MAX_PROCESS_MEDIA_READ_BYTES = 25 * 1024 * 1024;
@@ -306,6 +321,35 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : undefined;
+}
+
+function normalizeToolResultOutcome(
+  value: unknown,
+  isError: boolean,
+  content: string,
+): ProcToolResultOutcome {
+  if (
+    value === "completed"
+    || value === "failed"
+    || value === "cancelled"
+    || value === "denied"
+  ) {
+    return value;
+  }
+  if (!isError) {
+    return "completed";
+  }
+
+  const reason = content.startsWith("Error: ")
+    ? content.slice("Error: ".length)
+    : content;
+  if (reason === TOOL_EXECUTION_DENIED_BY_USER_MESSAGE) {
+    return "denied";
+  }
+  if (reason === USER_INTERRUPTED_TOOL_MESSAGE || reason === USER_SUPERSEDED_TOOL_MESSAGE) {
+    return "cancelled";
+  }
+  return "failed";
 }
 
 function asPlainRecord(value: unknown): Record<string, unknown> | null {
@@ -898,7 +942,7 @@ export class Process extends Host<Env> {
   /**
    * Single entry point — called by the Kernel to deliver frames.
    */
-  async recvFrame(frame: Frame) {
+  async recvFrame(frame: ProcessInboundFrame) {
     if (this.killed) {
       if (frame.type === "req") {
         await frame.body?.stream.cancel("Process no longer exists").catch(() => {});
@@ -980,8 +1024,13 @@ export class Process extends Host<Env> {
    * Handle a request frame from the kernel.
    * proc.send, proc.history, proc.reset, proc.kill are delivered here.
    */
-  private async handleReq(frame: RequestFrame): Promise<ResponseFrame | null> {
+  private async handleReq(frame: ProcessRequestFrame): Promise<ResponseFrame | null> {
     try {
+      if (frame.call === "proc.schedule.deliver") {
+        await this.handleProcScheduleDeliver(frame.args);
+        return { type: "res", id: frame.id, ok: true };
+      }
+
       let data: ResultOf<SyscallName>;
 
       switch (frame.call) {
@@ -1660,11 +1709,11 @@ export class Process extends Host<Env> {
       }
 
       const runId = run.runId;
-      this.cancelPendingRequests(runId, "User interrupted tool execution");
+      this.cancelPendingRequests(runId, USER_INTERRUPTED_TOOL_MESSAGE);
       this.rememberAbortedRun(runId);
       const pendingHil = this.store.getPendingHilForRun(runId);
       const interrupted = this.ingestToolResults(runId, this.store.getResults(runId), {
-        interruptPending: "User interrupted tool execution",
+        interruptPending: USER_INTERRUPTED_TOOL_MESSAGE,
       });
 
       if (pendingHil) {
@@ -1729,6 +1778,13 @@ export class Process extends Host<Env> {
       const remembered = args.decision === "approve" && args.remember === true
         ? this.rememberToolApproval(pendingHil, run)
         : false;
+      if (args.decision === "deny") {
+        this.store.fail(
+          pendingHil.ownerDispatchId ?? codeModeApproval.dispatchId,
+          TOOL_EXECUTION_DENIED_BY_USER_MESSAGE,
+          "denied",
+        );
+      }
       this.store.clearPendingHil();
       this.resolveCodeModeApproval(args.requestId, args.decision === "approve");
       return {
@@ -1744,15 +1800,36 @@ export class Process extends Host<Env> {
 
     if (!toolCall) {
       this.store.clearPendingHil();
-      const outerCodeMode = toolCalls.find(
-        (result) => result.call === CODEMODE_EXEC && result.status === "pending",
-      );
+      const outerCodeMode = pendingHil.ownerDispatchId
+        ? toolCalls.find((result) => (
+            result.dispatchId === pendingHil.ownerDispatchId
+            && result.call === CODEMODE_EXEC
+            && result.status === "pending"
+          ))
+        : undefined;
       const error = outerCodeMode
-        ? "CodeMode execution was interrupted while waiting for tool approval"
+        ? args.decision === "deny"
+          ? TOOL_EXECUTION_DENIED_BY_USER_MESSAGE
+          : "CodeMode execution was interrupted while waiting for tool approval"
         : `Registered tool call not found: ${pendingHil.runId}/${pendingHil.toolCallId}`;
       if (outerCodeMode) {
-        this.store.fail(outerCodeMode.dispatchId, error);
+        this.store.fail(
+          outerCodeMode.dispatchId,
+          error,
+          args.decision === "deny" ? "denied" : "failed",
+        );
         await this.scheduleTick(pendingHil.runId);
+      }
+      if (outerCodeMode && args.decision === "deny") {
+        return {
+          ok: true,
+          pid,
+          requestId: args.requestId,
+          decision: args.decision,
+          resumed: true,
+          remembered: false,
+          pendingHil: null,
+        };
       }
       return { ok: false, error };
     }
@@ -1799,7 +1876,11 @@ export class Process extends Host<Env> {
         );
       }
     } else {
-      this.store.fail(toolCall.dispatchId, "Tool execution denied by user");
+      this.store.fail(
+        toolCall.dispatchId,
+        TOOL_EXECUTION_DENIED_BY_USER_MESSAGE,
+        "denied",
+      );
     }
 
     const nextPendingHil = await this.processToolCalls(pendingHil.runId);
@@ -1887,24 +1968,27 @@ export class Process extends Host<Env> {
       const run = r.runId ? { runId: r.runId } : {};
       const metadataPart = metadata ? { metadata } : {};
       if (r.role === "toolResult") {
-        let meta: { toolName?: string; isError?: boolean } = {};
+        let meta: { toolName?: string; isError?: boolean; outcome?: unknown } = {};
         if (r.toolCalls) {
           try {
-            meta = JSON.parse(r.toolCalls) as { toolName?: string; isError?: boolean };
+            meta = JSON.parse(r.toolCalls) as typeof meta;
           } catch {
             meta = {};
           }
         }
+        const isError = meta.isError ?? false;
+        const content = {
+          toolName: meta.toolName ?? "unknown",
+          isError,
+          outcome: normalizeToolResultOutcome(meta.outcome, isError, r.content),
+          toolCallId: r.toolCallId ?? null,
+          output: r.content,
+        } satisfies ProcHistoryToolResultContent;
 
         return {
           id: r.id,
           role: r.role,
-          content: {
-            toolName: meta.toolName ?? "unknown",
-            isError: meta.isError ?? false,
-            toolCallId: r.toolCallId ?? null,
-            output: r.content,
-          },
+          content,
           timestamp: r.createdAt,
           ...run,
           ...(origin ? { origin } : {}),
@@ -2693,6 +2777,7 @@ export class Process extends Host<Env> {
         ? JSON.stringify({
             toolName: message.toolName ?? "unknown",
             isError: message.isError ?? false,
+            ...(message.outcome ? { outcome: message.outcome } : {}),
           })
         : message.toolCalls
           ? JSON.stringify(message.toolCalls)
@@ -2776,12 +2861,14 @@ export class Process extends Host<Env> {
     const run = message.runId ? { runId: message.runId } : {};
     const metadataPart = message.metadata ? { metadata: message.metadata } : {};
     if (message.role === "toolResult") {
+      const isError = message.isError ?? false;
       return {
         id: message.id,
         role: message.role,
         content: {
           toolName: message.toolName ?? "unknown",
-          isError: message.isError ?? false,
+          isError,
+          outcome: normalizeToolResultOutcome(message.outcome, isError, message.content),
           toolCallId: message.toolCallId ?? null,
           output: message.content,
         },
@@ -3150,9 +3237,6 @@ export class Process extends Host<Env> {
       case "ipc.timeout":
         await this.handleIpcSignal(frame.signal, frame.payload);
         break;
-      case "schedule.event":
-        await this.handleScheduleEventSignal(frame.payload);
-        break;
       default:
         console.log(`[Process] Unknown signal: ${frame.signal}`);
         break;
@@ -3343,58 +3427,70 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async handleScheduleEventSignal(payload: unknown): Promise<void> {
-    if (!payload || typeof payload !== "object") {
-      return;
-    }
-    const event = payload as { conversationId?: unknown };
-    const conversationId = normalizeConversationId(event.conversationId);
-    await this.handleRuntimeEvent(
-      formatScheduleEventMessage(payload),
+  private async handleProcScheduleDeliver(
+    args: ProcessScheduleDeliverArgs,
+  ): Promise<void> {
+    const conversationId = normalizeConversationId(args.conversationId);
+    const admission = await this.handleRuntimeEvent(
+      formatScheduleEventMessage(args),
       conversationId,
       "schedule.event",
     );
+    if (!admission.ok) {
+      throw new Error(admission.error);
+    }
   }
 
   private async handleRuntimeEvent(
     content: string,
     conversationId: string,
     reason: string,
-  ): Promise<void> {
+  ): Promise<RuntimeEventAdmission> {
     let messageId = -1;
     let nextRunId: string | null = null;
     let wakeRunId: string | null = null;
+    let admissionError: string | null = null;
     const releaseLifecycle = await this.acquireLifecycleTransition();
     const timestamp = Date.now();
     try {
       if (!this.isInitialized()) {
-        return;
-      }
-      const currentRun = this.currentRun;
-      nextRunId = currentRun ? null : crypto.randomUUID();
-      this.ctx.storage.transactionSync(() => {
-        messageId = this.store.appendMessage("system", content, {
-          conversationId,
-          createdAt: timestamp,
-          ...(nextRunId ? { runId: nextRunId } : {}),
-        });
-        if (!currentRun) {
-          this.currentRun = { runId: nextRunId!, conversationId };
-        } else if (currentRun.conversationId === conversationId) {
-          currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
-          this.currentRun = currentRun;
+        admissionError = "Process no longer exists";
+      } else {
+        const conversation = this.store.ensureConversation(conversationId);
+        if (conversation.status === "closed") {
+          admissionError = `Conversation is closed: ${conversationId}`;
         } else {
-          wakeRunId = crypto.randomUUID();
-          this.store.enqueue(
-            wakeRunId,
-            RUNTIME_EVENT_WAKE_MESSAGE,
-            undefined,
-            conversationId,
-          );
+          const currentRun = this.currentRun;
+          nextRunId = currentRun ? null : crypto.randomUUID();
+          this.ctx.storage.transactionSync(() => {
+            messageId = this.store.appendMessage("system", content, {
+              conversationId,
+              createdAt: timestamp,
+              ...(nextRunId ? { runId: nextRunId } : {}),
+            });
+            if (!currentRun) {
+              this.currentRun = { runId: nextRunId!, conversationId };
+            } else if (currentRun.conversationId === conversationId) {
+              currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
+              this.currentRun = currentRun;
+            } else {
+              wakeRunId = crypto.randomUUID();
+              this.store.enqueue(
+                wakeRunId,
+                RUNTIME_EVENT_WAKE_MESSAGE,
+                undefined,
+                conversationId,
+              );
+            }
+          });
         }
-      });
+      }
     } finally {
       releaseLifecycle();
+    }
+
+    if (admissionError) {
+      return { ok: false, error: admissionError };
     }
 
     this.ctx.waitUntil(this.emitProcChanged(["messages"], {
@@ -3426,6 +3522,7 @@ export class Process extends Host<Env> {
       }));
       this.ctx.waitUntil(this.announceRun(runId, conversationId, reason));
     }
+    return { ok: true };
   }
 
   async tick(input: { runId: string; generation: number }): Promise<void> {
@@ -5128,19 +5225,23 @@ export class Process extends Host<Env> {
       for (const result of toolResults) {
         let content: string;
         let isError: boolean;
+        let outcome: ProcToolResultOutcome;
 
         if (result.status === "completed") {
           content =
             typeof result.result === "string"
               ? result.result
               : JSON.stringify(result.result ?? null);
-          isError = false;
+          outcome = result.outcome ?? "completed";
+          isError = outcome !== "completed";
         } else if (result.status === "error") {
           content = `Error: ${result.error}`;
           isError = true;
+          outcome = result.outcome ?? "failed";
         } else if (options?.interruptPending) {
           content = `Error: ${options.interruptPending}`;
           isError = true;
+          outcome = "cancelled";
           interrupted += 1;
         } else {
           continue;
@@ -5153,6 +5254,7 @@ export class Process extends Host<Env> {
           isError,
           conversationId,
           runId,
+          outcome,
         );
         appended += 1;
       }
@@ -5408,7 +5510,7 @@ export class Process extends Host<Env> {
       this.store.resolve(dispatchId, {
         status: "failed",
         error: "CodeMode requires a non-empty code string",
-      });
+      }, "failed");
       return;
     }
 
@@ -5420,6 +5522,7 @@ export class Process extends Host<Env> {
         (call, toolArgs) => this.executeCodeModeSyscall(
           {
             runId,
+            dispatchId,
             approvalPolicy,
             capabilities: this.currentRun?.config?.capabilities ?? [],
           },
@@ -5432,12 +5535,16 @@ export class Process extends Host<Env> {
           signal,
         },
       );
-      this.store.resolve(dispatchId, result);
+      this.store.resolve(
+        dispatchId,
+        result,
+        result.status === "failed" ? "failed" : "completed",
+      );
     } catch (error) {
       this.store.resolve(dispatchId, {
         status: "failed",
         error: error instanceof Error ? error.message : String(error),
-      });
+      }, "failed");
     }
   }
 
@@ -5454,6 +5561,7 @@ export class Process extends Host<Env> {
   private async executeCodeModeSyscall(
     context: {
       runId: string;
+      dispatchId: string;
       approvalPolicy: ToolApprovalPolicy;
       capabilities: string[];
     } | null,
@@ -5489,6 +5597,7 @@ export class Process extends Host<Env> {
         }
         const approved = await this.waitForCodeModeApproval(
           context.runId,
+          context.dispatchId,
           toolCallId,
           SYSCALL_TOOL_NAMES[call] ?? call,
           call,
@@ -5531,6 +5640,7 @@ export class Process extends Host<Env> {
 
   private async waitForCodeModeApproval(
     runId: string,
+    dispatchId: string,
     toolCallId: string,
     toolName: string,
     call: string,
@@ -5550,13 +5660,14 @@ export class Process extends Host<Env> {
         }
         resolve(false);
       }, CODE_MODE_APPROVAL_TIMEOUT_MS);
-      this.codeModeApprovals.set(requestId, { runId, resolve, timeoutId });
+      this.codeModeApprovals.set(requestId, { runId, dispatchId, resolve, timeoutId });
     });
 
     const pendingHil: PendingHilRecord = {
       requestId,
       runId,
       conversationId,
+      ownerDispatchId: dispatchId,
       toolCallId,
       toolName,
       syscall: call,
@@ -6071,6 +6182,9 @@ function parseArchivedMessageRecord(value: unknown): ArchivedMessageRecord {
   const isError = typeof toolResultMeta?.isError === "boolean"
     ? toolResultMeta.isError
     : undefined;
+  const outcome = role === "toolResult"
+    ? normalizeToolResultOutcome(toolResultMeta?.outcome, isError ?? false, content)
+    : undefined;
 
   return {
     id,
@@ -6086,6 +6200,7 @@ function parseArchivedMessageRecord(value: unknown): ArchivedMessageRecord {
     toolCallId,
     ...(toolName ? { toolName } : {}),
     ...(isError !== undefined ? { isError } : {}),
+    ...(outcome ? { outcome } : {}),
     media: record.media,
     origin,
     metadata,

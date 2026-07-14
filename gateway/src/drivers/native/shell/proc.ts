@@ -131,6 +131,13 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
     case "delegate": {
       requireCommandCapability(ctx, "proc.spawn");
       requireCommandCapability(ctx, "proc.ipc.call");
+      if (!ctx.processId) {
+        return {
+          stdout: "",
+          stderr: "proc delegate: proc.ipc.call requires a process caller\n",
+          exitCode: 1,
+        };
+      }
       const parsed = parseProcDelegateCommand(rest, ctx);
       const label = parsed.label ?? summarizeDelegateLabel(parsed.message);
       const spawned = await handleProcSpawn({
@@ -143,14 +150,19 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       if (!spawned.ok) {
         return { stdout: "", stderr: `proc delegate: ${spawned.error}\n`, exitCode: 1 };
       }
-      const result = await handleProcIpcCall({
-        pid: spawned.pid,
-        message: parsed.message,
-        ...(parsed.conversationId ? { conversationId: parsed.conversationId } : {}),
-        ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
-      }, ctx);
+      let result: Awaited<ReturnType<typeof handleProcIpcCall>>;
+      try {
+        result = await handleProcIpcCall({
+          pid: spawned.pid,
+          message: parsed.message,
+          ...(parsed.conversationId ? { conversationId: parsed.conversationId } : {}),
+          ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
+        }, ctx);
+      } catch (error) {
+        return delegateFailureResult(ctx, spawned.pid, error);
+      }
       if (!result.ok) {
-        return { stdout: "", stderr: `proc delegate: ${result.error}\n`, exitCode: 1 };
+        return delegateFailureResult(ctx, spawned.pid, result.error);
       }
       return {
         stdout: [
@@ -371,6 +383,55 @@ async function runProcLifecycleSyscall<S extends ProcLifecycleCall>(
   return response.data as ResultOf<S>;
 }
 
+async function delegateFailureResult(
+  ctx: KernelContext,
+  pid: string,
+  originalError: unknown,
+): Promise<ExecResult> {
+  let error = originalError instanceof Error ? originalError.message : String(originalError);
+  const rollbackErrors: string[] = [];
+  let conversationId: string | null = null;
+  try {
+    const conversation = ctx.conversations.getByActivePid(pid);
+    conversationId = conversation?.conversationId ?? null;
+  } catch (lookupError) {
+    rollbackErrors.push(
+      `conversation lookup failed: ${lookupError instanceof Error ? lookupError.message : String(lookupError)}`,
+    );
+  }
+
+  let killed = false;
+  try {
+    const rollback = await runProcLifecycleSyscall(ctx, "proc.kill", {
+      pid,
+      archive: false,
+    });
+    if (!rollback.ok) {
+      throw new Error(rollback.error);
+    }
+    killed = true;
+  } catch (killError) {
+    rollbackErrors.push(killError instanceof Error ? killError.message : String(killError));
+  }
+
+  if (killed && conversationId) {
+    try {
+      if (!ctx.conversations.remove(conversationId)) {
+        throw new Error(`failed to remove conversation ${conversationId}`);
+      }
+    } catch (conversationError) {
+      rollbackErrors.push(
+        conversationError instanceof Error ? conversationError.message : String(conversationError),
+      );
+    }
+  }
+
+  if (rollbackErrors.length > 0) {
+    error += `; rollback failed: ${rollbackErrors.join("; ")}`;
+  }
+  return { stdout: "", stderr: `proc delegate: ${error}\n`, exitCode: 1 };
+}
+
 function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   let runAs: string | undefined;
   let label: string | undefined;
@@ -383,7 +444,14 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
 
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
+    if (current === "--") {
+      positional.push(...args.slice(index + 1));
+      break;
+    }
     if (current === "--json") {
+      if (index !== 0 || args.length !== 2) {
+        throw new Error("--json must be the only proc spawn option");
+      }
       return {
         ...JSON.parse(requireShellOptionValue(args[index + 1], current)) as ProcSpawnArgs,
         fresh: true,
@@ -425,6 +493,9 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
       index += 1;
       assignment = JSON.parse(requireShellOptionValue(args[index], current)) as ProcSpawnArgs["assignment"];
       continue;
+    }
+    if (current.startsWith("-")) {
+      throw new Error(`unexpected option: ${current}`);
     }
     positional.push(current);
   }
@@ -1142,7 +1213,7 @@ function procUsage(): string {
     "  proc self",
     "  proc list",
     "  proc agents [--json]",
-    "  proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] <prompt>",
+    "  proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--parent PID] [--cwd PATH] [--] [prompt]",
     "  proc spawn --json JSON",
     "  proc reset [--pid PID]",
     "  proc kill PID [--no-archive]",

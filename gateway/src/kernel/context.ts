@@ -1,8 +1,8 @@
 /**
  * KernelContext — the single shape passed to all syscall handlers.
  *
- * `identity` is undefined during sys.connect (pre-auth).
- * For all other handlers, the kernel guarantees it is present.
+ * `identity` is undefined for the pre-auth sys.connect, sys.setup, and
+ * sys.setup.assist handlers. Authenticated dispatch guarantees it is present.
  */
 
 import type { Connection } from "agents";

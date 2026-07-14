@@ -2275,6 +2275,11 @@ button.gsv-chat-task-row:focus-visible {
   box-shadow: 0 0 7px var(--error);
 }
 
+.gsv-chat-tool-card.is-warning .gsv-chat-tool-card-dot {
+  background: var(--warn);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--warn) 72%, transparent);
+}
+
 .gsv-chat-tool-card.is-pending .gsv-chat-tool-card-dot {
   background: var(--accent-bright);
   box-shadow: 0 0 7px rgba(179, 174, 255, 0.46);
@@ -2303,6 +2308,10 @@ button.gsv-chat-task-row:focus-visible {
 
 .gsv-chat-tool-card.is-error .gsv-chat-tool-card-head small {
   color: var(--error);
+}
+
+.gsv-chat-tool-card.is-warning .gsv-chat-tool-card-head small {
+  color: var(--warn);
 }
 
 .gsv-chat-tool-card.is-pending .gsv-chat-tool-card-head small {
@@ -2347,6 +2356,10 @@ button.gsv-chat-task-row:focus-visible {
 
 .gsv-chat-tool-card.is-error .gsv-chat-tool-card-output {
   color: #ffb199;
+}
+
+.gsv-chat-tool-card.is-warning .gsv-chat-tool-card-output {
+  color: color-mix(in srgb, var(--warn) 84%, white);
 }
 
 .gsv-chat-tool-card-details {
@@ -2411,6 +2424,10 @@ button.gsv-chat-task-row:focus-visible {
   border-color: rgba(255, 114, 142, 0.48);
 }
 
+.gsv-chat-tool-group-card.is-warning {
+  border-color: color-mix(in srgb, var(--warn) 52%, transparent);
+}
+
 .gsv-chat-tool-group-card.is-running {
   border-color: rgba(154, 148, 255, 0.56);
 }
@@ -2441,6 +2458,11 @@ button.gsv-chat-task-row:focus-visible {
   box-shadow: 0 0 8px var(--error);
 }
 
+.gsv-chat-tool-group-card.is-warning .gsv-chat-tool-group-dot {
+  background: var(--warn);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 72%, transparent);
+}
+
 .gsv-chat-tool-group-card.is-running .gsv-chat-tool-group-dot {
   background: var(--accent-bright);
   box-shadow: 0 0 8px rgba(179, 174, 255, 0.5);
@@ -2468,6 +2490,10 @@ button.gsv-chat-task-row:focus-visible {
 
 .gsv-chat-tool-group-card.is-error .gsv-chat-tool-group-head small {
   color: var(--error);
+}
+
+.gsv-chat-tool-group-card.is-warning .gsv-chat-tool-group-head small {
+  color: var(--warn);
 }
 
 .gsv-chat-tool-group-card.is-running .gsv-chat-tool-group-head small {
@@ -2571,6 +2597,12 @@ button.gsv-chat-task-row:focus-visible {
   box-shadow: 0 0 8px rgba(255, 114, 142, 0.5);
 }
 
+.gsv-chat-tool-entry.is-warning .gsv-chat-tool-entry-status {
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 68%, transparent);
+}
+
 .gsv-chat-tool-entry-main {
   min-width: 0;
   display: grid;
@@ -2590,6 +2622,10 @@ button.gsv-chat-task-row:focus-visible {
 
 .gsv-chat-tool-entry.is-error .gsv-chat-tool-entry-main strong {
   color: #ffbcc8;
+}
+
+.gsv-chat-tool-entry.is-warning .gsv-chat-tool-entry-main strong {
+  color: color-mix(in srgb, var(--warn) 82%, white);
 }
 
 .gsv-chat-tool-entry-controls {

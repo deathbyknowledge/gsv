@@ -303,11 +303,13 @@ async function rollbackSpawn(
   if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
     throw new Error("proc.kill rejected rollback");
   }
+  ctx.procs.kill(pid);
   ctx.conversations.clearActivePid(pid);
   if (conversationId) {
-    ctx.conversations.remove(conversationId);
+    if (!ctx.conversations.remove(conversationId)) {
+      throw new Error(`failed to remove conversation ${conversationId}`);
+    }
   }
-  ctx.procs.kill(pid);
 }
 
 /**
@@ -621,7 +623,21 @@ export async function forwardToProcess(
   if (response && response.type === "res") {
     const res = response as ResponseFrame;
     if (res.ok) {
-      const conversation = ctx.conversations.getByActivePid(pid);
+      let conversation: ReturnType<KernelContext["conversations"]["getByActivePid"]> = null;
+      if (
+        frame.call === "proc.reset"
+        || frame.call === "proc.kill"
+        || frame.call === "proc.conversation.reset"
+      ) {
+        try {
+          conversation = ctx.conversations.getByActivePid(pid);
+        } catch (error) {
+          console.warn(
+            `[proc] Failed to resolve conversation during ${frame.call} cleanup:`,
+            error,
+          );
+        }
+      }
       if (frame.call === "proc.reset" || frame.call === "proc.kill") {
         ctx.ipcCalls.cancelBySourcePid({ uid: proc.ownerUid, sourcePid: pid });
       }

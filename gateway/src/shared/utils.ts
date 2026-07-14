@@ -3,6 +3,7 @@ import { Kernel } from "../kernel/do";
 import { env } from "cloudflare:workers";
 import { Process } from "../process/do";
 import type { Frame, FrameBody, ResponseOkFrame } from "../protocol/frames";
+import type { ProcessInboundFrame } from "../protocol/process-frames";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 
 export const isWebSocketRequest = (request: Request) =>
@@ -56,7 +57,7 @@ export async function cancelProcessRequests(
 
 export async function sendFrameToProcess(
   pid: string,
-  frame: Frame,
+  frame: ProcessInboundFrame,
 ): Promise<Frame | null> {
   const proc = await getProcessByPid(pid);
   return proc.recvFrame(frame);

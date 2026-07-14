@@ -16,6 +16,7 @@ import type {
   ProcMessageMetadata,
   ProcMessageModelMetadata,
   ProcMessageProviderMetadata,
+  ProcToolResultOutcome,
   ProcUsageCost,
   ProcUsageCostSource,
   ProcUsageState,
@@ -62,6 +63,7 @@ export type ToolCallRecord = {
   status: ToolCallStatus;
   result: unknown;
   error: string | null;
+  outcome: ProcToolResultOutcome | null;
 };
 
 export type PendingToolCallRecord = {
@@ -124,12 +126,37 @@ export type PendingHilRecord = {
   requestId: string;
   runId: string;
   conversationId: string;
+  ownerDispatchId?: string;
   toolCallId: string;
   toolName: string;
   syscall: string;
   args: Record<string, unknown>;
   createdAt: number;
 };
+
+function normalizeStoredToolResultOutcome(value: string | null): ProcToolResultOutcome | null {
+  if (
+    value === "completed"
+    || value === "failed"
+    || value === "cancelled"
+    || value === "denied"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function resolvedToolResultOutcome(result: unknown): "completed" | "failed" {
+  if (
+    result
+    && typeof result === "object"
+    && !Array.isArray(result)
+    && (result as { status?: unknown }).status === "failed"
+  ) {
+    return "failed";
+  }
+  return "completed";
+}
 
 export class ProcessStore {
   constructor(private readonly sql: SqlStorage) {}
@@ -626,22 +653,32 @@ export class ProcessStore {
     );
   }
 
-  resolve(dispatchId: string, result: unknown): void {
+  resolve(
+    dispatchId: string,
+    result: unknown,
+    outcome: "completed" | "failed" = resolvedToolResultOutcome(result),
+  ): void {
     this.sql.exec(
       `UPDATE pending_tool_calls
-          SET status = 'completed', result_json = ?
+          SET status = 'completed', result_json = ?, outcome = ?
         WHERE dispatch_id = ? AND status IN ('registered', 'pending')`,
       JSON.stringify(result ?? null),
+      outcome,
       dispatchId,
     );
   }
 
-  fail(dispatchId: string, error: string): void {
+  fail(
+    dispatchId: string,
+    error: string,
+    outcome: Exclude<ProcToolResultOutcome, "completed"> = "failed",
+  ): void {
     this.sql.exec(
       `UPDATE pending_tool_calls
-          SET status = 'error', error = ?
+          SET status = 'error', error = ?, outcome = ?
         WHERE dispatch_id = ? AND status IN ('registered', 'pending')`,
       error,
+      outcome,
       dispatchId,
     );
   }
@@ -695,8 +732,9 @@ export class ProcessStore {
       status: string;
       result_json: string | null;
       error: string | null;
+      outcome: string | null;
     }>(
-      `SELECT id, dispatch_id, conversation_id, call, args_json, status, result_json, error
+      `SELECT id, dispatch_id, conversation_id, call, args_json, status, result_json, error, outcome
          FROM pending_tool_calls
         WHERE run_id = ?
         ORDER BY created_at ASC, rowid ASC`,
@@ -710,6 +748,7 @@ export class ProcessStore {
       status: row.status as ToolCallStatus,
       result: row.result_json ? JSON.parse(row.result_json) : null,
       error: row.error,
+      outcome: normalizeStoredToolResultOutcome(row.outcome),
     }));
   }
 
@@ -732,12 +771,13 @@ export class ProcessStore {
     this.clearPendingHil();
     this.sql.exec(
       `INSERT INTO pending_hil (
-        request_id, run_id, conversation_id, tool_call_id, tool_name, syscall,
-        args_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        request_id, run_id, conversation_id, owner_dispatch_id, tool_call_id,
+        tool_name, syscall, args_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       record.requestId,
       record.runId,
       normalizeConversationId(record.conversationId),
+      record.ownerDispatchId ?? null,
       record.toolCallId,
       record.toolName,
       record.syscall,
@@ -752,6 +792,7 @@ export class ProcessStore {
         request_id: string;
         run_id: string;
         conversation_id: string;
+        owner_dispatch_id: string | null;
         tool_call_id: string;
         tool_name: string;
         syscall: string;
@@ -770,6 +811,7 @@ export class ProcessStore {
       requestId: row.request_id,
       runId: row.run_id,
       conversationId: row.conversation_id,
+      ...(row.owner_dispatch_id ? { ownerDispatchId: row.owner_dispatch_id } : {}),
       toolCallId: row.tool_call_id,
       toolName: row.tool_name,
       syscall: row.syscall,
@@ -1258,8 +1300,8 @@ export class ProcessStore {
   }
 
   /**
-   * Append a tool result message. Stores the toolName and isError flag
-   * in the tool_calls column as JSON metadata.
+   * Append a tool result message. Stores presentation metadata in the
+   * tool_calls column so proc.history can expose a structured result.
    */
   appendToolResult(
     toolCallId: string,
@@ -1268,13 +1310,18 @@ export class ProcessStore {
     isError: boolean,
     conversationId: string = DEFAULT_CONVERSATION_ID,
     runId?: string,
+    outcome?: ProcToolResultOutcome,
   ): number {
     const toolName = SYSCALL_TOOL_NAMES[syscallName] ?? syscallName;
     return this.appendMessage("toolResult", content, {
       conversationId,
       runId,
       toolCallId,
-      toolCalls: JSON.stringify({ toolName, isError }),
+      toolCalls: JSON.stringify({
+        toolName,
+        isError,
+        ...(outcome ? { outcome } : {}),
+      }),
     });
   }
 

@@ -202,6 +202,16 @@ export type ProcHistoryArgs = {
   tail?: boolean;
 };
 
+export type ProcToolResultOutcome = "completed" | "failed" | "cancelled" | "denied";
+
+export type ProcHistoryToolResultContent = {
+  toolName: string;
+  isError: boolean;
+  outcome: ProcToolResultOutcome;
+  toolCallId: string | null;
+  output: unknown;
+};
+
 export type ProcHistoryMessage = {
   id?: number;
   runId?: string;

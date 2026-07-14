@@ -2,6 +2,7 @@ import type {
   InteractionOrigin,
   ProcContextState,
   ProcHilRequest,
+  ProcToolResultOutcome,
 } from "@humansandmachines/gsv/protocol";
 import type { ChatHistory, ChatHistoryMessage, ChatRunState } from "./processes";
 
@@ -14,6 +15,8 @@ export type ChatTranscriptRowStatus =
   | "running"
   | "streaming"
   | "thinking";
+
+export type ChatToolOutcome = ProcToolResultOutcome;
 
 export type ChatBackupModelInfo = {
   from?: {
@@ -39,6 +42,7 @@ export type ChatTranscriptRow = {
   toolArgs?: unknown;
   toolCallId?: string;
   toolName?: string;
+  toolOutcome?: ChatToolOutcome;
   toolOutput?: unknown;
   toolSyscall?: string | null;
   role?: ChatTranscriptRowRole;
@@ -86,6 +90,7 @@ type ToolResultHistory = {
   callId: string;
   error: string | null;
   ok: boolean;
+  outcome: ChatToolOutcome | null;
   output: unknown;
   syscall: string | null;
   toolName: string;
@@ -392,6 +397,7 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
           runId: message.runId ?? undefined,
           toolCallId: parsed.callId,
           toolName: parsed.toolName,
+          ...(parsed.outcome ? { toolOutcome: parsed.outcome } : {}),
           toolOutput: parsed.output,
           toolSyscall: parsed.syscall,
           isError: !parsed.ok,
@@ -1041,14 +1047,25 @@ function extractToolResultHistory(content: unknown, fallbackText: string): ToolR
     return null;
   }
   const callId = asString(record?.toolCallId) ?? asString(record?.callId) ?? asString(record?.id) ?? toolName;
+  const outcome = normalizeToolOutcome(record?.outcome);
   return {
     toolName,
     callId,
-    ok: record?.ok === true || record?.isError !== true,
+    ok: outcome === "completed" || (outcome === null && (record?.ok === true || record?.isError !== true)),
+    outcome,
     output: record?.output ?? fallbackText,
     error: asString(record?.error),
     syscall: inferToolSyscall(toolName, asString(record?.syscall)),
   };
+}
+
+function normalizeToolOutcome(value: unknown): ChatToolOutcome | null {
+  return value === "cancelled"
+      || value === "completed"
+      || value === "denied"
+      || value === "failed"
+    ? value
+    : null;
 }
 
 function extractThinkingBlocks(value: unknown): string[] {

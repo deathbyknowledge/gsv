@@ -76,6 +76,70 @@ describe("chat transcript rows", () => {
     });
   });
 
+  it.each([
+    ["completed", false],
+    ["failed", true],
+    ["cancelled", true],
+    ["denied", true],
+  ] as const)("normalizes the structured %s tool outcome", (outcome, isError) => {
+    const rows = transcriptRowsFromHistory(history([
+      {
+        id: 1,
+        clientId: "1",
+        role: "toolResult",
+        runId: "run-1",
+        content: {
+          toolName: "Shell",
+          toolCallId: "call-1",
+          output: "result",
+          outcome,
+          isError,
+        },
+        text: "result",
+        timestamp: 1,
+        origin: undefined,
+        metadata: undefined,
+      },
+    ]));
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        role: "toolResult",
+        toolOutcome: outcome,
+        isError,
+      }),
+    ]);
+  });
+
+  it("keeps legacy tool errors classified from isError", () => {
+    const rows = transcriptRowsFromHistory(history([
+      {
+        id: 1,
+        clientId: "1",
+        role: "toolResult",
+        runId: "run-1",
+        content: {
+          toolName: "Shell",
+          toolCallId: "call-1",
+          output: "Error: command failed",
+          isError: true,
+        },
+        text: "Error: command failed",
+        timestamp: 1,
+        origin: undefined,
+        metadata: undefined,
+      },
+    ]));
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        role: "toolResult",
+        isError: true,
+      }),
+    ]);
+    expect(rows[0].toolOutcome).toBeUndefined();
+  });
+
   it("keeps backup model metadata on assistant history rows", () => {
     const rows = transcriptRowsFromHistory(history([
       {
