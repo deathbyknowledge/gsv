@@ -1323,11 +1323,25 @@ Scheduler syscalls are Kernel-owned. Schedule records live in Kernel SQLite,
 GSV computes timezone-aware next fire times, and Cloudflare Agent schedules are
 used only as concrete wake-ups.
 
-The normal user-facing interface for recurring shell-command jobs is `crontab`
-or `/var/spool/cron/<user>`. Cron files are desired state: installing or
-rewriting a crontab removes and recreates the linked `sched.*` records, so
-crontab-backed schedule ids are operational ids, not stable cron identifiers.
-Use `sched.list` for status, last result, source, and low-level control.
+The user-facing interface depends on the delivery contract. From a
+process-backed shell, use the following form when each firing should enter the
+current process conversation. The event and any resulting reply are visible in
+its matching Web chat:
+
+```bash
+sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]
+```
+
+The shell resolves `--here` into a typed `process.event` target for the current
+process and active conversation. The target remains bound to that process id;
+it does not preserve an external adapter route. `--at` requires a future ISO
+timestamp with `Z` or an explicit numeric UTC offset. Use `crontab` or
+`/var/spool/cron/<user>` for recurring background shell commands. Cron files
+are desired state: installing or rewriting a crontab removes and recreates the
+linked `sched.*` records, so crontab-backed schedule ids are operational ids,
+not stable cron identifiers.
+Cron commands have no process-backed caller, so `proc delegate` is not valid in
+a crontab. Use `sched.list` for status, last result, source, and control.
 
 Runtime behavior:
 
@@ -1338,6 +1352,15 @@ Runtime behavior:
 | `sched.update` | `handleSchedulerUpdate` | Updates schedule metadata, expression, enabled state, or target, then re-arms the wake. |
 | `sched.remove` | `handleSchedulerRemove` | Removes a schedule and cancels its pending wake when present. |
 | `sched.run` | `handleSchedulerRun` | Runs due schedules or force-runs one schedule. `force` requires `id`. |
+
+Schedule status reports completion of target dispatch, not an implied
+end-to-end delivery contract. For `process.event`, `ok` means the event was
+accepted into the target process conversation, not that a model turn or reply
+completed. For `process.spawn`, or a
+`command.exec` target that invokes `proc spawn`, `ok` means the spawn was
+accepted; it does not mean the child completed or delivered its answer. Child
+answers remain in the child process history unless another mechanism consumes
+them.
 
 ```ts
 type ScheduleExpression =

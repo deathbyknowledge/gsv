@@ -40,15 +40,17 @@ conversation. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
 Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
-Inside the gateway shell, `proc` is the process IPC userland command and
-`crontab` is the normal scheduling interface. `sched` is the lower-level
-inspector/control command for the Kernel schedule records that back cron jobs
-and other schedule targets:
+Inside the gateway shell, `proc` is the process IPC userland command.
+`sched add --here` admits scheduled events to the current process conversation;
+the event and any resulting reply are visible in its matching Web chat.
+`crontab` schedules background shell commands, while the remaining `sched`
+commands inspect and control the Kernel schedule records:
 
 ```bash
 proc self
 proc list
-proc spawn [--as ACCOUNT] [--label LABEL] [--prompt TEXT]
+proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [--] [prompt]
+proc delegate [--as ACCOUNT] [--label LABEL] [--timeout 10m] <task>
 proc reset [--pid PID]
 proc kill PID [--no-archive]
 proc send <pid> [--conversation id] [--metadata-json json] <message>
@@ -57,6 +59,7 @@ crontab -l
 crontab FILE
 crontab -r
 sched list [--all]
+sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]
 sched add --json JSON
 sched enable <id>
 sched disable <id>
@@ -64,20 +67,52 @@ sched remove <id>
 sched run <id> [--force]
 ```
 
-`proc spawn` always creates a fresh process. `proc send` is asynchronous
-same-owner process mail. `proc call` is bounded: the source process receives
-either `ipc.reply` or `ipc.timeout` in its default conversation. In a
-process-backed shell, `proc self` prints the current process id and the shell
-exports it as `GSV_PID`; a top-level user shell has no current process, so
-`proc self` exits with an error there.
+`proc spawn` always creates a fresh process. Its prompt is fire-and-forget, and
+any answer remains in that child process's history. Unknown options are
+rejected; use `--` before a positional prompt that begins with `-`. Use
+`--non-interactive` for scheduled background work. `proc delegate` creates a
+bounded child and reports the result to its caller as a process event; it
+requires a process-backed caller and must not be placed in a crontab.
+`proc send` is asynchronous same-owner process mail. `proc call` is bounded:
+the source process receives either
+`ipc.reply` or `ipc.timeout` in its default conversation. In a process-backed
+shell, `proc self` prints the current process id and the shell exports it as
+`GSV_PID`; a top-level user shell has no current process, so `proc self` exits
+with an error there.
 
-Use `crontab FILE` or write `/var/spool/cron/<user>` for recurring shell-command
-automation. The crontab file is the desired state: reinstalling it deletes and
-recreates the linked Kernel schedule rows, so crontab-backed `sched` ids are not
-stable. Use `sched list` to inspect next fire time, last status, error, source,
-and target. `sched list --all` includes disabled schedules; it does not mean all
-users. `sched add --json` is a low-level compatibility path for direct
-`sched.*` payloads, not the recommended way to create ordinary cron jobs.
+Use `sched add --here` from a process-backed shell when each firing should admit
+an event into the current process conversation. The event and any resulting
+reply are visible in its matching Web chat. It creates a typed `process.event`
+schedule for the current process and active conversation; pass `--conversation`
+to override that conversation. The target is bound to the current process id
+and must be recreated after that process is killed. It does not preserve an
+external adapter route; recurring adapter delivery must explicitly send through
+the adapter target. A successful firing records event admission, not completion
+of a model turn or reply. Choose exactly one time expression. `--at` requires a
+future ISO timestamp with `Z` or an explicit numeric UTC offset.
+
+```bash
+sched add --here --name animal-facts --every 2m --message "Send one obscure animal fact."
+sched add --here --name daily-brief --cron "0 9 * * *" --timezone Europe/Amsterdam --message "Prepare the daily brief."
+```
+
+Use `crontab FILE` or write `/var/spool/cron/<user>` for recurring background
+shell-command automation. A cron command has no process-backed caller. If it
+starts an agent process, use `proc spawn --non-interactive` and do not expect its
+answer to appear in a chat:
+
+```cron
+0 9 * * * proc spawn --non-interactive --label refresh-index "Refresh the search index."
+```
+
+The crontab file is the desired state: reinstalling it deletes and recreates the
+linked Kernel schedule rows, so crontab-backed `sched` ids are not stable. Use
+`sched list` to inspect next fire time, last status, error, source, and target.
+For a command that invokes `proc spawn`, status `ok` means the command was
+dispatched and the spawn was accepted; it does not mean the child finished or
+delivered output. `sched list --all` includes disabled schedules; it does not
+mean all users. `sched add --json` is a low-level compatibility path for direct
+`sched.*` payloads.
 
 ## Process Commands
 

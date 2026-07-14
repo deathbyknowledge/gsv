@@ -13,6 +13,10 @@ import {
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/frames";
+import type {
+  ProcessScheduleDeliverArgs,
+  ProcessScheduleDeliverRequestFrame,
+} from "../protocol/process-frames";
 import { getProcessByPid, getKernelPtr } from "../shared/utils";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
 import { PROCESS_V001_INITIAL_SCHEMA } from "./schema/v001_initial";
@@ -32,6 +36,17 @@ const DEFAULT_PROFILE = "task" as const;
 
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
+}
+
+function makeScheduleDeliverReq(
+  args: Omit<ProcessScheduleDeliverArgs, "firedAtMs"> & { firedAtMs?: number },
+): ProcessScheduleDeliverRequestFrame {
+  return {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.schedule.deliver",
+    args: { ...args, firedAtMs: args.firedAtMs ?? Date.now() },
+  };
 }
 
 function registerToolBlock(
@@ -648,17 +663,15 @@ describe("Process DO — mechanical", () => {
           emitted.push({ signal, payload });
         };
 
-        await instance.recvFrame({
-          type: "sig",
-          signal: "schedule.event",
-          payload: {
-            scheduleId: "sched-1",
-            scheduleName: "nightly",
-            message: "run the nightly check",
-            scheduledAtMs: 1_000,
-            firedAtMs: 2_000,
-          },
-        } as any);
+        const request = makeScheduleDeliverReq({
+          scheduleId: "sched-1",
+          scheduleName: "nightly",
+          message: "run the nightly check",
+          scheduledAtMs: 1_000,
+          firedAtMs: 2_000,
+        });
+        const response = await instance.recvFrame(request);
+        expect(response).toMatchObject({ type: "res", id: request.id, ok: true });
 
         const messages = process.store.getMessages();
         return { emitted, messages };
@@ -692,6 +705,71 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("rejects scheduled runtime events for closed conversations", async () => {
+      const stub = await initProcess("mech-schedule-closed", ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.store.openConversation({ conversationId: "closed" });
+        const releaseLifecycle = await process.acquireLifecycleTransition();
+        const request = makeScheduleDeliverReq({
+          scheduleId: "sched-closed",
+          conversationId: "closed",
+          message: "do not run",
+        });
+        const delivery = instance.recvFrame(request);
+        await Promise.resolve();
+        process.store.closeConversation("closed");
+        releaseLifecycle();
+        const response = await delivery;
+        return {
+          requestId: request.id,
+          response,
+          messages: process.store.getMessages({ conversationId: "closed" }),
+        };
+      });
+
+      expect(result.response).toMatchObject({
+        type: "res",
+        id: result.requestId,
+        ok: false,
+        error: { message: "Conversation is closed: closed" },
+      });
+      expect(result.messages).toEqual([]);
+    });
+
+    it("rejects a scheduled runtime event when process teardown wins admission", async () => {
+      const stub = await initProcess("mech-schedule-teardown-race", ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const releaseLifecycle = await process.acquireLifecycleTransition();
+        const request = makeScheduleDeliverReq({
+          scheduleId: "sched-teardown-race",
+          message: "do not run",
+        });
+        const delivery = instance.recvFrame(request);
+        await Promise.resolve();
+        process.store.deleteValue("pid");
+        process.store.deleteValue("identity");
+        releaseLifecycle();
+        const response = await delivery;
+        return {
+          requestId: request.id,
+          response,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.response).toMatchObject({
+        type: "res",
+        id: result.requestId,
+        ok: false,
+        error: { message: "Process no longer exists" },
+      });
+      expect(result.messages).toEqual([]);
+    });
+
     it("wakes a busy conversation for a scheduled runtime event", async () => {
       const stub = await initProcess("mech-schedule-busy-wake", ROOT_IDENTITY);
 
@@ -701,11 +779,10 @@ describe("Process DO — mechanical", () => {
         process.scheduleTick = vi.fn(async () => {});
         process.currentRun = { runId: "run-busy", conversationId: "default" };
 
-        await instance.recvFrame({
-          type: "sig",
-          signal: "schedule.event",
-          payload: { scheduleId: "sched-busy", message: "check now" },
-        } as any);
+        await instance.recvFrame(makeScheduleDeliverReq({
+          scheduleId: "sched-busy",
+          message: "check now",
+        }));
         expect(process.currentRun).toMatchObject({
           runId: "run-busy",
           pendingRuntimeEvents: 1,
@@ -727,11 +804,10 @@ describe("Process DO — mechanical", () => {
           throw new Error("scheduler unavailable");
         });
 
-        await instance.recvFrame({
-          type: "sig",
-          signal: "schedule.event",
-          payload: { scheduleId: "sched-failure", message: "check now" },
-        } as any);
+        await instance.recvFrame(makeScheduleDeliverReq({
+          scheduleId: "sched-failure",
+          message: "check now",
+        }));
         await vi.waitFor(() => {
           expect(process.currentRun).toBeNull();
           expect(process.sendSignal).toHaveBeenCalledWith(

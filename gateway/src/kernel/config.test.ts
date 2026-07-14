@@ -163,7 +163,15 @@ describe("ConfigStore", () => {
     expect(orchestration).toContain("target: \"gsv\"");
     expect(orchestration).toContain("proc agents");
     expect(orchestration).toContain("proc spawn");
+    expect(orchestration).toContain("proc spawn --non-interactive");
     expect(orchestration).toContain("--as <account>");
+    expect(orchestration).toContain("sched add --here");
+    expect(orchestration).toContain("any resulting reply should be visible");
+    expect(orchestration).toContain("event admission, not completion");
+    expect(orchestration).toContain("does not preserve an external adapter route");
+    expect(orchestration).toContain("Delegation requires a process-backed caller");
+    expect(orchestration).toContain("never put `proc delegate` in a crontab");
+    expect(orchestration).toContain("dispatch and spawn acceptance");
     expect(orchestration).toContain("crontab FILE");
     expect(orchestration).toContain("/var/spool/cron/<username>");
     expect(orchestration).toContain("sched list");

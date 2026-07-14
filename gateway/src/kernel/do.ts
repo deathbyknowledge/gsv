@@ -102,6 +102,7 @@ import {
   type AppFrameContext,
 } from "../protocol/app-frame";
 import type { AppClientSessionContext } from "../protocol/app-session";
+import type { ProcessScheduleDeliverRequestFrame } from "../protocol/process-frames";
 import { listLocalPublicPackages } from "./pkg";
 import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
@@ -2618,6 +2619,9 @@ export class Kernel extends Host<Env> {
     }
 
     if (target.kind === "process.spawn") {
+      if (!hasCapability(ctx.identity?.capabilities ?? [], "proc.spawn")) {
+        throw new Error("Permission denied: proc.spawn");
+      }
       const runAs = this.resolveScheduledSpawnRunAs(record, target.runAs);
       const result = await handleProcSpawn({
         interactive: false,
@@ -2638,6 +2642,9 @@ export class Kernel extends Host<Env> {
     }
 
     if (target.kind === "process.event") {
+      if (!hasCapability(ctx.identity?.capabilities ?? [], "proc.send")) {
+        throw new Error("Permission denied: proc.send");
+      }
       const proc = this.procs.get(target.pid);
       if (!proc) {
         throw new Error(`Process not found: ${target.pid}`);
@@ -2646,10 +2653,11 @@ export class Kernel extends Host<Env> {
         throw new Error(`Permission denied: schedule ${record.id} cannot access process ${target.pid}`);
       }
 
-      await sendFrameToProcess(target.pid, {
-        type: "sig",
-        signal: "schedule.event",
-        payload: {
+      const request: ProcessScheduleDeliverRequestFrame = {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.schedule.deliver",
+        args: {
           scheduleId: record.id,
           scheduleName: record.name,
           conversationId: target.conversationId,
@@ -2658,7 +2666,14 @@ export class Kernel extends Host<Env> {
           scheduledAtMs,
           firedAtMs,
         },
-      });
+      };
+      const response = await sendFrameToProcess(target.pid, request);
+      if (!response || response.type !== "res" || response.id !== request.id) {
+        throw new Error("proc.schedule.deliver did not return a response");
+      }
+      if (!response.ok) {
+        throw new Error(response.error.message);
+      }
       return {
         kind: "process.event",
         pid: target.pid,

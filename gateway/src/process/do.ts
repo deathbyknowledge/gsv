@@ -101,6 +101,11 @@ import type {
 import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { AdapterSurface } from "../adapter-interface";
 import type {
+  ProcessInboundFrame,
+  ProcessRequestFrame,
+  ProcessScheduleDeliverArgs,
+} from "../protocol/process-frames";
+import type {
   AssistantMessage,
   AssistantMessageEvent,
   TextContent,
@@ -281,6 +286,10 @@ type ArchivedMessageRecord = {
   metadata?: MessageMetadata;
   createdAt?: number;
 };
+
+type RuntimeEventAdmission =
+  | { ok: true }
+  | { ok: false; error: string };
 
 const TOOL_APPROVAL_OVERRIDES_KEY = "toolApprovalOverrides";
 const HANDLED_IPC_CALLS_KEY = "handledIpcCalls";
@@ -933,7 +942,7 @@ export class Process extends Host<Env> {
   /**
    * Single entry point — called by the Kernel to deliver frames.
    */
-  async recvFrame(frame: Frame) {
+  async recvFrame(frame: ProcessInboundFrame) {
     if (this.killed) {
       if (frame.type === "req") {
         await frame.body?.stream.cancel("Process no longer exists").catch(() => {});
@@ -1015,8 +1024,13 @@ export class Process extends Host<Env> {
    * Handle a request frame from the kernel.
    * proc.send, proc.history, proc.reset, proc.kill are delivered here.
    */
-  private async handleReq(frame: RequestFrame): Promise<ResponseFrame | null> {
+  private async handleReq(frame: ProcessRequestFrame): Promise<ResponseFrame | null> {
     try {
+      if (frame.call === "proc.schedule.deliver") {
+        await this.handleProcScheduleDeliver(frame.args);
+        return { type: "res", id: frame.id, ok: true };
+      }
+
       let data: ResultOf<SyscallName>;
 
       switch (frame.call) {
@@ -3223,9 +3237,6 @@ export class Process extends Host<Env> {
       case "ipc.timeout":
         await this.handleIpcSignal(frame.signal, frame.payload);
         break;
-      case "schedule.event":
-        await this.handleScheduleEventSignal(frame.payload);
-        break;
       default:
         console.log(`[Process] Unknown signal: ${frame.signal}`);
         break;
@@ -3416,58 +3427,70 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async handleScheduleEventSignal(payload: unknown): Promise<void> {
-    if (!payload || typeof payload !== "object") {
-      return;
-    }
-    const event = payload as { conversationId?: unknown };
-    const conversationId = normalizeConversationId(event.conversationId);
-    await this.handleRuntimeEvent(
-      formatScheduleEventMessage(payload),
+  private async handleProcScheduleDeliver(
+    args: ProcessScheduleDeliverArgs,
+  ): Promise<void> {
+    const conversationId = normalizeConversationId(args.conversationId);
+    const admission = await this.handleRuntimeEvent(
+      formatScheduleEventMessage(args),
       conversationId,
       "schedule.event",
     );
+    if (!admission.ok) {
+      throw new Error(admission.error);
+    }
   }
 
   private async handleRuntimeEvent(
     content: string,
     conversationId: string,
     reason: string,
-  ): Promise<void> {
+  ): Promise<RuntimeEventAdmission> {
     let messageId = -1;
     let nextRunId: string | null = null;
     let wakeRunId: string | null = null;
+    let admissionError: string | null = null;
     const releaseLifecycle = await this.acquireLifecycleTransition();
     const timestamp = Date.now();
     try {
       if (!this.isInitialized()) {
-        return;
-      }
-      const currentRun = this.currentRun;
-      nextRunId = currentRun ? null : crypto.randomUUID();
-      this.ctx.storage.transactionSync(() => {
-        messageId = this.store.appendMessage("system", content, {
-          conversationId,
-          createdAt: timestamp,
-          ...(nextRunId ? { runId: nextRunId } : {}),
-        });
-        if (!currentRun) {
-          this.currentRun = { runId: nextRunId!, conversationId };
-        } else if (currentRun.conversationId === conversationId) {
-          currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
-          this.currentRun = currentRun;
+        admissionError = "Process no longer exists";
+      } else {
+        const conversation = this.store.ensureConversation(conversationId);
+        if (conversation.status === "closed") {
+          admissionError = `Conversation is closed: ${conversationId}`;
         } else {
-          wakeRunId = crypto.randomUUID();
-          this.store.enqueue(
-            wakeRunId,
-            RUNTIME_EVENT_WAKE_MESSAGE,
-            undefined,
-            conversationId,
-          );
+          const currentRun = this.currentRun;
+          nextRunId = currentRun ? null : crypto.randomUUID();
+          this.ctx.storage.transactionSync(() => {
+            messageId = this.store.appendMessage("system", content, {
+              conversationId,
+              createdAt: timestamp,
+              ...(nextRunId ? { runId: nextRunId } : {}),
+            });
+            if (!currentRun) {
+              this.currentRun = { runId: nextRunId!, conversationId };
+            } else if (currentRun.conversationId === conversationId) {
+              currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
+              this.currentRun = currentRun;
+            } else {
+              wakeRunId = crypto.randomUUID();
+              this.store.enqueue(
+                wakeRunId,
+                RUNTIME_EVENT_WAKE_MESSAGE,
+                undefined,
+                conversationId,
+              );
+            }
+          });
         }
-      });
+      }
     } finally {
       releaseLifecycle();
+    }
+
+    if (admissionError) {
+      return { ok: false, error: admissionError };
     }
 
     this.ctx.waitUntil(this.emitProcChanged(["messages"], {
@@ -3499,6 +3522,7 @@ export class Process extends Host<Env> {
       }));
       this.ctx.waitUntil(this.announceRun(runId, conversationId, reason));
     }
+    return { ok: true };
   }
 
   async tick(input: { runId: string; generation: number }): Promise<void> {

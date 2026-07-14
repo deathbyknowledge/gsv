@@ -312,6 +312,51 @@ describe("scheduler", () => {
     expect(store.setWakeScheduleId).toHaveBeenCalledWith("sched-1", "wake-1");
   });
 
+  it("rejects enabled one-shot timestamps that are not in the future", async () => {
+    const create = vi.fn();
+    const ctx = makeSchedulerContext({
+      schedules: { create } as unknown as ScheduleStore,
+    });
+
+    await expect(handleSchedulerAdd({
+      name: "past event",
+      expression: { kind: "at", atMs: Date.now() - 1_000 },
+      target: { kind: "process.spawn", prompt: "Do not run." },
+    }, ctx)).rejects.toThrow("schedule atMs must be in the future");
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects enabling a past one-shot before changing its wake", async () => {
+    const existing = makeScheduleRecord({
+      enabled: false,
+      expression: { kind: "at", atMs: Date.now() - 1_000 },
+      state: {
+        ...makeScheduleRecord().state,
+        nextRunAtMs: null,
+      },
+    });
+    const stored = { ...existing, wakeScheduleId: null };
+    const update = vi.fn();
+    const cancel = vi.fn(async () => {});
+    const ctx = makeSchedulerContext({
+      schedules: {
+        getStored: vi.fn(() => stored),
+        update,
+      } as unknown as ScheduleStore,
+      cancelScheduleWake: cancel,
+      scheduleScheduleWake: vi.fn(async () => "wake-new"),
+    });
+
+    await expect(handleSchedulerUpdate({
+      id: existing.id,
+      patch: { enabled: true },
+    }, ctx)).rejects.toThrow("schedule atMs must be in the future");
+
+    expect(cancel).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("requires shell.exec access for command schedules", async () => {
     const ctx = makeSchedulerContext({
       identity: {
@@ -697,6 +742,65 @@ describe("scheduler", () => {
     expect(schedule?.state.nextRunAtMs).toEqual(expect.any(Number));
   });
 
+  it("records an error when a process event targets a closed conversation", async () => {
+    const pid = `sched-event-closed-${crypto.randomUUID()}`;
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-closed-conversation-test-${crypto.randomUUID()}`,
+    );
+    const process = await getProcessByPid(pid);
+
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        auth: ScheduleTestAuth;
+        caps: { seed: () => void };
+        procs: { spawn: typeof instance["procs"]["spawn"] };
+      };
+      k.caps.seed();
+      addTestUser(k.auth);
+      k.procs.spawn(pid, USER_IDENTITY, {
+        ownerUid: USER_IDENTITY.uid,
+        label: "closed scheduled target",
+      });
+    });
+    await prepareScheduleTargetProcess(process, pid, "closed");
+    await process.recvFrame(makeReq("proc.conversation.close", { conversationId: "closed" }));
+
+    const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as { schedules: ScheduleStore; ctx: DurableObjectState };
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "closed conversation",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
+        target: {
+          kind: "process.event",
+          pid,
+          conversationId: "closed",
+          message: "Do not run.",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1_000,
+        schedule.id,
+      );
+      return schedule.id;
+    });
+
+    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
+
+    const schedule = await runInDurableObject(kernel, (instance: Kernel) =>
+      (instance as unknown as { schedules: ScheduleStore }).schedules.get(scheduleId),
+    );
+    expect(schedule?.state.lastStatus).toBe("error");
+    expect(schedule?.state.lastError).toBe("Conversation is closed: closed");
+  });
+
   it("runs a due command schedule through the Kernel shell", async () => {
     const kernel = await getAgentByName<Env, Kernel>(
       env.KERNEL,
@@ -844,6 +948,42 @@ describe("scheduler", () => {
         ) => Promise<unknown>;
       }).dispatchScheduleTarget(record, null, Date.now()),
     )).rejects.toThrow("Cannot resolve schedule run-as uid 9999");
+  });
+
+  it.each([
+    {
+      capability: "proc.spawn",
+      target: { kind: "process.spawn", prompt: "Do not run." } as const,
+    },
+    {
+      capability: "proc.send",
+      target: { kind: "process.event", pid: "missing", message: "Do not deliver." } as const,
+    },
+  ])("rechecks $capability when a process schedule fires", async ({ capability, target }) => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-revoked-capability-test-${crypto.randomUUID()}`,
+    );
+    const record = makeScheduleRecord({ target });
+
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        auth: ScheduleTestAuth;
+        caps: { revoke: (gid: number, capability: string) => { ok: boolean; error?: string } };
+      };
+      addTestUser(k.auth);
+      k.caps.revoke(100, "proc.*");
+    });
+
+    await expect(runInDurableObject(kernel, (instance: Kernel) =>
+      (instance as unknown as {
+        dispatchScheduleTarget: (
+          record: ScheduleRecord,
+          scheduledAtMs: number | null,
+          firedAtMs: number,
+        ) => Promise<unknown>;
+      }).dispatchScheduleTarget(record, null, Date.now()),
+    )).rejects.toThrow(`Permission denied: ${capability}`);
   });
 
   it("fires an armed one-shot schedule through the Agent alarm", async () => {
@@ -1418,10 +1558,14 @@ describe("scheduler", () => {
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
         auth: ScheduleTestAuth;
+        caps: {
+          grant: (gid: number, capability: string) => { ok: boolean; error?: string };
+        };
         schedules: ScheduleStore;
         ctx: DurableObjectState;
       };
       addTestAccount(k.auth, CUSTOM_AGENT_IDENTITY, "Wiki Builder");
+      k.caps.grant(CUSTOM_AGENT_IDENTITY.gid, "proc.spawn");
 
       const now = Date.now();
       const schedule = k.schedules.create({
