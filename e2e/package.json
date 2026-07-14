@@ -1,0 +1,14 @@
+{
+  "name": "@gsv/manual-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/unit/*.test.mjs",
+    "test:browser": "playwright test --config playwright.config.mjs",
+    "e2e:core": "./run.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}

@@ -91,6 +91,11 @@ npm run dev                    # start the local multi-worker stack
 
 Requires [Rust](https://rustup.rs) and [Node.js + npm](https://nodejs.org).
 
+To deploy and tear down a disposable core instance while exercising onboarding,
+device routing, agent tools, and delegation, see the
+[manual end-to-end runner](./e2e/README.md) or run `npm run e2e:manual` after its
+one-time setup.
+
 ## 🤝 Get Involved
 
 GSV is actively evolving, and we want you to be part of the network! We welcome contributions of all sizes.

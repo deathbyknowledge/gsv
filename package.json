@@ -13,6 +13,7 @@
     "postinstall": "npm run gsv:build",
     "setup": "bash ./scripts/setup-deps.sh",
     "dev": "bash ./scripts/dev-stack.sh",
+    "e2e:manual": "bash ./e2e/run.sh",
     "extension:check": "npm run check --workspace extension",
     "extension:build": "npm run build --workspace extension",
     "extension:package": "bash ./scripts/build-extension-package.sh",
