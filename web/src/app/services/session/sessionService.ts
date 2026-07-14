@@ -130,11 +130,12 @@ function readPersistedRevokes(): string[] {
   }
 }
 
-function storePersistedToken(token: PersistedSessionToken): void {
+function storePersistedToken(token: PersistedSessionToken): boolean {
   try {
     window.localStorage.setItem(STORAGE_SESSION_TOKEN, JSON.stringify(token));
+    return true;
   } catch {
-    // Ignore storage failures.
+    return false;
   }
 }
 
@@ -265,6 +266,7 @@ export function createSessionService(client: GSVClient): SessionService {
   let reconnectGeneration = 0;
   let pendingSetupLogin: SessionLoginInput | null = null;
   let holdReadyUntilBootstrap = false;
+  let holdReadyUntilLogin = false;
 
   const emit = (): void => {
     for (const listener of listeners) {
@@ -376,14 +378,14 @@ export function createSessionService(client: GSVClient): SessionService {
     }, delayMs);
   };
 
-  const refreshSessionToken = async (reason: "post-login" | "scheduled"): Promise<void> => {
+  const refreshSessionToken = async (reason: "post-login" | "scheduled"): Promise<boolean> => {
     if (!client.isConnected()) {
-      return;
+      return false;
     }
 
     const username = snapshot.username;
     if (!username) {
-      return;
+      return false;
     }
 
     const nextExpiry = Date.now() + SESSION_TOKEN_TTL_MS;
@@ -395,13 +397,17 @@ export function createSessionService(client: GSVClient): SessionService {
       if (reason === "scheduled" && currentSessionToken?.expiresAt && currentSessionToken.expiresAt <= Date.now()) {
         clearStoredSessionToken();
       }
-      return;
+      return false;
     }
 
     const previousToken = currentSessionToken;
     const persisted = toPersistedToken(username, nextToken);
+    if (!storePersistedToken(persisted)) {
+      queueRevoke(nextToken.tokenId);
+      await drainPendingRevokes("ui session token persistence failed");
+      return false;
+    }
     currentSessionToken = persisted;
-    storePersistedToken(persisted);
     scheduleRefresh(persisted);
 
     if (previousToken && previousToken.tokenId !== nextToken.tokenId) {
@@ -409,6 +415,7 @@ export function createSessionService(client: GSVClient): SessionService {
     }
 
     await drainPendingRevokes("ui session rotated");
+    return true;
   };
 
   const setLockedAfterDisconnect = (message: string): void => {
@@ -564,7 +571,7 @@ export function createSessionService(client: GSVClient): SessionService {
     if (status.state === "connected") {
       reconnectInFlight = false;
       clearReconnectTimer();
-      if (holdReadyUntilBootstrap) {
+      if (holdReadyUntilBootstrap || holdReadyUntilLogin) {
         return;
       }
       if (
@@ -608,6 +615,7 @@ export function createSessionService(client: GSVClient): SessionService {
     const username = input.username.trim();
     const password = input.password?.trim() ?? "";
     const token = input.token?.trim() ?? "";
+    holdReadyUntilLogin = true;
 
     setSnapshot({
       phase: "authenticating",
@@ -629,6 +637,13 @@ export function createSessionService(client: GSVClient): SessionService {
       storeValue(STORAGE_USERNAME, username);
       pendingSetupLogin = null;
 
+      await drainPendingRevokes("ui session cleanup");
+      const sessionTokenReady = await refreshSessionToken("post-login");
+      if (!sessionTokenReady) {
+        client.disconnect();
+        throw new Error("Could not create a persistent session. Sign in again.");
+      }
+
       if (!holdReadyUntilBootstrap) {
         setSnapshot({
           phase: "ready",
@@ -639,10 +654,8 @@ export function createSessionService(client: GSVClient): SessionService {
           message: null,
           setupResult: null,
         });
+        markConnectionStableSoon();
       }
-
-      await drainPendingRevokes("ui session cleanup");
-      await refreshSessionToken("post-login");
 
       return result;
     } catch (error) {
@@ -667,6 +680,8 @@ export function createSessionService(client: GSVClient): SessionService {
         setupResult: null,
       });
       throw error;
+    } finally {
+      holdReadyUntilLogin = false;
     }
   };
 
