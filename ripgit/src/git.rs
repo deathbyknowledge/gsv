@@ -370,12 +370,7 @@ pub async fn fetch_remote_ref_with_options(
 ) -> Result<RemoteFetchResult> {
     let remote = normalize_remote_base_url(remote_url)?;
     let advertised = fetch_advertised_refs(&remote).await?;
-    let remote_ref_name = normalize_remote_ref_name(remote_ref);
-    let wanted_hash = advertised
-        .refs
-        .get(&remote_ref_name)
-        .cloned()
-        .ok_or_else(|| Error::RustError(format!("remote ref not found: {}", remote_ref_name)))?;
+    let wanted_hash = resolve_remote_target(&advertised, remote_ref)?;
     let current_head = api::resolve_ref(sql, local_ref)?;
 
     if current_head.as_deref() == Some(wanted_hash.as_str()) {
@@ -541,7 +536,7 @@ fn parse_upload_request(data: &[u8]) -> UploadRequest {
                     // First want line may have capabilities after a space
                     let mut fields = rest.split_whitespace();
                     let hash = fields.next().unwrap_or("");
-                    if hash.len() == 40 {
+                    if is_full_object_id(hash) {
                         request.wants.push(hash.to_string());
                     }
                     if !saw_first_want {
@@ -552,7 +547,7 @@ fn parse_upload_request(data: &[u8]) -> UploadRequest {
                     }
                 } else if let Some(rest) = text.strip_prefix("have ") {
                     let hash = rest.split_whitespace().next().unwrap_or("");
-                    if hash.len() == 40 {
+                    if is_full_object_id(hash) {
                         request.haves.push(hash.to_string());
                     }
                 }
@@ -599,18 +594,19 @@ fn parse_advertised_refs(data: &[u8]) -> AdvertisedRefs {
                 let mut parts = text.splitn(2, ' ');
                 let hash = parts.next().unwrap_or("");
                 let ref_name = parts.next().unwrap_or("");
-                if hash.len() != 40 || ref_name.is_empty() {
+                if !is_full_object_id(hash) || ref_name.is_empty() {
                     continue;
                 }
+                let hash = hash.to_ascii_lowercase();
 
                 if !saw_first_ref {
                     refs.capabilities = capabilities;
                     saw_first_ref = true;
                 }
                 if let Some(ref_name) = ref_name.strip_suffix("^{}") {
-                    peeled_refs.insert(ref_name.to_string(), hash.to_string());
+                    peeled_refs.insert(ref_name.to_string(), hash);
                 } else {
-                    refs.refs.insert(ref_name.to_string(), hash.to_string());
+                    refs.refs.insert(ref_name.to_string(), hash);
                 }
             }
             None => break,
@@ -808,6 +804,25 @@ fn normalize_remote_ref_name(remote_ref: &str) -> String {
     } else {
         format!("refs/heads/{}", remote_ref)
     }
+}
+
+fn resolve_remote_target(advertised: &AdvertisedRefs, remote_ref: &str) -> Result<String> {
+    if is_full_object_id(remote_ref) {
+        return Ok(remote_ref.to_ascii_lowercase());
+    }
+
+    let remote_ref_name = normalize_remote_ref_name(remote_ref);
+    advertised
+        .refs
+        .get(&remote_ref_name)
+        .cloned()
+        .ok_or_else(|| Error::RustError(format!("remote ref not found: {}", remote_ref_name)))
+}
+
+fn is_full_object_id(value: &str) -> bool {
+    value.len() == 40
+        && value != store::ZERO_HASH
+        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn build_negotiation_response(request: &UploadRequest, common_haves: &[String]) -> Vec<u8> {
@@ -1465,6 +1480,96 @@ mod tests {
         assert!(!advertised.refs.contains_key("refs/tags/v0.4.0^{}"));
         assert!(advertised.capabilities.contains("multi_ack"));
         assert!(advertised.capabilities.contains("ofs-delta"));
+    }
+
+    #[test]
+    fn resolve_remote_target_accepts_a_full_commit_id() {
+        let object_id = "ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD";
+        let advertised = AdvertisedRefs::default();
+
+        let resolved = resolve_remote_target(&advertised, object_id).unwrap();
+
+        assert_eq!(resolved, object_id.to_ascii_lowercase());
+    }
+
+    #[test]
+    fn resolve_remote_target_passes_through_an_unadvertised_commit_id() {
+        let advertised = AdvertisedRefs {
+            refs: HashMap::from([(
+                "refs/heads/main".to_string(),
+                "1111111111111111111111111111111111111111".to_string(),
+            )]),
+            ..AdvertisedRefs::default()
+        };
+
+        let resolved = resolve_remote_target(
+            &advertised,
+            "2222222222222222222222222222222222222222",
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolved,
+            "2222222222222222222222222222222222222222"
+        );
+    }
+
+    #[test]
+    fn resolve_remote_target_preserves_branch_and_full_ref_semantics() {
+        let advertised = AdvertisedRefs {
+            refs: HashMap::from([
+                (
+                    "refs/heads/e2e".to_string(),
+                    "1111111111111111111111111111111111111111".to_string(),
+                ),
+                (
+                    "refs/tags/v0.4.0".to_string(),
+                    "2222222222222222222222222222222222222222".to_string(),
+                ),
+            ]),
+            ..AdvertisedRefs::default()
+        };
+
+        assert_eq!(
+            resolve_remote_target(&advertised, "e2e").unwrap(),
+            "1111111111111111111111111111111111111111"
+        );
+        assert_eq!(
+            resolve_remote_target(&advertised, "refs/tags/v0.4.0").unwrap(),
+            "2222222222222222222222222222222222222222"
+        );
+    }
+
+    #[test]
+    fn full_object_id_validation_rejects_malformed_values() {
+        assert!(is_full_object_id(
+            "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+        ));
+        assert!(!is_full_object_id(
+            "abcdefabcdefabcdefabcdefabcdefabcdefabc"
+        ));
+        assert!(!is_full_object_id(
+            "abcdefabcdefabcdefabcdefabcdefabcdefabcde"
+        ));
+        assert!(!is_full_object_id(
+            "gbcdefabcdefabcdefabcdefabcdefabcdefabcd"
+        ));
+        assert!(!is_full_object_id(store::ZERO_HASH));
+    }
+
+    #[test]
+    fn resolve_remote_target_does_not_pass_through_malformed_object_ids() {
+        for malformed in [
+            store::ZERO_HASH,
+            "gbcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        ] {
+            let error = resolve_remote_target(&AdvertisedRefs::default(), malformed).unwrap_err();
+
+            assert_eq!(
+                protocol_error_message(&error),
+                format!("remote ref not found: refs/heads/{}", malformed)
+            );
+        }
     }
 
     #[test]
