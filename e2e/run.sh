@@ -215,6 +215,7 @@ RUN_LOG="${RESULTS_DIR}/run.log"
 CHECKS_FILE="${RESULTS_DIR}/checks.ndjson"
 SUMMARY_FILE="${RESULTS_DIR}/summary.json"
 READINESS_DIAGNOSTICS_FILE="${RESULTS_DIR}/readiness-diagnostics.ndjson"
+BROWSER_DIAGNOSTICS_FILE="${RESULTS_DIR}/browser-diagnostics.ndjson"
 touch "${RUN_LOG}"
 chmod 600 "${RUN_LOG}"
 exec > >(tee -a "${RUN_LOG}") 2>&1
@@ -333,6 +334,7 @@ fi
 PLAYWRIGHT_BIN="${E2E_DIR}/node_modules/.bin/playwright"
 [[ -x "${PLAYWRIGHT_BIN}" ]] \
   || die "Playwright is not installed; run: npm ci --prefix e2e && npm --prefix e2e exec -- playwright install chromium"
+node "${E2E_DIR}/lib/browser-preflight.mjs" verify
 
 pass_check preflight
 CURRENT_CHECK="helper-tests"
@@ -417,6 +419,7 @@ if ! env \
   GSV_E2E_ROOT_PASSWORD="${ROOT_PASSWORD}" \
   GSV_E2E_BOOTSTRAP_SOURCE="${BOOTSTRAP_SOURCE}" \
   GSV_E2E_BOOTSTRAP_REF="${BOOTSTRAP_REF}" \
+  GSV_E2E_BROWSER_DIAGNOSTICS_FILE="${BROWSER_DIAGNOSTICS_FILE}" \
   GSV_E2E_PLAYWRIGHT_OUTPUT_DIR="${RUNTIME_DIR}/playwright-artifacts" \
   GSV_E2E_HEADED="${HEADED}" \
   "${PLAYWRIGHT_BIN}" test --config "${E2E_DIR}/playwright.config.mjs" \

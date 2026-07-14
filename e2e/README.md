@@ -31,6 +31,11 @@ npm ci --prefix e2e
 npm --prefix e2e exec -- playwright install chromium
 ```
 
+The runner verifies that the exact Chromium revision selected by the installed
+Playwright package exists and is executable before it builds or deploys
+anything. If it is missing, the run stops with the same browser install command
+without printing the resolved cache path.
+
 Use a dedicated Cloudflare test account. Export its credentials in the calling
 shell so they do not appear inline in the invocation or in the retained log:
 
@@ -100,6 +105,13 @@ Sanitized results are written to `e2e/results/<run-id>/` by default:
 - `checks.ndjson`: check names, statuses, and timestamps;
 - `summary.json`: overall outcome and non-secret run metadata; and
 - `run.log`: orchestration output without shell tracing or raw credentials.
+
+Browser runs append progress to `browser-diagnostics.ndjson`. Every record has
+exactly one fixed step identifier, an allowlisted outcome, and an allowlisted
+error class. The file never retains URLs, selectors, page text, credentials,
+DOM, screenshots, traces, video, console or network payloads, or arbitrary
+error messages. Full Playwright output remains in the mode-`0700` temporary
+runtime directory and is removed during cleanup.
 
 If a `/health` probe times out, `readiness-diagnostics.ndjson` adds one
 allowlisted record with the endpoint label, attempt count, curl transport
