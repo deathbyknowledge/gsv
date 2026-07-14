@@ -1151,7 +1151,7 @@ function ModelProfileForm({
   };
   const validateDrafts = async () => {
     const validationValues = modelValidationValuesFromProfileDrafts(effectiveDrafts, effectiveClearedSecretKeys);
-    setPendingLabel("TESTING");
+    setPendingLabel("TESTING...");
     setStatusTone("pending");
     setStatusText(isOpenAiCodexProvider ? "Verifying OpenAI Codex settings..." : "Testing model...");
     await onValidate({
@@ -1301,7 +1301,7 @@ function ModelProfileForm({
     setPendingLabel("SAVING");
     setStatusText(isOpenAiCodexProvider ? "OpenAI Codex verified. Saving model..." : "Model test passed. Saving model...");
     await onSave(name, effectiveDrafts, clearedProfileSecretKeys);
-  }, "Saved", "TESTING");
+  }, "Saved", "TESTING...");
 
   if (!profile) {
     const clampedStep = Math.max(0, Math.min(step, MODEL_PROFILE_STEP_LABELS.length - 1)) as ModelProfileStep;
@@ -1374,7 +1374,7 @@ function ModelProfileForm({
           />
           <Button
             variant="primary"
-            label={pending ? pendingLabel || "SAVING" : clampedStep === 3 ? "TEST & SAVE MODEL" : "CONTINUE"}
+            label={pending ? pendingLabel || "SAVING" : clampedStep === 3 ? "SAVE" : "CONTINUE"}
             disabled={!canContinue}
             onClick={clampedStep === 3 ? runTestAndSave : goNext}
           />
@@ -1404,7 +1404,7 @@ function ModelProfileForm({
         <div class="gsv-console-settings-actions">
           <Button
             variant="primary"
-            label={pending ? pendingLabel || "SAVING" : "TEST & SAVE MODEL"}
+            label={pending ? pendingLabel || "SAVING" : "SAVE"}
             disabled={!canSave || pending}
             onClick={runTestAndSave}
           />
@@ -1418,7 +1418,7 @@ function ModelProfileForm({
                 setPendingLabel("UPDATING");
                 setStatusText(isOpenAiCodexProvider ? "OpenAI Codex verified. Updating default..." : "Model test passed. Updating default...");
                 await onMakeDefault(effectiveDrafts, clearedProfileSecretKeys);
-              }, "Default updated", "TESTING")}
+              }, "Default updated", "TESTING...")}
             />
           ) : null}
           <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
@@ -1692,7 +1692,7 @@ function SettingsFieldGroup({
         delete values[field.key];
       }
     }
-    setPendingLabel("TESTING");
+    setPendingLabel("TESTING...");
     setStatusText(isOpenAiCodexSettings ? "Verifying OpenAI Codex settings..." : "Testing model...");
     await validateBeforeSave(values);
   };
@@ -1733,7 +1733,7 @@ function SettingsFieldGroup({
       return;
     }
     setPending(true);
-    setPendingLabel(validateBeforeSave ? "TESTING" : "SAVING");
+    setPendingLabel(validateBeforeSave ? "TESTING..." : "SAVING");
     setStatusText("");
     setStatusTone("pending");
     try {
@@ -1851,7 +1851,7 @@ function SettingsFieldGroup({
       <div class="gsv-console-settings-actions">
         <Button
           variant="primary"
-          label={pending ? pendingLabel || "SAVING" : validateBeforeSave ? "TEST & SAVE" : "SAVE CHANGES"}
+          label={pending ? pendingLabel || "SAVING" : validateBeforeSave ? "SAVE" : "SAVE CHANGES"}
           disabled={!editable || !dirty || pending || !codexOriginReady}
           onClick={() => void save()}
         />
