@@ -214,6 +214,7 @@ chmod 700 "${RESULTS_DIR}"
 RUN_LOG="${RESULTS_DIR}/run.log"
 CHECKS_FILE="${RESULTS_DIR}/checks.ndjson"
 SUMMARY_FILE="${RESULTS_DIR}/summary.json"
+READINESS_DIAGNOSTICS_FILE="${RESULTS_DIR}/readiness-diagnostics.ndjson"
 touch "${RUN_LOG}"
 chmod 600 "${RUN_LOG}"
 exec > >(tee -a "${RUN_LOG}") 2>&1
@@ -392,7 +393,12 @@ pass_check deployment
 CURRENT_CHECK="readiness"
 CURRENT_STAGE="readiness"
 printf 'Waiting for gateway health and web assets...\n'
-wait_for_http_contains "${GATEWAY_URL}/health" '"status":"healthy"' 180 \
+wait_for_http_contains \
+  "${GATEWAY_URL}/health" \
+  '"status":"healthy"' \
+  180 \
+  gateway-health \
+  "${READINESS_DIAGNOSTICS_FILE}" \
   || die "gateway health did not become ready"
 wait_for_http_ok "${GATEWAY_URL}/" 120 \
   || die "gateway web assets did not become ready"
@@ -463,7 +469,12 @@ python3 "${ROOT_DIR}/scripts/mock-openai-provider.py" \
   --delay-ms 15000 \
   >"${PROVIDER_LOG}" 2>&1 &
 PROVIDER_PID=$!
-wait_for_http_contains "http://127.0.0.1:${PROVIDER_PORT}/health" '"status":"ok"' 30 \
+wait_for_http_contains \
+  "http://127.0.0.1:${PROVIDER_PORT}/health" \
+  '"status":"ok"' \
+  30 \
+  mock-provider-health \
+  "${READINESS_DIAGNOSTICS_FILE}" \
   || die "mock provider did not become ready"
 pass_check mock-provider
 

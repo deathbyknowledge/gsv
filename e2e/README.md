@@ -101,6 +101,11 @@ Sanitized results are written to `e2e/results/<run-id>/` by default:
 - `summary.json`: overall outcome and non-secret run metadata; and
 - `run.log`: orchestration output without shell tracing or raw credentials.
 
+If a `/health` probe times out, `readiness-diagnostics.ndjson` adds one
+allowlisted record with the endpoint label, attempt count, curl transport
+class, numeric HTTP status, content-type class, response-body class, and byte
+count. It never retains response bodies, raw headers, URLs, or curl errors.
+
 Raw CLI token output, cached local sessions, and device/provider logs exist only
 beneath a mode-`0700` temporary runtime directory and are removed on every exit.
 Agent prompts, histories, and tool arguments live in the disposable instance and

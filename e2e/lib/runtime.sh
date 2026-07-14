@@ -4,21 +4,47 @@ wait_for_http_contains() {
   local url="$1"
   local expected="$2"
   local timeout_seconds="$3"
+  local endpoint_label="$4"
+  local diagnostics_file="$5"
   local deadline=$((SECONDS + timeout_seconds))
+  local started_at="${SECONDS}"
+  local attempts=0
+  local curl_exit=0
   local response_file="${RUNTIME_DIR}/http-response.tmp"
+  local metadata_file="${RUNTIME_DIR}/http-metadata.tmp"
 
   while ((SECONDS < deadline)); do
+    attempts=$((attempts + 1))
+    rm -f "${response_file}" "${metadata_file}"
     if curl --fail --silent --show-error \
       --connect-timeout 5 \
       --max-time 10 \
-      "${url}" >"${response_file}" 2>/dev/null \
-      && grep -Fq -- "${expected}" "${response_file}"; then
-      rm -f "${response_file}"
-      return 0
+      --output "${response_file}" \
+      --write-out $'%{http_code}\n%{content_type}\n%{time_total}\n' \
+      "${url}" >"${metadata_file}" 2>/dev/null; then
+      curl_exit=0
+      if grep -Fq -- "${expected}" "${response_file}"; then
+        rm -f "${response_file}" "${metadata_file}"
+        return 0
+      fi
+    else
+      curl_exit=$?
     fi
     sleep 1
   done
-  rm -f "${response_file}"
+
+  node "${E2E_DIR}/lib/http-diagnostics.mjs" record \
+    "${diagnostics_file}" \
+    "${endpoint_label}" \
+    "${attempts}" \
+    "$((SECONDS - started_at))" \
+    "${curl_exit}" \
+    "${metadata_file}" \
+    "${response_file}" \
+    "${expected}" \
+    || printf 'Health diagnostic unavailable: endpoint=%s attempts=%s\n' \
+      "${endpoint_label}" "${attempts}" >&2
+  rm -f "${response_file}" "${metadata_file}"
   return 1
 }
 
