@@ -3,6 +3,8 @@ import { PROCESS_MIGRATIONS, PROCESS_SCHEMA_COMPONENT } from "./migrations";
 import { PROCESS_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { PROCESS_V002_MESSAGE_RUN_ID } from "./v002_message_run_id";
 import { PROCESS_V003_MESSAGE_METADATA } from "./v003_message_metadata";
+import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./v005_tool_result_outcome";
+import { PROCESS_V006_PENDING_HIL_OWNER } from "./v006_pending_hil_owner";
 
 function normalizedStatements(): string[] {
   return PROCESS_MIGRATIONS.flatMap((migration) => migration.statements)
@@ -34,7 +36,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(4);
+    expect(PROCESS_MIGRATIONS).toHaveLength(6);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -50,6 +52,14 @@ describe("process schema migrations", () => {
     expect(PROCESS_MIGRATIONS[3]).toMatchObject({
       id: 4,
       name: "rebuild_pending_tool_dispatch_state",
+    });
+    expect(PROCESS_MIGRATIONS[4]).toMatchObject({
+      id: 5,
+      name: "add_tool_result_outcome",
+    });
+    expect(PROCESS_MIGRATIONS[5]).toMatchObject({
+      id: 6,
+      name: "add_pending_hil_owner",
     });
   });
 
@@ -109,6 +119,25 @@ describe("process schema migrations", () => {
     const statements = PROCESS_V003_MESSAGE_METADATA.statements
       .map((statement) => statement.trim().replace(/\s+/g, " "));
     expect(statements).toContain("ALTER TABLE messages ADD COLUMN metadata_json TEXT");
+  });
+
+  it("adds structured outcomes to pending tool state in v5", () => {
+    const statements = PROCESS_V005_TOOL_RESULT_OUTCOME.statements
+      .map((statement) => statement.trim().replace(/\s+/g, " "));
+    expect(statements).toContain("ALTER TABLE pending_tool_calls ADD COLUMN outcome TEXT");
+    expect(statements.some((statement) => (
+      statement.startsWith("UPDATE pending_tool_calls SET outcome = CASE")
+    ))).toBe(true);
+  });
+
+  it("links nested approvals to their owning tool in v6", () => {
+    const statements = PROCESS_V006_PENDING_HIL_OWNER.statements
+      .map((statement) => statement.trim().replace(/\s+/g, " "));
+    expect(statements).toContain("ALTER TABLE pending_hil ADD COLUMN owner_dispatch_id TEXT");
+    expect(statements.some((statement) => statement.startsWith("UPDATE pending_hil SET owner_dispatch_id")))
+      .toBe(true);
+    expect(statements.some((statement) => statement.startsWith("UPDATE pending_tool_calls SET status = 'error'")))
+      .toBe(true);
   });
 
 });

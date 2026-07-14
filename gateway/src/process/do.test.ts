@@ -17,6 +17,8 @@ import { getProcessByPid, getKernelPtr } from "../shared/utils";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
 import { PROCESS_V001_INITIAL_SCHEMA } from "./schema/v001_initial";
 import { PROCESS_V004_PENDING_TOOL_DISPATCH_ID } from "./schema/v004_pending_tool_dispatch_id";
+import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./schema/v005_tool_result_outcome";
+import { PROCESS_V006_PENDING_HIL_OWNER } from "./schema/v006_pending_hil_owner";
 
 const ROOT_IDENTITY: ProcessIdentity = {
   uid: 0,
@@ -5353,6 +5355,7 @@ describe("Process DO — mechanical", () => {
           content: {
             toolName: "Read",
             isError: true,
+            outcome: "failed",
             toolCallId: "tool-1",
             output: "permission denied",
           },
@@ -6197,6 +6200,8 @@ describe("Process DO — mechanical", () => {
         ]);
         expect(lastThree[0].content).toContain("User interrupted tool execution");
         expect(lastThree[1].content).toContain("User interrupted tool execution");
+        expect(JSON.parse(lastThree[0].toolCalls).outcome).toBe("cancelled");
+        expect(JSON.parse(lastThree[1].toolCalls).outcome).toBe("cancelled");
         expect(lastThree[2].role).toBe("user");
         expect(lastThree[2].content).toBe("follow-up after abort");
         expect(store.queueSize()).toBe(0);
@@ -6473,7 +6478,113 @@ describe("Process DO — mechanical", () => {
           id: "call-hil-2",
           status: "error",
           error: "Tool execution denied by user",
+          outcome: "denied",
         }]);
+        process.ingestToolResults("run-hil-2", process.store.getResults("run-hil-2"));
+        const toolResult = process.store.getMessages().at(-1);
+        expect(toolResult.role).toBe("toolResult");
+        expect(JSON.parse(toolResult.toolCalls).outcome).toBe("denied");
+      });
+    });
+
+    it("classifies a denied CodeMode confirmation as a user-controlled outcome", async () => {
+      const stub = await initProcess("mech-hil-codemode-deny", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const runId = "run-hil-codemode-deny";
+        const requestId = "approval-codemode-deny";
+        const resolve = vi.fn();
+        process.currentRun = {
+          runId,
+          conversationId: "default",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        registerToolBlock(process, runId, [
+          {
+            id: "call-codemode-other",
+            name: "CodeMode",
+            arguments: { code: "return 'still running';" },
+          },
+          {
+            id: "call-codemode-outer",
+            name: "CodeMode",
+            arguments: { code: "return await fs.read({ path: '/secret' });" },
+          },
+        ]);
+        process.store.markDispatched("dispatch-call-codemode-other");
+        process.store.markDispatched("dispatch-call-codemode-outer");
+        process.store.setPendingHil({
+          requestId,
+          runId,
+          conversationId: "default",
+          toolCallId: "codemode-nested-call",
+          toolName: "Read",
+          syscall: "fs.read",
+          args: { path: "/secret" },
+          createdAt: Date.now(),
+        });
+        process.codeModeApprovals.set(requestId, {
+          runId,
+          dispatchId: "dispatch-call-codemode-outer",
+          resolve,
+          timeoutId: setTimeout(() => {}, 60_000),
+        });
+
+        await expect(process.handleProcHil({ requestId, decision: "deny" })).resolves.toMatchObject({
+          ok: true,
+          decision: "deny",
+          resumed: true,
+        });
+
+        expect(resolve).toHaveBeenCalledWith(false);
+        expect(process.store.getResults(runId)).toMatchObject([
+          {
+            id: "call-codemode-other",
+            status: "pending",
+            outcome: null,
+          },
+          {
+            id: "call-codemode-outer",
+            status: "error",
+            error: "Tool execution denied by user",
+            outcome: "denied",
+          },
+        ]);
+        process.store.resolve("dispatch-call-codemode-other", {
+          status: "completed",
+          result: "still running",
+        });
+        process.ingestToolResults(runId, process.store.getResults(runId));
+        const outcomes = process.store.getMessages()
+          .filter((message: any) => message.role === "toolResult")
+          .map((message: any) => JSON.parse(message.toolCalls).outcome);
+        expect(outcomes).toEqual(["completed", "denied"]);
+      });
+    });
+
+    it("does not infer a user denial from a live tool error message", async () => {
+      const stub = await initProcess("mech-tool-error-denial-text", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        const runId = "run-tool-error-denial-text";
+        process.store.register(
+          "dispatch-tool-error-denial-text",
+          "call-tool-error-denial-text",
+          runId,
+          "fs.read",
+          { path: "/provider" },
+        );
+        process.store.fail(
+          "dispatch-tool-error-denial-text",
+          "Tool execution denied by user",
+        );
+
+        expect(process.store.getResults(runId)[0].outcome).toBe("failed");
+        process.ingestToolResults(runId, process.store.getResults(runId));
+        const toolResult = process.store.getMessages().at(-1);
+        expect(JSON.parse(toolResult.toolCalls).outcome).toBe("failed");
       });
     });
 
@@ -6536,17 +6647,25 @@ describe("Process DO — mechanical", () => {
           conversationId: "default",
           approvalPolicy: { default: "auto", rules: [] },
         };
-        registerToolBlock(process, runId, [{
-          id: "call-codemode-outer",
-          name: "CodeMode",
-          arguments: { code: "return await fs.read({ path: '/lost' });" },
-        }]);
+        registerToolBlock(process, runId, [
+          {
+            id: "call-codemode-other",
+            name: "CodeMode",
+            arguments: { code: "return 'still running';" },
+          },
+          {
+            id: "call-codemode-outer",
+            name: "CodeMode",
+            arguments: { code: "return await fs.read({ path: '/lost' });" },
+          },
+        ]);
+        process.store.markDispatched("dispatch-call-codemode-other");
         process.store.markDispatched("dispatch-call-codemode-outer");
         process.store.setPendingHil({
           requestId: "approval-lost",
           runId,
           conversationId: "default",
-          generation: 1,
+          ownerDispatchId: "dispatch-call-codemode-outer",
           toolCallId: "codemode-nested-call",
           toolName: "Read",
           syscall: "fs.read",
@@ -6564,11 +6683,17 @@ describe("Process DO — mechanical", () => {
         });
 
         expect(process.store.getPendingHil()).toBeNull();
-        expect(process.store.getResults(runId)).toMatchObject([{
-          id: "call-codemode-outer",
-          status: "error",
-          error: "CodeMode execution was interrupted while waiting for tool approval",
-        }]);
+        expect(process.store.getResults(runId)).toMatchObject([
+          {
+            id: "call-codemode-other",
+            status: "pending",
+          },
+          {
+            id: "call-codemode-outer",
+            status: "error",
+            error: "CodeMode execution was interrupted while waiting for tool approval",
+          },
+        ]);
         expect(process.schedule).toHaveBeenCalledWith(
           expect.any(Date),
           "tick",
@@ -6823,7 +6948,15 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.appendToolResult("call-1", "fs.read", "file contents here", false, "default", "run-history-tool");
+        store.appendToolResult(
+          "call-1",
+          "fs.read",
+          "file contents here",
+          false,
+          "default",
+          "run-history-tool",
+          "completed",
+        );
       });
 
       const res = (await stub.recvFrame(
@@ -6839,9 +6972,42 @@ describe("Process DO — mechanical", () => {
       expect(data.messages[0].content).toEqual({
         toolName: "Read",
         isError: false,
+        outcome: "completed",
         toolCallId: "call-1",
         output: "file contents here",
       });
+    });
+
+    it("normalizes legacy user-controlled tool outcomes", async () => {
+      const pid = "mech-history-toolresult-legacy-outcomes";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendToolResult(
+          "call-cancelled",
+          "fs.read",
+          "Error: User interrupted tool execution",
+          true,
+        );
+        store.appendToolResult(
+          "call-denied",
+          "fs.write",
+          "Error: Tool execution denied by user",
+          true,
+        );
+      });
+
+      const res = (await stub.recvFrame(
+        makeReq("proc.history", {}),
+      )) as ResponseOkFrame;
+
+      expect(res.ok).toBe(true);
+      const data = res.data as any;
+      expect(data.messages.map((message: any) => message.content.outcome)).toEqual([
+        "cancelled",
+        "denied",
+      ]);
     });
 
     it("includes assistant thinking blocks when present", async () => {
@@ -7152,6 +7318,7 @@ describe("Process DO — mechanical", () => {
         };
         process.waitForCodeModeApproval = async (
           _runId: string,
+          _dispatchId: string,
           _toolCallId: string,
           _toolName: string,
           call: string,
@@ -7168,6 +7335,7 @@ describe("Process DO — mechanical", () => {
         await expect(process.executeCodeModeSyscall(
           {
             runId: "run-codemode-fetch-approval",
+            dispatchId: "dispatch-codemode-fetch-approval",
             approvalPolicy: process.currentRun.approvalPolicy,
             capabilities: ["net.fetch"],
           },
@@ -7217,6 +7385,7 @@ describe("Process DO — mechanical", () => {
         await expect(process.executeCodeModeSyscall(
           {
             runId: "run-codemode-fetch-capability",
+            dispatchId: "dispatch-codemode-fetch-capability",
             approvalPolicy: {
               default: "ask",
               rules: [],
@@ -7263,6 +7432,7 @@ describe("Process DO — mechanical", () => {
         await expect(process.executeCodeModeSyscall(
           {
             runId: "run-codemode-fetch-stopped-after-fetch",
+            dispatchId: "dispatch-codemode-fetch-stopped-after-fetch",
             approvalPolicy: process.currentRun.approvalPolicy,
             capabilities: ["net.fetch"],
           },
@@ -7358,6 +7528,50 @@ describe("Process DO — mechanical", () => {
             },
           }),
         ]);
+      });
+    });
+
+    it("classifies a failed CodeMode result as a genuine tool failure", async () => {
+      const stub = await initProcess("mech-codemode-failed-outcome", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const runId = "run-codemode-failed-outcome";
+        const dispatchId = "dispatch-call-codemode-failed";
+        process.currentRun = {
+          runId,
+          conversationId: "default",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        registerToolBlock(process, runId, [{
+          type: "toolCall",
+          id: "call-codemode-failed",
+          name: "CodeMode",
+          arguments: { code: "" },
+        }]);
+        process.store.markDispatched(dispatchId);
+
+        await process.executeCodeModeTool(
+          runId,
+          dispatchId,
+          { code: "" },
+          process.currentRun.approvalPolicy,
+        );
+
+        expect(process.store.getResults(runId)).toMatchObject([{
+          status: "completed",
+          result: {
+            status: "failed",
+            error: "CodeMode requires a non-empty code string",
+          },
+          outcome: "failed",
+        }]);
+        process.ingestToolResults(runId, process.store.getResults(runId));
+        const toolResult = process.store.getMessages().at(-1);
+        expect(JSON.parse(toolResult.toolCalls)).toMatchObject({
+          isError: true,
+          outcome: "failed",
+        });
       });
     });
   });
@@ -7819,6 +8033,113 @@ describe("Process DO — mechanical", () => {
           .toArray()[0]?.count).toBe(0);
         expect(sql.exec<{ name: string }>("PRAGMA table_info(pending_hil)").toArray()
           .map((column) => column.name)).not.toContain("remaining_tool_calls_json");
+      });
+    });
+
+    it("backfills terminal tool outcomes when upgrading from v4", async () => {
+      const stub = await initProcess("mech-upgrade-v4-outcomes", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const sql = (instance as any).ctx.storage.sql as SqlStorage;
+        sql.exec("ALTER TABLE pending_tool_calls DROP COLUMN outcome");
+        const rows = [
+          ["completed", JSON.stringify({ status: "completed" }), null, "completed"],
+          ["failed-envelope", JSON.stringify({ status: "failed" }), null, "completed"],
+          ["denied", null, "Tool execution denied by user", "error"],
+          ["failed-error", null, "provider failure", "error"],
+        ] as const;
+        rows.forEach(([id, result, error, status], index) => {
+          sql.exec(
+            `INSERT INTO pending_tool_calls (
+              dispatch_id, id, run_id, conversation_id, call, args_json,
+              result_json, error, status, created_at
+            ) VALUES (?, ?, 'run-upgrade-outcomes', 'default', 'fs.read', '{}', ?, ?, ?, ?)`,
+            `dispatch-${id}`,
+            id,
+            result,
+            error,
+            status,
+            index,
+          );
+        });
+
+        for (const statement of PROCESS_V005_TOOL_RESULT_OUTCOME.statements) {
+          sql.exec(statement);
+        }
+
+        expect(sql.exec<{ id: string; outcome: string }>(
+          "SELECT id, outcome FROM pending_tool_calls ORDER BY created_at ASC",
+        ).toArray()).toEqual([
+          { id: "completed", outcome: "completed" },
+          { id: "failed-envelope", outcome: "failed" },
+          { id: "denied", outcome: "denied" },
+          { id: "failed-error", outcome: "failed" },
+        ]);
+      });
+    });
+
+    it("recovers only unambiguous CodeMode approval owners when upgrading from v5", async () => {
+      const stub = await initProcess("mech-upgrade-v5-hil-owner", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const sql = (instance as any).ctx.storage.sql as SqlStorage;
+        sql.exec("ALTER TABLE pending_hil DROP COLUMN owner_dispatch_id");
+        const insertTool = (
+          dispatchId: string,
+          id: string,
+          runId: string,
+          call: string,
+          status: string,
+          createdAt: number,
+        ) => sql.exec(
+          `INSERT INTO pending_tool_calls (
+            dispatch_id, id, run_id, conversation_id, call, args_json,
+            status, created_at
+          ) VALUES (?, ?, ?, 'default', ?, '{}', ?, ?)`,
+          dispatchId,
+          id,
+          runId,
+          call,
+          status,
+          createdAt,
+        );
+        const insertHil = (requestId: string, runId: string, toolCallId: string) => sql.exec(
+          `INSERT INTO pending_hil (
+            request_id, run_id, conversation_id, tool_call_id, tool_name,
+            syscall, args_json, created_at
+          ) VALUES (?, ?, 'default', ?, 'Read', 'fs.read', '{}', 1)`,
+          requestId,
+          runId,
+          toolCallId,
+        );
+
+        insertTool("dispatch-direct", "call-direct", "run-direct", "fs.read", "registered", 1);
+        insertHil("hil-direct", "run-direct", "call-direct");
+        insertTool("dispatch-single", "call-single", "run-single", "codemode.exec", "pending", 2);
+        insertHil("hil-single", "run-single", "nested-single");
+        insertTool("dispatch-multi-a", "call-multi-a", "run-multi", "codemode.exec", "pending", 3);
+        insertTool("dispatch-multi-b", "call-multi-b", "run-multi", "codemode.exec", "pending", 4);
+        insertHil("hil-multi", "run-multi", "nested-multi");
+
+        for (const statement of PROCESS_V006_PENDING_HIL_OWNER.statements) {
+          sql.exec(statement);
+        }
+
+        expect(sql.exec<{ request_id: string; owner_dispatch_id: string | null }>(
+          "SELECT request_id, owner_dispatch_id FROM pending_hil ORDER BY request_id ASC",
+        ).toArray()).toEqual([
+          { request_id: "hil-direct", owner_dispatch_id: null },
+          { request_id: "hil-single", owner_dispatch_id: "dispatch-single" },
+        ]);
+        expect(sql.exec<{ id: string; status: string; outcome: string | null }>(
+          `SELECT id, status, outcome
+             FROM pending_tool_calls
+            WHERE run_id = 'run-multi'
+            ORDER BY created_at ASC`,
+        ).toArray()).toEqual([
+          { id: "call-multi-a", status: "error", outcome: "failed" },
+          { id: "call-multi-b", status: "error", outcome: "failed" },
+        ]);
       });
     });
   });
