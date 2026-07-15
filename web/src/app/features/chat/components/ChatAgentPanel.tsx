@@ -24,7 +24,7 @@ type ChatAgentPanelProps = {
   onClose: () => void;
 };
 
-function taskRowStatus(status: string): ListRowStatus {
+function taskRowStatus(status: ChatAgentTaskView["status"]): ListRowStatus {
   if (status === "error") {
     return "error";
   }
@@ -34,7 +34,7 @@ function taskRowStatus(status: string): ListRowStatus {
   return "live";
 }
 
-function taskStatusLabel(status: string): string {
+function taskStatusLabel(status: ChatAgentTaskView["status"]): string {
   if (status === "error") {
     return "ERROR";
   }

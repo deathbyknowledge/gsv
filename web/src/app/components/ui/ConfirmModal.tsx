@@ -148,7 +148,7 @@ export function ConfirmModal({
           <rect x="11.1" y="9" width="1.8" height="5.4" fill="var(--warn)" stroke="none" />
           <rect x="11.1" y="16" width="1.8" height="1.8" fill="var(--warn)" stroke="none" />
         </svg>
-        <div style={{ paddingTop: "2px", fontFamily: "'Space Grotesk',sans-serif" }}>
+        <div style={{ paddingTop: "2px", fontFamily: "'Space Grotesk',sans-serif", minWidth: 0, overflowWrap: "anywhere" }}>
           <div id={descId} class="gsv-prose" style={{ lineHeight: "1.65", color: "var(--text)" }}>{message}</div>
           <div class="gsv-prose-sm" style={{ color: "#9a95cf", marginTop: "9px", letterSpacing: ".04em" }}>{note}</div>
           {children ? <div class="gsv-cm-extra">{children}</div> : null}

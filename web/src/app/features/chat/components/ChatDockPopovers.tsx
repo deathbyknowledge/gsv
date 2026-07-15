@@ -4,7 +4,7 @@ import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
 import { TwoLevelSelect } from "../../../components/ui/TwoLevelSelect";
 import type { StatusTone } from "../../../components/ui/StatusDot";
-import type { ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
+import type { ChatAgentTaskStatus, ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
 import type { ChatConversation, ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
 import { formatCount, shortId } from "./chatUiFormat";
 
@@ -47,7 +47,7 @@ type ChatDockPopoversProps = {
   taskCount: number;
 };
 
-function taskStatusTone(status: string): StatusTone {
+function taskStatusTone(status: ChatAgentTaskStatus): StatusTone {
   if (status === "error") {
     return "error";
   }
@@ -57,7 +57,7 @@ function taskStatusTone(status: string): StatusTone {
   return "live";
 }
 
-function taskStatusLabel(status: string): string {
+function taskStatusLabel(status: ChatAgentTaskStatus): string {
   if (status === "error") {
     return "ERROR";
   }
