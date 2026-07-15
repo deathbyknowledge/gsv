@@ -217,12 +217,12 @@ function roleGlyph(role: ChatDockMessageRole): ComponentChildren {
 
 function copyButtonLabel(copied: boolean, failed: boolean): string {
   if (copied) {
-    return "COPIED";
+    return "Copied";
   }
   if (failed) {
-    return "FAILED";
+    return "Copy failed";
   }
-  return "COPY";
+  return "Copy message";
 }
 
 function CopyButton({
@@ -1052,7 +1052,7 @@ function UserMessage({
         ) : null}
         <div class="gsv-chat-user-message-meta gsv-sublabel">
           {message.messageId && onBranch ? (
-            <Hint text="BRANCH">
+            <Hint text="Branch a new conversation from this message">
               <button
                 type="button"
                 class="gsv-chat-copy"

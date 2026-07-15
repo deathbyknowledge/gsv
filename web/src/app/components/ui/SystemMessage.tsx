@@ -22,7 +22,7 @@ export function SystemMessage({
   copyAriaLabel,
   copyDisabled = false,
   copyFailed = false,
-  copyLabel = "COPY",
+  copyLabel = "Copy message",
   copyTitle = "Copy message",
   meta,
   text = "",

@@ -29,7 +29,7 @@ const story: Story = {
           <SystemMessage
             text="Copy just failed — the icon flashes its failed state."
             time="14:25"
-            copyLabel="FAILED"
+            copyLabel="Copy failed"
             copyFailed
             onCopy={() => {}}
           />
