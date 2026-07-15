@@ -63,6 +63,10 @@ export type StartedChatProcess = {
   pid: string;
 };
 
+/** What fills the dock below the (always-present) header: the chat itself, the
+ *  agent tasks panel, or the full-body reasoning panel. */
+type ChatBodyState = "chat" | "agent" | "reasoning";
+
 type ChatDockProps = {
   open: boolean;
   width: number;
@@ -233,7 +237,8 @@ export function ChatDock({
   onSelectAgent,
   newTaskSignal = 0,
 }: ChatDockProps) {
-  const [agentPanelOpen, setAgentPanelOpen] = useState(false);
+  const [bodyState, setBodyState] = useState<ChatBodyState>("chat");
+  const asideRef = useRef<HTMLElement | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<DraftAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -297,7 +302,7 @@ export function ChatDock({
 
   useEffect(() => {
     if (!open) {
-      setAgentPanelOpen(false);
+      setBodyState("chat");
       setOpenPopover(null);
     }
   }, [open]);
@@ -316,10 +321,35 @@ export function ChatDock({
   }, [activeProcessId, currentRunActive, currentRunId, stoppingRun]);
 
   useEffect(() => {
-    if (agentPanelOpen) {
+    if (bodyState !== "chat") {
       setOpenPopover(null);
     }
-  }, [agentPanelOpen]);
+  }, [bodyState]);
+
+  // A blocking approval must never hide behind a panel — yank back to chat.
+  useEffect(() => {
+    if (pendingHil) {
+      setBodyState("chat");
+    }
+  }, [pendingHil]);
+
+  // Esc closes whichever panel is open and hands focus back to the header
+  // avatar button (the panel toggle).
+  useEffect(() => {
+    if (bodyState === "chat") {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.stopPropagation();
+      setBodyState("chat");
+      asideRef.current?.querySelector<HTMLButtonElement>(".gsv-chat-agent-main")?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [bodyState]);
 
   useEffect(() => {
     setDraftAttachments([]);
@@ -328,10 +358,12 @@ export function ChatDock({
     setSelectedArchiveSegmentId("");
     setBranchNotice("");
     feedback.reset();
+    setBodyState("chat");
   }, [activeProcessId, feedback.reset]);
 
   useEffect(() => {
     setSelectedArchiveSegmentId("");
+    setBodyState("chat");
   }, [activeProcessId, activeConversationId]);
 
   // Auto-dismiss the branch success notice after a few seconds.
@@ -756,12 +788,12 @@ export function ChatDock({
     });
   };
 
-  const openAgentPanel = () => {
-    setAgentPanelOpen(true);
+  const toggleAgentPanel = () => {
+    setBodyState((current) => current === "agent" ? "chat" : "agent");
   };
 
-  const closeAgentPanel = () => {
-    setAgentPanelOpen(false);
+  const returnToChat = () => {
+    setBodyState("chat");
   };
 
   const togglePopover = (popover: ChatPopoverId) => {
@@ -826,16 +858,17 @@ export function ChatDock({
 
   return (
     <aside
+      ref={asideRef}
       class={`gsv-chat${dragging ? " is-dragging" : ""}`}
       aria-label="Chat"
       style={{ width: `${width}px` }}
       onClickCapture={closePopoverFromOutsideClick}
     >
       <div class="gsv-chat-resize" onMouseDown={onResizeStart} title="Resize chat" />
-      {agentPanelOpen ? (
+      {bodyState === "agent" ? (
         <ActiveAgentPanel
           agent={activeAgent}
-          onClose={closeAgentPanel}
+          onClose={returnToChat}
           onOpenCrew={onOpenCrew}
           onSelectAgent={onSelectAgent}
         />
@@ -870,7 +903,7 @@ export function ChatDock({
       <ChatDockHeader
         activeAgent={activeAgent}
         activeProcessId={activeProcessId}
-        agentPanelOpen={agentPanelOpen}
+        agentPanelOpen={bodyState === "agent"}
         archiveOpen={archiveOpen}
         atMax={atMax}
         canAbortRun={canAbortRun}
@@ -915,7 +948,7 @@ export function ChatDock({
         speechStatus={replySpeech.speechStatus}
         taskCount={taskCount}
         onAbortRun={abortActiveRun}
-        onOpenAgentPanel={openAgentPanel}
+        onOpenAgentPanel={toggleAgentPanel}
         onOpenModels={() => {
           setOpenPopover(null);
           (onOpenModels ?? onOpenCrew)();
@@ -936,7 +969,7 @@ export function ChatDock({
         onTogglePopover={togglePopover}
       />
 
-      {archiveOpen && hasActiveProcess ? (
+      {bodyState === "chat" && archiveOpen && hasActiveProcess ? (
         <ChatArchivePanel
           conversationId={selectedConversationId}
           processId={activeProcessId}
@@ -946,19 +979,19 @@ export function ChatDock({
         />
       ) : null}
 
-      {controlError ? (
+      {bodyState === "chat" && controlError ? (
         <div class="gsv-chat-control-error" role="status">
           {controlError}
         </div>
       ) : null}
 
-      {branchNotice ? (
+      {bodyState === "chat" && branchNotice ? (
         <div class="gsv-chat-control-success" role="status">
           {branchNotice}
         </div>
       ) : null}
 
-      <ChatTranscript
+      {bodyState !== "chat" ? null : <ChatTranscript
         activeRunId={runtime.activeRunId}
         action={!hasActiveProcess ? (
           <button
@@ -983,9 +1016,9 @@ export function ChatDock({
         onBranch={branchFromMessage}
         processId={activeProcessId}
         state={transcriptState}
-      />
+      />}
 
-      {pendingHil ? (
+      {bodyState === "chat" && pendingHil ? (
         <ChatApprovalBanner
           busy={hilDecision.isPending}
           pendingHil={pendingHil}
@@ -993,7 +1026,7 @@ export function ChatDock({
         />
       ) : null}
 
-      <MessageInput
+      {bodyState !== "chat" ? null : <MessageInput
         attachments={draftAttachments}
         busy={sendMessage.isPending || abortProcess.isPending || spawnProcess.isPending}
         canSend={hasActiveProcess || canStartProcess}
@@ -1029,7 +1062,7 @@ export function ChatDock({
           ? false
           : ambientTranscription.dictationUnavailable}
         voiceTitle={voiceTitle}
-      />
+      />}
     </aside>
   );
 }
