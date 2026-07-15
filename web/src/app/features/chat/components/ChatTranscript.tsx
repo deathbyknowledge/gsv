@@ -57,7 +57,7 @@ type CopyState = {
   status: "copied" | "failed";
 };
 
-type TranscriptActivityEntry =
+export type TranscriptActivityEntry =
   | { kind: "backup"; message: ChatDockMessage }
   | { kind: "reasoning"; message: ChatDockMessage }
   | { kind: "tool"; message: ChatDockMessage };
@@ -443,7 +443,7 @@ function backupModelSummary(backupModel: ChatBackupModelInfo): string {
   return `The selected model failed, so GSV continued with ${modelRefLabel(backupModel.to)}.`;
 }
 
-function backupModelDetails(backupModel: ChatBackupModelInfo): string {
+export function backupModelDetails(backupModel: ChatBackupModelInfo): string {
   const lines = [backupModelSummary(backupModel)];
   if (backupModel.reason) {
     lines.push(`Reason: ${backupModel.reason}`);
@@ -484,11 +484,11 @@ function toolSyscall(message: ChatDockMessage): string | null {
   return inferToolSyscall(message.toolName, message.toolSyscall);
 }
 
-function toolEntryTone(message: ChatDockMessage): ChatTranscriptToolTone {
+export function toolEntryTone(message: ChatDockMessage): ChatTranscriptToolTone {
   return chatTranscriptToolTone(message);
 }
 
-function toolStatusLabel(message: ChatDockMessage): string {
+export function toolStatusLabel(message: ChatDockMessage): string {
   return chatTranscriptToolStatusLabel(message);
 }
 
@@ -517,7 +517,7 @@ function toolDisplayName(message: ChatDockMessage): string {
   return name;
 }
 
-type ToolDetailSection = {
+export type ToolDetailSection = {
   body: ComponentChildren;
   label: string;
 };
@@ -608,7 +608,7 @@ function editToolDiff(args: Record<string, unknown> | null): ToolDetailSection |
   };
 }
 
-function toolDetailSections(tool: ChatDockMessage): ToolDetailSection[] {
+export function toolDetailSections(tool: ChatDockMessage): ToolDetailSection[] {
   const syscall = toolSyscall(tool);
   const kind = fileToolKind(syscall);
   const args = asRecord(tool.toolArgs);
@@ -665,7 +665,7 @@ function ToolDiffPreview({ oldText, newText }: { oldText: string; newText: strin
   );
 }
 
-function toolActivityTitle(message: ChatDockMessage): string {
+export function toolActivityTitle(message: ChatDockMessage): string {
   const syscall = toolSyscall(message);
   const target = toolPathTarget(message) || "file";
   const tone = toolEntryTone(message);
@@ -813,7 +813,7 @@ function toolGroupTitle(tools: readonly ChatDockMessage[]): string {
   return latest ? lowercaseFirst(toolActivityTitle(latest)) : "completed work";
 }
 
-function reasoningText(message: ChatDockMessage): string {
+export function reasoningText(message: ChatDockMessage): string {
   return message.thinking?.filter((entry) => entry.trim()).join("\n\n") ?? "";
 }
 
@@ -851,6 +851,29 @@ function activityEntryForMessage(message: ChatDockMessage): TranscriptActivityEn
 
 function activityRunId(entry: TranscriptActivityEntry): string | null {
   return entry.message.runId || null;
+}
+
+/** All activity entries belonging to a run, in transcript order — used by the
+ *  full-body reasoning panel to resolve a run target from the raw rows. */
+export function collectRunEntries(
+  messages: readonly ChatDockMessage[],
+  runId: string,
+): TranscriptActivityEntry[] {
+  const entries: TranscriptActivityEntry[] = [];
+  for (const message of messages) {
+    const entry = activityEntryForMessage(message);
+    if (entry && activityRunId(entry) === runId) {
+      entries.push(entry);
+    }
+  }
+  return entries;
+}
+
+export function findMessageById(
+  messages: readonly ChatDockMessage[],
+  id: string,
+): ChatDockMessage | null {
+  return messages.find((message) => message.id === id) ?? null;
 }
 
 function buildTranscriptRenderItems(messages: readonly ChatDockMessage[]): TranscriptRenderItem[] {

@@ -49,6 +49,7 @@ import { useChatFeedback } from "../hooks/useChatFeedback";
 import { ActiveAgentPanel } from "./ActiveAgentPanel";
 import { ChatApprovalBanner } from "./ChatApprovalBanner";
 import { ChatArchivePanel } from "./ChatArchivePanel";
+import { ChatReasoningPanel, type ChatReasoningTarget } from "./ChatReasoningPanel";
 import { ChatDockHeader } from "./ChatDockHeader";
 import type { ChatPopoverId } from "./ChatDockPopovers";
 import { ChatTranscript, type ChatDockMessage } from "./ChatTranscript";
@@ -238,6 +239,7 @@ export function ChatDock({
   newTaskSignal = 0,
 }: ChatDockProps) {
   const [bodyState, setBodyState] = useState<ChatBodyState>("chat");
+  const [reasoningTarget, setReasoningTarget] = useState<ChatReasoningTarget | null>(null);
   const asideRef = useRef<HTMLElement | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<DraftAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
@@ -794,6 +796,7 @@ export function ChatDock({
 
   const returnToChat = () => {
     setBodyState("chat");
+    setReasoningTarget(null);
   };
 
   const togglePopover = (popover: ChatPopoverId) => {
@@ -968,6 +971,14 @@ export function ChatDock({
         onToggleOpen={onToggleOpen}
         onTogglePopover={togglePopover}
       />
+
+      {bodyState === "reasoning" && reasoningTarget ? (
+        <ChatReasoningPanel
+          messages={transcriptMessages}
+          target={reasoningTarget}
+          onClose={returnToChat}
+        />
+      ) : null}
 
       {bodyState === "chat" && archiveOpen && hasActiveProcess ? (
         <ChatArchivePanel
