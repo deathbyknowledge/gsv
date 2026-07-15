@@ -171,6 +171,21 @@
   will-change: transform;
 }
 
+/* Feedback line — plain-tag operation/run status in the chat body flow. */
+.gsv-chat-feedback {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 2px;
+}
+
+.gsv-chat-feedback-action {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+}
+
 .gsv-chat-empty {
   max-width: 260px;
   display: grid;

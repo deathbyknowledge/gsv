@@ -45,6 +45,7 @@ import {
   useChatRuntime,
   useDraggableMinimizedChat,
 } from "../hooks";
+import { useChatFeedback } from "../hooks/useChatFeedback";
 import { ActiveAgentPanel } from "./ActiveAgentPanel";
 import { ChatApprovalBanner } from "./ChatApprovalBanner";
 import { ChatArchivePanel } from "./ChatArchivePanel";
@@ -270,6 +271,7 @@ export function ChatDock({
     args: hasActiveProcess ? { pid: activeProcessId } : {},
   });
   const { history: processHistory, runtime } = chatRuntime;
+  const feedback = useChatFeedback();
   const pendingHil = runtime.pendingHil;
   const currentRunId = runtime.activeRunId ?? pendingHil?.runId ?? null;
   const currentRunActive = Boolean(currentRunId)
@@ -325,7 +327,8 @@ export function ChatDock({
     setArchiveOpen(false);
     setSelectedArchiveSegmentId("");
     setBranchNotice("");
-  }, [activeProcessId]);
+    feedback.reset();
+  }, [activeProcessId, feedback.reset]);
 
   useEffect(() => {
     setSelectedArchiveSegmentId("");
@@ -972,6 +975,7 @@ export function ChatDock({
         emptyDescription={emptyDescription}
         errorMessage={transcriptError}
         conversationId={selectedConversationId}
+        feedback={feedback.entries}
         hasOlderMessages={chatRuntime.hasOlderHistory}
         messages={transcriptMessages}
         loadingOlderMessages={chatRuntime.loadingOlderHistory}

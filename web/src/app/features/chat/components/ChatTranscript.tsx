@@ -14,6 +14,8 @@ import {
   type VirtualTranscriptItem,
   type VirtualTranscriptSource,
 } from "../hooks/useVirtualTranscript";
+import type { ChatFeedbackEntry } from "../hooks/useChatFeedback";
+import { ChatFeedbackMessage } from "./ChatFeedbackMessage";
 import { ChatMediaAttachment } from "./ChatMediaAttachment";
 import {
   chatTranscriptActiveGroupIndex,
@@ -41,6 +43,8 @@ type ChatTranscriptProps = {
   errorMessage?: string;
   action?: ComponentChildren;
   conversationId?: string | null;
+  /** Ephemeral operation feedback lines appended after the newest message. */
+  feedback?: readonly ChatFeedbackEntry[];
   hasOlderMessages?: boolean;
   loadingOlderMessages?: boolean;
   onLoadOlder?: () => Promise<void> | void;
@@ -65,6 +69,7 @@ type TranscriptRenderItem =
 type TranscriptVirtualEntry = VirtualTranscriptSource & (
   | { kind: "olderLoader" }
   | { item: TranscriptRenderItem; kind: "item" }
+  | { feedback: ChatFeedbackEntry; kind: "feedback" }
 );
 
 type TranscriptViewport = {
@@ -930,11 +935,13 @@ function estimateKeyForRenderItem(item: TranscriptRenderItem): string {
 
 function buildVirtualEntries({
   activeActivityGroupId,
+  feedback,
   hasOlderMessages,
   loadingOlderMessages,
   renderItems,
 }: {
   activeActivityGroupId: string | null;
+  feedback: readonly ChatFeedbackEntry[];
   hasOlderMessages: boolean;
   loadingOlderMessages: boolean;
   renderItems: TranscriptRenderItem[];
@@ -958,6 +965,16 @@ function buildVirtualEntries({
       item,
       key: item.id,
       kind: "item",
+    });
+  }
+  for (const entry of feedback) {
+    entries.push({
+      alwaysRender: entry.status === "running",
+      estimateHeight: 34,
+      estimateKey: `${entry.status}|${entry.label}`,
+      feedback: entry,
+      key: `feedback:${entry.id}`,
+      kind: "feedback",
     });
   }
   return entries;
@@ -1645,6 +1662,7 @@ export function ChatTranscript({
   emptyTitle = "No active conversation",
   errorMessage = "Process history could not be loaded.",
   conversationId = null,
+  feedback = [],
   hasOlderMessages = false,
   loadingOlderMessages = false,
   messages,
@@ -1673,10 +1691,11 @@ export function ChatTranscript({
   }, [activeRunId, renderItems]);
   const virtualEntries = useMemo(() => buildVirtualEntries({
     activeActivityGroupId,
+    feedback,
     hasOlderMessages,
     loadingOlderMessages,
     renderItems,
-  }), [activeActivityGroupId, hasOlderMessages, loadingOlderMessages, renderItems]);
+  }), [activeActivityGroupId, feedback, hasOlderMessages, loadingOlderMessages, renderItems]);
   const virtual = useVirtualTranscript({
     entries: virtualEntries,
     scrollTop: viewport.scrollTop,
@@ -1821,6 +1840,7 @@ export function ChatTranscript({
   const transcriptIdentity = `${processId}:${conversationId ?? ""}`;
   const tailMessage = messages[messages.length - 1];
   const tailKey = `${transcriptIdentity}:${messages.length}:${tailMessage?.id ?? "empty"}`;
+  const feedbackKey = feedback.map((entry) => `${entry.id}:${entry.status}:${entry.label}`).join("|");
 
   useLayoutEffect(() => {
     const anchor = scrollAnchorRef.current;
@@ -1870,7 +1890,7 @@ export function ChatTranscript({
       updateViewportForNode(latestNode);
     });
     return () => cancelAnimationFrame(frame);
-  }, [messages.length, tailKey, transcriptIdentity, updateViewportForNode, virtual.totalHeight]);
+  }, [feedbackKey, messages.length, tailKey, transcriptIdentity, updateViewportForNode, virtual.totalHeight]);
 
   return (
     <div
@@ -1916,6 +1936,11 @@ export function ChatTranscript({
                 >
                   {loadingOlderMessages ? "LOADING" : "LOAD OLDER"}
                 </button>
+              ) : item.entry.kind === "feedback" ? (
+                <ChatFeedbackMessage
+                  label={item.entry.feedback.label}
+                  status={item.entry.feedback.status}
+                />
               ) : (
                 <TranscriptRenderItemView
                   activeActivityGroupId={activeActivityGroupId}
