@@ -1,0 +1,131 @@
+/* TwoLevelSelect — headless grouped select. The host popover owns background,
+   border and positioning; this file only lays out header / groups / footer. */
+.gsv-tls {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--gsv-font-mono);
+  min-width: 0;
+}
+
+.gsv-tls-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--header-bar);
+  color: var(--text-hi);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  min-width: 0;
+}
+.gsv-tls-head-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gsv-tls-head svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.gsv-tls-group {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 4px 12px;
+  padding: 10px 12px;
+  align-items: start;
+}
+.gsv-tls-group + .gsv-tls-group {
+  border-top: 1px dotted var(--rule-inner);
+}
+
+.gsv-tls-group-label {
+  color: var(--meta);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding-top: 7px;
+}
+
+.gsv-tls-group-options {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.gsv-tls-opt {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem; /* 13px */
+  letter-spacing: 0.06em;
+  text-align: left;
+  padding: 7px 8px;
+  cursor: pointer;
+  min-width: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.gsv-tls-opt:not(:disabled):hover,
+.gsv-tls-opt:not(:disabled):focus-visible {
+  background: var(--hover);
+  color: var(--text-hi);
+  outline: none;
+}
+.gsv-tls-opt.is-selected {
+  background: var(--selected);
+  color: var(--text-hi);
+}
+.gsv-tls-opt:disabled {
+  cursor: default;
+}
+.gsv-tls-opt:disabled:not(.is-selected) {
+  color: var(--text-dim);
+}
+.gsv-tls-opt-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.gsv-tls-check {
+  flex: none;
+  color: var(--online);
+}
+
+.gsv-tls-empty {
+  color: var(--text-dim);
+  letter-spacing: 0.12em;
+  padding: 7px 8px;
+}
+
+.gsv-tls-footer {
+  appearance: none;
+  align-self: flex-start;
+  margin: 4px 12px 10px;
+  padding: 0 0 1px;
+  border: 0;
+  border-bottom: 1px solid var(--link);
+  background: transparent;
+  color: var(--link);
+  font: inherit;
+  font-size: 0.75rem; /* 12px */
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.gsv-tls-footer:hover,
+.gsv-tls-footer:focus-visible {
+  color: var(--link-hover);
+  border-color: var(--link-hover);
+  outline: none;
+}
+
+.gsv-tls-group:first-of-type {
+  padding-top: 12px;
+}

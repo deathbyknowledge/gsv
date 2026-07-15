@@ -16,6 +16,7 @@ import textInput from "./stories/TextInput.story";
 import search from "./stories/Search.story";
 import textArea from "./stories/TextArea.story";
 import select from "./stories/Select.story";
+import twoLevelSelect from "./stories/TwoLevelSelect.story";
 import segmented from "./stories/Segmented.story";
 import checkbox from "./stories/Checkbox.story";
 import radio from "./stories/Radio.story";
@@ -81,6 +82,7 @@ const STORIES: Story[] = [
   search,
   textArea,
   select,
+  twoLevelSelect,
   segmented,
   checkbox,
   radio,
