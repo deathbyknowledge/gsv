@@ -1,5 +1,5 @@
 import type { JSX } from "preact";
-import { useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   backupModelDetails,
   collectGroupEntries,
@@ -56,7 +56,7 @@ function PanelEntry({ entry }: { entry: TranscriptActivityEntry }) {
         <div class="gsv-chat-rp-entry-line">
           <strong class="gsv-prose">{entry.message.streaming ? "Thinking" : "Reasoned"}</strong>
         </div>
-        {text ? <p class="gsv-chat-rp-prose gsv-prose-lead">{text}</p> : null}
+        {text ? <p class="gsv-chat-rp-prose gsv-prose-lead" onClick={stop}>{text}</p> : null}
       </div>
     );
   }
@@ -68,7 +68,7 @@ function PanelEntry({ entry }: { entry: TranscriptActivityEntry }) {
         <div class="gsv-chat-rp-entry-line">
           <strong class="gsv-prose">Backup model used</strong>
         </div>
-        {details ? <p class="gsv-chat-rp-prose gsv-prose-lead">{details}</p> : null}
+        {details ? <p class="gsv-chat-rp-prose gsv-prose-lead" onClick={stop}>{details}</p> : null}
       </div>
     );
   }
@@ -114,6 +114,14 @@ function PanelEntry({ entry }: { entry: TranscriptActivityEntry }) {
  *  transcript + composer under the persistent chat header; plain text, no
  *  boxes. Clicking anywhere non-interactive returns to the chat. */
 export function ChatReasoningPanel({ messages, target, onClose }: ChatReasoningPanelProps) {
+  const backRef = useRef<HTMLButtonElement>(null);
+
+  // Opening the panel unmounts whatever had focus — move it to the Back
+  // button so the dialog is entered and announced.
+  useEffect(() => {
+    backRef.current?.focus();
+  }, []);
+
   const { blocks, label } = useMemo(() => {
     if (target.kind === "run") {
       return {
@@ -154,6 +162,7 @@ export function ChatReasoningPanel({ messages, target, onClose }: ChatReasoningP
     >
       <div class="gsv-chat-rp-head">
         <button
+          ref={backRef}
           type="button"
           class="gsv-chat-rp-back gsv-sublabel"
           onClick={(event) => {
@@ -180,7 +189,7 @@ export function ChatReasoningPanel({ messages, target, onClose }: ChatReasoningP
             <div class="gsv-chat-rp-entry-line">
               <strong class="gsv-prose">{block.title}</strong>
             </div>
-            <p class="gsv-chat-rp-prose gsv-prose-lead">{block.text}</p>
+            <p class="gsv-chat-rp-prose gsv-prose-lead" onClick={stop}>{block.text}</p>
           </div>
         ) : (
           <PanelEntry entry={block.entry} key={block.id} />

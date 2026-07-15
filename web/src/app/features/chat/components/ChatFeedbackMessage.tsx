@@ -18,10 +18,12 @@ type ChatFeedbackMessageProps = {
 
 /** ChatFeedbackMessage — the plain feedback line used for operation status and
  *  run activity in the chat body: a plain Tag whose dot pulses while running,
- *  then flips to the success/error tone. */
+ *  then flips to the success/error tone. Carries no live-region role of its
+ *  own — the transcript container's aria-live announces changes (a role per
+ *  historical line would spam screen readers as virtualized rows mount). */
 export function ChatFeedbackMessage({ label, status, action }: ChatFeedbackMessageProps) {
   return (
-    <div class={`gsv-chat-feedback is-${status}`} role="status">
+    <div class={`gsv-chat-feedback is-${status}`}>
       <Tag tone={STATUS_TONE[status]} label={label} dot pulse={status === "running"} size="medium" />
       {action ? <span class="gsv-chat-feedback-action">{action}</span> : null}
     </div>

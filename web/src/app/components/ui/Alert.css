@@ -42,7 +42,8 @@
 .gsv-alert-dismiss .gsv-ibtn-ghost {
   color: var(--alert-color);
 }
-.gsv-alert-dismiss .gsv-ibtn-ghost:hover {
+.gsv-alert-dismiss .gsv-ibtn-ghost:hover,
+.gsv-alert-dismiss .gsv-ibtn-ghost:focus-visible {
   color: var(--text-hi);
 }
 .gsv-alert-title {

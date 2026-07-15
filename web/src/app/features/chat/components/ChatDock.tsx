@@ -595,6 +595,13 @@ export function ChatDock({
           : setProcessAiConfig.isError
             ? errorMessage(setProcessAiConfig.error, "Process model settings could not be updated.")
             : attachmentError || voiceError;
+  // Re-arm the dismissed-error snapshot once the failing state clears, so a
+  // later failure with the identical message still surfaces.
+  useEffect(() => {
+    if (!controlError) {
+      setDismissedError("");
+    }
+  }, [controlError]);
   const taskCount = activeAgent.tasksTotal > 0 ? activeAgent.tasksTotal : activeAgent.tasks.length;
   const contextLevel = context?.level ? context.level.toUpperCase() : contextPercent === null ? "UNKNOWN" : "ESTIMATED";
   const processModel = processAiConfig.data?.values["config/ai/model"]?.trim() ?? "";
@@ -678,6 +685,9 @@ export function ChatDock({
     const selected = Array.from(files);
     const accepted = selected.filter((file) => file.size <= MAX_CHAT_PROCESS_MEDIA_BYTES);
     setAttachmentError(accepted.length === selected.length ? "" : "Chat attachments cannot exceed 25 MiB.");
+    if (accepted.length !== selected.length) {
+      setDismissedError("");
+    }
     setDraftAttachments((current) => current.concat(accepted.map(fileToDraftAttachment)));
   };
 

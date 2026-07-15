@@ -174,6 +174,16 @@
   will-change: transform;
 }
 
+/* Reduced motion: still the blinking activity caret and panel entrances
+   (the Tag pulse and composer slide guard themselves in their own files). */
+@media (prefers-reduced-motion: reduce) {
+  .gsv-chat-agent-activity i,
+  .gsv-chat-agent-panel,
+  .gsv-shell-viewport.is-mobile .gsv-chat {
+    animation: none;
+  }
+}
+
 /* Feedback line — plain-tag operation/run status in the chat body flow. */
 .gsv-chat-feedback {
   display: flex;
@@ -181,6 +191,21 @@
   gap: 10px;
   min-width: 0;
   padding: 8px 2px;
+}
+
+/* Long run titles must ellipsize in the narrow dock rather than wrap or push
+   the expand affordance out (reaches into the Tag's nested label span). */
+.gsv-chat-feedback > span:first-child,
+.gsv-chat-feedback > span:first-child > span {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.gsv-chat-feedback > span:first-child > span > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gsv-chat-feedback-action {
@@ -842,15 +867,12 @@
 }
 
 .gsv-chat-model-row:hover,
-.gsv-chat-model-row:focus-visible,
-.gsv-chat-reasoning-options button:hover,
-.gsv-chat-reasoning-options button:focus-visible {
+.gsv-chat-model-row:focus-visible {
   background: #171441;
   outline: none;
 }
 
 .gsv-chat-model-row:disabled,
-.gsv-chat-reasoning-options button:disabled,
 .gsv-chat-popover-action:disabled {
   opacity: 0.46;
   cursor: not-allowed;
@@ -907,43 +929,6 @@
   font-style: normal;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.gsv-chat-model-empty {
-  min-height: 38px;
-  display: grid;
-  place-items: center;
-  color: #7d78b8;
-  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
-  letter-spacing: 0.14em;
-}
-
-.gsv-chat-reasoning-options {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-bottom: 1px solid var(--rule-inner);
-}
-
-.gsv-chat-reasoning-options button {
-  min-width: 0;
-  min-height: 32px;
-  border: 0;
-  border-right: 1px solid var(--rule-inner);
-  background: transparent;
-  color: #9aa4b8;
-  cursor: pointer;
-  font-family: var(--gsv-font-mono);
-  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
-  letter-spacing: 0.1em;
-}
-
-.gsv-chat-reasoning-options button:last-child {
-  border-right: 0;
-}
-
-.gsv-chat-reasoning-options button.is-current {
-  background: rgba(132, 122, 255, 0.08);
-  color: #e6e4ff;
 }
 
 .gsv-chat-task-list {
