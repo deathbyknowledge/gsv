@@ -1372,93 +1372,49 @@ button.gsv-chat-task-row:focus-visible {
   display: block;
 }
 
+/* Approval prompt — unboxed text in the chat body flow (HAM-487): yellow
+   label title, muted paragraph message, right-aligned toned link buttons. */
 .gsv-chat-hil {
   flex: none;
-  position: relative;
   margin: 0 14px 12px;
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg, #100e2a, var(--node-bg));
-  color: #cdd2e0;
-  padding: 0;
-  display: grid;
-  gap: 0;
-  overflow: hidden;
-}
-
-.gsv-chat-hil::before,
-.gsv-chat-hil::after {
-  content: "";
-  position: absolute;
-  width: 7px;
-  height: 7px;
-  pointer-events: none;
-}
-
-.gsv-chat-hil::before {
-  top: 4px;
-  left: 4px;
-  border-top: 1px solid var(--bracket);
-  border-left: 1px solid var(--bracket);
-}
-
-.gsv-chat-hil::after {
-  right: 4px;
-  bottom: 4px;
-  border-right: 1px solid var(--bracket);
-  border-bottom: 1px solid var(--bracket);
-}
-
-.gsv-chat-hil-head {
   min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--border);
-  background: #171436;
 }
 
 .gsv-chat-hil.is-busy {
   opacity: 0.82;
 }
 
-.gsv-chat-hil span,
-.gsv-chat-hil small {
-  color: var(--text-dim);
-  font-family: var(--gsv-font-mono);
-  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
-  letter-spacing: 0.12em;
+.gsv-chat-hil-title {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--update);
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
-.gsv-chat-hil-head span {
-  color: var(--update);
-}
-
-.gsv-chat-hil strong {
+.gsv-chat-hil-title strong {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-hi);
-  font-size: 12px;
+  font-weight: 500;
 }
 
-.gsv-chat-hil p {
-  margin: 0;
-  padding: 10px 14px 0;
-  color: #cdd2e0;
-  font-size: 11.5px;
-  line-height: 1.5;
+.gsv-chat-hil-body {
+  margin: 7px 0 0;
+  color: var(--text-muted);
   overflow-wrap: anywhere;
 }
 
-.gsv-chat-hil small {
+.gsv-chat-hil-meta {
   display: block;
   min-width: 0;
-  padding: 8px 14px 0;
-  color: #7d78b8;
+  margin-top: 6px;
+  color: var(--text-dim);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1468,43 +1424,8 @@ button.gsv-chat-task-row:focus-visible {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 10px 14px 12px;
-}
-
-.gsv-chat-hil-actions button {
-  min-height: 30px;
-  border: 1px solid var(--border);
-  background: #0a0820;
-  color: #b3aeff;
-  padding: 0 12px;
-  cursor: pointer;
-  font-family: var(--gsv-font-mono);
-  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
-  letter-spacing: 0.12em;
-}
-
-.gsv-chat-hil-actions button:hover,
-.gsv-chat-hil-actions button:focus-visible {
-  border-color: #b3aeff;
-  color: #e6e4ff;
-  outline: none;
-}
-
-.gsv-chat-hil-actions button:disabled {
-  opacity: 0.56;
-  cursor: wait;
-}
-
-.gsv-chat-hil-approve {
-  background: rgba(35, 49, 24, 0.72) !important;
-  color: #d7ffbd !important;
-  border-color: rgba(165, 239, 125, 0.44) !important;
-}
-
-.gsv-chat-hil-deny {
-  color: #ffb199 !important;
-  border-color: rgba(255, 177, 153, 0.44) !important;
+  gap: 16px;
+  margin-top: 10px;
 }
 
 /* Control alerts render through the DS dismissible Alert; this wrapper only
@@ -2639,14 +2560,9 @@ button.gsv-chat-task-row:focus-visible {
     display: none;
   }
 
-  .gsv-chat-hil-head,
   .gsv-chat-hil-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .gsv-chat-hil-actions button {
-    width: 100%;
+    justify-content: flex-start;
+    gap: 14px;
   }
 }
 

@@ -1,3 +1,4 @@
+import { Button } from "../../../components/ui/Button";
 import type { ChatHilDecision, ChatHistory } from "../domain/processes";
 import { shortId } from "./chatUiFormat";
 
@@ -49,6 +50,8 @@ function summarizeHilArgs(args: Record<string, unknown> | null | undefined): str
     : entries.join(" · ");
 }
 
+/** ChatApprovalBanner — unboxed approval prompt (HAM-487): yellow label title,
+ *  muted paragraph message, right-aligned toned link buttons. */
 export function ChatApprovalBanner({ busy, onDecision, pendingHil }: ChatApprovalBannerProps) {
   const argsSummary = summarizeHilArgs(pendingHil.args);
   const createdAt = formatHilTime(pendingHil.createdAt);
@@ -59,12 +62,12 @@ export function ChatApprovalBanner({ busy, onDecision, pendingHil }: ChatApprova
       aria-label="Human approval pending"
       aria-busy={busy}
     >
-      <div class="gsv-chat-hil-head">
+      <div class="gsv-chat-hil-title gsv-label">
         <span>APPROVAL REQUIRED</span>
         <strong>{pendingHil.toolName || pendingHil.syscall}</strong>
       </div>
-      <p>{argsSummary}</p>
-      <small class="gsv-chat-hil-meta">
+      <p class="gsv-chat-hil-body gsv-paragraph">{argsSummary}</p>
+      <small class="gsv-chat-hil-meta gsv-sublabel">
         {pendingHil.syscall}
         {" · request "}
         {shortId(pendingHil.requestId)}
@@ -72,30 +75,27 @@ export function ChatApprovalBanner({ busy, onDecision, pendingHil }: ChatApprova
         {createdAt ? ` · ${createdAt}` : ""}
       </small>
       <div class="gsv-chat-hil-actions">
-        <button
-          type="button"
-          class="gsv-chat-hil-deny"
+        <Button
+          variant="link"
+          tone="error"
+          label="DENY"
           disabled={busy}
           onClick={() => onDecision("deny")}
-        >
-          Deny
-        </button>
-        <button
-          type="button"
-          class="gsv-chat-hil-approve"
+        />
+        <Button
+          variant="link"
+          tone="neutral"
+          label={busy ? "APPLYING" : "ALLOW ONCE"}
           disabled={busy}
           onClick={() => onDecision("approve")}
-        >
-          {busy ? "Applying" : "Approve"}
-        </button>
-        <button
-          type="button"
-          class="gsv-chat-hil-approve"
+        />
+        <Button
+          variant="link"
+          tone="success"
+          label="ALWAYS ALLOW"
           disabled={busy}
           onClick={() => onDecision("approve", true)}
-        >
-          Always allow
-        </button>
+        />
       </div>
     </section>
   );
