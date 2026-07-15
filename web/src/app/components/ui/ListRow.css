@@ -64,7 +64,15 @@
   opacity: 1;
 }
 
+/* The hover label floats out of flow, extending leftward from the arrow so it
+   never reserves row width; the row hover background masks what's beneath. */
 .lr-chevron-label {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--hover);
+  padding: 3px 2px 3px 10px;
   color: var(--accent);
   letter-spacing: 0.12em;
   white-space: nowrap;
