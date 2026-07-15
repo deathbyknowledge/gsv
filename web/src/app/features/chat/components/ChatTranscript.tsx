@@ -238,13 +238,8 @@ function CopyButton({
   text: string;
   onCopy: () => void;
 }) {
-  const label = copyButtonLabel(copied, failed);
-
   return (
-    <Hint
-      text={copied ? "Copied to clipboard" : "Copy message text"}
-      position={role === "user" ? "top-end" : "top"}
-    >
+    <Hint text={copyButtonLabel(copied, failed)}>
       <button
         type="button"
         class={`gsv-chat-copy${failed ? " is-failed" : ""}`}
@@ -252,13 +247,12 @@ function CopyButton({
         onClick={onCopy}
         aria-label={copied ? `Copied ${roleLabel(role).toLowerCase()} message` : `Copy ${roleLabel(role).toLowerCase()} message`}
       >
-        <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true">
+        <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
           <g fill="none" stroke="currentColor" stroke-width="1.5">
             <rect x="3" y="3" width="7" height="7" />
             <rect x="6" y="6" width="7" height="7" />
           </g>
         </svg>
-        {label}
       </button>
     </Hint>
   );
@@ -1057,12 +1051,22 @@ function UserMessage({
           </div>
         ) : null}
         <div class="gsv-chat-user-message-meta gsv-sublabel">
-          {message.time ? <span>{message.time}</span> : null}
-          {origin ? <span title={origin}>{origin}</span> : null}
           {message.messageId && onBranch ? (
-            <Hint text="Branch a new conversation from this message" position="top-end">
-              <button type="button" class="gsv-chat-copy" onClick={() => onBranch(message.messageId as number)}>
-                BRANCH
+            <Hint text="BRANCH">
+              <button
+                type="button"
+                class="gsv-chat-copy"
+                aria-label="Branch a new conversation from this message"
+                onClick={() => onBranch(message.messageId as number)}
+              >
+                <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+                  <g fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="4.5" cy="4" r="2" />
+                    <circle cx="4.5" cy="12" r="2" />
+                    <circle cx="11.5" cy="8" r="2" />
+                    <path d="M4.5 6 L4.5 10 M6.5 12 C10 12 11.5 10.5 11.5 10" />
+                  </g>
+                </svg>
               </button>
             </Hint>
           ) : null}
@@ -1073,6 +1077,13 @@ function UserMessage({
             text={message.text}
             onCopy={onCopy}
           />
+          {origin || message.time ? (
+            <span class="gsv-chat-meta-when" title={origin || undefined}>
+              {origin}
+              {origin && message.time ? " · " : ""}
+              {message.time}
+            </span>
+          ) : null}
         </div>
       </div>
     </div>

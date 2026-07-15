@@ -1211,6 +1211,24 @@ button.gsv-chat-task-row:focus-visible {
   outline: none;
 }
 
+/* Origin + timestamp sit at the end of the meta line, revealed on hover/focus
+   (always visible on touch). User bubbles are right-aligned, so "end" here is
+   the message edge. */
+.gsv-chat-meta-when {
+  opacity: 0;
+  transition: opacity 0.12s;
+  white-space: nowrap;
+}
+.gsv-chat-user-message:hover .gsv-chat-meta-when,
+.gsv-chat-user-message:focus-within .gsv-chat-meta-when {
+  opacity: 1;
+}
+@media (hover: none) {
+  .gsv-chat-meta-when {
+    opacity: 1;
+  }
+}
+
 .gsv-chat-system-surface {
   flex: none;
   border-left: 2px solid #2a2660;
