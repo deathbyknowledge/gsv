@@ -45,7 +45,7 @@ import {
   useDraggableMinimizedChat,
 } from "../hooks";
 import { useChatFeedback } from "../hooks/useChatFeedback";
-import { ActiveAgentPanel } from "./ActiveAgentPanel";
+import { ChatAgentPanel } from "./ChatAgentPanel";
 import { ChatApprovalBanner } from "./ChatApprovalBanner";
 import { ChatArchivePanel } from "./ChatArchivePanel";
 import { ChatReasoningPanel, type ChatReasoningTarget } from "./ChatReasoningPanel";
@@ -856,14 +856,6 @@ export function ChatDock({
       onClickCapture={closePopoverFromOutsideClick}
     >
       <div class="gsv-chat-resize" onMouseDown={onResizeStart} title="Resize chat" />
-      {bodyState === "agent" ? (
-        <ActiveAgentPanel
-          agent={activeAgent}
-          onClose={returnToChat}
-          onOpenCrew={onOpenCrew}
-          onSelectAgent={onSelectAgent}
-        />
-      ) : null}
       {contextConfirmOpen ? (
         <div class="gsv-chat-modal-layer" onClick={() => setContextConfirmOpen(false)}>
           <div class="gsv-chat-modal-wrap" onClick={(event) => event.stopPropagation()}>
@@ -955,6 +947,19 @@ export function ChatDock({
         onToggleOpen={onToggleOpen}
         onTogglePopover={togglePopover}
       />
+
+      {bodyState === "agent" ? (
+        <ChatAgentPanel
+          agent={activeAgent}
+          activeProcessId={activeProcessId}
+          canStartNewTask={canStartNewTask}
+          onOpenTaskProcess={openTaskProcess}
+          onStartNewTask={prepareNewTask}
+          onSelectAgent={onSelectAgent}
+          onOpenCrew={onOpenCrew}
+          onClose={returnToChat}
+        />
+      ) : null}
 
       {bodyState === "reasoning" && reasoningTarget ? (
         <ChatReasoningPanel
