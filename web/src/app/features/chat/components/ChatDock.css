@@ -200,6 +200,7 @@
   right: 24px;
   bottom: 20px;
   min-width: 238px;
+  max-width: calc(100% - 16px);
   min-height: 62px;
   display: flex;
   align-items: center;
@@ -210,6 +211,19 @@
   background: var(--node-bg);
   color: var(--text-hi);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.gsv-chat-min.is-dragging {
+  cursor: grabbing;
+}
+
+.gsv-chat-min img {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .gsv-chat-min:hover,
@@ -220,6 +234,7 @@
 
 .gsv-chat-min-copy {
   flex: 1;
+  min-width: 0;
   display: grid;
   gap: 5px;
   text-align: left;
@@ -230,6 +245,9 @@
   color: #f3f5fb;
   font-weight: 700;
   line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gsv-chat-min small {
@@ -238,6 +256,9 @@
   font-weight: 400;
   font-style: italic;
   letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gsv-chat-min small i {

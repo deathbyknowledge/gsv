@@ -43,6 +43,7 @@ import {
   type ChatTranscriptionTarget,
   useChatReplySpeech,
   useChatRuntime,
+  useDraggableMinimizedChat,
 } from "../hooks";
 import { ActiveAgentPanel } from "./ActiveAgentPanel";
 import { ChatApprovalBanner } from "./ChatApprovalBanner";
@@ -237,6 +238,7 @@ export function ChatDock({
   const [newTaskFocusKey, setNewTaskFocusKey] = useState(0);
   const [composerDraft, setComposerDraft] = useState("");
   const [branchNotice, setBranchNotice] = useState("");
+  const minimizedChat = useDraggableMinimizedChat({ open, onActivate: onToggleOpen });
   const activeProcessId = agent?.processId?.trim() ?? "";
   const startRunAs = agent?.runAs?.trim() ?? "";
   const hasActiveProcess = activeProcessId.length > 0;
@@ -748,7 +750,22 @@ export function ChatDock({
 
   if (!open) {
     return (
-      <button type="button" class="gsv-chat-min" onClick={onToggleOpen}>
+      <button
+        ref={minimizedChat.launcherRef}
+        type="button"
+        class={`gsv-chat-min${minimizedChat.dragging ? " is-dragging" : ""}`}
+        style={minimizedChat.style}
+        aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
+        aria-label={`Open chat with ${activeAgent.name}; use arrow keys to move`}
+        title="Open chat; drag or use arrow keys to move"
+        onClick={minimizedChat.onClick}
+        onKeyDown={minimizedChat.onKeyDown}
+        onLostPointerCapture={minimizedChat.onLostPointerCapture}
+        onPointerCancel={minimizedChat.onPointerCancel}
+        onPointerDown={minimizedChat.onPointerDown}
+        onPointerMove={minimizedChat.onPointerMove}
+        onPointerUp={minimizedChat.onPointerUp}
+      >
         <AgentImage src={activeAgent.imageSrc} size={40} cover />
         <span class="gsv-chat-min-copy">
           <strong class="gsv-prose-heading">{activeAgent.name}</strong>
