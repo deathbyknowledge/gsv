@@ -1,0 +1,21 @@
+/* Tag — dot pulse for in-progress states (the rest of the component is
+   inline-styled; only the animation needs a stylesheet). */
+@keyframes gsvTagPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.gsv-tag-dot--pulse {
+  animation: gsvTagPulse 1.1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gsv-tag-dot--pulse {
+    animation: none;
+  }
+}

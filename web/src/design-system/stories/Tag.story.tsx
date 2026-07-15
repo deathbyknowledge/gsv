@@ -26,6 +26,14 @@ const story: Story = {
         </div>
       </div>
       <div class="ds-cell">
+        <div class="ds-label">Pulsing dot (in progress)</div>
+        <div class="ds-row">
+          {(["info", "online", "error"] as TagTone[]).map((tone) => (
+            <Tag key={tone} tone={tone} label={tone.toUpperCase()} dot pulse />
+          ))}
+        </div>
+      </div>
+      <div class="ds-cell">
         <div class="ds-label">Boxed + dot (medium)</div>
         <div class="ds-row">
           {TONES.map((tone) => (
