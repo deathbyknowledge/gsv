@@ -18,6 +18,8 @@ export interface AlertProps {
   icon?: AlertIconKey | ComponentChildren;
   /** Body content, rendered after the text (e.g. an action button). */
   children?: ComponentChildren;
+  /** When set, renders a trailing dismiss (×) button that calls this back. */
+  onDismiss?: () => void;
 }
 
 const VARIANT_CLASS: Record<AlertVariant, string> = {
@@ -42,7 +44,7 @@ const DEFAULT_ICON: Record<AlertVariant, AlertIconKey> = {
 const ICON_GLYPH = { info: "help", attention: "attention" } as const;
 const ICON_LABEL = { info: "Information", attention: "Attention" } as const;
 
-export function Alert({ variant = "info", title, text, icon, children }: AlertProps) {
+export function Alert({ variant = "info", title, text, icon, children, onDismiss }: AlertProps) {
   const resolved = icon === undefined ? DEFAULT_ICON[variant] : icon;
 
   let iconNode: ComponentChildren = null;
@@ -64,6 +66,11 @@ export function Alert({ variant = "info", title, text, icon, children }: AlertPr
         {text ? <p class="gsv-alert-text gsv-prose">{text}</p> : null}
         {children}
       </div>
+      {onDismiss ? (
+        <span class="gsv-alert-dismiss">
+          <IconButton glyph="close" ghost size={18} ariaLabel="Dismiss" title="Dismiss" onClick={onDismiss} />
+        </span>
+      ) : null}
     </div>
   );
 }

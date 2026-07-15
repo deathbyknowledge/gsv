@@ -43,6 +43,22 @@ const story: Story = {
         </div>
       </div>
       <div class="ds-cell">
+        <div class="ds-label">Dismissible</div>
+        <div style={{ maxWidth: "440px", display: "flex", flexDirection: "column", gap: "12px" }}>
+          <Alert
+            variant="error"
+            title="Something went wrong"
+            text="We couldn't complete the request. Dismiss to clear."
+            onDismiss={() => {}}
+          />
+          <Alert
+            variant="success"
+            text="Saved. This notice can be dismissed."
+            onDismiss={() => {}}
+          />
+        </div>
+      </div>
+      <div class="ds-cell">
         <div class="ds-label">Icon options</div>
         <div style={{ maxWidth: "440px", display: "flex", flexDirection: "column", gap: "12px" }}>
           <Alert
