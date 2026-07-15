@@ -1,22 +1,10 @@
-/* Ported from SystemMessage.dc.html — values transcribed verbatim. */
+/* Ported from SystemMessage.dc.html — values transcribed verbatim.
+   2026-07: avatar glyph removed; meta row quieted (icon actions + hover time). */
 .gsv-sm {
   display: flex;
-  gap: 11px;
   min-width: 0;
   max-width: 100%;
   font-family: "Space Grotesk", sans-serif;
-}
-
-.gsv-sm-avatar {
-  width: 28px;
-  height: 28px;
-  flex: none;
-  border-radius: 3px;
-  background: #171436;
-  border: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .gsv-sm-body {
@@ -43,6 +31,23 @@
   margin-top: 5px;
   letter-spacing: 0.1em;
   color: var(--text-dim);
+}
+
+/* Timestamp sits at the end of the line and only shows on hover/focus; on
+   touch (no hover) it stays visible. */
+.gsv-sm-time {
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.gsv-sm:hover .gsv-sm-time,
+.gsv-sm:focus-within .gsv-sm-time {
+  opacity: 1;
+}
+@media (hover: none) {
+  .gsv-sm-time {
+    opacity: 1;
+  }
 }
 
 .gsv-sm-copy {

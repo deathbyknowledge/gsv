@@ -4,43 +4,30 @@ import type { Story } from "../story";
 const story: Story = {
   title: "SystemMessage",
   group: "Chrome",
-  blurb: "message bubble · avatar + text + time / copy",
+  blurb: "message body · icon-only actions with tooltip labels · hover timestamp",
   render: () => (
     <div class="ds-col">
       <div class="ds-cell">
-        <div class="ds-label">System</div>
+        <div class="ds-label">Default (hover to reveal the timestamp)</div>
         <div style={{ width: 440 }}>
           <SystemMessage
             text="Process is ready. Send an instruction to start the next run."
             time="14:22"
-          />
-        </div>
-      </div>
-      <div class="ds-cell">
-        <div class="ds-label">Assistant</div>
-        <div style={{ width: 440 }}>
-          <SystemMessage
-            text="Done. The process history has been updated and is ready for the next instruction."
-            time="14:23"
-          />
-        </div>
-      </div>
-      <div class="ds-cell">
-        <div class="ds-label">Copy affordance (onCopy)</div>
-        <div style={{ width: 440 }}>
-          <SystemMessage
-            text="Hover the meta row to reveal the copy button."
-            time="14:24"
-            copyAriaLabel="Copy message"
             onCopy={() => {}}
           />
         </div>
       </div>
       <div class="ds-cell">
-        <div class="ds-label">Copy failed / disabled</div>
+        <div class="ds-label">Copy states (label lives in the tooltip)</div>
         <div class="ds-col" style={{ width: 440 }}>
           <SystemMessage
-            text="Copy just failed — the button flashes its failed state."
+            text="Hover the copy icon — its label shows as a tooltip."
+            time="14:24"
+            copyAriaLabel="Copy message"
+            onCopy={() => {}}
+          />
+          <SystemMessage
+            text="Copy just failed — the icon flashes its failed state."
             time="14:25"
             copyLabel="FAILED"
             copyFailed
@@ -56,12 +43,12 @@ const story: Story = {
         </div>
       </div>
       <div class="ds-cell">
-        <div class="ds-label">Custom meta node</div>
+        <div class="ds-label">Custom meta node (actions sit before the timestamp)</div>
         <div style={{ width: 440 }}>
           <SystemMessage
-            text="Meta slot can carry a model tag or token count next to the time."
+            text="Meta slot can carry extra actions or tags ahead of the copy icon."
             time="14:27"
-            meta={<span>· GATEWAY DEFAULT · 412 TOK</span>}
+            meta={<span>412 TOK</span>}
             onCopy={() => {}}
           />
         </div>
