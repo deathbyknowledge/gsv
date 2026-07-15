@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { JSX } from "preact";
+import { Button } from "./Button";
 import { Icon } from "./Icon";
 import { IconButton } from "./IconButton";
 import { Hint, Tooltip } from "./Tooltip";
@@ -37,6 +38,13 @@ export interface MessageInputProps {
   voiceAvailableWhenBusy?: boolean;
   voiceDisabled?: boolean;
   voiceTitle?: string;
+  /** Live-conversation mode: the voiceAction icon slides into the attach slot,
+   *  the textarea is disabled, and mic/send give way to an end-conversation
+   *  link button. */
+  conversationMode?: boolean;
+  onEndConversation?: () => void;
+  conversationLabel?: string;
+  endConversationLabel?: string;
 }
 
 /** Pixel size of the composer's floating icon buttons (tap target). */
@@ -67,6 +75,10 @@ export function MessageInput({
   voiceAvailableWhenBusy = false,
   voiceDisabled = false,
   voiceTitle = "Record voice",
+  conversationMode = false,
+  onEndConversation,
+  conversationLabel = "Conversation mode",
+  endConversationLabel = "END CONVERSATION",
 }: MessageInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -74,8 +86,8 @@ export function MessageInput({
   const draft = value ?? internalValue;
   const draftText = draft.trim();
   const hasAttachment = attachments.length > 0;
-  const canSubmit = Boolean(onSend) && !disabled && !busy && (draftText.length > 0 || hasAttachment) && canSend !== false;
-  const canStop = running && Boolean(onStop) && !busy && !canSubmit;
+  const canSubmit = Boolean(onSend) && !disabled && !conversationMode && !busy && (draftText.length > 0 || hasAttachment) && canSend !== false;
+  const canStop = running && Boolean(onStop) && !busy && !canSubmit && !conversationMode;
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -137,7 +149,7 @@ export function MessageInput({
   };
 
   return (
-    <div class="gsv-mi">
+    <div class={`gsv-mi${conversationMode ? " is-conversation" : ""}`}>
       {attachments.length > 0 ? (
         <div class="gsv-mi-attachments">
           {attachments.map((attachment) => (
@@ -164,49 +176,56 @@ export function MessageInput({
         </div>
       ) : null}
       <form class="gsv-mi-bar" onSubmit={handleSubmit}>
-        {onFiles ? (
-          <>
-            <Hint position="top-start" text="Attach files or images">
-              <IconButton
-                variant="floating"
-                glyph="attach"
-                size={COMPOSER_ICON_SIZE}
-                ariaLabel="Attach files"
-                disabled={disabled || busy}
-                onClick={() => fileInputRef.current?.click()}
+        <span class="gsv-mi-attach-slot" aria-hidden={conversationMode ? "true" : undefined}>
+          {onFiles ? (
+            <>
+              <Hint position="top-start" text="Attach files or images">
+                <IconButton
+                  variant="floating"
+                  glyph="attach"
+                  size={COMPOSER_ICON_SIZE}
+                  ariaLabel="Attach files"
+                  disabled={disabled || busy || conversationMode}
+                  onClick={() => fileInputRef.current?.click()}
+                />
+              </Hint>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                hidden
+                disabled={disabled || busy || conversationMode}
+                onChange={(event) => {
+                  const input = event.currentTarget as HTMLInputElement;
+                  onFiles(input.files);
+                  input.value = "";
+                }}
               />
-            </Hint>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              hidden
-              disabled={disabled || busy}
-              onChange={(event) => {
-                const input = event.currentTarget as HTMLInputElement;
-                onFiles(input.files);
-                input.value = "";
-              }}
-            />
-          </>
-        ) : (
-          <IconButton variant="floating" glyph="attach" size={COMPOSER_ICON_SIZE} disabled />
-        )}
+            </>
+          ) : (
+            <IconButton variant="floating" glyph="attach" size={COMPOSER_ICON_SIZE} disabled />
+          )}
+        </span>
         {actions}
         <textarea
           ref={textareaRef}
           class="gsv-mi-input"
-          disabled={disabled}
-          placeholder={placeholder}
+          disabled={disabled || conversationMode}
+          placeholder={conversationMode ? conversationLabel : placeholder}
           rows={1}
           spellcheck={true}
-          value={draft}
+          value={conversationMode ? "" : draft}
           onInput={handleInput}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
         />
-        {voiceAction}
-        {onVoiceClick ? (
+        {voiceAction ? <span class="gsv-mi-voice-slot">{voiceAction}</span> : null}
+        {conversationMode && onEndConversation ? (
+          <span class="gsv-mi-end-convo">
+            <Button variant="link" label={endConversationLabel} onClick={onEndConversation} />
+          </span>
+        ) : null}
+        {conversationMode ? null : onVoiceClick ? (
           <Hint position="top-end" text={voiceTitle}>
             <IconButton
               variant="floating"
@@ -221,17 +240,19 @@ export function MessageInput({
         ) : (
           <IconButton variant="floating" glyph="mic" size={COMPOSER_ICON_SIZE} disabled />
         )}
-        <Hint position="top-end" text={canStop ? "Stop the running agent" : "Send"}>
-          <IconButton
-            variant="floating"
-            glyph={canStop ? "stop" : "send"}
-            size={COMPOSER_ICON_SIZE}
-            className={`gsv-mi-send${canStop ? " is-stop" : ""}`}
-            ariaLabel={canStop ? "Stop run" : "Send message"}
-            disabled={canStop ? false : !canSubmit}
-            onClick={canStop ? onStop : submitDraft}
-          />
-        </Hint>
+        {conversationMode ? null : (
+          <Hint position="top-end" text={canStop ? "Stop the running agent" : "Send"}>
+            <IconButton
+              variant="floating"
+              glyph={canStop ? "stop" : "send"}
+              size={COMPOSER_ICON_SIZE}
+              className={`gsv-mi-send${canStop ? " is-stop" : ""}`}
+              ariaLabel={canStop ? "Stop run" : "Send message"}
+              disabled={canStop ? false : !canSubmit}
+              onClick={canStop ? onStop : submitDraft}
+            />
+          </Hint>
+        )}
       </form>
       {user || cost ? (
         <div class="gsv-mi-meta gsv-sublabel">

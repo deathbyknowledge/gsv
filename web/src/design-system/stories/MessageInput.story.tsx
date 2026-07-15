@@ -1,5 +1,30 @@
+import { useState } from "preact/hooks";
+import { IconButton } from "../../app/components/ui/IconButton";
 import { MessageInput } from "../../app/components/ui/MessageInput";
 import type { Story } from "../story";
+
+function ConversationDemo() {
+  const [live, setLive] = useState(true);
+  return (
+    <MessageInput
+      user="operator"
+      onFiles={() => {}}
+      onSend={() => {}}
+      onVoiceClick={() => {}}
+      conversationMode={live}
+      onEndConversation={() => setLive(false)}
+      voiceAction={
+        <IconButton
+          variant="floating"
+          glyph="transcribe"
+          size={26}
+          ariaLabel={live ? "End conversation" : "Start conversation"}
+          onClick={() => setLive(!live)}
+        />
+      }
+    />
+  );
+}
 
 const ATTACHMENTS = [
   { id: "a", label: "diagram.png", meta: "184 KB" },
@@ -61,6 +86,12 @@ const story: Story = {
           <MessageInput onVoiceClick={() => {}} voiceActive voiceTitle="Stop recording" onSend={() => {}} user="operator" />
           <MessageInput onVoiceClick={() => {}} voiceDisabled voiceTitle="Voice unavailable" onSend={() => {}} user="operator" />
           <MessageInput busy onVoiceClick={() => {}} voiceAvailableWhenBusy voiceTitle="Record while busy" onSend={() => {}} user="operator" />
+        </div>
+      </div>
+      <div class="ds-cell">
+        <div class="ds-label">Conversation mode (toggle via the transcription icon)</div>
+        <div style={{ width: 460 }}>
+          <ConversationDemo />
         </div>
       </div>
       <div class="ds-cell">
