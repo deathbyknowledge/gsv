@@ -2,6 +2,7 @@ import { Icon } from "../../../components/ui/Icon";
 import { ArchiveFolderGlyph, FreeContextGlyph } from "../../../components/ui/lineGlyphs";
 import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
+import { TwoLevelSelect } from "../../../components/ui/TwoLevelSelect";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
 import type { ChatConversation, ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
@@ -29,7 +30,6 @@ type ChatDockPopoversProps = {
   onSelectConversation: (conversationId: string) => void;
   context: ChatHistory["context"] | null;
   contextLevel: string;
-  contextModel: string;
   contextPercent: number | null;
   hasActiveProcess: boolean;
   messageCount: number | null | undefined;
@@ -39,13 +39,10 @@ type ChatDockPopoversProps = {
   onOpenTasks: () => void;
   onOpenTaskProcess: (processId: string, process: ChatProcessSummary | null) => void;
   onStartNewTask: () => void;
-  onClearProcessAiConfig: () => void;
   onSetReasoning: (reasoning: string) => void;
   openPopover: ChatPopoverId | null;
   processAiConfig: ChatProcessAiConfig;
   processAiConfigBusy: boolean;
-  processAiConfigLoading: boolean;
-  runStateLabel: string;
   canStartNewTask: boolean;
   taskCount: number;
 };
@@ -72,13 +69,6 @@ function taskStatusLabel(status: string): string {
 
 const REASONING_OPTIONS = ["off", "low", "medium", "high"] as const;
 
-function modelProfileSummary(profile: ChatModelProfileData): string {
-  return [
-    profile.values["config/ai/provider"],
-    profile.values["config/ai/model"],
-  ].map((value) => value?.trim()).filter(Boolean).join(" · ") || "Saved AI config";
-}
-
 function modelProfileIsActive(
   config: ChatProcessAiConfig,
   profile: ChatModelProfileData,
@@ -104,13 +94,11 @@ export function ChatDockPopovers({
   onSelectConversation,
   context,
   contextLevel,
-  contextModel,
   contextPercent,
   hasActiveProcess,
   messageCount,
   modelLabel,
   onApplyModelProfile,
-  onClearProcessAiConfig,
   onOpenModels,
   onOpenTasks,
   onOpenTaskProcess,
@@ -119,17 +107,11 @@ export function ChatDockPopovers({
   openPopover,
   processAiConfig,
   processAiConfigBusy,
-  processAiConfigLoading,
-  runStateLabel,
   canStartNewTask,
   taskCount,
 }: ChatDockPopoversProps) {
-  const processModel = processAiConfig?.values["config/ai/model"]?.trim() ?? "";
   const processReasoning = processAiConfig?.values["config/ai/reasoning"]?.trim() ?? "";
-  const hasProcessOverrides = Boolean(processAiConfig && Object.keys(processAiConfig.values).length > 0);
-  const chatOverrideLabel = processAiConfigLoading
-    ? "LOADING"
-    : processAiConfig?.profile?.name || processAiConfig?.profile?.id || (hasProcessOverrides ? "CUSTOM OVERRIDE" : "");
+  const currentReasoning = (processReasoning || context?.reasoning || "").trim().toLowerCase();
 
   return (
     <>
@@ -165,84 +147,48 @@ export function ChatDockPopovers({
       ) : null}
 
       {openPopover === "model" ? (
-        <div class="gsv-chat-popover gsv-chat-model-popover" role="menu" aria-label="Model state">
-          <header>
-            <span>{modelLabel}</span>
-            <small>{activeAgent.modelIsDefault ? "DEFAULT" : "ACTIVE"}</small>
-          </header>
-          <div class="gsv-chat-popover-section">
-            <span>RUN STATE</span>
-            <strong>{runStateLabel.toUpperCase()}</strong>
-          </div>
-          <div class="gsv-chat-popover-section">
-            <span>MODEL SOURCE</span>
-            <strong>{processModel ? `PROCESS · ${processModel}` : contextModel || "GATEWAY DEFAULT"}</strong>
-          </div>
-          {chatOverrideLabel ? (
-            <div class="gsv-chat-popover-section">
-              <span>CHAT OVERRIDE</span>
-              <strong>{chatOverrideLabel}</strong>
-            </div>
-          ) : null}
-          <div class="gsv-chat-popover-label">MODEL PROFILE</div>
-          <div class="gsv-chat-model-options" role="list">
-            {activeAgent.modelProfiles.length > 0 ? activeAgent.modelProfiles.map((profile) => {
-              const active = modelProfileIsActive(processAiConfig, profile);
-              return (
-              <button
-                type="button"
-                class={`gsv-chat-model-row${active ? " is-current" : ""}`}
-                role="listitem"
-                aria-current={active ? "true" : undefined}
-                disabled={processAiConfigBusy || !hasActiveProcess || active}
-                key={profile.id}
-                onClick={() => onApplyModelProfile(profile)}
-              >
-                <span class="gsv-chat-model-current" aria-hidden="true" />
-                <span class="gsv-chat-model-label">
-                  <strong>{profile.name}</strong>
-                  <em>{modelProfileSummary(profile)}</em>
-                </span>
-                {active ? <small>CHAT</small> : null}
-              </button>
-              );
-            }) : (
-              <div class="gsv-chat-model-empty">NO SAVED MODEL PROFILES</div>
-            )}
-          </div>
-          <div class="gsv-chat-popover-label">REASONING</div>
-          <div class="gsv-chat-reasoning-options">
-            {REASONING_OPTIONS.map((option) => (
-              <button
-                key={option}
-                type="button"
-                class={processReasoning === option ? "is-current" : ""}
-                disabled={processAiConfigBusy || !hasActiveProcess}
-                onClick={() => onSetReasoning(option)}
-              >
-                {option.toUpperCase()}
-              </button>
-            ))}
-          </div>
-          {context?.runId ? (
-            <div class="gsv-chat-popover-section">
-              <span>RUN</span>
-              <strong>{shortId(context.runId)}</strong>
-            </div>
-          ) : null}
-          <button
-            type="button"
-            class="gsv-chat-popover-action"
-            disabled={processAiConfigBusy || !hasProcessOverrides}
-            onClick={onClearProcessAiConfig}
-          >
-            <Icon name="close" family="doticons" size={12} />
-            <span>CLEAR CHAT OVERRIDES</span>
-          </button>
-          <button type="button" class="gsv-chat-popover-action" onClick={onOpenModels}>
-            <Icon name="stars" size={12} />
-            <span>MANAGE MODELS</span>
-          </button>
+        <div class="gsv-chat-popover gsv-chat-model-popover" role="menu" aria-label="Model and reasoning">
+          <TwoLevelSelect
+            headerLabel={modelLabel}
+            ariaLabel="Model and reasoning"
+            groups={[
+              {
+                id: "reasoning",
+                label: "REASONING",
+                options: REASONING_OPTIONS.map((option) => ({
+                  id: option,
+                  label: option.toUpperCase(),
+                  selected: option === currentReasoning,
+                  disabled: processAiConfigBusy || !hasActiveProcess,
+                })),
+              },
+              {
+                id: "model",
+                label: "SWITCH MODEL",
+                emptyLabel: "NO SAVED MODELS",
+                options: activeAgent.modelProfiles.map((profile) => {
+                  const active = modelProfileIsActive(processAiConfig, profile);
+                  return {
+                    id: profile.id,
+                    label: profile.name,
+                    selected: active,
+                    disabled: processAiConfigBusy || !hasActiveProcess || active,
+                  };
+                }),
+              },
+            ]}
+            footer={{ label: "MANAGE MODELS", onClick: onOpenModels }}
+            onSelect={(groupId, optionId) => {
+              if (groupId === "reasoning") {
+                onSetReasoning(optionId);
+                return;
+              }
+              const profile = activeAgent.modelProfiles.find((entry) => entry.id === optionId);
+              if (profile) {
+                onApplyModelProfile(profile);
+              }
+            }}
+          />
         </div>
       ) : null}
 

@@ -26,7 +26,6 @@ import {
   type ChatHilDecision,
   type ChatMediaUpload,
   type ChatProcessSummary,
-  type ChatRunState,
 } from "../domain/processes";
 import {
   useAbortChatProcess,
@@ -94,10 +93,6 @@ type ChatDockProps = {
    *  whatever was last selected. */
   newTaskSignal?: number;
 };
-
-function formatRunStateLabel(runState: ChatRunState | string | undefined): string {
-  return runState ? runState.replaceAll("_", " ") : "idle";
-}
 
 function agentStatusTone(status: ChatAgentStatus | undefined): StatusTone | null {
   if (status === "error" || status === "idle" || status === "live" || status === "online") {
@@ -386,7 +381,6 @@ export function ChatDock({
   }), [effectiveAgent, title, effectiveStatus, effectiveStatusLabel, contextLabel]);
   const transcriptMessages = runtime.rows;
   const runState = runtime.runState ?? (effectiveStatusLabel === "loading" ? undefined : effectiveStatusLabel);
-  const runStateLabel = liveActivity?.runStateLabel ?? formatRunStateLabel(runState);
   const canAbortRun = hasActiveProcess
     && !abortProcess.isPending
     && !stoppingCurrentRun
@@ -563,7 +557,6 @@ export function ChatDock({
                 : attachmentError || voiceError;
   const taskCount = activeAgent.tasksTotal > 0 ? activeAgent.tasksTotal : activeAgent.tasks.length;
   const contextLevel = context?.level ? context.level.toUpperCase() : contextPercent === null ? "UNKNOWN" : "ESTIMATED";
-  const contextModel = context ? [context.provider, context.model].filter(Boolean).join(" · ") : activeAgent.modelLabel;
   const processModel = processAiConfig.data?.values["config/ai/model"]?.trim() ?? "";
   const currentModelLabel = processModel || activeAgent.modelLabel;
   const processReasoning = processAiConfig.data?.values["config/ai/reasoning"]?.trim() ?? "";
@@ -780,16 +773,6 @@ export function ChatDock({
     });
   };
 
-  const clearProcessAiConfig = () => {
-    if (!hasActiveProcess || setProcessAiConfig.isPending) {
-      return;
-    }
-    setProcessAiConfig.mutate({
-      pid: activeProcessId,
-      clear: true,
-    });
-  };
-
   const toggleAgentPanel = () => {
     setBodyState((current) => current === "agent" ? "chat" : "agent");
   };
@@ -937,7 +920,6 @@ export function ChatDock({
         context={context}
         contextLevel={contextLevel}
         contextTone={contextTone}
-        contextModel={contextModel}
         contextPercent={contextPercent}
         contextTitle={contextTitle}
         effectiveStatus={effectiveStatus}
@@ -947,9 +929,7 @@ export function ChatDock({
         openPopover={openPopover}
         processAiConfig={processAiConfig.data ?? null}
         processAiConfigBusy={setProcessAiConfig.isPending}
-        processAiConfigLoading={processAiConfig.isLoading}
         reasoningLabel={currentReasoningLabel}
-        runStateLabel={runStateLabel}
         canStartNewTask={canStartNewTask}
         spawnPending={spawnProcess.isPending}
         speakReplies={replySpeech.speakReplies}
@@ -969,7 +949,6 @@ export function ChatDock({
         onStartNewTask={prepareNewTask}
         onStartProcess={startProcess}
         onApplyModelProfile={applyProcessAiProfile}
-        onClearProcessAiConfig={clearProcessAiConfig}
         onSetReasoning={(reasoning) => setProcessAiKey("config/ai/reasoning", reasoning)}
         onToggleSpeakReplies={() => replySpeech.setSpeakReplies(!replySpeech.speakReplies)}
         onToggleMax={onToggleMax}

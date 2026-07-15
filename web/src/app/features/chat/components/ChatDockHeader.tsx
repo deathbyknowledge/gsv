@@ -31,7 +31,6 @@ type ChatDockHeaderProps = {
   context: ChatHistory["context"] | null;
   contextLevel: string;
   contextTone: "default" | "attention" | "error";
-  contextModel: string;
   contextPercent: number | null;
   contextTitle: string;
   effectiveStatus: StatusTone;
@@ -41,9 +40,7 @@ type ChatDockHeaderProps = {
   openPopover: ChatPopoverId | null;
   processAiConfig: ChatProcessAiConfig;
   processAiConfigBusy: boolean;
-  processAiConfigLoading: boolean;
   reasoningLabel: string;
-  runStateLabel: string;
   canStartNewTask: boolean;
   spawnPending: boolean;
   speakReplies: boolean;
@@ -51,7 +48,6 @@ type ChatDockHeaderProps = {
   taskCount: number;
   onAbortRun: () => void;
   onApplyModelProfile: (profile: ChatModelProfileData) => void;
-  onClearProcessAiConfig: () => void;
   onOpenAgentPanel: () => void;
   onOpenModels: () => void;
   onOpenTasks: () => void;
@@ -84,7 +80,6 @@ export function ChatDockHeader({
   context,
   contextLevel,
   contextTone,
-  contextModel,
   contextPercent,
   contextTitle,
   effectiveStatus,
@@ -94,9 +89,7 @@ export function ChatDockHeader({
   openPopover,
   processAiConfig,
   processAiConfigBusy,
-  processAiConfigLoading,
   reasoningLabel,
-  runStateLabel,
   canStartNewTask,
   spawnPending,
   speakReplies,
@@ -104,7 +97,6 @@ export function ChatDockHeader({
   taskCount,
   onAbortRun,
   onApplyModelProfile,
-  onClearProcessAiConfig,
   onOpenAgentPanel,
   onOpenModels,
   onOpenTasks,
@@ -301,7 +293,6 @@ export function ChatDockHeader({
         onSelectConversation={onSelectConversation}
         context={context}
         contextLevel={contextLevel}
-        contextModel={contextModel}
         contextPercent={contextPercent}
         hasActiveProcess={hasActiveProcess}
         messageCount={messageCount}
@@ -309,12 +300,9 @@ export function ChatDockHeader({
         openPopover={openPopover}
         processAiConfig={processAiConfig}
         processAiConfigBusy={processAiConfigBusy}
-        processAiConfigLoading={processAiConfigLoading}
-        runStateLabel={runStateLabel}
         canStartNewTask={canStartNewTask}
         taskCount={taskCount}
         onApplyModelProfile={onApplyModelProfile}
-        onClearProcessAiConfig={onClearProcessAiConfig}
         onOpenModels={onOpenModels}
         onOpenTasks={onOpenTasks}
         onOpenTaskProcess={onOpenTaskProcess}
