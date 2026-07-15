@@ -19,6 +19,15 @@ const story: Story = {
         </div>
       </div>
       <div class="ds-cell">
+        <div class="ds-label">Link tones</div>
+        <div class="ds-row">
+          <Button variant="link" label="DEFAULT" />
+          <Button variant="link" tone="error" label="DENY" />
+          <Button variant="link" tone="neutral" label="ALLOW ONCE" />
+          <Button variant="link" tone="success" label="ALWAYS ALLOW" />
+        </div>
+      </div>
+      <div class="ds-cell">
         <div class="ds-label">Disabled</div>
         <div class="ds-row">
           <Button variant="primary" label="SAVE" disabled />

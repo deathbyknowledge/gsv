@@ -107,6 +107,19 @@ const story: Story = {
       </div>
 
       <div class="ds-cell">
+        <div class="ds-label">Paragraph colour · default vs muted</div>
+        <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "10px", maxWidth: "56ch" }}>
+          <div class="gsv-paragraph" style={{ color: "var(--text)" }}>
+            Paragraph default — pair .gsv-paragraph with var(--text) for standard body copy.
+          </div>
+          <div class="gsv-paragraph" style={{ color: "var(--text-muted)" }}>
+            Paragraph muted — pair .gsv-paragraph with var(--text-muted) for secondary copy that
+            should sit back, e.g. approval prompt bodies.
+          </div>
+        </div>
+      </div>
+
+      <div class="ds-cell">
         <div class="ds-label">Character set · Departure Mono</div>
         <div
           style={{

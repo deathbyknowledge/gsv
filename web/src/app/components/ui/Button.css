@@ -206,6 +206,44 @@
   filter: none;
 }
 
+/* — link tones — action-colour variants; the default stays accent — */
+.gsv-btn-link.is-tone-error:not(.is-disabled) {
+  color: var(--error);
+  border-color: var(--error);
+}
+.gsv-btn-link.is-tone-error:not(.is-disabled):hover,
+.gsv-btn-link.is-tone-error:not(.is-disabled):focus-visible {
+  color: #ffa0b4;
+  border-color: #ffa0b4;
+}
+.gsv-btn-link.is-tone-error:not(.is-disabled) svg {
+  filter: drop-shadow(0 0 3px rgba(255, 111, 140, 0.5));
+}
+.gsv-btn-link.is-tone-neutral:not(.is-disabled) {
+  color: var(--label);
+  border-color: var(--idle);
+}
+.gsv-btn-link.is-tone-neutral:not(.is-disabled):hover,
+.gsv-btn-link.is-tone-neutral:not(.is-disabled):focus-visible {
+  color: #d6d2f5;
+  border-color: #8a84c9;
+}
+.gsv-btn-link.is-tone-neutral:not(.is-disabled) svg {
+  filter: drop-shadow(0 0 3px rgba(154, 149, 207, 0.45));
+}
+.gsv-btn-link.is-tone-success:not(.is-disabled) {
+  color: var(--online);
+  border-color: var(--online);
+}
+.gsv-btn-link.is-tone-success:not(.is-disabled):hover,
+.gsv-btn-link.is-tone-success:not(.is-disabled):focus-visible {
+  color: #8df5bd;
+  border-color: #8df5bd;
+}
+.gsv-btn-link.is-tone-success:not(.is-disabled) svg {
+  filter: drop-shadow(0 0 3px rgba(94, 242, 160, 0.5));
+}
+
 .gsv-btn.is-disabled {
   cursor: not-allowed;
 }

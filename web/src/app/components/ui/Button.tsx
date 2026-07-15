@@ -1,9 +1,12 @@
 import "./Button.css";
 
 export type ButtonVariant = "primary" | "secondary" | "success" | "danger" | "dangerGhost" | "link";
+export type ButtonLinkTone = "error" | "neutral" | "success";
 
 export interface ButtonProps {
   variant?: ButtonVariant;
+  /** Colour tone for the link variant (default keeps the accent). Ignored elsewhere. */
+  tone?: ButtonLinkTone;
   label?: string;
   disabled?: boolean;
   block?: boolean;
@@ -23,8 +26,9 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
 };
 
 /** Button — ported from Button.dc.html. */
-export function Button({ variant = "primary", label = "BUTTON", disabled = false, block = false, type = "button", onClick, dataAttrs }: ButtonProps) {
-  const cls = `gsv-btn ${VARIANT_CLASS[variant]}${block ? " gsv-btn-block" : ""}${disabled ? " is-disabled" : ""}`;
+export function Button({ variant = "primary", tone, label = "BUTTON", disabled = false, block = false, type = "button", onClick, dataAttrs }: ButtonProps) {
+  const toneClass = variant === "link" && tone ? ` is-tone-${tone}` : "";
+  const cls = `gsv-btn ${VARIANT_CLASS[variant]}${toneClass}${block ? " gsv-btn-block" : ""}${disabled ? " is-disabled" : ""}`;
   return (
     <button
       {...dataAttrs}
