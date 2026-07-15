@@ -102,6 +102,9 @@ export function ConfirmModal({
         position: "relative",
         width: `${width}px`,
         maxWidth: "100%",
+        maxHeight: "100%",
+        display: "flex",
+        flexDirection: "column",
         background: "#0e0b24",
         border: "1px solid var(--primary-hi)",
         boxShadow: "0 0 0 1px #060414,0 18px 50px rgba(0,0,0,.6)",
@@ -130,7 +133,7 @@ export function ConfirmModal({
         </button>
       </div>
 
-      <div style={{ display: "flex", gap: "16px", padding: "24px 22px 20px" }}>
+      <div style={{ display: "flex", gap: "16px", padding: "24px 22px 20px", flex: "1 1 auto", minHeight: 0, overflow: "auto" }}>
         <svg
           width="46"
           height="46"

@@ -68,6 +68,9 @@
 
 .gsv-chat-modal-wrap {
   max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  display: flex;
 }
 
 .gsv-chat-head {
@@ -1104,6 +1107,68 @@ button.gsv-chat-task-row:focus-visible {
 
 .gsv-chat-agent-panel .lr {
   padding: 12px 14px;
+}
+
+/* Composer lock — while context compaction is pending (or has failed) the
+   composer is disabled; hovering or focusing the area reveals an interactive
+   bubble explaining why (with a "start a new task" action on failure). */
+.gsv-chat-composer-lock {
+  position: relative;
+  flex: none;
+}
+
+.gsv-chat-composer-lock-bubble {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 2px);
+  z-index: 30;
+  padding: 9px 11px;
+  background: #05040f;
+  border: 1px solid var(--border-raised);
+  color: var(--label);
+  letter-spacing: 0.08em;
+  line-height: 1.6;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+.gsv-chat-composer-lock:hover .gsv-chat-composer-lock-bubble,
+.gsv-chat-composer-lock:focus-within .gsv-chat-composer-lock-bubble {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .gsv-chat-composer-lock-bubble {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.gsv-chat-inline-link {
+  appearance: none;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  letter-spacing: inherit;
+  padding: 0;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+
+.gsv-chat-inline-link:hover,
+.gsv-chat-inline-link:focus-visible {
+  color: var(--accent-bright);
+  outline: none;
+}
+
+.gsv-chat-inline-link:disabled {
+  color: var(--text-dim);
+  cursor: default;
 }
 
 .gsv-chat-user-message {

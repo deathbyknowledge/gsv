@@ -356,7 +356,8 @@ export function ChatDock({
     setBranchNotice("");
     feedback.reset();
     setBodyState("chat");
-  }, [activeProcessId, feedback.reset]);
+    compactConversation.reset();
+  }, [activeProcessId, compactConversation.reset, feedback.reset]);
 
   useEffect(() => {
     setSelectedArchiveSegmentId("");
@@ -438,7 +439,10 @@ export function ChatDock({
   const emptyDescription = hasActiveProcess
     ? "This process has not written user, assistant, system, or tool result messages yet."
     : "Start an interactive process to begin a native chat session.";
-  const inputDisabled = !hasActiveProcess && !canStartProcess && !processLookupLoading;
+  const compactPending = compactConversation.isPending;
+  const compactFailed = compactConversation.isError;
+  const composerLocked = hasActiveProcess && (compactPending || compactFailed);
+  const inputDisabled = (!hasActiveProcess && !canStartProcess && !processLookupLoading) || composerLocked;
   const sendChatDraft = useCallback(async (
     message: string,
     media: ChatMediaUpload[] = [],
@@ -698,6 +702,7 @@ export function ChatDock({
     setOpenPopover(null);
     setArchiveOpen(false);
     setSelectedArchiveSegmentId("");
+    compactConversation.reset();
     spawnProcess.mutate({
       fresh: true,
       interactive: true,
@@ -738,6 +743,7 @@ export function ChatDock({
     }
     const normalizedKeepLast = Math.max(1, Math.min(compactKeepMax, Math.floor(keepLast)));
     setContextConfirmOpen(false);
+    feedback.begin("compact", "Freeing context");
     compactConversation.mutate({
       pid: activeProcessId,
       conversationId: selectedConversationId,
@@ -747,6 +753,10 @@ export function ChatDock({
       onSuccess: (result) => {
         setArchiveOpen(true);
         setSelectedArchiveSegmentId(result.segment.id);
+        feedback.resolve("compact", "success", "Context freed");
+      },
+      onError: () => {
+        feedback.resolve("compact", "error", "Context freeing failed");
       },
     });
   };
@@ -864,7 +874,6 @@ export function ChatDock({
               message={`Archive older messages, generate a summary, and keep the latest ${compactKeepLastDraft} messages active.`}
               note="Older messages remain available in the archive after compaction."
               confirmLabel="FREE CONTEXT"
-              width={470}
               onCancel={() => setContextConfirmOpen(false)}
               onConfirm={() => freeContext(compactKeepLastDraft)}
             >
@@ -1027,7 +1036,8 @@ export function ChatDock({
         />
       ) : null}
 
-      {bodyState !== "chat" ? null : <MessageInput
+      {bodyState !== "chat" ? null : <div class="gsv-chat-composer-lock">
+      <MessageInput
         attachments={draftAttachments}
         busy={sendMessage.isPending || abortProcess.isPending || spawnProcess.isPending}
         canSend={hasActiveProcess || canStartProcess}
@@ -1063,7 +1073,28 @@ export function ChatDock({
           ? false
           : ambientTranscription.dictationUnavailable}
         voiceTitle={voiceTitle}
-      />}
+      />
+      {composerLocked ? (
+        <div class="gsv-chat-composer-lock-bubble gsv-sublabel" role="status">
+          {compactFailed ? (
+            <>
+              Context compression has failed -{" "}
+              <button
+                type="button"
+                class="gsv-chat-inline-link"
+                disabled={!canStartNewTask}
+                onClick={prepareNewTask}
+              >
+                start a new task
+              </button>
+              {" "}to continue.
+            </>
+          ) : (
+            "Wait for context compression to continue this conversation."
+          )}
+        </div>
+      ) : null}
+      </div>}
     </aside>
   );
 }
