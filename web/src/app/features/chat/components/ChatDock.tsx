@@ -345,6 +345,7 @@ export function ChatDock({
       }
       event.stopPropagation();
       setBodyState("chat");
+      setReasoningTarget(null);
       asideRef.current?.querySelector<HTMLButtonElement>(".gsv-chat-agent-main")?.focus();
     };
     document.addEventListener("keydown", onKeyDown);
@@ -359,6 +360,11 @@ export function ChatDock({
     setBranchNotice("");
     setDismissedError("");
     feedback.reset();
+    // The voice status line survives a process switch (the mic keeps recording
+    // into the new composer), but feedback.reset() just dropped its entry.
+    // Re-sync the mirror ref so the voice effect re-creates the line on its
+    // next state tick.
+    voiceFeedbackLabel.current = null;
     setBodyState("chat");
     compactConversation.reset();
   }, [activeProcessId, compactConversation.reset, feedback.reset]);
@@ -366,7 +372,14 @@ export function ChatDock({
   useEffect(() => {
     setSelectedArchiveSegmentId("");
     setBodyState("chat");
-  }, [activeProcessId, activeConversationId]);
+    // Compaction state and its status lines are conversation-bound: a failed
+    // compact on one conversation must not lock a sibling's composer, and a
+    // pending "Freeing context" line must not resolve onto another transcript.
+    // The recorder-bound "voice" line is deliberately left alone.
+    compactConversation.reset();
+    feedback.clear("compact");
+    feedback.clear("abort");
+  }, [activeProcessId, activeConversationId, compactConversation.reset, feedback.clear]);
 
   // Auto-dismiss the branch success notice after a few seconds.
   useEffect(() => {
@@ -838,9 +851,12 @@ export function ChatDock({
     setBodyState((current) => current === "agent" ? "chat" : "agent");
   };
 
-  const returnToChat = () => {
+  const returnToChat = (opts?: { restoreFocus?: boolean }) => {
     setBodyState("chat");
     setReasoningTarget(null);
+    if (opts?.restoreFocus) {
+      asideRef.current?.querySelector<HTMLButtonElement>(".gsv-chat-agent-main")?.focus();
+    }
   };
 
   const openReasoning = (target: ChatReasoningTarget) => {
@@ -1025,7 +1041,7 @@ export function ChatDock({
         <ChatReasoningPanel
           messages={transcriptMessages}
           target={reasoningTarget}
-          onClose={returnToChat}
+          onClose={() => returnToChat({ restoreFocus: true })}
         />
       ) : null}
 
