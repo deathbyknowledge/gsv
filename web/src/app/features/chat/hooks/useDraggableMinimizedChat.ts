@@ -4,6 +4,8 @@ import {
   chatMinimizedPositionAtPointer,
   clampChatMinimizedPosition,
   exceededChatMinimizedDragThreshold,
+  readPersistedChatMinimizedPosition,
+  writePersistedChatMinimizedPosition,
   type ChatMinimizedPoint,
   type ChatMinimizedSize,
   type ChatMinimizedViewport,
@@ -86,20 +88,27 @@ export function useDraggableMinimizedChat({
   open,
   onActivate,
 }: UseDraggableMinimizedChatOptions): DraggableMinimizedChat {
-  const [position, setPosition] = useState<ChatMinimizedPoint | null>(null);
+  const [position, setPosition] = useState<ChatMinimizedPoint | null>(readPersistedChatMinimizedPosition);
   const [dragging, setDragging] = useState(false);
   const launcherRef = useRef<HTMLButtonElement>(null);
-  const positionRef = useRef<ChatMinimizedPoint | null>(null);
+  const positionRef = useRef<ChatMinimizedPoint | null>(position);
+  const preferredPositionRef = useRef<ChatMinimizedPoint | null>(position);
   const dragRef = useRef<MinimizedChatDrag | null>(null);
   const suppressClickRef = useRef(false);
   const suppressGenerationRef = useRef(0);
   const activateRef = useRef(onActivate);
   activateRef.current = onActivate;
 
-  const commitPosition = useCallback((next: ChatMinimizedPoint): void => {
+  const renderPosition = useCallback((next: ChatMinimizedPoint): void => {
     positionRef.current = next;
     setPosition(next);
   }, []);
+
+  const commitPosition = useCallback((next: ChatMinimizedPoint): void => {
+    preferredPositionRef.current = next;
+    renderPosition(next);
+    writePersistedChatMinimizedPosition(next);
+  }, [renderPosition]);
 
   const deferClickSuppressionClear = useCallback((): void => {
     const generation = ++suppressGenerationRef.current;
@@ -279,17 +288,17 @@ export function useDraggableMinimizedChat({
     }
 
     const reclamp = (): void => {
-      const current = positionRef.current;
+      const preferred = preferredPositionRef.current;
       const geometry = minimizedChatGeometry(node);
-      if (!current || !geometry) {
+      if (!preferred || !geometry || dragRef.current) {
         return;
       }
-      const next = clampChatMinimizedPosition(current, geometry.viewport, geometry.launcher);
-      if (samePosition(current, next)) {
+      const next = clampChatMinimizedPosition(preferred, geometry.viewport, geometry.launcher);
+      if (positionRef.current && samePosition(positionRef.current, next)) {
         return;
       }
       applyMinimizedChatPosition(node, next);
-      commitPosition(next);
+      renderPosition(next);
     };
 
     reclamp();
@@ -308,7 +317,7 @@ export function useDraggableMinimizedChat({
       observer.disconnect();
       window.removeEventListener("resize", reclamp);
     };
-  }, [commitPosition, open, positioned]);
+  }, [open, positioned, renderPosition]);
 
   const style = useMemo<JSX.CSSProperties | undefined>(() => position ? {
     left: `${position.x}px`,
