@@ -1507,26 +1507,11 @@ button.gsv-chat-task-row:focus-visible {
   border-color: rgba(255, 177, 153, 0.44) !important;
 }
 
-.gsv-chat-control-error {
+/* Control alerts render through the DS dismissible Alert; this wrapper only
+   spaces them within the dock column. */
+.gsv-chat-control-alert {
   flex: none;
   margin: 10px 14px 0;
-  border: 1px solid rgba(255, 177, 153, 0.46);
-  background: rgba(67, 20, 24, 0.46);
-  color: #ffb199;
-  padding: 8px 10px;
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.gsv-chat-control-success {
-  flex: none;
-  margin: 10px 14px 0;
-  border: 1px solid rgba(94, 242, 160, 0.4);
-  background: rgba(18, 54, 38, 0.42);
-  color: var(--online);
-  padding: 8px 10px;
-  font-size: 11px;
-  line-height: 1.4;
 }
 
 .gsv-chat-archive {

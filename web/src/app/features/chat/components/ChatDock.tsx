@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ProcContextState, ProcMediaInput, ProcUsageState } from "@humansandmachines/gsv/protocol";
 import { AgentImage } from "../../../components/ui/AgentImage";
+import { Alert } from "../../../components/ui/Alert";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { Counter } from "../../../components/ui/Counter";
 import { Icon } from "../../../components/ui/Icon";
@@ -248,6 +249,8 @@ export function ChatDock({
   const [branchNotice, setBranchNotice] = useState("");
   const minimizedChat = useDraggableMinimizedChat({ open, onActivate: onToggleOpen });
   const [stoppingRun, setStoppingRun] = useState<StoppingRun | null>(null);
+  /** Snapshot of the last dismissed control error — a new distinct error re-shows. */
+  const [dismissedError, setDismissedError] = useState("");
   const activeProcessId = agent?.processId?.trim() ?? "";
   const startRunAs = agent?.runAs?.trim() ?? "";
   const hasActiveProcess = activeProcessId.length > 0;
@@ -354,6 +357,7 @@ export function ChatDock({
     setArchiveOpen(false);
     setSelectedArchiveSegmentId("");
     setBranchNotice("");
+    setDismissedError("");
     feedback.reset();
     setBodyState("chat");
     compactConversation.reset();
@@ -544,21 +548,19 @@ export function ChatDock({
     }
     ambientTranscription.toggleDictation();
   }, [ambientTranscription]);
+  // Stop + compaction failures surface as feedback lines in the transcript
+  // (HAM-366/434), so they are deliberately absent from this chain.
   const controlError = spawnProcess.isError
     ? errorMessage(spawnProcess.error, "Process could not be started.")
-    : abortProcess.isError
-      ? errorMessage(abortProcess.error, "Run could not be aborted.")
-      : sendMessage.isError
-        ? errorMessage(sendMessage.error, "Message could not be sent.")
-        : hilDecision.isError
-          ? errorMessage(hilDecision.error, "Tool approval could not be applied.")
-          : compactConversation.isError
-            ? errorMessage(compactConversation.error, "Conversation could not be compacted.")
-            : forkConversation.isError
-              ? errorMessage(forkConversation.error, "Conversation could not be branched.")
-              : setProcessAiConfig.isError
-                ? errorMessage(setProcessAiConfig.error, "Process model settings could not be updated.")
-                : attachmentError || voiceError;
+    : sendMessage.isError
+      ? errorMessage(sendMessage.error, "Message could not be sent.")
+      : hilDecision.isError
+        ? errorMessage(hilDecision.error, "Tool approval could not be applied.")
+        : forkConversation.isError
+          ? errorMessage(forkConversation.error, "Conversation could not be branched.")
+          : setProcessAiConfig.isError
+            ? errorMessage(setProcessAiConfig.error, "Process model settings could not be updated.")
+            : attachmentError || voiceError;
   const taskCount = activeAgent.tasksTotal > 0 ? activeAgent.tasksTotal : activeAgent.tasks.length;
   const contextLevel = context?.level ? context.level.toUpperCase() : contextPercent === null ? "UNKNOWN" : "ESTIMATED";
   const processModel = processAiConfig.data?.values["config/ai/model"]?.trim() ?? "";
@@ -993,15 +995,24 @@ export function ChatDock({
         />
       ) : null}
 
-      {bodyState === "chat" && controlError ? (
-        <div class="gsv-chat-control-error" role="status">
-          {controlError}
+      {bodyState === "chat" && controlError && controlError !== dismissedError ? (
+        <div class="gsv-chat-control-alert">
+          <Alert
+            variant="error"
+            icon="none"
+            text={controlError}
+            onDismiss={() => setDismissedError(controlError)}
+          />
         </div>
       ) : null}
 
       {bodyState === "chat" && branchNotice ? (
-        <div class="gsv-chat-control-success" role="status">
-          {branchNotice}
+        <div class="gsv-chat-control-alert">
+          <Alert
+            variant="success"
+            text={branchNotice}
+            onDismiss={() => setBranchNotice("")}
+          />
         </div>
       ) : null}
 
