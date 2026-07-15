@@ -14,6 +14,12 @@
   color: var(--accent-bright);
 }
 
+.lr-leading {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
 .lr-main,
 .lr-label,
 .lr-sub {
@@ -45,4 +51,21 @@
 .lr[data-clickable="true"]:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
+}
+
+/* Chevron (+ optional label) is a hover/focus affordance only — applies to
+   every ListRow consumer (was previously duplicated per surface). */
+.lr .lr-chevron {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.lr[data-clickable="true"]:hover .lr-chevron,
+.lr[data-clickable="true"]:focus-visible .lr-chevron {
+  opacity: 1;
+}
+
+.lr-chevron-label {
+  color: var(--accent);
+  letter-spacing: 0.12em;
+  white-space: nowrap;
 }

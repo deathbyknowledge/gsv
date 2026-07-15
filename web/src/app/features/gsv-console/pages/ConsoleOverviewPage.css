@@ -125,18 +125,16 @@
   min-height: 32px;
 }
 
-/* Chevrons (section headers + list rows) are a hover/focus affordance only.
-   The AddAction "connect new" arrow is a separate element and stays visible. */
-.gsv-settings-overview .gsv-section-header-chevron,
-.gsv-settings-overview .lr-chevron {
+/* Section-header chevrons are a hover/focus affordance only. (List-row chevron
+   reveal now lives in ListRow.css, design-system-wide.) The AddAction
+   "connect new" arrow is a separate element and stays visible. */
+.gsv-settings-overview .gsv-section-header-chevron {
   opacity: 0;
   transition: opacity 0.12s ease;
 }
 
 .gsv-settings-overview .gsv-section-header.is-clickable:hover .gsv-section-header-chevron,
-.gsv-settings-overview .gsv-section-header.is-clickable:focus-within .gsv-section-header-chevron,
-.gsv-settings-overview .lr[data-clickable="true"]:hover .lr-chevron,
-.gsv-settings-overview .lr[data-clickable="true"]:focus-visible .lr-chevron {
+.gsv-settings-overview .gsv-section-header.is-clickable:focus-within .gsv-section-header-chevron {
   opacity: 1;
 }
 

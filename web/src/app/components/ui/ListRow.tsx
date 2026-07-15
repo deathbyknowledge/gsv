@@ -1,4 +1,4 @@
-import type { JSX } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import { Icon } from "./Icon";
 import { Tag, type TagTone } from "./Tag";
 import "./ListRow.css";
@@ -15,8 +15,12 @@ export interface ListRowProps {
   tag?: string;
   tagTone?: TagTone;
   chevron?: boolean;
+  /** Hover label rendered next to the chevron (e.g. "Switch agent"). */
+  chevronLabel?: string;
   icon?: string;
   iconTitle?: string;
+  /** Custom leading node (e.g. an avatar image); takes precedence over `icon`. */
+  leading?: ComponentChildren;
   statusDotPlacement?: ListRowStatusDotPlacement;
   style?: JSX.CSSProperties;
   active?: boolean;
@@ -51,8 +55,10 @@ export function ListRow({
   tag = "",
   tagTone = "update",
   chevron = false,
+  chevronLabel = "",
   icon,
   iconTitle,
+  leading,
   statusDotPlacement = "leading",
   style,
   active = false,
@@ -96,7 +102,9 @@ export function ListRow({
 
   const content = (
     <>
-      {icon ? (
+      {leading ? (
+        <span class="lr-leading">{leading}</span>
+      ) : icon ? (
         <span class="lr-icon">
           <Icon name={icon} size={18} title={iconTitle ?? label} />
         </span>
@@ -142,7 +150,8 @@ export function ListRow({
       ) : null}
       {hasDot && statusDotPlacement === "trailing" ? <span class={dotClass} style={dotStyle} /> : null}
       {chevron ? (
-        <span class="lr-chevron" style={{ display: "inline-flex", flex: "none", alignItems: "center" }}>
+        <span class="lr-chevron" style={{ display: "inline-flex", flex: "none", alignItems: "center", gap: "8px" }}>
+          {chevronLabel ? <span class="lr-chevron-label gsv-sublabel">{chevronLabel}</span> : null}
           <svg width="9" height="12" viewBox="0 0 9 12" aria-hidden="true" style={{ filter: "drop-shadow(0 0 3px rgba(150,140,255,.5))" }}>
             <path d="M0 0 L9 6 L0 12 Z" fill="var(--accent)" />
           </svg>

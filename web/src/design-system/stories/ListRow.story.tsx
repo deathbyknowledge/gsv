@@ -20,11 +20,44 @@ const story: Story = {
         </div>
       </div>
       <div class="ds-cell">
-        <div class="ds-label">Sub-label · tag · chevron</div>
+        <div class="ds-label">Sub-label · tag · chevron (hover a clickable row to reveal the arrow)</div>
         <div class="ds-col">
           <ListRow label="PRIMARY NODE" status="online" sub="192.168.1.42 · 8 CORES" />
           <ListRow label="BUILD NODE" status="online" tag="UPDATE" />
-          <ListRow label="EDGE NODE" status="online" statusLabel="ONLINE" chevron />
+          <ListRow label="EDGE NODE" status="online" statusLabel="ONLINE" chevron onClick={() => {}} />
+        </div>
+      </div>
+      <div class="ds-cell">
+        <div class="ds-label">Leading node · chevron label (hover)</div>
+        <div class="ds-col">
+          <ListRow
+            leading={
+              <span
+                style={{
+                  width: "30px",
+                  height: "30px",
+                  borderRadius: "3px",
+                  background: "#171436",
+                  border: "1px solid var(--border)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--accent)",
+                  fontFamily: "var(--gsv-font-mono)",
+                  fontSize: "12px",
+                }}
+              >
+                SA
+              </span>
+            }
+            label="SALETE"
+            status="idle"
+            statusLabel="IDLE"
+            statusDotPlacement="trailing"
+            chevron
+            chevronLabel="SWITCH AGENT"
+            onClick={() => {}}
+          />
         </div>
       </div>
       <div class="ds-cell">

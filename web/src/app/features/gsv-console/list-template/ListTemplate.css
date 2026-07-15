@@ -89,16 +89,7 @@
   outline: none;
 }
 
-/* Row chevron is a hover/focus affordance only (matches the Settings Overview). */
-.gsv-list-template .lr-chevron {
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-.gsv-list-template-row .lr[data-clickable="true"]:hover .lr-chevron,
-.gsv-list-template-row .lr[data-clickable="true"]:focus-visible .lr-chevron {
-  opacity: 1;
-}
+/* Row chevron hover/focus reveal now lives in ListRow.css (design-system-wide). */
 
 /* Narrow panel (iPad and below, or chat dragged wide): action bar stacks ON TOP
    of the list and lays its controls out horizontally — search + filters left,
