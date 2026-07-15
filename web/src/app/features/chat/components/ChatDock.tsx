@@ -604,16 +604,21 @@ export function ChatDock({
     const runId = runtime.activeRunId ?? pendingHil?.runId;
     const requestedStop = { pid: activeProcessId, runId: runId ?? null };
     setStoppingRun(requestedStop);
+    feedback.begin("abort", "Stopping task");
     abortProcess.mutate({
       pid: activeProcessId,
       ...(runId ? { runId } : {}),
     }, {
+      onSuccess: () => {
+        feedback.resolve("abort", "success", "Task successfully stopped.");
+      },
       onError: () => {
         setStoppingRun((current) => (
           current?.pid === requestedStop.pid && current.runId === requestedStop.runId
             ? null
             : current
         ));
+        feedback.resolve("abort", "error", "Error trying to stop task");
       },
     });
   };
