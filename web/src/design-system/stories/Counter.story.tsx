@@ -25,6 +25,18 @@ const story: Story = {
         </div>
       </div>
       <div class="ds-cell">
+        <div class="ds-label">Typed input</div>
+        <div class="ds-col">
+          <Counter
+            label="KEEP MESSAGES"
+            description="Type a number or use the buttons — commits on Enter/blur, clamps to 1–100, Esc reverts."
+            min={1}
+            max={100}
+            value={46}
+          />
+        </div>
+      </div>
+      <div class="ds-cell">
         <div class="ds-label">States & extras</div>
         <div class="ds-col">
           <Counter label="REPLICAS" value={3} unit="x" step={1} />
