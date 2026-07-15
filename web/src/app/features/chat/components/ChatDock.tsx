@@ -541,6 +541,40 @@ export function ChatDock({
     ? ambientTranscription.liveTitle
     : ambientTranscription.dictationTitle;
   const voiceError = ambientTranscription.error;
+  // Voice status feedback lines — transient "Listening…" / "Transcribing…" in
+  // the chat body while conversation mode or dictation is active (HAM-473).
+  const voiceFeedbackLabel = useRef<string | null>(null);
+  useEffect(() => {
+    const state = ambientTranscription.state;
+    const voiceOn = ambientTranscription.liveActive || ambientTranscription.dictationActive;
+    const label = !voiceOn
+      ? null
+      : state === "recording" || state === "listening" || state === "capturing"
+        ? "Listening…"
+        : state === "transcribing" || state === "sending"
+          ? "Transcribing…"
+          : null;
+    if (!label) {
+      if (voiceFeedbackLabel.current !== null) {
+        voiceFeedbackLabel.current = null;
+        feedback.clear("voice");
+      }
+      return;
+    }
+    if (voiceFeedbackLabel.current === null) {
+      feedback.begin("voice", label, { persist: false });
+    } else if (voiceFeedbackLabel.current !== label) {
+      feedback.update("voice", label);
+    }
+    voiceFeedbackLabel.current = label;
+  }, [
+    ambientTranscription.state,
+    ambientTranscription.liveActive,
+    ambientTranscription.dictationActive,
+    feedback.begin,
+    feedback.clear,
+    feedback.update,
+  ]);
   const handleVoiceClick = useCallback(() => {
     if (ambientTranscription.liveActive) {
       ambientTranscription.toggleLive();
@@ -1070,6 +1104,8 @@ export function ChatDock({
         placeholder={`Message ${activeAgent.name}...`}
         running={canAbortRun}
         user={userLabel}
+        conversationMode={ambientTranscription.liveActive}
+        onEndConversation={ambientTranscription.toggleLive}
         voiceActive={ambientTranscription.dictationActive || ambientTranscription.liveActive}
         voiceAction={(
           <Hint position="top-end" text={ambientTranscription.liveTitle}>
@@ -1078,7 +1114,7 @@ export function ChatDock({
               glyph="transcribe"
               size={26}
               className={`gsv-chat-live-icon${ambientTranscription.liveActive ? " is-active" : ""}`}
-              ariaLabel={ambientTranscription.liveActive ? "Stop live voice chat" : "Start live voice chat"}
+              ariaLabel={ambientTranscription.liveActive ? "End conversation" : "Start conversation"}
               disabled={ambientTranscription.liveUnavailable}
               onClick={ambientTranscription.toggleLive}
             />

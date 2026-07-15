@@ -92,6 +92,44 @@ function cancellationError(message: string): Error {
   return error;
 }
 
+function ambientTitle(state: PresenceState, note: string): string {
+  if (state === "listening") {
+    return note || "End conversation";
+  }
+  if (state === "capturing") {
+    return note || "Capturing speech";
+  }
+  if (state === "transcribing") {
+    return note || "Transcribing speech";
+  }
+  if (state === "sending") {
+    return note || "Sending transcript";
+  }
+  if (state === "unsupported") {
+    return "Live transcription is unavailable in this browser";
+  }
+  if (state === "error") {
+    return note || "Live transcription needs attention";
+  }
+  return "Start conversation";
+}
+
+function dictationTitle(state: PresenceState, note: string): string {
+  if (state === "recording") {
+    return note || "Stop dictation";
+  }
+  if (state === "transcribing") {
+    return note || "Transcribing dictation";
+  }
+  if (state === "unsupported") {
+    return "Dictation is unavailable in this browser";
+  }
+  if (state === "error") {
+    return note || "Dictation needs attention";
+  }
+  return "Dictate message";
+}
+
 function isLiveState(state: PresenceState): boolean {
   return state === "listening"
     || state === "capturing"
