@@ -44,7 +44,10 @@ export function TwoLevelSelect({
   const rootRef = useRef<HTMLDivElement>(null);
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+    if (
+      event.key !== "ArrowDown" && event.key !== "ArrowUp"
+      && event.key !== "Home" && event.key !== "End"
+    ) {
       return;
     }
     const root = rootRef.current;
@@ -57,9 +60,13 @@ export function TwoLevelSelect({
     }
     event.preventDefault();
     const index = items.indexOf(document.activeElement as HTMLButtonElement);
-    const next = event.key === "ArrowDown"
-      ? (index + 1) % items.length
-      : (index - 1 + items.length) % items.length;
+    const next = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? items.length - 1
+        : event.key === "ArrowDown"
+          ? (index + 1) % items.length
+          : (index - 1 + items.length) % items.length;
     items[next]?.focus();
   };
 
