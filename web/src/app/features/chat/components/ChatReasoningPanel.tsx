@@ -2,6 +2,7 @@ import type { JSX } from "preact";
 import { useMemo, useState } from "preact/hooks";
 import {
   backupModelDetails,
+  collectGroupEntries,
   collectRunEntries,
   findMessageById,
   reasoningText,
@@ -15,11 +16,13 @@ import {
 import { shortId } from "./chatUiFormat";
 import "./ChatReasoningPanel.css";
 
-/** What the reasoning panel is scoped to: one run's activity, or one
- *  assistant reply's thinking (plus its run, when it has one). */
+/** What the reasoning panel is scoped to: one run's activity, one assistant
+ *  reply's thinking (plus its run, when it has one), or — for activity groups
+ *  that carry no run id — the group containing a message. */
 export type ChatReasoningTarget =
   | { kind: "run"; runId: string }
-  | { kind: "message"; messageId: string };
+  | { kind: "message"; messageId: string }
+  | { kind: "group"; messageId: string };
 
 type ChatReasoningPanelProps = {
   messages: readonly ChatDockMessage[];
@@ -116,6 +119,12 @@ export function ChatReasoningPanel({ messages, target, onClose }: ChatReasoningP
       return {
         blocks: entryBlocks(collectRunEntries(messages, target.runId)),
         label: `RUN ${shortId(target.runId)}`,
+      };
+    }
+    if (target.kind === "group") {
+      return {
+        blocks: entryBlocks(collectGroupEntries(messages, target.messageId)),
+        label: "RUN ACTIVITY",
       };
     }
     const message = findMessageById(messages, target.messageId);

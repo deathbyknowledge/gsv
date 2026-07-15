@@ -15,7 +15,7 @@ import {
   type VirtualTranscriptSource,
 } from "../hooks/useVirtualTranscript";
 import type { ChatFeedbackEntry } from "../hooks/useChatFeedback";
-import { ChatFeedbackMessage } from "./ChatFeedbackMessage";
+import { ChatFeedbackMessage, type ChatFeedbackStatus } from "./ChatFeedbackMessage";
 import { ChatMediaAttachment } from "./ChatMediaAttachment";
 import {
   chatTranscriptActiveGroupIndex,
@@ -30,6 +30,7 @@ import {
   chatTranscriptShouldPauseFollowForWheel,
   nextChatTranscriptBottomFollow,
 } from "./ChatTranscriptScrollPolicy";
+import type { ChatReasoningTarget } from "./ChatReasoningPanel";
 
 export type ChatDockMessageRole = ChatTranscriptRowRole;
 export type ChatDockMessage = ChatTranscriptRow;
@@ -50,6 +51,8 @@ type ChatTranscriptProps = {
   onLoadOlder?: () => Promise<void> | void;
   processId?: string;
   onBranch?: (messageId: number) => void;
+  /** Opens the full-body reasoning panel for a run or an assistant reply. */
+  onOpenReasoning?: (target: ChatReasoningTarget) => void;
 };
 
 type CopyState = {
@@ -876,6 +879,20 @@ export function findMessageById(
   return messages.find((message) => message.id === id) ?? null;
 }
 
+/** The contiguous activity group containing a message — the fallback target
+ *  for groups that carry no run id. */
+export function collectGroupEntries(
+  messages: readonly ChatDockMessage[],
+  messageId: string,
+): TranscriptActivityEntry[] {
+  for (const item of buildTranscriptRenderItems(messages)) {
+    if (item.kind === "activityGroup" && item.entries.some((entry) => entry.message.id === messageId)) {
+      return item.entries;
+    }
+  }
+  return [];
+}
+
 function buildTranscriptRenderItems(messages: readonly ChatDockMessage[]): TranscriptRenderItem[] {
   const items: TranscriptRenderItem[] = [];
   let index = 0;
@@ -939,9 +956,7 @@ function estimateMessageHeight(message: ChatDockMessage): number {
 
 function estimateRenderItemHeight(item: TranscriptRenderItem, active: boolean): number {
   if (item.kind === "activityGroup") {
-    const status = activityGroupStatus(item.entries, active);
-    const expanded = status === "running";
-    return expanded ? Math.max(112, 76 + item.entries.length * 42) : 58;
+    return 34;
   }
   return estimateMessageHeight(item.message);
 }
@@ -1223,196 +1238,44 @@ function activityGroupTitle(
   return status === "running" ? "thinking" : "reasoned";
 }
 
-function EntryControls({
-  expanded,
-  hasDetails,
-  label,
-  status,
-  onToggle,
-}: {
-  expanded: boolean;
-  hasDetails: boolean;
-  label: string;
-  status: string;
-  onToggle: () => void;
-}) {
-  return (
-    <Hint text={hasDetails ? (expanded ? `Hide ${label.toLowerCase()} · ${status}` : `Show ${label.toLowerCase()} · ${status}`) : status} position="left">
-    <div class="gsv-chat-tool-entry-controls" aria-label={status}>
-      {hasDetails ? (
-        <button
-          type="button"
-          class="gsv-chat-tool-entry-expand"
-          aria-expanded={expanded}
-          onClick={onToggle}
-        >
-          <i aria-hidden="true" data-expanded={expanded ? "true" : undefined}>{">"}</i>
-          {label}
-        </button>
-      ) : null}
-    </div>
-    </Hint>
-  );
-}
-
-function ReasoningEntry({ message }: { message: ChatDockMessage }) {
-  const [expanded, setExpanded] = useState(false);
-  const text = reasoningText(message);
-  const status = message.streaming ? "THINKING" : "REASONED";
-  return (
-    <div class={`gsv-chat-tool-entry gsv-chat-reasoning-entry${message.streaming ? " is-running" : " is-done"}`}>
-      <span class="gsv-chat-tool-entry-status" aria-hidden="true" />
-      <div class="gsv-chat-tool-entry-main">
-        <strong class="gsv-prose">{message.streaming ? "Thinking" : "Reasoned"}</strong>
-      </div>
-      <EntryControls
-        expanded={expanded}
-        hasDetails={Boolean(text)}
-        label="REASONING"
-        status={status}
-        onToggle={() => setExpanded((value) => !value)}
-      />
-      {text && expanded ? (
-        <div class="gsv-chat-tool-entry-detail-body">
-          <pre>{text}</pre>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function BackupModelEntry({ message }: { message: ChatDockMessage }) {
-  const [expanded, setExpanded] = useState(false);
-  const backupModel = message.backupModel;
-  const details = backupModel ? backupModelDetails(backupModel) : "";
-  const running = message.streaming === true || message.status === "running";
-  return (
-    <div class={`gsv-chat-tool-entry gsv-chat-backup-model-entry${running ? " is-running" : " is-done"}`}>
-      <span class="gsv-chat-tool-entry-status" aria-hidden="true" />
-      <div class="gsv-chat-tool-entry-main">
-        <strong class="gsv-prose">{running ? "Switching to backup model" : "Backup model used"}</strong>
-      </div>
-      <EntryControls
-        expanded={expanded}
-        hasDetails={Boolean(details)}
-        label="DETAILS"
-        status={running ? "RUNNING" : "DONE"}
-        onToggle={() => setExpanded((value) => !value)}
-      />
-      {details && expanded ? (
-        <div class="gsv-chat-tool-entry-detail-body">
-          <pre>{details}</pre>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ToolEntry({ tool }: { tool: ChatDockMessage }) {
-  const [expanded, setExpanded] = useState(false);
-  const tone = toolEntryTone(tool);
-  const details = toolDetailSections(tool);
-  const hasDetails = details.length > 0;
-  return (
-    <div class={`gsv-chat-tool-entry is-${tone}`}>
-      <span class="gsv-chat-tool-entry-status" aria-hidden="true" />
-      <div class="gsv-chat-tool-entry-main">
-        <strong class="gsv-prose">{toolActivityTitle(tool)}</strong>
-      </div>
-      <EntryControls
-        expanded={expanded}
-        hasDetails={hasDetails}
-        label="DETAILS"
-        status={toolStatusLabel(tool)}
-        onToggle={() => setExpanded((value) => !value)}
-      />
-      {hasDetails && expanded ? (
-        <div class="gsv-chat-tool-entry-detail-body">
-          {details.map((section, index) => (
-            <div class="gsv-chat-tool-detail-section" key={`${section.label}:${index}`}>
-              <small>{section.label}</small>
-              {section.body}
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function RunActivityCard({
+/** ActivityLine — the plain feedback line that replaced the boxed run card:
+ *  status dot + group title, with an "Expand reasoning" affordance opening the
+ *  full-body reasoning panel (HAM-366 / HAM-360). */
+function ActivityLine({
   active,
   entries,
+  onOpenReasoning,
 }: {
   active: boolean;
   entries: readonly TranscriptActivityEntry[];
+  onOpenReasoning?: (target: ChatReasoningTarget) => void;
 }) {
   const status = activityGroupStatus(entries, active);
-  const [expanded, setExpanded] = useState(status === "running");
-  const wasRunningRef = useRef(status === "running");
+  const feedbackStatus: ChatFeedbackStatus = status === "running"
+    ? "running"
+    : status === "error" ? "error" : "success";
   const runId = entries.find((entry) => entry.message.runId)?.message.runId;
-  const title = activityGroupTitle(entries, active);
-  const warningTool = status === "warning"
-    ? [...entries].reverse().find((entry) => entry.kind === "tool" && toolEntryTone(entry.message) === "warning")
-    : null;
-  const statusLabel = status === "error"
-    ? "ERROR"
-    : status === "running"
-      ? "RUNNING"
-      : warningTool
-        ? toolStatusLabel(warningTool.message)
-        : "DONE";
-
-  useEffect(() => {
-    if (status === "running" && !wasRunningRef.current) {
-      setExpanded(true);
-    }
-    wasRunningRef.current = status === "running";
-  }, [status]);
+  const firstMessageId = entries[0]?.message.id;
+  const target: ChatReasoningTarget | null = runId
+    ? { kind: "run", runId }
+    : firstMessageId
+      ? { kind: "group", messageId: firstMessageId }
+      : null;
 
   return (
-    <article class={`gsv-chat-tool-group-card is-${status}`}>
-      <span class="gsv-chat-tool-corner is-top-left" aria-hidden="true" />
-      <span class="gsv-chat-tool-corner is-top-right" aria-hidden="true" />
-      <span class="gsv-chat-tool-corner is-bottom-left" aria-hidden="true" />
-      <span class="gsv-chat-tool-corner is-bottom-right" aria-hidden="true" />
-
-      <header class="gsv-chat-tool-group-head">
-        <span class="gsv-chat-tool-group-dot" aria-hidden="true" />
-        <strong class="gsv-prose">{title}</strong>
-        <small>{statusLabel}</small>
+    <ChatFeedbackMessage
+      label={activityGroupTitle(entries, active)}
+      status={feedbackStatus}
+      action={target && onOpenReasoning ? (
         <button
           type="button"
-          class="gsv-chat-tool-group-toggle"
-          aria-label={expanded ? "Collapse tool activity" : "Expand tool activity"}
-          aria-expanded={expanded}
-          onClick={() => setExpanded((value) => !value)}
+          class="gsv-chat-expand-reasoning gsv-sublabel"
+          onClick={() => onOpenReasoning(target)}
         >
-          <i aria-hidden="true" data-expanded={expanded ? "true" : undefined}>{">"}</i>
+          EXPAND REASONING
         </button>
-      </header>
-
-      {expanded ? (
-        <>
-          <div class="gsv-chat-tool-group-id">
-            <span>{runId ? `RUN ${shortId(runId)}` : "RUN ACTIVITY"}</span>
-            <small>{entries.length} {entries.length === 1 ? "ENTRY" : "ENTRIES"}</small>
-          </div>
-
-          <div class="gsv-chat-tool-entry-list">
-            {entries.map((entry, index) => {
-              if (entry.kind === "backup") {
-                return <BackupModelEntry key={`backup:${entry.message.id}:${index}`} message={entry.message} />;
-              }
-              if (entry.kind === "reasoning") {
-                return <ReasoningEntry key={`reasoning:${entry.message.id}:${index}`} message={entry.message} />;
-              }
-              return <ToolEntry key={`tool:${entry.message.toolCallId || entry.message.id}:${index}`} tool={entry.message} />;
-            })}
-          </div>
-        </>
-      ) : null}
-    </article>
+      ) : undefined}
+    />
   );
 }
 
@@ -1422,14 +1285,15 @@ function AssistantProcessMessage({
   message,
   processId,
   onCopy,
+  onOpenReasoning,
 }: {
   copied: boolean;
   failed: boolean;
   message: ChatDockMessage;
   processId: string;
   onCopy: () => void;
+  onOpenReasoning?: (target: ChatReasoningTarget) => void;
 }) {
-  const [reasoningOpen, setReasoningOpen] = useState(false);
   const reasoning = reasoningText(message);
   const assistantText = message.text.trim()
     ? message.text
@@ -1444,16 +1308,23 @@ function AssistantProcessMessage({
         meta={hasMeta ? (
           <>
             {message.backupModel ? <BackupModelBadge backupModel={message.backupModel} /> : null}
-            {reasoning ? (
-              <button
-                type="button"
-                class="gsv-chat-reasoning-toggle"
-                aria-expanded={reasoningOpen}
-                onClick={() => setReasoningOpen((value) => !value)}
-              >
-                <i aria-hidden="true" data-expanded={reasoningOpen ? "true" : undefined}>{">"}</i>
-                REASONING
-              </button>
+            {reasoning && onOpenReasoning ? (
+              <Hint position="top" text="Expand reasoning">
+                <button
+                  type="button"
+                  class="gsv-chat-reasoning-icon"
+                  aria-label="Expand reasoning"
+                  onClick={() => onOpenReasoning({ kind: "message", messageId: message.id })}
+                >
+                  <svg width="11" height="11" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">
+                    <g fill="currentColor">
+                      <rect x="2" y="3" width="12" height="2" />
+                      <rect x="2" y="7" width="9" height="2" />
+                      <rect x="2" y="11" width="5" height="2" />
+                    </g>
+                  </svg>
+                </button>
+              </Hint>
             ) : null}
           </>
         ) : null}
@@ -1466,11 +1337,6 @@ function AssistantProcessMessage({
       >
         <AssistantText text={assistantText} streaming={message.streaming === true} />
       </SystemMessage>
-      {reasoning && reasoningOpen ? (
-        <div class="gsv-chat-assistant-reasoning">
-          <pre>{reasoning}</pre>
-        </div>
-      ) : null}
       {message.media?.length ? (
         <div class="gsv-chat-media-list is-assistant">
           {message.media.map((media, index) => (
@@ -1488,12 +1354,14 @@ function ProcessMessage({
   message,
   processId,
   onCopy,
+  onOpenReasoning,
 }: {
   copied: boolean;
   failed: boolean;
   message: ChatDockMessage;
   processId: string;
   onCopy: () => void;
+  onOpenReasoning?: (target: ChatReasoningTarget) => void;
 }) {
   const messageRole = normalizedRole(message.role);
   const role = roleClass(messageRole);
@@ -1530,6 +1398,7 @@ function ProcessMessage({
         message={message}
         processId={processId}
         onCopy={onCopy}
+        onOpenReasoning={onOpenReasoning}
       />
     );
   }
@@ -1603,6 +1472,7 @@ function TranscriptRenderItemView({
   item,
   onBranch,
   onCopy,
+  onOpenReasoning,
   processId,
 }: {
   activeActivityGroupId: string | null;
@@ -1610,10 +1480,11 @@ function TranscriptRenderItemView({
   item: TranscriptRenderItem;
   onBranch?: (messageId: number) => void;
   onCopy: (message: ChatDockMessage, messageId: string) => void;
+  onOpenReasoning?: (target: ChatReasoningTarget) => void;
   processId: string;
 }) {
   if (item.kind === "activityGroup") {
-    return <RunActivityCard active={item.id === activeActivityGroupId} entries={item.entries} />;
+    return <ActivityLine active={item.id === activeActivityGroupId} entries={item.entries} onOpenReasoning={onOpenReasoning} />;
   }
 
   const message = item.message;
@@ -1638,6 +1509,7 @@ function TranscriptRenderItemView({
       message={message}
       processId={processId}
       onCopy={() => onCopy(message, messageId)}
+      onOpenReasoning={onOpenReasoning}
     />
   );
 }
@@ -1691,6 +1563,7 @@ export function ChatTranscript({
   messages,
   onBranch,
   onLoadOlder,
+  onOpenReasoning,
   processId = "",
   state = "ready",
 }: ChatTranscriptProps) {
@@ -1971,6 +1844,7 @@ export function ChatTranscript({
                   item={item.entry.item}
                   onBranch={onBranch}
                   onCopy={copyMessage}
+                  onOpenReasoning={onOpenReasoning}
                   processId={processId}
                 />
               )}

@@ -799,6 +799,11 @@ export function ChatDock({
     setReasoningTarget(null);
   };
 
+  const openReasoning = (target: ChatReasoningTarget) => {
+    setReasoningTarget(target);
+    setBodyState("reasoning");
+  };
+
   const togglePopover = (popover: ChatPopoverId) => {
     setOpenPopover((current) => current === popover ? null : popover);
   };
@@ -1025,6 +1030,7 @@ export function ChatDock({
         loadingOlderMessages={chatRuntime.loadingOlderHistory}
         onLoadOlder={chatRuntime.loadOlderHistory}
         onBranch={branchFromMessage}
+        onOpenReasoning={openReasoning}
         processId={activeProcessId}
         state={transcriptState}
       />}
