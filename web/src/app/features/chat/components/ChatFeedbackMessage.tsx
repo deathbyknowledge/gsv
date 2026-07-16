@@ -1,12 +1,13 @@
 import type { ComponentChildren } from "preact";
 import { Tag, type TagTone } from "../../../components/ui/Tag";
 
-export type ChatFeedbackStatus = "running" | "success" | "error";
+export type ChatFeedbackStatus = "running" | "success" | "error" | "attention";
 
 const STATUS_TONE: Record<ChatFeedbackStatus, TagTone> = {
   running: "info",
   success: "online",
   error: "error",
+  attention: "update",
 };
 
 type ChatFeedbackMessageProps = {

@@ -1,7 +1,7 @@
 import "./Button.css";
 
 export type ButtonVariant = "primary" | "secondary" | "success" | "danger" | "dangerGhost" | "link";
-export type ButtonLinkTone = "error" | "neutral" | "success";
+export type ButtonLinkTone = "error" | "neutral" | "success" | "attention";
 
 export interface ButtonProps {
   variant?: ButtonVariant;

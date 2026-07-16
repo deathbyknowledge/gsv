@@ -243,6 +243,18 @@
 .gsv-btn-link.is-tone-success:not(.is-disabled) svg {
   filter: drop-shadow(0 0 3px rgba(94, 242, 160, 0.5));
 }
+.gsv-btn-link.is-tone-attention:not(.is-disabled) {
+  color: var(--update);
+  border-color: var(--update);
+}
+.gsv-btn-link.is-tone-attention:not(.is-disabled):hover,
+.gsv-btn-link.is-tone-attention:not(.is-disabled):focus-visible {
+  color: #ffe08a;
+  border-color: #ffe08a;
+}
+.gsv-btn-link.is-tone-attention:not(.is-disabled) svg {
+  filter: drop-shadow(0 0 3px rgba(255, 210, 77, 0.5));
+}
 
 .gsv-btn.is-disabled {
   cursor: not-allowed;

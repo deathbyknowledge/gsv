@@ -25,6 +25,7 @@ const story: Story = {
           <Button variant="link" tone="error" label="DENY" />
           <Button variant="link" tone="neutral" label="ALLOW ONCE" />
           <Button variant="link" tone="success" label="ALWAYS ALLOW" />
+          <Button variant="link" tone="attention" label="EXPAND REASONING" />
         </div>
       </div>
       <div class="ds-cell">
