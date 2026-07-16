@@ -89,7 +89,7 @@ function ContextVariation() {
       header={{ kind: "titled", title: "CONTEXT", count: "63% · HEALTHY" }}
       actions={[
         { label: "FREE CONTEXT · KEEP 20", onClick: () => {}, glyph: <FreeContextGlyph size={13} /> },
-        { label: "ARCHIVED", onClick: () => {}, glyph: <ArchiveFolderGlyph size={13} /> },
+        { label: "OPEN ARCHIVE", onClick: () => {}, glyph: <ArchiveFolderGlyph size={13} /> },
       ]}
     >
       <div class="gsv-popover-meter">

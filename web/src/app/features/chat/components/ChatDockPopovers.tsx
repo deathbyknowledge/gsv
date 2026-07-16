@@ -122,7 +122,7 @@ export function ChatDockPopovers({
           disabled: !canFreeContext,
         },
         {
-          label: archiveOpen ? "HIDE ARCHIVED" : "ARCHIVED",
+          label: archiveOpen ? "CLOSE ARCHIVE" : "OPEN ARCHIVE",
           onClick: onToggleArchive,
           glyph: <ArchiveFolderGlyph size={13} />,
           ariaExpanded: archiveOpen,

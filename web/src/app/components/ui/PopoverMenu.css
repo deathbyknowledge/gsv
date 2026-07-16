@@ -111,7 +111,7 @@
   flex: none;
   display: inline-flex;
   align-items: center;
-  color: var(--accent-bright);
+  color: var(--link);
 }
 
 /* The label is THE standard link treatment — shared with the TwoLevelSelect
