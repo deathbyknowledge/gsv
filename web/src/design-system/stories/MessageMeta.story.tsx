@@ -34,7 +34,7 @@ const story: Story = {
         <MessageMeta time="14:25" actions={<BranchAction />} onCopy={() => {}} />
       </div>
       <div class="ds-cell">
-        <div class="ds-label">Mirrored (assistant/system variant: icons left, time right)</div>
+        <div class="ds-label">Mirrored (assistant/system variant: icons + time cluster left)</div>
         <MessageMeta mirror time="14:25" actions={<BranchAction />} onCopy={() => {}} />
       </div>
       <div class="ds-cell">
