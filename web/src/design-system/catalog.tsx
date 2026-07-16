@@ -64,6 +64,7 @@ import systemMessage from "./stories/SystemMessage.story";
 import messageMeta from "./stories/MessageMeta.story";
 import chatMessageTypography from "./stories/ChatMessageTypography.story";
 import tabs from "./stories/Tabs.story";
+import popoverMenu from "./stories/PopoverMenu.story";
 import confirmModal from "./stories/ConfirmModal.story";
 import agentCard from "./stories/AgentCard.story";
 import crewTile from "./stories/CrewTile.story";
@@ -126,6 +127,7 @@ const STORIES: Story[] = [
   tabs,
   link,
   // Composite
+  popoverMenu,
   confirmModal,
   agentCard,
   crewTile,

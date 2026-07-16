@@ -5,6 +5,7 @@ import "./ListRow.css";
 
 export type ListRowStatus = "online" | "error" | "idle" | "live" | "none" | "update" | "warn";
 export type ListRowStatusDotPlacement = "leading" | "trailing";
+export type ListRowDensity = "default" | "compact";
 
 export interface ListRowProps {
   className?: string;
@@ -22,6 +23,8 @@ export interface ListRowProps {
   /** Custom leading node (e.g. an avatar image); takes precedence over `icon`. */
   leading?: ComponentChildren;
   statusDotPlacement?: ListRowStatusDotPlacement;
+  /** Row density — "compact" tightens padding/gap/icon for dense popover lists. */
+  density?: ListRowDensity;
   style?: JSX.CSSProperties;
   active?: boolean;
   onClick?: () => void;
@@ -30,7 +33,7 @@ export interface ListRowProps {
 const STATUS_TEXT: Record<Exclude<ListRowStatus, "none">, string> = {
   online: "var(--online)",
   error: "var(--error)",
-  idle: "#9a95cf",
+  idle: "var(--meta)",
   live: "var(--live)",
   update: "var(--update)",
   warn: "var(--warn)",
@@ -60,10 +63,12 @@ export function ListRow({
   iconTitle,
   leading,
   statusDotPlacement = "leading",
+  density = "default",
   style,
   active = false,
   onClick,
 }: ListRowProps) {
+  const compact = density === "compact";
   const st = status || "online";
   const hasDot = st !== "none";
   const dotKey = (st === "none" ? "online" : st) as Exclude<ListRowStatus, "none">;
@@ -81,9 +86,10 @@ export function ListRow({
     color: "inherit",
     display: "flex",
     alignItems: "center",
-    gap: "14px",
+    gap: compact ? "10px" : "14px",
     overflow: "hidden",
-    padding: "15px 20px",
+    padding: compact ? "8px 14px" : "15px 20px",
+    ...(compact ? { minHeight: "34px" } : {}),
     cursor: onClick ? "pointer" : "default",
     transition: "background .12s",
     font: "inherit",
@@ -106,7 +112,7 @@ export function ListRow({
         <span class="lr-leading">{leading}</span>
       ) : icon ? (
         <span class="lr-icon">
-          <Icon name={icon} size={18} title={iconTitle ?? label} />
+          <Icon name={icon} size={compact ? 14 : 18} title={iconTitle ?? label} />
         </span>
       ) : null}
       {hasDot && statusDotPlacement === "leading" ? <span class={dotClass} style={dotStyle} /> : null}
@@ -118,7 +124,8 @@ export function ListRow({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            /* size + .04em tracking from .gsv-listitem */
+            /* size + .04em tracking from .gsv-listitem; compact drops to 13px */
+            ...(compact ? { fontSize: "0.8125rem" } : {}),
             color: "var(--text)",
           }}
         >
@@ -134,7 +141,7 @@ export function ListRow({
               whiteSpace: "nowrap",
               /* size from .gsv-sublabel; .04em tracking kept intentionally */
               letterSpacing: ".04em",
-              color: "#8c86c8",
+              color: "var(--text-muted)",
               marginTop: "6px",
             }}
           >

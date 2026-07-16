@@ -1,4 +1,5 @@
 import { useRef } from "preact/hooks";
+import { useRovingFocus } from "./useRovingFocus";
 import "./TwoLevelSelect.css";
 
 export interface TwoLevelSelectOption {
@@ -26,6 +27,12 @@ export interface TwoLevelSelectProps {
   /** Trailing link-style action (e.g. "MANAGE MODELS"). */
   footer?: { label: string; onClick: () => void };
   ariaLabel?: string;
+  /** Render the own dark header bar echoing `headerLabel`. Set false when a host
+   *  (e.g. PopoverMenu) supplies the header. Default true. */
+  header?: boolean;
+  /** Own arrow-key roving focus between options. Set false when a host manages
+   *  roving across a wider set of controls. Default true. */
+  roving?: boolean;
   className?: string;
 }
 
@@ -39,50 +46,28 @@ export function TwoLevelSelect({
   onSelect,
   footer,
   ariaLabel,
+  header = true,
+  roving = true,
   className = "",
 }: TwoLevelSelectProps) {
   const rootRef = useRef<HTMLDivElement>(null);
-
-  const onKeyDown = (event: KeyboardEvent) => {
-    if (
-      event.key !== "ArrowDown" && event.key !== "ArrowUp"
-      && event.key !== "Home" && event.key !== "End"
-    ) {
-      return;
-    }
-    const root = rootRef.current;
-    if (!root) {
-      return;
-    }
-    const items = Array.from(root.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
-    if (items.length === 0) {
-      return;
-    }
-    event.preventDefault();
-    const index = items.indexOf(document.activeElement as HTMLButtonElement);
-    const next = event.key === "Home"
-      ? 0
-      : event.key === "End"
-        ? items.length - 1
-        : event.key === "ArrowDown"
-          ? (index + 1) % items.length
-          : (index - 1 + items.length) % items.length;
-    items[next]?.focus();
-  };
+  const onRovingKeyDown = useRovingFocus(rootRef);
 
   return (
     <div
       ref={rootRef}
       class={`gsv-tls${className ? ` ${className}` : ""}`}
       aria-label={ariaLabel}
-      onKeyDown={onKeyDown}
+      onKeyDown={roving ? onRovingKeyDown : undefined}
     >
-      <div class="gsv-tls-head gsv-label">
-        <span class="gsv-tls-head-label">{headerLabel}</span>
-        <svg width="9" height="6" viewBox="0 0 9 6" aria-hidden="true">
-          <path d="M0 0 L9 0 L4.5 6 Z" fill="currentColor" />
-        </svg>
-      </div>
+      {header ? (
+        <div class="gsv-tls-head gsv-label">
+          <span class="gsv-tls-head-label">{headerLabel}</span>
+          <svg width="9" height="6" viewBox="0 0 9 6" aria-hidden="true">
+            <path d="M0 0 L9 0 L4.5 6 Z" fill="currentColor" />
+          </svg>
+        </div>
+      ) : null}
       {groups.map((group) => (
         <div class="gsv-tls-group" key={group.id}>
           <span class="gsv-tls-group-label gsv-sublabel">{group.label}</span>

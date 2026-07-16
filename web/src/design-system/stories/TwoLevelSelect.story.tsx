@@ -54,6 +54,36 @@ const story: Story = {
         </div>
       </div>
       <div class="ds-cell">
+        <div class="ds-label">Headless (header={"{false}"}) — host supplies the echo bar (e.g. PopoverMenu)</div>
+        <div style={{ width: "300px", background: "var(--panel)", border: "1px solid var(--border-raised)" }}>
+          <TwoLevelSelect
+            headerLabel="@CF/ZAI-ORG/GLM-5.2"
+            header={false}
+            groups={[
+              {
+                id: "reasoning",
+                label: "REASONING",
+                options: ["off", "low", "medium", "high"].map((id) => ({
+                  id,
+                  label: id.toUpperCase(),
+                  selected: id === "high",
+                })),
+              },
+              {
+                id: "model",
+                label: "SWITCH MODEL",
+                options: [
+                  { id: "glm", label: "GLM-5.2", selected: true },
+                  { id: "deepseek", label: "DEEPSEEK-V4-PRO" },
+                ],
+              },
+            ]}
+            footer={{ label: "MANAGE MODELS", onClick: () => {} }}
+            onSelect={() => {}}
+          />
+        </div>
+      </div>
+      <div class="ds-cell">
         <div class="ds-label">Empty group + disabled options</div>
         <div style={{ width: "300px", background: "var(--panel)", border: "1px solid var(--border-raised)" }}>
           <TwoLevelSelect

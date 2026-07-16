@@ -1,0 +1,169 @@
+/* PopoverMenu — shared shell for the chat header's popover family. Owns the
+   panel chrome (background, border, shadow, entry animation), the header bar
+   (titled / echo variants), the footer action rows, and the bespoke context
+   stat-grid body. Positioning (absolute placement under the trigger) stays with
+   the host's `.gsv-chat-popover` rule. */
+
+@keyframes gsvPopoverIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.gsv-popover {
+  background: var(--panel);
+  border: 1px solid var(--border-raised);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.65);
+  color: var(--text);
+  font-family: var(--gsv-font-mono);
+  animation: gsvPopoverIn 0.14s ease;
+}
+
+/* Width presets — the host positioner reads offsetWidth to clamp placement. */
+.gsv-popover--menu {
+  width: min(256px, calc(100% - 28px));
+}
+.gsv-popover--narrow {
+  width: min(232px, calc(100% - 24px));
+}
+
+/* ── Header bar ──────────────────────────────────────────────────────────── */
+.gsv-popover-head {
+  min-height: 39px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--header-bar);
+}
+
+/* Titled variant — uppercase section title + optional count. */
+.gsv-popover-head-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-title);
+  font-size: 0.8125rem; /* 13px */
+  letter-spacing: 0.16em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.gsv-popover-head-count {
+  flex: none;
+  color: var(--meta);
+  font-size: 0.75rem; /* 12px */
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* Echo variant — reflects the current value with a trailing caret. */
+.gsv-popover-head-echo {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-hi);
+  font-size: 0.8125rem; /* 13px */
+  letter-spacing: 0.12em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.gsv-popover-head svg {
+  flex: none;
+  color: var(--accent);
+}
+
+/* ── Body list — the scroll region for row-based popovers. ─────────────────── */
+.gsv-popover-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* ── Footer actions ───────────────────────────────────────────────────────── */
+.gsv-popover-action {
+  width: 100%;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-top: 1px solid var(--rule-inner);
+  background: transparent;
+  color: inherit;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-family: var(--gsv-font-mono);
+  text-align: left;
+}
+.gsv-popover-action:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+}
+
+.gsv-popover-action-glyph {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent-bright);
+}
+
+/* The label is THE standard link treatment — shared with the TwoLevelSelect
+   footer (.gsv-tls-footer): underline sits on the label span, not the row. */
+.gsv-popover-action-label {
+  color: var(--link);
+  border-bottom: 1px solid var(--link);
+  padding-bottom: 1px;
+  font-size: 0.75rem; /* 12px */
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  transition: color 0.12s, border-color 0.12s;
+}
+.gsv-popover-action:not(:disabled):hover .gsv-popover-action-label,
+.gsv-popover-action:not(:disabled):focus-visible .gsv-popover-action-label {
+  color: var(--link-hover);
+  border-color: var(--link-hover);
+}
+.gsv-popover-action:not(:disabled):hover .gsv-popover-action-glyph,
+.gsv-popover-action:not(:disabled):focus-visible .gsv-popover-action-glyph {
+  color: var(--link-hover);
+}
+.gsv-popover-action:focus-visible {
+  outline: none;
+}
+
+/* ── Context body — meter + stat grid (bespoke to the context popover). ─────── */
+.gsv-popover-meter {
+  padding: 12px 14px 4px;
+}
+
+.gsv-popover-statgrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  padding: 10px 14px 13px;
+}
+.gsv-popover-statgrid > span {
+  color: var(--meta);
+  font-size: 0.75rem; /* 12px */
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.gsv-popover-statgrid > strong {
+  justify-self: end;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--accent-bright);
+  font-size: 0.8125rem; /* 13px */
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}

@@ -1,9 +1,9 @@
-import { Icon } from "../../../components/ui/Icon";
 import { ArchiveFolderGlyph, FreeContextGlyph } from "../../../components/ui/lineGlyphs";
+import { ListRow } from "../../../components/ui/ListRow";
+import { PopoverMenu, type PopoverActionProps } from "../../../components/ui/PopoverMenu";
 import { Progress } from "../../../components/ui/Progress";
-import { StatusDot } from "../../../components/ui/StatusDot";
 import { TwoLevelSelect } from "../../../components/ui/TwoLevelSelect";
-import type { StatusTone } from "../../../components/ui/StatusDot";
+import type { ListRowStatus } from "../../../components/ui/ListRow";
 import type { ChatAgentTaskStatus, ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
 import type { ChatConversation, ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
 import { formatCount, shortId } from "./chatUiFormat";
@@ -47,7 +47,7 @@ type ChatDockPopoversProps = {
   taskCount: number;
 };
 
-function taskStatusTone(status: ChatAgentTaskStatus): StatusTone {
+function taskStatusRowStatus(status: ChatAgentTaskStatus): ListRowStatus {
   if (status === "error") {
     return "error";
   }
@@ -113,44 +113,61 @@ export function ChatDockPopovers({
   const processReasoning = processAiConfig?.values["config/ai/reasoning"]?.trim() ?? "";
   const currentReasoning = (processReasoning || context?.reasoning || "").trim().toLowerCase();
 
+  const contextActions: PopoverActionProps[] = hasActiveProcess
+    ? [
+        {
+          label: compactPending ? "FREEING CONTEXT" : `FREE CONTEXT · KEEP ${compactKeepLast}`,
+          onClick: onFreeContext,
+          glyph: <FreeContextGlyph size={13} />,
+          disabled: !canFreeContext,
+        },
+        {
+          label: archiveOpen ? "HIDE ARCHIVED" : "ARCHIVED",
+          onClick: onToggleArchive,
+          glyph: <ArchiveFolderGlyph size={13} />,
+          ariaExpanded: archiveOpen,
+          disabled: !hasArchivedMessages && !archiveOpen,
+        },
+      ]
+    : [];
+
   return (
     <>
       {openPopover === "conversations" ? (
-        <div class="gsv-chat-popover gsv-chat-conversations-popover" role="menu" aria-label="Conversation branches">
-          <header>
-            <span>BRANCHES</span>
-            <small>{conversations.length}</small>
-          </header>
-          <div class="gsv-chat-model-options" role="list">
+        <PopoverMenu
+          ariaLabel="Conversation branches"
+          header={{ kind: "titled", title: "BRANCHES", count: conversations.length }}
+        >
+          <div class="gsv-popover-list" role="list" style={{ maxHeight: "min(288px, 44vh)" }}>
             {conversations.map((conversation) => {
               const active = conversation.id === activeConversationId;
               return (
-                <button
-                  type="button"
-                  class={`gsv-chat-model-row${active ? " is-current" : ""}`}
-                  role="listitem"
-                  aria-current={active ? "true" : undefined}
+                <ListRow
                   key={conversation.id}
+                  density="compact"
+                  status="none"
+                  label={conversationLabel(conversation)}
+                  sub={conversation.messageCount > 0 ? `${formatCount(conversation.messageCount)} messages` : ""}
+                  statusLabel={active ? "CURRENT" : ""}
+                  active={active}
                   onClick={() => onSelectConversation(conversation.id)}
-                >
-                  <span class="gsv-chat-model-current" aria-hidden="true" />
-                  <span class="gsv-chat-model-label">
-                    <strong>{conversationLabel(conversation)}</strong>
-                    {conversation.messageCount > 0 ? <em>{formatCount(conversation.messageCount)} messages</em> : null}
-                  </span>
-                  {active ? <small>CURRENT</small> : null}
-                </button>
+                />
               );
             })}
           </div>
-        </div>
+        </PopoverMenu>
       ) : null}
 
       {openPopover === "model" ? (
-        <div class="gsv-chat-popover gsv-chat-model-popover" role="menu" aria-label="Model and reasoning">
+        <PopoverMenu
+          ariaLabel="Model and reasoning"
+          header={{ kind: "echo", label: modelLabel }}
+          actions={[{ label: "MANAGE MODELS", onClick: onOpenModels }]}
+        >
           <TwoLevelSelect
             headerLabel={modelLabel}
-            ariaLabel="Model and reasoning"
+            header={false}
+            roving={false}
             groups={[
               {
                 id: "reasoning",
@@ -177,7 +194,6 @@ export function ChatDockPopovers({
                 }),
               },
             ]}
-            footer={{ label: "MANAGE MODELS", onClick: onOpenModels }}
             onSelect={(groupId, optionId) => {
               if (groupId === "reasoning") {
                 onSetReasoning(optionId);
@@ -189,75 +205,62 @@ export function ChatDockPopovers({
               }
             }}
           />
-        </div>
+        </PopoverMenu>
       ) : null}
 
       {openPopover === "tasks" ? (
-        <div class="gsv-chat-popover gsv-chat-task-popover" role="menu" aria-label="Current tasks">
-          <header>
-            <span>CURRENT TASKS</span>
-            <small>{taskCount}</small>
-          </header>
-          <div class="gsv-chat-task-list">
+        <PopoverMenu
+          ariaLabel="Current tasks"
+          header={{ kind: "titled", title: "CURRENT TASKS", count: taskCount }}
+          actions={[
+            {
+              label: "NEW TASK",
+              onClick: onStartNewTask,
+              icon: "plus",
+              disabled: !canStartNewTask,
+            },
+            { label: "OPEN TASKS", onClick: onOpenTasks, icon: "list" },
+          ]}
+        >
+          <div class="gsv-popover-list" style={{ maxHeight: "228px" }}>
             {activeAgent.tasks.length === 0 ? (
-              <div class="gsv-chat-task-row is-empty">
-                <StatusDot tone="idle" size={8} />
-                <span class="gsv-chat-task-name">No process activity</span>
-                <small>IDLE</small>
-              </div>
+              <ListRow
+                density="compact"
+                status="idle"
+                label="No process activity"
+                statusLabel="IDLE"
+              />
             ) : activeAgent.tasks.map((task) => {
               const canOpen = task.processId.length > 0;
               const current = canOpen && task.processId === activeProcessId;
-              const content = (
-                <>
-                  <StatusDot tone={taskStatusTone(task.status)} size={8} />
-                  <span class="gsv-chat-task-name">{task.name}</span>
-                  <small>{current ? "CURRENT" : taskStatusLabel(task.status)}</small>
-                </>
-              );
-
-              return canOpen ? (
-                <button
-                  type="button"
-                  class={`gsv-chat-task-row is-clickable${current ? " is-current" : ""}`}
-                  key={`${task.processId}-${task.status}`}
-                  aria-current={current ? "true" : undefined}
-                  onClick={() => onOpenTaskProcess(task.processId, task.process)}
-                >
-                  {content}
-                </button>
-              ) : (
-                <div class="gsv-chat-task-row" key={`${task.name}-${task.status}`}>
-                  {content}
-                </div>
+              return (
+                <ListRow
+                  key={canOpen ? `${task.processId}-${task.status}` : `${task.name}-${task.status}`}
+                  density="compact"
+                  status={taskStatusRowStatus(task.status)}
+                  label={task.name}
+                  statusLabel={current ? "CURRENT" : taskStatusLabel(task.status)}
+                  active={current}
+                  onClick={canOpen ? () => onOpenTaskProcess(task.processId, task.process) : undefined}
+                />
               );
             })}
           </div>
-          <button
-            type="button"
-            class="gsv-chat-popover-action"
-            disabled={!canStartNewTask}
-            onClick={onStartNewTask}
-          >
-            <Icon name="plus" size={12} />
-            <span>NEW TASK</span>
-          </button>
-          <button type="button" class="gsv-chat-popover-action" onClick={onOpenTasks}>
-            <Icon name="list" size={12} />
-            <span>OPEN TASKS</span>
-          </button>
-        </div>
+        </PopoverMenu>
       ) : null}
 
       {openPopover === "context" ? (
-        <div class="gsv-chat-popover gsv-chat-context-popover" role="menu" aria-label="Context state">
-          <header>
-            <span class="gsv-chat-context-heading">
-              <span>CONTEXT</span>
-            </span>
-            <small>{contextPercent !== null ? `${contextPercent}% · ${contextLevel}` : contextLevel}</small>
-          </header>
-          <div class="gsv-chat-context-popover-meter">
+        <PopoverMenu
+          ariaLabel="Context state"
+          width="narrow"
+          header={{
+            kind: "titled",
+            title: "CONTEXT",
+            count: contextPercent !== null ? `${contextPercent}% · ${contextLevel}` : contextLevel,
+          }}
+          actions={contextActions}
+        >
+          <div class="gsv-popover-meter">
             <Progress
               value={contextPercent ?? 0}
               indeterminate={contextPercent === null && hasActiveProcess}
@@ -267,7 +270,7 @@ export function ChatDockPopovers({
               width={186}
             />
           </div>
-          <div class="gsv-chat-context-grid">
+          <div class="gsv-popover-statgrid">
             <span>INPUT</span>
             <strong>{formatCount(context?.inputTokens)}</strong>
             <span>AVAILABLE</span>
@@ -277,30 +280,7 @@ export function ChatDockPopovers({
             <span>MESSAGES</span>
             <strong>{formatCount(context?.messageCount ?? messageCount)}</strong>
           </div>
-          {hasActiveProcess ? (
-            <>
-              <button
-                type="button"
-                class="gsv-chat-popover-action"
-                disabled={!canFreeContext}
-                onClick={onFreeContext}
-              >
-                <FreeContextGlyph size={13} />
-                <span>{compactPending ? "FREEING CONTEXT" : `FREE CONTEXT · KEEP ${compactKeepLast}`}</span>
-              </button>
-              <button
-                type="button"
-                class="gsv-chat-popover-action"
-                aria-expanded={archiveOpen}
-                disabled={!hasArchivedMessages && !archiveOpen}
-                onClick={onToggleArchive}
-              >
-                <ArchiveFolderGlyph size={13} />
-                <span>{archiveOpen ? "HIDE ARCHIVED" : "ARCHIVED"}</span>
-              </button>
-            </>
-          ) : null}
-        </div>
+        </PopoverMenu>
       ) : null}
     </>
   );

@@ -81,6 +81,15 @@ const story: Story = {
           <ListRow label="PRIMARY NODE" status="online" statusLabel="ONLINE" active />
         </div>
       </div>
+      <div class="ds-cell">
+        <div class="ds-label">Density (default · compact — tighter rows for popover lists)</div>
+        <div class="ds-col">
+          <ListRow label="STREAM NODE" status="live" statusLabel="LIVE" />
+          <ListRow label="STREAM NODE" status="live" statusLabel="LIVE" density="compact" />
+          <ListRow label="INDEX REBUILD" status="live" statusLabel="CURRENT" density="compact" active onClick={() => {}} />
+          <ListRow label="LOG SHIP" icon="terminal" status="error" statusLabel="ERROR" density="compact" onClick={() => {}} />
+        </div>
+      </div>
     </div>
   ),
 };
