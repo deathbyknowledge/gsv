@@ -96,8 +96,11 @@
   border: 0;
   background: transparent;
   color: var(--accent);
-  font: inherit;
-  letter-spacing: 0.14em;
+  /* Explicit link-button scale (10px) — `font: inherit` cascaded up to the
+     16px body default, same accident as .gsv-chat-rp-back above. */
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
   cursor: pointer;
   padding: 0 0 1px;
   border-bottom: 1px solid currentColor;

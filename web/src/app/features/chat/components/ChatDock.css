@@ -1181,6 +1181,12 @@ button.gsv-chat-task-row:focus-visible {
   color: #7d78b8;
 }
 
+/* The SYSTEM eyebrow uses the attention label color (same as APPROVAL
+   REQUIRED); the summary/detail copy stays muted. */
+.gsv-chat-system-line > .gsv-message-label {
+  color: var(--update);
+}
+
 .gsv-chat-system-line span,
 .gsv-chat-system-line small {
   min-width: 0;
@@ -1227,9 +1233,12 @@ button.gsv-chat-task-row:focus-visible {
 }
 
 /* Clicking the line itself expands a system message in place (the summary is
-   replaced by the full text — shown once, no repetition). */
+   replaced by the full text — shown once, no repetition). min/max-width keep
+   the ellipsis chain bounded inside the Hint's inline-flex wrapper. */
 .gsv-chat-system-toggle {
   cursor: pointer;
+  min-width: 0;
+  max-width: 100%;
 }
 .gsv-chat-system-toggle:focus-visible {
   outline: 1px solid var(--accent);

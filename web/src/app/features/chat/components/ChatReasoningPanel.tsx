@@ -83,7 +83,7 @@ function PanelEntry({ entry }: { entry: TranscriptActivityEntry }) {
         {details.length > 0 ? (
           <button
             type="button"
-            class="gsv-chat-rp-detail-toggle gsv-sublabel"
+            class="gsv-chat-rp-detail-toggle"
             aria-expanded={expanded}
             onClick={(event) => {
               stop(event);

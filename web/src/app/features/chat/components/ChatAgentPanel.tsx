@@ -166,6 +166,8 @@ export function ChatAgentPanel({
           title="CREW"
           meta={agent.hasCrewData ? `${agent.crew.length} AGENTS` : "PROCESS"}
           divider
+          onClick={onOpenCrew}
+          ariaLabel="Open crew page"
         />
         <div class="gsv-chat-agent-crew-rows">
           {agent.crew.map((member) => (
