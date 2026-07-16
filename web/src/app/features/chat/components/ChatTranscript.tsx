@@ -951,10 +951,11 @@ function estimateMessageHeight(message: ChatDockMessage, expanded: boolean): num
     return Math.max(86, 52 + Math.ceil(textLength / 72) * 23 + mediaHeight);
   }
   if (role === "system") {
+    // The SYSTEM eyebrow row adds a line above the summary/meta.
     if (message.isError && !expanded) {
-      return 56;
+      return 72;
     }
-    return Math.max(64, 44 + Math.ceil(textLength / 80) * 18);
+    return Math.max(80, 60 + Math.ceil(textLength / 80) * 18);
   }
   return Math.max(120, 92 + Math.ceil(textLength / 72) * 18);
 }
@@ -1117,16 +1118,19 @@ function SystemSurfaceMessage({
   onToggleExpand: () => void;
   onCopy: () => void;
 }) {
-  const origin = originLabel(message.origin);
   const summary = message.meta || summarizeSystemText(message.text);
   const expandable = systemTextHasMore(message.text, summary);
 
+  // Three stacked rows: SYSTEM eyebrow (never truncated), one-line summary
+  // (click to expand), shared meta row below — same shape as other messages.
   const body = (
     <>
-      <div class="gsv-chat-system-line">
-        <span class="gsv-message-label">SYSTEM</span>
-        {!expanded && summary ? <small class="gsv-prose">{summary}</small> : null}
-      </div>
+      <div class="gsv-chat-system-label gsv-message-label">SYSTEM</div>
+      {!expanded && summary ? (
+        <div class="gsv-chat-system-line">
+          <small class="gsv-prose">{summary}</small>
+        </div>
+      ) : null}
       {expanded ? <div class="gsv-chat-system-detail gsv-prose">{message.text}</div> : null}
     </>
   );
@@ -1153,17 +1157,15 @@ function SystemSurfaceMessage({
           </div>
         </Hint>
       ) : body}
-      <div class="gsv-chat-system-actions">
-        {message.time ? <span>{message.time}</span> : null}
-        {origin ? <span title={origin}>{origin}</span> : null}
-        <CopyButton
-          copied={copied}
-          failed={failed}
-          role="system"
-          text={message.text}
-          onCopy={onCopy}
-        />
-      </div>
+      <MessageMeta
+        mirror
+        time={message.time}
+        copyLabel={copyButtonLabel(copied, failed)}
+        copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
+        copyDisabled={!message.text.trim()}
+        copyFailed={failed}
+        onCopy={onCopy}
+      />
     </article>
   );
 }
@@ -1187,9 +1189,16 @@ function SystemErrorLine({
 }) {
   const summary = summarizeSystemText(message.text);
   const expandable = systemTextHasMore(message.text, summary);
-  const body = expanded
-    ? <div class="gsv-chat-system-error-full gsv-prose">{message.text}</div>
-    : <ChatFeedbackMessage label={summary} status="error" />;
+  // Same three-row shape as info system messages: the SYSTEM eyebrow stays
+  // visible above the red line / expanded text.
+  const body = (
+    <>
+      <div class="gsv-chat-system-label gsv-message-label">SYSTEM</div>
+      {expanded
+        ? <div class="gsv-chat-system-error-full gsv-prose">{message.text}</div>
+        : <ChatFeedbackMessage label={summary} status="error" />}
+    </>
+  );
 
   return (
     <article class="gsv-chat-system-error">

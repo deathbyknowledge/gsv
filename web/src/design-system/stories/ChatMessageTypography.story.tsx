@@ -45,20 +45,22 @@ const story: Story = {
       </div>
 
       <div class="ds-cell">
-        <div class="ds-label">System info (label + paragraph + meta)</div>
+        <div class="ds-label">System info (3 rows: label / one-line text / meta)</div>
         <div style={{ borderLeft: "2px solid #2a2660", padding: "1px 0 1px 14px" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: "8px", color: "#7d78b8" }}>
-            <span class="gsv-message-label">SYSTEM</span>
-            <small class="gsv-prose" style={{ color: "#8f89ca" }}>Schedule event: nightly summary queued</small>
-          </div>
+          <div class="gsv-message-label" style={{ marginBottom: "5px", color: "var(--update)" }}>SYSTEM</div>
+          <small class="gsv-prose" style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#8f89ca" }}>
+            Schedule event: nightly summary queued for every machine on the local network
+          </small>
+          <MessageMeta mirror time="11:15 AM" onCopy={() => {}} />
         </div>
       </div>
 
       <div class="ds-cell">
-        <div class="ds-label">System error (label tier via Tag + meta)</div>
+        <div class="ds-label">System error (3 rows: label / Tag line / meta)</div>
         <div>
+          <div class="gsv-message-label" style={{ marginBottom: "5px", color: "var(--update)" }}>SYSTEM</div>
           <Tag tone="error" label="Generation failed: error code: 1031" dot size="medium" />
-          <MessageMeta time="11:16 AM" onCopy={() => {}} />
+          <MessageMeta mirror time="11:16 AM" onCopy={() => {}} />
         </div>
       </div>
 
