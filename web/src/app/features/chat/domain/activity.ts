@@ -9,7 +9,6 @@ import type { ChatRuntimeState, ChatTranscriptRow } from "./transcript";
 export type ChatLiveActivity = {
   activity: string;
   agentStatus: ChatAgentStatus;
-  runStateLabel: string;
   status: ChatProcessStatusTone;
   statusLabel: string;
   tasks: ChatAgentTaskData[];
@@ -134,7 +133,6 @@ function liveActivity(input: Omit<ChatLiveActivity, "agentStatus" | "tasks"> & {
   return {
     activity: input.activity,
     agentStatus: statusToAgentStatus(input.status),
-    runStateLabel: input.runStateLabel,
     status: input.status,
     statusLabel: input.statusLabel,
     tasks: liveTask(input.task ?? input.activity),
@@ -163,7 +161,6 @@ export function deriveChatLiveActivity(
     });
     return liveActivity({
       activity: `Awaiting approval: ${tool}`,
-      runStateLabel: "awaiting approval",
       status: "warn",
       statusLabel: "awaiting approval",
       task: `Review ${tool}`,
@@ -186,7 +183,6 @@ export function deriveChatLiveActivity(
     });
     return liveActivity({
       activity,
-      runStateLabel: "using tools",
       status: "live",
       statusLabel: "using tools",
     });
@@ -198,7 +194,6 @@ export function deriveChatLiveActivity(
   if (streamingAssistant?.text.trim()) {
     return liveActivity({
       activity: "Writing reply",
-      runStateLabel: "writing reply",
       status: "live",
       statusLabel: "writing reply",
     });
@@ -206,7 +201,6 @@ export function deriveChatLiveActivity(
   if (streamingAssistant?.thinking?.some((entry) => entry.trim())) {
     return liveActivity({
       activity: "Thinking",
-      runStateLabel: "thinking",
       status: "live",
       statusLabel: "thinking",
     });
@@ -215,7 +209,6 @@ export function deriveChatLiveActivity(
   if (runtime.runState === "queued") {
     return liveActivity({
       activity: "Queued",
-      runStateLabel: "queued",
       status: "update",
       statusLabel: "queued",
     });
@@ -223,7 +216,6 @@ export function deriveChatLiveActivity(
   if (runtime.runState === "awaiting_hil") {
     return liveActivity({
       activity: "Awaiting approval",
-      runStateLabel: "awaiting approval",
       status: "warn",
       statusLabel: "awaiting approval",
       task: "Review tool approval",
@@ -232,7 +224,6 @@ export function deriveChatLiveActivity(
   if (runtime.runState === "running" || runtime.activeRunId) {
     return liveActivity({
       activity: "Running",
-      runStateLabel: "running",
       status: "live",
       statusLabel: "running",
     });
