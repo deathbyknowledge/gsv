@@ -1160,26 +1160,30 @@ export function ChatDock({
           : ambientTranscription.dictationUnavailable}
         voiceTitle={voiceTitle}
       />
-      {composerLocked ? (
-        <div class="gsv-chat-composer-lock-bubble gsv-sublabel" role="status">
-          {compactFailed ? (
-            <>
-              Context compression has failed -{" "}
-              <button
-                type="button"
-                class="gsv-chat-inline-link"
-                disabled={!canStartNewTask}
-                onClick={prepareNewTask}
-              >
-                start a new task
-              </button>
-              {" "}to continue.
-            </>
-          ) : (
-            "Wait for context compression to continue this conversation."
-          )}
-        </div>
-      ) : null}
+      {/* Kept mounted (content toggled) so screen readers announce the
+          role="status" mutation — a live region inserted pre-populated is
+          skipped by several of them. */}
+      <div
+        class={`gsv-chat-composer-lock-bubble gsv-sublabel${composerLocked ? " is-active" : ""}`}
+        role="status"
+      >
+        {!composerLocked ? null : compactFailed ? (
+          <>
+            Context compression has failed -{" "}
+            <button
+              type="button"
+              class="gsv-chat-inline-link"
+              disabled={!canStartNewTask}
+              onClick={prepareNewTask}
+            >
+              start a new task
+            </button>
+            {" "}to continue.
+          </>
+        ) : (
+          "Wait for context compression to continue this conversation."
+        )}
+      </div>
       </div>}
     </aside>
   );
