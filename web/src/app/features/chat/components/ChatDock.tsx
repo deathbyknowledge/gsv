@@ -65,8 +65,8 @@ export type StartedChatProcess = {
 };
 
 /** What fills the dock below the (always-present) header: the chat itself, the
- *  agent tasks panel, or the full-body reasoning panel. */
-type ChatBodyState = "chat" | "agent" | "reasoning";
+ *  agent tasks panel, the full-body reasoning panel, or the archive browser. */
+type ChatBodyState = "chat" | "agent" | "reasoning" | "archive";
 
 type ChatDockProps = {
   open: boolean;
@@ -239,7 +239,6 @@ export function ChatDock({
   const asideRef = useRef<HTMLElement | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<DraftAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
-  const [archiveOpen, setArchiveOpen] = useState(false);
   const [selectedArchiveSegmentId, setSelectedArchiveSegmentId] = useState("");
   const [openPopover, setOpenPopover] = useState<ChatPopoverId | null>(null);
   const [contextConfirmOpen, setContextConfirmOpen] = useState(false);
@@ -355,7 +354,6 @@ export function ChatDock({
   useEffect(() => {
     setDraftAttachments([]);
     setAttachmentError("");
-    setArchiveOpen(false);
     setSelectedArchiveSegmentId("");
     setBranchNotice("");
     setDismissedError("");
@@ -460,6 +458,7 @@ export function ChatDock({
   const compactFailed = compactConversation.isError;
   const composerLocked = hasActiveProcess && (compactPending || compactFailed);
   const inputDisabled = (!hasActiveProcess && !canStartProcess && !processLookupLoading) || composerLocked;
+  const archiveOpen = bodyState === "archive";
   const sendChatDraft = useCallback(async (
     message: string,
     media: ChatMediaUpload[] = [],
@@ -772,7 +771,7 @@ export function ChatDock({
       return;
     }
     setOpenPopover(null);
-    setArchiveOpen(false);
+    setBodyState("chat");
     setSelectedArchiveSegmentId("");
     compactConversation.reset();
     spawnProcess.mutate({
@@ -823,7 +822,7 @@ export function ChatDock({
       generateSummary: true,
     }, {
       onSuccess: (result) => {
-        setArchiveOpen(true);
+        setBodyState("archive");
         setSelectedArchiveSegmentId(result.segment.id);
         feedback.resolve("compact", "success", "Context freed");
       },
@@ -984,13 +983,13 @@ export function ChatDock({
         }}
         onToggleArchive={() => {
           setOpenPopover(null);
-          setArchiveOpen((value) => !value);
+          setBodyState((current) => current === "archive" ? "chat" : "archive");
         }}
         conversations={conversations.data ?? []}
         activeConversationId={selectedConversationId}
         onSelectConversation={(conversationId) => {
           setOpenPopover(null);
-          setArchiveOpen(false);
+          setBodyState("chat");
           onSelectConversation?.(conversationId);
         }}
         context={context}
@@ -1053,12 +1052,12 @@ export function ChatDock({
         />
       ) : null}
 
-      {bodyState === "chat" && archiveOpen && hasActiveProcess ? (
+      {bodyState === "archive" && hasActiveProcess ? (
         <ChatArchivePanel
           conversationId={selectedConversationId}
           processId={activeProcessId}
           selectedSegmentId={selectedArchiveSegmentId}
-          onClose={() => setArchiveOpen(false)}
+          onClose={() => returnToChat({ restoreFocus: true })}
           onSelectSegment={setSelectedArchiveSegmentId}
         />
       ) : null}

@@ -19,6 +19,8 @@
   border-bottom: 1px solid var(--rule-inner);
 }
 
+/* .gsv-chat-rp-head/-back/-meta are shared panel chrome — the archive panel
+   reuses them for its header. */
 .gsv-chat-rp-back {
   appearance: none;
   display: inline-flex;

@@ -1,4 +1,4 @@
-import { Icon } from "../../../components/ui/Icon";
+import { useEffect, useRef } from "preact/hooks";
 import {
   normalizeHistoryMessage,
   type ChatHistory,
@@ -64,16 +64,29 @@ export function ChatArchivePanel({
   const rows = segment.data
     ? transcriptRowsFromHistory(archiveHistoryFromSegment(processId, segment.data))
     : [];
+  const segmentCount = segments.data?.length ?? 0;
+  const backRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    backRef.current?.focus();
+  }, []);
 
   return (
     <section class="gsv-chat-archive" aria-label="Conversation archive">
-      <header>
-        <div>
-          <span><Icon name="folder" family="doticons" size={13} /> ARCHIVE</span>
-          <strong>{selected ? shortId(selected) : "No segment"}</strong>
-        </div>
-        <button type="button" onClick={onClose}>CLOSE</button>
-      </header>
+      <div class="gsv-chat-rp-head">
+        <button
+          ref={backRef}
+          type="button"
+          class="gsv-chat-rp-back"
+          onClick={onClose}
+        >
+          <i aria-hidden="true">‹</i>
+          BACK TO CHAT
+        </button>
+        <span class="gsv-chat-rp-meta gsv-sublabel">
+          ARCHIVE{selected ? ` ${shortId(selected)}` : ""}
+          {segmentCount > 0 ? ` · ${segmentCount} ${segmentCount === 1 ? "SEGMENT" : "SEGMENTS"}` : ""}
+        </span>
+      </div>
       <div class="gsv-chat-archive-layout">
         <div class="gsv-chat-archive-segments">
           {segments.isLoading ? (

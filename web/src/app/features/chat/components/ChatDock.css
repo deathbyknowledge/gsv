@@ -1393,63 +1393,22 @@ button.gsv-chat-task-row:focus-visible {
   margin: 10px 14px 0;
 }
 
+/* Archive browser — a full-body panel like the reasoning panel (its header
+   reuses the shared .gsv-chat-rp-head/-back/-meta chrome). */
 .gsv-chat-archive {
-  flex: none;
-  max-height: 42%;
-  min-height: 168px;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--border);
   background: #090818;
 }
 
-.gsv-chat-archive > header {
-  min-height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: #111029;
-  font-family: var(--gsv-font-mono);
-}
-
-.gsv-chat-archive > header div {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.gsv-chat-archive > header span,
-.gsv-chat-archive > header button,
 .gsv-chat-archive-segments button,
 .gsv-chat-archive-empty {
   font-family: var(--gsv-font-mono);
   font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
   text-transform: uppercase;
-}
-
-.gsv-chat-archive > header span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #9aa4b8;
-}
-
-.gsv-chat-archive > header strong {
-  color: #e6e4ff;
-  font-size: 0.75rem; /* 12px, size from .gsv-sublabel */
-  font-weight: 500;
-}
-
-.gsv-chat-archive > header button {
-  flex: none;
-  border: 0;
-  background: transparent;
-  color: #9a94ff;
-  cursor: pointer;
 }
 
 .gsv-chat-archive-layout {
