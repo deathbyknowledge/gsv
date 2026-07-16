@@ -8,7 +8,7 @@ import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
 import type { StatusTone } from "../../../components/ui/StatusDot";
-import { Hint } from "../../../components/ui/Tooltip";
+import { Hint, closeAllTooltips } from "../../../components/ui/Tooltip";
 import type { JSX } from "preact";
 import {
   buildChatAgentViewModel,
@@ -872,6 +872,10 @@ export function ChatDock({
   };
 
   const togglePopover = (popover: ChatPopoverId) => {
+    // A tooltip must never sit on top of an opened popover — covers keyboard
+    // and programmatic opens (mouse opens are handled by the tooltip's own
+    // pointerdown dismissal).
+    closeAllTooltips();
     setOpenPopover((current) => current === popover ? null : popover);
   };
 
