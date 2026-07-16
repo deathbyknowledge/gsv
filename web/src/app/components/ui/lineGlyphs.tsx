@@ -48,3 +48,28 @@ export function FreeContextGlyph({ size = 14 }: LineGlyphProps) {
     </svg>
   );
 }
+
+/** Plus — start a new task. Solid-stroke twin of the masked "plus" doticon,
+ *  which reads dimmer than the label at popover sizes. */
+export function PlusGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 5 V19" />
+      <path d="M5 12 H19" />
+    </svg>
+  );
+}
+
+/** Bulleted list — the open-tasks overview. */
+export function TaskListGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 6 H20" />
+      <path d="M9 12 H20" />
+      <path d="M9 18 H20" />
+      <path d="M4 6 H4.01" />
+      <path d="M4 12 H4.01" />
+      <path d="M4 18 H4.01" />
+    </svg>
+  );
+}

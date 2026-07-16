@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
-import { ArchiveFolderGlyph, FreeContextGlyph } from "../../app/components/ui/lineGlyphs";
+import { ArchiveFolderGlyph, FreeContextGlyph, PlusGlyph, TaskListGlyph } from "../../app/components/ui/lineGlyphs";
 import { ListRow } from "../../app/components/ui/ListRow";
 import { PopoverMenu } from "../../app/components/ui/PopoverMenu";
 import { Progress } from "../../app/components/ui/Progress";
@@ -67,8 +67,8 @@ function TasksVariation() {
       ariaLabel="Current tasks"
       header={{ kind: "titled", title: "CURRENT TASKS", count: 3 }}
       actions={[
-        { label: "NEW TASK", onClick: () => {}, icon: "plus" },
-        { label: "OPEN TASKS", onClick: () => {}, icon: "list" },
+        { label: "NEW TASK", onClick: () => {}, glyph: <PlusGlyph size={13} /> },
+        { label: "OPEN TASKS", onClick: () => {}, glyph: <TaskListGlyph size={13} /> },
       ]}
     >
       <div class="gsv-popover-list" style={{ maxHeight: "228px" }}>

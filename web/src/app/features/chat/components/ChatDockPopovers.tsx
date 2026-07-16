@@ -1,4 +1,4 @@
-import { ArchiveFolderGlyph, FreeContextGlyph } from "../../../components/ui/lineGlyphs";
+import { ArchiveFolderGlyph, FreeContextGlyph, PlusGlyph, TaskListGlyph } from "../../../components/ui/lineGlyphs";
 import { ListRow } from "../../../components/ui/ListRow";
 import { PopoverMenu, type PopoverActionProps } from "../../../components/ui/PopoverMenu";
 import { Progress } from "../../../components/ui/Progress";
@@ -216,10 +216,10 @@ export function ChatDockPopovers({
             {
               label: "NEW TASK",
               onClick: onStartNewTask,
-              icon: "plus",
+              glyph: <PlusGlyph size={13} />,
               disabled: !canStartNewTask,
             },
-            { label: "OPEN TASKS", onClick: onOpenTasks, icon: "list" },
+            { label: "OPEN TASKS", onClick: onOpenTasks, glyph: <TaskListGlyph size={13} /> },
           ]}
         >
           <div class="gsv-popover-list" style={{ maxHeight: "228px" }}>
