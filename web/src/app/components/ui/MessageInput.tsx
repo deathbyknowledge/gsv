@@ -38,6 +38,9 @@ export interface MessageInputProps {
   voiceAvailableWhenBusy?: boolean;
   voiceDisabled?: boolean;
   voiceTitle?: string;
+  /** Disables only the text entry (shell shows the disabled state) while the
+   *  mic/stop controls stay live — e.g. while dictation is recording. */
+  textDisabled?: boolean;
   /** Live-conversation mode: the voiceAction icon slides into the attach slot,
    *  the textarea is disabled, and mic/send give way to an end-conversation
    *  link button. */
@@ -75,6 +78,7 @@ export function MessageInput({
   voiceAvailableWhenBusy = false,
   voiceDisabled = false,
   voiceTitle = "Record voice",
+  textDisabled = false,
   conversationMode = false,
   onEndConversation,
   conversationLabel = "Conversation mode",
@@ -86,7 +90,7 @@ export function MessageInput({
   const draft = value ?? internalValue;
   const draftText = draft.trim();
   const hasAttachment = attachments.length > 0;
-  const canSubmit = Boolean(onSend) && !disabled && !conversationMode && !busy && (draftText.length > 0 || hasAttachment) && canSend !== false;
+  const canSubmit = Boolean(onSend) && !disabled && !textDisabled && !conversationMode && !busy && (draftText.length > 0 || hasAttachment) && canSend !== false;
   const canStop = running && Boolean(onStop) && !busy && !canSubmit && !conversationMode;
 
   useEffect(() => {
@@ -102,11 +106,11 @@ export function MessageInput({
   }, [draft]);
 
   useEffect(() => {
-    if (focusKey === undefined || disabled) {
+    if (focusKey === undefined || disabled || textDisabled) {
       return;
     }
     textareaRef.current?.focus();
-  }, [disabled, focusKey]);
+  }, [disabled, focusKey, textDisabled]);
 
   const setDraft = (nextValue: string) => {
     if (value === undefined) {
@@ -175,7 +179,7 @@ export function MessageInput({
           ))}
         </div>
       ) : null}
-      <form class="gsv-mi-bar" onSubmit={handleSubmit}>
+      <form class={`gsv-mi-bar${disabled || textDisabled ? " is-disabled" : ""}`} onSubmit={handleSubmit}>
         <span class="gsv-mi-attach-slot" aria-hidden={conversationMode ? "true" : undefined}>
           {onFiles ? (
             <>
@@ -210,7 +214,7 @@ export function MessageInput({
         <textarea
           ref={textareaRef}
           class="gsv-mi-input"
-          disabled={disabled || conversationMode}
+          disabled={disabled || textDisabled || conversationMode}
           placeholder={conversationMode ? conversationLabel : placeholder}
           rows={1}
           spellcheck={true}

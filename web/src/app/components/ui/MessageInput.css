@@ -84,17 +84,31 @@
   cursor: default;
 }
 
+/* Shell follows the DS form-input treatment (TextInput/TextArea palette).
+   Deliberately NO hover state on the shell. */
 .gsv-mi-bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: #0c0a22;
-  border: 1px solid var(--border);
+  background: #0a0822;
+  border: 1px solid #4a449e;
   border-radius: 7px;
   padding: 8px 11px;
+  transition: border-color 0.14s, box-shadow 0.14s;
 }
 .gsv-mi-bar:focus-within {
-  border-color: var(--dashed);
+  border-color: #b3aeff;
+  box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.22), 0 0 16px rgba(150, 140, 255, 0.14);
+}
+/* Disabled shell (composer lock / dictation): dimmed border + inert text
+   entry; the mic keeps full presence so recording can be stopped. */
+.gsv-mi-bar.is-disabled {
+  border-color: #25224d;
+  box-shadow: none;
+}
+.gsv-mi-bar.is-disabled .gsv-mi-input {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 /* Composer icon buttons use the floating IconButton variant; these rules only
@@ -175,12 +189,12 @@
 }
 
 .gsv-mi-input::placeholder {
-  color: #7d78b8;
+  color: #565199;
 }
 
 .gsv-mi-input:disabled {
-  color: #565178;
-  cursor: default;
+  color: #565199;
+  cursor: not-allowed;
 }
 
 /* Send — the primary composer action, brighter than the other floating icons;

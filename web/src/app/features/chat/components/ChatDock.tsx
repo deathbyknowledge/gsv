@@ -1139,6 +1139,7 @@ export function ChatDock({
         running={canAbortRun}
         user={userLabel}
         conversationMode={ambientTranscription.liveActive}
+        textDisabled={ambientTranscription.dictationActive}
         onEndConversation={ambientTranscription.toggleLive}
         voiceActive={ambientTranscription.dictationActive || ambientTranscription.liveActive}
         voiceAction={(

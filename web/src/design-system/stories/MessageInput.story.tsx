@@ -106,6 +106,12 @@ const story: Story = {
           <MessageInput disabled value="Composer locked" user="operator" onFiles={() => {}} onVoiceClick={() => {}} onSend={() => {}} />
         </div>
       </div>
+      <div class="ds-cell">
+        <div class="ds-label">Text disabled while dictating (mic stays live)</div>
+        <div style={{ width: 460 }}>
+          <MessageInput textDisabled voiceActive voiceTitle="Stop recording" placeholder="Listening…" user="operator" onFiles={() => {}} onVoiceClick={() => {}} onSend={() => {}} />
+        </div>
+      </div>
     </div>
   ),
 };
