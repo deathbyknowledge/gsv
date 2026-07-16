@@ -1158,54 +1158,11 @@ button.gsv-chat-task-row:focus-visible {
   text-wrap: pretty;
 }
 
-.gsv-chat-user-message-meta {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 5px;
-  /* size + family from .gsv-sublabel (12px); weight + tracking kept */
-  font-weight: 400;
-  letter-spacing: 0.1em;
-  color: var(--text-dim);
-}
-
-.gsv-chat-user-message-meta button {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0;
-  cursor: pointer;
-  font: inherit;
-  letter-spacing: inherit;
-}
-
-.gsv-chat-user-message-meta button:hover,
-.gsv-chat-user-message-meta button:focus-visible {
-  color: #9a94ff;
-  outline: none;
-}
-
-/* Origin + timestamp sit at the end of the meta line, revealed on hover/focus
-   (always visible on touch). User bubbles are right-aligned, so "end" here is
-   the message edge. */
-.gsv-chat-meta-when {
-  opacity: 0;
-  transition: opacity 0.12s;
-  white-space: nowrap;
-}
-.gsv-chat-user-message:hover .gsv-chat-meta-when,
-.gsv-chat-user-message:focus-within .gsv-chat-meta-when {
+/* Meta row is the shared MessageMeta component; hovering anywhere on the
+   bubble (not just the row) reveals its timestamp. */
+.gsv-chat-user-message:hover .gsv-mm-time,
+.gsv-chat-user-message:focus-within .gsv-mm-time {
   opacity: 1;
-}
-@media (hover: none) {
-  .gsv-chat-meta-when {
-    opacity: 1;
-  }
 }
 
 .gsv-chat-system-surface {

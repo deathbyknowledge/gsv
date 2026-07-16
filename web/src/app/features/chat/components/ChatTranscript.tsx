@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import DOMPurify from "dompurify";
 import { parse as parseMarkdown } from "marked";
 import { Button } from "../../../components/ui/Button";
+import { MessageMeta } from "../../../components/ui/MessageMeta";
 import { SystemMessage } from "../../../components/ui/SystemMessage";
 import { Hint, Tooltip } from "../../../components/ui/Tooltip";
 import type {
@@ -1039,7 +1040,6 @@ function UserMessage({
   onCopy: () => void;
   onBranch?: (messageId: number) => void;
 }) {
-  const origin = originLabel(message.origin);
   return (
     <div class="gsv-chat-user-message">
       <div class="gsv-chat-user-message-inner">
@@ -1051,16 +1051,22 @@ function UserMessage({
             ))}
           </div>
         ) : null}
-        <div class="gsv-chat-user-message-meta gsv-sublabel">
-          {message.messageId && onBranch ? (
+        <MessageMeta
+          time={message.time}
+          copyLabel={copyButtonLabel(copied, failed)}
+          copyAriaLabel={copied ? "Copied user message" : "Copy user message"}
+          copyDisabled={!message.text.trim()}
+          copyFailed={failed}
+          onCopy={onCopy}
+          actions={message.messageId && onBranch ? (
             <Hint text="Branch a new conversation from this message">
               <button
                 type="button"
-                class="gsv-chat-copy"
+                class="gsv-mm-btn"
                 aria-label="Branch a new conversation from this message"
                 onClick={() => onBranch(message.messageId as number)}
               >
-                <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+                <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
                   <g fill="none" stroke="currentColor" stroke-width="1.5">
                     <circle cx="4.5" cy="4" r="2" />
                     <circle cx="4.5" cy="12" r="2" />
@@ -1070,22 +1076,8 @@ function UserMessage({
                 </svg>
               </button>
             </Hint>
-          ) : null}
-          <CopyButton
-            copied={copied}
-            failed={failed}
-            role="user"
-            text={message.text}
-            onCopy={onCopy}
-          />
-          {origin || message.time ? (
-            <span class="gsv-chat-meta-when" title={origin || undefined}>
-              {origin}
-              {origin && message.time ? " · " : ""}
-              {message.time}
-            </span>
-          ) : null}
-        </div>
+          ) : undefined}
+        />
       </div>
     </div>
   );
@@ -1331,7 +1323,7 @@ function AssistantProcessMessage({
                   aria-label="Expand reasoning"
                   onClick={() => onOpenReasoning({ kind: "message", messageId: message.id })}
                 >
-                  <svg width="11" height="11" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">
+                  <svg width="13" height="13" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">
                     <g fill="currentColor">
                       <rect x="2" y="3" width="12" height="2" />
                       <rect x="2" y="7" width="9" height="2" />

@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { Hint } from "./Tooltip";
+import { MessageMeta } from "./MessageMeta";
 import "./SystemMessage.css";
 
 export interface SystemMessageProps {
@@ -33,26 +33,15 @@ export function SystemMessage({
     <div class="gsv-sm">
       <div class="gsv-sm-body">
         <div class="gsv-sm-text gsv-prose">{children ?? text}</div>
-        <div class="gsv-sm-meta gsv-sublabel">
-          {meta}
-          <Hint position="top" text={copyLabel}>
-            <button
-              type="button"
-              class={`gsv-sm-copy${copyFailed ? " is-failed" : ""}`}
-              disabled={copyDisabled}
-              aria-label={copyAriaLabel ?? copyTitle}
-              onClick={onCopy}
-            >
-              <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
-                <g fill="none" stroke="currentColor" stroke-width="1.5">
-                  <rect x="3" y="3" width="7" height="7" />
-                  <rect x="6" y="6" width="7" height="7" />
-                </g>
-              </svg>
-            </button>
-          </Hint>
-          {time ? <span class="gsv-sm-time">{time}</span> : null}
-        </div>
+        <MessageMeta
+          time={time}
+          actions={meta}
+          copyLabel={copyLabel}
+          copyAriaLabel={copyAriaLabel ?? copyTitle}
+          copyDisabled={copyDisabled}
+          copyFailed={copyFailed}
+          onCopy={onCopy}
+        />
       </div>
     </div>
   );

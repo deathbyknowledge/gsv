@@ -61,6 +61,7 @@ import breadcrumbs from "./stories/Breadcrumbs.story";
 import statusBar from "./stories/StatusBar.story";
 import messageInput from "./stories/MessageInput.story";
 import systemMessage from "./stories/SystemMessage.story";
+import messageMeta from "./stories/MessageMeta.story";
 import tabs from "./stories/Tabs.story";
 import confirmModal from "./stories/ConfirmModal.story";
 import agentCard from "./stories/AgentCard.story";
@@ -119,6 +120,7 @@ const STORIES: Story[] = [
   statusBar,
   messageInput,
   systemMessage,
+  messageMeta,
   tabs,
   link,
   // Composite
