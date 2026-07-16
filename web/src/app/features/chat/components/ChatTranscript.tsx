@@ -1214,6 +1214,7 @@ function SystemErrorLine({
         </Hint>
       ) : body}
       <MessageMeta
+        mirror
         time={message.time}
         copyLabel={copyButtonLabel(copied, failed)}
         copyAriaLabel={copied ? "Copied system message" : "Copy system message"}

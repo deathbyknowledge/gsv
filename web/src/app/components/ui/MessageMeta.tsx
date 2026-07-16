@@ -3,13 +3,17 @@ import { Hint } from "./Tooltip";
 import "./MessageMeta.css";
 
 export interface MessageMetaProps {
-  /** Timestamp shown at the line start, revealed on hover/focus (always
-   *  visible on touch). Consumers may widen the reveal to the whole message
-   *  via `<ancestor>:hover .gsv-mm-time { opacity: 1 }`. */
+  /** Timestamp revealed on hover/focus (always visible on touch), like the
+   *  icon actions. Consumers may widen the reveal to the whole message via
+   *  `<ancestor>:hover .gsv-mm-time, <ancestor>:hover .gsv-mm-actions`. */
   time?: string;
   /** Leading icon actions rendered before the copy button (branch,
    *  reasoning, badges). Use `.gsv-mm-btn` for consistent icon buttons. */
   actions?: ComponentChildren;
+  /** Mirror the row for left-aligned messages (assistant/system): icon
+   *  actions lead on the left, timestamp trails on the right. Default is the
+   *  user-bubble arrangement — timestamp left, actions right. */
+  mirror?: boolean;
   copyLabel?: string;
   copyAriaLabel?: string;
   copyDisabled?: boolean;
@@ -18,10 +22,12 @@ export interface MessageMetaProps {
 }
 
 /** MessageMeta — the quiet meta row shared by chat messages: hover-revealed
- *  timestamp on the left, icon-only actions (tooltip labels) on the right. */
+ *  timestamp and icon-only actions (tooltip labels), arranged to hug the
+ *  message's aligned edge. */
 export function MessageMeta({
   time = "",
   actions,
+  mirror = false,
   copyLabel = "Copy message",
   copyAriaLabel,
   copyDisabled = false,
@@ -29,7 +35,7 @@ export function MessageMeta({
   onCopy,
 }: MessageMetaProps) {
   return (
-    <div class="gsv-mm gsv-sublabel">
+    <div class={`gsv-mm gsv-sublabel${mirror ? " gsv-mm--mirror" : ""}`}>
       {time ? <span class="gsv-mm-time">{time}</span> : null}
       <span class="gsv-mm-actions">
         {actions}

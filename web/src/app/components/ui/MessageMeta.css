@@ -1,5 +1,7 @@
-/* MessageMeta — shared quiet meta row: hover-revealed timestamp left,
-   icon actions right. Size + family come from .gsv-sublabel (12px). */
+/* MessageMeta — shared quiet meta row: hover-revealed timestamp + icon
+   actions. Default arrangement (user bubbles): time left, actions right; the
+   --mirror variant (left-aligned messages) leads with actions and trails the
+   time. Size + family come from .gsv-sublabel (12px). */
 .gsv-mm {
   display: flex;
   align-items: center;
@@ -32,6 +34,28 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  /* Icons follow the timestamp's quiet-until-hover behavior. */
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.gsv-mm:hover .gsv-mm-actions,
+.gsv-mm:focus-within .gsv-mm-actions {
+  opacity: 1;
+}
+@media (hover: none) {
+  .gsv-mm-actions {
+    opacity: 1;
+  }
+}
+
+/* Mirrored variant for left-aligned messages: actions lead on the left, the
+   timestamp trails right. DOM order is unchanged — visual swap only. */
+.gsv-mm--mirror .gsv-mm-actions {
+  order: -1;
+  margin-left: 0;
+}
+.gsv-mm--mirror .gsv-mm-time {
+  margin-left: auto;
 }
 
 .gsv-mm-btn {

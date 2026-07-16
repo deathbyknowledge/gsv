@@ -22,16 +22,20 @@ function BranchAction() {
 const story: Story = {
   title: "MessageMeta",
   group: "Chrome",
-  blurb: "shared message meta row · hover timestamp left · icon actions right",
+  blurb: "shared message meta row · hover-revealed time + icons · mirrors to the message's aligned edge",
   render: () => (
     <div class="ds-col" style={{ maxWidth: "360px" }}>
       <div class="ds-cell">
-        <div class="ds-label">Copy only (hover the row for the timestamp)</div>
+        <div class="ds-label">Copy only (hover the row for timestamp + icons)</div>
         <MessageMeta time="14:24" onCopy={() => {}} />
       </div>
       <div class="ds-cell">
         <div class="ds-label">With branch action (user-message variant)</div>
         <MessageMeta time="14:25" actions={<BranchAction />} onCopy={() => {}} />
+      </div>
+      <div class="ds-cell">
+        <div class="ds-label">Mirrored (assistant/system variant: icons left, time right)</div>
+        <MessageMeta mirror time="14:25" actions={<BranchAction />} onCopy={() => {}} />
       </div>
       <div class="ds-cell">
         <div class="ds-label">Copy failed</div>

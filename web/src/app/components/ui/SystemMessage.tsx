@@ -34,6 +34,7 @@ export function SystemMessage({
       <div class="gsv-sm-body">
         <div class="gsv-sm-text gsv-prose">{children ?? text}</div>
         <MessageMeta
+          mirror
           time={time}
           actions={meta}
           copyLabel={copyLabel}

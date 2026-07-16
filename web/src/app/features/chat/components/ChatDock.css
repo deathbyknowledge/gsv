@@ -890,9 +890,11 @@
 }
 
 /* Meta row is the shared MessageMeta component; hovering anywhere on the
-   bubble (not just the row) reveals its timestamp. */
+   bubble (not just the row) reveals its timestamp and icon actions. */
 .gsv-chat-user-message:hover .gsv-mm-time,
-.gsv-chat-user-message:focus-within .gsv-mm-time {
+.gsv-chat-user-message:focus-within .gsv-mm-time,
+.gsv-chat-user-message:hover .gsv-mm-actions,
+.gsv-chat-user-message:focus-within .gsv-mm-actions {
   opacity: 1;
 }
 
@@ -992,7 +994,9 @@
   user-select: text;
 }
 .gsv-chat-system-error:hover .gsv-mm-time,
-.gsv-chat-system-error:focus-within .gsv-mm-time {
+.gsv-chat-system-error:focus-within .gsv-mm-time,
+.gsv-chat-system-error:hover .gsv-mm-actions,
+.gsv-chat-system-error:focus-within .gsv-mm-actions {
   opacity: 1;
 }
 
