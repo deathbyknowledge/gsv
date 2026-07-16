@@ -63,6 +63,23 @@
 .gsv-tt:has(:focus-visible) .gsv-tt-bub {
   opacity: 1;
 }
+/* Portaled bubble (Tooltip / Hint) — rendered into <body> so no ancestor
+   `overflow` / `transform` / `z-index` can clip it (fixes the chat-header
+   clipping). Positioned in JS via inline `left`/`top`, so the absolute
+   per-position bubble rules below don't apply (the position class rides on the
+   bubble element itself, not an ancestor, so `.gsv-tt-top .gsv-tt-bub` no longer
+   matches) — but the per-position *arrow* rules still do, since the arrow is a
+   descendant of the bubble. Reveal is JS-driven via `.is-open` because the CSS
+   ancestor-`:hover` selectors above can't reach a portaled node. z-index 75 sits
+   above in-dock popovers (72) and below the modal layer (80). InfoTip keeps the
+   in-DOM absolutely-positioned bubble (base rules above), so it is untouched. */
+.gsv-tt-bub.gsv-tt-portal {
+  position: fixed;
+  z-index: 75;
+}
+.gsv-tt-bub.gsv-tt-portal.is-open {
+  opacity: 1;
+}
 .gsv-tt-arrow {
   position: absolute;
   width: 7px;
