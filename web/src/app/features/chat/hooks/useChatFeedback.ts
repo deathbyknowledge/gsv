@@ -85,6 +85,21 @@ export function useChatFeedback(): ChatFeedback {
     clearTimer(key);
     const existing = entriesRef.current.find((item) => item.key === key);
     if (!existing) {
+      // Upsert: an outcome must survive even when something wiped the running
+      // line mid-operation (e.g. a conversation reset racing the mutation) —
+      // without a label there is nothing meaningful to show, so drop it.
+      if (!label) {
+        return;
+      }
+      counterRef.current += 1;
+      const entry: ChatFeedbackEntry = {
+        key,
+        id: `${key}:${counterRef.current}`,
+        label,
+        persist: true,
+        status,
+      };
+      apply((current) => [...current, entry]);
       return;
     }
     apply((current) => current.map((item) => item.key === key

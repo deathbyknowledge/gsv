@@ -287,6 +287,11 @@ export function ChatDock({
     && currentRunActive
     && (stoppingRun.runId === null || stoppingRun.runId === currentRunId),
   );
+  // The conversation the dock is showing. The raw `activeConversationId` prop
+  // is RUN-scoped (the gateway's `ln` is `activeRun?.conversationId ?? null`),
+  // so it flips to null whenever a run ends — never key user-facing resets on
+  // it directly, or they fire on every stop/completion.
+  const selectedConversationId = activeConversationId ?? runtime.conversationId ?? "default";
   const liveActivity = useMemo(
     () => deriveChatLiveActivity(runtime, stoppingCurrentRun),
     [runtime, stoppingCurrentRun],
@@ -373,11 +378,14 @@ export function ChatDock({
     // Compaction state and its status lines are conversation-bound: a failed
     // compact on one conversation must not lock a sibling's composer, and a
     // pending "Freeing context" line must not resolve onto another transcript.
-    // The recorder-bound "voice" line is deliberately left alone.
+    // The recorder-bound "voice" line is deliberately left alone. Keyed on the
+    // DISPLAYED conversation, not the run-scoped prop — keying on the prop
+    // fired this on every run stop/completion and wiped the abort line
+    // between begin() and resolve().
     compactConversation.reset();
     feedback.clear("compact");
     feedback.clear("abort");
-  }, [activeProcessId, activeConversationId, compactConversation.reset, feedback.clear]);
+  }, [activeProcessId, selectedConversationId, compactConversation.reset, feedback.clear]);
 
   // Auto-dismiss the branch success notice after a few seconds.
   useEffect(() => {
@@ -402,7 +410,6 @@ export function ChatDock({
     && !stoppingCurrentRun
     && (Boolean(runtime.activeRunId) || Boolean(pendingHil) || runState === "running" || runState === "awaiting_hil");
   const context = runtime.context;
-  const selectedConversationId = activeConversationId ?? runtime.conversationId ?? "default";
   const replySpeech = useChatReplySpeech({
     conversationId: selectedConversationId,
     hydrated: !processHistory.isLoading,
