@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import DOMPurify from "dompurify";
 import { parse as parseMarkdown } from "marked";
+import { Button } from "../../../components/ui/Button";
 import { SystemMessage } from "../../../components/ui/SystemMessage";
 import { Hint, Tooltip } from "../../../components/ui/Tooltip";
 import type {
@@ -1262,9 +1263,13 @@ function ActivityLine({
   onOpenReasoning?: (target: ChatReasoningTarget) => void;
 }) {
   const status = activityGroupStatus(entries, active);
+  // A completed backup-model switch is an attention state, not a success.
+  const usedBackup = entries.some((entry) => entry.kind === "backup");
   const feedbackStatus: ChatFeedbackStatus = status === "running"
     ? "running"
-    : status === "error" ? "error" : "success";
+    : status === "error"
+      ? "error"
+      : usedBackup ? "attention" : "success";
   const runId = entries.find((entry) => entry.message.runId)?.message.runId;
   const firstMessageId = entries[0]?.message.id;
   const target: ChatReasoningTarget | null = runId
@@ -1278,13 +1283,12 @@ function ActivityLine({
       label={activityGroupTitle(entries, active)}
       status={feedbackStatus}
       action={target && onOpenReasoning ? (
-        <button
-          type="button"
-          class="gsv-chat-expand-reasoning gsv-sublabel"
+        <Button
+          variant="link"
+          tone="attention"
+          label="EXPAND REASONING"
           onClick={() => onOpenReasoning(target)}
-        >
-          EXPAND REASONING
-        </button>
+        />
       ) : undefined}
     />
   );

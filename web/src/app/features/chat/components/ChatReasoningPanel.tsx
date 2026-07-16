@@ -164,7 +164,7 @@ export function ChatReasoningPanel({ messages, target, onClose }: ChatReasoningP
         <button
           ref={backRef}
           type="button"
-          class="gsv-chat-rp-back gsv-sublabel"
+          class="gsv-chat-rp-back"
           onClick={(event) => {
             stop(event);
             onClose();

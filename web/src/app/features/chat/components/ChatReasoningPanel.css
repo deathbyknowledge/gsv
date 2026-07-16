@@ -27,7 +27,10 @@
   border: 0;
   background: transparent;
   color: var(--accent);
-  font: inherit;
+  /* Explicit link-button scale (10px) — `font: inherit` here used to lose to
+     the sublabel class and cascade up to the 16px body default. */
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
   letter-spacing: 0.16em;
   cursor: pointer;
   padding: 4px 0;
@@ -35,7 +38,7 @@
 }
 .gsv-chat-rp-back i {
   font-style: normal;
-  font-size: 14px;
+  font-size: 11px;
   line-height: 1;
 }
 .gsv-chat-rp-back:hover,

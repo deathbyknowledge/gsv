@@ -1800,27 +1800,6 @@ button.gsv-chat-task-row:focus-visible {
   outline: none;
 }
 
-/* Run-line affordance opening the reasoning panel. */
-.gsv-chat-expand-reasoning {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font: inherit;
-  letter-spacing: 0.14em;
-  cursor: pointer;
-  padding: 0 0 1px;
-  border-bottom: 1px solid currentColor;
-  transition: color 0.12s;
-  white-space: nowrap;
-}
-
-.gsv-chat-expand-reasoning:hover,
-.gsv-chat-expand-reasoning:focus-visible {
-  color: var(--accent-bright);
-  outline: none;
-}
-
 .gsv-chat-backup-model-badge {
   min-width: 0;
   display: inline-flex;
