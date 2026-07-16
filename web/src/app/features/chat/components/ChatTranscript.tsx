@@ -889,7 +889,9 @@ export function collectGroupEntries(
   return [];
 }
 
-function buildTranscriptRenderItems(messages: readonly ChatDockMessage[]): TranscriptRenderItem[] {
+/** Exported for tests — the transcript's message/activity-group interleave,
+ *  including the synthetic streaming-reasoning tail. */
+export function buildTranscriptRenderItems(messages: readonly ChatDockMessage[]): TranscriptRenderItem[] {
   const items: TranscriptRenderItem[] = [];
   let index = 0;
 
@@ -929,6 +931,32 @@ function buildTranscriptRenderItems(messages: readonly ChatDockMessage[]): Trans
       id: `activity-group:${identifier}:${stableKey}`,
       index: startIndex,
     });
+  }
+
+  // A row with visible text no longer counts as a reasoning-only activity
+  // entry, so for tool-less runs the "thinking · EXPAND REASONING" line used
+  // to vanish the moment the answer started streaming. While the tail row is
+  // still streaming and carries reasoning, keep a synthetic activity line
+  // below it — unless the run already has a real group carrying the link.
+  const last = messages[messages.length - 1];
+  if (
+    last
+    && normalizedRole(last.role) === "assistant"
+    && last.streaming === true
+    && last.text.trim().length > 0
+    && reasoningText(last)
+  ) {
+    const hasRunGroup = Boolean(last.runId) && items.some((item) =>
+      item.kind === "activityGroup"
+      && item.entries.some((entry) => entry.message.runId === last.runId));
+    if (!hasRunGroup) {
+      items.push({
+        kind: "activityGroup",
+        entries: [{ kind: "reasoning", message: last }],
+        id: `activity-tail:${last.runId || last.id}`,
+        index: messages.length - 1,
+      });
+    }
   }
 
   return items;
