@@ -1739,6 +1739,12 @@ export function ChatTranscript({
   // flag survives virtualized rows unmounting off-screen.
   const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(new Set());
   const toggleExpanded = useCallback((messageId: string) => {
+    // Expansion grows the message downward from its own top edge, so freeze
+    // the scroll position: the SYSTEM label stays put and the text reads from
+    // the start. Without this the sticky bottom pin re-fires on the height
+    // change and jumps the viewport to the END of the expanded body. Sticking
+    // resumes once the user scrolls back to the bottom.
+    stickToBottomRef.current = false;
     setExpandedKeys((current) => {
       const next = new Set(current);
       if (next.has(messageId)) {
