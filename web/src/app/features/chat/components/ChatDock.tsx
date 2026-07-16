@@ -562,23 +562,23 @@ export function ChatDock({
   // Voice status feedback lines — transient "Listening…" / "Transcribing…" in
   // the chat body while conversation mode or dictation is active (HAM-473).
   const voiceFeedbackLabel = useRef<string | null>(null);
-  const voiceErrorNoted = useRef(false);
+  const voiceErrorNoted = useRef(0);
   useEffect(() => {
     const state = ambientTranscription.state;
     const voiceOn = ambientTranscription.liveActive || ambientTranscription.dictationActive;
     // A failure (dictation OR conversation mode) stays in the chat as a
     // persistent red line until the next sent message — the chat is the only
-    // failure surface; the mic tooltip keeps its plain action label. The ref
-    // gates re-resolving while the recorder sits in the error state.
+    // failure surface; the mic tooltip keeps its plain action label. Keyed on
+    // the failure NONCE, not the error state: consecutive failures keep the
+    // same state/note (error → error), which a boolean guard swallowed.
     if (state === "error") {
-      if (!voiceErrorNoted.current) {
-        voiceErrorNoted.current = true;
+      if (voiceErrorNoted.current !== ambientTranscription.errorNonce) {
+        voiceErrorNoted.current = ambientTranscription.errorNonce;
         voiceFeedbackLabel.current = null;
         feedback.resolve("voice", "error", ambientTranscription.note || "Voice input failed", { persist: true });
       }
       return;
     }
-    voiceErrorNoted.current = false;
     const label = !voiceOn
       ? null
       : state === "recording" || state === "listening" || state === "capturing"
@@ -602,6 +602,7 @@ export function ChatDock({
   }, [
     ambientTranscription.state,
     ambientTranscription.note,
+    ambientTranscription.errorNonce,
     ambientTranscription.liveActive,
     ambientTranscription.dictationActive,
     feedback.begin,

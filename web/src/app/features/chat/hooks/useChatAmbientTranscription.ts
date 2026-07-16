@@ -59,6 +59,9 @@ type ChatAmbientTranscription = {
   dictationTitle: string;
   dictationUnavailable: boolean;
   error: string;
+  /** Increments on every failure occurrence — consecutive failures keep the
+   *  same state/note, so consumers key error feedback on this instead. */
+  errorNonce: number;
   liveActive: boolean;
   liveTitle: string;
   liveUnavailable: boolean;
@@ -131,6 +134,7 @@ export function useChatAmbientTranscription({
   const [mode, setModeValue] = useState<ChatVoiceInputMode>("idle");
   const [note, setNoteValue] = useState("");
   const [error, setError] = useState("");
+  const [errorNonce, setErrorNonce] = useState(0);
   const destroyedRef = useRef(false);
   const stateRef = useRef(state);
   const modeRef = useRef<ChatVoiceInputMode>(mode);
@@ -189,9 +193,11 @@ export function useChatAmbientTranscription({
     }
     if (nextState === "error") {
       // Recorder-driven failures (microphone, push transcription) must reach
-      // the composer alert like ambient-segment failures do — keep an earlier,
-      // more specific message when one was already set.
+      // consumers like ambient-segment failures do — keep an earlier, more
+      // specific message when one was already set. The nonce distinguishes
+      // consecutive failures whose state/note are identical.
       setError((current) => current || message || "Voice input failed");
+      setErrorNonce((nonce) => nonce + 1);
     } else {
       setError("");
     }
@@ -608,6 +614,7 @@ export function useChatAmbientTranscription({
     dictationTitle: currentDictationTitle,
     dictationUnavailable,
     error,
+    errorNonce,
     liveActive,
     liveTitle: currentLiveTitle,
     liveUnavailable,
