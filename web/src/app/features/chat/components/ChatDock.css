@@ -665,12 +665,12 @@
 }
 
 .gsv-shell-root .gsv-chat .gsv-mi-voice.is-active {
-  color: #ff8aa0;
+  color: #bdb8ff;
 }
 
 .gsv-shell-root .gsv-chat .gsv-mi-voice.is-active:hover,
 .gsv-shell-root .gsv-chat .gsv-mi-voice.is-active:focus-visible {
-  color: #ffc1cc;
+  color: var(--accent-bright);
 }
 
 .gsv-shell-root .gsv-chat .gsv-mi-send:disabled {
@@ -1029,12 +1029,13 @@
 }
 
 /* Live transcription button uses the floating IconButton variant; this only adds
-   the green "live" active glow over that borderless base. */
+   the light-purple ACTIVE glow over that borderless base (matches the dictation
+   mic and the speech toggle's active purple). */
 .gsv-ibtn-floating.gsv-chat-live-icon.is-active {
-  color: #7df0b2;
+  color: #bdb8ff;
 }
 .gsv-ibtn-floating.gsv-chat-live-icon.is-active svg {
-  filter: drop-shadow(0 0 5px rgba(125, 240, 178, 0.5));
+  filter: drop-shadow(0 0 5px rgba(132, 122, 255, 0.5));
 }
 
 .gsv-chat-command-abort span {

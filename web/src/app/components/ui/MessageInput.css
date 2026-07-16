@@ -164,12 +164,16 @@
   align-self: center;
 }
 
-/* Dictation mic while recording — pink tone. */
+/* Dictation mic while recording — the shared light-purple ACTIVE treatment
+   (same as the conversation-mode live icon). */
 .gsv-ibtn-floating.gsv-mi-voice.is-active {
-  color: #ff8aa0;
+  color: #bdb8ff;
+}
+.gsv-ibtn-floating.gsv-mi-voice.is-active svg {
+  filter: drop-shadow(0 0 5px rgba(132, 122, 255, 0.5));
 }
 .gsv-ibtn-floating.gsv-mi-voice.is-active:hover {
-  color: #ffc1cc;
+  color: var(--accent-bright);
 }
 
 .gsv-mi-input {
