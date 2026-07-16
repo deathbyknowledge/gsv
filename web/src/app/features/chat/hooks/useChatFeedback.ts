@@ -23,7 +23,7 @@ export type ChatFeedback = {
   /** Update the label of a running line (e.g. Listening… → Transcribing…). */
   update: (key: string, label: string) => void;
   /** Mark the outcome; transient lines linger briefly then disappear. */
-  resolve: (key: string, status: "success" | "error", label?: string) => void;
+  resolve: (key: string, status: "success" | "error" | "attention", label?: string) => void;
   /** Remove a line immediately. */
   clear: (key: string) => void;
   /** Drop everything (e.g. when switching process). */
@@ -81,7 +81,7 @@ export function useChatFeedback(): ChatFeedback {
     apply((current) => current.filter((item) => item.key !== key));
   }, [apply, clearTimer]);
 
-  const resolve = useCallback((key: string, status: "success" | "error", label?: string) => {
+  const resolve = useCallback((key: string, status: "success" | "error" | "attention", label?: string) => {
     clearTimer(key);
     const existing = entriesRef.current.find((item) => item.key === key);
     if (!existing) {
