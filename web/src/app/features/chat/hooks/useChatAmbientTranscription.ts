@@ -14,12 +14,7 @@ import {
 } from "../../presence/constants";
 import { createPresenceRecorder, type AmbientSegment, type PresenceRecorder } from "../../presence/recording";
 import type { PresenceState } from "../../presence/types";
-import {
-  dictationTitle,
-  formatVoiceInputAlert,
-  liveTranscriptionTitle,
-  normalizeTranscriptionRequestError,
-} from "../domain/voiceFeedback";
+import { normalizeTranscriptionRequestError } from "../domain/voiceFeedback";
 
 type ChatAmbientTranscriptionArgs = {
   activeRunCount?: number;
@@ -209,7 +204,14 @@ export function useChatAmbientTranscription({
     } else if (message !== undefined) {
       setNoteValue(message);
     }
-    setError(nextState === "error" ? formatVoiceInputAlert(message) : "");
+    if (nextState === "error") {
+      // Recorder-driven failures (microphone, push transcription) must reach
+      // the composer alert like ambient-segment failures do — keep an earlier,
+      // more specific message when one was already set.
+      setError((current) => current || message || "Voice input failed");
+    } else {
+      setError("");
+    }
   }, []);
 
   const setMode = useCallback((nextMode: ChatVoiceInputMode) => {
@@ -614,7 +616,7 @@ export function useChatAmbientTranscription({
   const liveUnavailable = !liveActive && (disabled || !connected || !canUseAmbientMode());
   const dictationUnavailable = !dictationActive && (disabled || !connected || !canUseBrowserVoiceRecorder());
   const currentDictationTitle = dictationTitle(state, note);
-  const currentLiveTitle = liveTranscriptionTitle(state, note);
+  const currentLiveTitle = ambientTitle(state, note);
   const title = liveActive ? currentLiveTitle : currentDictationTitle;
 
   return {

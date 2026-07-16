@@ -559,6 +559,14 @@ export function ChatDock({
   useEffect(() => {
     const state = ambientTranscription.state;
     const voiceOn = ambientTranscription.liveActive || ambientTranscription.dictationActive;
+    // A failed session resolves the line red for a moment instead of silently
+    // vanishing; the persistent copy of the message is the composer alert
+    // (ambientTranscription.error → controlError).
+    if (state === "error" && voiceFeedbackLabel.current !== null) {
+      voiceFeedbackLabel.current = null;
+      feedback.resolve("voice", "error", ambientTranscription.note || "Voice input failed");
+      return;
+    }
     const label = !voiceOn
       ? null
       : state === "recording" || state === "listening" || state === "capturing"
@@ -581,10 +589,12 @@ export function ChatDock({
     voiceFeedbackLabel.current = label;
   }, [
     ambientTranscription.state,
+    ambientTranscription.note,
     ambientTranscription.liveActive,
     ambientTranscription.dictationActive,
     feedback.begin,
     feedback.clear,
+    feedback.resolve,
     feedback.update,
   ]);
   const handleVoiceClick = useCallback(() => {
