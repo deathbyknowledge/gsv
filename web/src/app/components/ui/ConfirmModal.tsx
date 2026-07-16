@@ -101,6 +101,7 @@ export function ConfirmModal({
       style={{
         position: "relative",
         width: `${width}px`,
+        minWidth: 0,
         maxWidth: "100%",
         maxHeight: "100%",
         display: "flex",
