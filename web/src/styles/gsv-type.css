@@ -59,6 +59,16 @@
   letter-spacing: 0.08em;
 }
 
+.gsv-message-label {
+  /* Chat message label tier ("SYSTEM", "APPROVAL REQUIRED", …): matches the
+   * Tag / link-button chrome scale (10px). Deliberately below the 12px
+   * reading floor — non-reading chrome, same exemption as Tag. */
+  font-family: var(--gsv-font-mono);
+  font-weight: 500;
+  font-size: 0.625rem; /* 10px */
+  letter-spacing: 0.14em;
+}
+
 /* Paragraph scale — Departure Mono (kept for consistency with library/HUD
  * copy). For reading copy and descriptions; the readability win comes from the
  * broader line-height per WCAG 1.4.12, not a font change. */

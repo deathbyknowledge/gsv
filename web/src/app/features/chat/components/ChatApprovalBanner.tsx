@@ -1,4 +1,5 @@
 import { Button } from "../../../components/ui/Button";
+import { Hint } from "../../../components/ui/Tooltip";
 import type { ChatHilDecision, ChatHistory } from "../domain/processes";
 import { shortId } from "./chatUiFormat";
 
@@ -55,6 +56,13 @@ function summarizeHilArgs(args: Record<string, unknown> | null | undefined): str
 export function ChatApprovalBanner({ busy, onDecision, pendingHil }: ChatApprovalBannerProps) {
   const argsSummary = summarizeHilArgs(pendingHil.args);
   const createdAt = formatHilTime(pendingHil.createdAt);
+  const toolLabel = pendingHil.toolName || pendingHil.syscall;
+  const metaLabel = [
+    pendingHil.syscall,
+    `request ${shortId(pendingHil.requestId)}`,
+    ...(pendingHil.runId ? [`run ${shortId(pendingHil.runId)}`] : []),
+    ...(createdAt ? [createdAt] : []),
+  ].join(" · ");
 
   return (
     <section
@@ -62,18 +70,16 @@ export function ChatApprovalBanner({ busy, onDecision, pendingHil }: ChatApprova
       aria-label="Human approval pending"
       aria-busy={busy}
     >
-      <div class="gsv-chat-hil-title gsv-label">
+      <div class="gsv-chat-hil-title gsv-message-label">
         <span>APPROVAL REQUIRED</span>
-        <strong>{pendingHil.toolName || pendingHil.syscall}</strong>
+        <Hint text={toolLabel}>
+          <strong>{toolLabel}</strong>
+        </Hint>
       </div>
-      <p class="gsv-chat-hil-body gsv-paragraph">{argsSummary}</p>
-      <small class="gsv-chat-hil-meta gsv-sublabel">
-        {pendingHil.syscall}
-        {" · request "}
-        {shortId(pendingHil.requestId)}
-        {pendingHil.runId ? ` · run ${shortId(pendingHil.runId)}` : ""}
-        {createdAt ? ` · ${createdAt}` : ""}
-      </small>
+      <p class="gsv-chat-hil-body gsv-prose">{argsSummary}</p>
+      <Hint text={metaLabel}>
+        <small class="gsv-chat-hil-meta gsv-sublabel">{metaLabel}</small>
+      </Hint>
       <div class="gsv-chat-hil-actions">
         <Button
           variant="link"

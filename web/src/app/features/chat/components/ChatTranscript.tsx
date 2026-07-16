@@ -1124,10 +1124,10 @@ function SystemSurfaceMessage({
   const body = (
     <>
       <div class="gsv-chat-system-line">
-        <span>SYSTEM</span>
-        {!expanded && summary ? <small>{summary}</small> : null}
+        <span class="gsv-message-label">SYSTEM</span>
+        {!expanded && summary ? <small class="gsv-prose">{summary}</small> : null}
       </div>
-      {expanded ? <div class="gsv-chat-system-detail">{message.text}</div> : null}
+      {expanded ? <div class="gsv-chat-system-detail gsv-prose">{message.text}</div> : null}
     </>
   );
 
@@ -1532,7 +1532,7 @@ function ProcessMessage({
       </div>
       <div class="gsv-chat-message-body">
         {showHead ? (
-          <div class="gsv-chat-message-head gsv-sublabel">
+          <div class="gsv-chat-message-head gsv-message-label">
             <span>{label}</span>
             {message.meta ? <small>{message.meta}</small> : null}
           </div>

@@ -1099,14 +1099,14 @@ button.gsv-chat-task-row:focus-visible {
   transition: opacity 0.12s;
 }
 
-.gsv-chat-composer-lock:hover .gsv-chat-composer-lock-bubble,
-.gsv-chat-composer-lock:focus-within .gsv-chat-composer-lock-bubble {
+.gsv-chat-composer-lock:hover .gsv-chat-composer-lock-bubble.is-active,
+.gsv-chat-composer-lock:focus-within .gsv-chat-composer-lock-bubble.is-active {
   opacity: 1;
   pointer-events: auto;
 }
 
 @media (hover: none) {
-  .gsv-chat-composer-lock-bubble {
+  .gsv-chat-composer-lock-bubble.is-active {
     opacity: 1;
     pointer-events: auto;
   }
@@ -1176,10 +1176,8 @@ button.gsv-chat-task-row:focus-visible {
   align-items: baseline;
   gap: 8px;
   min-width: 0;
-  font-family: var(--gsv-font-mono);
-  font-size: 0.75rem; /* 12px, size from .gsv-sublabel */
-  letter-spacing: 0.06em;
   line-height: 1.5;
+  /* label = .gsv-message-label (10px mono), summary = .gsv-prose (13px) */
   color: #7d78b8;
 }
 
@@ -1193,7 +1191,6 @@ button.gsv-chat-task-row:focus-visible {
 
 .gsv-chat-system-line small {
   color: #8f89ca;
-  font-size: inherit;
   font-weight: 400;
 }
 
@@ -1260,13 +1257,12 @@ button.gsv-chat-task-row:focus-visible {
 }
 
 .gsv-chat-system-detail {
+  /* size + family from .gsv-prose (13px, paragraph tier) */
   margin-top: 8px;
   padding: 10px 12px;
   border: 1px solid var(--rule-inner);
   background: #0c0a22;
   color: #9089d4;
-  font-family: var(--gsv-font-mono);
-  font-size: 10.5px;
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1358,6 +1354,19 @@ button.gsv-chat-task-row:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The Hint wrappers around the truncating labels must not shrink-wrap them —
+   the bubble is portaled, so the wrapper is layout-only here. */
+.gsv-chat-hil-title .gsv-tt {
+  min-width: 0;
+}
+.gsv-chat-hil-title .gsv-tt strong {
+  max-width: 100%;
+}
+.gsv-chat-hil > .gsv-tt {
+  display: block;
+  min-width: 0;
 }
 
 .gsv-chat-hil-actions {
@@ -1530,7 +1539,8 @@ button.gsv-chat-task-row:focus-visible {
   gap: 8px;
   flex-wrap: wrap;
   color: #a8a2dc;
-  /* size + family from .gsv-sublabel (12px); weight + tracking kept */
+  /* size + family from .gsv-message-label (10px, label tier); weight +
+     tracking kept */
   font-weight: 400;
   letter-spacing: 0.12em;
 }
@@ -1550,7 +1560,7 @@ button.gsv-chat-task-row:focus-visible {
 
 .gsv-chat-message-text {
   color: #cdd2e0;
-  font-size: 13.5px;
+  font-size: 0.8125rem; /* 13px, size from .gsv-prose (paragraph tier) */
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
