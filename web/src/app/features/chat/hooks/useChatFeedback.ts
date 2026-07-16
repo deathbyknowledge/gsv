@@ -22,8 +22,9 @@ export type ChatFeedback = {
   begin: (key: string, label: string, options?: { persist?: boolean }) => void;
   /** Update the label of a running line (e.g. Listening… → Transcribing…). */
   update: (key: string, label: string) => void;
-  /** Mark the outcome; transient lines linger briefly then disappear. */
-  resolve: (key: string, status: "success" | "error" | "attention", label?: string) => void;
+  /** Mark the outcome; transient lines linger briefly then disappear unless
+   *  `persist` overrides the entry's own persistence. */
+  resolve: (key: string, status: "success" | "error" | "attention", label?: string, options?: { persist?: boolean }) => void;
   /** Remove a line immediately. */
   clear: (key: string) => void;
   /** Drop everything (e.g. when switching process). */
@@ -81,7 +82,7 @@ export function useChatFeedback(): ChatFeedback {
     apply((current) => current.filter((item) => item.key !== key));
   }, [apply, clearTimer]);
 
-  const resolve = useCallback((key: string, status: "success" | "error" | "attention", label?: string) => {
+  const resolve = useCallback((key: string, status: "success" | "error" | "attention", label?: string, options?: { persist?: boolean }) => {
     clearTimer(key);
     const existing = entriesRef.current.find((item) => item.key === key);
     if (!existing) {
@@ -96,16 +97,17 @@ export function useChatFeedback(): ChatFeedback {
         key,
         id: `${key}:${counterRef.current}`,
         label,
-        persist: true,
+        persist: options?.persist ?? true,
         status,
       };
       apply((current) => [...current, entry]);
       return;
     }
+    const persist = options?.persist ?? existing.persist;
     apply((current) => current.map((item) => item.key === key
-      ? { ...item, status, label: label ?? item.label }
+      ? { ...item, status, persist, label: label ?? item.label }
       : item));
-    if (!existing.persist) {
+    if (!persist) {
       const timer = globalThis.setTimeout(() => {
         timersRef.current.delete(key);
         apply((current) => current.filter((item) => item.key !== key));

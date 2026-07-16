@@ -87,40 +87,23 @@ function cancellationError(message: string): Error {
   return error;
 }
 
-function ambientTitle(state: PresenceState, note: string): string {
-  if (state === "listening") {
-    return note || "End conversation";
-  }
-  if (state === "capturing") {
-    return note || "Capturing speech";
-  }
-  if (state === "transcribing") {
-    return note || "Transcribing speech";
-  }
-  if (state === "sending") {
-    return note || "Sending transcript";
-  }
+/** Tooltip titles stay plain action labels — never status or error text; the
+ *  chat feedback lines are the status surface. Only the capability notice
+ *  (unsupported browser) is allowed through, since it explains a disabled
+ *  control. */
+function ambientTitle(state: PresenceState): string {
   if (state === "unsupported") {
     return "Live transcription is unavailable in this browser";
   }
-  if (state === "error") {
-    return note || "Live transcription needs attention";
-  }
-  return "Start conversation";
+  return isLiveState(state) ? "End conversation" : "Start conversation";
 }
 
-function dictationTitle(state: PresenceState, note: string): string {
-  if (state === "recording") {
-    return note || "Stop dictation";
-  }
-  if (state === "transcribing") {
-    return note || "Transcribing dictation";
-  }
+function dictationTitle(state: PresenceState): string {
   if (state === "unsupported") {
     return "Dictation is unavailable in this browser";
   }
-  if (state === "error") {
-    return note || "Dictation needs attention";
+  if (state === "recording" || state === "transcribing") {
+    return "Stop dictation";
   }
   return "Dictate message";
 }
@@ -615,8 +598,8 @@ export function useChatAmbientTranscription({
   const active = dictationActive || liveActive;
   const liveUnavailable = !liveActive && (disabled || !connected || !canUseAmbientMode());
   const dictationUnavailable = !dictationActive && (disabled || !connected || !canUseBrowserVoiceRecorder());
-  const currentDictationTitle = dictationTitle(state, note);
-  const currentLiveTitle = ambientTitle(state, note);
+  const currentDictationTitle = dictationTitle(state);
+  const currentLiveTitle = ambientTitle(state);
   const title = liveActive ? currentLiveTitle : currentDictationTitle;
 
   return {

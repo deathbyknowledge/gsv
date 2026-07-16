@@ -559,21 +559,26 @@ export function ChatDock({
   const voiceTitle = ambientTranscription.liveActive
     ? ambientTranscription.liveTitle
     : ambientTranscription.dictationTitle;
-  const voiceError = ambientTranscription.error;
   // Voice status feedback lines — transient "Listening…" / "Transcribing…" in
   // the chat body while conversation mode or dictation is active (HAM-473).
   const voiceFeedbackLabel = useRef<string | null>(null);
+  const voiceErrorNoted = useRef(false);
   useEffect(() => {
     const state = ambientTranscription.state;
     const voiceOn = ambientTranscription.liveActive || ambientTranscription.dictationActive;
-    // A failed session resolves the line red for a moment instead of silently
-    // vanishing; the persistent copy of the message is the composer alert
-    // (ambientTranscription.error → controlError).
-    if (state === "error" && voiceFeedbackLabel.current !== null) {
-      voiceFeedbackLabel.current = null;
-      feedback.resolve("voice", "error", ambientTranscription.note || "Voice input failed");
+    // A failure (dictation OR conversation mode) stays in the chat as a
+    // persistent red line until the next sent message — the chat is the only
+    // failure surface; the mic tooltip keeps its plain action label. The ref
+    // gates re-resolving while the recorder sits in the error state.
+    if (state === "error") {
+      if (!voiceErrorNoted.current) {
+        voiceErrorNoted.current = true;
+        voiceFeedbackLabel.current = null;
+        feedback.resolve("voice", "error", ambientTranscription.note || "Voice input failed", { persist: true });
+      }
       return;
     }
+    voiceErrorNoted.current = false;
     const label = !voiceOn
       ? null
       : state === "recording" || state === "listening" || state === "capturing"
@@ -623,7 +628,7 @@ export function ChatDock({
           ? errorMessage(forkConversation.error, "Conversation could not be branched.")
           : setProcessAiConfig.isError
             ? errorMessage(setProcessAiConfig.error, "Process model settings could not be updated.")
-            : attachmentError || voiceError;
+            : attachmentError;
   // Re-arm the dismissed-error snapshot once the failing state clears, so a
   // later failure with the identical message still surfaces.
   useEffect(() => {
@@ -754,11 +759,12 @@ export function ChatDock({
       }
       return;
     }
-    // Resolved stop/compact status lines describe the previous operation; once
-    // the conversation moves on they'd sit below newer messages, so drop them.
-    // In-flight lines stay (their outcome still matters).
+    // Resolved stop/compact/voice status lines describe the previous
+    // operation; once the conversation moves on they'd sit below newer
+    // messages, so drop them. In-flight lines stay (their outcome still
+    // matters), including a live "Listening…" line.
     for (const entry of feedback.entries) {
-      if ((entry.key === "compact" || entry.key === "abort") && entry.status !== "running") {
+      if ((entry.key === "compact" || entry.key === "abort" || entry.key === "voice") && entry.status !== "running") {
         feedback.clear(entry.key);
       }
     }
