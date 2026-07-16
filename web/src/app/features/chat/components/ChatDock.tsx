@@ -738,6 +738,14 @@ export function ChatDock({
       }
       return;
     }
+    // Resolved stop/compact status lines describe the previous operation; once
+    // the conversation moves on they'd sit below newer messages, so drop them.
+    // In-flight lines stay (their outcome still matters).
+    for (const entry of feedback.entries) {
+      if ((entry.key === "compact" || entry.key === "abort") && entry.status !== "running") {
+        feedback.clear(entry.key);
+      }
+    }
   };
 
   const branchFromMessage = (messageId: number) => {
