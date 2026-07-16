@@ -326,6 +326,29 @@ export function applyChatSignal(
   return { matched: false, refreshHistory: false, state };
 }
 
+/** First-line markers of every system message the gateway emits for a FAILURE
+ *  (traced through gateway/src/process/do.ts + inference/errors.ts). System
+ *  rows carry no structural severity, so errors are recognized by text.
+ *  Fail-safe: anything unmatched renders as a neutral informational row —
+ *  a new gateway error format degrades to neutral, never to a false red. */
+export const SYSTEM_ERROR_PREFIXES: readonly string[] = [
+  "Generation failed",
+  "Context limit reached",
+  "Context limit policy stopped this run.",
+  "Auto-compaction failed before model call:",
+  "Message media preparation timed out after",
+  "Failed to prepare message media:",
+  "Failed to schedule media timeout:",
+  "Failed to schedule process run:",
+  "Failed to schedule delegated task:",
+  "Failed to schedule runtime event:",
+];
+
+export function classifySystemError(text: string): boolean {
+  const head = text.trimStart();
+  return SYSTEM_ERROR_PREFIXES.some((prefix) => head.startsWith(prefix));
+}
+
 export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptRow[] {
   const rows: ChatTranscriptRow[] = [];
 
@@ -428,6 +451,7 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
       id: `message:${message.clientId || index}`,
       role,
       text: message.text,
+      ...(role === "system" && classifySystemError(message.text) ? { isError: true } : {}),
       ...(media.length > 0 ? { media } : {}),
       messageId: message.id,
       origin: message.origin,
@@ -548,6 +572,7 @@ function rowFromProcChangedMessage(record: Record<string, unknown> | null): Chat
     id: messageId !== null ? `message:${messageId}` : `live:${role}:${timestamp}`,
     role,
     text,
+    ...(role === "system" && classifySystemError(text) ? { isError: true } : {}),
     ...(media.length > 0 ? { media } : {}),
     messageId,
     origin: normalizeInteractionOrigin(record.origin),

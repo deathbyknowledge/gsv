@@ -934,7 +934,13 @@ function buildTranscriptRenderItems(messages: readonly ChatDockMessage[]): Trans
   return items;
 }
 
-function estimateMessageHeight(message: ChatDockMessage): number {
+/** The per-message key used for copy + expansion state — must match the id
+ *  computed in TranscriptRenderItemView. */
+function renderItemMessageKey(item: TranscriptRenderItem & { kind: "message" }): string {
+  return `${normalizedRole(item.message.role)}:${item.message.id}:${item.index}`;
+}
+
+function estimateMessageHeight(message: ChatDockMessage, expanded: boolean): number {
   const role = normalizedRole(message.role);
   const textLength = message.text.length + (message.thinking?.join("\n\n").length ?? 0);
   const mediaHeight = (message.media?.length ?? 0) * 92;
@@ -945,36 +951,42 @@ function estimateMessageHeight(message: ChatDockMessage): number {
     return Math.max(86, 52 + Math.ceil(textLength / 72) * 23 + mediaHeight);
   }
   if (role === "system") {
+    if (message.isError && !expanded) {
+      return 56;
+    }
     return Math.max(64, 44 + Math.ceil(textLength / 80) * 18);
   }
   return Math.max(120, 92 + Math.ceil(textLength / 72) * 18);
 }
 
-function estimateRenderItemHeight(item: TranscriptRenderItem, active: boolean): number {
+function estimateRenderItemHeight(item: TranscriptRenderItem, expandedKeys: ReadonlySet<string>): number {
   if (item.kind === "activityGroup") {
     return 34;
   }
-  return estimateMessageHeight(item.message);
+  return estimateMessageHeight(item.message, expandedKeys.has(renderItemMessageKey(item)));
 }
 
-function estimateKeyForRenderItem(item: TranscriptRenderItem): string {
+function estimateKeyForRenderItem(item: TranscriptRenderItem, expandedKeys: ReadonlySet<string>): string {
   if (item.kind === "activityGroup") {
     const signature = item.entries
       .map((entry) => `${entry.kind}:${entry.message.id}:${entry.message.status ?? ""}:${entry.message.toolOutcome ?? ""}:${entry.message.text.length}:${reasoningText(entry.message).length}:${entry.message.backupModel ? "backup" : ""}`)
       .join("|");
     return `${item.id}:${signature}`;
   }
-  return `${item.id}:${item.message.status ?? ""}:${item.message.toolOutcome ?? ""}:${item.message.text.length}:${reasoningText(item.message).length}:${item.message.backupModel ? "backup" : ""}:${item.message.media?.length ?? 0}`;
+  const expanded = expandedKeys.has(renderItemMessageKey(item)) ? "expanded" : "";
+  return `${item.id}:${item.message.status ?? ""}:${item.message.toolOutcome ?? ""}:${item.message.text.length}:${reasoningText(item.message).length}:${item.message.backupModel ? "backup" : ""}:${item.message.media?.length ?? 0}:${expanded}`;
 }
 
 function buildVirtualEntries({
   activeActivityGroupId,
+  expandedKeys,
   feedback,
   hasOlderMessages,
   loadingOlderMessages,
   renderItems,
 }: {
   activeActivityGroupId: string | null;
+  expandedKeys: ReadonlySet<string>;
   feedback: readonly ChatFeedbackEntry[];
   hasOlderMessages: boolean;
   loadingOlderMessages: boolean;
@@ -994,8 +1006,8 @@ function buildVirtualEntries({
     const active = item.kind === "activityGroup" && item.id === activeActivityGroupId;
     entries.push({
       alwaysRender: item.kind === "activityGroup" && activityGroupStatus(item.entries, active) === "running",
-      estimateHeight: estimateRenderItemHeight(item, active),
-      estimateKey: estimateKeyForRenderItem(item),
+      estimateHeight: estimateRenderItemHeight(item, expandedKeys),
+      estimateKey: estimateKeyForRenderItem(item, expandedKeys),
       item,
       key: item.id,
       kind: "item",
@@ -1023,6 +1035,13 @@ function summarizeSystemText(text: string): string {
     return trimmed;
   }
   return `${trimmed.slice(0, 89).trim()}...`;
+}
+
+/** True when the full text carries more than the one-line summary shows —
+ *  either it was truncated or the original has multi-line formatting. */
+function systemTextHasMore(text: string, summary: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized !== summary || text.trim() !== normalized;
 }
 
 function UserMessage({
@@ -1087,28 +1106,53 @@ function SystemSurfaceMessage({
   copied,
   failed,
   message,
+  expanded,
+  onToggleExpand,
   onCopy,
 }: {
   copied: boolean;
   failed: boolean;
   message: ChatDockMessage;
+  expanded: boolean;
+  onToggleExpand: () => void;
   onCopy: () => void;
 }) {
   const origin = originLabel(message.origin);
-  const [expanded, setExpanded] = useState(false);
   const summary = message.meta || summarizeSystemText(message.text);
+  const expandable = systemTextHasMore(message.text, summary);
+
+  const body = (
+    <>
+      <div class="gsv-chat-system-line">
+        <span>SYSTEM</span>
+        {!expanded && summary ? <small>{summary}</small> : null}
+      </div>
+      {expanded ? <div class="gsv-chat-system-detail">{message.text}</div> : null}
+    </>
+  );
 
   return (
     <article class="gsv-chat-system-surface">
-      <div class="gsv-chat-system-line">
-        <span>SYSTEM</span>
-        {summary ? <small>{summary}</small> : null}
-      </div>
+      {expandable ? (
+        <Hint text={expanded ? "Click to collapse" : "Click to expand"}>
+          <div
+            role="button"
+            tabIndex={0}
+            class="gsv-chat-system-toggle"
+            aria-expanded={expanded}
+            onClick={onToggleExpand}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onToggleExpand();
+              }
+            }}
+          >
+            {body}
+          </div>
+        </Hint>
+      ) : body}
       <div class="gsv-chat-system-actions">
-        <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
-          <i aria-hidden="true" data-expanded={expanded ? "true" : undefined}>{">"}</i>
-          DETAILS
-        </button>
         {message.time ? <span>{message.time}</span> : null}
         {origin ? <span title={origin}>{origin}</span> : null}
         <CopyButton
@@ -1119,7 +1163,62 @@ function SystemSurfaceMessage({
           onCopy={onCopy}
         />
       </div>
-      {expanded ? <div class="gsv-chat-system-detail">{message.text}</div> : null}
+    </article>
+  );
+}
+
+/** System failure rows render as a red feedback line; clicking (when there is
+ *  more than the summarized line) swaps it for the full text shown once. */
+function SystemErrorLine({
+  copied,
+  failed,
+  message,
+  expanded,
+  onToggleExpand,
+  onCopy,
+}: {
+  copied: boolean;
+  failed: boolean;
+  message: ChatDockMessage;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onCopy: () => void;
+}) {
+  const summary = summarizeSystemText(message.text);
+  const expandable = systemTextHasMore(message.text, summary);
+  const body = expanded
+    ? <div class="gsv-chat-system-error-full gsv-prose">{message.text}</div>
+    : <ChatFeedbackMessage label={summary} status="error" />;
+
+  return (
+    <article class="gsv-chat-system-error">
+      {expandable ? (
+        <Hint text={expanded ? "Click to collapse" : "Click to expand"}>
+          <div
+            role="button"
+            tabIndex={0}
+            class="gsv-chat-system-toggle"
+            aria-expanded={expanded}
+            onClick={onToggleExpand}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onToggleExpand();
+              }
+            }}
+          >
+            {body}
+          </div>
+        </Hint>
+      ) : body}
+      <MessageMeta
+        time={message.time}
+        copyLabel={copyButtonLabel(copied, failed)}
+        copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
+        copyDisabled={!message.text.trim()}
+        copyFailed={failed}
+        onCopy={onCopy}
+      />
     </article>
   );
 }
@@ -1360,6 +1459,8 @@ function ProcessMessage({
   failed,
   message,
   processId,
+  expanded,
+  onToggleExpand,
   onCopy,
   onOpenReasoning,
 }: {
@@ -1367,6 +1468,8 @@ function ProcessMessage({
   failed: boolean;
   message: ChatDockMessage;
   processId: string;
+  expanded: boolean;
+  onToggleExpand: () => void;
   onCopy: () => void;
   onOpenReasoning?: (target: ChatReasoningTarget) => void;
 }) {
@@ -1387,11 +1490,22 @@ function ProcessMessage({
   }
 
   if (messageRole === "system") {
-    return (
+    return message.isError ? (
+      <SystemErrorLine
+        copied={copied}
+        failed={failed}
+        message={message}
+        expanded={expanded}
+        onToggleExpand={onToggleExpand}
+        onCopy={onCopy}
+      />
+    ) : (
       <SystemSurfaceMessage
         copied={copied}
         failed={failed}
         message={message}
+        expanded={expanded}
+        onToggleExpand={onToggleExpand}
         onCopy={onCopy}
       />
     );
@@ -1476,18 +1590,22 @@ function VirtualTranscriptRow({
 function TranscriptRenderItemView({
   activeActivityGroupId,
   copyState,
+  expandedKeys,
   item,
   onBranch,
   onCopy,
   onOpenReasoning,
+  onToggleExpand,
   processId,
 }: {
   activeActivityGroupId: string | null;
   copyState: CopyState | null;
+  expandedKeys: ReadonlySet<string>;
   item: TranscriptRenderItem;
   onBranch?: (messageId: number) => void;
   onCopy: (message: ChatDockMessage, messageId: string) => void;
   onOpenReasoning?: (target: ChatReasoningTarget) => void;
+  onToggleExpand: (messageId: string) => void;
   processId: string;
 }) {
   if (item.kind === "activityGroup") {
@@ -1515,6 +1633,8 @@ function TranscriptRenderItemView({
       failed={failed}
       message={message}
       processId={processId}
+      expanded={expandedKeys.has(messageId)}
+      onToggleExpand={() => onToggleExpand(messageId)}
       onCopy={() => onCopy(message, messageId)}
       onOpenReasoning={onOpenReasoning}
     />
@@ -1575,6 +1695,20 @@ export function ChatTranscript({
   state = "ready",
 }: ChatTranscriptProps) {
   const [copyState, setCopyState] = useState<CopyState | null>(null);
+  // Expanded system messages, keyed like copyState ids — parent-owned so the
+  // flag survives virtualized rows unmounting off-screen.
+  const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(new Set());
+  const toggleExpanded = useCallback((messageId: string) => {
+    setExpandedKeys((current) => {
+      const next = new Set(current);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  }, []);
   const copyResetTimer = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
@@ -1594,11 +1728,12 @@ export function ChatTranscript({
   }, [activeRunId, renderItems]);
   const virtualEntries = useMemo(() => buildVirtualEntries({
     activeActivityGroupId,
+    expandedKeys,
     feedback,
     hasOlderMessages,
     loadingOlderMessages,
     renderItems,
-  }), [activeActivityGroupId, feedback, hasOlderMessages, loadingOlderMessages, renderItems]);
+  }), [activeActivityGroupId, expandedKeys, feedback, hasOlderMessages, loadingOlderMessages, renderItems]);
   const virtual = useVirtualTranscript({
     entries: virtualEntries,
     scrollTop: viewport.scrollTop,
@@ -1848,10 +1983,12 @@ export function ChatTranscript({
                 <TranscriptRenderItemView
                   activeActivityGroupId={activeActivityGroupId}
                   copyState={copyState}
+                  expandedKeys={expandedKeys}
                   item={item.entry.item}
                   onBranch={onBranch}
                   onCopy={copyMessage}
                   onOpenReasoning={onOpenReasoning}
+                  onToggleExpand={toggleExpanded}
                   processId={processId}
                 />
               )}

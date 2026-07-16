@@ -1229,16 +1229,34 @@ button.gsv-chat-task-row:focus-visible {
   outline: none;
 }
 
-.gsv-chat-system-actions button i {
-  display: inline-block;
-  font-size: 8px;
-  font-style: normal;
-  transform-origin: center;
-  transition: transform 120ms ease;
+/* Clicking the line itself expands a system message in place (the summary is
+   replaced by the full text — shown once, no repetition). */
+.gsv-chat-system-toggle {
+  cursor: pointer;
+}
+.gsv-chat-system-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
-.gsv-chat-system-actions button i[data-expanded="true"] {
-  transform: rotate(90deg);
+/* System failure rows: red feedback line collapsed, full error prose when
+   expanded. */
+.gsv-chat-system-error {
+  flex: none;
+  padding: 2px 0;
+}
+.gsv-chat-system-error-full {
+  /* size + family from .gsv-prose (13px) */
+  color: var(--error);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+  user-select: text;
+}
+.gsv-chat-system-error:hover .gsv-mm-time,
+.gsv-chat-system-error:focus-within .gsv-mm-time {
+  opacity: 1;
 }
 
 .gsv-chat-system-detail {
