@@ -23,6 +23,7 @@
    reuses them for its header. */
 .gsv-chat-rp-back {
   appearance: none;
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -50,6 +51,9 @@
 }
 
 .gsv-chat-rp-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--meta);
   letter-spacing: 0.16em;
   white-space: nowrap;

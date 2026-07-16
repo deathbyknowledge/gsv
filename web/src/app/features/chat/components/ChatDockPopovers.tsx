@@ -252,7 +252,7 @@ export function ChatDockPopovers({
       {openPopover === "context" ? (
         <PopoverMenu
           ariaLabel="Context state"
-          width="narrow"
+          width="menu"
           header={{
             kind: "titled",
             title: "CONTEXT",

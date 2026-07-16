@@ -171,7 +171,14 @@ export function ListRow({
   const mergedStyle = style ? { ...rootStyle, ...style } : rootStyle;
 
   return onClick ? (
-    <button type="button" onClick={onClick} class={rootClass} data-clickable="true" style={mergedStyle}>
+    <button
+      type="button"
+      onClick={onClick}
+      class={rootClass}
+      data-clickable="true"
+      aria-current={active ? "true" : undefined}
+      style={mergedStyle}
+    >
       {content}
     </button>
   ) : (

@@ -109,7 +109,7 @@ const story: Story = {
       <div class="ds-cell">
         <div class="ds-label">Text disabled while dictating (mic stays live)</div>
         <div style={{ width: 460 }}>
-          <MessageInput textDisabled voiceActive voiceTitle="Stop recording" placeholder="Listening…" user="operator" onFiles={() => {}} onVoiceClick={() => {}} onSend={() => {}} />
+          <MessageInput textDisabled voiceActive voiceTitle="Stop dictation" placeholder="Message active process..." user="operator" onFiles={() => {}} onVoiceClick={() => {}} onSend={() => {}} />
         </div>
       </div>
     </div>

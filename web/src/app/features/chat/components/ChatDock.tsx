@@ -287,6 +287,10 @@ export function ChatDock({
     && currentRunActive
     && (stoppingRun.runId === null || stoppingRun.runId === currentRunId),
   );
+  // Latest value for async callbacks (the force-return-to-chat guard is
+  // edge-triggered, so a stale closure could open a panel over a live HIL).
+  const pendingHilRef = useRef(pendingHil);
+  pendingHilRef.current = pendingHil;
   const liveActivity = useMemo(
     () => deriveChatLiveActivity(runtime, stoppingCurrentRun),
     [runtime, stoppingCurrentRun],
@@ -822,7 +826,11 @@ export function ChatDock({
       generateSummary: true,
     }, {
       onSuccess: (result) => {
-        setBodyState("archive");
+        // Never open the archive over a blocking approval that arrived
+        // mid-compaction; the segment stays selected for when it clears.
+        if (!pendingHilRef.current) {
+          setBodyState("archive");
+        }
         setSelectedArchiveSegmentId(result.segment.id);
         feedback.resolve("compact", "success", "Context freed");
       },

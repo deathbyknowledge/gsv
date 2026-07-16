@@ -39,7 +39,7 @@ export const POS_CLASS: Record<TooltipPosition, string> = {
 };
 
 /** Resolved-side class on the portaled bubble — drives which arrow edge shows. */
-type Side = "top" | "bottom" | "left" | "right";
+export type Side = "top" | "bottom" | "left" | "right";
 const SIDE_CLASS: Record<Side, string> = {
   top: "gsv-tt-side-top",
   bottom: "gsv-tt-side-bottom",
@@ -52,11 +52,21 @@ const MARGIN = 8;
 /** Hover-intent dwell before a pointer opens the bubble. */
 const HOVER_DELAY = 300;
 
-interface Placement {
+export interface Placement {
   left: number;
   top: number;
   side: Side;
   arrowOffset: number;
+}
+
+/** Structural anchor rect — DOMRect satisfies it; tests can pass literals. */
+export interface AnchorRect {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+  width: number;
+  height: number;
 }
 
 /* ── Singleton manager ───────────────────────────────────────────────────────
@@ -167,9 +177,10 @@ const SIDE_PREF: Record<TooltipPosition, SidePref> = {
 /** Resolve the final on-screen placement of the bubble around the visible anchor
  *  rect: pick a side (flipping when the preferred side lacks room and its
  *  opposite has more), anchor + clamp the cross axis into the viewport, and
- *  compute the arrow offset so it keeps pointing at the anchor after clamping. */
-function resolvePlacement(
-  anchor: DOMRect,
+ *  compute the arrow offset so it keeps pointing at the anchor after clamping.
+ *  Exported for unit tests (pure math over the anchor + window size). */
+export function resolvePlacement(
+  anchor: AnchorRect,
   bw: number,
   bh: number,
   requested: TooltipPosition,
@@ -357,20 +368,21 @@ function useTooltipReveal(position: TooltipPosition) {
   return { wrapRef, bubbleRef, open, shown, placement };
 }
 
-/** Renders the portaled bubble. Returns null until the wrapper is open. */
+/** Renders the portaled bubble. Returns null until the wrapper is open. The
+ *  bubble is purely visual (aria-hidden) — the accessible description is the
+ *  always-mounted hidden span inside the wrapper, so it exists the moment
+ *  focus lands instead of one render later. */
 function TooltipBubble({
   open,
   shown,
   placement,
   bubbleRef,
-  bubbleId,
   text,
 }: {
   open: boolean;
   shown: boolean;
   placement: Placement | null;
   bubbleRef: RefObject<HTMLSpanElement>;
-  bubbleId: string;
   text: string;
 }) {
   if (!open) return null;
@@ -386,8 +398,7 @@ function TooltipBubble({
     <span
       ref={bubbleRef}
       class={`gsv-tt-bub gsv-tt-portal gsv-sublabel ${sideClass}${shown ? " is-open" : ""}`}
-      id={bubbleId}
-      role="tooltip"
+      aria-hidden="true"
       style={style}
     >
       {text}
@@ -415,16 +426,16 @@ export function Tooltip({
       <button
         type="button"
         class={`gsv-tt-trigger${bare ? " gsv-tt-trigger-bare" : ""}`}
-        aria-describedby={open ? bubbleId : undefined}
+        aria-describedby={bubbleId}
       >
         {bare ? children : trigger}
       </button>
+      <span class="gsv-tt-desc" id={bubbleId} role="tooltip">{text}</span>
       <TooltipBubble
         open={open}
         shown={shown}
         placement={placement}
         bubbleRef={bubbleRef}
-        bubbleId={bubbleId}
         text={text}
       />
     </span>
@@ -445,26 +456,27 @@ export interface HintProps {
  *  control (button, label, etc.) instead of rendering its own trigger button.
  *  The child stays the sole focusable element (no nested buttons); the bubble is
  *  revealed on hover/focus of the wrapper. When the child is a single element it
- *  is cloned to receive `aria-describedby` pointing at the bubble (only while it
- *  is mounted). Use this to give icon buttons a styled, explanatory tooltip in
- *  place of native `title`. */
+ *  is cloned to receive `aria-describedby` pointing at an always-mounted hidden
+ *  description span, so the description exists the moment focus lands. Use this
+ *  to give icon buttons a styled, explanatory tooltip in place of native
+ *  `title`. */
 export function Hint({ text, position = "top", children }: HintProps) {
   const bubbleId = useId();
   const { wrapRef, bubbleRef, open, shown, placement } = useTooltipReveal(position);
   const child = isValidElement(children)
     ? cloneElement(children as VNode<{ "aria-describedby"?: string }>, {
-        "aria-describedby": open ? bubbleId : undefined,
+        "aria-describedby": bubbleId,
       })
     : children;
   return (
     <span ref={wrapRef} class={`gsv-tt ${POS_CLASS[position]} gsv-hint`}>
       {child}
+      <span class="gsv-tt-desc" id={bubbleId} role="tooltip">{text}</span>
       <TooltipBubble
         open={open}
         shown={shown}
         placement={placement}
         bubbleRef={bubbleRef}
-        bubbleId={bubbleId}
         text={text}
       />
     </span>

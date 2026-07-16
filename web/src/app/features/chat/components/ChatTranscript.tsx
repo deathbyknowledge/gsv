@@ -934,8 +934,8 @@ function buildTranscriptRenderItems(messages: readonly ChatDockMessage[]): Trans
   return items;
 }
 
-/** The per-message key used for copy + expansion state — must match the id
- *  computed in TranscriptRenderItemView. */
+/** The per-message key for copy + expansion state — the single source shared
+ *  by TranscriptRenderItemView and the virtualization estimates. */
 function renderItemMessageKey(item: TranscriptRenderItem & { kind: "message" }): string {
   return `${normalizedRole(item.message.role)}:${item.message.id}:${item.index}`;
 }
@@ -1140,6 +1140,7 @@ function SystemSurfaceMessage({
             tabIndex={0}
             class="gsv-chat-system-toggle"
             aria-expanded={expanded}
+            aria-label={expanded ? "Collapse system message" : "Expand system message"}
             onClick={onToggleExpand}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
@@ -1199,6 +1200,7 @@ function SystemErrorLine({
             tabIndex={0}
             class="gsv-chat-system-toggle"
             aria-expanded={expanded}
+            aria-label={expanded ? "Collapse system error" : "Expand system error"}
             onClick={onToggleExpand}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
@@ -1614,7 +1616,7 @@ function TranscriptRenderItemView({
 
   const message = item.message;
   const messageRole = normalizedRole(message.role);
-  const messageId = `${messageRole}:${message.id}:${item.index}`;
+  const messageId = renderItemMessageKey(item);
   const copied = copyState?.id === messageId && copyState.status === "copied";
   const failed = copyState?.id === messageId && copyState.status === "failed";
 
