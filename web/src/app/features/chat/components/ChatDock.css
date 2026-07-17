@@ -423,7 +423,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.gsv-shell-root .gsv-chat-agent-conversation:hover,
+/* Hover brightening is pointer-only — on touch the tap would otherwise leave
+   the sticky :hover color behind after the sheet closes. Focus-visible keeps
+   the bright color for keyboard users on every device. */
+@media (hover: hover) {
+  .gsv-shell-root .gsv-chat-agent-conversation:hover {
+    color: #e6e4ff;
+  }
+}
 .gsv-shell-root .gsv-chat-agent-conversation:focus-visible {
   color: #e6e4ff;
   outline: none;
@@ -468,9 +475,14 @@
   color: var(--online);
 }
 
-.gsv-shell-root .gsv-chat-agent-model:hover,
+/* Pointer-only hover — same sticky-tap rationale as the branch trigger. */
+@media (hover: hover) {
+  .gsv-shell-root .gsv-chat-agent-model:hover,
+  .gsv-shell-root .gsv-chat-agent-activity:hover {
+    color: #e6e4ff;
+  }
+}
 .gsv-shell-root .gsv-chat-agent-model:focus-visible,
-.gsv-shell-root .gsv-chat-agent-activity:hover,
 .gsv-shell-root .gsv-chat-agent-activity:focus-visible {
   color: #e6e4ff;
   outline: none;
@@ -2334,7 +2346,7 @@
   flex: 1;
   flex-direction: row;
   align-items: center;
-  gap: 10px;
+  gap: 16px;
   min-width: 0;
 }
 
@@ -2353,6 +2365,8 @@
 .gsv-shell-viewport.is-mobile .gsv-chat-m-rows > * {
   width: 100%;
   min-height: 44px;
+  /* the OS tap flash reads as a stray highlight on these bare text rows */
+  -webkit-tap-highlight-color: transparent;
 }
 
 .gsv-shell-viewport.is-mobile .gsv-chat-actions {
