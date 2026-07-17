@@ -6,6 +6,10 @@
  */
 
 import { EventEmitter } from "node:events";
+import {
+  readResponseBodyBytes,
+  SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+} from "../../shared/src/media-body";
 
 // Re-export WebSocket constants
 export const CONNECTING = 0;
@@ -69,13 +73,33 @@ export class WebSocket extends EventEmitter {
         try {
           if (event.data instanceof ArrayBuffer) {
             const size = event.data.byteLength;
+            if (size > SAFE_MATERIALIZED_MEDIA_PART_BYTES) {
+              this.emit("error", new Error(`WebSocket message exceeds limit (${size} bytes)`));
+              this.ws?.close(1009, "Message too large");
+              return;
+            }
             console.log(`[ws-shim] Received ${size} bytes`);
             this.emit("message", Buffer.from(event.data));
           } else if (event.data instanceof Blob) {
             // Convert Blob to ArrayBuffer
+            if (event.data.size > SAFE_MATERIALIZED_MEDIA_PART_BYTES) {
+              this.emit("error", new Error(`WebSocket message exceeds limit (${event.data.size} bytes)`));
+              this.ws?.close(1009, "Message too large");
+              return;
+            }
             console.log(`[ws-shim] Received Blob: ${event.data.size} bytes`);
-            event.data.arrayBuffer().then((buffer) => {
-              this.emit("message", Buffer.from(buffer));
+            readResponseBodyBytes(new Response(event.data), {
+              maxBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+              expectedBytes: event.data.size,
+              label: "WebSocket message",
+            }).then((bytes) => {
+              this.emit("message", Buffer.from(
+                bytes.buffer as ArrayBuffer,
+                bytes.byteOffset,
+                bytes.byteLength,
+              ));
+            }).catch((error) => {
+              this.emit("error", error);
             });
           } else if (typeof event.data === "string") {
             // String message

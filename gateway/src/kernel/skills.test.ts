@@ -10,6 +10,7 @@ import {
   parseSkillMarkdown,
   renderSkillIndex,
   resolveSkillDocument,
+  validateSkillMarkdown,
 } from "./skills";
 
 const IDENTITY: ProcessIdentity = {
@@ -265,6 +266,47 @@ describe("parseSkillMarkdown", () => {
   });
 });
 
+describe("validateSkillMarkdown", () => {
+  it("accepts a complete skill whose name matches its path", () => {
+    expect(validateSkillMarkdown([
+      "---",
+      "name: browse-instagram",
+      "description: >",
+      "  Browse Instagram through the connected browser when the user asks for a repeatable review.",
+      "---",
+      "",
+      "# Browse Instagram",
+      "",
+      "Use the browser target and inspect before acting.",
+      "",
+    ].join("\n"), "browse-instagram")).toEqual({
+      ok: true,
+      name: "browse-instagram",
+      description: "Browse Instagram through the connected browser when the user asks for a repeatable review.",
+    });
+  });
+
+  it("reports malformed metadata, mismatched paths, and empty instructions", () => {
+    const result = validateSkillMarkdown([
+      "---",
+      "name: Browse Instagram",
+      "name: duplicate",
+      "description:",
+      "---",
+      "",
+    ].join("\n"), "browse-instagram");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toEqual(expect.arrayContaining([
+      "frontmatter field 'name' must appear exactly once",
+      "frontmatter name 'duplicate' must match skill path name 'browse-instagram'",
+      "frontmatter field 'description' is required",
+      "SKILL.md must include non-empty workflow instructions after frontmatter",
+    ]));
+  });
+});
+
 describe("renderSkillIndex", () => {
   it("renders top-level skills as the prompt-visible manual index", () => {
     const index = renderSkillIndex([
@@ -281,6 +323,21 @@ describe("renderSkillIndex", () => {
     expect(index).toContain("<skill>");
     expect(index).toContain("<name>device-management</name>");
     expect(index).toContain("<description>Manage devices and targets.</description>");
+  });
+
+  it("can render names without descriptions", () => {
+    const index = renderSkillIndex([
+      {
+        id: "device-management",
+        name: "device-management",
+        description: "Manage devices and targets.",
+        source: { kind: "home", label: "home", writable: true },
+      },
+    ], "names");
+
+    expect(index).toContain("<name>device-management</name>");
+    expect(index).not.toContain("<description>");
+    expect(index).not.toContain("Manage devices and targets.");
   });
 });
 

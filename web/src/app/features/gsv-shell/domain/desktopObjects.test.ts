@@ -42,7 +42,6 @@ const adapterInventory: ConsoleAdapter = {
   supportsDisconnect: true,
   supportsSend: true,
   supportsStatus: true,
-  supportsShellExec: true,
   supportsActivity: true,
   accounts: [adapter],
 };

@@ -8,16 +8,31 @@
  */
 
 import { DurableObject } from "cloudflare:workers";
+import { DeliveryLedger } from "../../shared/src/delivery-ledger";
+import {
+  bundleAdapterMedia,
+  cancelResponseBody,
+  cancelBinaryBody,
+  responseBodyToBinaryBody,
+  SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+  SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
+} from "../../shared/src/media-body";
 import type {
-  ChannelAccountStatus,
-  ChannelMedia,
-} from "./types";
+  AdapterMediaBundle,
+  AdapterMediaPart,
+} from "../../shared/src/media-body";
 import type {
+  AdapterAccountStatus,
   AdapterInboundMessage,
   AdapterInboundResult,
+  AdapterMedia,
+  AdapterOutboundMessage,
+  AdapterSendResult,
+  BinaryBody,
   GatewayFrame,
   GatewayRequestFrame,
 } from "../../shared/src/types";
+import { deliverDiscordMessage } from "./discord-delivery";
 
 const DISCORD_GATEWAY_URL = "https://discord.com/api/v10/gateway";
 
@@ -46,8 +61,8 @@ const INTENTS = {
   MESSAGE_CONTENT: 1 << 15,
 } as const;
 
-const MAX_INLINE_MEDIA_BYTES = 25 * 1024 * 1024; // 25MB
-const BYTE_TO_BASE64_CHUNK_SIZE = 0x1000; // 4KB (avoids argument-list stack overflows)
+const MAX_MEDIA_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_PART_BYTES;
+const MAX_MEDIA_TOTAL_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES;
 
 type GatewayChannelBinding = Fetcher & {
   serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
@@ -76,12 +91,14 @@ type GatewayState = {
 
 interface Env {
   GATEWAY: GatewayChannelBinding;
+  DISCORD_BOT_TOKEN?: string;
 }
 
 export class DiscordGateway extends DurableObject<Env> {
   private static readonly KEEP_ALIVE_INTERVAL_MS = 10_000; // 10 seconds
   
   private ws: WebSocket | null = null;
+  private readonly deliveries: DeliveryLedger;
   private heartbeatInterval: number = 0;
   private state: GatewayState = {
     accountId: null,
@@ -96,6 +113,7 @@ export class DiscordGateway extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.deliveries = new DeliveryLedger(this.ctx.storage);
     this.loadState();
   }
 
@@ -142,7 +160,7 @@ export class DiscordGateway extends DurableObject<Env> {
     await this.ctx.storage.deleteAlarm();
   }
 
-  async getStatus(): Promise<ChannelAccountStatus> {
+  async getStatus(): Promise<AdapterAccountStatus> {
     return {
       accountId: this.getAccountId(),
       connected: this.state.connected,
@@ -160,6 +178,19 @@ export class DiscordGateway extends DurableObject<Env> {
   async getBotToken(): Promise<string | null> {
     await this.loadState();
     return this.state.botToken;
+  }
+
+  async sendMessage(
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
+    await this.loadState();
+    return await deliverDiscordMessage(
+      this.deliveries,
+      this.state.botToken || this.env.DISCORD_BOT_TOKEN || null,
+      message,
+      body,
+    );
   }
   
   /** Get the account ID name (e.g., "default"), falling back to hex DO id */
@@ -353,8 +384,8 @@ export class DiscordGateway extends DurableObject<Env> {
     if (author?.bot) return;
 
     const content = typeof data.content === "string" ? data.content : "";
-    const media = await this.extractMediaAttachments(data);
-    if (!content && media.length === 0) return;
+    const hasAttachments = Array.isArray(data.attachments) && data.attachments.length > 0;
+    if (!content && !hasAttachments) return;
 
     const guildId = data.guild_id as string | undefined;
     const channelId = data.channel_id as string;
@@ -368,8 +399,20 @@ export class DiscordGateway extends DurableObject<Env> {
       ? (data.mentions as Array<{ id?: string }>)
       : [];
     const botUser = await this.ctx.storage.get<{ id: string }>("botUser");
-    const wasMentioned = mentions?.some(m => m.id === botUser?.id) ?? false;
+    const referencedMessage = data.referenced_message as
+      | { author?: { id?: string } }
+      | null
+      | undefined;
+    const botUserId = botUser?.id;
+    const wasMentioned = Boolean(
+      botUserId
+      && (
+        mentions.some((mention) => mention.id === botUserId)
+        || referencedMessage?.author?.id === botUserId
+      ),
+    );
     const actorId = author ? `discord:user:${author.id}` : undefined;
+    const media = await this.extractMediaAttachments(data);
 
     // Build inbound message
     const message: AdapterInboundMessage = {
@@ -384,8 +427,8 @@ export class DiscordGateway extends DurableObject<Env> {
         name: author.username,
         handle: author.discriminator ? `${author.username}#${author.discriminator}` : author.username,
       } : undefined,
-      text: content || "[Media]",
-      media: media.length > 0 ? media : undefined,
+      text: content || (media.media.length > 0 ? "[Media]" : "[Media unavailable]"),
+      media: media.media.length > 0 ? media.media : undefined,
       replyToId:
         messageReference && typeof messageReference.message_id === "string"
           ? messageReference.message_id
@@ -403,6 +446,7 @@ export class DiscordGateway extends DurableObject<Env> {
           accountId: this.getAccountId(),
           message,
         },
+        media.body,
       );
       if (!result.ok) {
         console.error(
@@ -410,21 +454,17 @@ export class DiscordGateway extends DurableObject<Env> {
         );
         return;
       }
-      if (result.challenge?.prompt) {
-        await this.sendChannelText(channelId, result.challenge.prompt, messageReference?.message_id);
-      }
-      if (result.reply?.text) {
-        await this.sendChannelText(channelId, result.reply.text, result.reply.replyToId || messageReference?.message_id);
-      }
+      this.state.lastError = null;
       console.log(
         `[DiscordGateway] Delivered message ${messageId} from ${author?.username}`,
       );
     } catch (e) {
-      console.error("[DiscordGateway] Failed to deliver inbound via RPC:", e);
+      this.state.lastError = e instanceof Error ? e.message : String(e);
+      console.error("[DiscordGateway] Inbound handling failed:", e);
     }
   }
 
-  private async notifyGatewayStatus(status: ChannelAccountStatus): Promise<void> {
+  private async notifyGatewayStatus(status: AdapterAccountStatus): Promise<void> {
     const accountId = this.getAccountId();
     try {
       await this.callGateway("adapter.state.update", {
@@ -437,16 +477,28 @@ export class DiscordGateway extends DurableObject<Env> {
     }
   }
 
-  private async callGateway<T = unknown>(call: string, args: unknown): Promise<T> {
+  private async callGateway<T = unknown>(
+    call: string,
+    args: unknown,
+    body?: BinaryBody,
+  ): Promise<T> {
     const frame: GatewayRequestFrame = {
       type: "req",
       id: crypto.randomUUID(),
       call,
       args,
+      ...(body ? { body } : {}),
     };
 
-    const response = await this.env.GATEWAY.serviceFrame(frame);
+    let response: GatewayFrame | null;
+    try {
+      response = await this.env.GATEWAY.serviceFrame(frame);
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      throw error;
+    }
     if (!response || response.type !== "res") {
+      await cancelBinaryBody(body, "No response from gateway serviceFrame");
       throw new Error("No response from gateway serviceFrame");
     }
     if (!response.ok) {
@@ -456,49 +508,30 @@ export class DiscordGateway extends DurableObject<Env> {
     return (response.data ?? {}) as T;
   }
 
-  private async sendChannelText(channelId: string, text: string, replyToId?: string): Promise<void> {
-    if (!this.state.botToken) return;
-    const body: Record<string, unknown> = { content: text };
-    if (replyToId) {
-      body.message_reference = { message_id: replyToId };
-    }
-
-    try {
-      const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bot ${this.state.botToken}`,
-          "Content-Type": "application/json; charset=utf-8",
-        },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) {
-        console.warn(`[DiscordGateway] Failed to send challenge prompt: ${response.status}`);
-      }
-    } catch (e) {
-      console.warn("[DiscordGateway] Error sending challenge prompt:", e);
-    }
-  }
-
   private async extractMediaAttachments(
     data: Record<string, unknown>,
-  ): Promise<ChannelMedia[]> {
+  ): Promise<AdapterMediaBundle> {
     if (!Array.isArray(data.attachments)) {
-      return [];
+      return { media: [] };
     }
 
-    const media: ChannelMedia[] = [];
-    for (const rawAttachment of data.attachments) {
+    const media: AdapterMediaPart[] = [];
+    let bodyBytes = 0;
+    for (const rawAttachment of data.attachments.slice(0, 10)) {
       const attachment = this.parseAttachment(rawAttachment);
       if (!attachment) continue;
 
-      const converted = await this.attachmentToMedia(attachment);
+      const converted = await this.attachmentToMedia(
+        attachment,
+        MAX_MEDIA_TOTAL_BODY_BYTES - bodyBytes,
+      );
       if (converted) {
         media.push(converted);
+        bodyBytes += converted.body?.length ?? 0;
       }
     }
 
-    return media;
+    return await bundleAdapterMedia(media);
   }
 
   private parseAttachment(raw: unknown): DiscordAttachment | null {
@@ -536,74 +569,70 @@ export class DiscordGateway extends DurableObject<Env> {
 
   private async attachmentToMedia(
     attachment: DiscordAttachment,
-  ): Promise<ChannelMedia | null> {
+    remainingBodyBytes: number,
+  ): Promise<AdapterMediaPart | null> {
     const mimeType =
       attachment.contentType || this.inferMimeTypeFromFilename(attachment.filename);
     const type = this.inferMediaTypeFromMime(mimeType);
     const url = attachment.url || attachment.proxyUrl;
 
-    const base: ChannelMedia = {
+    const base: Omit<AdapterMedia, "body"> = {
       type,
       mimeType,
-      url,
       filename: attachment.filename,
       size: attachment.size,
       duration: attachment.duration,
     };
 
-    if (!url) {
-      return base;
+    if (!url || remainingBodyBytes <= 0) {
+      return null;
     }
 
-    if (attachment.size && attachment.size > MAX_INLINE_MEDIA_BYTES) {
+    const maxBytes = Math.min(MAX_MEDIA_BODY_BYTES, remainingBodyBytes);
+    if (
+      attachment.size !== undefined
+      && (!Number.isSafeInteger(attachment.size) || attachment.size < 0)
+    ) {
       console.log(
-        `[DiscordGateway] Attachment ${attachment.id} too large for inline data (${attachment.size} bytes)`,
+        `[DiscordGateway] Attachment ${attachment.id} has an invalid size`,
       );
-      return base;
+      return null;
+    }
+    if (attachment.size !== undefined && attachment.size > maxBytes) {
+      console.log(
+        `[DiscordGateway] Attachment ${attachment.id} exceeds transfer limit (${attachment.size} bytes)`,
+      );
+      return null;
     }
 
     try {
       const response = await fetch(url);
       if (!response.ok) {
+        await cancelResponseBody(response, "Discord attachment download failed");
         console.warn(
           `[DiscordGateway] Failed to download attachment ${attachment.id}: HTTP ${response.status}`,
         );
-        return base;
+        return null;
       }
 
-      const contentLength = parseInt(
-        response.headers.get("content-length") || "0",
-        10,
-      );
-      if (contentLength > MAX_INLINE_MEDIA_BYTES) {
-        console.log(
-          `[DiscordGateway] Attachment ${attachment.id} content-length exceeds inline limit (${contentLength} bytes)`,
-        );
-        return base;
-      }
-
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength > MAX_INLINE_MEDIA_BYTES) {
-        console.log(
-          `[DiscordGateway] Attachment ${attachment.id} body exceeds inline limit (${bytes.byteLength} bytes)`,
-        );
-        return base;
-      }
-
+      const body = await responseBodyToBinaryBody(response, {
+        maxBytes,
+        expectedBytes: attachment.size,
+        label: "Discord attachment",
+      });
       return {
-        ...base,
-        data: this.bytesToBase64(bytes),
-        size: attachment.size ?? bytes.byteLength,
+        media: { ...base, size: body.length },
+        body,
       };
     } catch (e) {
       console.warn(
         `[DiscordGateway] Error downloading attachment ${attachment.id}: ${e}`,
       );
-      return base;
+      return null;
     }
   }
 
-  private inferMediaTypeFromMime(mimeType: string): ChannelMedia["type"] {
+  private inferMediaTypeFromMime(mimeType: string): AdapterMedia["type"] {
     const normalized = mimeType.split(";")[0].trim().toLowerCase();
     if (normalized.startsWith("image/")) return "image";
     if (normalized.startsWith("audio/")) return "audio";
@@ -630,18 +659,6 @@ export class DiscordGateway extends DurableObject<Env> {
       pdf: "application/pdf",
     };
     return map[extension] || "application/octet-stream";
-  }
-
-  private bytesToBase64(bytes: Uint8Array): string {
-    if (bytes.length === 0) return "";
-
-    const chunks: string[] = [];
-    for (let i = 0; i < bytes.length; i += BYTE_TO_BASE64_CHUNK_SIZE) {
-      chunks.push(
-        String.fromCharCode(...bytes.subarray(i, i + BYTE_TO_BASE64_CHUNK_SIZE)),
-      );
-    }
-    return btoa(chunks.join(""));
   }
 
   private async identify() {

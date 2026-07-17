@@ -1,5 +1,5 @@
 import { defineCommand } from "just-bash";
-import type { ExecResult } from "just-bash";
+import type { CommandContext, ExecResult } from "just-bash";
 import { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import {
@@ -7,13 +7,14 @@ import {
   listSkillFiles,
   resolveSkillDocument,
   type SkillDocument,
+  validateSkillMarkdown,
 } from "../../../kernel/skills";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 
 export function buildSkillsCommand(fs: GsvFs, ctx: KernelContext, identity: ProcessIdentity) {
-  return defineCommand("skills", async (args): Promise<ExecResult> => {
+  return defineCommand("skills", async (args, commandCtx): Promise<ExecResult> => {
     try {
-      return await runSkillsCommand(args, fs, ctx, identity);
+      return await runSkillsCommand(args, commandCtx, fs, ctx, identity);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {
@@ -27,6 +28,7 @@ export function buildSkillsCommand(fs: GsvFs, ctx: KernelContext, identity: Proc
 
 async function runSkillsCommand(
   args: string[],
+  commandCtx: CommandContext,
   fs: GsvFs,
   ctx: KernelContext,
   identity: ProcessIdentity,
@@ -93,9 +95,224 @@ async function runSkillsCommand(
       const content = await fs.readFile(`${root}/${filePath}`);
       return { stdout: content.endsWith("\n") ? content : `${content}\n`, stderr: "", exitCode: 0 };
     }
+    case "create": {
+      if (rest.includes("--help") || rest.includes("-h")) {
+        return { stdout: skillsCreateUsage(), stderr: "", exitCode: 0 };
+      }
+      const parsed = parseCreateArgs(rest);
+      const body = await readSkillBody(parsed.from, commandCtx, fs, identity);
+      const content = renderPersistedSkill(parsed.name, parsed.description, body);
+      const validation = validateSkillMarkdown(content, parsed.name);
+      if (!validation.ok) {
+        throw new Error(formatValidationErrors(validation.errors));
+      }
+
+      const skillDirectory = `${identity.home}/skills.d/${parsed.name}`;
+      const skillPath = `${skillDirectory}/SKILL.md`;
+      const exists = await fs.exists(skillPath);
+      if (exists && !parsed.replace) {
+        throw new Error(`skill '${parsed.name}' already exists; inspect it with 'skills show ${parsed.name}' and pass --replace only for an intentional update`);
+      }
+      if (!exists && parsed.replace) {
+        throw new Error(`skill '${parsed.name}' does not exist, so --replace cannot be used`);
+      }
+
+      await fs.mkdir(skillDirectory, { recursive: true });
+      await fs.writeFile(skillPath, content);
+      return {
+        stdout: [
+          `${parsed.replace ? "Replaced" : "Created"} ${skillPath}`,
+          `Validated skill '${parsed.name}'.`,
+          `NEXT: skills show ${parsed.name}`,
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    case "validate": {
+      const requested = String(rest[0] ?? "").trim();
+      if (!requested || rest.length !== 1) {
+        throw new Error("Usage: skills validate <skill-or-path>");
+      }
+      const candidate = await readSkillValidationCandidate(requested, commandCtx, fs, ctx, identity);
+      const validation = validateSkillMarkdown(candidate.content, candidate.expectedName);
+      if (!validation.ok) {
+        throw new Error(formatValidationErrors(validation.errors));
+      }
+      return {
+        stdout: [
+          `Valid skill: ${candidate.path}`,
+          `name: ${validation.name}`,
+          `description: ${validation.description}`,
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+      };
+    }
     default:
       throw new Error(`Unknown skills subcommand: ${subcommand}`);
   }
+}
+
+type CreateSkillArgs = {
+  name: string;
+  description: string;
+  from?: string;
+  replace: boolean;
+};
+
+function parseCreateArgs(args: string[]): CreateSkillArgs {
+  let rawName = "";
+  let description = "";
+  let from: string | undefined;
+  let replace = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--description" || arg === "-d") {
+      index += 1;
+      description = requireOptionValue(args[index], arg);
+      continue;
+    }
+    if (arg === "--from") {
+      index += 1;
+      from = requireOptionValue(args[index], arg);
+      continue;
+    }
+    if (arg === "--replace") {
+      replace = true;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      throw new Error(`unsupported option: ${arg}`);
+    }
+    if (rawName) {
+      throw new Error("skills create accepts exactly one skill name");
+    }
+    rawName = arg;
+  }
+
+  if (!rawName) {
+    throw new Error(skillsCreateUsage().trimEnd());
+  }
+  if (rawName.includes("/") || rawName.includes("\\") || rawName.includes("..")) {
+    throw new Error("skill name must not contain path separators or '..'");
+  }
+  const name = normalizeCreatedSkillName(rawName);
+  if (!name) {
+    throw new Error("skill name must contain at least one ASCII letter or digit");
+  }
+  if (name.length >= 64) {
+    throw new Error("skill name must be under 64 characters after normalization");
+  }
+
+  description = description.replace(/\s+/g, " ").trim();
+  if (!description) {
+    throw new Error("--description is required and must explain what the skill does and when to use it");
+  }
+  if (description.length > 220) {
+    throw new Error("--description must be at most 220 characters");
+  }
+
+  return { name, description, ...(from ? { from } : {}), replace };
+}
+
+function requireOptionValue(value: string | undefined, option: string): string {
+  if (!value) {
+    throw new Error(`${option} requires a value`);
+  }
+  return value;
+}
+
+function normalizeCreatedSkillName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+async function readSkillBody(
+  from: string | undefined,
+  commandCtx: CommandContext,
+  fs: GsvFs,
+  identity: ProcessIdentity,
+): Promise<string> {
+  const stdin = commandCtx.stdin.trim();
+  if (from && stdin) {
+    throw new Error("provide workflow instructions with either --from or stdin, not both");
+  }
+  const body = from
+    ? await fs.readFile(fs.resolvePath(commandCtx.cwd || identity.cwd, from))
+    : stdin;
+  if (!body.trim()) {
+    throw new Error("workflow instructions are required on stdin or with --from <file>");
+  }
+  if (/^---\s*(?:\r?\n|$)/.test(body.trimStart())) {
+    throw new Error("--from and stdin must contain only the Markdown instruction body, not SKILL.md frontmatter");
+  }
+  return body.trim();
+}
+
+function renderPersistedSkill(name: string, description: string, body: string): string {
+  return [
+    "---",
+    `name: ${name}`,
+    "description: >",
+    `  ${description}`,
+    "---",
+    "",
+    body,
+    "",
+  ].join("\n");
+}
+
+async function readSkillValidationCandidate(
+  requested: string,
+  commandCtx: CommandContext,
+  fs: GsvFs,
+  ctx: KernelContext,
+  identity: ProcessIdentity,
+): Promise<{ path: string; expectedName: string | undefined; content: string }> {
+  const docs = await collectFilesystemSkillDocuments(fs, ctx, identity);
+  const resolved = resolveSkillDocument(docs, requested);
+  if (resolved.ok) {
+    return {
+      path: resolved.doc.path,
+      expectedName: skillPathName(resolved.doc.path),
+      content: resolved.doc.content,
+    };
+  }
+
+  if (!requested.includes("/") && !requested.endsWith(".md")) {
+    throw new Error(resolved.error);
+  }
+  let path = fs.resolvePath(commandCtx.cwd || identity.cwd, requested);
+  const stat = await fs.stat(path);
+  if (stat.isDirectory) {
+    path = `${path.replace(/\/$/, "")}/SKILL.md`;
+  } else if (!stat.isFile) {
+    throw new Error(`skill path is not a regular file: ${path}`);
+  }
+  return {
+    path,
+    expectedName: skillPathName(path),
+    content: await fs.readFile(path),
+  };
+}
+
+function skillPathName(path: string): string | undefined {
+  const parts = path.split("/").filter(Boolean);
+  if (parts.at(-1) === "SKILL.md") {
+    return parts.at(-2) ?? "";
+  }
+  return undefined;
+}
+
+function formatValidationErrors(errors: string[]): string {
+  return ["invalid SKILL.md:", ...errors.map((error) => `- ${error}`)].join("\n");
 }
 
 function formatSkillsList(docs: SkillDocument[], parentId?: string): string {
@@ -272,10 +489,25 @@ function skillsUsage(): string {
     "  skills show <skill>",
     "  skills files <skill>",
     "  skills read <skill> <file>",
+    "  skills create <name> --description <text> [--from <body-file>] [--replace]",
+    "  skills validate <skill-or-path>",
     "",
     "Skill names come from layered skills.d directories. `skills list`",
     "shows top-level skills; `skills list <skill>` and `skills tree <skill>`",
     "disclose nested skills under a parent.",
+    "",
+    "`skills create` reads a Markdown instruction body from --from or stdin and",
+    "writes ~/skills.d/<name>/SKILL.md. It never overwrites without --replace.",
+    "",
+  ].join("\n");
+}
+
+function skillsCreateUsage(): string {
+  return [
+    "Usage: skills create <name> --description <text> [--from <body-file>] [--replace]",
+    "",
+    "Persist a complete reusable workflow under ~/skills.d. Supply the Markdown",
+    "instruction body with --from or stdin. Existing skills require --replace.",
     "",
   ].join("\n");
 }

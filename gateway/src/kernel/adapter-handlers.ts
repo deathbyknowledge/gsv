@@ -2,11 +2,11 @@ import type {
   AdapterActivity,
   AdapterInboundMessage,
   AdapterAccountStatus,
+  AdapterMedia,
   AdapterOutboundMessage,
   AdapterSurface,
   AdapterWorkerInterface,
 } from "../adapter-interface";
-import type { ShellExecArgs, ShellExecResult } from "../syscalls/shell";
 import type {
   AdapterConnectArgs,
   AdapterConnectResult as AdapterConnectSyscallResult,
@@ -14,6 +14,7 @@ import type {
   AdapterDisconnectResult as AdapterDisconnectSyscallResult,
   AdapterInboundArgs,
   AdapterInboundSyscallResult,
+  AdapterMessageDestination,
   InteractionOrigin,
   AdapterListArgs,
   AdapterListEntry,
@@ -24,31 +25,58 @@ import type {
   AdapterSendResult,
   AdapterStatusArgs,
   AdapterStatusResult,
+  BinaryBody,
   ProcMediaInput,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
-import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
+import {
+  cancelBinaryBody,
+  consumeAdapterMediaBodyParts,
+  validateAdapterMediaBody,
+} from "@humansandmachines/gsv/protocol";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
-import type { Frame, RequestFrame, ResponseOkFrame } from "../protocol/frames";
+import type { RequestFrame, ResponseOkFrame } from "../protocol/frames";
+import type {
+  ProcessAdapterDeliverRequestFrame,
+  ProcessAdapterDeliverResponseFrame,
+} from "../protocol/process-frames";
 import { sendFrameToProcess } from "../shared/utils";
-import { decodeBase64Bytes, normalizeBase64Data } from "../shared/base64";
-import { isVisibleAdapterTarget } from "./adapter-targets";
+import { stableOpaqueId } from "../shared/stable-id";
 import { ensureDefaultConversationExecutor } from "./agents";
 import { canOwnerRunAsAccount } from "./account-access";
 import { isLocked } from "../auth/shadow";
 import type { AdapterStatusRecord } from "./adapter-status";
 import type { IdentityLinkRecord } from "./identity-links";
+import {
+  assertAdapterMessageDestinationAccess,
+  normalizeAdapterMessageDestination,
+} from "./adapter-destinations";
+import {
+  MAX_MESSAGE_MEDIA_ITEMS,
+  MAX_MESSAGE_MEDIA_PART_BYTES,
+  MAX_MESSAGE_MEDIA_TOTAL_BYTES,
+} from "../shared/message-media-limits";
 
 type AdapterServiceBinding = Fetcher & Partial<AdapterWorkerInterface>;
-type ProcSendData = {
-  runId?: string;
-  queued?: boolean;
-};
 type AdapterCommandResult = {
   handled: boolean;
   reply?: {
     text: string;
     replyToId?: string;
+  };
+};
+type AdapterInboundDisposition = Omit<
+  AdapterInboundSyscallResult,
+  "reply" | "challenge" | "replayed"
+> & {
+  reply?: {
+    text: string;
+    replyToId?: string;
+  };
+  challenge?: {
+    code: string;
+    prompt: string;
+    expiresAt: number;
   };
 };
 type HilDecision = {
@@ -228,32 +256,172 @@ function requireAdapterControlOwnerUid(ctx: KernelContext, syscall: string): num
 export async function handleAdapterSend(
   args: AdapterSendArgs,
   ctx: KernelContext,
+  body?: BinaryBody,
+): Promise<AdapterSendResult> {
+  const adapter = typeof args.adapter === "string" ? args.adapter.trim().toLowerCase() : "";
+  const accountId = typeof args.accountId === "string" ? args.accountId.trim() : "";
+
+  if (!adapter) return rejectAdapterSend(body, "adapter is required");
+  if (!accountId) return rejectAdapterSend(body, "accountId is required");
+  let surface: AdapterSurface;
+  try {
+    surface = normalizeAdapterSurface(args.surface);
+  } catch (error) {
+    return rejectAdapterSend(
+      body,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  if (typeof args.text !== "string") {
+    return rejectAdapterSend(body, "text must be a string");
+  }
+  if (args.replyToId !== undefined && typeof args.replyToId !== "string") {
+    return rejectAdapterSend(body, "replyToId must be a string");
+  }
+  if (args.also !== undefined && typeof args.also !== "boolean") {
+    return rejectAdapterSend(body, "also must be a boolean");
+  }
+  if (!args.also && isCurrentAutomaticReplyDestination(ctx, adapter, accountId, surface)) {
+    return rejectAdapterSend(
+      body,
+      "This target is the current run's automatic reply destination. Return the text normally, or use --also to intentionally send an additional message.",
+    );
+  }
+  if (!canSendToAdapterSurface(ctx, adapter, accountId, surface)) {
+    return rejectAdapterSend(body, "Permission denied");
+  }
+
+  return deliverAdapterMessage({
+    ...args,
+    adapter,
+    accountId,
+    surface,
+    replyToId: args.replyToId?.trim() || undefined,
+  }, ctx, body);
+}
+
+/**
+ * Deliver the terminal output for a run to its trusted reply destination.
+ * This deliberately bypasses the explicit-send duplicate guard while still
+ * rechecking that the linked actor belongs to the route owner.
+ */
+export async function deliverAdapterReply(
+  destination: AdapterMessageDestination,
+  ownerUid: number,
+  message: Pick<AdapterSendArgs, "deliveryId" | "text" | "media" | "replyToId">,
+  ctx: KernelContext,
+  body?: BinaryBody,
+): Promise<AdapterSendResult> {
+  let normalized: AdapterMessageDestination;
+  try {
+    normalized = normalizeAdapterMessageDestination(destination);
+    assertAdapterMessageDestinationAccess(normalized, ownerUid, ctx);
+  } catch (error) {
+    await cancelBinaryBody(body, error);
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  return deliverAdapterMessage({
+    adapter: normalized.adapter,
+    accountId: normalized.accountId,
+    actorId: normalized.actorId,
+    surface: normalized.surface,
+    ...message,
+  }, ctx, body);
+}
+
+async function deliverAdapterMessage(
+  args: Pick<AdapterSendArgs, "adapter" | "accountId" | "deliveryId" | "surface" | "text" | "media" | "replyToId"> & {
+    actorId?: string;
+  },
+  ctx: KernelContext,
+  body?: BinaryBody,
 ): Promise<AdapterSendResult> {
   const adapter = args.adapter.trim().toLowerCase();
   const accountId = args.accountId.trim();
 
-  if (!adapter) return { ok: false, error: "adapter is required" };
-  if (!accountId) return { ok: false, error: "accountId is required" };
-  if (!args.surface?.id?.trim()) return { ok: false, error: "surface.id is required" };
-  if (!canSendToAdapterSurface(ctx, adapter, accountId, args.surface)) {
-    return { ok: false, error: "Permission denied" };
+  if (args.deliveryId !== undefined && typeof args.deliveryId !== "string") {
+    await cancelBinaryBody(body, "Invalid adapter delivery id");
+    return { ok: false, error: "Adapter deliveryId is invalid", retryable: false };
+  }
+  const deliveryId = args.deliveryId?.trim() || crypto.randomUUID();
+  if (deliveryId.length > 200 || !/^[a-zA-Z0-9._:-]+$/.test(deliveryId)) {
+    await cancelBinaryBody(body, "Invalid adapter delivery id");
+    return { ok: false, error: "Adapter deliveryId is invalid", retryable: false };
   }
 
   const service = resolveAdapterService(ctx.env, adapter);
   if (!service || typeof service.adapterSend !== "function") {
-    return { ok: false, error: `Adapter service unavailable: ${adapter}` };
+    await cancelBinaryBody(body, `Adapter service unavailable: ${adapter}`);
+    return {
+      ok: false,
+      error: `Adapter service unavailable: ${adapter}`,
+      deliveryId,
+      retryable: true,
+    };
+  }
+
+  try {
+    validateAdapterMediaBody(args.media, body, {
+      maxBytes: MAX_MESSAGE_MEDIA_TOTAL_BYTES,
+      maxPartBytes: MAX_MESSAGE_MEDIA_PART_BYTES,
+    });
+    validateAdapterMediaItems(args.media, "outbound");
+    ctx.requestSignal?.throwIfAborted();
+  } catch (error) {
+    await cancelBinaryBody(body, error);
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      deliveryId,
+      retryable: false,
+    };
   }
 
   const outbound: AdapterOutboundMessage = {
+    deliveryId,
     surface: args.surface,
+    ...(args.actorId ? { actorId: args.actorId } : {}),
     text: args.text,
     media: args.media,
     replyToId: args.replyToId,
   };
 
-  const result = await service.adapterSend(accountId, outbound);
+  let result;
+  try {
+    result = await service.adapterSend(accountId, outbound, body);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Adapter delivery transport failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      deliveryId,
+      retryable: true,
+    };
+  } finally {
+    await cancelBinaryBody(body, "adapter.send completed");
+  }
   if (!result.ok) {
-    return { ok: false, error: result.error };
+    if (result.ambiguous) {
+      return {
+        ok: true,
+        adapter,
+        accountId,
+        surfaceId: args.surface.id,
+        deliveryId,
+        deliveryState: "ambiguous",
+      };
+    }
+    return {
+      ok: false,
+      error: result.error,
+      deliveryId,
+      retryable: result.retryable === true,
+    };
   }
 
   return {
@@ -261,7 +429,58 @@ export async function handleAdapterSend(
     adapter,
     accountId,
     surfaceId: args.surface.id,
+    deliveryId,
     messageId: result.messageId,
+    deliveryState: result.deduplicated ? "deduplicated" : "sent",
+  };
+}
+
+async function rejectAdapterSend(body: BinaryBody | undefined, error: string): Promise<AdapterSendResult> {
+  await cancelBinaryBody(body, error);
+  return { ok: false, error, retryable: false };
+}
+
+function isCurrentAutomaticReplyDestination(
+  ctx: KernelContext,
+  adapter: string,
+  accountId: string,
+  surface: AdapterSurface,
+): boolean {
+  if (!ctx.processId || !ctx.processRunId) {
+    return false;
+  }
+  const route = ctx.runRoutes.get(ctx.processRunId);
+  return route?.kind === "adapter"
+    && route.processId === ctx.processId
+    && route.adapter === adapter
+    && route.accountId === accountId
+    && route.surfaceKind === surface.kind
+    && route.surfaceId === surface.id.trim()
+    && (route.threadId ?? "") === (surface.threadId?.trim() ?? "");
+}
+
+function normalizeAdapterSurface(surface: AdapterSurface | undefined): AdapterSurface {
+  if (!surface || typeof surface !== "object") {
+    throw new Error("surface is required");
+  }
+  if (
+    surface.kind !== "dm"
+    && surface.kind !== "group"
+    && surface.kind !== "channel"
+    && surface.kind !== "thread"
+  ) {
+    throw new Error("surface.kind is invalid");
+  }
+  if (typeof surface.id !== "string" || !surface.id.trim()) {
+    throw new Error("surface.id is required");
+  }
+  if (surface.threadId !== undefined && typeof surface.threadId !== "string") {
+    throw new Error("surface.threadId must be a string");
+  }
+  return {
+    kind: surface.kind,
+    id: surface.id.trim(),
+    ...(surface.threadId?.trim() ? { threadId: surface.threadId.trim() } : {}),
   };
 }
 
@@ -292,7 +511,7 @@ function canSendToAdapterSurface(
     return false;
   }
   return links.some((link) => linkAllowsAdapterSurface(link, surface))
-    || callerOwnsAdapterSurfaceRoute(ctx, adapter, accountId, surface, ownerUid);
+    || callerOwnsAdapterSurfaceRoute(ctx, adapter, accountId, surface, ownerUid, links);
 }
 
 function linkAllowsAdapterSurface(link: IdentityLinkRecord, surface: AdapterSurface): boolean {
@@ -303,7 +522,7 @@ function linkAllowsAdapterSurface(link: IdentityLinkRecord, surface: AdapterSurf
   if (linkedSurfaceKind && linkedSurfaceId) {
     return linkedSurfaceKind === surfaceKind && linkedSurfaceId === surfaceId;
   }
-  return surfaceKind === "dm" && link.actorId.trim() === surfaceId;
+  return false;
 }
 
 function callerOwnsAdapterSurfaceRoute(
@@ -312,45 +531,24 @@ function callerOwnsAdapterSurfaceRoute(
   accountId: string,
   surface: AdapterSurface,
   ownerUid: number,
+  links: IdentityLinkRecord[],
 ): boolean {
-  const route = ctx.adapters.surfaceRoutes.get(adapter, accountId, surface.kind, surface.id.trim());
-  return route?.uid === ownerUid;
+  return links.some((link) => {
+    const route = ctx.adapters.surfaceRoutes.get({
+      adapter,
+      accountId,
+      actorId: link.actorId,
+      surfaceKind: surface.kind,
+      surfaceId: surface.id.trim(),
+      threadId: surface.threadId,
+    });
+    return route?.uid === ownerUid;
+  });
 }
 
 function metadataString(metadata: Record<string, unknown> | null | undefined, key: string): string {
   const value = metadata?.[key];
   return typeof value === "string" ? value.trim() : "";
-}
-
-export async function handleAdapterShellExec(
-  adapter: string,
-  accountId: string,
-  args: unknown,
-  ctx: KernelContext,
-): Promise<ShellExecResult> {
-  const normalizedAdapter = adapter.trim().toLowerCase();
-  const normalizedAccountId = accountId.trim();
-  if (!normalizedAdapter) {
-    return failedShellResult("adapter is required");
-  }
-  if (!normalizedAccountId) {
-    return failedShellResult("accountId is required");
-  }
-  if (!isVisibleAdapterTarget(ctx, normalizedAdapter, normalizedAccountId)) {
-    throw new Error(`Access denied to adapter target: ${normalizedAdapter}`);
-  }
-
-  const service = resolveAdapterService(ctx.env, normalizedAdapter);
-  if (!service || typeof service.adapterShellExec !== "function") {
-    return failedShellResult(`Adapter does not expose shell commands: ${normalizedAdapter}`);
-  }
-
-  const execArgs = normalizeAdapterShellArgs(args);
-  if (!execArgs.input.trim()) {
-    return completedShellResult("");
-  }
-
-  return service.adapterShellExec(normalizedAccountId, execArgs);
 }
 
 export async function handleAdapterStatus(
@@ -525,25 +723,148 @@ function canSeeAllAdapterStatuses(ctx: KernelContext): boolean {
 export async function handleAdapterInbound(
   args: AdapterInboundArgs,
   ctx: KernelContext,
+  body?: BinaryBody,
+): Promise<AdapterInboundSyscallResult> {
+  try {
+    return await handleAdapterInboundOwned(args, ctx, body);
+  } finally {
+    await cancelBinaryBody(body, "adapter.inbound completed");
+  }
+}
+
+async function handleAdapterInboundOwned(
+  args: AdapterInboundArgs,
+  ctx: KernelContext,
+  body: BinaryBody | undefined,
 ): Promise<AdapterInboundSyscallResult> {
   const identity = ctx.identity;
   if (!identity || identity.role !== "service") {
     throw new Error("adapter.inbound requires a service identity");
   }
 
-  const adapter = args.adapter.trim().toLowerCase();
-  const accountId = args.accountId.trim();
-  const message = args.message;
+  const adapter = typeof args.adapter === "string" ? args.adapter.trim().toLowerCase() : "";
+  const accountId = typeof args.accountId === "string" ? args.accountId.trim() : "";
+  const inbound = args.message;
 
   if (!adapter) return { ok: false, error: "adapter is required" };
   if (!accountId) return { ok: false, error: "accountId is required" };
-  if (!message?.surface?.id?.trim()) return { ok: false, error: "message.surface.id is required" };
+  if (typeof inbound?.messageId !== "string" || !inbound.messageId.trim()) {
+    return { ok: false, error: "message.messageId is required" };
+  }
+  if (typeof inbound?.surface?.id !== "string" || !inbound.surface.id.trim()) {
+    return { ok: false, error: "message.surface.id is required" };
+  }
+  if (
+    inbound.surface.kind !== "dm"
+    && inbound.surface.kind !== "group"
+    && inbound.surface.kind !== "channel"
+    && inbound.surface.kind !== "thread"
+  ) {
+    return { ok: false, error: "message.surface.kind is invalid" };
+  }
+  if (typeof inbound.text !== "string") {
+    return { ok: false, error: "message.text is required" };
+  }
+  if (inbound.actor && typeof inbound.actor.id !== "string") {
+    return { ok: false, error: "message.actor.id is invalid" };
+  }
+  if (inbound.surface.threadId !== undefined && typeof inbound.surface.threadId !== "string") {
+    return { ok: false, error: "message.surface.threadId is invalid" };
+  }
+  if (inbound.replyToId !== undefined && typeof inbound.replyToId !== "string") {
+    return { ok: false, error: "message.replyToId is invalid" };
+  }
+  const message: AdapterInboundMessage = {
+    ...inbound,
+    messageId: inbound.messageId.trim(),
+    surface: {
+      ...inbound.surface,
+      id: inbound.surface.id.trim(),
+      ...(inbound.surface.threadId?.trim()
+        ? { threadId: inbound.surface.threadId.trim() }
+        : { threadId: undefined }),
+    },
+    ...(inbound.actor
+      ? { actor: { ...inbound.actor, id: inbound.actor.id.trim() } }
+      : {}),
+    replyToId: inbound.replyToId?.trim() || undefined,
+  };
 
   const actorId = resolveActorId(message);
   if (!actorId) {
     return { ok: false, error: "message.actor.id is required" };
   }
 
+  const receiptId = await stableOpaqueId("adapter-ingress", [
+    adapter,
+    accountId,
+    actorId,
+    message.surface.kind,
+    message.surface.id,
+    message.surface.threadId ?? null,
+    message.messageId,
+  ]);
+  // The receipt id is already opaque, stable, and valid as a delivery-id
+  // prefix. Suffixing the immediate outcome avoids another hashing round on
+  // every inbound message while keeping reply and challenge attempts distinct.
+  const replyDeliveryId = `${receiptId}:reply`;
+  const challengeDeliveryId = `${receiptId}:challenge`;
+  const receipt = ctx.adapters.ingressReceipts.claim({
+    receiptId,
+    adapter,
+    accountId,
+    actorId,
+    surfaceKind: message.surface.kind,
+    surfaceId: message.surface.id,
+    threadId: message.surface.threadId,
+    providerMessageId: message.messageId,
+  });
+  if (receipt.state === "in_progress") {
+    return {
+      ok: true,
+      droppedReason: "duplicate_in_progress",
+      replayed: "in_progress",
+    };
+  }
+  if (receipt.state === "completed") {
+    return { ...receipt.result, replayed: "completed" };
+  }
+
+  const disposition = await resolveClaimedAdapterInbound({
+    adapter,
+    accountId,
+    actorId,
+    message,
+    body,
+    ctx,
+  });
+  const {
+    reply: immediateReply,
+    challenge: immediateChallenge,
+    ...baseDisposition
+  } = disposition;
+  const result: AdapterInboundSyscallResult = {
+    ...baseDisposition,
+    ...(immediateReply
+      ? { reply: { deliveryId: replyDeliveryId, ...immediateReply } }
+      : {}),
+    ...(immediateChallenge
+      ? { challenge: { deliveryId: challengeDeliveryId, ...immediateChallenge } }
+      : {}),
+  };
+  ctx.adapters.ingressReceipts.complete(receiptId, result);
+  return result;
+}
+
+async function resolveClaimedAdapterInbound(input: {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  message: AdapterInboundMessage;
+  body?: BinaryBody;
+  ctx: KernelContext;
+}): Promise<AdapterInboundDisposition> {
+  const { adapter, accountId, actorId, message, body, ctx } = input;
   const uid = ctx.adapters.identityLinks.resolveUid(adapter, accountId, actorId);
   if (uid === null) {
     if (message.surface.kind !== "dm") {
@@ -568,6 +889,10 @@ export async function handleAdapterInbound(
     };
   }
 
+  if (message.surface.kind !== "dm" && message.wasMentioned !== true) {
+    return { ok: true, droppedReason: "not_addressed" };
+  }
+
   const userIdentity = identityForUid(uid, ctx);
   if (!userIdentity) {
     return { ok: false, error: `Unknown local user uid=${uid}` };
@@ -587,7 +912,26 @@ export async function handleAdapterInbound(
     };
   }
 
-  const pid = await resolveAdapterRoute(adapter, accountId, message.surface, uid, userIdentity, ctx);
+  const pid = await resolveAdapterRoute(
+    adapter,
+    accountId,
+    actorId,
+    message.surface,
+    uid,
+    userIdentity,
+    ctx,
+  );
+  ctx.adapters.surfaceRoutes.setRoute({
+    adapter,
+    accountId,
+    actorId,
+    surfaceKind: message.surface.kind,
+    surfaceId: message.surface.id,
+    threadId: message.surface.threadId,
+    uid,
+    pid,
+    updatedByUid: uid,
+  });
 
   const pendingHil = await getPendingHil(pid);
   if (pendingHil) {
@@ -659,53 +1003,34 @@ export async function handleAdapterInbound(
   }
 
   const origin = adapterInteractionOrigin(adapter, accountId, message, actorId);
-  const media = await storeAdapterInboundMedia(pid, message.media);
-  let response: Frame | null;
-  try {
-    response = await sendFrameToProcess(pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.send",
-      args: {
-        pid,
-        message: message.text?.trim() || "",
-        media,
-        origin,
-      },
-    } as RequestFrame);
-  } catch (error) {
-    await rollbackAdapterMedia(pid, media);
-    throw error;
-  }
-
-  if (!response || response.type !== "res") {
-    await rollbackAdapterMedia(pid, media);
-    return { ok: false, error: "No response from process" };
-  }
-  if (!response.ok) {
-    await rollbackAdapterMedia(pid, media);
-    return { ok: false, error: response.error.message };
-  }
-
-  const data = (response as { data?: ProcSendData }).data;
-  const runId = typeof data?.runId === "string" ? data.runId : null;
-  const queued = data?.queued === true;
-
-  if (!runId) {
-    await rollbackAdapterMedia(pid, media);
-    return { ok: false, error: "proc.send did not return runId" };
-  }
-
-  ctx.runRoutes.setAdapterRoute(
+  const runId = await stableOpaqueId("adapter-run", [
+    adapter,
+    accountId,
+    actorId,
+    message.surface.kind,
+    message.surface.id.trim(),
+    message.surface.threadId?.trim() || null,
+    message.messageId.trim(),
+  ]);
+  const media = await storeAdapterInboundMedia(
+    pid,
     runId,
+    message.media,
+    body,
+    ctx.requestSignal,
+  );
+  ctx.runRoutes.setAdapterRoute({
+    runId,
+    processId: pid,
     uid,
     adapter,
     accountId,
-    message.surface.kind,
-    message.surface.id,
-    message.surface.threadId,
-  );
-
+    actorId,
+    surfaceKind: message.surface.kind,
+    surfaceId: message.surface.id,
+    threadId: message.surface.threadId,
+    replyToId: message.messageId,
+  });
   await setAdapterActivityForKernel(
     ctx.env,
     adapter,
@@ -713,6 +1038,72 @@ export async function handleAdapterInbound(
     message.surface,
     { kind: "typing", active: true },
   );
+
+  let response: ProcessAdapterDeliverResponseFrame | null;
+  try {
+    response = await sendFrameToProcess(pid, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.adapter.deliver",
+      args: {
+        runId,
+        pid,
+        message: message.text?.trim() || "",
+        media,
+        origin,
+      },
+    } as ProcessAdapterDeliverRequestFrame);
+  } catch (error) {
+    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
+    // The Process RPC may have admitted the preallocated run before its
+    // response was interrupted. Preserve both its route and media on this
+    // ambiguous transport failure so a terminal signal can still reach the
+    // originating surface. Explicit Process rejections below remain safe to
+    // roll back because they prove that admission did not occur.
+    throw error;
+  }
+
+  if (!response || response.type !== "res") {
+    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
+    // A missing/malformed acknowledgement is not proof that Process admission
+    // failed. Stable run/media ids make the provider retry reconcilable.
+    return { ok: false, error: "No response from process" };
+  }
+  if (!response.ok) {
+    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
+    // Process wraps post-mutation failures in an error envelope, so preserve
+    // ownership until the same provider message id is retried and reconciled.
+    return { ok: false, error: response.error.message };
+  }
+
+  const data = (response as ProcessAdapterDeliverResponseFrame & { ok: true }).data;
+  if (!data.ok) {
+    ctx.runRoutes.delete(runId);
+    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
+    await rollbackAdapterMedia(pid, media);
+    return { ok: false, error: data.error };
+  }
+  const queued = data?.queued === true;
+
+  if (data.runId !== runId) {
+    ctx.runRoutes.delete(runId);
+    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
+    await rollbackAdapterMedia(pid, media);
+    return { ok: false, error: "proc.adapter.deliver admitted an unexpected run" };
+  }
+  if (data.replayed === "recorded") {
+    // This can occur during an upgrade when Process history predates the
+    // Kernel receipt table. The terminal signal has already happened, so do
+    // not resurrect a reply route or leave provider typing active. Ask the
+    // Process to delete replay-staged media as well; its reference check keeps
+    // any object already owned by the recorded history.
+    ctx.runRoutes.delete(runId);
+    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
+    await rollbackAdapterMedia(pid, media);
+  }
+  if (queued) {
+    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
+  }
 
   return {
     ok: true,
@@ -725,61 +1116,119 @@ export async function handleAdapterInbound(
   };
 }
 
+async function stopAdapterTyping(
+  ctx: KernelContext,
+  adapter: string,
+  accountId: string,
+  surface: AdapterSurface,
+): Promise<void> {
+  await setAdapterActivityForKernel(
+    ctx.env,
+    adapter,
+    accountId,
+    surface,
+    { kind: "typing", active: false },
+  );
+}
+
 async function storeAdapterInboundMedia(
   pid: string,
+  runId: string,
   media: AdapterInboundMessage["media"],
+  body: BinaryBody | undefined,
+  signal?: AbortSignal,
 ): Promise<ProcMediaInput[] | undefined> {
-  if (!media?.length) {
-    return undefined;
-  }
-
-  const settled = await Promise.allSettled(media.map(async (item) => {
-    if (!item.data) {
-      return {
-        type: item.type,
-        mimeType: item.mimeType,
-        ...(item.url ? { url: item.url } : {}),
-        ...(item.filename ? { filename: item.filename } : {}),
-        ...(item.size !== undefined ? { size: item.size } : {}),
-        ...(item.duration !== undefined ? { duration: item.duration } : {}),
-        ...(item.transcription ? { transcription: item.transcription } : {}),
-      };
-    }
-
-    const bytes = decodeBase64Bytes(normalizeBase64Data(item.data));
-    const response = await sendFrameToProcess(pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.media.write",
-      args: {
-        pid,
-        type: item.type,
-        mimeType: item.mimeType,
-        ...(item.filename ? { filename: item.filename } : {}),
-        ...(item.duration !== undefined ? { duration: item.duration } : {}),
-        ...(item.transcription ? { transcription: item.transcription } : {}),
-      },
-      body: bodyFromBytes(bytes),
-    } as RequestFrame<"proc.media.write">);
-    if (!response || response.type !== "res" || !response.ok) {
-      throw new Error(response && response.type === "res" && !response.ok
-        ? response.error.message
-        : "No response while storing adapter media");
-    }
-    const result = (response as ResponseOkFrame<"proc.media.write">).data;
-    if (!result?.ok) {
-      throw new Error(result?.error || "Failed to store adapter media");
-    }
-    return result.media;
-  }));
-
-  const stored = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-  const error = settled.find((result) => result.status === "rejected");
-  if (error?.status === "rejected") {
+  validateAdapterMediaItems(media, "inbound");
+  const stored: ProcMediaInput[] = [];
+  try {
+    await consumeAdapterMediaBodyParts(media, body, async ({
+      mediaIndex,
+      media: item,
+      body: partBody,
+    }) => {
+      const response = await sendFrameToProcess(pid, {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.media.write",
+        args: {
+          pid,
+          type: item.type,
+          mimeType: item.mimeType,
+          mediaId: `${runId}:${mediaIndex}`,
+          ...(item.filename ? { filename: item.filename } : {}),
+          ...(item.duration !== undefined ? { duration: item.duration } : {}),
+          ...(item.transcription ? { transcription: item.transcription } : {}),
+        },
+        body: partBody,
+      } as RequestFrame<"proc.media.write">);
+      if (!response || response.type !== "res" || !response.ok) {
+        throw new Error(response && response.type === "res" && !response.ok
+          ? response.error.message
+          : "No response while storing adapter media");
+      }
+      const result = (response as ResponseOkFrame<"proc.media.write">).data;
+      if (!result?.ok) {
+        throw new Error(result?.error || "Failed to store adapter media");
+      }
+      stored.push(result.media);
+    }, {
+      maxBytes: MAX_MESSAGE_MEDIA_TOTAL_BYTES,
+      maxPartBytes: MAX_MESSAGE_MEDIA_PART_BYTES,
+      signal,
+    });
+  } catch (error) {
     await rollbackAdapterMedia(pid, stored);
-    throw error.reason;
+    throw error;
   }
-  return stored;
+  return stored.length > 0 ? stored : undefined;
+}
+
+function validateAdapterMediaItems(
+  media: AdapterMedia[] | undefined,
+  direction: "inbound" | "outbound",
+): void {
+  if (media === undefined) return;
+  if (!Array.isArray(media)) {
+    throw new Error("Adapter media must be an array");
+  }
+  if (media.length > MAX_MESSAGE_MEDIA_ITEMS) {
+    throw new Error(`Adapter media exceeds item limit (${MAX_MESSAGE_MEDIA_ITEMS})`);
+  }
+
+  for (const item of media) {
+    if (!item || !["image", "audio", "video", "document"].includes(item.type)) {
+      throw new Error("Adapter media has an invalid type");
+    }
+    if (typeof item.mimeType !== "string" || !item.mimeType.trim()) {
+      throw new Error("Adapter media requires mimeType");
+    }
+    if (item.size !== undefined && (!Number.isSafeInteger(item.size) || item.size < 0)) {
+      throw new Error("Adapter media size must be a non-negative safe integer");
+    }
+    if (item.duration !== undefined && (!Number.isFinite(item.duration) || item.duration < 0)) {
+      throw new Error("Adapter media duration must be a non-negative number");
+    }
+    if (item.body && item.size !== undefined && item.size !== item.body.length) {
+      throw new Error("Adapter media size must match its binary body length");
+    }
+    if (direction === "inbound" && !item.body) {
+      throw new Error("Inbound adapter media must include a binary body");
+    }
+    if (direction === "outbound" && !item.body && !item.url?.trim()) {
+      throw new Error("Outbound adapter media must include a URL or binary body");
+    }
+    if (item.url) {
+      let url: URL;
+      try {
+        url = new URL(item.url);
+      } catch {
+        throw new Error("Adapter media URL is invalid");
+      }
+      if (url.protocol !== "https:" && url.protocol !== "http:") {
+        throw new Error("Adapter media URL must use HTTP or HTTPS");
+      }
+    }
+  }
 }
 
 async function rollbackAdapterMedia(
@@ -851,7 +1300,6 @@ function adapterListEntry(adapter: string, service: AdapterServiceBinding | null
     supportsDisconnect: typeof service?.adapterDisconnect === "function",
     supportsSend: typeof service?.adapterSend === "function",
     supportsStatus: typeof service?.adapterStatus === "function",
-    supportsShellExec: typeof service?.adapterShellExec === "function",
     supportsActivity: typeof service?.adapterSetActivity === "function",
     accounts: [],
   };
@@ -918,43 +1366,6 @@ async function refreshAdapterStatus(
   }
 }
 
-function normalizeAdapterShellArgs(args: unknown): ShellExecArgs {
-  const raw = args && typeof args === "object" ? args as Record<string, unknown> : {};
-  return {
-    input: typeof raw.input === "string" ? raw.input : "",
-    ...(typeof raw.cwd === "string" ? { cwd: raw.cwd } : {}),
-    ...(typeof raw.sessionId === "string" ? { sessionId: raw.sessionId } : {}),
-    ...(typeof raw.timeout === "number" ? { timeout: raw.timeout } : {}),
-    ...(typeof raw.background === "boolean" ? { background: raw.background } : {}),
-    ...(typeof raw.yieldMs === "number" ? { yieldMs: raw.yieldMs } : {}),
-  };
-}
-
-function completedShellResult(output: string): ShellExecResult {
-  return {
-    status: "completed",
-    output,
-    exitCode: 0,
-    ok: true,
-    pid: 0,
-    stdout: output,
-    stderr: "",
-  };
-}
-
-function failedShellResult(error: string): ShellExecResult {
-  return {
-    status: "failed",
-    output: error,
-    error,
-    exitCode: 1,
-    ok: false,
-    pid: 0,
-    stdout: "",
-    stderr: error,
-  };
-}
-
 function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity | null {
   const user = ctx.auth.getPasswdByUid(uid);
   if (!user) return null;
@@ -972,24 +1383,28 @@ function identityForUid(uid: number, ctx: KernelContext): ProcessIdentity | null
 async function resolveAdapterRoute(
   adapter: string,
   accountId: string,
+  actorId: string,
   surface: AdapterSurface,
   uid: number,
   userIdentity: ProcessIdentity,
   ctx: KernelContext,
 ): Promise<string> {
-  const routedPid = ctx.adapters.surfaceRoutes.resolvePid(
+  const routeKey = {
     adapter,
     accountId,
-    surface.kind,
-    surface.id,
+    actorId,
+    surfaceKind: surface.kind,
+    surfaceId: surface.id,
+    threadId: surface.threadId,
     uid,
-  );
+  };
+  const routedPid = ctx.adapters.surfaceRoutes.resolvePid(routeKey);
   if (routedPid) {
     const routedProcess = ctx.procs.get(routedPid);
     if (routedProcess && routedProcess.ownerUid === uid && routedProcess.interactive) {
       return routedPid;
     }
-    ctx.adapters.surfaceRoutes.clearRoute(adapter, accountId, surface.kind, surface.id);
+    ctx.adapters.surfaceRoutes.clearRoute(routeKey);
   }
 
   return ensureDefaultConversationExecutor(ctx, userIdentity);
@@ -1015,13 +1430,24 @@ async function handleAdapterCommand(args: {
   const [rawCommand, ...rest] = text.split(/\s+/);
   const command = rawCommand.toLowerCase();
   const selector = rest.join(" ").trim();
+  const actorId = resolveActorId(message);
+  if (!actorId) {
+    return replyToAdapterCommand(message, "This adapter message has no linked actor identity.");
+  }
 
   if (command === "/help") {
     return replyToAdapterCommand(message, renderAdapterCommandHelp());
   }
 
   if (command === "/where") {
-    const routed = resolveExistingAdapterRoute(adapter, accountId, message.surface, uid, ctx);
+    const routed = resolveExistingAdapterRoute(
+      adapter,
+      accountId,
+      actorId,
+      message.surface,
+      uid,
+      ctx,
+    );
     return replyToAdapterCommand(
       message,
       routed
@@ -1041,13 +1467,23 @@ async function handleAdapterCommand(args: {
 
     const normalized = selector.toLowerCase();
     if (normalized === "personal" || normalized === "default" || normalized === "home") {
-      const cleared = ctx.adapters.surfaceRoutes.clearRoute(adapter, accountId, message.surface.kind, message.surface.id);
-      return replyToAdapterCommand(
-        message,
-        cleared
-          ? "This chat now uses your personal conversation."
-          : "This chat is already using your personal conversation.",
-      );
+      const identity = identityForUid(uid, ctx);
+      if (!identity) {
+        return replyToAdapterCommand(message, "Your local user identity is unavailable.");
+      }
+      const pid = await ensureDefaultConversationExecutor(ctx, identity);
+      ctx.adapters.surfaceRoutes.setRoute({
+        adapter,
+        accountId,
+        actorId,
+        surfaceKind: message.surface.kind,
+        surfaceId: message.surface.id,
+        threadId: message.surface.threadId,
+        uid,
+        pid,
+        updatedByUid: uid,
+      });
+      return replyToAdapterCommand(message, "This chat now uses your personal conversation.");
     }
 
     const processMatch = findProcessForSelector(selector, uid, ctx);
@@ -1055,15 +1491,17 @@ async function handleAdapterCommand(args: {
       return replyToAdapterCommand(message, `More than one process matches "${selector}". Use a longer process id from /list.`);
     }
     if (processMatch.kind === "found") {
-      ctx.adapters.surfaceRoutes.setRoute(
+      ctx.adapters.surfaceRoutes.setRoute({
         adapter,
         accountId,
-        message.surface.kind,
-        message.surface.id,
+        actorId,
+        surfaceKind: message.surface.kind,
+        surfaceId: message.surface.id,
+        threadId: message.surface.threadId,
         uid,
-        processMatch.record.processId,
-        uid,
-      );
+        pid: processMatch.record.processId,
+        updatedByUid: uid,
+      });
       return replyToAdapterCommand(message, `This chat now uses ${describeProcessRoute(processMatch.record)}.`);
     }
 
@@ -1073,15 +1511,17 @@ async function handleAdapterCommand(args: {
     }
 
     const pid = await spawnAdapterAgentProcess(agent, uid, message.surface, ctx);
-    ctx.adapters.surfaceRoutes.setRoute(
+    ctx.adapters.surfaceRoutes.setRoute({
       adapter,
       accountId,
-      message.surface.kind,
-      message.surface.id,
+      actorId,
+      surfaceKind: message.surface.kind,
+      surfaceId: message.surface.id,
+      threadId: message.surface.threadId,
       uid,
       pid,
-      uid,
-    );
+      updatedByUid: uid,
+    });
     return replyToAdapterCommand(message, `This chat now uses ${agent.username}.`);
   }
 
@@ -1091,17 +1531,21 @@ async function handleAdapterCommand(args: {
 function resolveExistingAdapterRoute(
   adapter: string,
   accountId: string,
+  actorId: string,
   surface: AdapterSurface,
   uid: number,
   ctx: KernelContext,
 ): NonNullable<ReturnType<KernelContext["procs"]["get"]>> | null {
-  const routedPid = ctx.adapters.surfaceRoutes.resolvePid(
+  const routeKey = {
     adapter,
     accountId,
-    surface.kind,
-    surface.id,
+    actorId,
+    surfaceKind: surface.kind,
+    surfaceId: surface.id,
+    threadId: surface.threadId,
     uid,
-  );
+  };
+  const routedPid = ctx.adapters.surfaceRoutes.resolvePid(routeKey);
   if (!routedPid) {
     return null;
   }
@@ -1109,7 +1553,7 @@ function resolveExistingAdapterRoute(
   if (routedProcess && routedProcess.ownerUid === uid && routedProcess.interactive) {
     return routedProcess;
   }
-  ctx.adapters.surfaceRoutes.clearRoute(adapter, accountId, surface.kind, surface.id);
+  ctx.adapters.surfaceRoutes.clearRoute(routeKey);
   return null;
 }
 

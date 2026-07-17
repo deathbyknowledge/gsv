@@ -15,6 +15,7 @@ export type * from "./syscalls/ai";
 export type * from "./syscalls/apps";
 export type * from "./syscalls/map";
 export type * from "./adapters";
+export * from "./adapter-media-body";
 export type * from "./package-assembly";
 export * from "./body";
 export * from "./binary-frame";

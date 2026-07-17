@@ -14,10 +14,17 @@ export type AdapterActor = {
   handle?: string;
 };
 
+export type AdapterMediaBody = {
+  /** Byte offset in the request's single top-level binary body. */
+  offset: number;
+  /** Exact byte length of this media item in the top-level body. */
+  length: number;
+};
+
 export type AdapterMedia = {
   type: "image" | "audio" | "video" | "document";
   mimeType: string;
-  data?: string;
+  body?: AdapterMediaBody;
   url?: string;
   filename?: string;
   size?: number;
@@ -38,7 +45,11 @@ export type AdapterInboundMessage = {
 };
 
 export type AdapterOutboundMessage = {
+  /** Stable idempotency key for one logical provider delivery. */
+  deliveryId: string;
   surface: AdapterSurface;
+  /** Stable adapter actor identity for provider-specific reply addressing. */
+  actorId?: string;
   text: string;
   media?: AdapterMedia[];
   replyToId?: string;
@@ -68,14 +79,20 @@ export type AdapterInboundResult = {
     queued: boolean;
   };
   reply?: {
+    /** Stable idempotency key for delivering this immediate reply. */
+    deliveryId: string;
     text: string;
     replyToId?: string;
   };
   challenge?: {
+    /** Stable idempotency key for delivering this link challenge. */
+    deliveryId: string;
     code: string;
     prompt: string;
     expiresAt: number;
   };
+  /** Set only when this provider ingress key was already claimed. */
+  replayed?: "in_progress" | "completed";
   droppedReason?: string;
   error?: string;
 };

@@ -1,11 +1,11 @@
 import type { Frame } from "./protocol/frames";
-import type { ShellExecArgs, ShellExecResult } from "./syscalls/shell";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
   AdapterConnectChallenge,
   AdapterOutboundMessage,
   AdapterSurface,
+  BinaryBody,
 } from "@humansandmachines/gsv/protocol";
 
 export type {
@@ -58,11 +58,14 @@ export interface AdapterWorkerInterface {
   // "Specified address is missing port" before the request reaches the channel worker.
   adapterConnect(accountId: string, config?: Record<string, unknown>): Promise<AdapterConnectResult>;
   adapterDisconnect(accountId: string): Promise<AdapterDisconnectResult>;
-  adapterSend(accountId: string, message: AdapterOutboundMessage): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }>;
-  adapterShellExec?(
+  adapterSend(
     accountId: string,
-    args: ShellExecArgs,
-  ): Promise<ShellExecResult>;
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<
+    | { ok: true; messageId?: string; deduplicated?: boolean }
+    | { ok: false; error: string; retryable?: boolean; ambiguous?: boolean }
+  >;
   adapterSetActivity(
     accountId: string,
     surface: AdapterSurface,

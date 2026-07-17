@@ -52,6 +52,7 @@ function makeContext(options: {
         ),
       },
       status: {
+        listByOwner: vi.fn(() => []),
         list: vi.fn((adapter: string, accountId?: string) =>
           statuses
             .filter((status) =>
@@ -86,10 +87,10 @@ describe("adapter target helpers", () => {
     });
   });
 
-  it("lists connected authenticated adapter command targets linked to the user", () => {
+  it("lists connected authenticated adapter messaging targets linked to the user", () => {
     const ctx = makeContext({
       env: {
-        CHANNEL_WHATSAPP: { adapterShellExec: vi.fn() },
+        CHANNEL_WHATSAPP: { adapterSend: vi.fn() },
       },
       links: [{ adapter: "whatsapp", accountId: "primary", uid: 1000 }],
       statuses: [
@@ -104,13 +105,13 @@ describe("adapter target helpers", () => {
     expect(targets[0].label).toBe("WhatsApp");
   });
 
-  it("lists owner-linked adapter command targets for agent process callers", () => {
+  it("lists owner-linked adapter messaging targets for agent process callers", () => {
     const ctx = makeContext({
       uid: 2000,
       ownerUid: 1000,
       processId: "proc-agent",
       env: {
-        CHANNEL_TELEGRAM: { adapterShellExec: vi.fn() },
+        CHANNEL_TELEGRAM: { adapterSend: vi.fn() },
       },
       links: [{ adapter: "telegram", accountId: "bot", uid: 1000 }],
       statuses: [
@@ -124,7 +125,7 @@ describe("adapter target helpers", () => {
     expect(targets.map((target) => target.targetId)).toEqual(["adapter:telegram:bot"]);
   });
 
-  it("hides adapters without shell command support", () => {
+  it("hides adapters without message delivery support", () => {
     const ctx = makeContext({
       env: {
         CHANNEL_WHATSAPP: {},
@@ -138,10 +139,10 @@ describe("adapter target helpers", () => {
     expect(listVisibleAdapterTargets(ctx)).toEqual([]);
   });
 
-  it("lists offline authenticated adapter command targets when requested", () => {
+  it("lists offline authenticated adapter messaging targets when requested", () => {
     const ctx = makeContext({
       env: {
-        CHANNEL_WHATSAPP: { adapterShellExec: vi.fn() },
+        CHANNEL_WHATSAPP: { adapterSend: vi.fn() },
       },
       links: [{ adapter: "whatsapp", accountId: "primary", uid: 1000 }],
       statuses: [
@@ -158,7 +159,7 @@ describe("adapter target helpers", () => {
   it("does not list unauthenticated adapter targets in offline mode", () => {
     const ctx = makeContext({
       env: {
-        CHANNEL_WHATSAPP: { adapterShellExec: vi.fn() },
+        CHANNEL_WHATSAPP: { adapterSend: vi.fn() },
       },
       links: [{ adapter: "whatsapp", accountId: "primary", uid: 1000 }],
       statuses: [
@@ -169,11 +170,11 @@ describe("adapter target helpers", () => {
     expect(listVisibleAdapterTargets(ctx, { includeOffline: true })).toEqual([]);
   });
 
-  it("lets root see all connected authenticated adapter command targets", () => {
+  it("lets root see all connected authenticated adapter messaging targets", () => {
     const ctx = makeContext({
       uid: 0,
       env: {
-        CHANNEL_DISCORD: { adapterShellExec: vi.fn() },
+        CHANNEL_DISCORD: { adapterSend: vi.fn() },
       },
       statuses: [
         { adapter: "discord", accountId: "ops", connected: true, authenticated: true },

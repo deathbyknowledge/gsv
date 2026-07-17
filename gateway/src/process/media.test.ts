@@ -29,7 +29,9 @@ import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
   DEFAULT_IMAGE_READING_MODEL,
   deleteProcessMedia,
+  describeStoredProcessMedia,
   parseStoredProcessMedia,
+  processMediaPath,
   storeIncomingProcessMedia,
   type AudioTranscriptionBinding,
   type ImageReadingBinding,
@@ -64,6 +66,32 @@ afterEach(async () => {
 });
 
 describe("process media", () => {
+  it("maps process media keys to actionable filesystem paths", () => {
+    const key = "var/media/1000/proc:abc/attachment";
+    expect(processMediaPath(key)).toBe(`/${key}`);
+    expect(processMediaPath("var/media/01000/proc:abc/attachment")).toBeNull();
+    expect(processMediaPath("var/media/1000/proc:abc/nested/attachment")).toBeNull();
+    expect(describeStoredProcessMedia({
+      type: "document",
+      mimeType: "application/pdf",
+      key,
+      filename: "brief.pdf",
+    })).toBe(`Attached document "brief.pdf" [application/pdf]\nPath: /${key}`);
+  });
+
+  it("only restores persisted paths from the archived-media namespace", () => {
+    const archivedKey = `home/alice/.gsv/media/archived-media:${"a".repeat(64)}`;
+    const parsed = parseStoredProcessMedia(JSON.stringify([
+      { type: "image", mimeType: "image/png", key: archivedKey, path: `/${archivedKey}` },
+      { type: "document", mimeType: "text/plain", key: "etc/passwd", path: "/etc/passwd" },
+      { type: "document", mimeType: "text/plain", key: "home/alice/./secret", path: "/home/alice/./secret" },
+      { type: "document", mimeType: "text/plain", key: "home/alice\\secret", path: "/home/alice\\secret" },
+    ]));
+
+    expect(parsed[0]?.path).toBe(`/${archivedKey}`);
+    expect(parsed.slice(1).map((item) => item.path)).toEqual([undefined, undefined, undefined]);
+  });
+
   it("transcribes incoming audio with Workers AI before storing metadata", async () => {
     const pid = pidForTest("transcribe");
     const ai: AudioTranscriptionBinding = {
@@ -92,6 +120,7 @@ describe("process media", () => {
     expect(media[0].transcription).toBe("voice note transcript");
     expect(media[0].duration).toBe(1.5);
     expect(media[0].key).toBeTruthy();
+    expect(media[0].path).toBe(`/${media[0].key}`);
     expect(ai.run).toHaveBeenCalledWith(
       DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
       expect.objectContaining({

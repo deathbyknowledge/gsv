@@ -642,6 +642,7 @@ export async function forwardToProcess(
         ctx.ipcCalls.cancelBySourcePid({ uid: proc.ownerUid, sourcePid: pid });
       }
       if (frame.call === "proc.reset") {
+        ctx.runRoutes.clearForProcess(pid);
         ctx.failIpcCallsByTarget(
           proc.ownerUid,
           pid,
@@ -654,9 +655,7 @@ export async function forwardToProcess(
           clearLatestArchiveForConversation(ctx, conversation);
         }
       } else if (frame.call === "proc.kill") {
-        if (proc.activeRunId) {
-          ctx.runRoutes.delete(proc.activeRunId);
-        }
+        ctx.runRoutes.clearForProcess(pid);
         ctx.failIpcCallsByTarget(
           proc.ownerUid,
           pid,
@@ -686,7 +685,12 @@ export async function forwardToProcess(
         && ctx.connection
         && typeof runData?.runId === "string"
       ) {
-        ctx.runRoutes.setConnectionRoute(runData.runId, proc.ownerUid, ctx.connection.id);
+        ctx.runRoutes.setConnectionRoute({
+          runId: runData.runId,
+          processId: pid,
+          uid: proc.ownerUid,
+          connectionId: ctx.connection.id,
+        });
       }
       return {
         data: responseData,

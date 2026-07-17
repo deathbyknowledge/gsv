@@ -66,17 +66,33 @@ export function createAccountHomeBackend(
   );
 
   if (!options?.auth) {
-    return primary;
+    const homeName = homeNamespaceName(identity);
+    return new AccountHomeNamespaceMountBackend(
+      primary,
+      () => homeName ? [homeName] : [],
+    );
   }
 
-  return new DelegatingAccountHomeMountBackend(
+  const auth = options.auth;
+  const ownerUid = options.ownerUid ?? identity.uid;
+  const isRoot = options.isRoot ?? identity.uid === 0;
+  const delegated = new DelegatingAccountHomeMountBackend(
     primary,
     client,
     bucket,
     identity,
-    options.auth,
-    options.ownerUid ?? identity.uid,
-    options.isRoot ?? identity.uid === 0,
+    auth,
+    ownerUid,
+    isRoot,
+  );
+  return new AccountHomeNamespaceMountBackend(
+    delegated,
+    () => visibleHomeNamespaceNames(
+      auth,
+      identity,
+      ownerUid,
+      isRoot,
+    ),
   );
 }
 
@@ -85,6 +101,205 @@ export function isAccountHomeReservedPath(path: string): boolean {
   return homeUsernameFromPath(normalized) !== null
     || normalized === "/root"
     || normalized.startsWith("/root/");
+}
+
+/**
+ * Owns the virtual `/home` ancestor so concrete ripgit-backed account mounts
+ * remain reachable on a clean R2 bucket. The root only exposes account homes
+ * that the caller is authorized to manage.
+ */
+class AccountHomeNamespaceMountBackend implements MountBackend {
+  constructor(
+    private readonly delegate: MountBackend,
+    private readonly visibleHomeNames: () => string[],
+  ) {}
+
+  handles(path: string): boolean {
+    const normalized = normalizePath(path);
+    return normalized === "/home" || this.delegate.handles(normalized);
+  }
+
+  readFile(
+    path: string,
+    options?: { encoding?: BufferEncoding | null } | BufferEncoding,
+  ): Promise<string> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") throwDirectoryRead(normalized);
+    return this.delegate.readFile(normalized, options);
+  }
+
+  readFileBuffer(path: string): Promise<Uint8Array> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") throwDirectoryRead(normalized);
+    return this.delegate.readFileBuffer(normalized);
+  }
+
+  openFile(path: string, options?: OpenFileOptions): Promise<OpenFileResult | undefined> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") return Promise.resolve(undefined);
+    return this.delegate.openFile?.(normalized, options) ?? Promise.resolve(undefined);
+  }
+
+  writeFile(
+    path: string,
+    content: FileContent,
+    options?: WriteFileOptions | BufferEncoding,
+  ): Promise<void> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") throwDirectoryWrite(normalized);
+    return this.delegate.writeFile(normalized, content, options);
+  }
+
+  writeFileStream(
+    path: string,
+    content: ReadableStream<Uint8Array>,
+    options: WriteFileStreamOptions,
+  ): Promise<WriteFileStreamResult | undefined> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") {
+      return rejectHomeRootStream(content, directoryWriteError(normalized));
+    }
+    return this.delegate.writeFileStream?.(normalized, content, options)
+      ?? Promise.resolve(undefined);
+  }
+
+  appendFile(
+    path: string,
+    content: FileContent,
+    options?: { encoding?: BufferEncoding } | BufferEncoding,
+  ): Promise<void> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") throwDirectoryWrite(normalized);
+    return this.delegate.appendFile(normalized, content, options);
+  }
+
+  exists(path: string): Promise<boolean> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") return Promise.resolve(true);
+    return this.delegate.exists(normalized);
+  }
+
+  stat(path: string): Promise<ExtendedMountStat> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") return Promise.resolve(homeNamespaceStat());
+    return this.delegate.stat(normalized);
+  }
+
+  lstat(path: string): Promise<ExtendedMountStat> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") return Promise.resolve(homeNamespaceStat());
+    return this.delegate.lstat?.(normalized) ?? this.delegate.stat(normalized);
+  }
+
+  mkdir(path: string, options?: MkdirOptions): Promise<void> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") {
+      if (options?.recursive) return Promise.resolve();
+      throw new Error(`EEXIST: file already exists, mkdir '${normalized}'`);
+    }
+    return this.delegate.mkdir(normalized, options);
+  }
+
+  readdir(path: string): Promise<string[]> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") {
+      return Promise.resolve([...new Set(this.visibleHomeNames())].sort());
+    }
+    return this.delegate.readdir(normalized);
+  }
+
+  rm(path: string, options?: RmOptions): Promise<void> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") {
+      throw new Error(`EPERM: cannot remove virtual home root '${normalized}'`);
+    }
+    return this.delegate.rm(normalized, options);
+  }
+
+  symlink(target: string, linkPath: string): Promise<void> {
+    const normalized = normalizePath(linkPath);
+    if (normalized === "/home") {
+      throw new Error(`EEXIST: file already exists, symlink '${normalized}'`);
+    }
+    if (!this.delegate.symlink) {
+      throw new Error(`ENOSYS: symlink is unavailable for '${normalized}'`);
+    }
+    return this.delegate.symlink(target, normalized);
+  }
+
+  readlink(path: string): Promise<string> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") {
+      throw new Error(`EINVAL: invalid argument, readlink '${normalized}'`);
+    }
+    if (!this.delegate.readlink) {
+      throw new Error(`ENOSYS: readlink is unavailable for '${normalized}'`);
+    }
+    return this.delegate.readlink(normalized);
+  }
+
+  search(
+    path: string,
+    query: string,
+    include?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult> {
+    const normalized = normalizePath(path);
+    if (normalized !== "/home") {
+      if (!this.delegate.search) {
+        throw new Error(`ENOSYS: search is unavailable for '${normalized}'`);
+      }
+      return this.delegate.search(normalized, query, include, signal);
+    }
+    if (!this.delegate.search) {
+      throw new Error(`ENOSYS: search is unavailable for '${normalized}'`);
+    }
+
+    return this.searchHomeRoot(query, include, signal);
+  }
+
+  private async searchHomeRoot(
+    query: string,
+    include?: string,
+    signal?: AbortSignal,
+  ): Promise<FsSearchBackendResult> {
+    const search = this.delegate.search;
+    if (!search) {
+      throw new Error("ENOSYS: search is unavailable for '/home'");
+    }
+    const matches = new Map<string, FsSearchBackendResult["matches"][number]>();
+    let truncated = false;
+    for (const name of this.visibleHomeNames()) {
+      signal?.throwIfAborted();
+      const result = await search.call(this.delegate, `/home/${name}`, query, include, signal);
+      truncated ||= result.truncated === true;
+      for (const match of result.matches) {
+        matches.set(`${match.path}:${match.line}:${match.content}`, match);
+      }
+    }
+    return { matches: [...matches.values()], truncated };
+  }
+
+  chmod(path: string, mode: number): Promise<void> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") throwVirtualRootMutation("chmod", normalized);
+    if (!this.delegate.chmod) throwUnsupportedMutation("chmod", normalized);
+    return this.delegate.chmod(normalized, mode);
+  }
+
+  chown(path: string, uid?: number, gid?: number): Promise<void> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") throwVirtualRootMutation("chown", normalized);
+    if (!this.delegate.chown) throwUnsupportedMutation("chown", normalized);
+    return this.delegate.chown(normalized, uid, gid);
+  }
+
+  utimes(path: string, atime: Date, mtime: Date): Promise<void> {
+    const normalized = normalizePath(path);
+    if (normalized === "/home") throwVirtualRootMutation("utimes", normalized);
+    if (!this.delegate.utimes) throwUnsupportedMutation("utimes", normalized);
+    return this.delegate.utimes(normalized, atime, mtime);
+  }
 }
 
 class AccountHomeMountBackend implements MountBackend {
@@ -109,6 +324,16 @@ class AccountHomeMountBackend implements MountBackend {
 
   private get skillsRoot() {
     return normalizePath(`${this.identity.home}/skills.d`);
+  }
+
+  private get archivedMediaRoot() {
+    return normalizePath(`${this.identity.home}/.gsv/media`);
+  }
+
+  private assertMutablePath(path: string): void {
+    if (path === this.archivedMediaRoot || path.startsWith(`${this.archivedMediaRoot}/`)) {
+      throwPermissionDenied(path);
+    }
   }
 
   handles(path: string): boolean {
@@ -168,6 +393,7 @@ class AccountHomeMountBackend implements MountBackend {
 
   async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
     const normalized = normalizePath(path);
+    this.assertMutablePath(normalized);
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
@@ -195,6 +421,12 @@ class AccountHomeMountBackend implements MountBackend {
     options: WriteFileStreamOptions,
   ): Promise<WriteFileStreamResult | undefined> {
     const normalized = normalizePath(path);
+    try {
+      this.assertMutablePath(normalized);
+    } catch (error) {
+      await content.cancel(error).catch(() => {});
+      throw error;
+    }
     if (this.classify(normalized) !== "other") {
       return undefined;
     }
@@ -206,6 +438,7 @@ class AccountHomeMountBackend implements MountBackend {
 
   async appendFile(path: string, content: FileContent): Promise<void> {
     const normalized = normalizePath(path);
+    this.assertMutablePath(normalized);
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
@@ -318,6 +551,7 @@ class AccountHomeMountBackend implements MountBackend {
 
   async mkdir(path: string, options?: MkdirOptions): Promise<void> {
     const normalized = normalizePath(path);
+    this.assertMutablePath(normalized);
     const kind = this.classify(normalized);
 
     if (kind === "home" || kind === "context-root" || kind === "skills-root") {
@@ -390,6 +624,7 @@ class AccountHomeMountBackend implements MountBackend {
 
   async rm(path: string, options?: RmOptions): Promise<void> {
     const normalized = normalizePath(path);
+    this.assertMutablePath(normalized);
     const kind = this.classify(normalized);
 
     if (kind === "home") {
@@ -503,6 +738,7 @@ class AccountHomeMountBackend implements MountBackend {
 
   async symlink(target: string, linkPath: string): Promise<void> {
     const normalized = normalizePath(linkPath);
+    this.assertMutablePath(normalized);
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
@@ -817,6 +1053,78 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
 
     return delegate.handles(normalized) ? delegate : null;
   }
+}
+
+function visibleHomeNamespaceNames(
+  auth: AuthStore,
+  viewerIdentity: ProcessIdentity,
+  ownerUid: number,
+  isRoot: boolean,
+): string[] {
+  const names = new Set<string>();
+  const viewerHome = homeNamespaceName(viewerIdentity);
+  if (viewerHome) names.add(viewerHome);
+
+  for (const entry of auth.getPasswdEntries()) {
+    if (normalizePath(entry.home) !== `/home/${entry.username}`) continue;
+    if (canOwnerAccessAccountHome(
+      auth,
+      ownerUid,
+      viewerIdentity.username,
+      entry.username,
+      isRoot,
+    )) {
+      names.add(entry.username);
+    }
+  }
+  return [...names].sort();
+}
+
+function homeNamespaceName(identity: ProcessIdentity): string | null {
+  return normalizePath(identity.home) === `/home/${identity.username}`
+    ? identity.username
+    : null;
+}
+
+function homeNamespaceStat(): ExtendedMountStat {
+  return {
+    isFile: false,
+    isDirectory: true,
+    isSymbolicLink: false,
+    mode: 0o755,
+    size: 0,
+    mtime: new Date(),
+    uid: 0,
+    gid: 0,
+  };
+}
+
+function throwDirectoryRead(path: string): never {
+  throw new Error(`EISDIR: illegal operation on a directory, read '${path}'`);
+}
+
+function directoryWriteError(path: string): Error {
+  return new Error(`EISDIR: illegal operation on a directory, write '${path}'`);
+}
+
+function throwDirectoryWrite(path: string): never {
+  throw directoryWriteError(path);
+}
+
+async function rejectHomeRootStream(
+  content: ReadableStream<Uint8Array>,
+  error: Error,
+): Promise<never> {
+  await content.cancel(error).catch(() => {});
+  throw error;
+}
+
+function throwVirtualRootMutation(operation: string, path: string): never {
+  throw new Error(`EPERM: cannot ${operation} virtual home root '${path}'`);
+}
+
+function throwUnsupportedMutation(operation: string, path: string): never {
+  throw new Error(`ENOSYS: ${operation} is unavailable for '${path}'`);
 }
 
 function throwPermissionDenied(path: string): never {

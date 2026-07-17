@@ -113,7 +113,6 @@ export type ConsoleAdapter = {
   supportsDisconnect: boolean;
   supportsSend: boolean;
   supportsStatus: boolean;
-  supportsShellExec: boolean;
   supportsActivity: boolean;
   accounts: ConsoleAdapterAccount[];
 };

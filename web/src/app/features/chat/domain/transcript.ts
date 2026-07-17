@@ -332,8 +332,9 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
   history.messages.forEach((message, index) => {
     if (message.role === "assistant") {
       const parsed = extractAssistantHistory(message.content, message.text);
+      const media = extractMessageMedia(message.content);
       const backupModel = normalizeBackupModelInfo(message.metadata?.fallback);
-      if (parsed.text.trim() || parsed.thinking.length > 0) {
+      if (parsed.text.trim() || parsed.thinking.length > 0 || media.length > 0) {
         rows.push({
           id: `message:${message.clientId}`,
           role: "assistant",
@@ -344,6 +345,7 @@ export function transcriptRowsFromHistory(history: ChatHistory): ChatTranscriptR
           timestamp: message.timestamp,
           time: formatTranscriptTime(message.timestamp),
           runId: message.runId ?? undefined,
+          ...(media.length > 0 ? { media } : {}),
           ...(backupModel ? { backupModel } : {}),
           status: "done",
         });
@@ -611,8 +613,9 @@ function applyAssistantOutput(
 ): ChatTranscriptRow[] {
   const text = asString(record?.text) ?? "";
   const thinking = extractThinkingBlocks(record);
+  const media = extractMessageMedia(record);
   const backupModel = normalizeBackupModelInfo(record?.fallback) ?? backupModelForRun(rows, runId);
-  if (!text.trim() && thinking.length === 0) {
+  if (!text.trim() && thinking.length === 0 && media.length === 0) {
     return runId ? finishRowsForRun(rows, runId) : rows;
   }
   const timestamp = asNumber(record?.timestamp) ?? Date.now();
@@ -621,6 +624,7 @@ function applyAssistantOutput(
     role: "assistant",
     text,
     thinking,
+    ...(media.length > 0 ? { media } : {}),
     timestamp,
     time: formatTranscriptTime(timestamp),
     ...(runId ? { runId } : {}),

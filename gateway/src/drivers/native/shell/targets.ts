@@ -296,7 +296,7 @@ function targetToEntry(target: TargetDescriptor): TargetListEntry {
     metadataWritable: target.metadataWritable,
     route: target.route.kind === "connection"
       ? "connection"
-      : `adapter-shell:${target.route.adapter}:${target.route.accountId}`,
+      : `adapter:${target.route.adapter}:${target.route.accountId}`,
   };
 }
 

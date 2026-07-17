@@ -383,7 +383,6 @@ function normalizeAdapterEntry(value: unknown, adapterFallback: string): Console
     supportsDisconnect: record.supportsDisconnect === true,
     supportsSend: record.supportsSend === true,
     supportsStatus: record.supportsStatus === true,
-    supportsShellExec: record.supportsShellExec === true,
     supportsActivity: record.supportsActivity === true,
     accounts,
   };

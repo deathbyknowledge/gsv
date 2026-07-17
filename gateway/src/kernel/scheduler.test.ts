@@ -6,6 +6,7 @@ import type {
   ProcessIdentity,
   SchedulePrincipal,
   ScheduleRecord,
+  ScheduleRunResult,
 } from "@humansandmachines/gsv/protocol";
 import { getProcessByPid } from "../shared/utils";
 import type { RequestFrame } from "../protocol/frames";
@@ -161,6 +162,36 @@ function makeSchedulerContext(overrides: Partial<KernelContext> = {}): KernelCon
   } as unknown as KernelContext;
 }
 
+const TELEGRAM_DESTINATION = {
+  kind: "adapter" as const,
+  adapter: "telegram",
+  accountId: "bot",
+  actorId: "telegram:user:42",
+  surface: { kind: "dm" as const, id: "chat-42" },
+};
+
+function makeAdapterSchedulerContext(
+  adapterSend: ReturnType<typeof vi.fn>,
+): KernelContext {
+  return makeSchedulerContext({
+    env: {
+      CHANNEL_TELEGRAM: { adapterSend },
+    } as unknown as Env,
+    adapters: {
+      identityLinks: {
+        get: vi.fn(() => ({
+          adapter: "telegram",
+          accountId: "bot",
+          actorId: "telegram:user:42",
+          uid: USER_IDENTITY.uid,
+          metadata: { surfaceKind: "dm", surfaceId: "chat-42" },
+        })),
+      },
+      surfaceRoutes: { get: vi.fn(() => null) },
+    } as unknown as KernelContext["adapters"],
+  });
+}
+
 describe("scheduler", () => {
   it("computes cron next-runs in the schedule timezone", () => {
     const expression = {
@@ -230,6 +261,361 @@ describe("scheduler", () => {
       kind: "at",
       atMs: Date.now() + 30_000,
     }, Date.now())).toEqual({ enabled: false, nextRunAtMs: null });
+  });
+
+  it("preserves a one-shot occurrence across retry and rotates it on user re-arm or update", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-one-shot-occurrence-test-${crypto.randomUUID()}`,
+    );
+
+    const state = await runInDurableObject(kernel, (instance: Kernel) => {
+      const schedules = (instance as unknown as { schedules: ScheduleStore }).schedules;
+      const now = Date.now();
+      const created = schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "retryable one shot",
+        enabled: true,
+        expression: { kind: "after", afterMs: 30_000 },
+        target: { kind: "process.spawn", prompt: "Run once." },
+        now,
+      });
+      const initial = schedules.getStored(created.id)!;
+      const firstRunning = schedules.markRunning(created.id, now + 1)!;
+      const firstKey = schedules.occurrenceKey(
+        firstRunning,
+        "due",
+        created.state.nextRunAtMs,
+        now + 1,
+      );
+
+      schedules.finishRun({
+        scheduleId: created.id,
+        ownerUid: created.ownerUid,
+        scheduledAtMs: created.state.nextRunAtMs,
+        startedAtMs: now + 1,
+        finishedAtMs: now + 2,
+        status: "error",
+        error: "temporary delivery failure",
+        nextRunAtMs: now + 5_000,
+        enabled: true,
+        oneShotOccurrenceId: firstRunning.oneShotOccurrenceId,
+        countOneShotAttempt: true,
+      });
+      const retryPending = schedules.getStored(created.id)!;
+      schedules.update(created.id, {
+        description: "metadata only",
+        now: now + 3,
+      });
+      const retryAfterMetadata = schedules.getStored(created.id)!;
+      const retryRunning = schedules.markRunning(created.id, now + 3)!;
+      const retryKey = schedules.occurrenceKey(
+        retryRunning,
+        "due",
+        retryPending.state.nextRunAtMs,
+        now + 3,
+      );
+
+      schedules.finishRun({
+        scheduleId: created.id,
+        ownerUid: created.ownerUid,
+        scheduledAtMs: retryPending.state.nextRunAtMs,
+        startedAtMs: now + 3,
+        finishedAtMs: now + 4,
+        status: "ok",
+        nextRunAtMs: null,
+        enabled: false,
+        oneShotOccurrenceId: retryRunning.oneShotOccurrenceId,
+        countOneShotAttempt: true,
+      });
+      const terminal = schedules.getStored(created.id)!;
+
+      schedules.update(created.id, { enabled: true, now: now + 5 });
+      const rearmed = schedules.getStored(created.id)!;
+      schedules.update(created.id, { name: "updated one shot", now: now + 6 });
+      const metadataUpdated = schedules.getStored(created.id)!;
+      schedules.update(created.id, {
+        target: { kind: "process.spawn", prompt: "Run the updated occurrence." },
+        now: now + 7,
+      });
+      const updated = schedules.getStored(created.id)!;
+      const updatedRunning = schedules.markRunning(created.id, now + 8)!;
+      const updatedKey = schedules.occurrenceKey(
+        updatedRunning,
+        "due",
+        updated.state.nextRunAtMs,
+        now + 8,
+      );
+
+      schedules.finishRun({
+        scheduleId: created.id,
+        ownerUid: created.ownerUid,
+        scheduledAtMs: null,
+        startedAtMs: now + 8,
+        finishedAtMs: now + 9,
+        status: "error",
+        error: "forced run failed",
+        nextRunAtMs: updated.state.nextRunAtMs,
+        enabled: true,
+        oneShotOccurrenceId: updatedRunning.oneShotOccurrenceId,
+        countOneShotAttempt: false,
+      });
+      const afterForce = schedules.getStored(created.id)!;
+
+      schedules.update(created.id, {
+        target: { kind: "process.spawn", prompt: "Run the newest occurrence." },
+        now: now + 10,
+      });
+      const latest = schedules.getStored(created.id)!;
+      schedules.finishRun({
+        scheduleId: created.id,
+        ownerUid: created.ownerUid,
+        scheduledAtMs: updated.state.nextRunAtMs,
+        startedAtMs: now + 8,
+        finishedAtMs: now + 11,
+        status: "error",
+        error: "late old occurrence",
+        nextRunAtMs: null,
+        enabled: false,
+        oneShotOccurrenceId: updatedRunning.oneShotOccurrenceId,
+        countOneShotAttempt: true,
+      });
+      const afterOldOccurrence = schedules.getStored(created.id)!;
+
+      return {
+        initialOccurrenceId: initial.oneShotOccurrenceId,
+        initialAttemptCount: initial.oneShotAttemptCount,
+        firstKey,
+        retryOccurrenceId: retryPending.oneShotOccurrenceId,
+        retryAttemptCount: retryPending.oneShotAttemptCount,
+        retryAfterMetadataOccurrenceId: retryAfterMetadata.oneShotOccurrenceId,
+        retryAfterMetadataAttemptCount: retryAfterMetadata.oneShotAttemptCount,
+        retryKey,
+        terminalOccurrenceId: terminal.oneShotOccurrenceId,
+        terminalAttemptCount: terminal.oneShotAttemptCount,
+        rearmedOccurrenceId: rearmed.oneShotOccurrenceId,
+        rearmedAttemptCount: rearmed.oneShotAttemptCount,
+        metadataUpdatedOccurrenceId: metadataUpdated.oneShotOccurrenceId,
+        metadataUpdatedAttemptCount: metadataUpdated.oneShotAttemptCount,
+        updatedOccurrenceId: updated.oneShotOccurrenceId,
+        updatedAttemptCount: updated.oneShotAttemptCount,
+        updatedKey,
+        afterForceOccurrenceId: afterForce.oneShotOccurrenceId,
+        afterForceAttemptCount: afterForce.oneShotAttemptCount,
+        latestOccurrenceId: latest.oneShotOccurrenceId,
+        latestAttemptCount: latest.oneShotAttemptCount,
+        latestNextRunAtMs: latest.state.nextRunAtMs,
+        afterOldOccurrenceId: afterOldOccurrence.oneShotOccurrenceId,
+        afterOldAttemptCount: afterOldOccurrence.oneShotAttemptCount,
+        afterOldEnabled: afterOldOccurrence.enabled,
+        afterOldNextRunAtMs: afterOldOccurrence.state.nextRunAtMs,
+      };
+    });
+
+    expect(state.initialOccurrenceId).toEqual(expect.any(String));
+    expect(state.initialAttemptCount).toBe(0);
+    expect(state.retryOccurrenceId).toBe(state.initialOccurrenceId);
+    expect(state.retryAttemptCount).toBe(1);
+    expect(state.retryAfterMetadataOccurrenceId).toBe(state.retryOccurrenceId);
+    expect(state.retryAfterMetadataAttemptCount).toBe(state.retryAttemptCount);
+    expect(state.retryKey).toBe(state.firstKey);
+    expect(state.terminalOccurrenceId).toBeNull();
+    expect(state.terminalAttemptCount).toBe(0);
+    expect(state.rearmedOccurrenceId).toEqual(expect.any(String));
+    expect(state.rearmedOccurrenceId).not.toBe(state.initialOccurrenceId);
+    expect(state.rearmedAttemptCount).toBe(0);
+    expect(state.metadataUpdatedOccurrenceId).toBe(state.rearmedOccurrenceId);
+    expect(state.metadataUpdatedAttemptCount).toBe(state.rearmedAttemptCount);
+    expect(state.updatedOccurrenceId).toEqual(expect.any(String));
+    expect(state.updatedOccurrenceId).not.toBe(state.rearmedOccurrenceId);
+    expect(state.updatedAttemptCount).toBe(0);
+    expect(state.updatedKey).not.toBe(state.firstKey);
+    expect(state.afterForceOccurrenceId).toBe(state.updatedOccurrenceId);
+    expect(state.afterForceAttemptCount).toBe(0);
+    expect(state.latestOccurrenceId).not.toBe(state.updatedOccurrenceId);
+    expect(state.latestAttemptCount).toBe(0);
+    expect(state.afterOldOccurrenceId).toBe(state.latestOccurrenceId);
+    expect(state.afterOldAttemptCount).toBe(0);
+    expect(state.afterOldEnabled).toBe(true);
+    expect(state.afterOldNextRunAtMs).toBe(state.latestNextRunAtMs);
+  });
+
+  it("uses the per-occurrence attempt count for retry cutoff, backoff, and force isolation", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-one-shot-attempt-test-${crypto.randomUUID()}`,
+    );
+    const adapterSend = vi.fn(async () => ({
+      ok: false as const,
+      error: "temporary adapter outage",
+      retryable: true,
+    }));
+
+    const state = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+        buildScheduleContext: (record: ScheduleRecord) => KernelContext;
+        scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
+        runScheduleRecord: (
+          record: ScheduleRecord,
+          mode: "due" | "force",
+        ) => Promise<ScheduleRunResult>;
+      };
+      k.buildScheduleContext = () => makeAdapterSchedulerContext(adapterSend);
+      k.scheduleScheduleWake = async () => "wake-retry";
+
+      const now = Date.now();
+      const created = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "retry budget",
+        enabled: true,
+        expression: { kind: "after", afterMs: 30_000 },
+        target: {
+          kind: "adapter.send",
+          destination: TELEGRAM_DESTINATION,
+          text: "deliver once",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        `UPDATE schedules
+            SET next_run_at = ?, run_count = 99
+          WHERE schedule_id = ?`,
+        now - 1,
+        created.id,
+      );
+
+      const retryStartedAt = Date.now();
+      const retryResult = await k.runScheduleRecord(k.schedules.get(created.id)!, "due");
+      const retryFinishedAt = Date.now();
+      const retryStored = k.schedules.getStored(created.id)!;
+      const forceResult = await k.runScheduleRecord(k.schedules.get(created.id)!, "force");
+      const afterForce = k.schedules.getStored(created.id)!;
+
+      k.ctx.storage.sql.exec(
+        `UPDATE schedules
+            SET next_run_at = ?, one_shot_attempt_count = 9
+          WHERE schedule_id = ?`,
+        Date.now() - 1,
+        created.id,
+      );
+      const cutoffResult = await k.runScheduleRecord(k.schedules.get(created.id)!, "due");
+      const cutoffStored = k.schedules.getStored(created.id)!;
+
+      return {
+        retryResult,
+        retryStartedAt,
+        retryFinishedAt,
+        retryAttemptCount: retryStored.oneShotAttemptCount,
+        retryRunCount: retryStored.state.runCount,
+        retryOccurrenceId: retryStored.oneShotOccurrenceId,
+        retryNextRunAtMs: retryStored.state.nextRunAtMs,
+        forceResult,
+        afterForceAttemptCount: afterForce.oneShotAttemptCount,
+        afterForceOccurrenceId: afterForce.oneShotOccurrenceId,
+        afterForceNextRunAtMs: afterForce.state.nextRunAtMs,
+        cutoffResult,
+        cutoffEnabled: cutoffStored.enabled,
+        cutoffOccurrenceId: cutoffStored.oneShotOccurrenceId,
+        cutoffAttemptCount: cutoffStored.oneShotAttemptCount,
+        cutoffRunCount: cutoffStored.state.runCount,
+      };
+    });
+
+    expect(state.retryResult.status).toBe("error");
+    expect(state.retryAttemptCount).toBe(1);
+    expect(state.retryRunCount).toBe(100);
+    expect(state.retryResult.nextRunAtMs).toBeGreaterThanOrEqual(state.retryStartedAt + 5_000);
+    expect(state.retryResult.nextRunAtMs).toBeLessThanOrEqual(state.retryFinishedAt + 5_000);
+    expect(state.forceResult.status).toBe("error");
+    expect(state.afterForceAttemptCount).toBe(state.retryAttemptCount);
+    expect(state.afterForceOccurrenceId).toBe(state.retryOccurrenceId);
+    expect(state.afterForceNextRunAtMs).toBe(state.retryNextRunAtMs);
+    expect(state.cutoffResult.status).toBe("error");
+    expect(state.cutoffResult.nextRunAtMs).toBeNull();
+    expect(state.cutoffEnabled).toBe(false);
+    expect(state.cutoffOccurrenceId).toBeNull();
+    expect(state.cutoffAttemptCount).toBe(0);
+    expect(state.cutoffRunCount).toBe(102);
+    expect(adapterSend).toHaveBeenCalledTimes(3);
+  });
+
+  it("records and summarizes an ambiguous adapter delivery without retrying", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-ambiguous-adapter-test-${crypto.randomUUID()}`,
+    );
+    const adapterSend = vi.fn(async () => ({
+      ok: false as const,
+      error: "adapter acknowledgement was lost",
+      ambiguous: true,
+    }));
+
+    const state = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+        buildScheduleContext: (record: ScheduleRecord) => KernelContext;
+        runScheduleRecord: (
+          record: ScheduleRecord,
+          mode: "due" | "force",
+        ) => Promise<ScheduleRunResult>;
+      };
+      k.buildScheduleContext = () => makeAdapterSchedulerContext(adapterSend);
+
+      const now = Date.now();
+      const created = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "ambiguous delivery",
+        enabled: true,
+        expression: { kind: "after", afterMs: 30_000 },
+        target: {
+          kind: "adapter.send",
+          destination: TELEGRAM_DESTINATION,
+          text: "deliver once",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1,
+        created.id,
+      );
+
+      const result = await k.runScheduleRecord(k.schedules.get(created.id)!, "due");
+      return {
+        result,
+        schedule: k.schedules.getStored(created.id),
+        history: k.schedules.history(created.id),
+      };
+    });
+
+    expect(state.result).toMatchObject({
+      status: "ok",
+      summary: "message delivery through telegram is ambiguous",
+      nextRunAtMs: null,
+    });
+    expect(state.schedule).toMatchObject({
+      enabled: false,
+      oneShotOccurrenceId: null,
+      oneShotAttemptCount: 0,
+    });
+    expect(state.history).toHaveLength(1);
+    expect(state.history[0].result).toMatchObject({
+      kind: "adapter.send",
+      adapter: "telegram",
+      accountId: "bot",
+      surfaceId: "chat-42",
+      deliveryState: "ambiguous",
+    });
+    expect(adapterSend).toHaveBeenCalledTimes(1);
   });
 
   it("rejects invalid cron and timezone expressions", () => {
@@ -355,6 +741,49 @@ describe("scheduler", () => {
 
     expect(cancel).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("lets a schedule be disabled without revalidating its stale target", async () => {
+    const existing = makeScheduleRecord({
+      target: {
+        kind: "process.event",
+        pid: "proc:removed",
+        message: "This target no longer exists.",
+      },
+    });
+    const stored = { ...existing, wakeScheduleId: "wake-old" };
+    const disabled = makeScheduleRecord({
+      ...existing,
+      enabled: false,
+      state: { ...existing.state, nextRunAtMs: null },
+    });
+    const update = vi.fn(() => disabled);
+    const cancel = vi.fn(async () => {});
+    const setWakeScheduleId = vi.fn();
+    const getProcess = vi.fn(() => null);
+    const ctx = makeSchedulerContext({
+      procs: { get: getProcess } as unknown as KernelContext["procs"],
+      schedules: {
+        getStored: vi.fn(() => stored),
+        update,
+        setWakeScheduleId,
+      } as unknown as ScheduleStore,
+      cancelScheduleWake: cancel,
+    });
+
+    const result = await handleSchedulerUpdate({
+      id: existing.id,
+      patch: { enabled: false },
+    }, ctx);
+
+    expect(result.schedule.enabled).toBe(false);
+    expect(getProcess).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(existing.id, expect.objectContaining({
+      enabled: false,
+      target: existing.target,
+    }));
+    expect(cancel).toHaveBeenCalledWith("wake-old");
+    expect(setWakeScheduleId).toHaveBeenCalledWith(existing.id, null);
   });
 
   it("requires shell.exec access for command schedules", async () => {
@@ -984,6 +1413,46 @@ describe("scheduler", () => {
         ) => Promise<unknown>;
       }).dispatchScheduleTarget(record, null, Date.now()),
     )).rejects.toThrow(`Permission denied: ${capability}`);
+  });
+
+  it("rechecks adapter.send when a scheduled process event has a reply target", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-revoked-reply-test-${crypto.randomUUID()}`,
+    );
+    const record = makeScheduleRecord({
+      target: {
+        kind: "process.event",
+        pid: "proc:removed",
+        message: "Do not deliver.",
+        replyTo: {
+          kind: "adapter",
+          adapter: "telegram",
+          accountId: "bot",
+          actorId: "telegram:user:42",
+          surface: { kind: "dm", id: "chat-42" },
+        },
+      },
+    });
+
+    await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        auth: ScheduleTestAuth;
+        caps: { revoke: (gid: number, capability: string) => { ok: boolean; error?: string } };
+      };
+      addTestUser(k.auth);
+      k.caps.revoke(100, "adapter.send");
+    });
+
+    await expect(runInDurableObject(kernel, (instance: Kernel) =>
+      (instance as unknown as {
+        dispatchScheduleTarget: (
+          record: ScheduleRecord,
+          scheduledAtMs: number | null,
+          firedAtMs: number,
+        ) => Promise<unknown>;
+      }).dispatchScheduleTarget(record, null, Date.now()),
+    )).rejects.toThrow("Permission denied: adapter.send");
   });
 
   it("fires an armed one-shot schedule through the Agent alarm", async () => {

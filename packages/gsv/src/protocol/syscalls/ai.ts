@@ -34,6 +34,8 @@ export type AiSkillIndexEntry = {
   };
 };
 
+export type AiSkillIndexMode = "summary" | "names" | "off";
+
 export type AiConfigArgs = {
   processOverrides?: Record<string, string>;
   processProfile?: ProcAiConfigProfileRef | null;
@@ -79,6 +81,7 @@ export type AiConfigResult = {
     timezone: string;
   };
   skillIndex?: AiSkillIndexEntry[];
+  skillIndexMode?: AiSkillIndexMode;
   accountApprovalPolicy?: string | null;
   capabilities: string[];
   maxContextBytes: number;

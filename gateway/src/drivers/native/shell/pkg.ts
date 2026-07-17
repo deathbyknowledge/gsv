@@ -59,9 +59,13 @@ type PackageRunnerStub = {
   runCommand(input: AppRunnerCommandInput): Promise<PackageCommandResult>;
 };
 
-export function buildPackageCommands(identity: ProcessIdentity, ctx: KernelContext) {
+export function buildPackageCommands(
+  identity: ProcessIdentity,
+  ctx: KernelContext,
+  reservedCommandNames?: ReadonlySet<string>,
+) {
   const commands = [];
-  const reserved = new Set([
+  const reserved = new Set(reservedCommandNames ?? [
     "pkg",
     "proc",
     "rgit",

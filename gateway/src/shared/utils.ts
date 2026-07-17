@@ -3,7 +3,15 @@ import { Kernel } from "../kernel/do";
 import { env } from "cloudflare:workers";
 import { Process } from "../process/do";
 import type { Frame, FrameBody, ResponseOkFrame } from "../protocol/frames";
-import type { ProcessInboundFrame } from "../protocol/process-frames";
+import type {
+  ProcessAdapterDeliverRequestFrame,
+  ProcessAdapterDeliverResponseFrame,
+  ProcessInboundFrame,
+  ProcessRunAttachRequestFrame,
+  ProcessRunAttachResponseFrame,
+  ProcessScheduleDeliverRequestFrame,
+  ProcessScheduleDeliverResponseFrame,
+} from "../protocol/process-frames";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 
 export const isWebSocketRequest = (request: Request) =>
@@ -55,10 +63,32 @@ export async function cancelProcessRequests(
   return kernel.cancelProcessRequests(processId, requestIds, reason);
 }
 
+export function sendFrameToProcess(
+  pid: string,
+  frame: ProcessAdapterDeliverRequestFrame,
+): Promise<ProcessAdapterDeliverResponseFrame | null>;
+export function sendFrameToProcess(
+  pid: string,
+  frame: ProcessScheduleDeliverRequestFrame,
+): Promise<ProcessScheduleDeliverResponseFrame | null>;
+export function sendFrameToProcess(
+  pid: string,
+  frame: ProcessRunAttachRequestFrame,
+): Promise<ProcessRunAttachResponseFrame | null>;
+export function sendFrameToProcess(
+  pid: string,
+  frame: Frame,
+): Promise<Frame | null>;
 export async function sendFrameToProcess(
   pid: string,
   frame: ProcessInboundFrame,
-): Promise<Frame | null> {
+): Promise<
+  | Frame
+  | ProcessScheduleDeliverResponseFrame
+  | ProcessAdapterDeliverResponseFrame
+  | ProcessRunAttachResponseFrame
+  | null
+> {
   const proc = await getProcessByPid(pid);
   return proc.recvFrame(frame);
 }

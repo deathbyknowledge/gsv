@@ -59,7 +59,7 @@ export function listVisibleAdapterTargets(
     const adapter = normalizeAdapter(status.adapter);
     const online = status.connected && status.authenticated;
     if (!status.authenticated || (!options.includeOffline && !online)) continue;
-    if (!adapterShellExecServiceAvailable(ctx, adapter)) continue;
+    if (!adapterSendServiceAvailable(ctx, adapter)) continue;
 
     const targetId = adapterTargetId(adapter, status.accountId);
     targets.set(targetId, {
@@ -68,8 +68,8 @@ export function listVisibleAdapterTargets(
       accountId: status.accountId,
       label: adapterDisplayName(adapter),
       description: [
-        `${adapterDisplayName(adapter)} command target.`,
-        "Run the target shell help command to discover supported messaging actions.",
+        `${adapterDisplayName(adapter)} messaging target.`,
+        "Use `message destinations` to inspect authorized surfaces and `message send` for an explicit outbound message.",
       ].join(" "),
       status: { ...status, adapter },
     });
@@ -98,9 +98,9 @@ export function isVisibleAdapterTarget(ctx: KernelContext, adapter: string, acco
   return getVisibleAdapterTarget(ctx, targetId) !== null;
 }
 
-function adapterShellExecServiceAvailable(ctx: KernelContext, adapter: string): boolean {
+function adapterSendServiceAvailable(ctx: KernelContext, adapter: string): boolean {
   const service = adapterServiceBinding(ctx.env, adapter);
-  return Boolean(service && typeof service.adapterShellExec === "function");
+  return Boolean(service && typeof service.adapterSend === "function");
 }
 
 function visibleAdapterStatuses(ctx: KernelContext): AdapterStatusRecord[] {
@@ -117,6 +117,14 @@ function visibleAdapterStatuses(ctx: KernelContext): AdapterStatusRecord[] {
   const links = ctx.adapters.identityLinks.list(ownerUid);
   const seen = new Set<string>();
   const statuses: AdapterStatusRecord[] = [];
+  for (const status of ctx.adapters.status.listByOwner(ownerUid)) {
+    const adapter = normalizeAdapter(status.adapter);
+    const accountId = status.accountId.trim();
+    const key = `${adapter}\0${accountId}`;
+    if (!adapter || !accountId || seen.has(key)) continue;
+    seen.add(key);
+    statuses.push({ ...status, adapter });
+  }
   for (const link of links) {
     const adapter = normalizeAdapter(link.adapter);
     const accountId = link.accountId.trim();
@@ -132,12 +140,12 @@ function visibleAdapterStatuses(ctx: KernelContext): AdapterStatusRecord[] {
   return statuses;
 }
 
-function adapterServiceBinding(env: Env | undefined, adapter: string): { adapterShellExec?: unknown } | null {
+function adapterServiceBinding(env: Env | undefined, adapter: string): { adapterSend?: unknown } | null {
   if (!env) return null;
   const key = `CHANNEL_${normalizeAdapter(adapter).toUpperCase()}`;
   const binding = (env as unknown as Record<string, unknown>)[key];
   return binding && typeof binding === "object"
-    ? binding as { adapterShellExec?: unknown }
+    ? binding as { adapterSend?: unknown }
     : null;
 }
 

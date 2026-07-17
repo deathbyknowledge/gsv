@@ -1,4 +1,5 @@
 import type { ProcSpawnAssignment } from "./proc";
+import type { AdapterMessageDestination, EventReplyTarget } from "./interaction-origin";
 
 export type ScheduleExpression =
   | { kind: "at"; atMs: number }
@@ -29,6 +30,12 @@ export type ScheduleTarget =
       conversationId?: string;
       message: string;
       data?: Record<string, unknown>;
+      replyTo?: EventReplyTarget;
+    }
+  | {
+      kind: "adapter.send";
+      destination: AdapterMessageDestination;
+      text: string;
     };
 
 export type SchedulePrincipal = {

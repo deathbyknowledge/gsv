@@ -536,16 +536,8 @@ describe("dispatch", () => {
     expect(deps.registerRoute).not.toHaveBeenCalled();
   });
 
-  it("routes adapter shell targets through adapter workers", async () => {
-    const adapterShellExec = vi.fn(async () => ({
-      status: "completed" as const,
-      output: "ok",
-      exitCode: 0,
-      ok: true as const,
-      pid: 0,
-      stdout: "ok",
-      stderr: "",
-    }));
+  it("does not treat adapter messaging targets as shell devices", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const }));
     const deps = {
       connections: new Map(),
       registerRoute: vi.fn(),
@@ -567,7 +559,7 @@ describe("dispatch", () => {
         capabilities: ["*"],
       },
       env: {
-        CHANNEL_WHATSAPP: { adapterShellExec },
+        CHANNEL_WHATSAPP: { adapterSend },
       },
       auth: {
         getPasswdByUid: vi.fn(() => null),
@@ -590,6 +582,7 @@ describe("dispatch", () => {
           }]),
         },
         status: {
+          listByOwner: vi.fn(() => []),
           list: vi.fn(() => [{
             adapter: "whatsapp",
             accountId: "primary",
@@ -620,19 +613,14 @@ describe("dispatch", () => {
       response: {
         type: "res",
         id: "req_adapter",
-        ok: true,
-        data: {
-          status: "completed",
-          output: "ok",
-          exitCode: 0,
-          ok: true,
-          pid: 0,
-          stdout: "ok",
-          stderr: "",
+        ok: false,
+        error: {
+          code: 400,
+          message: "Device adapter:whatsapp:primary does not implement shell.exec",
         },
       },
     });
-    expect(adapterShellExec).toHaveBeenCalledWith("primary", { input: "send +15551234567 hello" });
+    expect(adapterSend).not.toHaveBeenCalled();
     expect(deps.registerRoute).not.toHaveBeenCalled();
   });
 });

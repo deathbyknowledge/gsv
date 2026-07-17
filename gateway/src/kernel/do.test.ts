@@ -957,16 +957,44 @@ describe("Kernel process signal routing", () => {
     kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
     kernel.broadcastToUserUid = vi.fn();
     kernel.deliverSignalToConnection = vi.fn();
-    kernel.deliverSignalToAdapter = vi.fn(async () => {});
+    kernel.deliverSignalToAdapter = vi.fn(async () => ({ state: "delivered" }));
+    kernel.schedule = vi.fn(async () => ({ id: "scheduled-delivery" }));
     return kernel;
   }
 
   const connectionRoute = {
     kind: "connection",
     runId: "run-1",
+    processId: "proc-1",
     uid: 1000,
     connectionId: "connection-1",
   };
+
+  it("acknowledges HIL only after its durable delivery work is queued", async () => {
+    let release!: () => void;
+    const queued = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.updateProcessRuntimeFromSignal = vi.fn(() => true);
+    kernel.enqueueProcessSignal = vi.fn(() => queued);
+    kernel.completeIpcCallsForProcessSignal = vi.fn();
+    const frame = {
+      type: "sig",
+      signal: "proc.run.hil.requested",
+      payload: { pid: "proc-1", runId: "run-hil", requestId: "hil-1" },
+    };
+
+    let acknowledged = false;
+    const receiving = kernel.recvFrame("proc-1", frame).then(() => {
+      acknowledged = true;
+    });
+    await Promise.resolve();
+    expect(acknowledged).toBe(false);
+    release();
+    await receiving;
+    expect(kernel.enqueueProcessSignal).toHaveBeenCalledWith("proc-1", frame);
+  });
 
   it("broadcasts connection-routed HIL requests without duplicating the origin", async () => {
     const kernel = buildKernel(connectionRoute);
@@ -983,10 +1011,11 @@ describe("Kernel process signal routing", () => {
     expect(kernel.deliverSignalToAdapter).not.toHaveBeenCalled();
   });
 
-  it("broadcasts adapter-routed HIL requests and preserves adapter delivery", async () => {
+  it("broadcasts adapter-routed HIL requests and durably queues attempt one", async () => {
     const route = {
       kind: "adapter",
       runId: "run-1",
+      processId: "proc-1",
       uid: 1000,
       adapter: "discord",
       accountId: "account-1",
@@ -1003,7 +1032,17 @@ describe("Kernel process signal routing", () => {
     await kernel.handleProcessSignal("proc-1", frame);
 
     expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(1000, frame.signal, frame.payload);
-    expect(kernel.deliverSignalToAdapter).toHaveBeenCalledWith(route, frame);
+    expect(kernel.deliverSignalToAdapter).not.toHaveBeenCalled();
+    expect(kernel.schedule).toHaveBeenCalledWith(
+      expect.any(Date),
+      "onAdapterSignalDelivery",
+      expect.objectContaining({
+        runId: route.runId,
+        signal: frame.signal,
+        attempt: 1,
+      }),
+      expect.objectContaining({ idempotent: true }),
+    );
   });
 
   it("keeps ordinary run signals exclusive to their connection route", async () => {
@@ -1018,6 +1057,132 @@ describe("Kernel process signal routing", () => {
 
     expect(kernel.broadcastToUserUid).not.toHaveBeenCalled();
     expect(kernel.deliverSignalToConnection).toHaveBeenCalledWith(connectionRoute, frame, 1000);
+  });
+
+  it("durably retries a terminal adapter reply without deleting its route", async () => {
+    const route = {
+      kind: "adapter",
+      runId: "run-retry",
+      processId: "proc-1",
+      uid: 1000,
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "actor-1",
+      surfaceKind: "dm",
+      surfaceId: "chat-1",
+    };
+    const kernel = buildKernel(route);
+    kernel.deliverSignalToAdapter.mockResolvedValue({
+      state: "retryable",
+      error: "service binding disconnected",
+    });
+    kernel.schedule = vi.fn(async () => ({ id: "retry-job" }));
+    const frame = {
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: { pid: "proc-1", runId: route.runId, conversationId: "default", text: "done" },
+    };
+
+    await kernel.handleProcessSignal("proc-1", frame);
+
+    expect(kernel.schedule).toHaveBeenCalledWith(
+      expect.any(Date),
+      "onAdapterSignalDelivery",
+      expect.objectContaining({
+        runId: route.runId,
+        processId: route.processId,
+        signal: "proc.run.finished",
+        attempt: 2,
+      }),
+      expect.objectContaining({ idempotent: true }),
+    );
+    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+  });
+
+  it("keeps a terminal route until its ambiguous delivery notice is acknowledged", async () => {
+    const route = {
+      kind: "adapter",
+      runId: "run-ambiguous",
+      processId: "proc-1",
+      uid: 1000,
+      adapter: "whatsapp",
+      accountId: "primary",
+      actorId: "actor-1",
+      surfaceKind: "dm",
+      surfaceId: "chat-1",
+    };
+    const kernel = buildKernel(route);
+    kernel.deliverSignalToAdapter.mockResolvedValue({
+      state: "ambiguous",
+      error: "provider acknowledgement was lost",
+    });
+    kernel.queueProcessDeliveryNotice = vi.fn(async () => {});
+    const frame = {
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: { pid: "proc-1", runId: route.runId, conversationId: "default", text: "done" },
+    };
+
+    await kernel.handleProcessSignal("proc-1", frame);
+
+    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+    expect(kernel.queueProcessDeliveryNotice).toHaveBeenCalledWith(
+      route,
+      frame,
+      expect.objectContaining({
+        state: "ambiguous",
+        message: expect.stringContaining("not retried"),
+      }),
+    );
+  });
+
+  it("suppresses stale delivery notices after their run route is cleared", async () => {
+    sendFrameToProcessMock.mockReset();
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.runRoutes = { get: vi.fn(() => null), delete: vi.fn() };
+
+    await kernel.onProcessDeliveryNotice({
+      noticeId: "notice:stale",
+      runId: "run-stale",
+      processId: "proc-1",
+      conversationId: "default",
+      deliveryKind: "final",
+      state: "exhausted",
+      message: "Delivery stopped.",
+      cleanupRunRoute: true,
+    });
+
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+  });
+
+  it("clears a final run route only after its delivery notice is accepted", async () => {
+    sendFrameToProcessMock.mockReset();
+    sendFrameToProcessMock.mockResolvedValueOnce(null);
+    const route = {
+      kind: "adapter",
+      runId: "run-notice",
+      processId: "proc-1",
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
+
+    await kernel.onProcessDeliveryNotice({
+      noticeId: "notice:accepted",
+      runId: route.runId,
+      processId: route.processId,
+      conversationId: "default",
+      deliveryKind: "final",
+      state: "ambiguous",
+      message: "Delivery is ambiguous.",
+      cleanupRunRoute: true,
+    });
+
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(route.processId, expect.objectContaining({
+      signal: "proc.delivery.notice",
+      payload: expect.objectContaining({ noticeId: "notice:accepted" }),
+    }));
+    expect(kernel.runRoutes.delete).toHaveBeenCalledWith(route.runId);
   });
 });
 
@@ -1091,6 +1256,306 @@ describe("Kernel package app authorization", () => {
   });
 });
 
+describe("Kernel adapter route replies", () => {
+  const route = {
+    kind: "adapter" as const,
+    runId: "run-adapter-reply",
+    processId: "proc-1",
+    uid: 1000,
+    adapter: "telegram",
+    accountId: "bot",
+    actorId: "telegram:user:42",
+    surfaceKind: "dm" as const,
+    surfaceId: "chat-42",
+    replyToId: "incoming-42",
+    createdAt: 1,
+    expiresAt: 2,
+  };
+
+  function replyContext(options: {
+    authorized: boolean;
+    adapterSend: ReturnType<typeof vi.fn>;
+  }) {
+    const link = options.authorized
+      ? {
+          adapter: "telegram",
+          accountId: "bot",
+          actorId: "telegram:user:42",
+          uid: 1000,
+          metadata: { surfaceKind: "dm", surfaceId: "chat-42" },
+        }
+      : null;
+    return {
+      env: { CHANNEL_TELEGRAM: { adapterSend: options.adapterSend } },
+      adapters: {
+        identityLinks: { get: vi.fn(() => link) },
+        surfaceRoutes: { get: vi.fn(() => null) },
+      },
+    };
+  }
+
+  it("permanently drops an automatic reply after destination authorization is revoked", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const }));
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.buildProcessContext = vi.fn(() => replyContext({
+      authorized: false,
+      adapterSend,
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(kernel.deliverAdapterRouteReply(route, {
+      deliveryId: "run-adapter-reply:finished",
+      text: "must not retry",
+    })).resolves.toEqual({
+      state: "permanent",
+      error: "Adapter destination is not authorized",
+    });
+
+    expect(adapterSend).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Dropping revoked adapter reply route run-adapter-reply"),
+    );
+    warn.mockRestore();
+  });
+
+  it("propagates transient automatic reply delivery failures for retry handling", async () => {
+    const adapterSend = vi.fn(async () => ({
+      ok: false as const,
+      error: "Telegram temporarily unavailable",
+      retryable: true,
+    }));
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.buildProcessContext = vi.fn(() => replyContext({
+      authorized: true,
+      adapterSend,
+    }));
+
+    await expect(kernel.deliverAdapterRouteReply(route, {
+      deliveryId: "run-adapter-reply:finished",
+      text: "retry this",
+    })).resolves.toEqual({
+      state: "retryable",
+      error: "Adapter reply failed (telegram/bot): Telegram temporarily unavailable",
+    });
+    expect(adapterSend).toHaveBeenCalledWith(
+      "bot",
+      {
+        deliveryId: "run-adapter-reply:finished",
+        surface: { kind: "dm", id: "chat-42", threadId: undefined },
+        actorId: "telegram:user:42",
+        text: "retry this",
+        media: undefined,
+        replyToId: "incoming-42",
+      },
+      undefined,
+    );
+  });
+
+  it("streams immutable process-owned final-reply media through the adapter body", async () => {
+    let deliveredBytes: Uint8Array | undefined;
+    const adapterSend = vi.fn(async (
+      _accountId: string,
+      _message: unknown,
+      body?: { stream: ReadableStream<Uint8Array> },
+    ) => {
+      deliveredBytes = body
+        ? new Uint8Array(await new Response(body.stream).arrayBuffer())
+        : undefined;
+      return { ok: true as const };
+    });
+    const kernel = Object.create(Kernel.prototype) as any;
+    const key = `home/agent/.gsv/media/archived-media:${"a".repeat(64)}`;
+    kernel.procs = {
+      get: vi.fn(() => ({ uid: 2000, gid: 2000, home: "/home/agent" })),
+    };
+    kernel.env = {
+      STORAGE: {
+        get: vi.fn(async (requested: string) => requested === key
+          ? {
+              size: 3,
+              httpMetadata: { contentType: "application/pdf" },
+              customMetadata: {
+                purpose: "conversation-media",
+                uid: "2000",
+                gid: "2000",
+                mode: "400",
+              },
+              body: new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new Uint8Array([7, 8, 9]));
+                  controller.close();
+                },
+              }),
+            }
+          : null),
+      },
+    };
+    kernel.buildProcessContext = vi.fn(() => replyContext({
+      authorized: true,
+      adapterSend,
+    }));
+    const bundle = await kernel.bundleProcessReplyMedia("proc-1", [{
+      type: "document",
+      mimeType: "application/pdf",
+      filename: "report.pdf",
+      key,
+      path: `/${key}`,
+      size: 3,
+    }]);
+
+    await kernel.deliverAdapterRouteReply(route, {
+      deliveryId: "run-adapter-reply:finished",
+      text: "Here it is.",
+      media: bundle.media,
+    }, bundle.body);
+
+    expect(deliveredBytes && [...deliveredBytes]).toEqual([7, 8, 9]);
+    expect(adapterSend).toHaveBeenCalledWith(
+      "bot",
+      expect.objectContaining({
+        text: "Here it is.",
+        media: [{
+          type: "document",
+          mimeType: "application/pdf",
+          filename: "report.pdf",
+          size: 3,
+          body: { offset: 0, length: 3 },
+        }],
+      }),
+      expect.objectContaining({ length: 3 }),
+    );
+  });
+});
+
+describe("Kernel scheduled process reply routes", () => {
+  const destination = {
+    kind: "adapter" as const,
+    adapter: "telegram",
+    accountId: "bot",
+    actorId: "telegram:user:42",
+    surface: { kind: "dm" as const, id: "chat-42" },
+  };
+
+  function makeScheduledProcessKernel() {
+    const setAdapterRoute = vi.fn();
+    const deleteRoute = vi.fn();
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.buildScheduleContext = vi.fn(() => ({
+      identity: {
+        role: "user",
+        capabilities: ["proc.send", "adapter.send"],
+      },
+      adapters: {
+        identityLinks: {
+          get: vi.fn(() => ({
+            adapter: "telegram",
+            accountId: "bot",
+            actorId: "telegram:user:42",
+            uid: 1000,
+            metadata: { surfaceKind: "dm", surfaceId: "chat-42" },
+          })),
+        },
+        surfaceRoutes: { get: vi.fn(() => null) },
+      },
+    }));
+    kernel.procs = { get: vi.fn(() => ({ ownerUid: 1000 })) };
+    kernel.runRoutes = {
+      setAdapterRoute,
+      delete: deleteRoute,
+    };
+    const record = {
+      id: "schedule-1",
+      name: "Reminder",
+      ownerUid: 1000,
+      target: {
+        kind: "process.event",
+        pid: "proc-1",
+        conversationId: "default",
+        message: "Check the oven.",
+        replyTo: destination,
+      },
+    };
+    return { kernel, record, setAdapterRoute, deleteRoute };
+  }
+
+  beforeEach(() => {
+    sendFrameToProcessMock.mockReset();
+  });
+
+  it("preserves a preallocated reply route when Process transport admission is ambiguous", async () => {
+    const { kernel, record, setAdapterRoute, deleteRoute } = makeScheduledProcessKernel();
+    sendFrameToProcessMock.mockRejectedValueOnce(new Error("Process response was lost"));
+
+    await expect(kernel.dispatchScheduleTarget(record, 100, 101, "occurrence-1")).rejects.toThrow(
+      "Process response was lost",
+    );
+
+    expect(setAdapterRoute).toHaveBeenCalledWith(expect.objectContaining({
+      processId: "proc-1",
+      uid: 1000,
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "telegram:user:42",
+      surfaceKind: "dm",
+      surfaceId: "chat-42",
+    }));
+    expect(deleteRoute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "malformed",
+      response: () => null,
+      error: "proc.schedule.deliver did not return a response",
+      deletesRoute: false,
+    },
+    {
+      label: "explicit error",
+      response: (request: { id: string }) => ({
+        type: "res" as const,
+        id: request.id,
+        ok: false as const,
+        error: { code: 503, message: "Process rejected the event" },
+      }),
+      error: "Process rejected the event",
+      deletesRoute: false,
+    },
+    {
+      label: "mismatched admission",
+      response: (request: { id: string }) => ({
+        type: "res" as const,
+        id: request.id,
+        ok: true as const,
+        data: { ok: true, runId: "unexpected-run" },
+      }),
+      error: "proc.schedule.deliver admitted an unexpected reply run",
+      deletesRoute: true,
+    },
+  ])("handles a $label response according to admission certainty", async ({
+    response,
+    error,
+    deletesRoute,
+  }) => {
+    const { kernel, record, setAdapterRoute, deleteRoute } = makeScheduledProcessKernel();
+    sendFrameToProcessMock.mockImplementationOnce(async (_pid, request) => response(request));
+
+    await expect(kernel.dispatchScheduleTarget(
+      record,
+      100,
+      101,
+      "occurrence-1",
+    )).rejects.toThrow(error);
+
+    const route = setAdapterRoute.mock.calls[0]?.[0];
+    expect(route).toBeDefined();
+    if (deletesRoute) {
+      expect(deleteRoute).toHaveBeenCalledWith(route.runId);
+    } else {
+      expect(deleteRoute).not.toHaveBeenCalled();
+    }
+  });
+});
+
 describe("Kernel service binding identity", () => {
   it("rejects service calls instead of fabricating a missing root account", async () => {
     const kernel = Object.create(Kernel.prototype) as any;
@@ -1109,6 +1574,111 @@ describe("Kernel service binding identity", () => {
         message: "Service identity is not configured",
       },
     });
+  });
+});
+
+describe("Kernel adapter ingress reply outbox", () => {
+  const inboundFrame = {
+    type: "req" as const,
+    id: "inbound-1",
+    call: "adapter.inbound",
+    args: {
+      adapter: "telegram",
+      accountId: "bot",
+      message: {
+        messageId: "provider-message-1",
+        surface: { kind: "dm", id: "chat-42" },
+      },
+    },
+  };
+
+  it("turns deterministic inbound replies into Kernel-owned delivery jobs", async () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.queueAdapterImmediateDelivery = vi.fn(async () => {});
+
+    await kernel.deliverAdapterInboundImmediateReplies(inboundFrame, {
+      type: "res",
+      id: inboundFrame.id,
+      ok: true,
+      data: {
+        ok: true,
+        challenge: {
+          deliveryId: "challenge-delivery-1",
+          prompt: "Link this account.",
+        },
+        reply: {
+          deliveryId: "reply-delivery-1",
+          text: "Command accepted.",
+        },
+      },
+    });
+
+    expect(kernel.queueAdapterImmediateDelivery).toHaveBeenNthCalledWith(1, {
+      adapter: "telegram",
+      accountId: "bot",
+      surface: { kind: "dm", id: "chat-42" },
+      deliveryId: "challenge-delivery-1",
+      text: "Link this account.",
+      replyToId: "provider-message-1",
+      attempt: 1,
+    });
+    expect(kernel.queueAdapterImmediateDelivery).toHaveBeenNthCalledWith(2, {
+      adapter: "telegram",
+      accountId: "bot",
+      surface: { kind: "dm", id: "chat-42" },
+      deliveryId: "reply-delivery-1",
+      text: "Command accepted.",
+      replyToId: "provider-message-1",
+      attempt: 1,
+    });
+  });
+
+  it("durably retries a retry-safe immediate reply with the same delivery id", async () => {
+    const adapterSend = vi.fn(async () => ({
+      ok: false as const,
+      error: "adapter temporarily unavailable",
+      retryable: true,
+      deliveryId: "reply-delivery-1",
+    }));
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.schedule = vi.fn(async () => ({ id: "immediate-retry" }));
+    const ctx = {
+      identity: {
+        role: "service",
+        process: {
+          uid: 0,
+          gid: 0,
+          gids: [0],
+          username: "root",
+          home: "/root",
+          cwd: "/root",
+        },
+        capabilities: ["adapter.*"],
+      },
+      env: { CHANNEL_TELEGRAM: { adapterSend } },
+    };
+    const job = {
+      adapter: "telegram",
+      accountId: "bot",
+      surface: { kind: "dm", id: "chat-42" },
+      deliveryId: "reply-delivery-1",
+      text: "Command accepted.",
+      replyToId: "provider-message-1",
+      attempt: 1,
+    };
+
+    await kernel.attemptAdapterImmediateDelivery(job, ctx);
+
+    expect(adapterSend).toHaveBeenCalledWith("bot", expect.objectContaining({
+      deliveryId: job.deliveryId,
+      text: job.text,
+    }), undefined);
+    expect(kernel.schedule).toHaveBeenCalledWith(
+      expect.any(Date),
+      "onAdapterImmediateDelivery",
+      { ...job, attempt: 2 },
+      expect.objectContaining({ idempotent: true }),
+    );
   });
 });
 
@@ -1475,6 +2045,7 @@ describe("Kernel process runtime projection", () => {
     });
     const events: string[] = [];
     const kernel = Object.create(Kernel.prototype) as any;
+    kernel.ctx = { waitUntil: vi.fn() };
     kernel.pendingProcessSignals = new Map();
     kernel.extractRunId = vi.fn((payload) => payload.runId);
     kernel.updateProcessRuntimeFromSignal = vi.fn(() => true);

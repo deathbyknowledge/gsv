@@ -71,7 +71,6 @@ function placeholderAdapter(adapter: string): ConsoleAdapter {
     supportsDisconnect: false,
     supportsSend: false,
     supportsStatus: false,
-    supportsShellExec: false,
     supportsActivity: false,
     accounts: [],
   };

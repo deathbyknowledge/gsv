@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(8);
+    expect(KERNEL_MIGRATIONS).toHaveLength(13);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -63,6 +63,26 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[7]).toMatchObject({
       id: 8,
       name: "bind_routes_to_driver_connections",
+    });
+    expect(KERNEL_MIGRATIONS[8]).toMatchObject({
+      id: 9,
+      name: "bind_run_reply_routes",
+    });
+    expect(KERNEL_MIGRATIONS[9]).toMatchObject({
+      id: 10,
+      name: "scope_adapter_destinations",
+    });
+    expect(KERNEL_MIGRATIONS[10]).toMatchObject({
+      id: 11,
+      name: "add_schedule_occurrence_id",
+    });
+    expect(KERNEL_MIGRATIONS[11]).toMatchObject({
+      id: 12,
+      name: "add_schedule_attempt_count",
+    });
+    expect(KERNEL_MIGRATIONS[12]).toMatchObject({
+      id: 13,
+      name: "add_adapter_ingress_receipts",
     });
   });
 
@@ -100,6 +120,7 @@ describe("kernel schema migrations", () => {
       "oauth_flows",
       "oauth_accounts",
       "user_mcp_servers",
+      "adapter_ingress_receipts",
     ]);
   });
 
@@ -168,6 +189,60 @@ describe("kernel schema migrations", () => {
       "ALTER TABLE routing_table ADD COLUMN driver_connection_id TEXT",
     );
     expect(createTableStatement("routing_table")).not.toContain("driver_connection_id");
+  });
+
+  it("binds reply routes to the process and linked adapter actor", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "ALTER TABLE run_routes ADD COLUMN process_id TEXT",
+    );
+    expect(statements).toContain(
+      "ALTER TABLE run_routes ADD COLUMN actor_id TEXT",
+    );
+    expect(statements).toContain("DELETE FROM run_routes");
+    expect(createTableStatement("run_routes")).not.toContain("process_id");
+    expect(createTableStatement("run_routes")).not.toContain("actor_id");
+  });
+
+  it("scopes observed adapter destinations to their linked actor", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain("DROP TABLE surface_routes");
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE surface_routes")
+      && statement.includes("actor_id TEXT NOT NULL")
+      && statement.includes("thread_id TEXT NOT NULL DEFAULT ''")
+      && statement.includes("PRIMARY KEY (adapter, account_id, actor_id, surface_kind, surface_id, thread_id)")
+    ))).toBe(true);
+    expect(statements).toContain(
+      "ALTER TABLE run_routes ADD COLUMN reply_to_id TEXT",
+    );
+  });
+
+  it("adds durable occurrence identity for armed one-shot schedules", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "ALTER TABLE schedules ADD COLUMN one_shot_occurrence_id TEXT",
+    );
+    expect(statements).toContain(
+      "UPDATE schedules SET one_shot_occurrence_id = 'legacy:' || schedule_id WHERE enabled = 1 AND next_run_at IS NOT NULL AND json_extract(expression_json, '$.kind') IN ('at', 'after')",
+    );
+    expect(createTableStatement("schedules")).not.toContain("one_shot_occurrence_id");
+  });
+
+  it("adds a per-occurrence one-shot attempt counter", () => {
+    expect(normalizedStatements()).toContain(
+      "ALTER TABLE schedules ADD COLUMN one_shot_attempt_count INTEGER NOT NULL DEFAULT 0",
+    );
+    expect(createTableStatement("schedules")).not.toContain("one_shot_attempt_count");
+  });
+
+  it("claims normalized adapter ingress before side effects", () => {
+    const receiptTable = createTableStatement("adapter_ingress_receipts");
+    expect(receiptTable).toContain("receipt_id TEXT NOT NULL UNIQUE");
+    expect(receiptTable).toContain("state TEXT NOT NULL CHECK (state IN ('in_progress', 'completed'))");
+    expect(receiptTable).toContain(
+      "PRIMARY KEY ( adapter, account_id, actor_id, surface_kind, surface_id, thread_id, provider_message_id )",
+    );
   });
 
   it("includes current indexes owned by the kernel stores", () => {

@@ -1,15 +1,6 @@
 export type {
   ChannelAccountStatus,
-  ChannelCapabilities,
-  ChannelInboundMessage,
   ChannelMedia,
   ChannelOutboundMessage,
   ChannelPeer,
-  ChannelSender,
-  ChannelWorkerInterface,
-  LoginResult,
-  LogoutResult,
-  SendResult,
-  StartResult,
-  StopResult,
 } from "../../shared/src/types";

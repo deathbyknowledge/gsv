@@ -14,9 +14,8 @@ export type {
   AdapterSurface,
   AdapterSurfaceKind,
   AdapterWorkerInterface,
+  BinaryBody,
   GatewayFrame,
   GatewayRequestFrame,
   GatewayResponseFrame,
-  ShellExecArgs,
-  ShellExecResult,
 } from "../../shared/src/types";

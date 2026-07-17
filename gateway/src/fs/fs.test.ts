@@ -1396,6 +1396,62 @@ describe("GsvFs virtual /sys config tree", () => {
 });
 
 describe("GsvFs Linux-like runtime views", () => {
+  it("exposes process media through a stable read-only filesystem path", async () => {
+    const ownKey = "var/media/1000/task-alpha/own-media";
+    const siblingKey = "var/media/2000/task-personal/sibling-media";
+    await env.STORAGE.put(ownKey, new Uint8Array([1, 2, 3, 4]), {
+      httpMetadata: { contentType: "image/png" },
+    });
+    await env.STORAGE.put(siblingKey, new Uint8Array([5, 6]), {
+      httpMetadata: { contentType: "application/octet-stream" },
+    });
+
+    try {
+      const fs = makeRuntimeViewFs(SAM_AGENT, "task-personal");
+      await expect(fs.readdir("/var")).resolves.toContain("media");
+      await expect(fs.readdir("/var/media")).resolves.toEqual(["1000", "2000"]);
+      await expect(fs.readdir("/var/media/1000/task-alpha")).resolves.toEqual(["own-media"]);
+      await expect(fs.readFileBuffer(`/${ownKey}`)).resolves.toEqual(new Uint8Array([1, 2, 3, 4]));
+      await expect(fs.readFileBuffer(`/${siblingKey}`)).resolves.toEqual(new Uint8Array([5, 6]));
+
+      const stat = await fs.statExtended(`/${ownKey}`);
+      expect(stat).toMatchObject({
+        isFile: true,
+        mode: 0o400,
+        uid: 1000,
+        gid: 1000,
+        contentType: "image/png",
+      });
+
+      const opened = await fs.openFile(`/${ownKey}`, { range: { offset: 1, length: 2 } });
+      expect(opened).toMatchObject({ status: 206, size: 2, totalSize: 4 });
+      expect(new Uint8Array(await new Response(opened.body).arrayBuffer())).toEqual(new Uint8Array([2, 3]));
+
+      await expect(fs.writeFile(`/${ownKey}`, "replacement")).rejects.toThrow("EROFS");
+      await expect(fs.rm(`/${ownKey}`)).rejects.toThrow("EROFS");
+    } finally {
+      await env.STORAGE.delete([ownKey, siblingKey]);
+    }
+  });
+
+  it("does not expose media owned by another user's process", async () => {
+    const foreignKey = "var/media/1001/task-foreign/foreign-media";
+    await env.STORAGE.put(foreignKey, new Uint8Array([9]), {
+      httpMetadata: { contentType: "image/png" },
+    });
+
+    try {
+      const fs = makeRuntimeViewFs(SAM, "task-alpha");
+      await expect(fs.readdir("/var/media")).resolves.toEqual(["1000", "2000"]);
+      await expect(fs.exists(`/${foreignKey}`)).resolves.toBe(false);
+
+      const rootFs = makeRuntimeViewFs(ROOT);
+      await expect(rootFs.readFileBuffer(`/${foreignKey}`)).resolves.toEqual(new Uint8Array([9]));
+    } finally {
+      await env.STORAGE.delete(foreignKey);
+    }
+  });
+
   it("exposes process conversations and compacted segments under /proc", async () => {
     const fs = makeRuntimeViewFs(SAM, "task-alpha");
 

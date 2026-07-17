@@ -115,7 +115,6 @@ import {
   handleAdapterInbound,
   handleAdapterList,
   handleAdapterSend,
-  handleAdapterShellExec,
   handleAdapterStateUpdate,
   handleAdapterStatus,
 } from "./adapter-handlers";
@@ -620,13 +619,13 @@ async function dispatchNative(
         data = await handleAdapterDisconnect(frame.args, ctx);
         break;
       case "adapter.inbound":
-        data = await handleAdapterInbound(frame.args, ctx);
+        data = await handleAdapterInbound(frame.args, ctx, frame.body);
         break;
       case "adapter.state.update":
         data = handleAdapterStateUpdate(frame.args, ctx);
         break;
       case "adapter.send":
-        data = await handleAdapterSend(frame.args, ctx);
+        data = await handleAdapterSend(frame.args, ctx, frame.body);
         break;
       case "adapter.status":
         data = await handleAdapterStatus(frame.args, ctx);
@@ -691,10 +690,6 @@ async function routeToTarget(
       handled: true,
       response: errFrame(frame.id, 400, `Device ${target.targetId} does not implement ${frame.call}`),
     };
-  }
-
-  if (target.route.kind === "adapter-shell") {
-    return routeToAdapterShell(frame, target.route.adapter, target.route.accountId, ctx);
   }
 
   const deviceConn = findDeviceConnection(target.targetId, deps.connections);
@@ -776,27 +771,6 @@ export function routedFrameTtlMs(frame: RequestFrame): number {
     return normalizeNetFetchTimeoutMs(timeout.timeoutMs);
   }
   return DEFAULT_DEVICE_TTL_MS;
-}
-
-async function routeToAdapterShell(
-  frame: RequestFrame,
-  adapter: string,
-  accountId: string,
-  ctx: KernelContext,
-): Promise<DispatchResult> {
-  try {
-    const data = await handleAdapterShellExec(adapter, accountId, frame.args, ctx);
-    return {
-      handled: true,
-      response: { type: "res", id: frame.id, ok: true, data },
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      handled: true,
-      response: errFrame(frame.id, message.startsWith("Access denied") ? 403 : 500, message),
-    };
-  }
 }
 
 function findDeviceConnection(

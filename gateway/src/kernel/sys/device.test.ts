@@ -138,7 +138,7 @@ function makeContext(
     },
     adapters: {
       identityLinks: { list: () => [] },
-      status: { list: () => [], listAll: () => [] },
+      status: { listByOwner: () => [], list: () => [], listAll: () => [] },
     },
     devices: devices as unknown as KernelContext["devices"],
   } as KernelContext;
@@ -197,11 +197,11 @@ describe("sys.device handlers", () => {
     expect(result.devices.map((device) => device.deviceId)).toEqual(["node-alpha", "node-beta"]);
   });
 
-  it("includes visible adapter command targets", () => {
+  it("includes visible adapter messaging targets", () => {
     const ctx = {
       ...makeContext(1000, []),
       env: {
-        CHANNEL_WHATSAPP: { adapterShellExec: () => undefined },
+        CHANNEL_WHATSAPP: { adapterSend: () => undefined },
       },
       adapters: {
         identityLinks: {
@@ -216,6 +216,7 @@ describe("sys.device handlers", () => {
           }],
         },
         status: {
+          listByOwner: () => [],
           list: () => [{
             adapter: "whatsapp",
             accountId: "primary",
@@ -233,7 +234,7 @@ describe("sys.device handlers", () => {
     expect(result.devices).toEqual([
       expect.objectContaining({
         deviceId: "adapter:whatsapp:primary",
-        implements: ["shell.exec"],
+        implements: ["adapter.send"],
         label: "WhatsApp",
         platform: "adapter",
         online: true,
@@ -241,7 +242,7 @@ describe("sys.device handlers", () => {
     ]);
   });
 
-  it("includes owner-linked adapter command targets for agent process callers", () => {
+  it("includes owner-linked adapter messaging targets for agent process callers", () => {
     const listLinks = vi.fn((filterUid?: number) =>
       filterUid === 1000
         ? [{
@@ -258,13 +259,14 @@ describe("sys.device handlers", () => {
     const ctx = {
       ...makeContext(2000, [], [], { ownerUid: 1000, processId: "proc-agent" }),
       env: {
-        CHANNEL_TELEGRAM: { adapterShellExec: () => undefined },
+        CHANNEL_TELEGRAM: { adapterSend: () => undefined },
       },
       adapters: {
         identityLinks: {
           list: listLinks,
         },
         status: {
+          listByOwner: () => [],
           list: () => [{
             adapter: "telegram",
             accountId: "bot",
@@ -283,7 +285,7 @@ describe("sys.device handlers", () => {
     expect(result.devices).toEqual([
       expect.objectContaining({
         deviceId: "adapter:telegram:bot",
-        implements: ["shell.exec"],
+        implements: ["adapter.send"],
         ownerUid: 1000,
         ownerUsername: "user1000",
         label: "Telegram",
@@ -318,11 +320,11 @@ describe("sys.device handlers", () => {
     expect(result.device?.description).toBe("Linux home server");
   });
 
-  it("returns details for visible adapter command targets", () => {
+  it("returns details for visible adapter messaging targets", () => {
     const ctx = {
       ...makeContext(1000, []),
       env: {
-        CHANNEL_DISCORD: { adapterShellExec: () => undefined },
+        CHANNEL_DISCORD: { adapterSend: () => undefined },
       },
       adapters: {
         identityLinks: {
@@ -337,6 +339,7 @@ describe("sys.device handlers", () => {
           }],
         },
         status: {
+          listByOwner: () => [],
           list: () => [{
             adapter: "discord",
             accountId: "ops",
@@ -355,7 +358,7 @@ describe("sys.device handlers", () => {
       deviceId: "adapter:discord:ops",
       label: "Discord",
       platform: "adapter",
-      implements: ["shell.exec"],
+      implements: ["adapter.send"],
       online: true,
     });
   });

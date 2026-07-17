@@ -277,6 +277,7 @@ function makeContext(options?: {
       status: {
         list: vi.fn(() => []),
         listAll: vi.fn(() => []),
+        listByOwner: vi.fn(() => []),
       },
     } as unknown as KernelContext["adapters"],
     runRoutes: null as never,
@@ -304,6 +305,112 @@ function packageScopeKey(scope: InstalledPackageRecord["scope"]): string {
     case "user":
       return `user:${scope.uid}`;
   }
+}
+
+function makeSkillFetcher(
+  files: Record<string, string>,
+  readPaths: string[] = [],
+): Fetcher {
+  const encoder = new TextEncoder();
+  const names = Object.keys(files).sort();
+  return {
+    async fetch(input: RequestInfo | URL) {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname !== "/hyperspace/repos/sam/home/read") {
+        return new Response("missing", { status: 404 });
+      }
+      const path = url.searchParams.get("path") ?? "";
+      readPaths.push(path);
+      if (path === "skills.d") {
+        return Response.json(names.map((name) => ({
+          name,
+          mode: "100644",
+          hash: `hash-${name}`,
+          type: "blob",
+        })));
+      }
+      const content = files[path.replace(/^skills\.d\//, "")];
+      if (content === undefined) {
+        return new Response("missing", { status: 404 });
+      }
+      return new Response(content, {
+        headers: { "X-Blob-Size": String(encoder.encode(content).byteLength) },
+      });
+    },
+  } as unknown as Fetcher;
+}
+
+function enableTelegramMessaging(ctx: KernelContext) {
+  const link = {
+    adapter: "telegram",
+    accountId: "bot",
+    actorId: "chat-42",
+    uid: IDENTITY.uid,
+    createdAt: 1,
+    linkedByUid: IDENTITY.uid,
+    metadata: { surfaceKind: "dm", surfaceId: "chat-42" },
+  };
+  const status = {
+    adapter: "telegram",
+    accountId: "bot",
+    ownerUid: IDENTITY.uid,
+    connected: true,
+    authenticated: true,
+    mode: "webhook",
+    lastActivity: 2,
+    error: null,
+    extra: null,
+    updatedAt: 3,
+  };
+  const adapterSend = vi.fn(async (
+    _accountId: string,
+    _message: unknown,
+    body?: { stream: ReadableStream<Uint8Array>; length?: number },
+  ) => {
+    const bytes = body ? await bodyToBytes(body) : undefined;
+    return { ok: true as const, messageId: bytes ? `bytes-${bytes.byteLength}` : "msg-1" };
+  });
+  Object.assign(ctx.env as unknown as Record<string, unknown>, {
+    CHANNEL_TELEGRAM: { adapterSend },
+  });
+  ctx.adapters = {
+    identityLinks: {
+      list: vi.fn(() => [link]),
+      get: vi.fn((adapter: string, accountId: string, actorId: string) =>
+        adapter === link.adapter && accountId === link.accountId && actorId === link.actorId
+          ? link
+          : null),
+    },
+    surfaceRoutes: {
+      get: vi.fn(() => null),
+      list: vi.fn(() => []),
+    },
+    status: {
+      get: vi.fn((adapter: string, accountId: string) =>
+        adapter === status.adapter && accountId === status.accountId ? status : null),
+      list: vi.fn(() => [status]),
+      listAll: vi.fn(() => [status]),
+      listByOwner: vi.fn(() => [status]),
+    },
+  } as unknown as KernelContext["adapters"];
+  ctx.runRoutes = {
+    get: vi.fn((runId: string) => runId === ctx.processRunId
+      ? {
+          kind: "adapter",
+          runId,
+          processId: ctx.processId!,
+          uid: IDENTITY.uid,
+          adapter: "telegram",
+          accountId: "bot",
+          actorId: "chat-42",
+          surfaceKind: "dm",
+          surfaceId: "chat-42",
+          createdAt: 1,
+          expiresAt: Date.now() + 60_000,
+        }
+      : null),
+  } as unknown as KernelContext["runRoutes"];
+  return { adapterSend, link, status };
 }
 
 describe("native shell execution", () => {
@@ -490,6 +597,180 @@ describe("native shell execution", () => {
       expect(binList.data.files).toContain("human-tool");
       expect(binList.data.files).not.toContain("agent-tool");
     }
+  });
+});
+
+describe("native shell capability discovery", () => {
+  it.each([
+    ["put the image from this chat on my connected machine", "cp"],
+    ["create a picture from words", "txt2img"],
+    ["describe this screenshot", "img2txt"],
+    ["listen to this voice note", "stt"],
+    ["make spoken audio from text", "tts"],
+    ["run this every weekday morning", "crontab"],
+    ["save this workflow for next time", "skills"],
+    ["send this file to the chat", "message"],
+  ])("maps a plain-language task '%s' to %s", async (query, expectedCommand) => {
+    const result = await handleShellExec(
+      { input: `man --search -- '${query}'` },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.split("\n")[2]).toContain(`command\t${expectedCommand}\t`);
+    expect(result.stdout).toContain(`command\t${expectedCommand}\t`);
+    expect(result.stdout).toContain(`man '${expectedCommand}'`);
+  });
+
+  it("supports the standard man -k search alias", async () => {
+    const result = await handleShellExec(
+      { input: "man -k 'generate an image'" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("command\ttxt2img\t");
+  });
+
+  it("reports the caller's current media capability availability", async () => {
+    const unavailable = await handleShellExec(
+      { input: "man --search -- 'generate an image'" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+    const available = await handleShellExec(
+      { input: "man --search -- 'generate an image'" },
+      makeContext({ capabilities: ["shell.exec", "ai.image.generate"] }),
+    );
+
+    expect(unavailable.stdout).toContain("command\ttxt2img\tno (ai.image.generate)");
+    expect(available.stdout).toContain("command\ttxt2img\tyes");
+  });
+
+  it("renders fallback manuals for every registered native command", async () => {
+    const result = await handleShellExec(
+      { input: "man img2txt" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("IMG2TXT(1)");
+    expect(result.stdout).toContain("WHEN TO USE");
+    expect(result.stdout).toContain("img2txt [OPTIONS] IMAGE");
+  });
+
+  it("documents the generic outbound file bridge", async () => {
+    const result = await handleShellExec(
+      { input: "man message" },
+      makeContext({ capabilities: ["shell.exec", "adapter.send"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("MESSAGE(1)");
+    expect(result.stdout).toContain("message send --to DESTINATION");
+    expect(result.stdout).toContain("--attach PATH");
+  });
+
+  it("prints exact next actions and structured JSON results", async () => {
+    const result = await handleShellExec(
+      { input: "man --search --json -- 'find a connected browser'" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.query).toBe("find a connected browser");
+    expect(parsed.matches).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "command", name: "targets", next: "man 'targets'" }),
+    ]));
+  });
+
+  it("discovers live filesystem skills when prompt enumeration is off", async () => {
+    const readPaths: string[] = [];
+    const ripgit = makeSkillFetcher({
+      "instagram.md": [
+        "---",
+        "name: instagram-browser",
+        "description: Automate Instagram browsing in a connected browser.",
+        "---",
+        "",
+        "Open the connected browser and inspect the requested Instagram feed.",
+      ].join("\n"),
+    }, readPaths);
+    const ctx = makeContext({
+      capabilities: ["shell.exec"],
+      config: { "config/ai/skills/index_mode": "off" },
+      ripgit,
+    });
+    const result = await handleShellExec(
+      { input: "man --search -- 'browse my instagram feed'" },
+      ctx,
+    );
+    const json = await handleShellExec(
+      { input: "man --search --json -- 'browse instagram'" },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(readPaths).toContain("skills.d");
+    expect(readPaths).toContain("skills.d/instagram.md");
+    expect(result.stdout.split("\n")[2]).toContain("workflow\tinstagram-browser\t");
+    expect(result.stdout).toContain("workflow\tinstagram-browser\t");
+    expect(result.stdout).toContain("skills show 'instagram-browser'");
+    expect(json.stdout).not.toContain("Open the connected browser");
+  });
+
+  it("discovers commands from the caller-visible package registry", async () => {
+    const accessibilityPackage = makePackage({
+      packageId: "user:1000:accessibility-tools",
+      scope: { kind: "user", uid: 1000 },
+      enabled: true,
+      manifest: {
+        ...makePackage().manifest,
+        name: "accessibility-tools",
+        description: "Audit web interfaces for accessibility problems.",
+        entrypoints: [{
+          name: "Accessibility Audit",
+          kind: "command",
+          command: "a11y-audit",
+          description: "Audit a web page for contrast and accessibility problems.",
+        }],
+      },
+    });
+    const result = await handleShellExec(
+      { input: "man --search -- 'check page contrast'" },
+      makeContext({ capabilities: ["shell.exec"], packages: [accessibilityPackage] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout.split("\n")[2]).toContain("command\ta11y-audit\t");
+    expect(result.stdout).toContain("command\ta11y-audit\t");
+    expect(result.stdout).toContain("man 'a11y-audit'");
+  });
+
+  it("discovers only caller-visible connected targets", async () => {
+    const devices = {
+      listForUser: vi.fn(() => [makeDevice({
+        device_id: "studio-mac",
+        label: "Studio MacBook",
+        description: "Laptop used for design work.",
+        platform: "darwin",
+        implements: ["shell.exec", "fs.*"],
+      })]),
+    } as unknown as KernelContext["devices"];
+    const visible = await handleShellExec(
+      { input: "man --search -- 'work on studio macbook'" },
+      makeContext({ capabilities: ["shell.exec", "sys.device.list"], devices }),
+    );
+    const hidden = await handleShellExec(
+      { input: "man --search -- 'work on studio macbook'" },
+      makeContext({ capabilities: ["shell.exec"], devices }),
+    );
+
+    expect(visible.ok).toBe(true);
+    expect(visible.stdout).toContain("target\tstudio-mac\t");
+    expect(visible.stdout).toContain("targets show 'studio-mac'");
+    expect(hidden.stdout).not.toContain("target\tstudio-mac\t");
   });
 });
 
@@ -879,7 +1160,7 @@ describe("proc native command", () => {
     const kill = vi.fn();
     const cancelBySourcePid = vi.fn();
     const failIpcCallsByTarget = vi.fn();
-    const deleteRunRoute = vi.fn();
+    const clearProcessRoutes = vi.fn();
     const clearActivePid = vi.fn();
     const ctx = makeContext({
       capabilities: [capability],
@@ -894,7 +1175,7 @@ describe("proc native command", () => {
     });
     Object.assign(ctx, {
       failIpcCallsByTarget,
-      runRoutes: { delete: deleteRunRoute },
+      runRoutes: { clearForProcess: clearProcessRoutes },
     });
     Object.assign(ctx.conversations, { clearActivePid });
     return {
@@ -902,7 +1183,7 @@ describe("proc native command", () => {
       kill,
       cancelBySourcePid,
       failIpcCallsByTarget,
-      deleteRunRoute,
+      clearProcessRoutes,
       clearActivePid,
     };
   }
@@ -1127,7 +1408,7 @@ describe("proc native command", () => {
       kill,
       cancelBySourcePid,
       failIpcCallsByTarget,
-      deleteRunRoute,
+      clearProcessRoutes,
       clearActivePid,
     } = makeLifecycleContext("proc.kill");
     sendFrameToProcessMock.mockResolvedValueOnce({
@@ -1159,7 +1440,7 @@ describe("proc native command", () => {
       "proc:child",
       "Target process was killed",
     );
-    expect(deleteRunRoute).toHaveBeenCalledWith("run-child");
+    expect(clearProcessRoutes).toHaveBeenCalledWith("proc:child");
     expect(kill).toHaveBeenCalledWith("proc:child");
     expect(clearActivePid).toHaveBeenCalledWith("proc:child");
   });
@@ -1387,7 +1668,7 @@ describe("proc native command", () => {
     });
     Object.assign(ctx, {
       failIpcCallsByTarget: vi.fn(),
-      runRoutes: { delete: vi.fn() },
+      runRoutes: { clearForProcess: vi.fn() },
     });
     Object.assign(ctx.conversations, {
       getByActivePid: vi.fn(() => {
@@ -2682,6 +2963,389 @@ describe("pkg shell command", () => {
       },
     }));
     expect(setWakeScheduleId).toHaveBeenCalledWith("sched-2", "wake-1");
+  });
+
+  it("distinguishes the automatic reply from intentional extra messages", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.send"],
+      processRunId: "run-telegram",
+    });
+    const { adapterSend } = enableTelegramMessaging(ctx);
+
+    const current = await handleShellExec({ input: "message current" }, ctx);
+    const duplicate = await handleShellExec({
+      input: 'message send --to here --message "duplicate reply"',
+    }, ctx);
+    const intentional = await handleShellExec({
+      input: 'message send --to here --message "extra update" --also',
+    }, ctx);
+
+    expect(current).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(current.stdout).toContain("automatic reply: Telegram direct message");
+    expect(current.stdout).toContain("create additional outbound messages");
+    expect(duplicate.status).toBe("failed");
+    expect(duplicate.stderr).toContain("automatic reply destination");
+    expect(duplicate.stderr).toContain("--also");
+    expect(intentional).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(intentional.stdout).toContain("message_id=msg-1");
+    expect(adapterSend).toHaveBeenCalledTimes(1);
+    expect(adapterSend).toHaveBeenCalledWith(
+      "bot",
+      expect.objectContaining({
+        surface: { kind: "dm", id: "chat-42" },
+        text: "extra update",
+      }),
+      undefined,
+    );
+  });
+
+  it("bridges a GSV file into an explicit adapter message body", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.send", "fs.write"],
+      processRunId: "run-telegram-file",
+    });
+    const { adapterSend } = enableTelegramMessaging(ctx);
+    await handleFsWrite({ path: "/tmp/share.png", content: "PNG" }, ctx);
+
+    const result = await handleShellExec({
+      input: "message send --to here --attach /tmp/share.png --also",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result.stdout).toContain("message_id=bytes-3");
+    expect(adapterSend).toHaveBeenCalledWith(
+      "bot",
+      expect.objectContaining({
+        text: "",
+        media: [{
+          type: "image",
+          mimeType: "image/png",
+          filename: "share.png",
+          size: 3,
+          body: { offset: 0, length: 3 },
+        }],
+      }),
+      expect.objectContaining({ length: 3 }),
+    );
+  });
+
+  it("retries an explicit message with the same delivery id", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.send"],
+      processRunId: "run-telegram-retry",
+    });
+    enableTelegramMessaging(ctx);
+    const adapterSend = vi.fn()
+      .mockRejectedValueOnce(new Error("service binding disconnected"))
+      .mockResolvedValueOnce({ ok: true as const, messageId: "msg-retried" });
+    Object.assign(ctx.env as unknown as Record<string, unknown>, {
+      CHANNEL_TELEGRAM: { adapterSend },
+    });
+
+    const result = await handleShellExec({
+      input: "message send --to here --message retry --delivery-id logical-send-1 --also",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result.stdout).toContain("delivery_id=logical-send-1");
+    expect(adapterSend).toHaveBeenCalledTimes(2);
+    expect(adapterSend.mock.calls.map((call) => (call[1] as any).deliveryId)).toEqual([
+      "logical-send-1",
+      "logical-send-1",
+    ]);
+  });
+
+  it("reports an ambiguous explicit delivery as unconfirmed, not sent", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.send"],
+      processRunId: "run-telegram-ambiguous",
+    });
+    enableTelegramMessaging(ctx);
+    Object.assign(ctx.env as unknown as Record<string, unknown>, {
+      CHANNEL_TELEGRAM: {
+        adapterSend: vi.fn(async () => ({
+          ok: false as const,
+          error: "provider outcome unknown",
+          ambiguous: true,
+        })),
+      },
+    });
+
+    const result = await handleShellExec({
+      input: "message send --to here --message uncertain --delivery-id logical-send-ambiguous --also",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result.stdout).toContain("sent=false");
+    expect(result.stdout).toContain("delivery_confirmed=false");
+    expect(result.stdout).toContain("delivery_state=ambiguous");
+    expect(result.stdout).toContain("delivery_id=logical-send-ambiguous");
+  });
+
+  it("keeps the reconciliation id when reopening a retry attachment fails", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.send", "fs.write"],
+      processRunId: "run-telegram-retry-file",
+    });
+    enableTelegramMessaging(ctx);
+    await handleFsWrite({ path: "/tmp/retry-share.png", content: "PNG" }, ctx);
+    const adapterSend = vi.fn(async (
+      _accountId: string,
+      _message: unknown,
+      body?: { stream: ReadableStream<Uint8Array>; length?: number },
+    ) => {
+      if (body) await bodyToBytes(body);
+      await env.STORAGE.delete("tmp/retry-share.png");
+      return { ok: false as const, error: "retry safely", retryable: true };
+    });
+    Object.assign(ctx.env as unknown as Record<string, unknown>, {
+      CHANNEL_TELEGRAM: { adapterSend },
+    });
+
+    const result = await handleShellExec({
+      input: "message send --to here --attach /tmp/retry-share.png --delivery-id logical-send-file --also",
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(adapterSend).toHaveBeenCalledTimes(1);
+    expect(result.stderr).toContain("delivery_id=logical-send-file");
+    expect(result.stderr).toContain("retry with --delivery-id using this value");
+  });
+
+  it("stages files on the active run's automatic final reply", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "proc.media.write", "fs.write"],
+      processRunId: "run-native-file",
+    });
+    await handleFsWrite({ path: "/tmp/final.png", content: "PNG" }, ctx);
+    let stagedBytes: Uint8Array | undefined;
+    let stagedKey = "";
+    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+      if (frame.type !== "req") return null;
+      if (frame.call === "proc.media.write") {
+        stagedBytes = frame.body ? await bodyToBytes(frame.body) : undefined;
+        stagedKey = `var/media/1000/task:pkg/${frame.args.mediaId}`;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            media: {
+              type: "image",
+              mimeType: "image/png",
+              filename: "final.png",
+              key: stagedKey,
+              path: `/${stagedKey}`,
+              size: 3,
+            },
+          },
+        } as any;
+      }
+      if (frame.call === "proc.run.attach") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: true, runId: frame.args.runId, media: frame.args.media },
+        } as any;
+      }
+      return null;
+    });
+
+    const result = await handleShellExec({ input: "message attach /tmp/final.png" }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result.stdout).toContain("attached=true");
+    expect(result.stdout).toContain("run_id=run-native-file");
+    expect(stagedBytes && [...stagedBytes]).toEqual([80, 78, 71]);
+    expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
+      "task:pkg",
+      expect.objectContaining({
+        call: "proc.run.attach",
+        args: expect.objectContaining({
+          runId: "run-native-file",
+          stagedKeys: [stagedKey],
+        }),
+      }),
+    );
+  });
+
+  it("removes staged reply media when active-run registration fails", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "proc.media.write", "fs.write"],
+      processRunId: "run-ended",
+    });
+    await handleFsWrite({ path: "/tmp/late.pdf", content: "PDF" }, ctx);
+    let key = "";
+    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+      if (frame.type !== "req") return null;
+      if (frame.call === "proc.media.write") {
+        await frame.body?.stream.cancel("test does not need the bytes");
+        key = `var/media/1000/task:pkg/${frame.args.mediaId}`;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            media: {
+              type: "document",
+              mimeType: "application/pdf",
+              filename: "late.pdf",
+              key,
+              path: `/${key}`,
+              size: 3,
+            },
+          },
+        } as any;
+      }
+      if (frame.call === "proc.run.attach") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: false, error: "the process run is no longer active" },
+        } as any;
+      }
+      if (frame.call === "proc.media.delete") {
+        return { type: "res", id: frame.id, ok: true, data: { ok: true, key } } as any;
+      }
+      return null;
+    });
+
+    const result = await handleShellExec({ input: "message attach /tmp/late.pdf" }, ctx);
+
+    expect(result.status).toBe("failed");
+    expect(result.stderr).toContain("run is no longer active");
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      "task:pkg",
+      expect.objectContaining({ call: "proc.media.delete", args: { pid: "task:pkg", key } }),
+    );
+  });
+
+  it("captures the current adapter reply destination in a --here schedule", async () => {
+    const create = vi.fn((input) => ({
+      id: "sched-adapter-here",
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      name: input.name,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+      overlapPolicy: "skip",
+      createdAtMs: input.now,
+      updatedAtMs: input.now,
+      state: {
+        nextRunAtMs: input.now + input.expression.afterMs,
+        runningAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runCount: 0,
+      },
+    }));
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "sched.add", "proc.send", "adapter.send"],
+      processRunId: "run-schedule-here",
+      procs: {
+        get: vi.fn(() => ({
+          processId: "task:pkg",
+          uid: IDENTITY.uid,
+          ownerUid: IDENTITY.uid,
+          activeConversationId: null,
+        })),
+        getOwnerUid: vi.fn(() => IDENTITY.uid),
+      } as Partial<KernelContext["procs"]>,
+      schedules: {
+        create,
+        setWakeScheduleId: vi.fn(),
+      } as unknown as KernelContext["schedules"],
+      scheduleScheduleWake: vi.fn(async () => "wake-adapter-here"),
+    });
+    enableTelegramMessaging(ctx);
+
+    const result = await handleShellExec({
+      input: 'sched add --here --name reminder --after 10m --message "Check the oven."',
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      target: {
+        kind: "process.event",
+        pid: "task:pkg",
+        conversationId: "default",
+        message: "Check the oven.",
+        replyTo: {
+          kind: "adapter",
+          adapter: "telegram",
+          accountId: "bot",
+          actorId: "chat-42",
+          surface: { kind: "dm", id: "chat-42" },
+        },
+      },
+    }));
+  });
+
+  it("creates direct adapter delivery schedules from authorized destinations", async () => {
+    const create = vi.fn((input) => ({
+      id: "sched-adapter-direct",
+      ownerUid: input.ownerUid,
+      creator: input.creator,
+      runAs: input.runAs,
+      name: input.name,
+      enabled: input.enabled,
+      expression: input.expression,
+      target: input.target,
+      overlapPolicy: "skip",
+      createdAtMs: input.now,
+      updatedAtMs: input.now,
+      state: {
+        nextRunAtMs: input.now + input.expression.afterMs,
+        runningAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastError: null,
+        lastDurationMs: null,
+        runCount: 0,
+      },
+    }));
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "sched.add", "adapter.send"],
+      schedules: {
+        create,
+        setWakeScheduleId: vi.fn(),
+      } as unknown as KernelContext["schedules"],
+      scheduleScheduleWake: vi.fn(async () => "wake-adapter-direct"),
+    });
+    enableTelegramMessaging(ctx);
+
+    const result = await handleShellExec({
+      input: 'sched add --to adapter:telegram:bot --name reminder --after 10m --message "Check the oven."',
+    }, ctx);
+    const invalidConversation = await handleShellExec({
+      input: 'sched add --to adapter:telegram:bot --name invalid --after 10m --message "No." --conversation ops',
+    }, ctx);
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      target: {
+        kind: "adapter.send",
+        destination: {
+          kind: "adapter",
+          adapter: "telegram",
+          accountId: "bot",
+          actorId: "chat-42",
+          surface: { kind: "dm", id: "chat-42" },
+        },
+        text: "Check the oven.",
+      },
+    }));
+    expect(invalidConversation.status).toBe("failed");
+    expect(invalidConversation.stderr).toContain("--conversation is only valid with --here");
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("schedules an event into the caller's active conversation", async () => {

@@ -3,6 +3,7 @@
  *
  * Explicit mount routing:
  *   /proc/*, /dev/*, /sys/*, /var/{spool,log}/*, /etc/{passwd,shadow,group,cron.d} → KernelMountBackend
+ *   /var/media/*                                          → ProcessMediaMountBackend
  *   /src/repos/*                                       → Process source/ripgit repo backend
  *   /usr/local/bin/*                                      → Package backend
  *   everything else                                           → R2 backend
@@ -38,6 +39,8 @@ import type {
 } from "./mount";
 import { R2MountBackend } from "./backends/r2";
 import { KernelMountBackend } from "./backends/kernel";
+import { ProcessMediaMountBackend } from "./backends/process-media";
+import { isProcessMediaPath } from "../shared/process-media-path";
 import { isAccountHomeReservedPath } from "./backends/account-home";
 import { isPackageMountPath } from "./backends/packages";
 import { isProcessSourcePath } from "./backends/process-sources";
@@ -53,6 +56,7 @@ export class GsvFs implements IFileSystem {
   private readonly kernel: KernelRefs | null;
   private readonly r2Backend: MountBackend;
   private readonly kernelBackend: MountBackend;
+  private readonly processMediaBackend: MountBackend;
   private readonly sourceBackend: MountBackend | null;
   private readonly accountHomeBackend: MountBackend | null;
   private readonly packageBackend: MountBackend | null;
@@ -70,6 +74,7 @@ export class GsvFs implements IFileSystem {
     this.kernel = kernel ?? null;
     this.r2Backend = new R2MountBackend(bucket, identity);
     this.kernelBackend = new KernelMountBackend(identity, this.kernel, selfPid ?? null);
+    this.processMediaBackend = new ProcessMediaMountBackend(bucket, identity, this.kernel, selfPid ?? null);
     this.sourceBackend = sourceBackend ?? null;
     this.accountHomeBackend = accountHomeBackend ?? null;
     this.packageBackend = packageBackend ?? null;
@@ -442,6 +447,10 @@ export class GsvFs implements IFileSystem {
   }
 
   private backendForPath(path: string): MountBackend {
+    if (isProcessMediaPath(path)) {
+      return this.processMediaBackend;
+    }
+
     if (isProcessSourcePath(path)) {
       if (!this.sourceBackend) {
         throw new Error(`ENOSYS: source backend is unavailable for '${path}'`);
@@ -524,6 +533,7 @@ export class GsvFs implements IFileSystem {
     for (const name of await this.kernelBackend.readdir("/var").catch(() => [] as string[])) {
       entries.add(name);
     }
+    entries.add("media");
     return [...entries].sort();
   }
 }

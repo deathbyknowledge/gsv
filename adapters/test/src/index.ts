@@ -1,51 +1,52 @@
 /**
- * Test Channel Worker
+ * Test Adapter Worker
  * 
- * A minimal channel implementation for e2e testing the Channel ↔ Gateway communication.
- * This channel doesn't connect to any external service - it's purely for testing
- * the Gateway channel architecture.
+ * A minimal adapter implementation for end-to-end testing of adapter ↔ Gateway
+ * communication. It does not connect to an external service.
  * 
  * Uses a Durable Object to maintain state across requests (important because Gateway
- * calls send() via Service Binding which may be a different worker invocation).
+ * calls adapterSend() via Service Binding which may be a different worker invocation).
  */
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import {
-  isHelpCommand,
-  parseAttachArgs,
-  parseShellWords,
-} from "../../shared/src/command";
+  DeliveryLedger,
+  fingerprintOutboundDelivery,
+} from "../../shared/src/delivery-ledger";
+import {
+  cancelBinaryBody,
+  readAdapterMediaBody,
+  validateAdapterMediaBody,
+  SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+  SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
+} from "../../shared/src/media-body";
 import type {
-  ChannelAccountStatus,
-  ChannelCapabilities,
-  ChannelInboundMessage,
-  ChannelMedia,
-  ChannelOutboundMessage,
-  ChannelPeer,
-  ChannelSender,
-  SendResult,
-  ShellExecArgs,
-  ShellExecResult,
-  StartResult,
-  StopResult,
+  AdapterAccountStatus,
+  AdapterActivity,
+  AdapterActor,
+  AdapterInboundMessage,
+  AdapterInboundResult,
+  AdapterMedia,
+  AdapterOutboundMessage,
+  AdapterSendResult,
+  AdapterSurface,
+  AdapterWorkerInterface,
+  BinaryBody,
+  GatewayFrame,
+  GatewayRequestFrame,
 } from "../../shared/src/types";
 
-type GatewayChannelBinding = Fetcher & {
-  channelInbound: (
-    channelId: string,
-    accountId: string,
-    message: ChannelInboundMessage,
-  ) => Promise<{ ok: boolean; sessionKey?: string; status?: string; error?: string }>;
-  channelStatusChanged: (
-    channelId: string,
-    accountId: string,
-    status: ChannelAccountStatus,
-  ) => Promise<void>;
+type GatewayAdapterBinding = Fetcher & {
+  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
 };
 
-type RecordedMessage = { direction: "in" | "out"; message: ChannelOutboundMessage | ChannelInboundMessage; timestamp: number };
+type RecordedMessage = {
+  direction: "in" | "out";
+  message: AdapterOutboundMessage | AdapterInboundMessage;
+  timestamp: number;
+};
 
 interface Env {
-  GATEWAY: GatewayChannelBinding;
+  GATEWAY: GatewayAdapterBinding;
   TEST_CHANNEL_STATE: DurableObjectNamespace;
 }
 
@@ -56,9 +57,11 @@ interface Env {
 export class TestChannelState extends DurableObject<Env> {
   private connected = false;
   private messages: RecordedMessage[] = [];
+  private readonly deliveries: DeliveryLedger;
   
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.deliveries = new DeliveryLedger(this.ctx.storage);
     // Load state from storage
     this.ctx.blockConcurrencyWhile(async () => {
       this.connected = (await this.ctx.storage.get<boolean>("connected")) ?? false;
@@ -66,33 +69,84 @@ export class TestChannelState extends DurableObject<Env> {
     });
   }
   
-  async start(): Promise<void> {
-    this.connected = true;
-    await this.ctx.storage.put("connected", true);
-  }
-  
-  async stop(): Promise<void> {
-    this.connected = false;
-    await this.ctx.storage.put("connected", false);
+  async setConnected(connected: boolean): Promise<void> {
+    this.connected = connected;
+    await this.ctx.storage.put("connected", connected);
   }
   
   async isConnected(): Promise<boolean> {
     return this.connected;
   }
   
-  async recordMessage(direction: "in" | "out", message: ChannelOutboundMessage | ChannelInboundMessage): Promise<void> {
+  async recordMessage(
+    direction: "in" | "out",
+    message: AdapterOutboundMessage | AdapterInboundMessage,
+  ): Promise<void> {
     this.messages.push({ direction, message, timestamp: Date.now() });
     await this.ctx.storage.put("messages", this.messages);
+  }
+
+  async recordOutboundMessage(
+    message: AdapterOutboundMessage,
+    requestFingerprint: string,
+  ): Promise<AdapterSendResult> {
+    const claim = await this.deliveries.claim(
+      message.deliveryId,
+      requestFingerprint,
+    );
+    if (!claim.claimed) {
+      return claim.result;
+    }
+
+    if (!this.connected) {
+      await this.deliveries.releaseRetryable(message.deliveryId, claim.attemptId);
+      return {
+        ok: false,
+        error: "Test adapter account is not connected",
+        retryable: true,
+      };
+    }
+
+    const messageId = `test-msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const record = { direction: "out", message, timestamp: Date.now() } as const;
+    this.messages.push(record);
+    try {
+      await this.ctx.storage.put("messages", this.messages);
+    } catch (error) {
+      this.messages.pop();
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.deliveries.failAmbiguous(
+        message.deliveryId,
+        claim.attemptId,
+        `Test adapter record outcome is unknown: ${detail}`,
+      );
+      return {
+        ok: false,
+        error: `Test adapter record outcome is unknown: ${detail}`,
+        ambiguous: true,
+      };
+    }
+
+    try {
+      await this.deliveries.succeed(message.deliveryId, claim.attemptId, messageId);
+    } catch (error) {
+      return {
+        ok: false,
+        error: "Test adapter recorded the delivery but could not persist its outcome",
+        ambiguous: true,
+      };
+    }
+    return { ok: true, messageId };
   }
   
   async getMessages(): Promise<RecordedMessage[]> {
     return this.messages;
   }
   
-  async getOutboundMessages(): Promise<ChannelOutboundMessage[]> {
+  async getOutboundMessages(): Promise<AdapterOutboundMessage[]> {
     return this.messages
       .filter(m => m.direction === "out")
-      .map(m => m.message as ChannelOutboundMessage);
+      .map(m => m.message as AdapterOutboundMessage);
   }
   
   async clearMessages(): Promise<void> {
@@ -111,53 +165,37 @@ export class TestChannelState extends DurableObject<Env> {
 // Test Channel WorkerEntrypoint
 // ============================================================================
 
-export class TestChannel extends WorkerEntrypoint<Env> {
-  readonly channelId = "test";
+export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerInterface {
   readonly adapterId = "test";
-  
-  readonly capabilities: ChannelCapabilities = {
-    chatTypes: ["dm", "group"],
-    media: true,
-    reactions: true,
-    threads: false,
-    typing: true,
-    editing: false,
-    deletion: false,
-  };
 
   private getStateDO(accountId: string): DurableObjectStub<TestChannelState> {
     const id = this.env.TEST_CHANNEL_STATE.idFromName(accountId);
     return this.env.TEST_CHANNEL_STATE.get(id) as DurableObjectStub<TestChannelState>;
   }
 
-  async start(accountId: string, _config: Record<string, unknown>): Promise<StartResult> {
+  async adapterConnect(
+    accountId: string,
+    _config: Record<string, unknown> = {},
+  ): Promise<{ ok: true; connected: true; authenticated: true; message: string }> {
     const state = this.getStateDO(accountId);
-    await state.start();
-    
-    await this.env.GATEWAY.channelStatusChanged("test", accountId, {
-      accountId,
+    await state.setConnected(true);
+    return {
+      ok: true,
       connected: true,
       authenticated: true,
-      mode: "test",
-    });
-    
-    return { ok: true };
+      message: "Connected",
+    };
   }
 
-  async stop(accountId: string): Promise<StopResult> {
+  async adapterDisconnect(
+    accountId: string,
+  ): Promise<{ ok: true; message: string }> {
     const state = this.getStateDO(accountId);
-    await state.stop();
-    
-    await this.env.GATEWAY.channelStatusChanged("test", accountId, {
-      accountId,
-      connected: false,
-      authenticated: false,
-    });
-    
-    return { ok: true };
+    await state.setConnected(false);
+    return { ok: true, message: "Disconnected" };
   }
 
-  async adapterStatus(accountId?: string): Promise<ChannelAccountStatus[]> {
+  async adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]> {
     if (accountId) {
       const state = this.getStateDO(accountId);
       const connected = await state.isConnected();
@@ -172,122 +210,93 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     return [];
   }
 
-  async status(accountId?: string) {
-    return this.adapterStatus(accountId);
-  }
-
   /**
    * Send a message (Gateway → Channel).
    * Records it in the account's Durable Object.
    */
   async adapterSend(
     accountId: string,
-    message: {
-      surface: ChannelPeer;
-      text: string;
-      replyToId?: string;
-      media?: ChannelMedia[];
-    },
-  ): Promise<SendResult> {
-    const state = this.getStateDO(accountId);
-    const outbound: ChannelOutboundMessage = {
-      peer: message.surface,
-      text: message.text,
-      replyToId: message.replyToId,
-      media: message.media,
-    };
-    await state.recordMessage("out", outbound);
-    
-    const messageId = `test-msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    console.log(`[TestChannel] Sent to ${accountId}/${message.surface.id}: ${message.text.slice(0, 50)}...`);
-    
-    return { ok: true, messageId };
-  }
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
+    try {
+      validateAdapterMediaBody(message.media, body, {
+        maxBytes: SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
+        maxPartBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+      });
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
 
-  async send(accountId: string, message: ChannelOutboundMessage) {
-    return this.adapterSend(accountId, {
-      surface: message.peer,
+    let mediaBytes: Array<Uint8Array | undefined>;
+    try {
+      mediaBytes = await readAdapterMediaBody(message.media, body, {
+        maxBytes: SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
+        maxPartBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        retryable: true,
+      };
+    }
+    const state = this.getStateDO(accountId);
+    let requestFingerprint: string;
+    try {
+      requestFingerprint = await fingerprintOutboundDelivery(message, mediaBytes);
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Could not fingerprint test adapter delivery: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        retryable: true,
+      };
+    }
+    const outbound: AdapterOutboundMessage = {
+      deliveryId: message.deliveryId,
+      surface: message.surface,
+      actorId: message.actorId,
       text: message.text,
       replyToId: message.replyToId,
-      media: message.media,
-    });
+      media: message.media?.map((item, index) => {
+        const { body: _body, ...metadata } = item;
+        return {
+          ...metadata,
+          size: metadata.size ?? mediaBytes[index]?.byteLength,
+        };
+      }),
+    };
+    try {
+      const result = await state.recordOutboundMessage(outbound, requestFingerprint);
+      if (result.ok && !result.deduplicated) {
+        console.log(
+          `[TestChannel] Sent to ${accountId}/${message.surface.id}: ${message.text.slice(0, 50)}...`,
+        );
+      }
+      return result;
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Test adapter delivery outcome is unknown: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        ambiguous: true,
+      };
+    }
   }
 
   async adapterSetActivity(
     _accountId: string,
-    _surface: ChannelPeer,
-    _activity: { kind: "typing" | "recording" | "uploading"; active: boolean },
+    _surface: AdapterSurface,
+    _activity: AdapterActivity,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     return { ok: true };
-  }
-
-  async setTyping(_accountId: string, _peer: ChannelPeer, _typing: boolean): Promise<void> {
-    // No-op
-  }
-
-  async adapterShellExec(accountId: string, args: ShellExecArgs): Promise<ShellExecResult> {
-    const tokens = parseShellWords(args.input);
-    const command = tokens[0] ?? "help";
-    if (isHelpCommand(command)) {
-      return shellOk([
-        "test adapter commands:",
-        "  help | -h | --help",
-        "  send <surface-id> <text>",
-        "  reply <surface-id> <message-id> <text>",
-        "  react <surface-id> <message-id> <emoji>",
-        "  attach <surface-id> <url> [--filename <name>] [caption]",
-      ].join("\n"));
-    }
-
-    if (command === "send") {
-      const [surfaceId, ...textParts] = tokens.slice(1);
-      const text = textParts.join(" ").trim();
-      if (!surfaceId || !text) {
-        return shellFail("usage: send <surface-id> <text>");
-      }
-      const result = await this.adapterSend(accountId, {
-        surface: { kind: "dm", id: surfaceId },
-        text,
-      });
-      return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
-    }
-
-    if (command === "reply") {
-      const [surfaceId, messageId, ...textParts] = tokens.slice(1);
-      const text = textParts.join(" ").trim();
-      if (!surfaceId || !messageId || !text) {
-        return shellFail("usage: reply <surface-id> <message-id> <text>");
-      }
-      const result = await this.adapterSend(accountId, {
-        surface: { kind: "dm", id: surfaceId },
-        text,
-        replyToId: messageId,
-      });
-      return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
-    }
-
-    if (command === "react") {
-      const [surfaceId, messageId, emoji] = tokens.slice(1);
-      if (!surfaceId || !messageId || !emoji) {
-        return shellFail("usage: react <surface-id> <message-id> <emoji>");
-      }
-      return shellOk(`reacted ${emoji} to ${surfaceId}/${messageId}`);
-    }
-
-    if (command === "attach") {
-      const { targetId: surfaceId, url, filename, caption } = parseAttachArgs(tokens.slice(1));
-      if (!surfaceId || !url) {
-        return shellFail("usage: attach <surface-id> <url> [--filename <name>] [caption]");
-      }
-      const result = await this.adapterSend(accountId, {
-        surface: { kind: "dm", id: surfaceId },
-        text: caption,
-        media: [await mediaFromUrl(url, filename)],
-      });
-      return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
-    }
-
-    return shellFail(`unknown command: ${command}`);
   }
 
   // =========================================================================
@@ -296,40 +305,68 @@ export class TestChannel extends WorkerEntrypoint<Env> {
 
   async simulateInbound(
     accountId: string,
-    peer: ChannelPeer,
+    surface: AdapterSurface,
     text: string,
-    options?: { sender?: ChannelSender; media?: ChannelMedia[]; replyToId?: string; replyToText?: string }
+    options?: {
+      actor?: AdapterActor;
+      media?: AdapterMedia[];
+      body?: BinaryBody;
+      replyToId?: string;
+      replyToText?: string;
+      wasMentioned?: boolean;
+    },
   ): Promise<{ ok: boolean; messageId: string; error?: string }> {
     const state = this.getStateDO(accountId);
     const connected = await state.isConnected();
     if (!connected) {
+      await cancelBinaryBody(options?.body, "Test adapter account is not connected");
       return { ok: false, messageId: "", error: "Account not connected" };
     }
 
     const messageId = `test-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    const message: ChannelInboundMessage = {
+    const message: AdapterInboundMessage = {
       messageId,
-      peer,
-      sender: options?.sender,
+      surface,
+      actor: options?.actor ?? { id: `test:user:${surface.id}` },
       text,
       media: options?.media,
       replyToId: options?.replyToId,
       replyToText: options?.replyToText,
       timestamp: Date.now(),
+      wasMentioned: surface.kind === "dm" ? true : options?.wasMentioned === true,
     };
 
     await state.recordMessage("in", message);
 
-    console.log(`[TestChannel] Simulating inbound from ${peer.id}: ${text}`);
+    console.log(`[TestChannel] Simulating inbound from ${surface.id}: ${text}`);
 
     try {
-      const result = await this.env.GATEWAY.channelInbound("test", accountId, message);
+      const frame: GatewayRequestFrame = {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "adapter.inbound",
+        args: { adapter: "test", accountId, message },
+        ...(options?.body ? { body: options.body } : {}),
+      };
+      const response = await this.env.GATEWAY.serviceFrame(frame);
+      if (!response || response.type !== "res") {
+        return { ok: false, messageId, error: "No response from gateway serviceFrame" };
+      }
+      if (!response.ok) {
+        return {
+          ok: false,
+          messageId,
+          error: response.error?.message || "Gateway rejected message",
+        };
+      }
+      const result = (response.data ?? {}) as AdapterInboundResult;
       if (!result.ok) {
         return { ok: false, messageId, error: result.error || "Gateway rejected message" };
       }
       return { ok: true, messageId };
     } catch (e) {
+      await cancelBinaryBody(options?.body, e);
       console.error(`[TestChannel] RPC send failed:`, e);
       return { ok: false, messageId, error: String(e) };
     }
@@ -340,7 +377,7 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     return await state.getMessages();
   }
 
-  async getOutboundMessages(accountId: string): Promise<ChannelOutboundMessage[]> {
+  async getOutboundMessages(accountId: string): Promise<AdapterOutboundMessage[]> {
     const state = this.getStateDO(accountId);
     return await state.getOutboundMessages();
   }
@@ -379,52 +416,3 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 };
-
-async function mediaFromUrl(url: string, filename?: string): Promise<ChannelMedia> {
-  let mimeType = "application/octet-stream";
-  try {
-    const response = await fetch(url, { method: "HEAD" });
-    mimeType = response.headers.get("Content-Type")?.split(";")[0].trim() || mimeType;
-  } catch {
-    // Test adapter does not need to fetch the body; fall back to generic binary.
-  }
-
-  return {
-    type: mediaTypeFromMime(mimeType),
-    mimeType,
-    url,
-    ...(filename ? { filename } : {}),
-  };
-}
-
-function mediaTypeFromMime(mimeType: string): ChannelMedia["type"] {
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType.startsWith("video/")) return "video";
-  return "document";
-}
-
-function shellOk(output: string): ShellExecResult {
-  return {
-    status: "completed",
-    output,
-    exitCode: 0,
-    ok: true,
-    pid: 0,
-    stdout: output,
-    stderr: "",
-  };
-}
-
-function shellFail(error: string): ShellExecResult {
-  return {
-    status: "failed",
-    output: error,
-    error,
-    exitCode: 1,
-    ok: false,
-    pid: 0,
-    stdout: "",
-    stderr: error,
-  };
-}

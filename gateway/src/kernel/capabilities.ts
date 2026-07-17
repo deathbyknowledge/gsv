@@ -57,6 +57,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "adapter.connect",
     "adapter.disconnect",
     "adapter.list",
+    "adapter.send",
     "adapter.status",
     "sys.config.get",
     "sys.config.set",

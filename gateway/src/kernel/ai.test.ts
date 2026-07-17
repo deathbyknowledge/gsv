@@ -127,6 +127,7 @@ function makeContext(
     adapters: {
       identityLinks: { list: vi.fn(() => []) },
       status: {
+        listByOwner: vi.fn(() => []),
         list: vi.fn(() => []),
         listAll: vi.fn(() => []),
       },
@@ -262,11 +263,11 @@ describe("handleAiTools", () => {
     expect(ctx.mcp.listTools).not.toHaveBeenCalled();
   });
 
-  it("advertises visible adapter targets through the routable Shell target list", async () => {
+  it("advertises visible adapter messaging targets", async () => {
     const ctx = {
       ...makeContext("ready"),
       env: {
-        CHANNEL_WHATSAPP: { adapterShellExec: vi.fn() },
+        CHANNEL_WHATSAPP: { adapterSend: vi.fn() },
       },
       adapters: {
         identityLinks: {
@@ -281,6 +282,7 @@ describe("handleAiTools", () => {
           }]),
         },
         status: {
+          listByOwner: vi.fn(() => []),
           list: vi.fn(() => [{
             adapter: "whatsapp",
             accountId: "primary",
@@ -299,10 +301,10 @@ describe("handleAiTools", () => {
       id: "adapter:whatsapp:primary",
       label: "WhatsApp",
       platform: "adapter",
-      implements: ["shell.exec"],
+      implements: ["adapter.send"],
     }));
     const shell = result.tools.find((tool) => tool.name === "Shell");
-    expect(JSON.stringify(shell?.inputSchema)).toContain("adapter:whatsapp:primary");
+    expect(JSON.stringify(shell?.inputSchema)).not.toContain("adapter:whatsapp:primary");
   });
 
   it("advertises owner-linked adapter targets for service-account agent processes", async () => {
@@ -326,13 +328,14 @@ describe("handleAiTools", () => {
         processId: "proc-agent",
       }),
       env: {
-        CHANNEL_TELEGRAM: { adapterShellExec: vi.fn() },
+        CHANNEL_TELEGRAM: { adapterSend: vi.fn() },
       },
       adapters: {
         identityLinks: {
           list: listLinks,
         },
         status: {
+          listByOwner: vi.fn(() => []),
           list: vi.fn(() => [{
             adapter: "telegram",
             accountId: "bot",
@@ -352,10 +355,10 @@ describe("handleAiTools", () => {
       id: "adapter:telegram:bot",
       label: "Telegram",
       platform: "adapter",
-      implements: ["shell.exec"],
+      implements: ["adapter.send"],
     }));
     const shell = result.tools.find((tool) => tool.name === "Shell");
-    expect(JSON.stringify(shell?.inputSchema)).toContain("adapter:telegram:bot");
+    expect(JSON.stringify(shell?.inputSchema)).not.toContain("adapter:telegram:bot");
   });
 
   it("caps routable tool target descriptions when many targets are online", async () => {
@@ -510,6 +513,18 @@ describe("handleAiConfig", () => {
     await expect(handleAiConfig({}, makeAiConfigContext({
       "config/ai/generation/streaming": "invalid",
     }))).resolves.toMatchObject({ generationStreaming: "auto" });
+  });
+
+  it("resolves prompt skill enumeration independently from live skills", async () => {
+    await expect(handleAiConfig({}, makeAiConfigContext()))
+      .resolves.toMatchObject({ skillIndexMode: "summary" });
+    await expect(handleAiConfig({}, makeAiConfigContext({
+      "config/ai/skills/index_mode": "off",
+    }))).resolves.toMatchObject({ skillIndexMode: "off", skillIndex: [] });
+    await expect(handleAiConfig({}, makeAiConfigContext({
+      "config/ai/skills/index_mode": "off",
+      "users/1000/ai/skills/index_mode": "names",
+    }))).resolves.toMatchObject({ skillIndexMode: "names" });
   });
 
   it("returns the text executor for kernel and process callers", async () => {

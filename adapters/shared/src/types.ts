@@ -14,10 +14,22 @@ export type AdapterActor = {
   handle?: string;
 };
 
+export type BinaryBody = {
+  stream: ReadableStream<Uint8Array>;
+  length?: number;
+};
+
+export type AdapterMediaBody = {
+  /** Byte offset in the request's single top-level binary body. */
+  offset: number;
+  /** Exact byte length of this media item in the top-level body. */
+  length: number;
+};
+
 export type AdapterMedia = {
   type: "image" | "audio" | "video" | "document";
   mimeType: string;
-  data?: string;
+  body?: AdapterMediaBody;
   url?: string;
   filename?: string;
   size?: number;
@@ -38,7 +50,11 @@ export type AdapterInboundMessage = {
 };
 
 export type AdapterOutboundMessage = {
+  /** Stable idempotency key for one logical provider delivery. */
+  deliveryId: string;
   surface: AdapterSurface;
+  /** Stable adapter actor identity for provider-specific reply addressing. */
+  actorId?: string;
   text: string;
   media?: AdapterMedia[];
   replyToId?: string;
@@ -68,14 +84,20 @@ export type AdapterInboundResult = {
     queued: boolean;
   };
   reply?: {
+    /** Stable idempotency key for delivering this immediate reply. */
+    deliveryId: string;
     text: string;
     replyToId?: string;
   };
   challenge?: {
+    /** Stable idempotency key for delivering this link challenge. */
+    deliveryId: string;
     code: string;
     prompt: string;
     expiresAt: number;
   };
+  /** Set only when this provider ingress key was already claimed. */
+  replayed?: "in_progress" | "completed";
   droppedReason?: string;
   error?: string;
 };
@@ -107,32 +129,14 @@ export type AdapterDisconnectResult =
   | { ok: false; error: string };
 
 export type AdapterSendResult =
-  | { ok: true; messageId?: string }
-  | { ok: false; error: string };
-
-export type ShellExecArgs = {
-  input: string;
-};
-
-export type ShellExecResult =
+  | { ok: true; messageId?: string; deduplicated?: boolean }
   | {
-      status: "completed";
-      output: string;
-      exitCode: number;
-      ok: true;
-      pid: number;
-      stdout: string;
-      stderr: string;
-    }
-  | {
-      status: "failed";
-      output: string;
-      error: string;
-      exitCode: number;
       ok: false;
-      pid: number;
-      stdout: string;
-      stderr: string;
+      error: string;
+      /** True only when retrying this deliveryId may safely call the provider again. */
+      retryable?: boolean;
+      /** The provider may have accepted the delivery; retrying could duplicate it. */
+      ambiguous?: boolean;
     };
 
 export type AdapterCapabilities = {
@@ -151,6 +155,7 @@ export type GatewayRequestFrame = {
   id: string;
   call: string;
   args: unknown;
+  body?: BinaryBody;
 };
 
 export type GatewayResponseFrame = {
@@ -158,6 +163,7 @@ export type GatewayResponseFrame = {
   id: string;
   ok: boolean;
   data?: unknown;
+  body?: BinaryBody;
   error?: {
     code?: number | string;
     message: string;
@@ -177,11 +183,8 @@ export interface AdapterWorkerInterface {
   adapterSend(
     accountId: string,
     message: AdapterOutboundMessage,
+    body?: BinaryBody,
   ): Promise<AdapterSendResult>;
-  adapterShellExec?(
-    accountId: string,
-    args: ShellExecArgs,
-  ): Promise<ShellExecResult>;
   adapterSetActivity(
     accountId: string,
     surface: AdapterSurface,
@@ -191,33 +194,8 @@ export interface AdapterWorkerInterface {
 }
 
 export type ChannelPeer = AdapterSurface;
-export type ChannelSender = AdapterActor;
 export type ChannelMedia = AdapterMedia;
-export type ChannelInboundMessage = Omit<AdapterInboundMessage, "surface" | "actor"> & {
-  peer: ChannelPeer;
-  sender?: ChannelSender;
-};
 export type ChannelOutboundMessage = Omit<AdapterOutboundMessage, "surface"> & {
   peer: ChannelPeer;
 };
 export type ChannelAccountStatus = AdapterAccountStatus;
-export type ChannelCapabilities = AdapterCapabilities;
-
-export type StartResult = { ok: true } | { ok: false; error: string };
-export type StopResult = { ok: true } | { ok: false; error: string };
-export type SendResult = AdapterSendResult;
-export type LoginResult = { ok: true; qrDataUrl?: string; message: string } | { ok: false; error: string };
-export type LogoutResult = { ok: true } | { ok: false; error: string };
-
-export interface ChannelWorkerInterface {
-  readonly channelId: string;
-  readonly capabilities: ChannelCapabilities;
-
-  start(accountId: string, config: Record<string, unknown>): Promise<StartResult>;
-  stop(accountId: string): Promise<StopResult>;
-  status(accountId?: string): Promise<ChannelAccountStatus[]>;
-  send(accountId: string, message: ChannelOutboundMessage): Promise<SendResult>;
-  setTyping?(accountId: string, peer: ChannelPeer, typing: boolean): Promise<void>;
-  login?(accountId: string, options?: { force?: boolean }): Promise<LoginResult>;
-  logout?(accountId: string): Promise<LogoutResult>;
-}

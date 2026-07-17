@@ -9,6 +9,19 @@ import { KERNEL_V007_REMOVE_CLI_MIRROR } from "./v007_remove_cli_mirror";
 import {
   KERNEL_V008_BIND_ROUTES_TO_DRIVER_CONNECTIONS,
 } from "./v008_bind_routes_to_driver_connections";
+import { KERNEL_V009_BIND_RUN_REPLY_ROUTES } from "./v009_bind_run_reply_routes";
+import {
+  KERNEL_V010_SCOPE_ADAPTER_DESTINATIONS,
+} from "./v010_scope_adapter_destinations";
+import {
+  KERNEL_V011_ADD_SCHEDULE_OCCURRENCE_ID,
+} from "./v011_add_schedule_occurrence_id";
+import {
+  KERNEL_V012_ADD_SCHEDULE_ATTEMPT_COUNT,
+} from "./v012_add_schedule_attempt_count";
+import {
+  KERNEL_V013_ADD_ADAPTER_INGRESS_RECEIPTS,
+} from "./v013_add_adapter_ingress_receipts";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -22,6 +35,11 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V006_ADD_IPC_DELIVERY_STATE,
   KERNEL_V007_REMOVE_CLI_MIRROR,
   KERNEL_V008_BIND_ROUTES_TO_DRIVER_CONNECTIONS,
+  KERNEL_V009_BIND_RUN_REPLY_ROUTES,
+  KERNEL_V010_SCOPE_ADAPTER_DESTINATIONS,
+  KERNEL_V011_ADD_SCHEDULE_OCCURRENCE_ID,
+  KERNEL_V012_ADD_SCHEDULE_ATTEMPT_COUNT,
+  KERNEL_V013_ADD_ADAPTER_INGRESS_RECEIPTS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

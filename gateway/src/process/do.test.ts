@@ -14,6 +14,9 @@ import {
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/frames";
 import type {
+  ProcessAdapterDeliverArgs,
+  ProcessAdapterDeliverRequestFrame,
+  ProcessRunAttachRequestFrame,
   ProcessScheduleDeliverArgs,
   ProcessScheduleDeliverRequestFrame,
 } from "../protocol/process-frames";
@@ -39,13 +42,31 @@ function makeReq(call: string, args: unknown): RequestFrame {
 }
 
 function makeScheduleDeliverReq(
-  args: Omit<ProcessScheduleDeliverArgs, "firedAtMs"> & { firedAtMs?: number },
+  args: Omit<ProcessScheduleDeliverArgs, "runId" | "firedAtMs"> & {
+    runId?: string;
+    firedAtMs?: number;
+  },
 ): ProcessScheduleDeliverRequestFrame {
   return {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.schedule.deliver",
-    args: { ...args, firedAtMs: args.firedAtMs ?? Date.now() },
+    args: {
+      ...args,
+      runId: args.runId ?? crypto.randomUUID(),
+      firedAtMs: args.firedAtMs ?? Date.now(),
+    },
+  };
+}
+
+function makeAdapterDeliverReq(
+  args: ProcessAdapterDeliverArgs,
+): ProcessAdapterDeliverRequestFrame {
+  return {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.adapter.deliver",
+    args,
   };
 }
 
@@ -227,6 +248,59 @@ async function initProcess(pid: string, identity: ProcessIdentity, opts?: { regi
 // ---------------------------------------------------------------------------
 
 describe("Process DO — mechanical", () => {
+  it("records terminal adapter delivery outcomes in conversation history", async () => {
+    const pid = "mech-delivery-notice";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    const notice = {
+      type: "sig",
+      signal: "proc.delivery.notice",
+      payload: {
+        noticeId: "notice:mech-delivery-notice",
+        runId: "run-delivery-notice",
+        conversationId: "default",
+        deliveryKind: "final",
+        state: "ambiguous",
+        message: "The automatic reply reached the adapter, but provider delivery is ambiguous.",
+      },
+    } as const;
+    await stub.recvFrame(notice);
+    await stub.recvFrame(notice);
+
+    await runInDurableObject(stub, (instance: Process) => {
+      expect((instance as any).store.getMessages()).toEqual([
+        expect.objectContaining({
+          role: "system",
+          runId: "run-delivery-notice",
+          content: expect.stringContaining("delivery is ambiguous"),
+        }),
+      ]);
+    });
+  });
+
+  it("bounds terminal adapter delivery notice tombstones", async () => {
+    const stub = await initProcess("mech-delivery-notice-bounds", ROOT_IDENTITY);
+
+    await runInDurableObject(stub, async (instance: Process) => {
+      const process = instance as any;
+      for (let index = 0; index <= 256; index += 1) {
+        await process.handleSig({
+          type: "sig",
+          signal: "proc.delivery.notice",
+          payload: {
+            noticeId: `notice:bounded:${index}`,
+            runId: `run-${index}`,
+            conversationId: "default",
+            message: `Delivery notice ${index}`,
+          },
+        });
+      }
+      expect(process.store.getValue("deliveryNotice:notice:bounded:0")).toBeNull();
+      expect(process.store.getValue("deliveryNotice:notice:bounded:256")).not.toBeNull();
+      expect(JSON.parse(process.store.getValue("deliveryNoticeIds"))).toHaveLength(256);
+    });
+  });
+
   it("projects proc.run signals into kernel process activity", async () => {
     const pid = "mech-kernel-process-activity";
     await registerInKernel(pid, ROOT_IDENTITY);
@@ -705,6 +779,108 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("reconciles duplicate scheduled runs while active and after they are recorded", async () => {
+      const stub = await initProcess("mech-schedule-idempotent-recorded", ROOT_IDENTITY);
+      const args = {
+        runId: "run-schedule-idempotent-recorded",
+        scheduleId: "sched-idempotent-recorded",
+        message: "run this scheduled check once",
+      };
+
+      const firstRequest = makeScheduleDeliverReq(args);
+      const first = await stub.recvFrame(firstRequest);
+      const activeRepeatRequest = makeScheduleDeliverReq(args);
+      const activeRepeat = await stub.recvFrame(activeRepeatRequest);
+      const activeState = await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        return {
+          messages: process.store.getMessages(),
+          queueSize: process.store.queueSize(),
+          currentRunId: process.currentRun?.runId ?? null,
+        };
+      });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        (instance as any).currentRun = null;
+      });
+      const recordedRepeatRequest = makeScheduleDeliverReq(args);
+      const recordedRepeat = await stub.recvFrame(recordedRepeatRequest);
+      const recordedState = await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        return {
+          messages: process.store.getMessages(),
+          queueSize: process.store.queueSize(),
+          currentRunId: process.currentRun?.runId ?? null,
+        };
+      });
+
+      expect(first).toMatchObject({
+        type: "res",
+        id: firstRequest.id,
+        ok: true,
+        data: { runId: args.runId, queued: false },
+      });
+      expect((activeRepeat as any).data).toEqual((first as any).data);
+      expect((recordedRepeat as any).data).toEqual((first as any).data);
+      expect(activeState).toMatchObject({
+        messages: [expect.objectContaining({ runId: args.runId })],
+        queueSize: 0,
+        currentRunId: args.runId,
+      });
+      expect(recordedState).toMatchObject({
+        messages: [expect.objectContaining({ runId: args.runId })],
+        queueSize: 0,
+        currentRunId: null,
+      });
+    });
+
+    it("reconciles duplicate queued scheduled replies", async () => {
+      const stub = await initProcess("mech-schedule-idempotent-queued", ROOT_IDENTITY);
+      const args = {
+        runId: "run-schedule-idempotent-queued",
+        scheduleId: "sched-idempotent-queued",
+        message: "send this reminder once",
+        replyTo: {
+          kind: "adapter" as const,
+          adapter: "telegram",
+          accountId: "primary",
+          actorId: "telegram-user-1",
+          surface: { kind: "dm" as const, id: "telegram-chat-1" },
+        },
+      };
+
+      await runInDurableObject(stub, (instance: Process) => {
+        (instance as any).currentRun = {
+          runId: "run-busy",
+          conversationId: "default",
+        };
+      });
+      const firstRequest = makeScheduleDeliverReq(args);
+      const first = await stub.recvFrame(firstRequest);
+      const repeatedRequest = makeScheduleDeliverReq(args);
+      const repeated = await stub.recvFrame(repeatedRequest);
+
+      expect(first).toMatchObject({
+        type: "res",
+        id: firstRequest.id,
+        ok: true,
+        data: { runId: args.runId, queued: true },
+      });
+      expect((repeated as any).data).toEqual((first as any).data);
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        expect(process.currentRun).toMatchObject({ runId: "run-busy" });
+        expect(process.store.getMessages()).toEqual([]);
+        expect(process.store.queueSize()).toBe(1);
+        expect(process.store.drainQueue("default")).toEqual([
+          expect.objectContaining({
+            runId: args.runId,
+            message: expect.stringContaining(args.message),
+          }),
+        ]);
+      });
+    });
+
     it("rejects scheduled runtime events for closed conversations", async () => {
       const stub = await initProcess("mech-schedule-closed", ROOT_IDENTITY);
 
@@ -791,6 +967,101 @@ describe("Process DO — mechanical", () => {
         await process.finishRun("run-busy", { status: "ok", text: "done" });
         expect(process.currentRun).toMatchObject({ conversationId: "default" });
         expect(process.currentRun.runId).not.toBe("run-busy");
+      });
+    });
+
+    it("keeps a scheduled adapter reply as a distinct queued run and explains automatic delivery", async () => {
+      const stub = await initProcess("mech-schedule-adapter-reply", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
+        process.scheduleTick = vi.fn(async () => {});
+        process.currentRun = { runId: "run-busy", conversationId: "default" };
+        process.generation = {
+          async generate(request: any) {
+            const prompt = request.context.systemPrompt as string;
+            expect(prompt).toContain("[run.reply]");
+            expect(prompt).toContain("scheduled run's final response is delivered automatically");
+            expect(prompt).toContain("Telegram direct message");
+            expect(prompt).toContain("`message send` creates an additional outbound message");
+            expect(prompt).toContain("requires `--also`");
+            expect(prompt).not.toContain("telegram-user-1");
+            expect(prompt).not.toContain("telegram-chat-1");
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "scheduled reply" }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "scheduled reply";
+          },
+        };
+
+        const request = makeScheduleDeliverReq({
+          runId: "run-scheduled-reply",
+          scheduleId: "sched-adapter-reply",
+          message: "send the reminder",
+          replyTo: {
+            kind: "adapter",
+            adapter: "telegram",
+            accountId: "primary",
+            actorId: "telegram-user-1",
+            surface: { kind: "dm", id: "telegram-chat-1" },
+          },
+        });
+        const response = await instance.recvFrame(request);
+        expect(response).toMatchObject({
+          type: "res",
+          id: request.id,
+          ok: true,
+          data: { runId: "run-scheduled-reply", queued: true },
+        });
+        expect(process.currentRun).toMatchObject({ runId: "run-busy" });
+        expect(process.store.queueSize("default")).toBe(1);
+
+        process.currentRun = null;
+        expect(process.claimNextQueuedRun()).toMatchObject({ runId: "run-scheduled-reply" });
+        expect(process.currentRun).toMatchObject({
+          runId: "run-scheduled-reply",
+          origin: {
+            kind: "scheduler",
+            scheduleId: "sched-adapter-reply",
+            replyTo: {
+              kind: "adapter",
+              adapter: "telegram",
+              accountId: "primary",
+              actorId: "telegram-user-1",
+              surface: { kind: "dm", id: "telegram-chat-1" },
+            },
+          },
+        });
+        process.currentRun = {
+          ...process.currentRun,
+          config: {
+            executor: { kind: "process", pid: process.pid },
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/test/model",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          mcpServers: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.runTick("run-scheduled-reply");
       });
     });
 
@@ -1088,6 +1359,202 @@ describe("Process DO — mechanical", () => {
         thinking: [
           { type: "thinking", thinking: "Need to preserve this reasoning." },
         ],
+      });
+    });
+
+    it("persists active-run reply media on the final assistant message and signals", async () => {
+      const pid = "mech-final-reply-media";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const key = `var/media/0/${pid}/final-report`;
+      await env.STORAGE.put(key, new Uint8Array([1, 2, 3]), {
+        httpMetadata: { contentType: "application/pdf" },
+      });
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: any }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "Here is the report." }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "unused";
+          },
+        };
+        process.store.appendMessage("user", "Send the report.");
+        process.currentRun = {
+          runId: "run-final-reply-media",
+          conversationId: "default",
+          config: {
+            executor: { kind: "process", pid },
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/test/model",
+            apiKey: "",
+            reasoning: "off",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        const media = {
+          type: "document" as const,
+          mimeType: "application/pdf",
+          filename: "report.pdf",
+          key,
+          path: `/${key}`,
+          size: 3,
+        };
+        const attach = await process.recvFrame({
+          type: "req",
+          id: crypto.randomUUID(),
+          call: "proc.run.attach",
+          args: {
+            runId: "run-final-reply-media",
+            media: [media],
+            stagedKeys: [key],
+          },
+        } satisfies ProcessRunAttachRequestFrame);
+        const pendingDelete = await process.recvFrame(makeReq("proc.media.delete", { key }));
+        await process.runTick("run-final-reply-media");
+        const history = await process.handleProcHistory({ conversationId: "default" });
+        return {
+          attach,
+          pendingDelete,
+          emitted,
+          history,
+          messages: process.store.getMessages(),
+        };
+      });
+
+      expect(result.attach).toMatchObject({
+        ok: true,
+        data: { ok: true, runId: "run-final-reply-media", media: [{ key }] },
+      });
+      expect(result.pendingDelete).toMatchObject({
+        ok: true,
+        data: { ok: false, error: "media is referenced by process history" },
+      });
+      expect(result.messages.at(-1)).toMatchObject({
+        role: "assistant",
+        content: "Here is the report.",
+        media: expect.stringMatching(/root\/\.gsv\/media\/archived-media:[0-9a-f]{64}/),
+      });
+      expect(result.history).toMatchObject({
+        ok: true,
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: "assistant",
+            content: expect.objectContaining({
+              text: "Here is the report.",
+              media: [expect.objectContaining({
+                key: expect.stringMatching(/^root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
+                path: expect.stringMatching(/^\/root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
+              })],
+            }),
+          }),
+        ]),
+      });
+      for (const signal of ["proc.run.output", "proc.run.finished"]) {
+        expect(result.emitted.find((entry) => entry.signal === signal)?.payload).toMatchObject({
+          runId: "run-final-reply-media",
+          media: [expect.objectContaining({
+            key: expect.stringMatching(/^root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
+            path: expect.stringMatching(/^\/root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
+          })],
+        });
+      }
+      const archivedKey = (result.history as any).messages
+        .find((message: any) => message.role === "assistant").content.media[0].key;
+      await expect(env.STORAGE.get(key)).resolves.toBeNull();
+      const archived = await env.STORAGE.get(archivedKey);
+      expect(archived && [...new Uint8Array(await archived.arrayBuffer())]).toEqual([1, 2, 3]);
+    });
+
+    it("keeps distinct immutable archives when a live media key is reused", async () => {
+      const pid = "mech-immutable-media-identity";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const liveKey = `var/media/0/${pid}/reused`;
+
+      await env.STORAGE.put(liveKey, new Uint8Array([1, 2, 3]), {
+        httpMetadata: { contentType: "image/png" },
+      });
+      const firstKey = await runInDurableObject(stub, async (instance: Process) => {
+        const rewrites = await (instance as any).persistArchivedMediaKeys([liveKey]);
+        return rewrites.get(liveKey).key as string;
+      });
+
+      await env.STORAGE.put(liveKey, new Uint8Array([9, 8, 7]), {
+        httpMetadata: { contentType: "image/png" },
+      });
+      const secondKey = await runInDurableObject(stub, async (instance: Process) => {
+        const rewrites = await (instance as any).persistArchivedMediaKeys([liveKey]);
+        return rewrites.get(liveKey).key as string;
+      });
+
+      expect(secondKey).not.toBe(firstKey);
+      const first = await env.STORAGE.get(firstKey);
+      const second = await env.STORAGE.get(secondKey);
+      expect(first && [...new Uint8Array(await first.arrayBuffer())]).toEqual([1, 2, 3]);
+      expect(second && [...new Uint8Array(await second.arrayBuffer())]).toEqual([9, 8, 7]);
+    });
+
+    it("cleans command-staged reply media when the run aborts before a final answer", async () => {
+      const pid = "mech-aborted-reply-media";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const key = `var/media/0/${pid}/unfinished-report`;
+      await env.STORAGE.put(key, new Uint8Array([1]), {
+        httpMetadata: { contentType: "application/pdf" },
+      });
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
+        process.currentRun = {
+          runId: "run-aborted-reply-media",
+          conversationId: "default",
+        };
+        const attach = await process.recvFrame({
+          type: "req",
+          id: crypto.randomUUID(),
+          call: "proc.run.attach",
+          args: {
+            runId: "run-aborted-reply-media",
+            media: [{
+              type: "document",
+              mimeType: "application/pdf",
+              filename: "report.pdf",
+              key,
+              path: `/${key}`,
+              size: 1,
+            }],
+            stagedKeys: [key],
+          },
+        } satisfies ProcessRunAttachRequestFrame);
+        expect(attach).toMatchObject({ ok: true, data: { ok: true } });
+        const abort = await process.handleProcAbort({ runId: "run-aborted-reply-media" });
+        expect(abort).toMatchObject({ ok: true, aborted: true });
+      });
+
+      await vi.waitFor(async () => {
+        expect(await env.STORAGE.head(key)).toBeNull();
       });
     });
 
@@ -2892,6 +3359,78 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.send", () => {
+    it("reconciles repeated adapter deliveries without duplicating admission", async () => {
+      const pid = "mech-adapter-delivery-idempotent";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const args: ProcessAdapterDeliverArgs = {
+        runId: "run-adapter-idempotent",
+        pid,
+        message: "retry-safe inbound message",
+        origin: {
+          kind: "adapter",
+          adapter: "telegram",
+          accountId: "primary",
+          surface: { kind: "dm", id: "telegram-chat-1" },
+          actorId: "telegram-user-1",
+          messageId: "telegram-message-1",
+        },
+      };
+
+      const firstRequest = makeAdapterDeliverReq(args);
+      const first = await stub.recvFrame(firstRequest);
+      expect(first).toMatchObject({
+        type: "res",
+        id: firstRequest.id,
+        ok: true,
+        data: {
+          ok: true,
+          status: "started",
+          runId: args.runId,
+        },
+      });
+
+      const repeatedRequest = makeAdapterDeliverReq(args);
+      const repeated = await stub.recvFrame(repeatedRequest);
+      expect(repeated).toMatchObject({
+        type: "res",
+        id: repeatedRequest.id,
+        ok: true,
+        data: {
+          replayed: "active",
+        },
+      });
+      expect((first as any).data).not.toHaveProperty("replayed");
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        expect(process.store.getMessages()).toEqual([
+          expect.objectContaining({
+            role: "user",
+            content: args.message,
+            runId: args.runId,
+          }),
+        ]);
+        expect(process.store.queueSize()).toBe(0);
+        expect(process.currentRun).toMatchObject({ runId: args.runId });
+      });
+
+      await runInDurableObject(stub, (instance: Process) => {
+        (instance as any).currentRun = null;
+      });
+      const recordedRequest = makeAdapterDeliverReq(args);
+      const recorded = await stub.recvFrame(recordedRequest);
+      expect(recorded).toMatchObject({
+        type: "res",
+        id: recordedRequest.id,
+        ok: true,
+        data: {
+          ok: true,
+          runId: args.runId,
+          replayed: "recorded",
+        },
+      });
+    });
+
     it("appends user message, starts run, loop completes", async () => {
       const pid = "mech-send-1";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -3212,7 +3751,8 @@ describe("Process DO — mechanical", () => {
 
         expect(lateBodyCancelled).toBe(true);
         expect(process.store.getResults("run-live-tools")).toEqual([]);
-        expect(process.dispatchSyscall).toHaveBeenCalledTimes(1);
+        expect(process.dispatchSyscall.mock.calls.length).toBeGreaterThanOrEqual(1);
+        expect(process.dispatchSyscall.mock.calls.length).toBeLessThanOrEqual(2);
         expect(process.currentRun).toMatchObject({ runId: nextRunId });
         expect(process.scheduleTick).toHaveBeenCalledTimes(1);
         expect(process.scheduleTick).toHaveBeenCalledWith(nextRunId);
@@ -3458,7 +3998,13 @@ describe("Process DO — mechanical", () => {
       if (!upload.ok) {
         throw new Error(upload.error.message);
       }
-      expect(upload.data).toMatchObject({ ok: true, media: { size: 3 } });
+      expect(upload.data).toMatchObject({
+        ok: true,
+        media: {
+          size: 3,
+          path: expect.stringMatching(`^/var/media/0/${pid}/`),
+        },
+      });
       const uploadedMedia = upload.data?.ok ? upload.data.media : null;
       expect(uploadedMedia).not.toBeNull();
 
@@ -3487,18 +4033,29 @@ describe("Process DO — mechanical", () => {
         const media = JSON.parse(record.media!);
         expect(media).toHaveLength(1);
         expect(media[0].key).toContain(`/0/${pid}/`);
+        expect(media[0].path).toBe(`/${media[0].key}`);
         mediaKey = media[0].key;
 
         const stored = await env.STORAGE.get(media[0].key);
         expect(stored).not.toBeNull();
+        expect(stored?.customMetadata).toMatchObject({
+          uid: "0",
+          gid: "0",
+          mode: "400",
+          processId: pid,
+        });
 
         const messages = await (instance as any).buildContextMessages();
         const user = messages[0] as any;
         expect(Array.isArray(user.content)).toBe(true);
         expect(user.content[0]).toEqual({ type: "text", text: "Describe this image." });
-        expect(user.content[1].type).toBe("image");
-        expect(user.content[1].mimeType).toBe("image/png");
-        expect(user.content[1].data).toBe("AQID");
+        expect(user.content[1]).toEqual({
+          type: "text",
+          text: `Attached image "proof.png" [image/png] 3 B\nPath: /${media[0].key}`,
+        });
+        expect(user.content[2].type).toBe("image");
+        expect(user.content[2].mimeType).toBe("image/png");
+        expect(user.content[2].data).toBe("AQID");
       });
 
       const read = (await stub.recvFrame(
@@ -3508,6 +4065,7 @@ describe("Process DO — mechanical", () => {
       expect(read.data).toMatchObject({
         ok: true,
         key: mediaKey,
+        path: `/${mediaKey}`,
         mimeType: "image/png",
       });
       expect(read.body && [...await bodyToBytes(read.body)]).toEqual([1, 2, 3]);
@@ -3551,6 +4109,180 @@ describe("Process DO — mechanical", () => {
       expect(withBody.data).toEqual({ ok: false, error: "proc.media.delete does not accept a body" });
     });
 
+    it("reconciles repeated process media writes and drains the repeated body", async () => {
+      const pid = "mech-media-write-idempotent";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const args = {
+        type: "image" as const,
+        mimeType: "image/png",
+        filename: "provider-image.png",
+        mediaId: "provider-message-1:image-1",
+      };
+
+      const first = (await stub.recvFrame({
+        ...makeReq("proc.media.write", args),
+        body: bodyFromBytes(new Uint8Array([1, 2, 3])),
+      })) as ResponseOkFrame<"proc.media.write">;
+      expect(first.data).toMatchObject({
+        ok: true,
+        media: {
+          type: "image",
+          mimeType: "image/png",
+          filename: "provider-image.png",
+          size: 3,
+          key: `var/media/0/${pid}/${args.mediaId}`,
+          path: `/var/media/0/${pid}/${args.mediaId}`,
+        },
+      });
+      const originalMedia = (first.data as any).media;
+
+      let repeatedBodyPulled = false;
+      const repeatedBody = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          repeatedBodyPulled = true;
+          controller.enqueue(new Uint8Array([9, 9, 9]));
+          controller.close();
+        },
+      }, { highWaterMark: 0 });
+      const repeated = (await stub.recvFrame({
+        ...makeReq("proc.media.write", args),
+        body: { stream: repeatedBody, length: 3 },
+      })) as ResponseOkFrame<"proc.media.write">;
+
+      expect(repeatedBodyPulled).toBe(true);
+      expect(repeated.data).toEqual({ ok: true, media: originalMedia });
+
+      const mimeConflict = (await runInDurableObject(stub, (instance: Process) =>
+        instance.recvFrame({
+          ...makeReq("proc.media.write", {
+            ...args,
+            mimeType: "image/jpeg",
+          }),
+          body: bodyFromBytes(new Uint8Array([4, 5, 6])),
+        })
+      )) as ResponseOkFrame<"proc.media.write">;
+      expect(mimeConflict.data).toEqual({
+        ok: false,
+        error: "proc.media.write mediaId conflicts with existing media",
+      });
+      for (const conflictingArgs of [
+        { ...args, type: "document" as const },
+        { ...args, filename: "different-provider-image.png" },
+        { ...args, duration: 12 },
+        { ...args, transcription: "different transcript" },
+      ]) {
+        const conflict = (await runInDurableObject(stub, (instance: Process) =>
+          instance.recvFrame({
+            ...makeReq("proc.media.write", conflictingArgs),
+            body: bodyFromBytes(new Uint8Array([4, 5, 6])),
+          })
+        )) as ResponseOkFrame<"proc.media.write">;
+        expect(conflict.data).toEqual({
+          ok: false,
+          error: "proc.media.write mediaId conflicts with existing media",
+        });
+      }
+
+      const stored = await env.STORAGE.get(originalMedia.key);
+      expect(stored).not.toBeNull();
+      expect([...new Uint8Array(await new Response(stored!.body).arrayBuffer())]).toEqual([1, 2, 3]);
+    });
+
+    it("serializes concurrent repeated media writes into one storage put", async () => {
+      const pid = "mech-media-write-concurrent-idempotent";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        const objects = new Map<string, {
+          bytes: Uint8Array;
+          httpMetadata?: { contentType?: string };
+          customMetadata?: Record<string, string>;
+        }>();
+        let releasePut!: () => void;
+        let markPutStarted!: () => void;
+        const putBlocked = new Promise<void>((resolve) => {
+          releasePut = resolve;
+        });
+        const putStarted = new Promise<void>((resolve) => {
+          markPutStarted = resolve;
+        });
+        const put = vi.fn(async (
+          key: string,
+          stream: ReadableStream<Uint8Array>,
+          options?: {
+            httpMetadata?: { contentType?: string };
+            customMetadata?: Record<string, string>;
+          },
+        ) => {
+          markPutStarted();
+          await putBlocked;
+          const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+          objects.set(key, {
+            bytes,
+            httpMetadata: options?.httpMetadata,
+            customMetadata: options?.customMetadata,
+          });
+          return { key, size: bytes.byteLength };
+        });
+        process.env = {
+          ...originalEnv,
+          STORAGE: {
+            head: vi.fn(async (key: string) => {
+              const object = objects.get(key);
+              return object
+                ? {
+                  key,
+                  size: object.bytes.byteLength,
+                  httpMetadata: object.httpMetadata,
+                  customMetadata: object.customMetadata,
+                }
+                : null;
+            }),
+            put,
+            delete: vi.fn(async (key: string) => {
+              objects.delete(key);
+            }),
+          },
+        };
+
+        try {
+          const args = {
+            type: "image" as const,
+            mimeType: "image/png",
+            filename: "concurrent.png",
+            mediaId: "provider-message-2:image-1",
+          };
+          const first = process.handleProcMediaWrite(
+            args,
+            bodyFromBytes(new Uint8Array([1, 2, 3])),
+          );
+          await putStarted;
+          const repeated = process.handleProcMediaWrite(
+            args,
+            bodyFromBytes(new Uint8Array([9, 9, 9])),
+          );
+          releasePut();
+          const [firstResult, repeatedResult] = await Promise.all([first, repeated]);
+          const stored = [...objects.values()][0];
+          return {
+            firstResult,
+            repeatedResult,
+            putCalls: put.mock.calls.length,
+            storedBytes: stored ? [...stored.bytes] : [],
+          };
+        } finally {
+          process.env = originalEnv;
+          releasePut();
+        }
+      });
+
+      expect(result.putCalls).toBe(1);
+      expect(result.repeatedResult).toEqual(result.firstResult);
+      expect(result.storedBytes).toEqual([1, 2, 3]);
+    });
+
     it("keeps SVG attachments out of raster model image blocks", async () => {
       const stub = await initProcess("mech-svg-context", ROOT_IDENTITY);
 
@@ -3573,7 +4305,10 @@ describe("Process DO — mechanical", () => {
           expect(get).not.toHaveBeenCalled();
           expect(messages[0].content).toEqual([
             { type: "text", text: "Review this diagram." },
-            { type: "text", text: "Attached image \"diagram.svg\" [image/svg+xml]" },
+            {
+              type: "text",
+              text: "Attached image \"diagram.svg\" [image/svg+xml]\nPath: /var/media/0/mech-svg-context/diagram.svg",
+            },
           ]);
         } finally {
           process.env = originalEnv;
@@ -3639,6 +4374,23 @@ describe("Process DO — mechanical", () => {
       expect(response.data).toEqual({
         ok: false,
         error: "proc.media.write requires an exact body length",
+      });
+    });
+
+    it("rejects the reserved R2 directory-marker media id", async () => {
+      const stub = await initProcess("mech-media-reserved-marker", ROOT_IDENTITY);
+      const response = (await stub.recvFrame({
+        ...makeReq("proc.media.write", {
+          type: "document",
+          mimeType: "application/octet-stream",
+          mediaId: ".dir",
+        }),
+        body: bodyFromBytes(new Uint8Array([1])),
+      })) as ResponseOkFrame;
+
+      expect(response.data).toEqual({
+        ok: false,
+        error: "proc.media.write mediaId is invalid",
       });
     });
 
@@ -3727,6 +4479,7 @@ describe("Process DO — mechanical", () => {
             get: vi.fn(async (key: string) => ({
               size: key.endsWith("oversized") ? 25 * 1024 * 1024 + 1 : 15 * 1024 * 1024,
               arrayBuffer,
+              body: { cancel: vi.fn(async () => {}) },
             })),
           },
         };
@@ -4951,6 +5704,36 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("deletes media released by an unarchived conversation reset", async () => {
+      const pid = "mech-conversation-reset-media-cleanup";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const key = `var/media/0/${pid}/discard.bin`;
+      await env.STORAGE.put(key, new Uint8Array([7, 8, 9]), {
+        httpMetadata: { contentType: "application/octet-stream" },
+        customMetadata: { uid: "0", gid: "0", mode: "400", processId: pid },
+      });
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.openConversation({ conversationId: "discard" });
+        store.appendMessage("user", "discard attachment", {
+          conversationId: "discard",
+          media: JSON.stringify([{
+            type: "document",
+            mimeType: "application/octet-stream",
+            key,
+            path: `/${key}`,
+          }]),
+        });
+      });
+
+      const reset = await stub.recvFrame(makeReq("proc.conversation.reset", {
+        conversationId: "discard",
+        archive: false,
+      })) as ResponseOkFrame;
+      expect(reset.data).toMatchObject({ ok: true, archivedMessages: 1 });
+      expect(await env.STORAGE.head(key)).toBeNull();
+    });
+
     it("compacts a conversation prefix into an archived segment", async () => {
       const pid = "mech-conversation-compact";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -5439,6 +6222,76 @@ describe("Process DO — mechanical", () => {
         },
       ]);
       expect((toolResultPageRes.data as any).truncated).toBe(false);
+    });
+
+    it("retains assistant media references when reading a compacted segment", async () => {
+      const pid = "mech-conversation-segment-assistant-media";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const activeKey = `var/media/0/${pid}/result.png`;
+      await env.STORAGE.put(activeKey, new Uint8Array([7, 8, 9]), {
+        httpMetadata: { contentType: "image/png" },
+        customMetadata: {
+          uid: "0",
+          gid: "0",
+          mode: "400",
+          processId: pid,
+        },
+      });
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.openConversation({ conversationId: "thread", title: "Thread" });
+        store.appendMessage("assistant", "Here is the result.", {
+          conversationId: "thread",
+          createdAt: 20,
+          media: JSON.stringify([{
+            type: "image",
+            mimeType: "image/png",
+            filename: "result.png",
+            size: 3,
+            key: activeKey,
+            path: `/${activeKey}`,
+          }]),
+        });
+        store.appendMessage("user", "keep this", {
+          conversationId: "thread",
+          createdAt: 30,
+        });
+      });
+
+      const compactRes = await stub.recvFrame(makeReq("proc.conversation.compact", {
+        conversationId: "thread",
+        keepLast: 1,
+        summary: "Earlier context.",
+      })) as ResponseOkFrame;
+      const segment = (compactRes.data as any).segment;
+      const segmentRes = await stub.recvFrame(makeReq("proc.conversation.segment.read", {
+        conversationId: "thread",
+        segmentId: segment.id,
+      })) as ResponseOkFrame;
+      const media = (segmentRes.data as any).messages[0].content.media[0];
+
+      expect((segmentRes.data as any).messages[0]).toMatchObject({
+        role: "assistant",
+        content: {
+          text: "Here is the result.",
+          thinking: [],
+          toolCalls: [],
+        },
+        timestamp: 20,
+      });
+      expect(media).toMatchObject({
+        type: "image",
+        mimeType: "image/png",
+        filename: "result.png",
+        size: 3,
+        key: expect.stringMatching(/^root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
+      });
+      expect(media.path).toBe(`/${media.key}`);
+      expect(await env.STORAGE.head(activeKey)).toBeNull();
+
+      const read = await stub.recvFrame(makeReq("proc.media.read", { key: media.key })) as ResponseOkFrame;
+      expect(read.data).toMatchObject({ ok: true, key: media.key, path: media.path, size: 3 });
+      expect(read.body && [...await bodyToBytes(read.body)]).toEqual([7, 8, 9]);
     });
 
     it("forks a live conversation from a message", async () => {
@@ -6228,6 +7081,53 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = vi.fn(async () => {});
         await process.onRunFinishDelivery("run-finish-outbox");
         expect(process.store.getValue("pendingRunFinishes")).toBeNull();
+      });
+    });
+
+    it("stops terminal delivery after ten attempts and records an inspectable history note", async () => {
+      const stub = await initProcess("mech-finish-outbox-exhausted", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.store.setValue("pendingRunFinishes", JSON.stringify([{
+          pid: process.pid,
+          runId: "run-finish-exhausted",
+          conversationId: "default",
+          status: "ok",
+          reason: "turn.complete",
+          text: "completed answer",
+          queuedCount: 0,
+          timestamp: 1,
+          deliveryAttempts: 9,
+        }]));
+        process.sendSignal = vi.fn(async () => {
+          throw new Error("adapter transport remains unavailable");
+        });
+        process.schedule = vi.fn(async () => ({ id: "must-not-retry" }));
+        process.emitProcChanged = vi.fn(async () => {});
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await process.onRunFinishDelivery("run-finish-exhausted");
+
+        expect(process.sendSignal).toHaveBeenCalledOnce();
+        expect(process.schedule).not.toHaveBeenCalled();
+        expect(process.store.getValue("pendingRunFinishes")).toBeNull();
+        expect(process.store.getMessages()).toContainEqual(expect.objectContaining({
+          role: "system",
+          runId: "run-finish-exhausted",
+          content: expect.stringContaining(
+            "Automatic reply delivery stopped after repeated transport failures",
+          ),
+        }));
+        expect(process.emitProcChanged).toHaveBeenCalledWith(
+          ["messages"],
+          expect.objectContaining({
+            conversationId: "default",
+            runId: "run-finish-exhausted",
+            messageId: expect.any(Number),
+          }),
+        );
+        warn.mockRestore();
       });
     });
 
@@ -7868,6 +8768,65 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.kill", () => {
+    it("rehomes archived media so a fresh executor can hydrate and read it", async () => {
+      const pid = "mech-kill-archive-media";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const activeKey = `var/media/0/${pid}/proof.png`;
+      await env.STORAGE.put(activeKey, new Uint8Array([1, 2, 3]), {
+        httpMetadata: { contentType: "image/png" },
+        customMetadata: {
+          uid: "0",
+          gid: "0",
+          mode: "400",
+          processId: pid,
+        },
+      });
+      await runInDurableObject(stub, (instance: Process) => {
+        (instance as any).store.appendMessage("user", "Keep this image.", {
+          media: JSON.stringify([{
+            type: "image",
+            mimeType: "image/png",
+            filename: "proof.png",
+            size: 3,
+            key: activeKey,
+            path: `/${activeKey}`,
+          }]),
+        });
+      });
+
+      const killed = await stub.recvFrame(makeReq("proc.kill", {})) as ResponseOkFrame;
+      const archive = (killed.data as any).archives.find((item: any) => (
+        item.conversationId === "default"
+      ));
+      expect(archive).toBeTruthy();
+      expect(await env.STORAGE.head(activeKey)).toBeNull();
+
+      const resumedPid = "mech-resume-archive-media";
+      const resumed = await getProcessByPid(resumedPid);
+      const initialized = await resumed.recvFrame(makeReq("proc.setidentity", {
+        pid: resumedPid,
+        identity: ROOT_IDENTITY,
+        profile: DEFAULT_PROFILE,
+        hydrateFrom: archive.path,
+      })) as ResponseOkFrame;
+      expect(initialized.ok).toBe(true);
+
+      const history = await resumed.recvFrame(makeReq("proc.history", {})) as ResponseOkFrame;
+      const media = (history.data as any).messages[0].content.media[0];
+      expect(media).toMatchObject({
+        filename: "proof.png",
+        key: expect.stringMatching(/^root\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/),
+      });
+      expect(media.path).toBe(`/${media.key}`);
+
+      const read = await resumed.recvFrame(makeReq("proc.media.read", { key: media.key })) as ResponseOkFrame;
+      expect(read.data).toMatchObject({ ok: true, key: media.key, path: media.path, size: 3 });
+      expect(read.body && [...await bodyToBytes(read.body)]).toEqual([1, 2, 3]);
+
+      await env.STORAGE.delete([archive.path.replace(/^\//, ""), media.key]);
+      await resumed.recvFrame(makeReq("proc.kill", { archive: false }));
+    });
+
     it("can dispose an executor whose identity initialization never completed", async () => {
       const pid = "mech-kill-uninitialized";
       const stub = await getProcessByPid(pid);

@@ -21,6 +21,12 @@ import {
 import { isVectorImageMimeType } from "../inference/image-mime";
 import { isWorkersAiProvider } from "../inference/workers-ai";
 import { encodeBase64Bytes } from "../shared/base64";
+import {
+  processMediaPath,
+  processMediaPrefix,
+} from "../shared/process-media-path";
+
+export { processMediaPath, processMediaPrefix } from "../shared/process-media-path";
 
 export {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
@@ -40,6 +46,7 @@ export type StoredProcessMedia = {
   type: ProcMediaInput["type"];
   mimeType: string;
   key?: string;
+  path?: string;
   url?: string;
   filename?: string;
   size?: number;
@@ -47,6 +54,13 @@ export type StoredProcessMedia = {
   transcription?: string;
   description?: string;
 };
+
+const ARCHIVED_PROCESS_MEDIA_KEY =
+  /^(?:root|home\/(?!\.{1,2}\/)[^/\\]+)\/\.gsv\/media\/archived-media:[0-9a-f]{64}$/;
+
+export function archivedProcessMediaPath(key: string): string | null {
+  return ARCHIVED_PROCESS_MEDIA_KEY.test(key) ? `/${key}` : null;
+}
 
 export type StoreIncomingProcessMediaOptions = {
   ai?: AudioTranscriptionBinding & ImageReadingBinding;
@@ -65,10 +79,6 @@ export type StoreIncomingProcessMediaOptions = {
   imageReadingTimeoutMs?: number;
 };
 
-
-export function processMediaPrefix(uid: number, pid: string): string {
-  return `var/media/${uid}/${pid}/`;
-}
 
 export async function storeIncomingProcessMedia(
   bucket: R2Bucket,
@@ -99,7 +109,8 @@ export async function storeIncomingProcessMedia(
     let base64: string | null = null;
 
     if (typeof item.key === "string" && item.key.length > 0) {
-      if (!item.key.startsWith(prefix)) {
+      const path = processMediaPath(item.key);
+      if (!item.key.startsWith(prefix) || !path) {
         throw new Error("media key is outside this process");
       }
       const object = await bucket.head(item.key);
@@ -107,6 +118,7 @@ export async function storeIncomingProcessMedia(
         throw new Error(`media not found: ${item.key}`);
       }
       next.key = item.key;
+      next.path = path;
       next.size = object.size;
 
       const processingLimit = item.type === "audio"
@@ -223,7 +235,14 @@ export function parseStoredProcessMedia(raw: string | null): StoredProcessMedia[
       type,
       mimeType,
     };
-    if (typeof candidate.key === "string" && candidate.key.length > 0) next.key = candidate.key;
+    if (typeof candidate.key === "string" && candidate.key.length > 0) {
+      next.key = candidate.key;
+      const persistedPath = typeof candidate.path === "string"
+        && candidate.path === `/${candidate.key}`
+        ? archivedProcessMediaPath(candidate.key)
+        : null;
+      next.path = processMediaPath(candidate.key) ?? persistedPath ?? undefined;
+    }
     if (typeof candidate.url === "string" && candidate.url.length > 0) next.url = candidate.url;
     if (typeof candidate.filename === "string" && candidate.filename.length > 0) next.filename = candidate.filename;
     if (typeof candidate.size === "number" && Number.isFinite(candidate.size)) next.size = candidate.size;
@@ -254,16 +273,18 @@ export function describeStoredProcessMedia(media: StoredProcessMedia): string {
     parts.push(`${media.duration}s`);
   }
   const base = parts.join(" ");
+  const path = media.path ?? (media.key ? processMediaPath(media.key) : null);
+  const location = path ? `\nPath: ${path}` : "";
   if (media.transcription && media.transcription.trim().length > 0) {
-    return `${base}\nTranscript: ${media.transcription.trim()}`;
+    return `${base}${location}\nTranscript: ${media.transcription.trim()}`;
   }
   if (media.description && media.description.trim().length > 0) {
-    return `${base}\nImage description: ${media.description.trim()}`;
+    return `${base}${location}\nImage description: ${media.description.trim()}`;
   }
   if (media.url && !media.key) {
     return `${base}\nSource: remote URL`;
   }
-  return base;
+  return `${base}${location}`;
 }
 
 export function buildFallbackMediaBlocks(

@@ -13,7 +13,7 @@ export type TargetProviderId = "device" | "adapter";
 
 export type TargetRoute =
   | { kind: "connection" }
-  | { kind: "adapter-shell"; adapter: string; accountId: string };
+  | { kind: "adapter"; adapter: string; accountId: string };
 
 export type TargetDescriptor = {
   targetId: string;
@@ -232,14 +232,14 @@ function adapterTargetToDescriptor(ctx: KernelContext, target: AdapterTarget): T
     platform: "adapter",
     version: "",
     online,
-    implements: ["shell.exec"],
+    implements: ["adapter.send"],
     firstSeenAt: target.status.updatedAt,
     lastSeenAt: target.status.lastActivity ?? target.status.updatedAt,
     connectedAt: online ? target.status.updatedAt : null,
     disconnectedAt: online ? null : target.status.updatedAt,
     metadataWritable: false,
     route: {
-      kind: "adapter-shell",
+      kind: "adapter",
       adapter: target.adapter,
       accountId: target.accountId,
     },

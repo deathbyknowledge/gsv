@@ -24,7 +24,6 @@ export function adapterFamilySub(adapter: ConsoleAdapter): string {
   const capabilities = [
     adapter.supportsConnect ? "connect" : "",
     adapter.supportsSend ? "send" : "",
-    adapter.supportsShellExec ? "shell" : "",
     adapter.supportsActivity ? "activity" : "",
   ].filter(Boolean).join(", ");
   return compactText([
