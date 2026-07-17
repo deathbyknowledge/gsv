@@ -108,9 +108,80 @@ function makeContext(
   const ingressReceipts = new Map<string, {
     state: "in_progress" | "completed";
     result?: Record<string, unknown>;
+    claimToken: string;
+    active: boolean;
+    recovery?: unknown;
   }>();
+  const ingressReceiptStore = {
+    claim: vi.fn((input: { receiptId: string }) => {
+      const existing = ingressReceipts.get(input.receiptId);
+      if (!existing) {
+        const claimToken = `claim:${input.receiptId}`;
+        ingressReceipts.set(input.receiptId, {
+          state: "in_progress",
+          claimToken,
+          active: true,
+        });
+        return { state: "claimed", receiptId: input.receiptId, claimToken };
+      }
+      if (existing.state === "completed") {
+        return {
+          state: "completed",
+          receiptId: input.receiptId,
+          result: existing.result,
+        };
+      }
+      if (existing.active) {
+        return { state: "in_progress", receiptId: input.receiptId };
+      }
+      existing.active = true;
+      existing.claimToken = `${existing.claimToken}:reclaimed`;
+      return existing.result
+        ? {
+            state: "prepared",
+            receiptId: input.receiptId,
+            claimToken: existing.claimToken,
+            result: existing.result,
+          }
+        : {
+            state: "claimed",
+            receiptId: input.receiptId,
+            claimToken: existing.claimToken,
+            ...(existing.recovery !== undefined ? { recovery: existing.recovery } : {}),
+          };
+    }),
+    prepare: vi.fn((receiptId: string, claimToken: string, result: Record<string, unknown>) => {
+      const existing = ingressReceipts.get(receiptId);
+      if (!existing || existing.claimToken !== claimToken) {
+        throw new Error(`receipt is not owned: ${receiptId}`);
+      }
+      existing.result = result;
+    }),
+    checkpoint: vi.fn((receiptId: string, claimToken: string, recovery: unknown) => {
+      const existing = ingressReceipts.get(receiptId);
+      if (!existing || existing.claimToken !== claimToken) {
+        throw new Error(`receipt is not owned: ${receiptId}`);
+      }
+      existing.recovery = recovery;
+    }),
+    complete: vi.fn((receiptId: string, claimToken: string) => {
+      const existing = ingressReceipts.get(receiptId);
+      if (!existing || existing.claimToken !== claimToken || !existing.result) {
+        throw new Error(`receipt is not owned: ${receiptId}`);
+      }
+      existing.state = "completed";
+      existing.active = false;
+    }),
+    abandon: vi.fn((receiptId: string, claimToken: string) => {
+      const existing = ingressReceipts.get(receiptId);
+      if (existing?.claimToken === claimToken) {
+        existing.active = false;
+      }
+    }),
+    ...options.ingressReceipts,
+  };
 
-  return {
+  const context = {
     env: {
       STORAGE: makeStorageBucket(),
       ...env,
@@ -154,6 +225,7 @@ function makeContext(
       spawn: vi.fn(),
     },
     conversations: {
+      get: vi.fn(() => null),
       ensureDefault: vi.fn(() => ({
         record: {
           conversationId: "conv-1",
@@ -169,8 +241,8 @@ function makeContext(
         },
         created: false,
       })),
-      create: vi.fn(() => ({
-        conversationId: "conv-agent",
+      create: vi.fn((input: { conversationId?: string }) => ({
+        conversationId: input.conversationId ?? "conv-agent",
         ownerUid: 1000,
         agentUid: 1002,
         title: "helper",
@@ -212,26 +284,7 @@ function makeContext(
         setRoute: vi.fn(),
         clearRoute: vi.fn(() => Boolean(options.routePid === undefined ? "pid-1" : options.routePid)),
       },
-      ingressReceipts: {
-        claim: vi.fn((input: { receiptId: string }) => {
-          const existing = ingressReceipts.get(input.receiptId);
-          if (!existing) {
-            ingressReceipts.set(input.receiptId, { state: "in_progress" });
-            return { state: "claimed", receiptId: input.receiptId };
-          }
-          return existing.state === "completed"
-            ? {
-                state: "completed",
-                receiptId: input.receiptId,
-                result: existing.result,
-              }
-            : { state: "in_progress", receiptId: input.receiptId };
-        }),
-        complete: vi.fn((receiptId: string, result: Record<string, unknown>) => {
-          ingressReceipts.set(receiptId, { state: "completed", result });
-        }),
-        ...options.ingressReceipts,
-      },
+      ingressReceipts: ingressReceiptStore,
     },
     runRoutes: {
       setAdapterRoute: vi.fn(),
@@ -246,6 +299,10 @@ function makeContext(
     },
     callerOwnerUid: options.callerOwnerUid,
   } as unknown as KernelContext;
+  context.completeAdapterIngressReceipt = vi.fn(async ({ receiptId, claimToken }) => {
+    ingressReceiptStore.complete(receiptId, claimToken);
+  });
+  return context;
 }
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
@@ -1233,6 +1290,45 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
+  it("reclaims a prepared command reply when its durable enqueue failed", async () => {
+    const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: "pid-1" });
+    const completePrepared = ctx.completeAdapterIngressReceipt;
+    let completionAttempts = 0;
+    ctx.completeAdapterIngressReceipt = vi.fn(async (input) => {
+      completionAttempts++;
+      if (completionAttempts === 1) {
+        throw new Error("scheduler unavailable");
+      }
+      await completePrepared(input);
+    });
+    const inbound = {
+      adapter: "whatsapp",
+      accountId: "primary",
+      message: {
+        messageId: "command-outbox-retry",
+        surface: { kind: "dm" as const, id: "dm-1" },
+        actor: { id: "wa:+123" },
+        text: "/use personal",
+      },
+    };
+
+    await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow("scheduler unavailable");
+    const replay = await handleAdapterInbound(inbound, ctx);
+
+    expect(replay).toMatchObject({
+      ok: true,
+      replayed: "completed",
+      reply: { text: "This chat now uses your personal conversation." },
+    });
+    expect(ctx.adapters.surfaceRoutes.setRoute).toHaveBeenCalledTimes(1);
+    expect(ctx.completeAdapterIngressReceipt).toHaveBeenCalledTimes(2);
+    const firstDelivery = vi.mocked(ctx.completeAdapterIngressReceipt).mock.calls[0]?.[0]
+      .deliveries[0];
+    const secondDelivery = vi.mocked(ctx.completeAdapterIngressReceipt).mock.calls[1]?.[0]
+      .deliveries[0];
+    expect(secondDelivery?.deliveryId).toBe(firstDelivery?.deliveryId);
+  });
+
   it("replays a link challenge with one challenge mutation and one delivery id", async () => {
     const ctx = makeContext({}, { upsert: vi.fn() }, {
       identityLinks: { resolveUid: vi.fn(() => null) },
@@ -1434,7 +1530,7 @@ describe("adapter lifecycle handlers", () => {
         replyToId: "msg-1",
       },
     });
-    expect(result.reply?.text).toContain('"approve always"');
+    expect(result.reply?.text).toContain('"approve always hil[hil-1]"');
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
   });
 
@@ -1696,7 +1792,7 @@ describe("adapter lifecycle handlers", () => {
       },
     }, { upsert: vi.fn() });
 
-    const result = await handleAdapterInbound({
+    await expect(handleAdapterInbound({
       adapter: "whatsapp",
       accountId: "primary",
       message: {
@@ -1711,9 +1807,8 @@ describe("adapter lifecycle handlers", () => {
           body: { offset: 0, length: 1 },
         }],
       },
-    }, ctx, bodyFromBytes(new Uint8Array([1])));
+    }, ctx, bodyFromBytes(new Uint8Array([1])))).rejects.toThrow("delivery failed");
 
-    expect(result).toEqual({ ok: false, error: "delivery failed" });
     expect(sendFrameToProcessMock.mock.calls.some(([, frame]) =>
       frame.call === "proc.media.delete"
     )).toBe(false);
@@ -1722,8 +1817,9 @@ describe("adapter lifecycle handlers", () => {
     expect(ctx.runRoutes.delete).not.toHaveBeenCalled();
   });
 
-  it("preserves the preallocated route and media when Process delivery throws ambiguously", async () => {
+  it("reclaims and reconciles an ambiguous Process admission without re-uploading media", async () => {
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
+    let deliveryAttempts = 0;
     sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
@@ -1746,7 +1842,22 @@ describe("adapter lifecycle handlers", () => {
         };
       }
       if (frame.call === "proc.adapter.deliver") {
-        throw new Error("Process RPC transport lost");
+        deliveryAttempts++;
+        if (deliveryAttempts === 1) {
+          throw new Error("Process RPC transport lost");
+        }
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            status: "started",
+            runId: frame.args.runId,
+            queued: false,
+            replayed: "active",
+          },
+        };
       }
       if (frame.call === "proc.media.delete") {
         throw new Error("Ambiguous delivery must not delete admitted media");
@@ -1782,10 +1893,9 @@ describe("adapter lifecycle handlers", () => {
     );
 
     const replay = await handleAdapterInbound(inbound, ctx);
-    expect(replay).toEqual({
+    expect(replay).toMatchObject({
       ok: true,
-      droppedReason: "duplicate_in_progress",
-      replayed: "in_progress",
+      delivered: { pid: "pid-1", queued: false },
     });
 
     const preallocatedRunId = vi.mocked(ctx.runRoutes.setAdapterRoute).mock.calls[0]?.[0]?.runId;
@@ -1796,6 +1906,9 @@ describe("adapter lifecycle handlers", () => {
     )).toBe(false);
     expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
       frame.call === "proc.adapter.deliver"
+    ))).toHaveLength(2);
+    expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
+      frame.call === "proc.media.write"
     ))).toHaveLength(1);
     expect(adapterSetActivity).toHaveBeenNthCalledWith(
       1,
@@ -1808,6 +1921,12 @@ describe("adapter lifecycle handlers", () => {
       "primary",
       { kind: "dm", id: "dm-1" },
       { kind: "typing", active: false },
+    );
+    expect(adapterSetActivity).toHaveBeenNthCalledWith(
+      3,
+      "primary",
+      { kind: "dm", id: "dm-1" },
+      { kind: "typing", active: true },
     );
   });
 
@@ -2039,6 +2158,134 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
       frame.call === "proc.hil"
     ))).toHaveLength(1);
+  });
+
+  it("reconciles a crashed HIL decision without applying it to the next approval", async () => {
+    let historyReads = 0;
+    let hilAttempts = 0;
+    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+      if (frame.call === "proc.history") {
+        historyReads++;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            pendingHil: historyReads === 1
+              ? {
+                  requestId: "hil-old",
+                  toolName: "Write",
+                  syscall: "fs.write",
+                  args: { path: "~/old.txt" },
+                }
+              : {
+                  requestId: "hil-new",
+                  toolName: "Write",
+                  syscall: "fs.write",
+                  args: { path: "~/new.txt" },
+                },
+          },
+        };
+      }
+      if (frame.call === "proc.hil") {
+        hilAttempts++;
+        expect(frame.args.requestId).toBe("hil-old");
+        if (hilAttempts === 1) {
+          // The Process committed the old decision, then its response was lost.
+          throw new Error("Process response lost after commit");
+        }
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: false, error: "Pending tool confirmation not found: hil-old" },
+        };
+      }
+      throw new Error(`Unexpected call: ${frame.call}`);
+    });
+    const ctx = makeContext({}, { upsert: vi.fn() });
+    const inbound = {
+      adapter: "whatsapp",
+      accountId: "primary",
+      message: {
+        messageId: "hil-crash-window",
+        surface: { kind: "dm" as const, id: "dm-1" },
+        actor: { id: "wa:+123" },
+        text: "approve hil[hil-old]",
+      },
+    };
+
+    await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow(
+      "Process response lost after commit",
+    );
+    const result = await handleAdapterInbound(inbound, ctx);
+
+    expect(result).toMatchObject({ ok: true, reply: { replyToId: "hil-crash-window" } });
+    expect(result.reply?.text).toContain("~/new.txt");
+    expect(hilAttempts).toBe(2);
+    expect(historyReads).toBe(2);
+    expect(sendFrameToProcessMock.mock.calls.some(([, frame]) => (
+      frame.call === "proc.adapter.deliver"
+    ))).toBe(false);
+    const checkpointOrder = vi.mocked(ctx.adapters.ingressReceipts.checkpoint)
+      .mock.invocationCallOrder[0];
+    const firstHilOrder = sendFrameToProcessMock.mock.invocationCallOrder[1];
+    expect(checkpointOrder).toBeLessThan(firstHilOrder);
+  });
+
+  it("does not turn a reclaimed HIL answer into a normal conversation turn", async () => {
+    let historyReads = 0;
+    let hilAttempts = 0;
+    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+      if (frame.call === "proc.history") {
+        historyReads++;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            pendingHil: historyReads === 1
+              ? {
+                  requestId: "hil-finished",
+                  toolName: "Read",
+                  syscall: "fs.read",
+                  args: { path: "~/secret.txt" },
+                }
+              : null,
+          },
+        };
+      }
+      if (frame.call === "proc.hil") {
+        hilAttempts++;
+        if (hilAttempts === 1) throw new Error("response lost after commit");
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: false, error: "Pending tool confirmation not found: hil-finished" },
+        };
+      }
+      throw new Error(`Unexpected call: ${frame.call}`);
+    });
+    const ctx = makeContext({}, { upsert: vi.fn() });
+    const inbound = {
+      adapter: "telegram",
+      accountId: "bot",
+      message: {
+        messageId: "hil-no-normal-turn",
+        surface: { kind: "dm" as const, id: "chat-1" },
+        actor: { id: "telegram:user:1" },
+        text: "deny hil[hil-finished]",
+      },
+    };
+
+    await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow("response lost after commit");
+    const result = await handleAdapterInbound(inbound, ctx);
+
+    expect(result.reply?.text).toBe("Denied. Continuing.");
+    expect(sendFrameToProcessMock.mock.calls.some(([, frame]) => (
+      frame.call === "proc.adapter.deliver"
+    ))).toBe(false);
   });
 
   it("adapter.inbound accepts approve always with remembered approval", async () => {
@@ -2294,7 +2541,7 @@ describe("adapter lifecycle handlers", () => {
         call: "proc.setidentity",
         args: expect.objectContaining({
           identity: expect.objectContaining({ username: "helper" }),
-          conversationId: "conv-agent",
+          conversationId: expect.stringMatching(/^adapter:adapter-ingress:/),
         }),
       }),
     );

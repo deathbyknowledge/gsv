@@ -21,7 +21,6 @@ import type {
 import type {
   AdapterMedia,
   AdapterMediaPart,
-  AdapterInboundResult,
   AdapterSurface,
   BinaryBody,
   ConnectionIdentity,
@@ -55,6 +54,7 @@ import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import { ProcessRegistry, type ProcessState } from "./processes";
 import { ConversationRegistry } from "./conversations";
 import { AdapterStore } from "./adapter-store";
+import type { AdapterIngressCompletion } from "./adapter-ingress-receipts";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
 import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
@@ -139,6 +139,7 @@ const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
 const MAX_ONE_SHOT_SCHEDULE_DELIVERY_ATTEMPTS = 10;
 const MAX_ADAPTER_SIGNAL_DELIVERY_ATTEMPTS = 10;
+const ADAPTER_INGRESS_OUTBOX_SWEEP_SECONDS = 60;
 
 type AdapterSignalDeliveryOutcome =
   | { state: "delivered" }
@@ -362,6 +363,17 @@ export class Kernel extends Host<Env> {
     for (const callId of this.ipcCalls.recoverDeliveryIds()) {
       this.queueIpcCallDelivery(callId);
     }
+    this.ctx.waitUntil((async () => {
+      await this.scheduleEvery(
+        ADAPTER_INGRESS_OUTBOX_SWEEP_SECONDS,
+        "onAdapterIngressOutboxSweep",
+        {},
+        { retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 } },
+      );
+      await this.onAdapterIngressOutboxSweep();
+    })().catch((error) => {
+      console.warn("[Kernel] Failed to start adapter ingress outbox recovery", error);
+    }));
   }
 
   createMcpOAuthProvider(callbackUrl: string): AgentMcpOAuthProvider {
@@ -1190,71 +1202,33 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private async deliverAdapterInboundImmediateReplies(
-    frame: RequestFrame,
-    response: ResponseFrame,
+  private async completeAdapterIngressReceipt(
+    input: AdapterIngressCompletion,
   ): Promise<void> {
-    if (!response.ok || !response.data || typeof response.data !== "object") return;
-    const result = response.data as AdapterInboundResult;
-    if (!result.ok) return;
-    const args = frame.args && typeof frame.args === "object"
-      ? frame.args as Record<string, unknown>
-      : {};
-    const inbound = args.message && typeof args.message === "object"
-      ? args.message as Record<string, unknown>
-      : {};
-    const rawSurface = inbound.surface && typeof inbound.surface === "object"
-      ? inbound.surface as Record<string, unknown>
-      : {};
-    const adapter = typeof args.adapter === "string" ? args.adapter.trim().toLowerCase() : "";
-    const accountId = typeof args.accountId === "string" ? args.accountId.trim() : "";
-    const surfaceId = typeof rawSurface.id === "string" ? rawSurface.id.trim() : "";
-    const surfaceKind = rawSurface.kind;
-    if (
-      !adapter
-      || !accountId
-      || !surfaceId
-      || (surfaceKind !== "dm" && surfaceKind !== "group" && surfaceKind !== "channel" && surfaceKind !== "thread")
-    ) {
-      return;
+    // This ordering is the ingress outbox completion barrier: once a receipt
+    // says completed, every immediate response already has a durable schedule.
+    // A crash or scheduling error before that point leaves the prepared result
+    // reclaimable, and its stable delivery ids make enqueue replay harmless.
+    for (const delivery of input.deliveries) {
+      await this.queueAdapterImmediateDelivery({ ...delivery, attempt: 1 });
     }
-    const surface: AdapterSurface = {
-      kind: surfaceKind,
-      id: surfaceId,
-      ...(typeof rawSurface.threadId === "string" && rawSurface.threadId.trim()
-        ? { threadId: rawSurface.threadId.trim() }
-        : {}),
-    };
-    const providerMessageId = typeof inbound.messageId === "string"
-      ? inbound.messageId.trim()
-      : undefined;
-    const jobs: AdapterImmediateDeliveryRetry[] = [];
-    if (result.challenge?.prompt) {
-      jobs.push({
-        adapter,
-        accountId,
-        surface,
-        deliveryId: result.challenge.deliveryId,
-        text: result.challenge.prompt,
-        ...(providerMessageId ? { replyToId: providerMessageId } : {}),
-        attempt: 1,
-      });
-    }
-    if (result.reply?.text) {
-      jobs.push({
-        adapter,
-        accountId,
-        surface,
-        deliveryId: result.reply.deliveryId,
-        text: result.reply.text,
-        ...(result.reply.replyToId || providerMessageId
-          ? { replyToId: result.reply.replyToId || providerMessageId }
-          : {}),
-        attempt: 1,
-      });
-    }
-    for (const job of jobs) {
-      await this.queueAdapterImmediateDelivery(job);
+    this.adapters.ingressReceipts.complete(input.receiptId, input.claimToken);
+  }
+
+  async onAdapterIngressOutboxSweep(): Promise<void> {
+    for (const completion of this.adapters.ingressReceipts.claimPreparedCompletions()) {
+      try {
+        await this.completeAdapterIngressReceipt(completion);
+      } catch (error) {
+        this.adapters.ingressReceipts.abandon(
+          completion.receiptId,
+          completion.claimToken,
+        );
+        console.warn(
+          `[Kernel] Adapter ingress outbox recovery failed receipt=${completion.receiptId}`,
+          error,
+        );
+      }
     }
   }
 
@@ -1919,9 +1893,6 @@ export class Kernel extends Host<Env> {
     }
 
     this.applyPostDispatchEffects(frame, result.response);
-    if (frame.call === "adapter.inbound") {
-      await this.deliverAdapterInboundImmediateReplies(frame, result.response);
-    }
     return result.response;
   }
 
@@ -1980,6 +1951,7 @@ export class Kernel extends Host<Env> {
         await this.cancelSchedule(wakeScheduleId);
       },
       runSchedules: this.runSchedules.bind(this),
+      completeAdapterIngressReceipt: this.completeAdapterIngressReceipt.bind(this),
       addMcpServerConnection: this.addMcpServerConnection.bind(this),
       removeMcpServerConnection: this.removeMcpServer.bind(this),
       refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),

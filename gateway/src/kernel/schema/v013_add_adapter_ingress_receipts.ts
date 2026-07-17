@@ -16,6 +16,9 @@ export const KERNEL_V013_ADD_ADAPTER_INGRESS_RECEIPTS: SqlMigration = {
         provider_message_id TEXT    NOT NULL,
         state               TEXT    NOT NULL CHECK (state IN ('in_progress', 'completed')),
         result_json         TEXT,
+        progress_json       TEXT,
+        claim_token         TEXT    NOT NULL,
+        claimed_at          INTEGER NOT NULL,
         created_at          INTEGER NOT NULL,
         completed_at        INTEGER,
         PRIMARY KEY (
@@ -28,6 +31,10 @@ export const KERNEL_V013_ADD_ADAPTER_INGRESS_RECEIPTS: SqlMigration = {
           provider_message_id
         )
       )
+    `,
+    `
+      CREATE INDEX IF NOT EXISTS idx_adapter_ingress_receipts_retention
+      ON adapter_ingress_receipts(state, completed_at, claimed_at)
     `,
   ],
 };

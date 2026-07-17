@@ -1861,39 +1861,39 @@ describe("Kernel service binding identity", () => {
 });
 
 describe("Kernel adapter ingress reply outbox", () => {
-  const inboundFrame = {
-    type: "req" as const,
-    id: "inbound-1",
-    call: "adapter.inbound",
-    args: {
-      adapter: "telegram",
-      accountId: "bot",
-      message: {
-        messageId: "provider-message-1",
-        surface: { kind: "dm", id: "chat-42" },
-      },
-    },
-  };
-
-  it("turns deterministic inbound replies into Kernel-owned delivery jobs", async () => {
+  it("durably queues deterministic replies before completing their ingress receipt", async () => {
+    const events: string[] = [];
     const kernel = Object.create(Kernel.prototype) as any;
-    kernel.queueAdapterImmediateDelivery = vi.fn(async () => {});
+    kernel.queueAdapterImmediateDelivery = vi.fn(async (job: { deliveryId: string }) => {
+      events.push(`queue:${job.deliveryId}`);
+    });
+    kernel.adapters = {
+      ingressReceipts: {
+        complete: vi.fn(() => events.push("complete")),
+      },
+    };
 
-    await kernel.deliverAdapterInboundImmediateReplies(inboundFrame, {
-      type: "res",
-      id: inboundFrame.id,
-      ok: true,
-      data: {
-        ok: true,
-        challenge: {
+    await kernel.completeAdapterIngressReceipt({
+      receiptId: "receipt-1",
+      claimToken: "claim-1",
+      deliveries: [
+        {
+          adapter: "telegram",
+          accountId: "bot",
+          surface: { kind: "dm", id: "chat-42" },
           deliveryId: "challenge-delivery-1",
-          prompt: "Link this account.",
+          text: "Link this account.",
+          replyToId: "provider-message-1",
         },
-        reply: {
+        {
+          adapter: "telegram",
+          accountId: "bot",
+          surface: { kind: "dm", id: "chat-42" },
           deliveryId: "reply-delivery-1",
           text: "Command accepted.",
+          replyToId: "provider-message-1",
         },
-      },
+      ],
     });
 
     expect(kernel.queueAdapterImmediateDelivery).toHaveBeenNthCalledWith(1, {
@@ -1914,6 +1914,92 @@ describe("Kernel adapter ingress reply outbox", () => {
       replyToId: "provider-message-1",
       attempt: 1,
     });
+    expect(events).toEqual([
+      "queue:challenge-delivery-1",
+      "queue:reply-delivery-1",
+      "complete",
+    ]);
+    expect(kernel.adapters.ingressReceipts.complete).toHaveBeenCalledWith(
+      "receipt-1",
+      "claim-1",
+    );
+  });
+
+  it("does not complete a receipt when durable reply enqueue fails", async () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.queueAdapterImmediateDelivery = vi.fn(async () => {
+      throw new Error("scheduler unavailable");
+    });
+    kernel.adapters = {
+      ingressReceipts: { complete: vi.fn() },
+    };
+
+    await expect(kernel.completeAdapterIngressReceipt({
+      receiptId: "receipt-1",
+      claimToken: "claim-1",
+      deliveries: [{
+        adapter: "telegram",
+        accountId: "bot",
+        surface: { kind: "dm", id: "chat-42" },
+        deliveryId: "reply-delivery-1",
+        text: "Command accepted.",
+      }],
+    })).rejects.toThrow("scheduler unavailable");
+
+    expect(kernel.adapters.ingressReceipts.complete).not.toHaveBeenCalled();
+  });
+
+  it("recovers prepared replies from the durable ingress outbox", async () => {
+    const completion = {
+      receiptId: "receipt-recovered",
+      claimToken: "claim-recovered",
+      deliveries: [{
+        adapter: "telegram",
+        accountId: "bot",
+        surface: { kind: "dm", id: "chat-42" },
+        deliveryId: "reply-recovered",
+        text: "Recovered reply.",
+      }],
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.adapters = {
+      ingressReceipts: {
+        claimPreparedCompletions: vi.fn(() => [completion]),
+        abandon: vi.fn(),
+      },
+    };
+    kernel.completeAdapterIngressReceipt = vi.fn(async () => undefined);
+
+    await kernel.onAdapterIngressOutboxSweep();
+
+    expect(kernel.completeAdapterIngressReceipt).toHaveBeenCalledWith(completion);
+    expect(kernel.adapters.ingressReceipts.abandon).not.toHaveBeenCalled();
+  });
+
+  it("releases a prepared outbox claim when recovery scheduling fails", async () => {
+    const completion = {
+      receiptId: "receipt-recovered",
+      claimToken: "claim-recovered",
+      deliveries: [],
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.adapters = {
+      ingressReceipts: {
+        claimPreparedCompletions: vi.fn(() => [completion]),
+        abandon: vi.fn(),
+      },
+    };
+    kernel.completeAdapterIngressReceipt = vi.fn(async () => {
+      throw new Error("scheduler unavailable");
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await kernel.onAdapterIngressOutboxSweep();
+
+    expect(kernel.adapters.ingressReceipts.abandon).toHaveBeenCalledWith(
+      completion.receiptId,
+      completion.claimToken,
+    );
   });
 
   it("durably retries a retry-safe immediate reply with the same delivery id", async () => {

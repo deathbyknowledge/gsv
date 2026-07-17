@@ -56,6 +56,7 @@ import {
   MAX_MESSAGE_MEDIA_PART_BYTES,
   MAX_MESSAGE_MEDIA_TOTAL_BYTES,
 } from "../shared/message-media-limits";
+import { adapterIngressImmediateDeliveries } from "./adapter-ingress-receipts";
 
 type AdapterServiceBinding = Fetcher & Partial<AdapterWorkerInterface>;
 type AdapterCommandResult = {
@@ -86,6 +87,22 @@ type HilDecision = {
 type ParsedHilDecision = HilDecision & {
   requestToken?: string;
 };
+type AdapterIngressProcessRecovery = {
+  kind: "process_delivery";
+  uid: number;
+  pid: string;
+  runId: string;
+  media: ProcMediaInput[];
+  origin: InteractionOrigin;
+};
+type AdapterIngressHilRecovery = {
+  kind: "hil_decision";
+  pid: string;
+  requestId: string;
+  decision: "approve" | "deny";
+  remember: boolean;
+};
+type AdapterIngressRecovery = AdapterIngressProcessRecovery | AdapterIngressHilRecovery;
 export type AdapterHilRequest = {
   requestId: string;
   toolName: string;
@@ -839,34 +856,87 @@ async function handleAdapterInboundOwned(
   if (receipt.state === "completed") {
     return { ...receipt.result, replayed: "completed" };
   }
+  const claimToken = receipt.claimToken;
+  try {
+    if (receipt.state === "prepared") {
+      await finishAdapterIngressReceipt({
+        receiptId,
+        claimToken,
+        adapter,
+        accountId,
+        message,
+        result: receipt.result,
+        ctx,
+      });
+      return { ...receipt.result, replayed: "completed" };
+    }
 
-  const disposition = await resolveClaimedAdapterInbound({
+    const disposition = await resolveClaimedAdapterInbound({
+      receiptId,
+      claimToken,
+      recovery: receipt.recovery,
+      adapter,
+      accountId,
+      actorId,
+      message,
+      body,
+      ctx,
+    });
+    const {
+      reply: immediateReply,
+      challenge: immediateChallenge,
+      ...baseDisposition
+    } = disposition;
+    const result: AdapterInboundSyscallResult = {
+      ...baseDisposition,
+      ...(immediateReply
+        ? { reply: { deliveryId: replyDeliveryId, ...immediateReply } }
+        : {}),
+      ...(immediateChallenge
+        ? { challenge: { deliveryId: challengeDeliveryId, ...immediateChallenge } }
+        : {}),
+    };
+    ctx.adapters.ingressReceipts.prepare(receiptId, claimToken, result);
+    await finishAdapterIngressReceipt({
+      receiptId,
+      claimToken,
+      adapter,
+      accountId,
+      message,
+      result,
+      ctx,
+    });
+    return result;
+  } catch (error) {
+    ctx.adapters.ingressReceipts.abandon(receiptId, claimToken);
+    throw error;
+  }
+}
+
+async function finishAdapterIngressReceipt(input: {
+  receiptId: string;
+  claimToken: string;
+  adapter: string;
+  accountId: string;
+  message: AdapterInboundMessage;
+  result: AdapterInboundSyscallResult;
+  ctx: KernelContext;
+}): Promise<void> {
+  const { receiptId, claimToken, adapter, accountId, message, result, ctx } = input;
+  const deliveries = adapterIngressImmediateDeliveries({
     adapter,
     accountId,
-    actorId,
-    message,
-    body,
-    ctx,
+    surface: message.surface,
+    providerMessageId: message.messageId,
+    result,
   });
-  const {
-    reply: immediateReply,
-    challenge: immediateChallenge,
-    ...baseDisposition
-  } = disposition;
-  const result: AdapterInboundSyscallResult = {
-    ...baseDisposition,
-    ...(immediateReply
-      ? { reply: { deliveryId: replyDeliveryId, ...immediateReply } }
-      : {}),
-    ...(immediateChallenge
-      ? { challenge: { deliveryId: challengeDeliveryId, ...immediateChallenge } }
-      : {}),
-  };
-  ctx.adapters.ingressReceipts.complete(receiptId, result);
-  return result;
+  await ctx.completeAdapterIngressReceipt({ receiptId, claimToken, deliveries });
 }
 
 async function resolveClaimedAdapterInbound(input: {
+  receiptId: string;
+  claimToken: string;
+  recovery?: unknown;
   adapter: string;
   accountId: string;
   actorId: string;
@@ -874,7 +944,17 @@ async function resolveClaimedAdapterInbound(input: {
   body?: BinaryBody;
   ctx: KernelContext;
 }): Promise<AdapterInboundDisposition> {
-  const { adapter, accountId, actorId, message, body, ctx } = input;
+  const {
+    receiptId,
+    claimToken,
+    adapter,
+    accountId,
+    actorId,
+    message,
+    body,
+    ctx,
+  } = input;
+  const recovery = normalizeAdapterIngressRecovery(input.recovery);
   const uid = ctx.adapters.identityLinks.resolveUid(adapter, accountId, actorId);
   if (uid === null) {
     if (message.surface.kind !== "dm") {
@@ -908,11 +988,36 @@ async function resolveClaimedAdapterInbound(input: {
     return { ok: false, error: `Unknown local user uid=${uid}` };
   }
 
+  if (recovery?.kind === "process_delivery") {
+    if (recovery.uid !== uid) {
+      return { ok: false, error: "Adapter ingress owner changed during recovery" };
+    }
+    return deliverAdapterInboundToProcess({
+      adapter,
+      accountId,
+      actorId,
+      message,
+      ctx,
+      recovery,
+    });
+  }
+  if (recovery?.kind === "hil_decision") {
+    return deliverAdapterHilDecision({
+      adapter,
+      accountId,
+      message,
+      ctx,
+      recovery,
+      reconciling: true,
+    });
+  }
+
   const command = await handleAdapterCommand({
     adapter,
     accountId,
     message,
     uid,
+    operationId: receiptId,
     ctx,
   });
   if (command.handled) {
@@ -964,76 +1069,199 @@ async function resolveClaimedAdapterInbound(input: {
       };
     }
 
-    const hilResponse = await sendFrameToProcess(pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.hil",
-      args: {
-        pid,
-        requestId: pendingHil.requestId,
-        decision: decision.decision,
-        ...(decision.remember ? { remember: true } : {}),
-      },
-    } as RequestFrame);
-
-    if (!hilResponse || hilResponse.type !== "res") {
-      return { ok: false, error: "No response from process" };
-    }
-    if (!hilResponse.ok) {
-      return { ok: false, error: hilResponse.error.message };
-    }
-
-    const hilData = (hilResponse as { data?: { resumed?: boolean; pendingHil?: unknown } }).data;
-    const nextPendingHil = normalizeAdapterHilRequest(hilData?.pendingHil);
-    if (!nextPendingHil && hilData?.resumed) {
-      await setAdapterActivityForKernel(
-        ctx.env,
-        adapter,
-        accountId,
-        message.surface,
-        { kind: "typing", active: true },
-      );
-    }
-
-    return {
-      ok: true,
-      ...(nextPendingHil
-        ? {
-            reply: {
-              text: renderAdapterHilPrompt(nextPendingHil, message.surface.kind, "reminder"),
-              replyToId: message.messageId,
-            },
-          }
-        : {
-            reply: {
-              text: decision.decision === "approve"
-                ? decision.remember
-                  ? "Approved. I will remember this for this conversation."
-                  : "Approved. Continuing."
-                : "Denied. Continuing.",
-              replyToId: message.messageId,
-            },
-          }),
+    const hilRecovery: AdapterIngressHilRecovery = {
+      kind: "hil_decision",
+      pid,
+      requestId: pendingHil.requestId,
+      decision: decision.decision,
+      remember: decision.remember,
     };
+    ctx.adapters.ingressReceipts.checkpoint(receiptId, claimToken, hilRecovery);
+    return deliverAdapterHilDecision({
+      adapter,
+      accountId,
+      message,
+      ctx,
+      recovery: hilRecovery,
+      reconciling: false,
+    });
   }
-
-  const origin = adapterInteractionOrigin(adapter, accountId, message, actorId);
-  const runId = await stableOpaqueId("adapter-run", [
+  return deliverAdapterInboundToProcess({
     adapter,
     accountId,
     actorId,
-    message.surface.kind,
-    message.surface.id.trim(),
-    message.surface.threadId?.trim() || null,
-    message.messageId.trim(),
-  ]);
-  const media = await storeAdapterInboundMedia(
-    pid,
-    runId,
-    message.media,
+    message,
     body,
-    ctx.requestSignal,
-  );
+    uid,
+    pid,
+    ctx,
+    checkpoint: { receiptId, claimToken },
+  });
+}
+
+async function deliverAdapterHilDecision(input: {
+  adapter: string;
+  accountId: string;
+  message: AdapterInboundMessage;
+  ctx: KernelContext;
+  recovery: AdapterIngressHilRecovery;
+  reconciling: boolean;
+}): Promise<AdapterInboundDisposition> {
+  const { adapter, accountId, message, ctx, recovery, reconciling } = input;
+  const response = await sendFrameToProcess(recovery.pid, {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.hil",
+    args: {
+      pid: recovery.pid,
+      requestId: recovery.requestId,
+      decision: recovery.decision,
+      ...(recovery.remember ? { remember: true } : {}),
+    },
+  } as RequestFrame);
+
+  if (!response || response.type !== "res") {
+    throw new Error("No response from process");
+  }
+  if (!response.ok) {
+    // A Process error envelope does not prove whether the durable decision was
+    // committed. Leave the checkpoint reclaimable and retry the same request.
+    throw new Error(response.error.message);
+  }
+
+  const data = (response as {
+    data?: {
+      ok?: boolean;
+      error?: string;
+      resumed?: boolean;
+      pendingHil?: unknown;
+    };
+  }).data;
+  if (data?.ok === false) {
+    if (!reconciling) {
+      return { ok: false, error: data.error || "Process rejected approval" };
+    }
+
+    // The earlier attempt may have committed and cleared this request before
+    // its response was lost. Query current state, but never apply the old
+    // YES/DENY to a newer approval or turn it into ordinary conversation text.
+    const current = await getPendingHil(recovery.pid);
+    if (current?.requestId === recovery.requestId) {
+      throw new Error(data.error || "Process has not reconciled approval yet");
+    }
+    if (current) {
+      return {
+        ok: true,
+        reply: {
+          text: renderAdapterHilPrompt(current, message.surface.kind, "reminder"),
+          replyToId: message.messageId,
+        },
+      };
+    }
+    return adapterHilDecisionAcknowledgement(message, recovery);
+  }
+
+  const nextPendingHil = normalizeAdapterHilRequest(data?.pendingHil);
+  if (!nextPendingHil && data?.resumed) {
+    await setAdapterActivityForKernel(
+      ctx.env,
+      adapter,
+      accountId,
+      message.surface,
+      { kind: "typing", active: true },
+    );
+  }
+  if (nextPendingHil) {
+    return {
+      ok: true,
+      reply: {
+        text: renderAdapterHilPrompt(nextPendingHil, message.surface.kind, "reminder"),
+        replyToId: message.messageId,
+      },
+    };
+  }
+  return adapterHilDecisionAcknowledgement(message, recovery);
+}
+
+function adapterHilDecisionAcknowledgement(
+  message: AdapterInboundMessage,
+  recovery: AdapterIngressHilRecovery,
+): AdapterInboundDisposition {
+  return {
+    ok: true,
+    reply: {
+      text: recovery.decision === "approve"
+        ? recovery.remember
+          ? "Approved. I will remember this for this conversation."
+          : "Approved. Continuing."
+        : "Denied. Continuing.",
+      replyToId: message.messageId,
+    },
+  };
+}
+
+async function deliverAdapterInboundToProcess(input: {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  message: AdapterInboundMessage;
+  ctx: KernelContext;
+  body?: BinaryBody;
+  uid?: number;
+  pid?: string;
+  recovery?: AdapterIngressProcessRecovery;
+  checkpoint?: { receiptId: string; claimToken: string };
+}): Promise<AdapterInboundDisposition> {
+  const { adapter, accountId, actorId, message, ctx } = input;
+  let recovery = input.recovery;
+  if (!recovery) {
+    if (input.uid === undefined || !input.pid || !input.checkpoint) {
+      throw new Error("Adapter ingress process delivery is missing claim state");
+    }
+    const runId = await stableOpaqueId("adapter-run", [
+      adapter,
+      accountId,
+      actorId,
+      message.surface.kind,
+      message.surface.id.trim(),
+      message.surface.threadId?.trim() || null,
+      message.messageId.trim(),
+    ]);
+    const media = await storeAdapterInboundMedia(
+      input.pid,
+      runId,
+      message.media,
+      input.body,
+      ctx.requestSignal,
+    );
+    recovery = {
+      kind: "process_delivery",
+      uid: input.uid,
+      pid: input.pid,
+      runId,
+      media: media ?? [],
+      origin: adapterInteractionOrigin(adapter, accountId, message, actorId),
+    };
+    ctx.adapters.ingressReceipts.checkpoint(
+      input.checkpoint.receiptId,
+      input.checkpoint.claimToken,
+      recovery,
+    );
+  }
+
+  const { uid, pid, runId, origin } = recovery;
+  const media = recovery.media.length > 0 ? recovery.media : undefined;
+  ctx.adapters.surfaceRoutes.setRoute({
+    adapter,
+    accountId,
+    actorId,
+    surfaceKind: message.surface.kind,
+    surfaceId: message.surface.id,
+    threadId: message.surface.threadId,
+    uid,
+    pid,
+    updatedByUid: uid,
+  });
   ctx.runRoutes.setAdapterRoute({
     runId,
     processId: pid,
@@ -1070,25 +1298,16 @@ async function resolveClaimedAdapterInbound(input: {
     } as ProcessAdapterDeliverRequestFrame);
   } catch (error) {
     await stopAdapterTyping(ctx, adapter, accountId, message.surface);
-    // The Process RPC may have admitted the preallocated run before its
-    // response was interrupted. Preserve both its route and media on this
-    // ambiguous transport failure so a terminal signal can still reach the
-    // originating surface. Explicit Process rejections below remain safe to
-    // roll back because they prove that admission did not occur.
     throw error;
   }
 
   if (!response || response.type !== "res") {
     await stopAdapterTyping(ctx, adapter, accountId, message.surface);
-    // A missing/malformed acknowledgement is not proof that Process admission
-    // failed. Stable run/media ids make the provider retry reconcilable.
-    return { ok: false, error: "No response from process" };
+    throw new Error("No response from process");
   }
   if (!response.ok) {
     await stopAdapterTyping(ctx, adapter, accountId, message.surface);
-    // Process wraps post-mutation failures in an error envelope, so preserve
-    // ownership until the same provider message id is retried and reconciled.
-    return { ok: false, error: response.error.message };
+    throw new Error(response.error.message);
   }
 
   const data = (response as ProcessAdapterDeliverResponseFrame & { ok: true }).data;
@@ -1098,8 +1317,7 @@ async function resolveClaimedAdapterInbound(input: {
     await rollbackAdapterMedia(pid, media);
     return { ok: false, error: data.error };
   }
-  const queued = data?.queued === true;
-
+  const queued = data.queued === true;
   if (data.runId !== runId) {
     ctx.runRoutes.delete(runId);
     await stopAdapterTyping(ctx, adapter, accountId, message.surface);
@@ -1107,11 +1325,6 @@ async function resolveClaimedAdapterInbound(input: {
     return { ok: false, error: "proc.adapter.deliver admitted an unexpected run" };
   }
   if (data.replayed === "recorded") {
-    // This can occur during an upgrade when Process history predates the
-    // Kernel receipt table. The terminal signal has already happened, so do
-    // not resurrect a reply route or leave provider typing active. Ask the
-    // Process to delete replay-staged media as well; its reference check keeps
-    // any object already owned by the recorded history.
     ctx.runRoutes.delete(runId);
     await stopAdapterTyping(ctx, adapter, accountId, message.surface);
     await rollbackAdapterMedia(pid, media);
@@ -1122,13 +1335,39 @@ async function resolveClaimedAdapterInbound(input: {
 
   return {
     ok: true,
-    delivered: {
-      uid,
-      pid,
-      runId,
-      queued,
-    },
+    delivered: { uid, pid, runId, queued },
   };
+}
+
+function normalizeAdapterIngressRecovery(value: unknown): AdapterIngressRecovery | null {
+  if (value === undefined) return null;
+  if (!value || typeof value !== "object") {
+    throw new Error("Invalid adapter ingress recovery checkpoint");
+  }
+  const recovery = value as Partial<AdapterIngressRecovery>;
+  if (recovery.kind === "hil_decision") {
+    if (
+      typeof recovery.pid === "string"
+      && typeof recovery.requestId === "string"
+      && (recovery.decision === "approve" || recovery.decision === "deny")
+      && typeof recovery.remember === "boolean"
+    ) {
+      return recovery as AdapterIngressHilRecovery;
+    }
+  } else if (recovery.kind === "process_delivery") {
+    if (
+      Number.isSafeInteger(recovery.uid)
+      && typeof recovery.pid === "string"
+      && typeof recovery.runId === "string"
+      && Array.isArray(recovery.media)
+      && recovery.origin
+      && typeof recovery.origin === "object"
+      && recovery.origin.kind === "adapter"
+    ) {
+      return recovery as AdapterIngressProcessRecovery;
+    }
+  }
+  throw new Error("Invalid adapter ingress recovery checkpoint");
 }
 
 async function stopAdapterTyping(
@@ -1430,9 +1669,10 @@ async function handleAdapterCommand(args: {
   accountId: string;
   message: AdapterInboundMessage;
   uid: number;
+  operationId: string;
   ctx: KernelContext;
 }): Promise<AdapterCommandResult> {
-  const { adapter, accountId, message, uid, ctx } = args;
+  const { adapter, accountId, message, uid, operationId, ctx } = args;
   if (message.surface.kind !== "dm") {
     return { handled: false };
   }
@@ -1525,7 +1765,13 @@ async function handleAdapterCommand(args: {
       return replyToAdapterCommand(message, `I could not find a process or agent named "${selector}". Use /list to see available targets.`);
     }
 
-    const pid = await spawnAdapterAgentProcess(agent, uid, message.surface, ctx);
+    const pid = await spawnAdapterAgentProcess(
+      agent,
+      uid,
+      message.surface,
+      operationId,
+      ctx,
+    );
     ctx.adapters.surfaceRoutes.setRoute({
       adapter,
       accountId,
@@ -1719,18 +1965,23 @@ async function spawnAdapterAgentProcess(
   agent: RunnableAgent,
   ownerUid: number,
   surface: AdapterSurface,
+  operationId: string,
   ctx: KernelContext,
 ): Promise<string> {
-  const pid = `proc:${crypto.randomUUID()}`;
+  const pid = `proc:${operationId}`;
+  const conversationId = `adapter:${operationId}`;
   const label = `adapter ${describeAdapterSurface(surface)} (${agent.username})`;
-  ctx.procs.spawn(pid, agent.identity, {
-    ownerUid,
-    interactive: true,
-    label,
-    cwd: agent.identity.cwd,
-  });
+  if (!ctx.procs.get(pid)) {
+    ctx.procs.spawn(pid, agent.identity, {
+      ownerUid,
+      interactive: true,
+      label,
+      cwd: agent.identity.cwd,
+    });
+  }
 
-  const conversation = ctx.conversations.create({
+  const conversation = ctx.conversations.get(conversationId) ?? ctx.conversations.create({
+    conversationId,
     ownerUid,
     agentUid: agent.identity.uid,
     agentHome: agent.identity.home,
