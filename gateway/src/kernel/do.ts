@@ -88,6 +88,7 @@ import {
 } from "../shared/message-media-limits";
 import {
   agentArchiveMediaPath,
+  isValidAgentArchiveMediaObject,
   processMediaPath,
   processMediaPrefix,
 } from "../shared/process-media-path";
@@ -1707,12 +1708,14 @@ export class Kernel extends Host<Env> {
         }
         if (
           archivePath
-          && (
-            object.customMetadata?.purpose !== "conversation-media"
-            || object.customMetadata.uid !== String(process.uid)
-            || object.customMetadata.gid !== String(process.gid)
-            || object.customMetadata.mode !== "400"
-          )
+          && !isValidAgentArchiveMediaObject({
+            home: process.home,
+            key,
+            uid: process.uid,
+            gid: process.gid,
+            object,
+            expectedContentType: mimeType,
+          })
         ) {
           await object.body.cancel("Process reply archive metadata mismatch").catch(() => {});
           throw new AdapterReplyMediaError(

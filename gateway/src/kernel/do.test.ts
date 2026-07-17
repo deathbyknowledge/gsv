@@ -1382,6 +1382,8 @@ describe("Kernel adapter route replies", () => {
                 uid: "2000",
                 gid: "2000",
                 mode: "400",
+                sourceEtag: "source-etag-1",
+                sourceContentType: "application/pdf",
               },
               body: new ReadableStream<Uint8Array>({
                 start(controller) {
@@ -1427,6 +1429,42 @@ describe("Kernel adapter route replies", () => {
       }),
       expect.objectContaining({ length: 3 }),
     );
+  });
+
+  it("rejects immutable reply media whose content type differs from its source metadata", async () => {
+    const kernel = Object.create(Kernel.prototype) as any;
+    const key = `home/agent/.gsv/media/archived-media:${"b".repeat(64)}`;
+    const cancel = vi.fn(async () => undefined);
+    kernel.procs = {
+      get: vi.fn(() => ({ uid: 2000, gid: 2000, home: "/home/agent" })),
+    };
+    kernel.env = {
+      STORAGE: {
+        get: vi.fn(async () => ({
+          size: 3,
+          httpMetadata: { contentType: "application/pdf" },
+          customMetadata: {
+            purpose: "conversation-media",
+            uid: "2000",
+            gid: "2000",
+            mode: "400",
+            sourceEtag: "source-etag-2",
+            sourceContentType: "image/png",
+          },
+          body: { cancel },
+        })),
+      },
+    };
+
+    await expect(kernel.bundleProcessReplyMedia("proc-1", [{
+      type: "document",
+      mimeType: "application/pdf",
+      filename: "report.pdf",
+      key,
+      path: `/${key}`,
+      size: 3,
+    }])).rejects.toThrow("archive metadata does not match");
+    expect(cancel).toHaveBeenCalledOnce();
   });
 });
 
