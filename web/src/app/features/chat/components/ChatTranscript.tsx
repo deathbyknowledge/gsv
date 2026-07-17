@@ -2079,7 +2079,11 @@ export function ChatTranscript({
           description={errorMessage}
           tone="error"
         />
-      ) : messages.length === 0 ? (
+      ) : messages.length === 0 && feedback.length === 0 ? (
+        /* Feedback lines (voice status + failures) must surface even before the
+           first message — the composer no longer alerts for voice, so this is
+           their only surface. The empty state only wins a truly quiet
+           transcript. */
         <TranscriptState
           action={action}
           title={emptyTitle}
