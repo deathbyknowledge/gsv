@@ -84,6 +84,28 @@ describe("adapter response media bodies", () => {
     expect([...new Uint8Array(await new Response(body.stream).arrayBuffer())]).toEqual([1, 2, 3]);
   });
 
+  it("rejects a response shorter than its declared length", async () => {
+    const response = new Response(Uint8Array.of(1, 2), {
+      headers: { "content-length": "3" },
+    });
+
+    await expect(readResponseBodyBytes(response, {
+      maxBytes: 3,
+      label: "attachment",
+    })).rejects.toThrow("Body length 2 did not match 3");
+  });
+
+  it("rejects a response longer than its declared length", async () => {
+    const response = new Response(Uint8Array.of(1, 2, 3), {
+      headers: { "content-length": "2" },
+    });
+
+    await expect(readResponseBodyBytes(response, {
+      maxBytes: 3,
+      label: "attachment",
+    })).rejects.toThrow("Body length 3 did not match 2");
+  });
+
   it("cancels a response with invalid fallback length metadata", async () => {
     let cancelled = false;
     const response = new Response(new ReadableStream<Uint8Array>({

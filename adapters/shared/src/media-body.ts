@@ -2,7 +2,6 @@ import { bodyToBytes } from "../../../packages/gsv/src/protocol/body.js";
 import type { BinaryBody } from "./types";
 
 export {
-  binaryBodyFromBytes,
   bundleAdapterMedia,
   cancelBinaryBody,
   readAdapterMediaBody,
@@ -55,7 +54,10 @@ export async function readResponseBodyBytes(
 
   try {
     return await bodyToBytes(
-      { stream: response.body },
+      {
+        stream: response.body,
+        ...(declaredBytes === undefined ? {} : { length: declaredBytes }),
+      },
       maxBytes,
       options.signal,
     );

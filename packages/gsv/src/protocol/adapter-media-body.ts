@@ -43,22 +43,6 @@ export type AdapterMediaBodyPartConsumer = (
   part: AdapterMediaBodyStreamPart,
 ) => void | Promise<void>;
 
-export function binaryBodyFromBytes(bytes: Uint8Array): BinaryBody {
-  const chunk = new Uint8Array(bytes.byteLength);
-  chunk.set(bytes);
-  return {
-    length: chunk.byteLength,
-    stream: new ReadableStream<Uint8Array>({
-      start(controller) {
-        if (chunk.byteLength > 0) {
-          controller.enqueue(chunk);
-        }
-        controller.close();
-      },
-    }),
-  };
-}
-
 /**
  * Packs media streams into the one binary body supported by a GSV frame.
  * Body-backed media are laid out contiguously in media order.

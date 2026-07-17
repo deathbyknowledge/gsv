@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { bodyFromBytes } from "../dist/protocol/body.js";
 import {
-  binaryBodyFromBytes,
   bundleAdapterMedia,
   consumeAdapterMediaBodyParts,
   readAdapterMediaBody,
@@ -18,9 +18,9 @@ const image = (filename) => ({
 
 test("bundles multiple media streams into contiguous frame-body ranges", async () => {
   const bundle = await bundleAdapterMedia([
-    { media: image("one.png"), body: binaryBodyFromBytes(Uint8Array.of(1, 2)) },
+    { media: image("one.png"), body: bodyFromBytes(Uint8Array.of(1, 2)) },
     { media: { ...image("remote.png"), url: "https://example.com/remote.png" } },
-    { media: image("two.png"), body: binaryBodyFromBytes(Uint8Array.of(3, 4, 5)) },
+    { media: image("two.png"), body: bodyFromBytes(Uint8Array.of(3, 4, 5)) },
   ]);
 
   assert.deepEqual(bundle.media.map((item) => item.body), [
@@ -122,7 +122,7 @@ test("validates descriptors without touching a frame body", async () => {
     totalLength: 2,
   });
 
-  const body = binaryBodyFromBytes(Uint8Array.of(1, 2));
+  const body = bodyFromBytes(Uint8Array.of(1, 2));
   assert.deepEqual(validateAdapterMediaBody(media, body), {
     parts: [
       { mediaIndex: 0, offset: 0, length: 0 },
@@ -173,15 +173,15 @@ test("non-consuming preflight rejects missing, unreferenced, locked, and mismatc
     /missing binary body/,
   );
   assert.throws(
-    () => validateAdapterMediaBody([], binaryBodyFromBytes(new Uint8Array())),
+    () => validateAdapterMediaBody([], bodyFromBytes(new Uint8Array())),
     /unreferenced binary body/,
   );
   assert.throws(
-    () => validateAdapterMediaBody(media, binaryBodyFromBytes(Uint8Array.of(1, 2))),
+    () => validateAdapterMediaBody(media, bodyFromBytes(Uint8Array.of(1, 2))),
     /did not match described length/,
   );
 
-  const locked = binaryBodyFromBytes(Uint8Array.of(1));
+  const locked = bodyFromBytes(Uint8Array.of(1));
   const owner = locked.stream.getReader();
   assert.throws(
     () => validateAdapterMediaBody(media, locked),
@@ -192,7 +192,7 @@ test("non-consuming preflight rejects missing, unreferenced, locked, and mismatc
 });
 
 test("rejects locked source bodies while bundling", async () => {
-  const body = binaryBodyFromBytes(Uint8Array.of(1));
+  const body = bodyFromBytes(Uint8Array.of(1));
   const owner = body.stream.getReader();
   await assert.rejects(
     bundleAdapterMedia([{ media: image("locked.png"), body }]),
