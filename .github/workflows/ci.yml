@@ -159,6 +159,10 @@ jobs:
         if: needs.changes.outputs.sdk == 'true'
         run: npm run public-packages:check
 
+      - name: Verify public package versions
+        if: needs.changes.outputs.sdk == 'true'
+        run: npm run public-packages:publish:dry-run
+
       - name: Check web shell
         if: needs.changes.outputs.web == 'true'
         run: npm run check --workspace web
