@@ -306,6 +306,17 @@ export class TelegramAccount extends DurableObject<Env> {
     await this.ctx.storage.put("state", this.state);
   }
 
+  private async commitLifecycleState(alarmAt: number | null): Promise<void> {
+    await this.ctx.storage.transaction(async (txn) => {
+      await txn.put("state", this.state);
+      if (alarmAt === null) {
+        await txn.deleteAlarm();
+      } else {
+        await txn.setAlarm(alarmAt);
+      }
+    });
+  }
+
   private getAccountId(): string {
     return this.state.accountId || "default";
   }
@@ -445,10 +456,7 @@ export class TelegramAccount extends DurableObject<Env> {
     this.state.webhookSecret = webhookSecret;
     this.state.lastError = null;
 
-    await this.saveState();
-    if (await this.inboundDeliveries.hasPending()) {
-      await this.scheduleInboundRetry(INBOUND_WAKE_DELAY_MS);
-    }
+    await this.commitLifecycleState(Date.now() + INBOUND_WAKE_DELAY_MS);
     await this.notifyGatewayStatus();
   }
 
@@ -471,8 +479,7 @@ export class TelegramAccount extends DurableObject<Env> {
     this.state.connected = false;
     this.state.authenticated = false;
     this.state.lastError = null;
-    await this.ctx.storage.deleteAlarm();
-    await this.saveState();
+    await this.commitLifecycleState(null);
     await this.notifyGatewayStatus();
   }
 
