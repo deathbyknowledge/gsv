@@ -1,8 +1,8 @@
-/* MessageMeta — shared quiet meta row: hover-revealed timestamp + icon
-   actions, clustered together (no spread) on the message's aligned edge.
-   Default (user bubbles): [time icons] hugging the right; the --mirror
-   variant (left-aligned messages): [icons time] hugging the left. Size +
-   family come from .gsv-sublabel (12px). */
+/* MessageMeta — shared quiet meta row: always-visible timestamp + hover-
+   revealed icon actions, clustered together (no spread) on the message's
+   aligned edge. Default (user bubbles): [time icons] hugging the right; the
+   --mirror variant (left-aligned messages): [icons time] hugging the left.
+   Size + family come from .gsv-sublabel (12px). */
 .gsv-mm {
   display: flex;
   align-items: center;
@@ -18,17 +18,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-.gsv-mm:hover .gsv-mm-time,
-.gsv-mm:focus-within .gsv-mm-time {
-  opacity: 1;
-}
-@media (hover: none) {
-  .gsv-mm-time {
-    opacity: 1;
-  }
 }
 
 .gsv-mm-actions {
