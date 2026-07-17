@@ -8,6 +8,9 @@
     "deploy": "wrangler deploy --minify",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "marked": "^16.4.2"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250109.0",
     "typescript": "^5.7.3",
