@@ -738,14 +738,37 @@
   color: #7d78b8;
 }
 
+/* Body container — everything under the persistent header. Positioned so the
+   popover family can anchor to exactly the body region (and, on mobile, fill it
+   as a sheet) without knowing the header's height. */
+.gsv-chat-main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Popover positioning only — the shared shell chrome (background, border,
    shadow, entry animation, header bar, list, footer actions, context stat-grid)
    now lives in PopoverMenu.css and the DS ListRow. Each popover's top/left is
-   set at open time by ChatDockHeader so it anchors directly under the control
-   that opened it; widths come from the PopoverMenu width preset. */
+   set at open time by ChatDock so it anchors directly under the control that
+   opened it — coordinates are relative to .gsv-chat-main, so a negative top
+   overlaps the header band (z 72 paints above the header's z 55); widths come
+   from the PopoverMenu width preset. On mobile the sheet block below owns
+   placement instead. */
 .gsv-chat-popover {
   position: absolute;
   z-index: 72;
+}
+
+/* Desktop height caps for the row lists — mobile lifts them (the sheet body
+   scrolls instead). */
+.gsv-popover-conversations .gsv-popover-list {
+  max-height: min(288px, 44vh);
+}
+.gsv-popover-tasks .gsv-popover-list {
+  max-height: 228px;
 }
 
 /* Agent panel — in-flow body state under the persistent header: the agent's

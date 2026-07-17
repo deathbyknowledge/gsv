@@ -136,9 +136,10 @@ export function ChatDockPopovers({
       {openPopover === "conversations" ? (
         <PopoverMenu
           ariaLabel="Conversation branches"
+          className="gsv-popover-conversations"
           header={{ kind: "titled", title: "BRANCHES", count: conversations.length }}
         >
-          <div class="gsv-popover-list" role="list" style={{ maxHeight: "min(288px, 44vh)" }}>
+          <div class="gsv-popover-list" role="list">
             {conversations.map((conversation) => {
               const active = conversation.id === activeConversationId;
               return (
@@ -211,6 +212,7 @@ export function ChatDockPopovers({
       {openPopover === "tasks" ? (
         <PopoverMenu
           ariaLabel="Current tasks"
+          className="gsv-popover-tasks"
           header={{ kind: "titled", title: "CURRENT TASKS", count: taskCount }}
           actions={[
             {
@@ -222,7 +224,7 @@ export function ChatDockPopovers({
             { label: "OPEN TASKS", onClick: onOpenTasks, glyph: <TaskListGlyph size={13} /> },
           ]}
         >
-          <div class="gsv-popover-list" style={{ maxHeight: "228px" }}>
+          <div class="gsv-popover-list">
             {activeAgent.tasks.length === 0 ? (
               <ListRow
                 density="compact"

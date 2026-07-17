@@ -1,4 +1,3 @@
-import { useLayoutEffect, useRef } from "preact/hooks";
 import { Avatar } from "../../../components/ui/Avatar";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
@@ -7,53 +6,31 @@ import { StatusDot } from "../../../components/ui/StatusDot";
 import { SpeakerOnGlyph, SpeakerOffGlyph } from "../../../components/ui/lineGlyphs";
 import { Hint } from "../../../components/ui/Tooltip";
 import type { StatusTone } from "../../../components/ui/StatusDot";
-import type { ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
-import type { ChatConversation, ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
-import { ChatDockPopovers, type ChatPopoverId } from "./ChatDockPopovers";
+import type { ChatAgentViewModel } from "../domain/agent";
+import type { ChatConversation } from "../domain/processes";
+import type { ChatPopoverId } from "./ChatDockPopovers";
 import { shortId } from "./chatUiFormat";
 
 type ChatDockHeaderProps = {
   activeAgent: ChatAgentViewModel;
-  activeProcessId: string;
   agentPanelOpen: boolean;
-  archiveOpen: boolean;
   atMax: boolean;
   canAbortRun: boolean;
-  canFreeContext: boolean;
-  compactKeepLast: number;
-  compactPending: boolean;
-  hasArchivedMessages: boolean;
-  onFreeContext: () => void;
-  onToggleArchive: () => void;
   conversations: readonly ChatConversation[];
   activeConversationId: string;
-  onSelectConversation: (conversationId: string) => void;
-  context: ChatHistory["context"] | null;
-  contextLevel: string;
   contextTone: "default" | "attention" | "error";
   contextPercent: number | null;
   contextTitle: string;
   effectiveStatus: StatusTone;
   hasActiveProcess: boolean;
-  messageCount: number | null | undefined;
   modelLabel: string;
   openPopover: ChatPopoverId | null;
-  processAiConfig: ChatProcessAiConfig;
-  processAiConfigBusy: boolean;
   reasoningLabel: string;
-  canStartNewTask: boolean;
   spawnPending: boolean;
   speakReplies: boolean;
   speechStatus: string;
-  taskCount: number;
   onAbortRun: () => void;
-  onApplyModelProfile: (profile: ChatModelProfileData) => void;
   onOpenAgentPanel: () => void;
-  onOpenModels: () => void;
-  onOpenTasks: () => void;
-  onOpenTaskProcess: (processId: string, process: ChatProcessSummary | null) => void;
-  onStartNewTask: () => void;
-  onSetReasoning: (reasoning: string) => void;
   onStartProcess: () => void;
   onToggleSpeakReplies: () => void;
   onToggleMax: () => void;
@@ -63,46 +40,24 @@ type ChatDockHeaderProps = {
 
 export function ChatDockHeader({
   activeAgent,
-  activeProcessId,
   agentPanelOpen,
-  archiveOpen,
   atMax,
   canAbortRun,
-  canFreeContext,
-  compactKeepLast,
-  compactPending,
-  hasArchivedMessages,
-  onFreeContext,
-  onToggleArchive,
   conversations,
   activeConversationId,
-  onSelectConversation,
-  context,
-  contextLevel,
   contextTone,
   contextPercent,
   contextTitle,
   effectiveStatus,
   hasActiveProcess,
-  messageCount,
   modelLabel,
   openPopover,
-  processAiConfig,
-  processAiConfigBusy,
   reasoningLabel,
-  canStartNewTask,
   spawnPending,
   speakReplies,
   speechStatus,
-  taskCount,
   onAbortRun,
-  onApplyModelProfile,
   onOpenAgentPanel,
-  onOpenModels,
-  onOpenTasks,
-  onOpenTaskProcess,
-  onStartNewTask,
-  onSetReasoning,
   onStartProcess,
   onToggleSpeakReplies,
   onToggleMax,
@@ -115,31 +70,8 @@ export function ChatDockHeader({
   const conversationLabel = activeConversation?.title
     || (activeConversationId === "default" ? "Default" : shortId(activeConversationId) || "Default");
 
-  // Anchor the open popover directly under the control that opened it — left edge
-  // aligned with the trigger, dropping just below it — clamped to stay in-bounds.
-  const headRef = useRef<HTMLElement | null>(null);
-  useLayoutEffect(() => {
-    const head = headRef.current;
-    if (!head || !openPopover) {
-      return;
-    }
-    const trigger = head.querySelector<HTMLElement>(`[data-chat-popover-trigger="${openPopover}"]`);
-    const popover = head.querySelector<HTMLElement>(".gsv-chat-popover");
-    if (!trigger || !popover) {
-      return;
-    }
-    const headRect = head.getBoundingClientRect();
-    const triggerRect = trigger.getBoundingClientRect();
-    const margin = 12;
-    const maxLeft = Math.max(margin, headRect.width - popover.offsetWidth - margin);
-    const left = Math.min(Math.max(triggerRect.left - headRect.left, margin), maxLeft);
-    popover.style.left = `${left}px`;
-    popover.style.right = "auto";
-    popover.style.top = `${triggerRect.bottom - headRect.top + 6}px`;
-  }, [openPopover, conversationLabel, modelLabel, reasoningLabel]);
-
   return (
-    <header class="gsv-chat-head" ref={headRef}>
+    <header class="gsv-chat-head">
       <div class="gsv-chat-agent">
         <Hint text="View agent profile & switch agents" position="bottom-start">
           <button
@@ -277,38 +209,6 @@ export function ChatDockHeader({
           </button>
         </Hint>
       </div>
-
-      <ChatDockPopovers
-        activeAgent={activeAgent}
-        activeProcessId={activeProcessId}
-        archiveOpen={archiveOpen}
-        canFreeContext={canFreeContext}
-        compactKeepLast={compactKeepLast}
-        compactPending={compactPending}
-        hasArchivedMessages={hasArchivedMessages}
-        onFreeContext={onFreeContext}
-        onToggleArchive={onToggleArchive}
-        conversations={conversations}
-        activeConversationId={activeConversationId}
-        onSelectConversation={onSelectConversation}
-        context={context}
-        contextLevel={contextLevel}
-        contextPercent={contextPercent}
-        hasActiveProcess={hasActiveProcess}
-        messageCount={messageCount}
-        modelLabel={modelLabel}
-        openPopover={openPopover}
-        processAiConfig={processAiConfig}
-        processAiConfigBusy={processAiConfigBusy}
-        canStartNewTask={canStartNewTask}
-        taskCount={taskCount}
-        onApplyModelProfile={onApplyModelProfile}
-        onOpenModels={onOpenModels}
-        onOpenTasks={onOpenTasks}
-        onOpenTaskProcess={onOpenTaskProcess}
-        onStartNewTask={onStartNewTask}
-        onSetReasoning={onSetReasoning}
-      />
     </header>
   );
 }

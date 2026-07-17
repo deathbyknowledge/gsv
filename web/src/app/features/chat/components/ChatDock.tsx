@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ProcContextState, ProcMediaInput, ProcUsageState } from "@humansandmachines/gsv/protocol";
 import { AgentImage } from "../../../components/ui/AgentImage";
 import { Alert } from "../../../components/ui/Alert";
@@ -51,7 +51,7 @@ import { ChatApprovalBanner } from "./ChatApprovalBanner";
 import { ChatArchivePanel } from "./ChatArchivePanel";
 import { ChatReasoningPanel, type ChatReasoningTarget } from "./ChatReasoningPanel";
 import { ChatDockHeader } from "./ChatDockHeader";
-import type { ChatPopoverId } from "./ChatDockPopovers";
+import { ChatDockPopovers, type ChatPopoverId } from "./ChatDockPopovers";
 import { ChatTranscript, type ChatDockMessage } from "./ChatTranscript";
 import { formatCount, formatCurrencyCost, shortId } from "./chatUiFormat";
 import "./ChatDock.css";
@@ -71,6 +71,9 @@ type ChatBodyState = "chat" | "agent" | "reasoning" | "archive";
 type ChatDockProps = {
   open: boolean;
   width: number;
+  /** Shell mobile layout (root ≤760px): the dock is a full-screen drawer and
+   *  header popovers open as full-body sheets instead of anchored floaters. */
+  mobileLayout?: boolean;
   activeConversationId?: string | null;
   dragging?: boolean;
   atMax?: boolean;
@@ -214,6 +217,7 @@ function fileToDraftAttachment(file: File): DraftAttachment {
 export function ChatDock({
   open,
   width,
+  mobileLayout = false,
   activeConversationId = null,
   dragging = false,
   atMax = false,
@@ -237,6 +241,7 @@ export function ChatDock({
   const [bodyState, setBodyState] = useState<ChatBodyState>("chat");
   const [reasoningTarget, setReasoningTarget] = useState<ChatReasoningTarget | null>(null);
   const asideRef = useRef<HTMLElement | null>(null);
+  const mainRef = useRef<HTMLDivElement | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<DraftAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [selectedArchiveSegmentId, setSelectedArchiveSegmentId] = useState("");
@@ -930,6 +935,48 @@ export function ChatDock({
     setOpenPopover(null);
   };
 
+  // Anchor the open popover directly under the header control that opened it —
+  // left edge aligned with the trigger, dropping just below it, clamped to stay
+  // in-bounds. The popover lives in the body container (.gsv-chat-main), so
+  // coordinates are relative to the body's top edge (a negative top overlaps
+  // the header band, painting above it — same look as the old in-header
+  // anchoring). On mobile the popover is a full-body sheet: CSS owns placement
+  // and any inline anchor left over from a desktop layout is cleared.
+  useLayoutEffect(() => {
+    const positionPopover = () => {
+      const aside = asideRef.current;
+      const main = mainRef.current;
+      if (!aside || !main || !openPopover) {
+        return;
+      }
+      const popover = main.querySelector<HTMLElement>(".gsv-chat-popover");
+      if (!popover) {
+        return;
+      }
+      if (mobileLayout) {
+        popover.style.left = "";
+        popover.style.right = "";
+        popover.style.top = "";
+        return;
+      }
+      const trigger = aside.querySelector<HTMLElement>(`[data-chat-popover-trigger="${openPopover}"]`);
+      if (!trigger) {
+        return;
+      }
+      const mainRect = main.getBoundingClientRect();
+      const triggerRect = trigger.getBoundingClientRect();
+      const margin = 12;
+      const maxLeft = Math.max(margin, mainRect.width - popover.offsetWidth - margin);
+      const left = Math.min(Math.max(triggerRect.left - mainRect.left, margin), maxLeft);
+      popover.style.left = `${left}px`;
+      popover.style.right = "auto";
+      popover.style.top = `${triggerRect.bottom - mainRect.top + 6}px`;
+    };
+    positionPopover();
+    window.addEventListener("resize", positionPopover);
+    return () => window.removeEventListener("resize", positionPopover);
+  }, [openPopover, mobileLayout, conversations.data, selectedConversationId, currentModelLabel, currentReasoningLabel]);
+
   if (!open) {
     return (
       <button
@@ -997,11 +1044,37 @@ export function ChatDock({
       {openPopover ? <button type="button" class="gsv-chat-popover-scrim" aria-label="Close chat menu" onClick={() => setOpenPopover(null)} /> : null}
       <ChatDockHeader
         activeAgent={activeAgent}
-        activeProcessId={activeProcessId}
         agentPanelOpen={bodyState === "agent"}
-        archiveOpen={archiveOpen}
         atMax={atMax}
         canAbortRun={canAbortRun}
+        conversations={conversations.data ?? []}
+        activeConversationId={selectedConversationId}
+        contextTone={contextTone}
+        contextPercent={contextPercent}
+        contextTitle={contextTitle}
+        effectiveStatus={effectiveStatus}
+        hasActiveProcess={hasActiveProcess}
+        modelLabel={currentModelLabel}
+        openPopover={openPopover}
+        reasoningLabel={currentReasoningLabel}
+        spawnPending={spawnProcess.isPending}
+        speakReplies={replySpeech.speakReplies}
+        speechStatus={replySpeech.speechStatus}
+        onAbortRun={abortActiveRun}
+        onOpenAgentPanel={toggleAgentPanel}
+        onStartProcess={startProcess}
+        onToggleSpeakReplies={() => replySpeech.setSpeakReplies(!replySpeech.speakReplies)}
+        onToggleMax={onToggleMax}
+        onToggleOpen={onToggleOpen}
+        onTogglePopover={togglePopover}
+      />
+
+      <div class="gsv-chat-main" ref={mainRef}>
+
+      <ChatDockPopovers
+        activeAgent={activeAgent}
+        activeProcessId={activeProcessId}
+        archiveOpen={archiveOpen}
         canFreeContext={canFreeContext}
         compactKeepLast={compactKeepLast}
         compactPending={compactConversation.isPending}
@@ -1023,24 +1096,16 @@ export function ChatDock({
         }}
         context={context}
         contextLevel={contextLevel}
-        contextTone={contextTone}
         contextPercent={contextPercent}
-        contextTitle={contextTitle}
-        effectiveStatus={effectiveStatus}
         hasActiveProcess={hasActiveProcess}
         messageCount={runtime.messageCount}
         modelLabel={currentModelLabel}
         openPopover={openPopover}
         processAiConfig={processAiConfig.data ?? null}
         processAiConfigBusy={setProcessAiConfig.isPending}
-        reasoningLabel={currentReasoningLabel}
         canStartNewTask={canStartNewTask}
-        spawnPending={spawnProcess.isPending}
-        speakReplies={replySpeech.speakReplies}
-        speechStatus={replySpeech.speechStatus}
         taskCount={taskCount}
-        onAbortRun={abortActiveRun}
-        onOpenAgentPanel={toggleAgentPanel}
+        onApplyModelProfile={applyProcessAiProfile}
         onOpenModels={() => {
           setOpenPopover(null);
           (onOpenModels ?? onOpenCrew)();
@@ -1051,13 +1116,7 @@ export function ChatDock({
         }}
         onOpenTaskProcess={openTaskProcess}
         onStartNewTask={prepareNewTask}
-        onStartProcess={startProcess}
-        onApplyModelProfile={applyProcessAiProfile}
         onSetReasoning={(reasoning) => setProcessAiKey("config/ai/reasoning", reasoning)}
-        onToggleSpeakReplies={() => replySpeech.setSpeakReplies(!replySpeech.speakReplies)}
-        onToggleMax={onToggleMax}
-        onToggleOpen={onToggleOpen}
-        onTogglePopover={togglePopover}
       />
 
       {bodyState === "agent" ? (
@@ -1214,6 +1273,8 @@ export function ChatDock({
         )}
       </div>
       </div>}
+
+      </div>
     </aside>
   );
 }
