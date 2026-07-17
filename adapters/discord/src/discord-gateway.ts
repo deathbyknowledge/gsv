@@ -13,10 +13,11 @@ import {
   deliverAdapterInboundResponses,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
+import { callAdapterGateway } from "../../shared/src/gateway-rpc";
+import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
   bundleAdapterMedia,
   cancelResponseBody,
-  cancelBinaryBody,
   responseBodyToBinaryBody,
   SAFE_MATERIALIZED_MEDIA_PART_BYTES,
   SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
@@ -33,8 +34,6 @@ import type {
   AdapterOutboundMessage,
   AdapterSendResult,
   BinaryBody,
-  GatewayFrame,
-  GatewayRequestFrame,
 } from "../../shared/src/types";
 import { deliverDiscordMessage } from "./discord-delivery";
 
@@ -71,10 +70,6 @@ const INBOUND_DELIVERY_PREFIX = "pending_inbound:";
 const INBOUND_RETRY_DELAY_MS = 10_000;
 const INBOUND_RETRY_BATCH_SIZE = 25;
 
-type GatewayChannelBinding = Fetcher & {
-  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
-};
-
 type DiscordAttachment = {
   id: string;
   filename: string;
@@ -97,7 +92,7 @@ type GatewayState = {
 };
 
 interface Env {
-  GATEWAY: GatewayChannelBinding;
+  GATEWAY: Fetcher & AdapterGatewayBinding;
   DISCORD_BOT_TOKEN?: string;
 }
 
@@ -495,7 +490,8 @@ export class DiscordGateway extends DurableObject<Env> {
       wasMentioned,
     };
 
-    const result = await this.callGateway<AdapterInboundResult>(
+    const result = await callAdapterGateway<AdapterInboundResult>(
+      this.env.GATEWAY,
       "adapter.inbound",
       {
         adapter: "discord",
@@ -527,7 +523,7 @@ export class DiscordGateway extends DurableObject<Env> {
   private async notifyGatewayStatus(status: AdapterAccountStatus): Promise<void> {
     const accountId = this.getAccountId();
     try {
-      await this.callGateway("adapter.state.update", {
+      await callAdapterGateway(this.env.GATEWAY, "adapter.state.update", {
         adapter: "discord",
         accountId,
         status,
@@ -535,37 +531,6 @@ export class DiscordGateway extends DurableObject<Env> {
     } catch (e) {
       console.error("[DiscordGateway] Failed to deliver status via RPC:", e);
     }
-  }
-
-  private async callGateway<T = unknown>(
-    call: string,
-    args: unknown,
-    body?: BinaryBody,
-  ): Promise<T> {
-    const frame: GatewayRequestFrame = {
-      type: "req",
-      id: crypto.randomUUID(),
-      call,
-      args,
-      ...(body ? { body } : {}),
-    };
-
-    let response: GatewayFrame | null;
-    try {
-      response = await this.env.GATEWAY.serviceFrame(frame);
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      throw error;
-    }
-    if (!response || response.type !== "res") {
-      await cancelBinaryBody(body, "No response from gateway serviceFrame");
-      throw new Error("No response from gateway serviceFrame");
-    }
-    if (!response.ok) {
-      throw new Error(response.error?.message || `Gateway error on ${call}`);
-    }
-
-    return (response.data ?? {}) as T;
   }
 
   private async extractMediaAttachments(

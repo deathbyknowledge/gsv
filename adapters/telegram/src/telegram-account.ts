@@ -9,6 +9,8 @@ import {
   deliverAdapterInboundResponses,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
+import { callAdapterGateway } from "../../shared/src/gateway-rpc";
+import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
   bundleAdapterMedia,
   cancelResponseBody,
@@ -33,20 +35,14 @@ import type {
   AdapterSendResult,
   AdapterSurface,
   BinaryBody,
-  GatewayFrame,
-  GatewayRequestFrame,
 } from "./types";
 import {
   callTelegramApiWithMarkdownCaption,
   sendTelegramMarkdownMessage,
 } from "./telegram-formatting";
 
-type GatewayAdapterBinding = Fetcher & {
-  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
-};
-
 interface Env {
-  GATEWAY: GatewayAdapterBinding;
+  GATEWAY: Fetcher & AdapterGatewayBinding;
 }
 
 type TelegramApiSuccess<T> = {
@@ -1034,7 +1030,8 @@ export class TelegramAccount extends DurableObject<Env> {
       return { terminal: false, error: "Telegram account is disconnected" };
     }
 
-    const result = await this.callGateway<AdapterInboundResult>(
+    const result = await callAdapterGateway<AdapterInboundResult>(
+      this.env.GATEWAY,
       "adapter.inbound",
       {
         adapter: "telegram",
@@ -1528,7 +1525,7 @@ export class TelegramAccount extends DurableObject<Env> {
   private async notifyGatewayStatus(): Promise<void> {
     try {
       const status = await this.getStatus();
-      await this.callGateway("adapter.state.update", {
+      await callAdapterGateway(this.env.GATEWAY, "adapter.state.update", {
         adapter: "telegram",
         accountId: this.getAccountId(),
         status,
@@ -1539,36 +1536,5 @@ export class TelegramAccount extends DurableObject<Env> {
         error,
       );
     }
-  }
-
-  private async callGateway<T = unknown>(
-    call: string,
-    args: unknown,
-    body?: BinaryBody,
-  ): Promise<T> {
-    const frame: GatewayRequestFrame = {
-      type: "req",
-      id: crypto.randomUUID(),
-      call,
-      args,
-      ...(body ? { body } : {}),
-    };
-
-    let response: GatewayFrame | null;
-    try {
-      response = await this.env.GATEWAY.serviceFrame(frame);
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      throw error;
-    }
-    if (!response || response.type !== "res") {
-      await cancelBinaryBody(body, "No response from gateway serviceFrame");
-      throw new Error("No response from gateway serviceFrame");
-    }
-    if (!response.ok) {
-      throw new Error(response.error?.message || `Gateway error on ${call}`);
-    }
-
-    return (response.data ?? {}) as T;
   }
 }

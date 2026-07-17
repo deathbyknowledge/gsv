@@ -18,6 +18,8 @@ import {
   deliverAdapterInboundResponses,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
+import { callAdapterGateway } from "../../shared/src/gateway-rpc";
+import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
   makeWASocket,
   fetchLatestBaileysVersion,
@@ -61,17 +63,11 @@ import type {
   AdapterSendResult,
   AdapterSurface,
   BinaryBody,
-  GatewayFrame,
-  GatewayRequestFrame,
 } from "../../shared/src/types";
-
-type GatewayChannelBinding = Fetcher & {
-  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
-};
 
 interface Env {
   // Direct service binding to Gateway entrypoint.
-  GATEWAY: GatewayChannelBinding;
+  GATEWAY: Fetcher & AdapterGatewayBinding;
 }
 
 // Quiet logger for Baileys - suppresses verbose output
@@ -960,7 +956,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
       `[WA:${this.state.accountId}] inbound actorId=${actorId} surfaceJid=${surfaceJid} deliveryJid=${deliveryJid} remoteJid=${remoteJid} remoteJidAlt=${remoteJidAlt ?? ""} participant=${participantJid ?? ""} participantPn=${participantPn ?? ""}`,
     );
 
-    const result = await this.callGateway<AdapterInboundResult>(
+    const result = await callAdapterGateway<AdapterInboundResult>(
+      this.env.GATEWAY,
       "adapter.inbound",
       {
         adapter: "whatsapp",
@@ -1225,7 +1222,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
         extra: { selfJid: this.state.selfJid, selfE164: this.state.selfE164 },
       };
 
-      await this.callGateway(
+      await callAdapterGateway(
+        this.env.GATEWAY,
         "adapter.state.update",
         {
           adapter: "whatsapp",
@@ -1237,37 +1235,6 @@ export class WhatsAppAccount extends DurableObject<Env> {
       // Status updates are best-effort.
       console.error(`[WA:${this.state.accountId}] Gateway RPC status failed:`, e);
     }
-  }
-
-  private async callGateway<T = unknown>(
-    call: string,
-    args: unknown,
-    body?: BinaryBody,
-  ): Promise<T> {
-    const frame: GatewayRequestFrame = {
-      type: "req",
-      id: crypto.randomUUID(),
-      call,
-      args,
-      ...(body ? { body } : {}),
-    };
-
-    let response: GatewayFrame | null;
-    try {
-      response = await this.env.GATEWAY.serviceFrame(frame);
-    } catch (error) {
-      await cancelBinaryBody(body, error);
-      throw error;
-    }
-    if (!response || response.type !== "res") {
-      await cancelBinaryBody(body, "No response from gateway serviceFrame");
-      throw new Error("No response from gateway serviceFrame");
-    }
-    if (!response.ok) {
-      throw new Error(response.error?.message || `Gateway error on ${call}`);
-    }
-
-    return (response.data ?? {}) as T;
   }
 
   private waitForQrOrConnection(timeoutMs: number): Promise<{ connected?: boolean; qr?: string }> {
