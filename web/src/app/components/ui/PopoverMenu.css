@@ -24,6 +24,12 @@
   animation: gsvPopoverIn 0.14s ease;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .gsv-popover {
+    animation: none;
+  }
+}
+
 /* Width presets — the host positioner reads offsetWidth to clamp placement. */
 .gsv-popover--menu {
   width: min(256px, calc(100% - 28px));

@@ -2253,6 +2253,55 @@
   display: none;
 }
 
+/* Mobile: header popovers open as full-body sheets — the panel fills the chat
+   body (.gsv-chat-main) under the persistent header. The dock-level positioner
+   skips inline anchoring on mobile, so this block owns placement. The sheet is
+   full-bleed (no side chrome; the top border is the seam under the header),
+   lists lose their desktop height caps and scroll inside the sheet, footer
+   actions pin to the bottom edge, and rows grow to touch comfort (≥44px). */
+.gsv-shell-viewport.is-mobile .gsv-chat-popover {
+  inset: 0;
+  width: auto;
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  border-top: 1px solid var(--border-raised);
+  box-shadow: none;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-popover .gsv-popover-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-popover .gsv-tls {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* In a flex-column sheet, margin-top:auto pins the footer actions to the bottom
+   even when the body doesn't grow (e.g. the context meter + stat grid). */
+.gsv-shell-viewport.is-mobile .gsv-chat-popover .gsv-popover-actions {
+  margin-top: auto;
+}
+
+/* Touch row heights. ListRow's compact metrics are inline styles on the row
+   element, hence the !important. */
+.gsv-shell-viewport.is-mobile .gsv-chat-popover .lr {
+  min-height: 44px !important;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-popover .gsv-popover-action {
+  min-height: 44px;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-popover .gsv-tls-opt {
+  min-height: 44px;
+}
+
 @keyframes gsvMobileChatIn {
   from {
     transform: translateX(100%);
