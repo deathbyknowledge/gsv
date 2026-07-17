@@ -86,6 +86,25 @@ export function ConsoleAgentPage({
   const newAgentFallbackOptions = fallbackModelOptionsForAccount(config.config, null, ownerUid, "", inheritedNewAgentFallback);
 
   if (createNew) {
+    // The draft avatar is picked ONCE at editor mount (unused-portrait
+    // contract), so the editor must not mount while accounts/config are still
+    // loading — an empty pool snapshot reads as "everything unused" and can
+    // duplicate an existing portrait. Empty-but-loaded data is a valid state
+    // (first agent ever), so this gates on loading only, never emptiness.
+    if (accounts.resource.isUnavailable || config.resource.isUnavailable) {
+      return (
+        <ConsolePage flush>
+          <ConsolePageState kind="offline" label="AGENT" />
+        </ConsolePage>
+      );
+    }
+    if (accounts.resource.isLoading || config.resource.isLoading) {
+      return (
+        <ConsolePage flush>
+          <ConsolePageState kind="loading" label="AGENT" />
+        </ConsolePage>
+      );
+    }
     return (
       <ConsolePage flush>
         <NewAgentEditorSurface

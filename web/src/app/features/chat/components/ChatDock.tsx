@@ -297,6 +297,13 @@ export function ChatDock({
   // so it flips to null whenever a run ends — never key user-facing resets on
   // it directly, or they fire on every stop/completion.
   const selectedConversationId = activeConversationId ?? runtime.conversationId ?? "default";
+  // Live mirror of the displayed process/conversation for async mutation
+  // callbacks (abort/compact): resolve() upserts, so a completion that lands
+  // after the user switched away would otherwise inject its status line into
+  // whichever transcript is now on screen. Reassigned (not mutated) each
+  // render so a captured snapshot stays a stable point-in-time identity.
+  const displayedTargetRef = useRef({ pid: activeProcessId, conversationId: selectedConversationId });
+  displayedTargetRef.current = { pid: activeProcessId, conversationId: selectedConversationId };
   const liveActivity = useMemo(
     () => deriveChatLiveActivity(runtime, stoppingCurrentRun),
     [runtime, stoppingCurrentRun],
@@ -370,9 +377,11 @@ export function ChatDock({
     feedback.reset();
     // The voice status line survives a process switch (the mic keeps recording
     // into the new composer), but feedback.reset() just dropped its entry.
-    // Re-sync the mirror ref so the voice effect re-creates the line on its
-    // next state tick.
+    // Re-sync both mirrors — the voice effect keys on the process id too, so
+    // it immediately re-creates an active "Listening…"/"Transcribing…" line
+    // and re-resolves a standing recorder error for the new process.
     voiceFeedbackLabel.current = null;
+    voiceErrorNoted.current = 0;
     setBodyState("chat");
     compactConversation.reset();
   }, [activeProcessId, compactConversation.reset, feedback.reset]);
@@ -605,6 +614,7 @@ export function ChatDock({
     }
     voiceFeedbackLabel.current = label;
   }, [
+    activeProcessId,
     ambientTranscription.state,
     ambientTranscription.note,
     ambientTranscription.errorNonce,
@@ -687,13 +697,20 @@ export function ChatDock({
     const runId = runtime.activeRunId ?? pendingHil?.runId;
     const requestedStop = { pid: activeProcessId, runId: runId ?? null };
     setStoppingRun(requestedStop);
+    const target = displayedTargetRef.current;
+    const stillDisplayed = () => displayedTargetRef.current.pid === target.pid
+      && displayedTargetRef.current.conversationId === target.conversationId;
     feedback.begin("abort", "Stopping task");
     abortProcess.mutate({
       pid: activeProcessId,
       ...(runId ? { runId } : {}),
     }, {
       onSuccess: () => {
-        feedback.resolve("abort", "attention", "Task interrupted");
+        // A switch mid-flight already cleared the line; resolving would
+        // upsert it into the newly displayed transcript.
+        if (stillDisplayed()) {
+          feedback.resolve("abort", "attention", "Task interrupted");
+        }
       },
       onError: () => {
         setStoppingRun((current) => (
@@ -701,7 +718,9 @@ export function ChatDock({
             ? null
             : current
         ));
-        feedback.resolve("abort", "error", "Error trying to stop task");
+        if (stillDisplayed()) {
+          feedback.resolve("abort", "error", "Error trying to stop task");
+        }
       },
     });
   };
@@ -843,6 +862,9 @@ export function ChatDock({
     }
     const normalizedKeepLast = Math.max(1, Math.min(compactKeepMax, Math.floor(keepLast)));
     setContextConfirmOpen(false);
+    const target = displayedTargetRef.current;
+    const stillDisplayed = () => displayedTargetRef.current.pid === target.pid
+      && displayedTargetRef.current.conversationId === target.conversationId;
     feedback.begin("compact", "Freeing context");
     compactConversation.mutate({
       pid: activeProcessId,
@@ -851,13 +873,21 @@ export function ChatDock({
       generateSummary: true,
     }, {
       onSuccess: (result) => {
+        // A switch mid-flight cleared the running line (compaction state is
+        // conversation-bound) — the archive preselect and resolve() upsert
+        // must not land on the newly displayed transcript.
+        if (!stillDisplayed()) {
+          return;
+        }
         // Stay in chat — the feedback line is the whole signal. Preselect the
         // fresh segment so a manual archive open lands on it.
         setSelectedArchiveSegmentId(result.segment.id);
         feedback.resolve("compact", "success", "Context freed");
       },
       onError: () => {
-        feedback.resolve("compact", "error", "Context freeing failed");
+        if (stillDisplayed()) {
+          feedback.resolve("compact", "error", "Context freeing failed");
+        }
       },
     });
   };
