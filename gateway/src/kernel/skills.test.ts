@@ -8,6 +8,7 @@ import {
   collectPromptSkillIndex,
   listSkillFiles,
   parseSkillMarkdown,
+  renderSkillMarkdown,
   renderSkillIndex,
   resolveSkillDocument,
   validateSkillMarkdown,
@@ -304,6 +305,21 @@ describe("validateSkillMarkdown", () => {
       "frontmatter field 'description' is required",
       "SKILL.md must include non-empty workflow instructions after frontmatter",
     ]));
+  });
+
+  it("validates the canonical authoring renderer with the persisted contract", () => {
+    const content = renderSkillMarkdown({
+      name: "browse-instagram",
+      description: "  Browse Instagram through the connected browser\nwhen the workflow repeats.  ",
+      body: "\n# Browse Instagram\n\nInspect before acting.\n",
+    });
+
+    expect(content).toContain("description: >\n  Browse Instagram through the connected browser when the workflow repeats.");
+    expect(validateSkillMarkdown(content, "browse-instagram")).toEqual({
+      ok: true,
+      name: "browse-instagram",
+      description: "Browse Instagram through the connected browser when the workflow repeats.",
+    });
   });
 });
 

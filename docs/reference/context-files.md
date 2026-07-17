@@ -48,11 +48,14 @@ pitfalls to avoid.
 Skill sources are layered:
 
 ```text
-config/ai/profile/{profile}/skills.d/
-~/skills.d/
-/workspaces/{workspaceId}/.gsv/skills.d/
-package source repos, resolved with `pkg source <package>`
+the owning user's ~/skills.d/
+the run-as agent's ~/skills.d/, when distinct from the owner
+visible enabled package source repos, resolved with `pkg source <package>`
 ```
+
+For a process running as a distinct agent account, owner skills are considered
+before agent-specific skills. Profile and workspace context directories affect
+prompt context, but they are not skill discovery roots.
 
 The root GSV source repo can ship system skills under `skills/`. During
 `sys.bootstrap`, those files are copied into each bootstrapped user's

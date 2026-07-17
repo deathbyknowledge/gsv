@@ -268,6 +268,24 @@ export function validateSkillMarkdown(
     : { ok: true, name: rawName, description };
 }
 
+export function renderSkillMarkdown(input: {
+  name: string;
+  description: string;
+  body: string;
+}): string {
+  const description = input.description.replace(/\s+/g, " ").trim();
+  return [
+    "---",
+    `name: ${input.name}`,
+    "description: >",
+    `  ${description}`,
+    "---",
+    "",
+    input.body.trim(),
+    "",
+  ].join("\n");
+}
+
 export function renderSkillIndex(
   entries: SkillIndexEntry[],
   mode: Exclude<AiSkillIndexMode, "off"> = "summary",

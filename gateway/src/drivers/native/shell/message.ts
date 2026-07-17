@@ -68,7 +68,6 @@ async function runMessageCommand(
     case "current":
       return showCurrentReplyDestination(rest, ctx);
     case "destinations":
-    case "targets":
       return await listDestinations(rest, ctx);
     case "attach":
       return attachToReply(rest, shellCtx, fs, ctx);

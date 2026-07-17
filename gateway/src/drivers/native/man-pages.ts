@@ -1,46 +1,9 @@
-export function renderManualPage(topic?: string): string | null {
-  const normalized = (topic ?? "").trim().toLowerCase();
+import { nativeCommandSynopsis } from "./shell/discovery";
+
+export function renderManualPage(topic: string): string | null {
+  const normalized = topic.trim().toLowerCase();
 
   switch (normalized) {
-    case "":
-    case "help":
-      return [
-        "GSV manual pages",
-        "",
-        "Available pages:",
-        "  gsv   Platform model, targets, paths, and knowledge systems",
-        "  targets  Discover target ids for devices, browser clients, and adapters",
-        "  codemode  Run GSV tool scripts from the shell",
-        "  crontab  Install, list, and remove cron tables",
-        "  llm   Generate one text response with the configured AI model",
-        "  mcp   Connected MCP servers and tool calls",
-        "  message  Inspect reply routing and send explicit adapter messages or files",
-        "  proc  Process inspection, lifecycle, and same-owner process IPC",
-        "  sched  Schedule chat prompts and inspect Kernel schedules",
-        "  notify  User notifications and background job alerts",
-        "  rgit  ripgit repository inspection and staged commits",
-        "  pkg   Package inspection and lifecycle",
-        "  skills  Reusable process skills loaded from skills.d",
-        "  wiki  Durable repo-backed knowledge databases",
-        "",
-        "Usage:",
-        "  man gsv",
-        "  man targets",
-        "  man codemode",
-        "  man crontab",
-        "  man llm",
-        "  man mcp",
-        "  man message",
-        "  man proc",
-        "  man sched",
-        "  man notify",
-        "  man rgit",
-        "  man pkg",
-        "  man skills",
-        "  man wiki",
-        "",
-      ].join("\n");
-
     case "llm":
       return [
         "LLM(1)",
@@ -193,11 +156,7 @@ export function renderManualPage(topic?: string): string | null {
         "  message - add files to an automatic reply or send explicit adapter messages",
         "",
         "SYNOPSIS",
-        "  message current [--json]",
-        "  message destinations [--all] [--json]",
-        "  message attach PATH... [--mime TYPE]",
-        "  message send --to DESTINATION [--message TEXT] [--delivery-id ID]",
-        "      [--attach PATH [--mime TYPE]] [--also]",
+        ...manualSynopsis("message"),
         "",
         "OVERVIEW",
         "  A process run's final answer returns automatically to the client or adapter",
@@ -249,17 +208,7 @@ export function renderManualPage(topic?: string): string | null {
         "  sched - schedule chat prompts and control Kernel schedules",
         "",
         "SYNOPSIS",
-        "  sched list [--all]",
-        "  sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] |",
-        "      --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]",
-        "  sched add --to DESTINATION --name NAME (--every DURATION |",
-        "      --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP)",
-        "      --message MESSAGE",
-        "  sched add --json JSON",
-        "  sched enable <id>",
-        "  sched disable <id>",
-        "  sched remove <id>",
-        "  sched run <id> [--force]",
+        ...manualSynopsis("sched"),
         "",
         "OVERVIEW",
         "  `sched` wraps sched.* for chat-visible prompts, direct adapter delivery,",
@@ -576,13 +525,17 @@ export function renderManualPage(topic?: string): string | null {
         "  only a compact skill index; use this command to inspect the full skill.",
         "",
         "SOURCES",
-        "  ~/skills.d",
-        "      Account-local skills, backed by the run-as account's home ripgit repository.",
+        "  owner and agent home skills.d",
+        "      Skills from the owning user's home and, for a distinct run-as agent,",
+        "      that agent's home. Both are backed by their account home repositories.",
         "  package source repos",
         "      Package-provided skills shipped with visible enabled packages.",
         "      Use `pkg source <package>` to locate the repo path.",
         "",
         "COMMANDS",
+        ...manualSynopsis("skills"),
+        "",
+        "DETAILS",
         "  skills list",
         "      List top-level skill ids, source labels, writable state, and descriptions.",
         "  skills list <skill>",
@@ -710,4 +663,8 @@ export function renderManualPage(topic?: string): string | null {
     default:
       return null;
   }
+}
+
+function manualSynopsis(command: string): string[] {
+  return (nativeCommandSynopsis(command) ?? [`${command} --help`]).map((line) => `  ${line}`);
 }

@@ -601,6 +601,19 @@ describe("native shell execution", () => {
 });
 
 describe("native shell capability discovery", () => {
+  it("renders the registered command descriptors as the top-level manual", async () => {
+    const result = await handleShellExec(
+      { input: "man" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("GSV live capability manual");
+    expect(result.stdout).toContain("message      Send messages and file attachments");
+    expect(result.stdout).toContain("skills       Inspect and maintain reusable agent workflows");
+    expect(result.stdout).not.toContain("GSV manual pages");
+  });
+
   it.each([
     ["put the image from this chat on my connected machine", "cp"],
     ["create a picture from words", "txt2img"],
@@ -667,6 +680,8 @@ describe("native shell capability discovery", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("MESSAGE(1)");
+    expect(result.stdout).toContain("message current [--json]");
+    expect(result.stdout).toContain("[--delivery-id ID] [--also]");
     expect(result.stdout).toContain("message send --to DESTINATION");
     expect(result.stdout).toContain("--attach PATH");
   });
@@ -3017,6 +3032,9 @@ describe("pkg shell command", () => {
     expect(listed.stdout).toContain("Telegram direct message");
     expect(listed.stdout).not.toContain("chat-42");
     expect(listed.stdout).not.toContain('"bot"');
+    const removedAlias = await handleShellExec({ input: "message targets" }, ctx);
+    expect(removedAlias).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(removedAlias.stderr).toContain("unknown command: targets");
 
     const sent = await handleShellExec({
       input: `message send --to ${destinationId} --message "opaque route" --also`,

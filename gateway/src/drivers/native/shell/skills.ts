@@ -5,11 +5,13 @@ import type { KernelContext } from "../../../kernel/context";
 import {
   collectFilesystemSkillDocuments,
   listSkillFiles,
+  renderSkillMarkdown,
   resolveSkillDocument,
   type SkillDocument,
   validateSkillMarkdown,
 } from "../../../kernel/skills";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { nativeCommandSynopsis } from "./discovery";
 
 export function buildSkillsCommand(fs: GsvFs, ctx: KernelContext, identity: ProcessIdentity) {
   return defineCommand("skills", async (args, commandCtx): Promise<ExecResult> => {
@@ -101,7 +103,11 @@ async function runSkillsCommand(
       }
       const parsed = parseCreateArgs(rest);
       const body = await readSkillBody(parsed.from, commandCtx, fs, identity);
-      const content = renderPersistedSkill(parsed.name, parsed.description, body);
+      const content = renderSkillMarkdown({
+        name: parsed.name,
+        description: parsed.description,
+        body,
+      });
       const validation = validateSkillMarkdown(content, parsed.name);
       if (!validation.ok) {
         throw new Error(formatValidationErrors(validation.errors));
@@ -204,16 +210,9 @@ function parseCreateArgs(args: string[]): CreateSkillArgs {
   if (!name) {
     throw new Error("skill name must contain at least one ASCII letter or digit");
   }
-  if (name.length >= 64) {
-    throw new Error("skill name must be under 64 characters after normalization");
-  }
 
-  description = description.replace(/\s+/g, " ").trim();
-  if (!description) {
+  if (!description.trim()) {
     throw new Error("--description is required and must explain what the skill does and when to use it");
-  }
-  if (description.length > 220) {
-    throw new Error("--description must be at most 220 characters");
   }
 
   return { name, description, ...(from ? { from } : {}), replace };
@@ -253,20 +252,7 @@ async function readSkillBody(
   if (/^---\s*(?:\r?\n|$)/.test(body.trimStart())) {
     throw new Error("--from and stdin must contain only the Markdown instruction body, not SKILL.md frontmatter");
   }
-  return body.trim();
-}
-
-function renderPersistedSkill(name: string, description: string, body: string): string {
-  return [
-    "---",
-    `name: ${name}`,
-    "description: >",
-    `  ${description}`,
-    "---",
-    "",
-    body,
-    "",
-  ].join("\n");
+  return body;
 }
 
 async function readSkillValidationCandidate(
@@ -483,14 +469,7 @@ function skillsUsage(): string {
   return [
     "Usage: skills <subcommand> [args]",
     "",
-    "  skills list [skill]",
-    "  skills tree [skill]",
-    "  skills search <query>",
-    "  skills show <skill>",
-    "  skills files <skill>",
-    "  skills read <skill> <file>",
-    "  skills create <name> --description <text> [--from <body-file>] [--replace]",
-    "  skills validate <skill-or-path>",
+    ...(nativeCommandSynopsis("skills") ?? ["skills --help"]).map((line) => `  ${line}`),
     "",
     "Skill names come from layered skills.d directories. `skills list`",
     "shows top-level skills; `skills list <skill>` and `skills tree <skill>`",
@@ -503,8 +482,11 @@ function skillsUsage(): string {
 }
 
 function skillsCreateUsage(): string {
+  const synopsis = nativeCommandSynopsis("skills")
+    ?.find((line) => line.startsWith("skills create "))
+    ?? "skills create <name>";
   return [
-    "Usage: skills create <name> --description <text> [--from <body-file>] [--replace]",
+    `Usage: ${synopsis}`,
     "",
     "Persist a complete reusable workflow under ~/skills.d. Supply the Markdown",
     "instruction body with --from or stdin. Existing skills require --replace.",

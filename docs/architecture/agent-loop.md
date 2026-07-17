@@ -75,14 +75,15 @@ and profile context can template values such as `identity.username`, `identity.c
 `workspace`, `devices`, `mcpServers`, and `known_paths`. Home and workspace context are loaded
 lexically and bounded by `config/ai/max_context_bytes`.
 
-Skill sources follow the same layered shape: profile `skills.d`, `~/skills.d`,
-workspace `.gsv/skills.d`, and visible package source repos. Use
-`pkg source <package>` to locate package-provided skill files under
-`/src/repos/<owner>/<repo>`. The prompt uses a configurable compact skill index
-(`summary`, `names`, or `off`) and tells processes to start unfamiliar work with
-`man --search -- '<plain-language goal>'`. That live search returns exact next
-actions such as `skills show`; long source paths and full skill bodies are not
-embedded in standing context.
+Skill discovery reads the owning user's home `skills.d`, the run-as agent's home
+`skills.d` when that account is distinct from the owner, and visible enabled
+package source repos. Use `pkg source <package>` to locate package-provided skill
+files under `/src/repos/<owner>/<repo>`. Profile and workspace directories supply
+prompt context, but are not skill discovery roots. The prompt uses a configurable
+compact skill index (`summary`, `names`, or `off`) and tells processes to start
+unfamiliar work with `man --search -- '<plain-language goal>'`. That live search
+returns exact next actions such as `skills show`; long source paths and full skill
+bodies are not embedded in standing context.
 
 System-provided skills live in the root GSV source tree under `skills/` and are
 seeded into user home `skills.d` during bootstrap when missing.

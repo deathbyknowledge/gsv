@@ -31,7 +31,7 @@ export type ShellDiscoveryEntry = {
   searchText?: string;
 };
 
-type NativeCommandMetadata = Omit<
+type NativeCommandDescriptor = Omit<
   ShellDiscoveryEntry,
   "available" | "kind" | "name" | "next" | "searchText"
 > & {
@@ -39,7 +39,7 @@ type NativeCommandMetadata = Omit<
   synopsis?: string[];
 };
 
-const NATIVE_COMMAND_METADATA: Record<string, NativeCommandMetadata> = {
+const NATIVE_COMMAND_DESCRIPTORS: Record<string, NativeCommandDescriptor> = {
   whoami: command("Print the current program account name.", "Identify which user or agent account the shell is running as.", ["identity", "account", "username"]),
   id: command("Print the current uid, gid, and supplementary groups.", "Inspect the current program identity and group membership.", ["identity", "permissions", "groups"]),
   hostname: command("Print the native GSV server name.", "Identify the GSV instance running the native shell.", ["server", "instance", "machine"]),
@@ -55,10 +55,24 @@ const NATIVE_COMMAND_METADATA: Record<string, NativeCommandMetadata> = {
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
   mcp: command("Discover and call connected MCP integrations.", "Use an external connected service or search its available integration tools.", ["integration", "service", "connector", "api", "tools", "mcp"]),
   proc: command("Inspect, delegate to, message, and control GSV agent processes.", "Create a subagent, delegate a task, contact another agent, or inspect agent history and lifecycle.", ["agent", "subagent", "delegate", "process", "message", "history"]),
-  message: command("Send messages and file attachments through the active conversation.", "Attach a generated or copied file to the automatic final reply, or send an additional message through a chat adapter.", ["chat", "reply", "send", "attachment", "file", "image", "photo", "audio", "document"], [], ["message current", "message attach PATH...", "message destinations", "message send --to DESTINATION [--message TEXT] [--attach PATH]"]),
+  message: command("Send messages and file attachments through the active conversation.", "Attach a generated or copied file to the automatic final reply, or send an additional message through a chat adapter.", ["chat", "reply", "send", "attachment", "file", "image", "photo", "audio", "document"], [], [
+    "message current [--json]",
+    "message destinations [--all] [--json]",
+    "message attach PATH... [--mime TYPE]",
+    "message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]",
+  ]),
   rgit: command("Inspect and commit staged ripgit repository changes.", "Work with GSV repo-backed source, diffs, history, branches, or commits.", ["git", "repository", "source", "diff", "commit"], ["ripgit"]),
   ripgit: command("Alias for the rgit repository command.", "Work with GSV repo-backed source, diffs, history, branches, or commits.", ["git", "repository", "source", "diff", "commit"], ["rgit"]),
-  sched: command("Create and inspect Kernel schedules and delayed prompts.", "Send a prompt later, wake the current conversation, or inspect scheduled work.", ["schedule", "reminder", "recurring", "automation", "later", "timer"], ["crontab"]),
+  sched: command("Create and inspect Kernel schedules and delayed prompts.", "Send a prompt later, wake the current conversation, or inspect scheduled work.", ["schedule", "reminder", "recurring", "automation", "later", "timer"], ["crontab"], [
+    "sched list [--all]",
+    "sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]",
+    "sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
+    "sched add --json JSON",
+    "sched enable <id>",
+    "sched disable <id>",
+    "sched remove <id>",
+    "sched run <id> [--force]",
+  ]),
   targets: command("Discover connected machines, browsers, and adapter targets.", "Find where work can run, including a laptop, phone, browser profile, or messaging adapter.", ["device", "machine", "laptop", "browser", "phone", "adapter", "hardware", "target"], ["devices"]),
   devices: command("Alias for connected-target discovery.", "Find a connected machine, browser profile, or other execution target.", ["device", "machine", "laptop", "browser", "hardware", "target"], ["targets"]),
   net: command("Make a streamed HTTP request through GSV or another target.", "Fetch a URL or call an HTTP API with explicit request and response control.", ["http", "network", "url", "download", "api", "fetch"]),
@@ -70,7 +84,16 @@ const NATIVE_COMMAND_METADATA: Record<string, NativeCommandMetadata> = {
   stt: command("Transcribe an audio file to text.", "Listen to, understand, or transcribe a voice note, recording, speech, or audio file.", ["audio", "voice", "voice-note", "recording", "speech", "listen", "transcribe"], [], ["stt [OPTIONS] AUDIO"], ["ai.transcription.create"]),
   tts: command("Synthesize spoken audio from text.", "Create a voice message, spoken reply, narration, or audio file from text.", ["audio", "voice", "speak", "speech", "narration", "voice-message"], [], ["tts [OPTIONS] -o PATH TEXT..."], ["ai.speech.create"]),
   pkg: command("Inspect, create, install, review, and manage GSV packages.", "Work with an installed app, package source, package command, or package lifecycle.", ["package", "app", "install", "source", "plugin", "extension"]),
-  skills: command("Inspect and maintain reusable agent workflows stored in skills.d.", "Create, open, or update procedural memory for a workflow that should be repeatable later.", ["workflow", "procedure", "automation", "skill", "instructions", "playbook", "create", "save", "persist", "reuse", "repeat"]),
+  skills: command("Inspect and maintain reusable agent workflows stored in skills.d.", "Create, open, or update procedural memory for a workflow that should be repeatable later.", ["workflow", "procedure", "automation", "skill", "instructions", "playbook", "create", "save", "persist", "reuse", "repeat"], [], [
+    "skills list [skill]",
+    "skills tree [skill]",
+    "skills search <query>",
+    "skills show <skill>",
+    "skills files <skill>",
+    "skills read <skill> <file>",
+    "skills create <name> --description <text> [--from <body-file>] [--replace]",
+    "skills validate <skill-or-path>",
+  ]),
   wiki: command("Search and maintain durable repo-backed knowledge.", "Remember, retrieve, or organize durable notes, facts, decisions, and reference material.", ["knowledge", "memory", "notes", "search", "wiki", "reference"]),
   notify: command("Create and manage user notifications.", "Alert the user about a completed background job, warning, or actionable event.", ["notification", "alert", "remind", "background", "done"]),
   flynn: command("Print the GSV version banner.", "Inspect the GSV release banner or project easter egg.", ["version", "banner", "gsv"]),
@@ -94,7 +117,7 @@ export class ShellDiscoveryCatalog {
     const packageMetadata = packageCommandMetadata(this.ctx);
     for (const registered of commands) {
       if (this.commands.has(registered.name)) continue;
-      const metadata = NATIVE_COMMAND_METADATA[registered.name]
+      const metadata = NATIVE_COMMAND_DESCRIPTORS[registered.name]
         ?? packageMetadata.get(registered.name)
         ?? command(
           `Run the installed ${registered.name} shell command.`,
@@ -118,10 +141,6 @@ export class ShellDiscoveryCatalog {
     }
   }
 
-  commandNames(): string[] {
-    return [...this.commands.keys()].sort((left, right) => left.localeCompare(right));
-  }
-
   renderIndex(): string {
     const lines = [
       "GSV live capability manual",
@@ -142,10 +161,7 @@ export class ShellDiscoveryCatalog {
   renderCommandManual(topic: string): string | null {
     const entry = this.commands.get(topic.trim().toLowerCase());
     if (!entry) return null;
-    const metadata = NATIVE_COMMAND_METADATA[entry.name];
-    const synopsis = metadata?.synopsis?.length
-      ? metadata.synopsis
-      : [`${entry.name} --help`];
+    const synopsis = nativeCommandSynopsis(entry.name) ?? [`${entry.name} --help`];
     return [
       `${entry.name.toUpperCase()}(1)`,
       "",
@@ -265,6 +281,11 @@ export function rankShellDiscoveryEntries(
     .map(({ entry }) => entry);
 }
 
+export function nativeCommandSynopsis(name: string): readonly string[] | null {
+  const synopsis = NATIVE_COMMAND_DESCRIPTORS[name.trim().toLowerCase()]?.synopsis;
+  return synopsis?.length ? synopsis : null;
+}
+
 export function formatShellDiscoveryResults(
   query: string,
   entries: readonly ShellDiscoveryEntry[],
@@ -367,7 +388,7 @@ function command(
   aliases: string[] = [],
   synopsis?: string[],
   requirements?: string[],
-): NativeCommandMetadata {
+): NativeCommandDescriptor {
   return {
     summary,
     useWhen,
@@ -378,8 +399,8 @@ function command(
   };
 }
 
-function packageCommandMetadata(ctx: KernelContext): Map<string, NativeCommandMetadata> {
-  const metadata = new Map<string, NativeCommandMetadata>();
+function packageCommandMetadata(ctx: KernelContext): Map<string, NativeCommandDescriptor> {
+  const metadata = new Map<string, NativeCommandDescriptor>();
   try {
     const scopes = visiblePackageScopesForActor({ uid: resolveCallerOwnerUid(ctx) });
     for (const record of ctx.packages.list({ enabled: true, scopes })) {

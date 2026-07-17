@@ -144,6 +144,32 @@ describe("skills shell command", () => {
     expect(state.writes).toEqual([]);
     expect(state.entries["/home/sam/skills.d"]).toBeUndefined();
   });
+
+  it("delegates persisted name and description limits to Kernel validation", async () => {
+    const state = makeMutableSkillFs({ "/home/sam": [] });
+    const command = buildSkillsCommand(state.fs, makeContext(), IDENTITY);
+
+    const longName = await run(command, [
+      "create",
+      "a".repeat(64),
+      "--description",
+      "A reusable workflow.",
+    ], "# Workflow\n\nDo the work.");
+    expect(longName.exitCode).toBe(1);
+    expect(longName.stderr).toContain("invalid SKILL.md");
+    expect(longName.stderr).toContain("frontmatter field 'name' must be under 64 characters");
+
+    const longDescription = await run(command, [
+      "create",
+      "valid-name",
+      "--description",
+      "x".repeat(221),
+    ], "# Workflow\n\nDo the work.");
+    expect(longDescription.exitCode).toBe(1);
+    expect(longDescription.stderr).toContain("invalid SKILL.md");
+    expect(longDescription.stderr).toContain("frontmatter field 'description' must be at most 220 characters");
+    expect(state.writes).toEqual([]);
+  });
 });
 
 async function run(
