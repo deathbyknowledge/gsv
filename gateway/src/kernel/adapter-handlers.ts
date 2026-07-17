@@ -83,6 +83,9 @@ type HilDecision = {
   decision: "approve" | "deny";
   remember: boolean;
 };
+type ParsedHilDecision = HilDecision & {
+  requestToken?: string;
+};
 export type AdapterHilRequest = {
   requestId: string;
   toolName: string;
@@ -942,15 +945,20 @@ async function resolveClaimedAdapterInbound(input: {
 
   const pendingHil = await getPendingHil(pid);
   if (pendingHil) {
-    const decision = message.surface.kind === "dm"
+    const parsedDecision = message.surface.kind === "dm"
       ? parseHilDecision(message.text)
+      : null;
+    const decision = parsedDecision?.requestToken === adapterHilRequestToken(pendingHil.requestId)
+      ? parsedDecision
       : null;
 
     if (!decision) {
       return {
         ok: true,
         reply: {
-          text: renderAdapterHilPrompt(pendingHil, message.surface.kind, "reminder"),
+          text: parsedDecision
+            ? renderAdapterHilCorrelationFailure(pendingHil, message.surface.kind)
+            : renderAdapterHilPrompt(pendingHil, message.surface.kind, "reminder"),
           replyToId: message.messageId,
         },
       };
@@ -1836,18 +1844,35 @@ export function normalizeAdapterHilRequest(
   };
 }
 
-function parseHilDecision(text: string): HilDecision | null {
-  const normalized = text.trim().toLowerCase().replace(/[.!?]+$/g, "");
-  if (["approve always", "allow always", "yes always", "always approve", "always allow"].includes(normalized)) {
-    return { decision: "approve", remember: true };
-  }
-  if (["approve", "allow", "yes"].includes(normalized)) {
-    return { decision: "approve", remember: false };
-  }
-  if (["deny", "reject", "no"].includes(normalized)) {
-    return { decision: "deny", remember: false };
-  }
-  return null;
+function parseHilDecision(text: string): ParsedHilDecision | null {
+  const normalized = text.trim().replace(/[.!?]+$/g, "");
+  const match = /^(approve\s+always|allow\s+always|yes\s+always|always\s+approve|always\s+allow|approve|allow|yes|deny|reject|no)(?:\s+(\S+))?$/i.exec(normalized);
+  if (!match) return null;
+
+  const phrase = match[1].toLowerCase().replace(/\s+/g, " ");
+  const decision = phrase === "deny" || phrase === "reject" || phrase === "no"
+    ? "deny"
+    : "approve";
+  return {
+    decision,
+    remember: decision === "approve" && phrase.includes("always"),
+    ...(match[2] ? { requestToken: match[2] } : {}),
+  };
+}
+
+function adapterHilRequestToken(requestId: string): string {
+  return `hil[${requestId}]`;
+}
+
+function renderAdapterHilCorrelationFailure(
+  pendingHil: AdapterHilRequest,
+  surfaceKind: AdapterSurface["kind"],
+): string {
+  return [
+    "I couldn\u2019t verify that approval response was for the current request.",
+    "",
+    renderAdapterHilPrompt(pendingHil, surfaceKind, "reminder"),
+  ].join("\n");
 }
 
 export function renderAdapterHilPrompt(
@@ -1856,10 +1881,11 @@ export function renderAdapterHilPrompt(
   phase: "initial" | "reminder",
 ): string {
   const action = summarizeAdapterHilRequest(pendingHil);
+  const requestToken = adapterHilRequestToken(pendingHil.requestId);
   const responseLine = surfaceKind === "dm"
     ? phase === "initial"
-      ? 'Reply "approve" to continue, "approve always" to remember it for this conversation, or "deny" to stop this action.'
-      : 'Reply "approve", "deny", or "approve always" to continue.'
+      ? `Reply "approve ${requestToken}" to continue, "approve always ${requestToken}" to remember it for this conversation, or "deny ${requestToken}" to stop this action.`
+      : `Reply "approve ${requestToken}", "deny ${requestToken}", or "approve always ${requestToken}" to continue.`
     : "Open Chat to approve or deny this action.";
   return [
     phase === "initial"

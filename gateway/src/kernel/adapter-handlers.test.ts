@@ -1811,7 +1811,114 @@ describe("adapter lifecycle handlers", () => {
     );
   });
 
-  it("adapter.inbound accepts approve in dm while a confirmation is pending", async () => {
+  it("rejects a bare decision replying to an unverified old HIL prompt", async () => {
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "history-current",
+      ok: true,
+      data: {
+        pendingHil: {
+          requestId: "hil-current",
+          toolName: "Read",
+          syscall: "fs.read",
+          args: { path: "~/current.txt" },
+        },
+      },
+    } as any);
+    const ctx = makeContext({}, { upsert: vi.fn() });
+
+    const result = await handleAdapterInbound({
+      adapter: "telegram",
+      accountId: "bot",
+      message: {
+        messageId: "decision-on-old-prompt",
+        surface: { kind: "dm", id: "chat-1" },
+        actor: { id: "telegram:user:1" },
+        text: "approve",
+        replyToId: "provider-hil-old",
+      },
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      reply: { replyToId: "decision-on-old-prompt" },
+    });
+    expect(result.reply?.text).toContain("couldn’t verify");
+    expect(result.reply?.text).toContain('"approve hil[hil-current]"');
+    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
+    expect(sendFrameToProcessMock).not.toHaveBeenCalledWith(
+      "pid-1",
+      expect.objectContaining({ call: "proc.hil" }),
+    );
+  });
+
+  it("rejects an old request token after the pending HIL prompt is replaced", async () => {
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "history-replaced",
+      ok: true,
+      data: {
+        pendingHil: {
+          requestId: "hil-new",
+          toolName: "Write",
+          syscall: "fs.write",
+          args: { path: "~/new.txt" },
+        },
+      },
+    } as any);
+    const ctx = makeContext({}, { upsert: vi.fn() });
+
+    const result = await handleAdapterInbound({
+      adapter: "discord",
+      accountId: "bot",
+      message: {
+        messageId: "decision-for-replaced-prompt",
+        surface: { kind: "dm", id: "channel-1" },
+        actor: { id: "discord:user:1" },
+        text: "approve hil[hil-old]",
+        replyToId: "provider-hil-old",
+      },
+    }, ctx);
+
+    expect(result.reply?.text).toContain("couldn’t verify");
+    expect(result.reply?.text).toContain('"approve hil[hil-new]"');
+    expect(result.reply?.text).not.toContain('"approve hil[hil-old]"');
+    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a bare decision when the adapter supplies no reply correlation", async () => {
+    sendFrameToProcessMock.mockResolvedValueOnce({
+      type: "res",
+      id: "history-no-correlation",
+      ok: true,
+      data: {
+        pendingHil: {
+          requestId: "hil-no-correlation",
+          toolName: "Delete",
+          syscall: "fs.delete",
+          args: { path: "~/old.txt" },
+        },
+      },
+    } as any);
+    const ctx = makeContext({}, { upsert: vi.fn() });
+
+    const result = await handleAdapterInbound({
+      adapter: "whatsapp",
+      accountId: "primary",
+      message: {
+        messageId: "bare-decision",
+        surface: { kind: "dm", id: "dm-1" },
+        actor: { id: "wa:+123" },
+        text: "deny",
+      },
+    }, ctx);
+
+    expect(result.reply?.text).toContain("couldn’t verify");
+    expect(result.reply?.text).toContain('"deny hil[hil-no-correlation]"');
+    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the exact current HIL token without provider reply correlation", async () => {
     const service = {
       adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
     };
@@ -1859,7 +1966,7 @@ describe("adapter lifecycle handlers", () => {
           messageId: "msg-2",
           surface: { kind: "dm", id: "dm-1" },
           actor: { id: "wa:+123" },
-          text: "approve",
+          text: "approve hil[hil-2]",
         },
       },
       ctx,
@@ -1919,7 +2026,7 @@ describe("adapter lifecycle handlers", () => {
         messageId: "hil-provider-once",
         surface: { kind: "dm" as const, id: "dm-1" },
         actor: { id: "wa:+123" },
-        text: "deny",
+        text: "deny hil[hil-once]",
       },
     };
 
@@ -1983,7 +2090,7 @@ describe("adapter lifecycle handlers", () => {
           messageId: "msg-4",
           surface: { kind: "dm", id: "dm-1" },
           actor: { id: "wa:+123" },
-          text: "approve always",
+          text: "approve always hil[hil-3]",
         },
       },
       ctx,
