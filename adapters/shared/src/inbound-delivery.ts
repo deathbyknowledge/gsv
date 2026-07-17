@@ -6,31 +6,48 @@ import type {
 } from "./types";
 import { isAdapterInboundResult } from "../../../packages/gsv/src/protocol/adapters.js";
 
-type PendingInboundDelivery<Payload> = {
-  payload: Payload;
-  createdAt: number;
+type PendingInboundResponse = {
+  message: AdapterOutboundMessage;
+  expiresAt?: number;
 };
 
-export type InboundDeliveryDisposition = {
+type PendingInboundDelivery<Payload> =
+  | {
+      state: "provider";
+      payload: Payload;
+      createdAt: number;
+    }
+  | {
+      state: "responses";
+      responses: PendingInboundResponse[];
+      /** Number of provider-delivery rounds durably started. */
+      attempt: number;
+      createdAt: number;
+    };
+
+type InboundDeliveryDisposition = {
   terminal: boolean;
   error?: string;
+  responses?: PendingInboundResponse[];
 };
 
-export type InboundDeliveryAttempt =
+type InboundDeliveryAttempt =
   | { state: "completed" }
   | { state: "pending"; error?: string }
   | { state: "active" }
   | { state: "missing" };
 
 const MAX_ERROR_LENGTH = 1_024;
+const MAX_RESPONSE_DELIVERY_ATTEMPTS = 10;
 
 /**
  * Adapter-owned durable handoff for provider ingress.
  *
  * The compact provider payload (never a one-shot body stream) is recorded
- * before the first Gateway RPC and removed only after the Kernel returns a
- * terminal receipt disposition. Scheduling is deliberately left to the
- * adapter Durable Object's existing alarm.
+ * before the first Gateway RPC. A terminal Kernel result atomically advances
+ * that record to normalized outbound responses before provider delivery. A
+ * response retry therefore never re-enters the Kernel or renormalizes actor
+ * identity. Scheduling uses the adapter Durable Object's existing alarm.
  */
 export class InboundDeliveryLedger<Payload> {
   private readonly active = new Set<string>();
@@ -55,6 +72,7 @@ export class InboundDeliveryLedger<Payload> {
     await this.storage.transaction(async (txn) => {
       if (!await txn.get(key)) {
         await txn.put(key, {
+          state: "provider",
           payload,
           createdAt: Date.now(),
         } satisfies PendingInboundDelivery<Payload>);
@@ -76,9 +94,23 @@ export class InboundDeliveryLedger<Payload> {
     });
   }
 
+  async armIfPending(alarmAt: number): Promise<boolean> {
+    const normalizedAlarmAt = requireAlarmTime(alarmAt);
+    return await this.storage.transaction(async (txn) => {
+      const pending = await txn.list({ prefix: this.prefix, limit: 1 });
+      if (pending.size === 0) return false;
+      const currentAlarm = await txn.getAlarm();
+      if (currentAlarm === null || currentAlarm > normalizedAlarmAt) {
+        await txn.setAlarm(normalizedAlarmAt);
+      }
+      return true;
+    });
+  }
+
   async attempt(
     deliveryId: string,
     deliver: (payload: Payload) => Promise<InboundDeliveryDisposition>,
+    send?: (message: AdapterOutboundMessage) => Promise<AdapterSendResult>,
   ): Promise<InboundDeliveryAttempt> {
     const normalizedId = requireDeliveryId(deliveryId);
     if (this.active.has(normalizedId)) {
@@ -93,6 +125,10 @@ export class InboundDeliveryLedger<Payload> {
         return { state: "missing" };
       }
 
+      if (pending.state === "responses") {
+        return await this.deliverResponses(key, pending, send);
+      }
+
       let disposition: InboundDeliveryDisposition;
       try {
         disposition = await deliver(pending.payload);
@@ -104,8 +140,19 @@ export class InboundDeliveryLedger<Payload> {
       }
 
       if (disposition.terminal) {
-        await this.storage.delete(key);
-        return { state: "completed" };
+        const responses = disposition.responses ?? [];
+        if (responses.length === 0) {
+          await this.storage.delete(key);
+          return { state: "completed" };
+        }
+        const responseState: PendingInboundDelivery<Payload> = {
+          state: "responses",
+          responses,
+          attempt: 0,
+          createdAt: pending.createdAt,
+        };
+        await this.storage.put(key, responseState);
+        return await this.deliverResponses(key, responseState, send);
       }
 
       const error = disposition.error?.slice(0, MAX_ERROR_LENGTH);
@@ -129,13 +176,74 @@ export class InboundDeliveryLedger<Payload> {
       .map(([key]) => key.slice(this.prefix.length));
   }
 
-  async hasPending(): Promise<boolean> {
-    const records = await this.storage.list({ prefix: this.prefix, limit: 1 });
-    return records.size > 0;
-  }
-
   private recordKey(deliveryId: string): string {
     return `${this.prefix}${deliveryId}`;
+  }
+
+  private async deliverResponses(
+    key: string,
+    pending: Extract<PendingInboundDelivery<Payload>, { state: "responses" }>,
+    send: ((message: AdapterOutboundMessage) => Promise<AdapterSendResult>) | undefined,
+  ): Promise<InboundDeliveryAttempt> {
+    if (!send) {
+      return { state: "pending", error: "Adapter response delivery is unavailable" };
+    }
+    if (pending.attempt >= MAX_RESPONSE_DELIVERY_ATTEMPTS) {
+      console.warn(
+        `[Adapter] Inbound responses stopped after ${pending.attempt} attempts`,
+      );
+      await this.storage.delete(key);
+      return { state: "completed" };
+    }
+
+    // Count the round before provider I/O. A crash can consume an attempt, but
+    // cannot exceed the durable retry bound.
+    const attempted = {
+      ...pending,
+      attempt: pending.attempt + 1,
+    } satisfies PendingInboundDelivery<Payload>;
+    await this.storage.put(key, attempted);
+
+    let retryError: string | undefined;
+    for (const response of attempted.responses) {
+      if (response.expiresAt !== undefined && response.expiresAt <= Date.now()) {
+        console.warn(
+          `[Adapter] Inbound response ${response.message.deliveryId} expired before delivery`,
+        );
+        continue;
+      }
+
+      let delivery: AdapterSendResult;
+      try {
+        delivery = await send(response.message);
+      } catch (error) {
+        retryError ??= toErrorMessage(error);
+        continue;
+      }
+      if (delivery.ok) continue;
+      if (delivery.retryable) {
+        retryError ??= delivery.error;
+        continue;
+      }
+      console.warn(
+        `[Adapter] Inbound response ${response.message.deliveryId} was not delivered: ${delivery.error}`,
+      );
+    }
+
+    if (
+      retryError !== undefined
+      && attempted.attempt < MAX_RESPONSE_DELIVERY_ATTEMPTS
+    ) {
+      const detail = retryError.slice(0, MAX_ERROR_LENGTH);
+      return { state: "pending", ...(detail ? { error: detail } : {}) };
+    }
+    if (retryError !== undefined) {
+      console.warn(
+        `[Adapter] Inbound responses stopped after ${attempted.attempt} attempts: ${retryError}`,
+      );
+    }
+    await this.storage.delete(key);
+    return { state: "completed" };
   }
 }
 
@@ -146,21 +254,14 @@ export function isTerminalAdapterInboundResult(
   return isAdapterInboundResult(result) && result.replayed !== "in_progress";
 }
 
-/**
- * Completes the provider-facing half of an inbound handoff.
- *
- * The caller must keep its durable inbound payload until this returns terminal.
- * Stable response delivery ids make replay through the account-local outbound
- * ledger safe after a transport failure or Durable Object restart.
- */
-export async function deliverAdapterInboundResponses(
+/** Converts a terminal Kernel result into durable, provider-ready responses. */
+export function adapterInboundResultDisposition(
   result: unknown,
   input: {
     surface: AdapterSurface;
     providerMessageId: string;
-    send: (message: AdapterOutboundMessage) => Promise<AdapterSendResult>;
   },
-): Promise<InboundDeliveryDisposition> {
+): InboundDeliveryDisposition {
   if (!isTerminalAdapterInboundResult(result)) {
     return {
       terminal: false,
@@ -168,41 +269,29 @@ export async function deliverAdapterInboundResponses(
     };
   }
 
-  const responses: AdapterOutboundMessage[] = [];
+  const responses: PendingInboundResponse[] = [];
   if (result.challenge?.prompt) {
     responses.push({
-      deliveryId: result.challenge.deliveryId,
-      surface: input.surface,
-      text: result.challenge.prompt,
-      replyToId: input.providerMessageId,
+      message: {
+        deliveryId: result.challenge.deliveryId,
+        surface: input.surface,
+        text: result.challenge.prompt,
+        replyToId: input.providerMessageId,
+      },
+      expiresAt: result.challenge.expiresAt,
     });
   }
   if (result.reply?.text) {
     responses.push({
-      deliveryId: result.reply.deliveryId,
-      surface: input.surface,
-      text: result.reply.text,
-      replyToId: result.reply.replyToId || input.providerMessageId,
+      message: {
+        deliveryId: result.reply.deliveryId,
+        surface: input.surface,
+        text: result.reply.text,
+        replyToId: result.reply.replyToId || input.providerMessageId,
+      },
     });
   }
-
-  for (const response of responses) {
-    let delivery: AdapterSendResult;
-    try {
-      delivery = await input.send(response);
-    } catch (error) {
-      return { terminal: false, error: toErrorMessage(error) };
-    }
-    if (delivery.ok) continue;
-    if (delivery.retryable) {
-      return { terminal: false, error: delivery.error };
-    }
-    console.warn(
-      `[Adapter] Inbound response ${response.deliveryId} was not delivered: ${delivery.error}`,
-    );
-  }
-
-  return { terminal: true };
+  return { terminal: true, ...(responses.length > 0 ? { responses } : {}) };
 }
 
 function requireDeliveryId(value: string): string {

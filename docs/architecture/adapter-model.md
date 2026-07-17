@@ -73,7 +73,8 @@ The inbound path looks like this:
 1. A platform event arrives at the adapter worker.
 2. The adapter normalizes it into a GSV adapter message.
 3. The adapter sends `adapter.inbound` through the Gateway's `serviceFrame`
-   binding, with an optional top-level media body.
+   binding with its stable account-scoped ingress `deliveryId` and an optional
+   top-level media body.
 4. The Kernel resolves the adapter account and external actor.
 5. The Kernel checks the identity link and non-DM activation policy.
 6. The Kernel records the actor/thread-scoped observed surface and resolves its
@@ -111,18 +112,21 @@ sends text or one filesystem attachment as an extra message. An explicit
 send to the current automatic destination requires `--also`, preventing an
 accidental duplicate final reply.
 
-Inbound provider message ids are stable idempotency inputs. Before link,
-command, approval, routing, media, or Process side effects, the Kernel claims a
-durable receipt for the normalized adapter, account, actor, exact surface and
-thread, and provider message id. A completed replay returns the stored
-disposition; a concurrent replay on the live Kernel observes the active claim,
-while an abandoned or post-restart claim is fenced and reclaimed. Checkpoints
-bind HIL decisions to their exact request and preserve staged media plus the
-stable Process run id, so reconciliation cannot turn an old approval into a
-new turn or upload the same media again. Both paths cancel any repeated media
-body before staging bytes. A Process admission predating the receipt migration
-reports whether that run is active, queued, or already recorded so the Kernel
-cannot resurrect a completed run's reply route or typing state.
+Each adapter derives a stable account-scoped ingress `deliveryId` from the
+provider's complete event identity. For example, WhatsApp includes the group
+participant as well as the stanza id. Before link, command, approval, routing,
+media, or Process side effects, the Kernel claims a durable receipt for that
+id. The actor and surface are recorded for audit and authorization but are not
+part of receipt identity, because provider aliases may normalize after the
+first delivery. A completed replay returns the stored disposition; a
+concurrent replay on the live Kernel observes the active claim, while an
+abandoned or post-restart claim is fenced and reclaimed. Checkpoints bind HIL
+decisions to their exact request and preserve staged media plus the stable
+Process run id, so reconciliation cannot turn an old approval into a new turn
+or upload the same media again. Both paths cancel any repeated media body before
+staging bytes. A Process admission predating the receipt migration reports
+whether that run is active, queued, or already recorded so the Kernel cannot
+resurrect a completed run's reply route or typing state.
 
 The adapter owns the handoff until the Kernel reaches a terminal disposition.
 Discord stores the compact provider event as JSON, Telegram stores the
@@ -131,19 +135,22 @@ protobuf message in their existing account Durable Object storage before the
 first Gateway call. A transport failure or `replayed: "in_progress"` leaves the
 record pending; the account's existing alarm retries it and rebuilds any media
 body from the provider payload. The payload and its earliest alarm are committed
-in one storage transaction. A terminal result is not released until the adapter
-has also handled any immediate response described below. This uses the account's
-existing storage and wake-up mechanism rather than introducing a second ingress
-scheduler or blob store.
+in one storage transaction. An alarm re-arms pending work before retry I/O, so a
+worker failure cannot leave a durable record without a wake-up. This uses the
+account's existing storage and wake-up mechanism rather than introducing a
+second ingress scheduler or blob store.
 
 Command replies, link challenges, and HIL acknowledgements use the receipt's
 stable delivery ids. The Kernel prepares and completes the receipt with the
-exact result, while the adapter retains its durable provider payload. The
-adapter then passes each immediate response through the same account-local
-outbound ledger used by normal sends before deleting that payload. If either
-side restarts, the adapter replays the provider event, the Kernel returns the
-stored result, and the stable delivery id deduplicates any completed send.
-Completed receipts are capped and retained for seven days.
+exact result. Before provider delivery, the adapter replaces its durable raw
+payload with normalized response records. It then passes each response through
+the same account-local outbound ledger used by normal sends. A response retry
+therefore cannot re-enter the Kernel or renormalize actor identity. A crash
+before that transition can replay the stable Kernel receipt without repeating
+side effects; after it, a restart replays only the stored response with its
+stable delivery id. Link challenges are skipped after their expiry, and
+retry-safe response failures stop after ten durably counted attempts. Completed
+Kernel receipts are capped and retained for seven days.
 
 Outbound messages cross the adapter-worker boundary with a stable
 `deliveryId`. Automatic run replies, schedule occurrences, and the `message`
@@ -254,7 +261,10 @@ so the cutover is intentionally explicit.
 Kernel migration v013 adds the normalized ingress receipt table. The table is
 additive, so it does not disturb routes or active runs. Claim tokens fence a
 stale request, and durable progress/result checkpoints let a replacement Kernel
-resume or reconcile the exact operation before completing the receipt.
+resume or reconcile the exact operation before completing the receipt. V014
+adds the adapter-owned provider delivery id. During an upgrade, legacy receipts
+are reused only when the old actor-scoped identity resolves unambiguously;
+ambiguous legacy matches fail closed instead of repeating side effects.
 
 ## Platform-specific quirks stay inside the adapter
 
@@ -273,7 +283,8 @@ runtime.
 
 1. Implement the shared adapter worker interface in a separate worker.
 2. Keep one account's provider lifecycle in its owning Durable Object.
-3. Normalize stable actor, surface, and provider message identifiers.
+3. Normalize stable actor and surface identifiers, and derive one account-scoped
+   ingress delivery id from the provider's complete event identity.
 4. Persist reconstructable ingress before the first Gateway call and retry it
    with the account's existing wake-up mechanism until a terminal disposition.
 5. Implement mention/reply activation for every supported non-DM surface.

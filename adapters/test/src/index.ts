@@ -346,7 +346,7 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
         type: "req",
         id: crypto.randomUUID(),
         call: "adapter.inbound",
-        args: { adapter: "test", accountId, message },
+        args: { adapter: "test", accountId, deliveryId: messageId, message },
         ...(options?.body ? { body: options.body } : {}),
       };
       const response = await this.env.GATEWAY.serviceFrame(frame);

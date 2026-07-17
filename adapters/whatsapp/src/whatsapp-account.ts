@@ -15,7 +15,7 @@ import {
   fingerprintOutboundDelivery,
 } from "../../shared/src/delivery-ledger";
 import {
-  deliverAdapterInboundResponses,
+  adapterInboundResultDisposition,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
@@ -843,8 +843,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
       async (encoded) => {
         const decoded = proto.WebMessageInfo.decode(encoded);
         if (!decoded.key) return { terminal: true };
-        return this.forwardInboundMessage(decoded as WAMessage);
+        return this.forwardInboundMessage(decoded as WAMessage, deliveryId);
       },
+      async (response) => this.sendMessage(this.state.accountId!, response),
     );
     if (attempt.state !== "pending") return;
 
@@ -863,6 +864,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   private async forwardInboundMessage(
     msg: WAMessage,
+    deliveryId: string,
   ): Promise<{ terminal: boolean; error?: string }> {
     const extracted = extractMessageContent(msg.message);
     const contentType = extracted ? getContentType(extracted) : undefined;
@@ -962,24 +964,24 @@ export class WhatsAppAccount extends DurableObject<Env> {
       {
         adapter: "whatsapp",
         accountId: this.state.accountId,
+        deliveryId,
         message: inbound,
       },
       media.body,
     );
-    const responseDisposition = await deliverAdapterInboundResponses(result, {
+    const responseDisposition = adapterInboundResultDisposition(result, {
       surface: inbound.surface,
       providerMessageId: inbound.messageId,
-      send: (response) => this.sendMessage(this.state.accountId!, response),
     });
     if (!responseDisposition.terminal) return responseDisposition;
     if (!result.ok) {
       console.error(
         `[WA:${this.state.accountId}] Gateway RPC inbound rejected: ${result.error || "unknown error"}`,
       );
-      return { terminal: true };
+      return responseDisposition;
     }
     this.state.lastMessageAt = Date.now();
-    return { terminal: true };
+    return responseDisposition;
   }
 
   private isGroupMessageAddressedToSelf(

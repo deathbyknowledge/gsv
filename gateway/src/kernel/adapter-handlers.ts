@@ -733,10 +733,14 @@ async function handleAdapterInboundOwned(
 
   const adapter = typeof args.adapter === "string" ? args.adapter.trim().toLowerCase() : "";
   const accountId = typeof args.accountId === "string" ? args.accountId.trim() : "";
+  const providerDeliveryId = typeof args.deliveryId === "string"
+    ? args.deliveryId.trim()
+    : "";
   const inbound = args.message;
 
   if (!adapter) return { ok: false, error: "adapter is required" };
   if (!accountId) return { ok: false, error: "accountId is required" };
+  if (!providerDeliveryId) return { ok: false, error: "deliveryId is required" };
   if (typeof inbound?.messageId !== "string" || !inbound.messageId.trim()) {
     return { ok: false, error: "message.messageId is required" };
   }
@@ -784,22 +788,13 @@ async function handleAdapterInboundOwned(
     return { ok: false, error: "message.actor.id is required" };
   }
 
-  const receiptId = await stableOpaqueId("adapter-ingress", [
+  const candidateReceiptId = await stableOpaqueId("adapter-ingress", [
     adapter,
     accountId,
-    actorId,
-    message.surface.kind,
-    message.surface.id,
-    message.surface.threadId ?? null,
-    message.messageId,
+    providerDeliveryId,
   ]);
-  // The receipt id is already opaque, stable, and valid as a delivery-id
-  // prefix. Suffixing the immediate outcome avoids another hashing round on
-  // every inbound message while keeping reply and challenge attempts distinct.
-  const replyDeliveryId = `${receiptId}:reply`;
-  const challengeDeliveryId = `${receiptId}:challenge`;
   const receipt = ctx.adapters.ingressReceipts.claim({
-    receiptId,
+    receiptId: candidateReceiptId,
     adapter,
     accountId,
     actorId,
@@ -807,7 +802,11 @@ async function handleAdapterInboundOwned(
     surfaceId: message.surface.id,
     threadId: message.surface.threadId,
     providerMessageId: message.messageId,
+    providerDeliveryId,
   });
+  if (receipt.state === "ambiguous") {
+    return { ok: false, error: receipt.error };
+  }
   if (receipt.state === "in_progress") {
     return {
       ok: true,
@@ -818,6 +817,9 @@ async function handleAdapterInboundOwned(
   if (receipt.state === "completed") {
     return { ...receipt.result, replayed: "completed" };
   }
+  const receiptId = receipt.receiptId;
+  const replyDeliveryId = `${receiptId}:reply`;
+  const challengeDeliveryId = `${receiptId}:challenge`;
   const claimToken = receipt.claimToken;
   try {
     if (receipt.state === "prepared") {
@@ -1144,15 +1146,10 @@ async function deliverAdapterInboundToProcess(input: {
     if (input.uid === undefined || !input.pid || !input.checkpoint) {
       throw new Error("Adapter ingress process delivery is missing claim state");
     }
-    const runId = await stableOpaqueId("adapter-run", [
-      adapter,
-      accountId,
-      actorId,
-      message.surface.kind,
-      message.surface.id.trim(),
-      message.surface.threadId?.trim() || null,
-      message.messageId.trim(),
-    ]);
+    const runId = await stableOpaqueId(
+      "adapter-run",
+      [input.checkpoint.receiptId],
+    );
     const media = await storeAdapterInboundMedia(
       input.pid,
       runId,

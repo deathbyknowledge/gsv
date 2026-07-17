@@ -6,7 +6,7 @@ import {
 } from "../../shared/src/delivery-ledger";
 import type { DeliveryFailureKind } from "../../shared/src/delivery-ledger";
 import {
-  deliverAdapterInboundResponses,
+  adapterInboundResultDisposition,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
@@ -1015,6 +1015,7 @@ export class TelegramAccount extends DurableObject<Env> {
 
   private async forwardWebhookMessage(
     message: TelegramMessage,
+    deliveryId: string,
   ): Promise<{ terminal: boolean; error?: string }> {
     if (!this.canProcessInbound()) {
       return { terminal: false, error: "Telegram account is disconnected" };
@@ -1036,26 +1037,26 @@ export class TelegramAccount extends DurableObject<Env> {
       {
         adapter: "telegram",
         accountId: this.getAccountId(),
+        deliveryId,
         message: inbound.message,
       },
       inbound.body,
     );
-    const responseDisposition = await deliverAdapterInboundResponses(result, {
+    const responseDisposition = adapterInboundResultDisposition(result, {
       surface: inbound.message.surface,
       providerMessageId: inbound.message.messageId,
-      send: (response) => this.sendMessage(response),
     });
     if (!responseDisposition.terminal) return responseDisposition;
     if (!result.ok) {
       this.state.lastError = result.error || "Gateway rejected inbound message";
       await this.saveState();
-      return { terminal: true };
+      return responseDisposition;
     }
 
     this.state.lastActivity = Date.now();
     this.state.lastError = null;
     await this.saveState();
-    return { terminal: true };
+    return responseDisposition;
   }
 
   private normalizeUpdateId(value: unknown): number | null {
@@ -1076,7 +1077,8 @@ export class TelegramAccount extends DurableObject<Env> {
   ): Promise<"completed" | "pending"> {
     const attempt = await this.inboundDeliveries.attempt(
       deliveryId,
-      async (message) => this.forwardWebhookMessage(message),
+      async (message) => this.forwardWebhookMessage(message, deliveryId),
+      async (response) => this.sendMessage(response),
     );
     if (attempt.state !== "pending") {
       return "completed";
@@ -1093,12 +1095,14 @@ export class TelegramAccount extends DurableObject<Env> {
       return;
     }
 
+    // Re-arm before provider or Gateway I/O. If this alarm invocation crashes,
+    // the durable record still has another scheduled owner.
+    await this.inboundDeliveries.armIfPending(
+      Date.now() + INBOUND_RETRY_DELAY_MS,
+    );
     const ids = await this.inboundDeliveries.pendingIds(INBOUND_RETRY_BATCH_SIZE);
     for (const deliveryId of ids) {
       await this.deliverPendingInbound(deliveryId);
-    }
-    if (await this.inboundDeliveries.hasPending()) {
-      await this.inboundDeliveries.arm(Date.now() + INBOUND_RETRY_DELAY_MS);
     }
   }
 

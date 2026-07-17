@@ -4,14 +4,19 @@ import {
   handleAdapterConnect,
   handleAdapterDisconnect,
   deliverAdapterReply,
-  handleAdapterInbound,
+  handleAdapterInbound as handleAdapterInboundImpl,
   handleAdapterList,
   handleAdapterSend,
   handleAdapterStateUpdate,
   handleAdapterStatus,
 } from "./adapter-handlers";
 import { sendFrameToProcess } from "../shared/utils";
-import { bodyFromBytes, bodyToBytes } from "@humansandmachines/gsv/protocol";
+import {
+  bodyFromBytes,
+  bodyToBytes,
+  type AdapterInboundArgs,
+  type BinaryBody,
+} from "@humansandmachines/gsv/protocol";
 
 vi.mock("../shared/utils", () => ({
   sendFrameToProcess: vi.fn(),
@@ -54,6 +59,17 @@ function userIdentity(uid = 1000): KernelContext["identity"] {
     },
     capabilities: ["adapter.*"],
   };
+}
+
+function handleAdapterInbound(
+  args: Omit<AdapterInboundArgs, "deliveryId"> & { deliveryId?: string },
+  ctx: KernelContext,
+  body?: BinaryBody,
+) {
+  return handleAdapterInboundImpl({
+    ...args,
+    deliveryId: args.deliveryId ?? args.message.messageId,
+  }, ctx, body);
 }
 
 function makeContext(
@@ -1269,7 +1285,7 @@ describe("adapter lifecycle handlers", () => {
     );
   });
 
-  it("replays completed commands without repeating their side effects", async () => {
+  it("replays completed commands across actor alias normalization", async () => {
     const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: "pid-1" });
     const inbound = {
       adapter: "whatsapp",
@@ -1277,18 +1293,73 @@ describe("adapter lifecycle handlers", () => {
       message: {
         messageId: "command-once",
         surface: { kind: "dm" as const, id: "dm-1" },
-        actor: { id: "wa:+123" },
+        actor: { id: "wa:lid:123" },
         text: "/use personal",
       },
     };
 
     const first = await handleAdapterInbound(inbound, ctx);
-    const replay = await handleAdapterInbound(inbound, ctx);
+    const replay = await handleAdapterInbound({
+      ...inbound,
+      message: {
+        ...inbound.message,
+        actor: { id: "wa:+123" },
+      },
+    }, ctx);
 
     expect(first.reply?.deliveryId).toMatch(/^adapter-ingress:[0-9a-f]{64}:reply$/);
     expect(replay).toEqual({ ...first, replayed: "completed" });
     expect(ctx.adapters.surfaceRoutes.setRoute).toHaveBeenCalledTimes(1);
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps equal WhatsApp stanza ids distinct across group participants", async () => {
+    const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: "pid-1" });
+    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+      if (frame.call === "proc.history") {
+        return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
+      }
+      if (frame.call === "proc.adapter.deliver") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            status: "started",
+            runId: frame.args.runId,
+            queued: false,
+          },
+        };
+      }
+      throw new Error(`Unexpected call: ${frame.call}`);
+    });
+    const base = {
+      adapter: "whatsapp",
+      accountId: "primary",
+      message: {
+        messageId: "client-stanza",
+        surface: { kind: "group" as const, id: "group@g.us" },
+        text: "/use personal",
+        wasMentioned: true,
+      },
+    };
+
+    const first = await handleAdapterInbound({
+      ...base,
+      deliveryId: "group@g.us:participant-a:client-stanza",
+      message: { ...base.message, actor: { id: "wa:lid:a" } },
+    }, ctx);
+    const second = await handleAdapterInbound({
+      ...base,
+      deliveryId: "group@g.us:participant-b:client-stanza",
+      message: { ...base.message, actor: { id: "wa:lid:b" } },
+    }, ctx);
+
+    expect(first.delivered?.runId).not.toBe(second.delivered?.runId);
+    expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) =>
+      frame.call === "proc.adapter.deliver"
+    )).toHaveLength(2);
   });
 
   it("reclaims a prepared command reply after completion is interrupted", async () => {

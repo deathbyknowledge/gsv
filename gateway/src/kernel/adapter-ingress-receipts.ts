@@ -4,7 +4,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import { isAdapterInboundResult } from "@humansandmachines/gsv/protocol";
 
-export type AdapterIngressReceiptKey = {
+type AdapterIngressReceiptInput = {
   adapter: string;
   accountId: string;
   actorId: string;
@@ -12,6 +12,7 @@ export type AdapterIngressReceiptKey = {
   surfaceId: string;
   threadId?: string;
   providerMessageId: string;
+  providerDeliveryId: string;
 };
 
 export type AdapterIngressReceiptClaim =
@@ -32,6 +33,11 @@ export type AdapterIngressReceiptClaim =
       state: "completed";
       receiptId: string;
       result: AdapterInboundResult;
+    }
+  | {
+      state: "ambiguous";
+      receiptId: string;
+      error: string;
     };
 
 type AdapterIngressReceiptRow = {
@@ -43,6 +49,7 @@ type AdapterIngressReceiptRow = {
   surface_id: string;
   thread_id: string;
   provider_message_id: string;
+  provider_delivery_id: string | null;
   state: string;
   result_json: string | null;
   progress_json: string | null;
@@ -67,10 +74,16 @@ const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
  * prepared/completed. The time lease is only a final escape hatch for a
  * request that never reaches its cleanup path.
  *
+ * Provider identity is the adapter's stable account-scoped delivery id. Actor
+ * and surface are recorded for audit and authorization, but are not part of
+ * idempotency because provider aliases can normalize after delivery. Legacy
+ * rows without a delivery id are reclaimed only when their raw identity is
+ * unambiguous.
+ *
  * A result is prepared before completion so a replacement Kernel can return
- * the exact disposition without replaying its side effects. The adapter keeps
- * its provider payload until it has delivered any immediate response through
- * its account-local outbound ledger.
+ * the exact disposition without replaying its side effects. The adapter then
+ * persists any immediate response before its account-local outbound ledger
+ * contacts the provider.
  */
 export class AdapterIngressReceiptStore {
   private readonly activeClaims = new Set<string>();
@@ -79,10 +92,21 @@ export class AdapterIngressReceiptStore {
   constructor(private readonly sql: SqlStorage) {}
 
   claim(
-    input: AdapterIngressReceiptKey & { receiptId: string },
+    input: AdapterIngressReceiptInput & { receiptId: string },
   ): AdapterIngressReceiptClaim {
     this.prune();
-    const existing = this.get(input);
+    let existing = this.getByReceiptId(input.receiptId);
+    if (!existing) {
+      const legacy = this.getLegacyReceipt(input);
+      if (legacy.state === "ambiguous") {
+        return {
+          state: "ambiguous",
+          receiptId: input.receiptId,
+          error: "Legacy adapter ingress identity is ambiguous",
+        };
+      }
+      existing = legacy.receipt;
+    }
     if (existing) {
       if (existing.state === "completed") {
         return completedClaimFromRow(existing);
@@ -104,9 +128,9 @@ export class AdapterIngressReceiptStore {
     this.sql.exec(
       `INSERT INTO adapter_ingress_receipts (
         receipt_id, adapter, account_id, actor_id, surface_kind, surface_id,
-        thread_id, provider_message_id, state, result_json, progress_json, claim_token,
-        claimed_at, created_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'in_progress', NULL, NULL, ?, ?, ?, NULL)`,
+        thread_id, provider_message_id, provider_delivery_id, state, result_json,
+        progress_json, claim_token, claimed_at, created_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_progress', NULL, NULL, ?, ?, ?, NULL)`,
       input.receiptId,
       input.adapter,
       input.accountId,
@@ -115,6 +139,7 @@ export class AdapterIngressReceiptStore {
       input.surfaceId,
       input.threadId ?? "",
       input.providerMessageId,
+      input.providerDeliveryId,
       claimToken,
       now,
       now,
@@ -251,40 +276,49 @@ export class AdapterIngressReceiptStore {
     };
   }
 
-  private get(input: AdapterIngressReceiptKey): AdapterIngressReceiptRow | null {
-    return this.sql.exec<AdapterIngressReceiptRow>(
-      `SELECT receipt_id, adapter, account_id, actor_id, surface_kind,
-              surface_id, thread_id, provider_message_id, state, result_json,
-              progress_json, claim_token, claimed_at
-         FROM adapter_ingress_receipts
-        WHERE adapter = ?
-          AND account_id = ?
-          AND actor_id = ?
-          AND surface_kind = ?
-          AND surface_id = ?
-          AND thread_id = ?
-          AND provider_message_id = ?
-        LIMIT 1`,
-      input.adapter,
-      input.accountId,
-      input.actorId,
-      input.surfaceKind,
-      input.surfaceId,
-      input.threadId ?? "",
-      input.providerMessageId,
-    ).toArray()[0] ?? null;
-  }
-
   private getByReceiptId(receiptId: string): AdapterIngressReceiptRow | null {
     return this.sql.exec<AdapterIngressReceiptRow>(
       `SELECT receipt_id, adapter, account_id, actor_id, surface_kind,
-              surface_id, thread_id, provider_message_id, state, result_json,
-              progress_json, claim_token, claimed_at
+              surface_id, thread_id, provider_message_id, provider_delivery_id,
+              state, result_json, progress_json, claim_token, claimed_at
          FROM adapter_ingress_receipts
         WHERE receipt_id = ?
         LIMIT 1`,
       receiptId,
     ).toArray()[0] ?? null;
+  }
+
+  private getLegacyReceipt(
+    input: AdapterIngressReceiptInput,
+  ):
+    | { state: "resolved"; receipt: AdapterIngressReceiptRow | null }
+    | { state: "ambiguous" } {
+    const candidates = this.sql.exec<AdapterIngressReceiptRow>(
+      `SELECT receipt_id, adapter, account_id, actor_id, surface_kind,
+              surface_id, thread_id, provider_message_id, provider_delivery_id,
+              state, result_json, progress_json, claim_token, claimed_at
+         FROM adapter_ingress_receipts
+        WHERE provider_delivery_id IS NULL
+          AND adapter = ?
+          AND account_id = ?
+          AND surface_kind = ?
+          AND surface_id = ?
+          AND thread_id = ?
+          AND provider_message_id = ?
+        ORDER BY CASE WHEN actor_id = ? THEN 0 ELSE 1 END, created_at ASC
+        LIMIT 2`,
+      input.adapter,
+      input.accountId,
+      input.surfaceKind,
+      input.surfaceId,
+      input.threadId ?? "",
+      input.providerMessageId,
+      input.actorId,
+    ).toArray();
+    const exact = candidates.find((row) => row.actor_id === input.actorId);
+    if (exact) return { state: "resolved", receipt: exact };
+    if (candidates.length > 1) return { state: "ambiguous" };
+    return { state: "resolved", receipt: candidates[0] ?? null };
   }
 }
 

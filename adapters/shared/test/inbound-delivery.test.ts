@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  deliverAdapterInboundResponses,
+  adapterInboundResultDisposition,
   InboundDeliveryLedger,
   isTerminalAdapterInboundResult,
 } from "../src/inbound-delivery";
@@ -26,6 +26,16 @@ class MemoryTransaction {
 
   async setAlarm(value: number): Promise<void> {
     this.alarm.value = value;
+  }
+
+  async list<T>(options?: {
+    prefix?: string;
+    limit?: number;
+  }): Promise<Map<string, T>> {
+    const entries = [...this.values.entries()]
+      .filter(([key]) => !options?.prefix || key.startsWith(options.prefix))
+      .slice(0, options?.limit);
+    return new Map(entries) as Map<string, T>;
   }
 }
 
@@ -126,7 +136,7 @@ describe("InboundDeliveryLedger", () => {
       state: "completed",
     });
     expect(deliver).toHaveBeenCalledWith({ providerMessageId: "provider-1" });
-    await expect(restarted.hasPending()).resolves.toBe(false);
+    await expect(restarted.pendingIds()).resolves.toEqual([]);
   });
 
   it("keeps an in-progress Kernel replay pending", async () => {
@@ -173,7 +183,7 @@ describe("InboundDeliveryLedger", () => {
       state: "completed",
     });
     expect(replay).toHaveBeenCalledTimes(1);
-    await expect(restarted.hasPending()).resolves.toBe(false);
+    await expect(restarted.pendingIds()).resolves.toEqual([]);
   });
 
   it("does not overwrite a provider payload when the provider replays it", async () => {
@@ -186,14 +196,160 @@ describe("InboundDeliveryLedger", () => {
     await pending.attempt("provider-4", deliver);
     expect(deliver).toHaveBeenCalledWith({ providerMessageId: "original" });
   });
+
+  it("re-arms durable ingress before retry work starts", async () => {
+    const storage = new MemoryStorage();
+    const pending = ledger(storage);
+    await pending.enqueueAndArm("provider-5", { providerMessageId: "provider-5" }, 200);
+
+    storage.alarm.value = null;
+    await expect(pending.armIfPending(100)).resolves.toBe(true);
+    expect(storage.alarm.value).toBe(100);
+
+    await pending.attempt("provider-5", async () => ({ terminal: true }));
+    storage.alarm.value = null;
+    await expect(pending.armIfPending(300)).resolves.toBe(false);
+    expect(storage.alarm.value).toBeNull();
+  });
+
+  it("persists normalized responses before retrying provider delivery", async () => {
+    const storage = new MemoryStorage();
+    const first = ledger(storage);
+    const surface = { kind: "dm" as const, id: "chat-1" };
+    await first.enqueueAndArm("provider-6", { providerMessageId: "provider-6" }, 100);
+
+    const enterKernel = vi.fn(async () => adapterInboundResultDisposition({
+      ok: true,
+      reply: { deliveryId: "reply-6", text: "Try again" },
+    }, { surface, providerMessageId: "provider-6" }));
+    const send = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false as const,
+        error: "provider unavailable",
+        retryable: true,
+      })
+      .mockResolvedValueOnce({ ok: true as const });
+
+    await expect(first.attempt("provider-6", enterKernel, send)).resolves.toEqual({
+      state: "pending",
+      error: "provider unavailable",
+    });
+    expect(enterKernel).toHaveBeenCalledTimes(1);
+
+    const restarted = ledger(storage);
+    const unexpectedKernelReplay = vi.fn(async () => ({ terminal: true }));
+    await expect(restarted.attempt(
+      "provider-6",
+      unexpectedKernelReplay,
+      send,
+    )).resolves.toEqual({ state: "completed" });
+    expect(unexpectedKernelReplay).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[0]?.[0]).toEqual(send.mock.calls[1]?.[0]);
+  });
+
+  it("attempts every response in a retry round", async () => {
+    const storage = new MemoryStorage();
+    const pending = ledger(storage);
+    await pending.enqueueAndArm("provider-multi", {
+      providerMessageId: "provider-multi",
+    }, 100);
+    const send = vi.fn(async (message: { deliveryId: string }) =>
+      message.deliveryId === "challenge-multi"
+        ? {
+            ok: false as const,
+            error: "challenge unavailable",
+            retryable: true,
+          }
+        : { ok: true as const }
+    );
+
+    await expect(pending.attempt("provider-multi", async () =>
+      adapterInboundResultDisposition({
+        ok: true,
+        challenge: {
+          deliveryId: "challenge-multi",
+          code: "CODE",
+          prompt: "Link this account",
+          expiresAt: Number.MAX_SAFE_INTEGER,
+        },
+        reply: { deliveryId: "reply-multi", text: "Reply too" },
+      }, {
+        surface: { kind: "dm", id: "chat-multi" },
+        providerMessageId: "provider-multi",
+      }), send)).resolves.toEqual({
+      state: "pending",
+      error: "challenge unavailable",
+    });
+    expect(send.mock.calls.map(([message]) => message.deliveryId)).toEqual([
+      "challenge-multi",
+      "reply-multi",
+    ]);
+  });
+
+  it("drops an expired link challenge without calling the provider", async () => {
+    const storage = new MemoryStorage();
+    const pending = ledger(storage);
+    const send = vi.fn(async () => ({ ok: true as const }));
+    await pending.enqueueAndArm("provider-7", { providerMessageId: "provider-7" }, 100);
+
+    await expect(pending.attempt("provider-7", async () =>
+      adapterInboundResultDisposition({
+        ok: true,
+        challenge: {
+          deliveryId: "challenge-7",
+          code: "CODE",
+          prompt: "Link this account",
+          expiresAt: 0,
+        },
+      }, {
+        surface: { kind: "dm", id: "chat-7" },
+        providerMessageId: "provider-7",
+      }), send)).resolves.toEqual({ state: "completed" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("does not exceed ten response attempts after a cleanup crash", async () => {
+    const storage = new MemoryStorage();
+    const pending = ledger(storage);
+    const enterKernel = vi.fn(async () => adapterInboundResultDisposition({
+      ok: true,
+      reply: { deliveryId: "reply-8", text: "Bounded retry" },
+    }, {
+      surface: { kind: "dm", id: "chat-8" },
+      providerMessageId: "provider-8",
+    }));
+    const send = vi.fn(async () => ({
+      ok: false as const,
+      error: "provider unavailable",
+      retryable: true,
+    }));
+    await pending.enqueueAndArm("provider-8", { providerMessageId: "provider-8" }, 100);
+
+    for (let attempt = 1; attempt < 10; attempt += 1) {
+      await expect(pending.attempt("provider-8", enterKernel, send)).resolves.toEqual(
+        { state: "pending", error: "provider unavailable" },
+      );
+    }
+    storage.failNextDelete = true;
+    await expect(pending.attempt("provider-8", enterKernel, send))
+      .rejects.toThrow("simulated crash before local acknowledgement");
+
+    const restarted = ledger(storage);
+    await expect(restarted.attempt("provider-8", enterKernel, send)).resolves.toEqual({
+      state: "completed",
+    });
+    expect(enterKernel).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(10);
+    await expect(restarted.pendingIds()).resolves.toEqual([]);
+  });
 });
 
-describe("deliverAdapterInboundResponses", () => {
-  const surface = { kind: "dm" as const, id: "chat-1" };
+describe("adapterInboundResultDisposition", () => {
+  it("normalizes stable response ids and challenge expiry", () => {
+    const surface = { kind: "dm" as const, id: "chat-1" };
 
-  it("uses stable response ids before releasing inbound ownership", async () => {
-    const send = vi.fn(async () => ({ ok: true as const }));
-    await expect(deliverAdapterInboundResponses({
+    expect(adapterInboundResultDisposition({
       ok: true,
       challenge: {
         deliveryId: "challenge-1",
@@ -208,40 +364,27 @@ describe("deliverAdapterInboundResponses", () => {
     }, {
       surface,
       providerMessageId: "provider-1",
-      send,
-    })).resolves.toEqual({ terminal: true });
-
-    expect(send.mock.calls.map(([message]) => message)).toEqual([
-      {
-        deliveryId: "challenge-1",
-        surface,
-        text: "Link this account",
-        replyToId: "provider-1",
-      },
-      {
-        deliveryId: "reply-1",
-        surface,
-        text: "Done",
-        replyToId: "provider-1",
-      },
-    ]);
-  });
-
-  it("retains inbound ownership for a retry-safe response failure", async () => {
-    await expect(deliverAdapterInboundResponses({
-      ok: true,
-      reply: { deliveryId: "reply-2", text: "Try again" },
-    }, {
-      surface,
-      providerMessageId: "provider-2",
-      send: vi.fn(async () => ({
-        ok: false as const,
-        error: "provider unavailable",
-        retryable: true,
-      })),
-    })).resolves.toEqual({
-      terminal: false,
-      error: "provider unavailable",
+    })).toEqual({
+      terminal: true,
+      responses: [
+        {
+          message: {
+            deliveryId: "challenge-1",
+            surface,
+            text: "Link this account",
+            replyToId: "provider-1",
+          },
+          expiresAt: 123,
+        },
+        {
+          message: {
+            deliveryId: "reply-1",
+            surface,
+            text: "Done",
+            replyToId: "provider-1",
+          },
+        },
+      ],
     });
   });
 });

@@ -10,7 +10,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { DeliveryLedger } from "../../shared/src/delivery-ledger";
 import {
-  deliverAdapterInboundResponses,
+  adapterInboundResultDisposition,
   InboundDeliveryLedger,
 } from "../../shared/src/inbound-delivery";
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
@@ -213,14 +213,16 @@ export class DiscordGateway extends DurableObject<Env> {
     // Reload state in case we hibernated
     await this.loadState();
 
+    // An alarm is cleared when it starts. Persist the next wake-up before any
+    // retry performs external I/O so a crash cannot strand durable ingress.
+    await this.inboundDeliveries.armIfPending(
+      Date.now() + INBOUND_RETRY_DELAY_MS,
+    );
     await this.retryPendingInbound();
 
     // No token = not started, don't reschedule
     if (!this.state.botToken) {
       console.log("[DiscordGateway] No bot token, alarm stopping");
-      if (await this.inboundDeliveries.hasPending()) {
-        await this.inboundDeliveries.arm(Date.now() + INBOUND_RETRY_DELAY_MS);
-      }
       return;
     }
 
@@ -417,6 +419,7 @@ export class DiscordGateway extends DurableObject<Env> {
       async (serialized) => this.forwardMessageCreate(
         JSON.parse(serialized) as Record<string, unknown>,
       ),
+      async (response) => this.sendMessage(response),
     );
     if (attempt.state !== "pending") return;
 
@@ -496,28 +499,28 @@ export class DiscordGateway extends DurableObject<Env> {
       {
         adapter: "discord",
         accountId: this.getAccountId(),
+        deliveryId: messageId,
         message,
       },
       media.body,
     );
-    const responseDisposition = await deliverAdapterInboundResponses(result, {
+    const responseDisposition = adapterInboundResultDisposition(result, {
       surface: message.surface,
       providerMessageId: messageId,
-      send: (response) => this.sendMessage(response),
     });
     if (!responseDisposition.terminal) return responseDisposition;
     if (!result.ok) {
       console.error(
         `[DiscordGateway] Inbound rejected by gateway: ${result.error ?? "unknown error"}`,
       );
-      return { terminal: true };
+      return responseDisposition;
     }
 
     this.state.lastError = null;
     console.log(
       `[DiscordGateway] Delivered message ${messageId} from ${author?.username}`,
     );
-    return { terminal: true };
+    return responseDisposition;
   }
 
   private async notifyGatewayStatus(status: AdapterAccountStatus): Promise<void> {

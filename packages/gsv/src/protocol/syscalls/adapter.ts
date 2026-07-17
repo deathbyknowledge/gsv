@@ -108,6 +108,8 @@ export type AdapterListResult = {
 export type AdapterInboundArgs = {
   adapter: string;
   accountId: string;
+  /** Stable account-scoped identity for the complete provider event. */
+  deliveryId: string;
   message: AdapterInboundMessage;
 };
 

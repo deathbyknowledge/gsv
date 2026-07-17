@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(13);
+    expect(KERNEL_MIGRATIONS).toHaveLength(14);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -83,6 +83,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[12]).toMatchObject({
       id: 13,
       name: "add_adapter_ingress_receipts",
+    });
+    expect(KERNEL_MIGRATIONS[13]).toMatchObject({
+      id: 14,
+      name: "add_adapter_ingress_delivery_id",
     });
   });
 
@@ -239,9 +243,13 @@ describe("kernel schema migrations", () => {
   it("claims normalized adapter ingress before side effects", () => {
     const receiptTable = createTableStatement("adapter_ingress_receipts");
     expect(receiptTable).toContain("receipt_id TEXT NOT NULL UNIQUE");
+    expect(receiptTable).not.toContain("provider_delivery_id");
     expect(receiptTable).toContain("state TEXT NOT NULL CHECK (state IN ('in_progress', 'completed'))");
     expect(receiptTable).toContain(
       "PRIMARY KEY ( adapter, account_id, actor_id, surface_kind, surface_id, thread_id, provider_message_id )",
+    );
+    expect(normalizedStatements()).toContain(
+      "ALTER TABLE adapter_ingress_receipts ADD COLUMN provider_delivery_id TEXT",
     );
   });
 

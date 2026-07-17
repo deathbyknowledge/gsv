@@ -11,6 +11,7 @@ type ReceiptRow = {
   surface_id: string;
   thread_id: string;
   provider_message_id: string;
+  provider_delivery_id: string | null;
   state: "in_progress" | "completed";
   result_json: string | null;
   progress_json: string | null;
@@ -31,10 +32,25 @@ function createMockSql() {
   function exec<T = MockSqlRow>(query: string, ...bindings: unknown[]) {
     const normalized = query.trim();
     if (normalized.startsWith("SELECT receipt_id,")) {
-      const row = bindings.length === 1
-        ? [...rows.values()].find((candidate) => candidate.receipt_id === bindings[0])
-        : rows.get(key(bindings));
-      return cursor((row ? [row] : []) as T[]);
+      if (normalized.includes("WHERE receipt_id = ?")) {
+        const row = [...rows.values()].find(
+          (candidate) => candidate.receipt_id === bindings[0],
+        );
+        return cursor((row ? [row] : []) as T[]);
+      }
+      const matches = [...rows.values()].filter((candidate) =>
+        candidate.provider_delivery_id === null
+        && candidate.adapter === bindings[0]
+        && candidate.account_id === bindings[1]
+        && candidate.surface_kind === bindings[2]
+        && candidate.surface_id === bindings[3]
+        && candidate.thread_id === bindings[4]
+        && candidate.provider_message_id === bindings[5]
+      ).sort((left, right) =>
+        Number(right.actor_id === bindings[6])
+        - Number(left.actor_id === bindings[6])
+      ).slice(0, 2);
+      return cursor(matches as T[]);
     }
     if (normalized.startsWith("INSERT INTO adapter_ingress_receipts")) {
       const [
@@ -46,10 +62,12 @@ function createMockSql() {
         surfaceId,
         threadId,
         providerMessageId,
+        providerDeliveryId,
         claimToken,
         claimedAt,
         createdAt,
       ] = bindings as [
+        string,
         string,
         string,
         string,
@@ -79,6 +97,7 @@ function createMockSql() {
         surface_id: surfaceId,
         thread_id: threadId,
         provider_message_id: providerMessageId,
+        provider_delivery_id: providerDeliveryId,
         state: "in_progress",
         result_json: null,
         progress_json: null,
@@ -184,6 +203,7 @@ const BASE_KEY = {
   surfaceKind: "dm" as const,
   surfaceId: "chat-1",
   providerMessageId: "provider-message-1",
+  providerDeliveryId: "provider-message-1",
 };
 
 describe("AdapterIngressReceiptStore", () => {
@@ -230,28 +250,98 @@ describe("AdapterIngressReceiptStore", () => {
     });
   });
 
-  it("keys receipts by the actor and exact surface thread", () => {
+  it("keeps a stable delivery receipt across actor aliases", () => {
     const sql = createMockSql();
     const store = new AdapterIngressReceiptStore(sql as unknown as SqlStorage);
 
-    expect(store.claim({
+    const original = store.claim({
       ...BASE_KEY,
       threadId: "thread-a",
       receiptId: "receipt-a",
-    }).state)
-      .toBe("claimed");
-    expect(store.claim({
-      ...BASE_KEY,
-      threadId: "thread-b",
-      receiptId: "receipt-b",
-    }).state)
-      .toBe("claimed");
+    });
+    expect(original.state).toBe("claimed");
+    if (original.state !== "claimed") throw new Error("receipt was not claimed");
+    store.prepare(original.receiptId, original.claimToken, { ok: true });
+    store.complete(original.receiptId, original.claimToken);
     expect(store.claim({
       ...BASE_KEY,
       actorId: "telegram:user:2",
       threadId: "thread-a",
-      receiptId: "receipt-c",
-    }).state).toBe("claimed");
+      receiptId: "receipt-a",
+    })).toEqual({
+      state: "completed",
+      receiptId: "receipt-a",
+      result: { ok: true },
+    });
+    expect(sql.rows.size).toBe(1);
+  });
+
+  it("reclaims one unambiguous legacy receipt across actor aliases", () => {
+    const sql = createMockSql();
+    const store = new AdapterIngressReceiptStore(sql as unknown as SqlStorage);
+    const original = store.claim({ ...BASE_KEY, receiptId: "legacy-receipt" });
+    if (original.state !== "claimed") throw new Error("receipt was not claimed");
+    store.prepare(original.receiptId, original.claimToken, { ok: true });
+    store.complete(original.receiptId, original.claimToken);
+    const row = [...sql.rows.values()][0];
+    if (!row) throw new Error("receipt was not inserted");
+    row.provider_delivery_id = null;
+
+    expect(store.claim({
+      ...BASE_KEY,
+      actorId: "telegram:user:alias",
+      providerDeliveryId: "stable-delivery-id",
+      receiptId: "stable-receipt",
+    })).toEqual({
+      state: "completed",
+      receiptId: "legacy-receipt",
+      result: { ok: true },
+    });
+  });
+
+  it("does not collapse ambiguous legacy receipts across actors", () => {
+    const sql = createMockSql();
+    const store = new AdapterIngressReceiptStore(sql as unknown as SqlStorage);
+    const first = store.claim({
+      ...BASE_KEY,
+      providerDeliveryId: "old-delivery-a",
+      receiptId: "old-receipt-a",
+    });
+    const second = store.claim({
+      ...BASE_KEY,
+      actorId: "telegram:user:2",
+      providerDeliveryId: "old-delivery-b",
+      receiptId: "old-receipt-b",
+    });
+    const third = store.claim({
+      ...BASE_KEY,
+      actorId: "telegram:user:3",
+      providerDeliveryId: "old-delivery-c",
+      receiptId: "old-receipt-c",
+    });
+    expect(first.state).toBe("claimed");
+    expect(second.state).toBe("claimed");
+    expect(third.state).toBe("claimed");
+    for (const row of sql.rows.values()) {
+      row.provider_delivery_id = null;
+    }
+
+    expect(store.claim({
+      ...BASE_KEY,
+      actorId: "telegram:user:2",
+      providerDeliveryId: "stable-delivery-b",
+      receiptId: "stable-receipt-b",
+    })).toEqual({ state: "in_progress", receiptId: "old-receipt-b" });
+    expect(store.claim({
+      ...BASE_KEY,
+      actorId: "telegram:user:4",
+      providerDeliveryId: "stable-delivery-d",
+      receiptId: "stable-receipt-d",
+    })).toEqual({
+      state: "ambiguous",
+      receiptId: "stable-receipt-d",
+      error: "Legacy adapter ingress identity is ambiguous",
+    });
     expect(sql.rows.size).toBe(3);
   });
 
@@ -360,6 +450,7 @@ describe("AdapterIngressReceiptStore", () => {
     store.claim({
       ...BASE_KEY,
       providerMessageId: "provider-message-new",
+      providerDeliveryId: "provider-message-new",
       receiptId: "receipt-new",
     });
 
