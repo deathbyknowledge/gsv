@@ -74,6 +74,30 @@ export function TaskListGlyph({ size = 14 }: LineGlyphProps) {
   );
 }
 
+/** Vertical dots (kebab) — the mobile header's "more controls" toggle. Filled
+ *  circles rather than strokes: at small sizes dots read as dots only when
+ *  solid. */
+export function MoreVerticalGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none">
+      <circle cx="12" cy="5" r="1.9" />
+      <circle cx="12" cy="12" r="1.9" />
+      <circle cx="12" cy="19" r="1.9" />
+    </svg>
+  );
+}
+
+/** Left arrow — returns the mobile header's "more" view to the primary one.
+ *  24-viewBox twin of IconButton's arrowBack, sized for bespoke buttons. */
+export function ArrowLeftGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 6 L8 12 L14 18" />
+      <path d="M8 12 H19" />
+    </svg>
+  );
+}
+
 /** Processor chip — the saved model profiles. */
 export function ModelChipGlyph({ size = 14 }: LineGlyphProps) {
   return (

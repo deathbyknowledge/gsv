@@ -2,11 +2,14 @@ import {
   SpeakerOnGlyph,
   SpeakerOffGlyph,
   ArchiveFolderGlyph,
+  ArrowLeftGlyph,
   FreeContextGlyph,
   ModelChipGlyph,
+  MoreVerticalGlyph,
   PlusGlyph,
   TaskListGlyph,
 } from "../../app/components/ui/lineGlyphs";
+import { ReasoningGlyph } from "../../app/components/ui/ReasoningGlyph";
 import type { ComponentChildren } from "preact";
 import type { Story } from "../story";
 
@@ -18,12 +21,15 @@ const GLYPHS: { label: string; node: (size: number) => ComponentChildren }[] = [
   { label: "plus", node: (s) => <PlusGlyph size={s} /> },
   { label: "task-list", node: (s) => <TaskListGlyph size={s} /> },
   { label: "model-chip", node: (s) => <ModelChipGlyph size={s} /> },
+  { label: "more-vertical", node: (s) => <MoreVerticalGlyph size={s} /> },
+  { label: "arrow-left", node: (s) => <ArrowLeftGlyph size={s} /> },
+  { label: "reasoning", node: (s) => <ReasoningGlyph size={s} /> },
 ];
 
 const story: Story = {
   title: "Line glyphs",
   group: "Chrome",
-  blurb: "Inline outline glyphs (crisp at small sizes) · speaker on/off · archive · free-context · plus · task-list · model-chip",
+  blurb: "Inline outline glyphs (crisp at small sizes) · speaker on/off · archive · free-context · plus · task-list · model-chip · more-vertical · arrow-left · reasoning",
   render: () => (
     <div class="ds-col">
       <div class="ds-cell">
