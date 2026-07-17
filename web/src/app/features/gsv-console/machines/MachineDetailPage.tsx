@@ -28,6 +28,8 @@ export function MachineDetailPage({
 }: MachineDetailPageProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const confirmPhrase = target.deviceId;
+  const targetType = target.kind === "browser" ? "browser" : "machine";
+  const forgetLabel = `FORGET ${targetType.toUpperCase()}`;
 
   return (
     <>
@@ -36,7 +38,7 @@ export function MachineDetailPage({
           <div class="gsv-console-detail-actions">
             <Button
               variant="dangerGhost"
-              label={deleting ? "FORGETTING" : "FORGET MACHINE"}
+              label={deleting ? "FORGETTING" : forgetLabel}
               disabled={deleting || !onDelete || (target.kind !== "native-device" && target.kind !== "browser")}
               onClick={() => setConfirmDelete(true)}
             />
@@ -58,9 +60,9 @@ export function MachineDetailPage({
           <div class="gsv-console-confirm-wrap" onClick={(event) => event.stopPropagation()}>
             <ConfirmModal
               title="CONFIRM FORGET"
-              message={`Forget machine "${target.label}"?`}
-              note="The machine record is removed, any live device connection is disconnected, and active node tokens for this device are revoked."
-              confirmLabel="FORGET MACHINE"
+              message={`Forget ${targetType} "${target.label}"?`}
+              note={`The ${targetType} record is removed, any live device connection is disconnected, and active node tokens for this device are revoked.`}
+              confirmLabel={forgetLabel}
               confirmPhrase={confirmPhrase}
               confirmInputPlaceholder={confirmPhrase}
               onCancel={() => setConfirmDelete(false)}

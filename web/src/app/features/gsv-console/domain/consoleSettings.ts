@@ -115,9 +115,8 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   {
     key: "config/ai/api_key",
     label: "API key",
-    description: "Provider credential for endpoints that require one.",
+    description: "Some providers require an API key, while others do not.",
     kind: "password",
-    requirement: "optional",
     placeholder: "sk-...",
     size: "large",
   },
@@ -188,9 +187,8 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
       {
         key: "config/ai/image/read/api_key",
         label: "API key",
-        description: "Credential for providers that require one. Falls back to the agent API key when empty.",
+        description: "Some providers require an API key, while others do not. Falls back to the agent API key when empty.",
         kind: "password",
-        requirement: "optional",
         placeholder: "sk-...",
       },
       {
@@ -261,9 +259,8 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
       {
         key: "config/ai/image/generation/api_key",
         label: "API key",
-        description: "Credential for providers that require one. Falls back to the agent API key when empty.",
+        description: "Some providers require an API key, while others do not. Falls back to the agent API key when empty.",
         kind: "password",
-        requirement: "optional",
         placeholder: "sk-...",
       },
     ],
@@ -293,9 +290,8 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
       {
         key: "config/ai/transcription/api_key",
         label: "API key",
-        description: "Credential for providers that require one. Falls back to the agent API key when empty.",
+        description: "Some providers require an API key, while others do not. Falls back to the agent API key when empty.",
         kind: "password",
-        requirement: "optional",
         placeholder: "sk-...",
       },
       {
@@ -332,9 +328,8 @@ export const TOOL_MODEL_GROUPS: readonly ConsoleSettingGroup[] = [
       {
         key: "config/ai/speech/api_key",
         label: "API key",
-        description: "Credential for providers that require one. Falls back to the agent API key when empty.",
+        description: "Some providers require an API key, while others do not. Falls back to the agent API key when empty.",
         kind: "password",
-        requirement: "optional",
         placeholder: "sk-...",
       },
       {
