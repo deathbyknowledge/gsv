@@ -2,8 +2,9 @@ import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import DOMPurify from "dompurify";
 import { parse as parseMarkdown } from "marked";
-import { MessageMeta } from "../../../components/ui/MessageMeta";
+import { CopyIconButton, MessageMeta } from "../../../components/ui/MessageMeta";
 import { ReasoningGlyph } from "../../../components/ui/ReasoningGlyph";
+import { ActionRail, SwipeRow, TranscriptMobileContext, useTranscriptMobile } from "./SwipeRow";
 import { SystemMessage } from "../../../components/ui/SystemMessage";
 import { Hint, Tooltip } from "../../../components/ui/Tooltip";
 import type {
@@ -52,6 +53,9 @@ type ChatTranscriptProps = {
   loadingOlderMessages?: boolean;
   onLoadOlder?: () => Promise<void> | void;
   processId?: string;
+  /** Shell mobile layout: timestamps stay inline; message actions move into
+   *  the swipe-to-reveal rail. */
+  mobile?: boolean;
   onBranch?: (messageId: number) => void;
   /** Opens the full-body reasoning panel for a run or an assistant reply. */
   onOpenReasoning?: (target: ChatReasoningTarget) => void;
@@ -1088,45 +1092,73 @@ function UserMessage({
   onCopy: () => void;
   onBranch?: (messageId: number) => void;
 }) {
+  const mobile = useTranscriptMobile();
+  // Built once, routed by breakpoint: desktop puts them in the meta row,
+  // mobile in the swipe rail — never both (no duplicate controls for AT).
+  const branchAction = message.messageId && onBranch ? (
+    <Hint text="Branch a new conversation from this message">
+      <button
+        type="button"
+        class="gsv-mm-btn"
+        aria-label="Branch a new conversation from this message"
+        onClick={() => onBranch(message.messageId as number)}
+      >
+        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="4.5" cy="4" r="2" />
+            <circle cx="4.5" cy="12" r="2" />
+            <circle cx="11.5" cy="8" r="2" />
+            <path d="M4.5 6 L4.5 10 M6.5 12 C10 12 11.5 10.5 11.5 10" />
+          </g>
+        </svg>
+      </button>
+    </Hint>
+  ) : null;
+  const copyAction = (
+    <CopyIconButton
+      copyLabel={copyButtonLabel(copied, failed)}
+      copyAriaLabel={copied ? "Copied user message" : "Copy user message"}
+      copyDisabled={!message.text.trim()}
+      copyFailed={failed}
+      onCopy={onCopy}
+    />
+  );
+
   return (
     <div class="gsv-chat-user-message">
-      <div class="gsv-chat-user-message-inner">
-        {message.text ? <div class="gsv-chat-user-message-text gsv-prose">{message.text}</div> : null}
-        {message.media?.length ? (
-          <div class="gsv-chat-media-list">
-            {message.media.map((media, index) => (
-              <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={processId} />
-            ))}
-          </div>
-        ) : null}
-        <MessageMeta
-          time={message.time}
-          copyLabel={copyButtonLabel(copied, failed)}
-          copyAriaLabel={copied ? "Copied user message" : "Copy user message"}
-          copyDisabled={!message.text.trim()}
-          copyFailed={failed}
-          onCopy={onCopy}
-          actions={message.messageId && onBranch ? (
-            <Hint text="Branch a new conversation from this message">
-              <button
-                type="button"
-                class="gsv-mm-btn"
-                aria-label="Branch a new conversation from this message"
-                onClick={() => onBranch(message.messageId as number)}
-              >
-                <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-                  <g fill="none" stroke="currentColor" stroke-width="1.5">
-                    <circle cx="4.5" cy="4" r="2" />
-                    <circle cx="4.5" cy="12" r="2" />
-                    <circle cx="11.5" cy="8" r="2" />
-                    <path d="M4.5 6 L4.5 10 M6.5 12 C10 12 11.5 10.5 11.5 10" />
-                  </g>
-                </svg>
-              </button>
-            </Hint>
-          ) : undefined}
-        />
-      </div>
+      <SwipeRow
+        align="end"
+        rail={(
+          <ActionRail>
+            {branchAction}
+            {copyAction}
+          </ActionRail>
+        )}
+      >
+        <div class="gsv-chat-user-message-inner">
+          {message.text ? <div class="gsv-chat-user-message-text gsv-prose">{message.text}</div> : null}
+          {message.media?.length ? (
+            <div class="gsv-chat-media-list">
+              {message.media.map((media, index) => (
+                <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={processId} />
+              ))}
+            </div>
+          ) : null}
+          {mobile ? (
+            <MessageMeta time={message.time} />
+          ) : (
+            <MessageMeta
+              time={message.time}
+              copyLabel={copyButtonLabel(copied, failed)}
+              copyAriaLabel={copied ? "Copied user message" : "Copy user message"}
+              copyDisabled={!message.text.trim()}
+              copyFailed={failed}
+              onCopy={onCopy}
+              actions={branchAction ?? undefined}
+            />
+          )}
+        </div>
+      </SwipeRow>
     </div>
   );
 }
@@ -1146,6 +1178,7 @@ function SystemSurfaceMessage({
   onToggleExpand: () => void;
   onCopy: () => void;
 }) {
+  const mobile = useTranscriptMobile();
   const summary = message.meta || summarizeSystemText(message.text);
   const expandable = systemTextHasMore(message.text, summary);
 
@@ -1164,37 +1197,51 @@ function SystemSurfaceMessage({
   );
 
   return (
-    <article class="gsv-chat-system-surface">
-      {expandable ? (
-        <Hint text={expanded ? "Click to collapse" : "Click to expand"}>
-          <div
-            role="button"
-            tabIndex={0}
-            class="gsv-chat-system-toggle"
-            aria-expanded={expanded}
-            aria-label={expanded ? "Collapse system message" : "Expand system message"}
-            onClick={onToggleExpand}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onToggleExpand();
-              }
-            }}
-          >
-            {body}
-          </div>
-        </Hint>
-      ) : body}
-      <MessageMeta
-        mirror
-        time={message.time}
-        copyLabel={copyButtonLabel(copied, failed)}
-        copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
-        copyDisabled={!message.text.trim()}
-        copyFailed={failed}
-        onCopy={onCopy}
-      />
-    </article>
+    <SwipeRow
+      rail={(
+        <ActionRail>
+          <CopyIconButton
+            copyLabel={copyButtonLabel(copied, failed)}
+            copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
+            copyDisabled={!message.text.trim()}
+            copyFailed={failed}
+            onCopy={onCopy}
+          />
+        </ActionRail>
+      )}
+    >
+      <article class="gsv-chat-system-surface">
+        {expandable ? (
+          <Hint text={expanded ? "Click to collapse" : "Click to expand"}>
+            <div
+              role="button"
+              tabIndex={0}
+              class="gsv-chat-system-toggle"
+              aria-expanded={expanded}
+              aria-label={expanded ? "Collapse system message" : "Expand system message"}
+              onClick={onToggleExpand}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onToggleExpand();
+                }
+              }}
+            >
+              {body}
+            </div>
+          </Hint>
+        ) : body}
+        <MessageMeta
+          mirror
+          time={message.time}
+          copyLabel={copyButtonLabel(copied, failed)}
+          copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
+          copyDisabled={!message.text.trim()}
+          copyFailed={failed}
+          onCopy={mobile ? undefined : onCopy}
+        />
+      </article>
+    </SwipeRow>
   );
 }
 
@@ -1215,6 +1262,7 @@ function SystemErrorLine({
   onToggleExpand: () => void;
   onCopy: () => void;
 }) {
+  const mobile = useTranscriptMobile();
   const summary = summarizeSystemText(message.text);
   const expandable = systemTextHasMore(message.text, summary);
   // Same three-row shape as info system messages: the SYSTEM eyebrow stays
@@ -1229,37 +1277,51 @@ function SystemErrorLine({
   );
 
   return (
-    <article class="gsv-chat-system-error">
-      {expandable ? (
-        <Hint text={expanded ? "Click to collapse" : "Click to expand"}>
-          <div
-            role="button"
-            tabIndex={0}
-            class="gsv-chat-system-toggle"
-            aria-expanded={expanded}
-            aria-label={expanded ? "Collapse system error" : "Expand system error"}
-            onClick={onToggleExpand}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onToggleExpand();
-              }
-            }}
-          >
-            {body}
-          </div>
-        </Hint>
-      ) : body}
-      <MessageMeta
-        mirror
-        time={message.time}
-        copyLabel={copyButtonLabel(copied, failed)}
-        copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
-        copyDisabled={!message.text.trim()}
-        copyFailed={failed}
-        onCopy={onCopy}
-      />
-    </article>
+    <SwipeRow
+      rail={(
+        <ActionRail>
+          <CopyIconButton
+            copyLabel={copyButtonLabel(copied, failed)}
+            copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
+            copyDisabled={!message.text.trim()}
+            copyFailed={failed}
+            onCopy={onCopy}
+          />
+        </ActionRail>
+      )}
+    >
+      <article class="gsv-chat-system-error">
+        {expandable ? (
+          <Hint text={expanded ? "Click to collapse" : "Click to expand"}>
+            <div
+              role="button"
+              tabIndex={0}
+              class="gsv-chat-system-toggle"
+              aria-expanded={expanded}
+              aria-label={expanded ? "Collapse system error" : "Expand system error"}
+              onClick={onToggleExpand}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onToggleExpand();
+                }
+              }}
+            >
+              {body}
+            </div>
+          </Hint>
+        ) : body}
+        <MessageMeta
+          mirror
+          time={message.time}
+          copyLabel={copyButtonLabel(copied, failed)}
+          copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
+          copyDisabled={!message.text.trim()}
+          copyFailed={failed}
+          onCopy={mobile ? undefined : onCopy}
+        />
+      </article>
+    </SwipeRow>
   );
 }
 
@@ -1444,40 +1506,61 @@ function AssistantProcessMessage({
   onCopy: () => void;
   onOpenReasoning?: (target: ChatReasoningTarget) => void;
 }) {
+  const mobile = useTranscriptMobile();
   const reasoning = reasoningText(message);
   const assistantText = message.text.trim()
     ? message.text
     : message.streaming ? "Thinking..." : "";
-  const hasMeta = Boolean(message.backupModel || reasoning);
+
+  const reasoningAction = reasoning && onOpenReasoning ? (
+    <Hint position="top" text="Expand reasoning">
+      <button
+        type="button"
+        class="gsv-chat-reasoning-icon"
+        aria-label="Expand reasoning"
+        onClick={() => onOpenReasoning({ kind: "message", messageId: message.id })}
+      >
+        <ReasoningGlyph size={13} />
+      </button>
+    </Hint>
+  ) : null;
+  // The backup badge is informational and stays inline in the meta row on
+  // both breakpoints; interactive actions move to the rail on mobile.
+  const badge = message.backupModel ? <BackupModelBadge backupModel={message.backupModel} /> : null;
+  const inlineMeta = mobile
+    ? badge
+    : (badge || reasoningAction) ? (
+        <>
+          {badge}
+          {reasoningAction}
+        </>
+      ) : null;
 
   return (
-    <>
+    <SwipeRow
+      rail={(
+        <ActionRail>
+          {reasoningAction}
+          <CopyIconButton
+            copyLabel={copyButtonLabel(copied, failed)}
+            copyAriaLabel={copied ? "Copied assistant message" : "Copy assistant message"}
+            copyDisabled={!assistantText.trim()}
+            copyFailed={failed}
+            onCopy={onCopy}
+          />
+        </ActionRail>
+      )}
+    >
       <SystemMessage
         text={assistantText}
         time={message.time}
-        meta={hasMeta ? (
-          <>
-            {message.backupModel ? <BackupModelBadge backupModel={message.backupModel} /> : null}
-            {reasoning && onOpenReasoning ? (
-              <Hint position="top" text="Expand reasoning">
-                <button
-                  type="button"
-                  class="gsv-chat-reasoning-icon"
-                  aria-label="Expand reasoning"
-                  onClick={() => onOpenReasoning({ kind: "message", messageId: message.id })}
-                >
-                  <ReasoningGlyph size={13} />
-                </button>
-              </Hint>
-            ) : null}
-          </>
-        ) : null}
+        meta={inlineMeta}
         copyLabel={copyButtonLabel(copied, failed)}
         copyDisabled={!assistantText.trim()}
         copyFailed={failed}
         copyTitle={copied ? "Copied" : "Copy message"}
         copyAriaLabel={copied ? "Copied assistant message" : "Copy assistant message"}
-        onCopy={onCopy}
+        onCopy={mobile ? undefined : onCopy}
       >
         <AssistantText text={assistantText} streaming={message.streaming === true} />
       </SystemMessage>
@@ -1488,7 +1571,7 @@ function AssistantProcessMessage({
           ))}
         </div>
       ) : null}
-    </>
+    </SwipeRow>
   );
 }
 
@@ -1726,6 +1809,7 @@ export function ChatTranscript({
   hasOlderMessages = false,
   loadingOlderMessages = false,
   messages,
+  mobile = false,
   onBranch,
   onLoadOlder,
   onOpenReasoning,
@@ -1975,6 +2059,7 @@ export function ChatTranscript({
   }, [feedbackKey, messages.length, tailKey, transcriptIdentity, updateViewportForNode, virtual.totalHeight]);
 
   return (
+    <TranscriptMobileContext.Provider value={mobile}>
     <div
       class="gsv-chat-transcript"
       aria-live="polite"
@@ -2046,5 +2131,6 @@ export function ChatTranscript({
         </button>
       ) : null}
     </div>
+    </TranscriptMobileContext.Provider>
   );
 }

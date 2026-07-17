@@ -1705,6 +1705,10 @@
 .gsv-chat-audio-player input {
   width: 100%;
   accent-color: var(--accent-bright);
+  /* The seek slider owns its horizontal drag — without this the mobile
+     swipe-row scroller (touch-action: pan-x) hijacks scrubbing. Same pattern
+     as the DS Slider hit area. */
+  touch-action: none;
 }
 
 .gsv-chat-audio-player span {
@@ -2420,6 +2424,12 @@
    full-body sheet covers the body anyway). */
 .gsv-shell-viewport.is-mobile .gsv-chat-popover-scrim {
   inset: 0;
+}
+
+/* Only the per-row swipe scrollers own the horizontal axis on mobile — a rail
+   over-swipe must not pan the whole transcript sideways. */
+.gsv-shell-viewport.is-mobile .gsv-chat-transcript {
+  overflow-x: hidden;
 }
 
 @keyframes gsvMobileChatIn {

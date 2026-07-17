@@ -1192,6 +1192,7 @@ export function ChatDock({
         feedback={feedback.entries}
         hasOlderMessages={chatRuntime.hasOlderHistory}
         messages={transcriptMessages}
+        mobile={mobileLayout}
         loadingOlderMessages={chatRuntime.loadingOlderHistory}
         onLoadOlder={chatRuntime.loadOlderHistory}
         onBranch={branchFromMessage}
