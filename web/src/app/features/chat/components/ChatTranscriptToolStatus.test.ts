@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ChatTranscriptRow } from "../domain/transcript";
 import {
+  chatTranscriptActiveGroupIndex,
+  chatTranscriptActivityGroupTone,
   chatTranscriptToolGroupTone,
   chatTranscriptToolStatusLabel,
   chatTranscriptToolTone,
@@ -45,5 +47,49 @@ describe("chat transcript tool status", () => {
       tool({ toolOutcome: "completed" }),
       tool({ isError: true, toolOutcome: "cancelled" }),
     ])).toBe("warning");
+  });
+
+  it("keeps a group running while reasoning continues after a completed tool", () => {
+    expect(chatTranscriptActivityGroupTone([
+      { kind: "tool", message: tool({ runId: "run-1", status: "done" }) },
+      {
+        kind: "reasoning",
+        message: tool({
+          id: "assistant-1",
+          role: "assistant",
+          runId: "run-1",
+          status: "streaming",
+          streaming: true,
+        }),
+      },
+    ])).toBe("running");
+  });
+
+  it("keeps an active run group running when refreshed rows look terminal", () => {
+    const entries = [
+      { kind: "tool" as const, message: tool({ runId: "run-1", status: "done" }) },
+      {
+        kind: "reasoning" as const,
+        message: tool({ id: "assistant-1", role: "assistant", runId: "run-1", status: "done" }),
+      },
+    ];
+
+    expect(chatTranscriptActivityGroupTone(entries, true)).toBe("running");
+    expect(chatTranscriptActivityGroupTone(entries)).toBe("done");
+  });
+
+  it("applies the active run override only to its final activity group", () => {
+    const completed = [
+      { kind: "tool" as const, message: tool({ runId: "run-1", status: "done" }) },
+    ];
+    const current = [
+      {
+        kind: "reasoning" as const,
+        message: tool({ id: "assistant-1", role: "assistant", runId: "run-1", status: "done" }),
+      },
+    ];
+
+    expect(chatTranscriptActiveGroupIndex([completed, current], "run-1")).toBe(1);
+    expect(chatTranscriptActiveGroupIndex([completed, current], "run-2")).toBe(-1);
   });
 });

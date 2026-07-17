@@ -3,6 +3,21 @@ import { applyChatLiveActivityToAgent, deriveChatLiveActivity } from "./activity
 import { emptyChatRuntimeState } from "./transcript";
 
 describe("chat live activity", () => {
+  it("prioritizes a requested stop until the active run reconciles", () => {
+    const state = {
+      ...emptyChatRuntimeState("pid-1", "default"),
+      activeRunId: "run-1",
+      runState: "running" as const,
+    };
+
+    expect(deriveChatLiveActivity(state, true)).toMatchObject({
+      activity: "Stopping",
+      runStateLabel: "stopping",
+      status: "update",
+      statusLabel: "stopping",
+    });
+  });
+
   it("prioritizes pending approvals over generic running state", () => {
     const state = {
       ...emptyChatRuntimeState("pid-1", "default"),

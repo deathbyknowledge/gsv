@@ -157,6 +157,11 @@ function formatConversationCostTooltip(context: ProcContextState | null | undefi
 
 type DraftAttachment = ChatMediaUpload & MessageInputAttachment;
 
+type StoppingRun = {
+  pid: string;
+  runId: string | null;
+};
+
 function formatAttachmentSize(size: number | undefined): string {
   if (!size || size <= 0) {
     return "";
@@ -239,6 +244,7 @@ export function ChatDock({
   const [composerDraft, setComposerDraft] = useState("");
   const [branchNotice, setBranchNotice] = useState("");
   const minimizedChat = useDraggableMinimizedChat({ open, onActivate: onToggleOpen });
+  const [stoppingRun, setStoppingRun] = useState<StoppingRun | null>(null);
   const activeProcessId = agent?.processId?.trim() ?? "";
   const startRunAs = agent?.runAs?.trim() ?? "";
   const hasActiveProcess = activeProcessId.length > 0;
@@ -265,7 +271,20 @@ export function ChatDock({
   });
   const { history: processHistory, runtime } = chatRuntime;
   const pendingHil = runtime.pendingHil;
-  const liveActivity = useMemo(() => deriveChatLiveActivity(runtime), [runtime]);
+  const currentRunId = runtime.activeRunId ?? pendingHil?.runId ?? null;
+  const currentRunActive = Boolean(currentRunId)
+    || runtime.runState === "running"
+    || runtime.runState === "awaiting_hil";
+  const stoppingCurrentRun = Boolean(
+    stoppingRun
+    && stoppingRun.pid === activeProcessId
+    && currentRunActive
+    && (stoppingRun.runId === null || stoppingRun.runId === currentRunId),
+  );
+  const liveActivity = useMemo(
+    () => deriveChatLiveActivity(runtime, stoppingCurrentRun),
+    [runtime, stoppingCurrentRun],
+  );
   const effectiveAgent = useMemo(() => applyChatLiveActivityToAgent(
     agent,
     liveActivity,
@@ -280,6 +299,19 @@ export function ChatDock({
       setOpenPopover(null);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (
+      stoppingRun
+      && (
+        stoppingRun.pid !== activeProcessId
+        || !currentRunActive
+        || (stoppingRun.runId !== null && stoppingRun.runId !== currentRunId)
+      )
+    ) {
+      setStoppingRun(null);
+    }
+  }, [activeProcessId, currentRunActive, currentRunId, stoppingRun]);
 
   useEffect(() => {
     if (agentPanelOpen) {
@@ -320,6 +352,7 @@ export function ChatDock({
   const runStateLabel = liveActivity?.runStateLabel ?? formatRunStateLabel(runState);
   const canAbortRun = hasActiveProcess
     && !abortProcess.isPending
+    && !stoppingCurrentRun
     && (Boolean(runtime.activeRunId) || Boolean(pendingHil) || runState === "running" || runState === "awaiting_hil");
   const context = runtime.context;
   const selectedConversationId = activeConversationId ?? runtime.conversationId ?? "default";
@@ -535,9 +568,19 @@ export function ChatDock({
       return;
     }
     const runId = runtime.activeRunId ?? pendingHil?.runId;
+    const requestedStop = { pid: activeProcessId, runId: runId ?? null };
+    setStoppingRun(requestedStop);
     abortProcess.mutate({
       pid: activeProcessId,
       ...(runId ? { runId } : {}),
+    }, {
+      onError: () => {
+        setStoppingRun((current) => (
+          current?.pid === requestedStop.pid && current.runId === requestedStop.runId
+            ? null
+            : current
+        ));
+      },
     });
   };
 
@@ -913,6 +956,7 @@ export function ChatDock({
       ) : null}
 
       <ChatTranscript
+        activeRunId={runtime.activeRunId}
         action={!hasActiveProcess ? (
           <button
             type="button"

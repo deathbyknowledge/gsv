@@ -16,6 +16,8 @@ import {
 } from "../hooks/useVirtualTranscript";
 import { ChatMediaAttachment } from "./ChatMediaAttachment";
 import {
+  chatTranscriptActiveGroupIndex,
+  chatTranscriptActivityGroupTone,
   chatTranscriptToolGroupTone,
   chatTranscriptToolStatusLabel,
   chatTranscriptToolTone,
@@ -31,6 +33,7 @@ export type ChatDockMessageRole = ChatTranscriptRowRole;
 export type ChatDockMessage = ChatTranscriptRow;
 
 type ChatTranscriptProps = {
+  activeRunId?: string | null;
   messages: readonly ChatDockMessage[];
   state?: "empty" | "error" | "loading" | "ready";
   emptyTitle?: string;
@@ -906,9 +909,9 @@ function estimateMessageHeight(message: ChatDockMessage): number {
   return Math.max(120, 92 + Math.ceil(textLength / 72) * 18);
 }
 
-function estimateRenderItemHeight(item: TranscriptRenderItem): number {
+function estimateRenderItemHeight(item: TranscriptRenderItem, active: boolean): number {
   if (item.kind === "activityGroup") {
-    const status = activityGroupStatus(item.entries);
+    const status = activityGroupStatus(item.entries, active);
     const expanded = status === "running";
     return expanded ? Math.max(112, 76 + item.entries.length * 42) : 58;
   }
@@ -926,10 +929,12 @@ function estimateKeyForRenderItem(item: TranscriptRenderItem): string {
 }
 
 function buildVirtualEntries({
+  activeActivityGroupId,
   hasOlderMessages,
   loadingOlderMessages,
   renderItems,
 }: {
+  activeActivityGroupId: string | null;
   hasOlderMessages: boolean;
   loadingOlderMessages: boolean;
   renderItems: TranscriptRenderItem[];
@@ -945,9 +950,10 @@ function buildVirtualEntries({
     });
   }
   for (const item of renderItems) {
+    const active = item.kind === "activityGroup" && item.id === activeActivityGroupId;
     entries.push({
-      alwaysRender: item.kind === "activityGroup" && activityGroupStatus(item.entries) === "running",
-      estimateHeight: estimateRenderItemHeight(item),
+      alwaysRender: item.kind === "activityGroup" && activityGroupStatus(item.entries, active) === "running",
+      estimateHeight: estimateRenderItemHeight(item, active),
       estimateKey: estimateKeyForRenderItem(item),
       item,
       key: item.id,
@@ -1133,12 +1139,11 @@ function ToolResultMessage({
   );
 }
 
-function activityGroupStatus(entries: readonly TranscriptActivityEntry[]): ChatTranscriptToolTone {
-  const tools = entries.filter((entry) => entry.kind === "tool").map((entry) => entry.message);
-  if (tools.length > 0) {
-    return toolGroupStatus(tools);
-  }
-  return entries.some((entry) => entry.message.streaming) ? "running" : "done";
+function activityGroupStatus(
+  entries: readonly TranscriptActivityEntry[],
+  active = false,
+): ChatTranscriptToolTone {
+  return chatTranscriptActivityGroupTone(entries, active);
 }
 
 function activityDuration(entries: readonly TranscriptActivityEntry[]): string {
@@ -1157,10 +1162,13 @@ function activityDuration(entries: readonly TranscriptActivityEntry[]): string {
   return remaining > 0 ? `${minutes}m ${remaining}s` : `${minutes}m`;
 }
 
-function activityGroupTitle(entries: readonly TranscriptActivityEntry[]): string {
+function activityGroupTitle(
+  entries: readonly TranscriptActivityEntry[],
+  active: boolean,
+): string {
   const tools = entries.filter((entry) => entry.kind === "tool").map((entry) => entry.message);
   const backups = entries.filter((entry) => entry.kind === "backup");
-  const status = activityGroupStatus(entries);
+  const status = activityGroupStatus(entries, active);
   const duration = activityDuration(entries);
 
   if (status === "done" && duration && entries.length > 1) {
@@ -1292,12 +1300,18 @@ function ToolEntry({ tool }: { tool: ChatDockMessage }) {
   );
 }
 
-function RunActivityCard({ entries }: { entries: readonly TranscriptActivityEntry[] }) {
-  const status = activityGroupStatus(entries);
+function RunActivityCard({
+  active,
+  entries,
+}: {
+  active: boolean;
+  entries: readonly TranscriptActivityEntry[];
+}) {
+  const status = activityGroupStatus(entries, active);
   const [expanded, setExpanded] = useState(status === "running");
   const wasRunningRef = useRef(status === "running");
   const runId = entries.find((entry) => entry.message.runId)?.message.runId;
-  const title = activityGroupTitle(entries);
+  const title = activityGroupTitle(entries, active);
   const warningTool = status === "warning"
     ? [...entries].reverse().find((entry) => entry.kind === "tool" && toolEntryTone(entry.message) === "warning")
     : null;
@@ -1544,12 +1558,14 @@ function VirtualTranscriptRow({
 }
 
 function TranscriptRenderItemView({
+  activeActivityGroupId,
   copyState,
   item,
   onBranch,
   onCopy,
   processId,
 }: {
+  activeActivityGroupId: string | null;
   copyState: CopyState | null;
   item: TranscriptRenderItem;
   onBranch?: (messageId: number) => void;
@@ -1557,7 +1573,7 @@ function TranscriptRenderItemView({
   processId: string;
 }) {
   if (item.kind === "activityGroup") {
-    return <RunActivityCard entries={item.entries} />;
+    return <RunActivityCard active={item.id === activeActivityGroupId} entries={item.entries} />;
   }
 
   const message = item.message;
@@ -1624,6 +1640,7 @@ function nestedScrollerCanScrollUp(target: EventTarget | null, boundary: HTMLEle
 
 export function ChatTranscript({
   action,
+  activeRunId = null,
   emptyDescription = "Process history will appear here when a conversation is available.",
   emptyTitle = "No active conversation",
   errorMessage = "Process history could not be loaded.",
@@ -1646,11 +1663,20 @@ export function ChatTranscript({
   const [showJumpLatest, setShowJumpLatest] = useState(false);
   const [viewport, setViewport] = useState<TranscriptViewport>(EMPTY_VIEWPORT);
   const renderItems = useMemo(() => buildTranscriptRenderItems(messages), [messages]);
+  const activeActivityGroupId = useMemo(() => {
+    const groups = renderItems.filter((item) => item.kind === "activityGroup");
+    const activeIndex = chatTranscriptActiveGroupIndex(
+      groups.map((group) => group.entries),
+      activeRunId,
+    );
+    return activeIndex >= 0 ? groups[activeIndex].id : null;
+  }, [activeRunId, renderItems]);
   const virtualEntries = useMemo(() => buildVirtualEntries({
+    activeActivityGroupId,
     hasOlderMessages,
     loadingOlderMessages,
     renderItems,
-  }), [hasOlderMessages, loadingOlderMessages, renderItems]);
+  }), [activeActivityGroupId, hasOlderMessages, loadingOlderMessages, renderItems]);
   const virtual = useVirtualTranscript({
     entries: virtualEntries,
     scrollTop: viewport.scrollTop,
@@ -1892,6 +1918,7 @@ export function ChatTranscript({
                 </button>
               ) : (
                 <TranscriptRenderItemView
+                  activeActivityGroupId={activeActivityGroupId}
                   copyState={copyState}
                   item={item.entry.item}
                   onBranch={onBranch}

@@ -143,7 +143,18 @@ function liveActivity(input: Omit<ChatLiveActivity, "agentStatus" | "tasks"> & {
 
 export function deriveChatLiveActivity(
   runtime: Pick<ChatRuntimeState, "activeRunId" | "pendingHil" | "rows" | "runState">,
+  stopping = false,
 ): ChatLiveActivity | null {
+  if (stopping) {
+    return liveActivity({
+      activity: "Stopping",
+      runStateLabel: "stopping",
+      status: "update",
+      statusLabel: "stopping",
+      task: "Stopping current run",
+    });
+  }
+
   if (runtime.pendingHil) {
     const tool = liveToolTitle({
       args: runtime.pendingHil.args,
