@@ -181,6 +181,7 @@ import { stableOpaqueId } from "../shared/stable-id";
 import {
   agentArchiveMediaPath,
   agentArchiveMediaPrefix,
+  isValidAgentArchiveMediaObject,
 } from "../shared/process-media-path";
 import {
   MAX_MESSAGE_MEDIA_ITEMS,
@@ -2188,7 +2189,7 @@ export class Process extends Host<Env> {
     if (!object) {
       return { data: { ok: false, error: "media not found" } };
     }
-    if (!this.hasOwnedArchiveMetadata(key, object.customMetadata)) {
+    if (!this.isValidOwnedArchiveObject(key, object)) {
       await object.body.cancel("Invalid archived media ownership").catch(() => {});
       return { data: { ok: false, error: "media key is outside this process" } };
     }
@@ -5783,7 +5784,7 @@ export class Process extends Host<Env> {
       });
 
       if (item.type === "image" && item.key && !isVectorImageMimeType(item.mimeType)) {
-        const data = await this.loadProcessMedia(item.key, budget);
+        const data = await this.loadProcessMedia(item.key, item.mimeType, budget);
         if (data) {
           content.push(buildImageBlock(data, item.mimeType));
         }
@@ -5799,6 +5800,7 @@ export class Process extends Host<Env> {
 
   private async loadProcessMedia(
     key: string,
+    expectedContentType: string,
     budget: { remainingBytes: number },
   ): Promise<string | null> {
     if (!this.ownedMediaPath(key)) {
@@ -5809,7 +5811,7 @@ export class Process extends Host<Env> {
       return null;
     }
     if (
-      !this.hasOwnedArchiveMetadata(key, object.customMetadata)
+      !this.isValidOwnedArchiveObject(key, object, { expectedContentType })
       || object.size > MAX_PROCESS_MEDIA_READ_BYTES
       || object.size > budget.remainingBytes
     ) {
@@ -5833,15 +5835,24 @@ export class Process extends Host<Env> {
     return agentArchiveMediaPath(this.identity.home, key);
   }
 
-  private hasOwnedArchiveMetadata(
+  private isValidOwnedArchiveObject(
     key: string,
-    metadata: Record<string, string> | undefined,
+    object: {
+      customMetadata?: Record<string, string>;
+      httpMetadata?: { contentType?: string };
+    },
+    expected: { sourceEtag?: string; expectedContentType?: string } = {},
   ): boolean {
     if (!key.startsWith(this.archiveMediaPrefix())) return true;
-    return metadata?.purpose === "conversation-media"
-      && metadata.uid === String(this.identity.uid)
-      && metadata.gid === String(this.identity.gid)
-      && metadata.mode === "400";
+    return isValidAgentArchiveMediaObject({
+      home: this.identity.home,
+      key,
+      uid: this.identity.uid,
+      gid: this.identity.gid,
+      object,
+      expectedSourceEtag: expected.sourceEtag,
+      expectedContentType: expected.expectedContentType,
+    });
   }
 
   private parseOwnedProcessMedia(raw: string | null): StoredProcessMedia[] {
@@ -5962,13 +5973,15 @@ export class Process extends Host<Env> {
       }
       const archiveId = await stableOpaqueId("archived-media", [sourceKey, sourceHead.etag]);
       const archivedKey = `${this.archiveMediaPrefix()}${archiveId}`;
+      const sourceContentType = sourceHead.httpMetadata?.contentType?.trim()
+        || "application/octet-stream";
       const existing = await this.env.STORAGE.head(archivedKey);
       const reusable = existing
         && existing.size === sourceHead.size
-        && (existing.httpMetadata?.contentType ?? "")
-          === (sourceHead.httpMetadata?.contentType ?? "")
-        && existing.customMetadata?.sourceEtag === sourceHead.etag
-        && existing.customMetadata?.purpose === "conversation-media";
+        && this.isValidOwnedArchiveObject(archivedKey, existing, {
+          sourceEtag: sourceHead.etag,
+          expectedContentType: sourceContentType,
+        });
       if (existing && !reusable) {
         throw new Error(`archived media content-address collision: ${archivedKey}`);
       }
@@ -5979,7 +5992,12 @@ export class Process extends Host<Env> {
           rewrites.set(sourceKey, { missing: true });
           continue;
         }
-        if (source.etag !== sourceHead.etag || source.size !== sourceHead.size) {
+        if (
+          source.etag !== sourceHead.etag
+          || source.size !== sourceHead.size
+          || (source.httpMetadata?.contentType?.trim() || "application/octet-stream")
+            !== sourceContentType
+        ) {
           await source.body.cancel("Process media changed while archiving").catch(() => {});
           throw new Error(`media changed while archiving: ${sourceKey}`);
         }
@@ -5998,13 +6016,17 @@ export class Process extends Host<Env> {
         let piped: Promise<void>;
         try {
           stored = this.env.STORAGE.put(archivedKey, fixed.readable, {
-            httpMetadata: sourceHead.httpMetadata,
+            httpMetadata: {
+              ...sourceHead.httpMetadata,
+              contentType: sourceContentType,
+            },
             customMetadata: {
               uid: String(this.identity.uid),
               gid: String(this.identity.gid),
               mode: "400",
               purpose: "conversation-media",
               sourceEtag: sourceHead.etag,
+              sourceContentType,
             },
           });
           piped = source.body.pipeTo(fixed.writable, { signal });
@@ -6025,8 +6047,10 @@ export class Process extends Host<Env> {
         if (
           !copied
           || copied.size !== sourceHead.size
-          || copied.customMetadata?.sourceEtag !== sourceHead.etag
-          || copied.customMetadata?.purpose !== "conversation-media"
+          || !this.isValidOwnedArchiveObject(archivedKey, copied, {
+            sourceEtag: sourceHead.etag,
+            expectedContentType: sourceContentType,
+          })
         ) {
           throw new Error(`failed to verify archived media: ${archivedKey}`);
         }

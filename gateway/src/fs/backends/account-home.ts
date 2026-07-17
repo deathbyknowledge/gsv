@@ -28,6 +28,10 @@ import {
 } from "../ripgit/client";
 import { accountHomeRepoRef } from "../ripgit/repos";
 import { concatBytes, normalizePath } from "../utils";
+import {
+  agentArchiveMediaPath,
+  isValidAgentArchiveMediaObject,
+} from "../../shared/process-media-path";
 
 const DIRECTORY_MARKER = ".dir";
 const TEXT_DECODER = new TextDecoder();
@@ -63,6 +67,7 @@ export function createAccountHomeBackend(
     client,
     new R2MountBackend(bucket, identity),
     identity,
+    bucket,
   );
 
   if (!options?.auth) {
@@ -307,6 +312,7 @@ class AccountHomeMountBackend implements MountBackend {
     private readonly client: RipgitClient,
     private readonly fallback: R2MountBackend,
     private readonly identity: ProcessIdentity,
+    private readonly bucket: R2Bucket,
     private readonly allowHomeR2Fallback = true,
   ) {}
 
@@ -336,6 +342,40 @@ class AccountHomeMountBackend implements MountBackend {
     }
   }
 
+  private async archivedMediaReadable(path: string): Promise<boolean | null> {
+    const normalized = normalizePath(path);
+    if (normalized === this.archivedMediaRoot) return null;
+    if (!normalized.startsWith(`${this.archivedMediaRoot}/`)) return null;
+    const key = normalized.slice(1);
+    if (!agentArchiveMediaPath(this.identity.home, key)) return false;
+    const object = await this.bucket.head(key);
+    return Boolean(object && isValidAgentArchiveMediaObject({
+      home: this.identity.home,
+      key,
+      uid: this.identity.uid,
+      gid: this.identity.gid,
+      object,
+    }));
+  }
+
+  private async assertReadableArchivedMedia(path: string): Promise<void> {
+    if (await this.archivedMediaReadable(path) === false) {
+      throwPermissionDenied(normalizePath(path));
+    }
+  }
+
+  private async filterReadableArchiveMatches(
+    result: FsSearchBackendResult,
+  ): Promise<FsSearchBackendResult> {
+    const matches = [] as FsSearchBackendResult["matches"];
+    for (const match of result.matches) {
+      if (await this.archivedMediaReadable(match.path) !== false) {
+        matches.push(match);
+      }
+    }
+    return { ...result, matches };
+  }
+
   handles(path: string): boolean {
     const normalized = normalizePath(path);
     return normalized === this.home || normalized.startsWith(`${this.home}/`);
@@ -362,6 +402,7 @@ class AccountHomeMountBackend implements MountBackend {
         }
         throwPermissionDenied(normalized);
       }
+      await this.assertReadableArchivedMedia(normalized);
       return this.fallback.readFileBuffer(normalized);
     }
 
@@ -388,6 +429,7 @@ class AccountHomeMountBackend implements MountBackend {
     if (!this.allowHomeR2Fallback) {
       throwPermissionDenied(normalized);
     }
+    await this.assertReadableArchivedMedia(normalized);
     return this.fallback.openFile(normalized, options);
   }
 
@@ -472,7 +514,8 @@ class AccountHomeMountBackend implements MountBackend {
       if (!this.allowHomeR2Fallback) {
         return false;
       }
-      return this.fallback.exists(normalized);
+      const archiveReadable = await this.archivedMediaReadable(normalized);
+      return archiveReadable ?? this.fallback.exists(normalized);
     }
     if (kind === "context-root" || kind === "skills-root") {
       return true;
@@ -505,6 +548,7 @@ class AccountHomeMountBackend implements MountBackend {
       if (!this.allowHomeR2Fallback) {
         throwPermissionDenied(normalized);
       }
+      await this.assertReadableArchivedMedia(normalized);
       return this.fallback.stat(normalized);
     }
     if (kind === "context-root" || kind === "skills-root") {
@@ -578,7 +622,18 @@ class AccountHomeMountBackend implements MountBackend {
       if (!this.allowHomeR2Fallback) {
         throwPermissionDenied(normalized);
       }
-      return this.fallback.readdir(normalized);
+      if (normalized !== this.archivedMediaRoot) {
+        await this.assertReadableArchivedMedia(normalized);
+        return this.fallback.readdir(normalized);
+      }
+      const entries = await this.fallback.readdir(normalized);
+      const readable: string[] = [];
+      for (const name of entries) {
+        if (await this.archivedMediaReadable(`${normalized}/${name}`) === true) {
+          readable.push(name);
+        }
+      }
+      return readable;
     }
 
     const entries = new Set<string>();
@@ -696,7 +751,10 @@ class AccountHomeMountBackend implements MountBackend {
       if (!this.allowHomeR2Fallback) {
         throwPermissionDenied(normalized);
       }
-      return this.fallback.search!(normalized, query, include, signal);
+      await this.assertReadableArchivedMedia(normalized);
+      return this.filterReadableArchiveMatches(
+        await this.fallback.search!(normalized, query, include, signal),
+      );
     }
 
     const combined = new Map<string, FsSearchBackendResult["matches"][number]>();
@@ -707,7 +765,7 @@ class AccountHomeMountBackend implements MountBackend {
           signal?.throwIfAborted();
           return { matches: [] as FsSearchBackendResult["matches"] };
         });
-        for (const match of fallbackMatches.matches) {
+        for (const match of (await this.filterReadableArchiveMatches(fallbackMatches)).matches) {
           combined.set(`${match.path}:${match.line}:${match.content}`, match);
         }
       }
@@ -728,7 +786,7 @@ class AccountHomeMountBackend implements MountBackend {
         signal?.throwIfAborted();
         return { matches: [] as FsSearchBackendResult["matches"] };
       });
-      for (const match of fallbackMatches.matches) {
+      for (const match of (await this.filterReadableArchiveMatches(fallbackMatches)).matches) {
         combined.set(`${match.path}:${match.line}:${match.content}`, match);
       }
     }
@@ -1046,6 +1104,7 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
         this.client,
         new R2MountBackend(this.bucket, this.viewerIdentity),
         targetIdentity,
+        this.bucket,
         this.isRoot,
       );
       this.delegates.set(username, delegate);

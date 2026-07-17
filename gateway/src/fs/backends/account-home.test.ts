@@ -392,6 +392,8 @@ describe("AccountHomeMountBackend delegated routing", () => {
         gid: String(ALICE.gid),
         mode: "400",
         purpose: "conversation-media",
+        sourceEtag: "source-etag-1",
+        sourceContentType: "image/png",
       },
     });
     const fs = new GsvFs(
@@ -434,6 +436,37 @@ describe("AccountHomeMountBackend delegated routing", () => {
     await expect(env.STORAGE.get(archiveKey).then((object) => object?.arrayBuffer()))
       .resolves
       .toEqual(archivedBytes.buffer);
+  });
+
+  it("hides malformed archived media from filesystem reads and search", async () => {
+    const archiveRoot = "/home/alice/.gsv/media";
+    const basename = `archived-media:${"b".repeat(64)}`;
+    const archivePath = `${archiveRoot}/${basename}`;
+    await env.STORAGE.put(archivePath.slice(1), "provider secret", {
+      httpMetadata: { contentType: "text/plain" },
+      customMetadata: {
+        uid: String(ALICE.uid),
+        gid: String(ALICE.gid),
+        mode: "400",
+        purpose: "conversation-media",
+      },
+    });
+    const fs = new GsvFs(
+      env.STORAGE,
+      ALICE,
+      undefined,
+      undefined,
+      null,
+      createDelegatingBackend(),
+    );
+
+    await expect(fs.readFileBuffer(archivePath)).rejects.toThrow("EACCES");
+    await expect(fs.openFile(archivePath)).rejects.toThrow("EACCES");
+    await expect(fs.exists(archivePath)).resolves.toBe(false);
+    await expect(fs.readdir(archiveRoot)).resolves.not.toContain(basename);
+    await expect(fs.search(archiveRoot, "provider secret"))
+      .resolves
+      .toMatchObject({ matches: [] });
   });
 
   it("lists virtual overlay roots from an authorized agent home", async () => {

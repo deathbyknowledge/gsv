@@ -1516,6 +1516,50 @@ describe("Process DO — mechanical", () => {
       expect(second && [...new Uint8Array(await second.arrayBuffer())]).toEqual([9, 8, 7]);
     });
 
+    it("rejects an existing archive whose ownership metadata is incomplete", async () => {
+      const pid = "mech-archive-media-ownership";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const liveKey = `var/media/0/${pid}/report`;
+      await env.STORAGE.put(liveKey, new Uint8Array([1, 2, 3]), {
+        httpMetadata: { contentType: "application/pdf" },
+      });
+      const archivedKey = await runInDurableObject(stub, async (instance: Process) => {
+        const rewrites = await (instance as any).persistArchivedMediaKeys([liveKey]);
+        return rewrites.get(liveKey).key as string;
+      });
+      const source = await env.STORAGE.head(liveKey);
+      expect(source).not.toBeNull();
+      await env.STORAGE.put(archivedKey, new Uint8Array([1, 2, 3]), {
+        httpMetadata: { contentType: "application/pdf" },
+        customMetadata: {
+          purpose: "conversation-media",
+          sourceEtag: source!.etag,
+        },
+      });
+
+      await expect(runInDurableObject(stub, async (instance: Process) => {
+        return (instance as any).persistArchivedMediaKeys([liveKey]);
+      })).rejects.toThrow("archived media content-address collision");
+    });
+
+    it("refuses to read an archive without immutable source metadata", async () => {
+      const pid = "mech-archive-media-read-metadata";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const key = `root/.gsv/media/archived-media:${"c".repeat(64)}`;
+      await env.STORAGE.put(key, new Uint8Array([1, 2, 3]), {
+        httpMetadata: { contentType: "image/png" },
+        customMetadata: {
+          uid: "0",
+          gid: "0",
+          mode: "400",
+          purpose: "conversation-media",
+        },
+      });
+
+      const response = await stub.recvFrame(makeReq("proc.media.read", { key })) as ResponseOkFrame;
+      expect(response.data).toEqual({ ok: false, error: "media key is outside this process" });
+    });
+
     it("cleans command-staged reply media when the run aborts before a final answer", async () => {
       const pid = "mech-aborted-reply-media";
       const stub = await initProcess(pid, ROOT_IDENTITY);

@@ -22,6 +22,44 @@ export function agentArchiveMediaPath(home: string, key: string): string | null 
   return ARCHIVED_MEDIA_BASENAME.test(basename) ? `/${key}` : null;
 }
 
+export type AgentArchiveMediaObject = {
+  customMetadata?: Record<string, string>;
+  httpMetadata?: { contentType?: string };
+};
+
+/**
+ * Validate the complete immutable archive contract at every consumption point.
+ * `sourceEtag` binds the archive name to one live object revision, while the
+ * stored source content type prevents object metadata from being rewritten
+ * independently of the archived bytes.
+ */
+export function isValidAgentArchiveMediaObject(input: {
+  home: string;
+  key: string;
+  uid: number;
+  gid: number;
+  object: AgentArchiveMediaObject;
+  expectedSourceEtag?: string;
+  expectedContentType?: string;
+}): boolean {
+  if (!agentArchiveMediaPath(input.home, input.key)) return false;
+  const metadata = input.object.customMetadata;
+  const sourceEtag = metadata?.sourceEtag?.trim() ?? "";
+  const sourceContentType = metadata?.sourceContentType?.trim() ?? "";
+  const objectContentType = input.object.httpMetadata?.contentType?.trim() ?? "";
+  const expectedSourceEtag = input.expectedSourceEtag?.trim();
+  const expectedContentType = input.expectedContentType?.trim();
+  return metadata?.purpose === "conversation-media"
+    && metadata.uid === String(input.uid)
+    && metadata.gid === String(input.gid)
+    && metadata.mode === "400"
+    && sourceEtag.length > 0
+    && sourceContentType.length > 0
+    && objectContentType === sourceContentType
+    && (!expectedSourceEtag || sourceEtag === expectedSourceEtag)
+    && (!expectedContentType || objectContentType === expectedContentType);
+}
+
 /** Convert a physical process-media R2 key to its stable filesystem path. */
 export function processMediaPath(key: string): string | null {
   const path = `/${key}`;
