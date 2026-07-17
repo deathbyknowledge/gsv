@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  deliverAdapterInboundResponses,
   InboundDeliveryLedger,
   isTerminalAdapterInboundResult,
 } from "../src/inbound-delivery";
 
 class MemoryTransaction {
-  constructor(private readonly values: Map<string, unknown>) {}
+  constructor(
+    private readonly values: Map<string, unknown>,
+    private readonly alarm: { value: number | null },
+  ) {}
 
   async get<T>(key: string): Promise<T | undefined> {
     return this.values.get(key) as T | undefined;
@@ -15,16 +19,25 @@ class MemoryTransaction {
   async put<T>(key: string, value: T): Promise<void> {
     this.values.set(key, value);
   }
+
+  async getAlarm(): Promise<number | null> {
+    return this.alarm.value;
+  }
+
+  async setAlarm(value: number): Promise<void> {
+    this.alarm.value = value;
+  }
 }
 
 class MemoryStorage {
   readonly values = new Map<string, unknown>();
+  readonly alarm = { value: null as number | null };
   failNextDelete = false;
 
   async transaction<T>(
     closure: (txn: MemoryTransaction) => Promise<T>,
   ): Promise<T> {
-    return await closure(new MemoryTransaction(this.values));
+    return await closure(new MemoryTransaction(this.values, this.alarm));
   }
 
   async get<T>(key: string): Promise<T | undefined> {
@@ -41,6 +54,14 @@ class MemoryStorage {
       throw new Error("simulated crash before local acknowledgement");
     }
     return this.values.delete(key);
+  }
+
+  async getAlarm(): Promise<number | null> {
+    return this.alarm.value;
+  }
+
+  async setAlarm(value: number): Promise<void> {
+    this.alarm.value = value;
   }
 
   async list<T>(options?: {
@@ -64,10 +85,32 @@ function ledger(
 }
 
 describe("InboundDeliveryLedger", () => {
+  it("commits a provider payload with its earliest wake-up", async () => {
+    const storage = new MemoryStorage();
+    const pending = ledger(storage);
+
+    await pending.enqueueAndArm(
+      "provider-alarm",
+      { providerMessageId: "original" },
+      200,
+    );
+    await pending.enqueueAndArm(
+      "provider-alarm",
+      { providerMessageId: "replacement" },
+      300,
+    );
+    await pending.arm(100);
+
+    expect(storage.alarm.value).toBe(100);
+    const deliver = vi.fn(async () => ({ terminal: true }));
+    await pending.attempt("provider-alarm", deliver);
+    expect(deliver).toHaveBeenCalledWith({ providerMessageId: "original" });
+  });
+
   it("replays a durable provider payload after the Gateway transport fails", async () => {
     const storage = new MemoryStorage();
     const first = ledger(storage);
-    await first.enqueue("provider-1", { providerMessageId: "provider-1" });
+    await first.enqueueAndArm("provider-1", { providerMessageId: "provider-1" }, 100);
 
     await expect(first.attempt("provider-1", async () => {
       throw new Error("Kernel restarted before preparing the receipt");
@@ -89,7 +132,7 @@ describe("InboundDeliveryLedger", () => {
   it("keeps an in-progress Kernel replay pending", async () => {
     const storage = new MemoryStorage();
     const pending = ledger(storage);
-    await pending.enqueue("provider-2", { providerMessageId: "provider-2" });
+    await pending.enqueueAndArm("provider-2", { providerMessageId: "provider-2" }, 100);
 
     const result = { ok: true as const, replayed: "in_progress" as const };
     await expect(pending.attempt("provider-2", async () => ({
@@ -118,7 +161,7 @@ describe("InboundDeliveryLedger", () => {
   it("replays when the Kernel completed but the adapter crashed before deleting", async () => {
     const storage = new MemoryStorage();
     const first = ledger(storage);
-    await first.enqueue("provider-3", { providerMessageId: "provider-3" });
+    await first.enqueueAndArm("provider-3", { providerMessageId: "provider-3" }, 100);
     storage.failNextDelete = true;
 
     await expect(first.attempt("provider-3", async () => ({ terminal: true })))
@@ -136,11 +179,69 @@ describe("InboundDeliveryLedger", () => {
   it("does not overwrite a provider payload when the provider replays it", async () => {
     const storage = new MemoryStorage();
     const pending = ledger(storage);
-    await pending.enqueue("provider-4", { providerMessageId: "original" });
-    await pending.enqueue("provider-4", { providerMessageId: "replacement" });
+    await pending.enqueueAndArm("provider-4", { providerMessageId: "original" }, 100);
+    await pending.enqueueAndArm("provider-4", { providerMessageId: "replacement" }, 100);
 
     const deliver = vi.fn(async () => ({ terminal: true }));
     await pending.attempt("provider-4", deliver);
     expect(deliver).toHaveBeenCalledWith({ providerMessageId: "original" });
+  });
+});
+
+describe("deliverAdapterInboundResponses", () => {
+  const surface = { kind: "dm" as const, id: "chat-1" };
+
+  it("uses stable response ids before releasing inbound ownership", async () => {
+    const send = vi.fn(async () => ({ ok: true as const }));
+    await expect(deliverAdapterInboundResponses({
+      ok: true,
+      challenge: {
+        deliveryId: "challenge-1",
+        code: "CODE",
+        prompt: "Link this account",
+        expiresAt: 123,
+      },
+      reply: {
+        deliveryId: "reply-1",
+        text: "Done",
+      },
+    }, {
+      surface,
+      providerMessageId: "provider-1",
+      send,
+    })).resolves.toEqual({ terminal: true });
+
+    expect(send.mock.calls.map(([message]) => message)).toEqual([
+      {
+        deliveryId: "challenge-1",
+        surface,
+        text: "Link this account",
+        replyToId: "provider-1",
+      },
+      {
+        deliveryId: "reply-1",
+        surface,
+        text: "Done",
+        replyToId: "provider-1",
+      },
+    ]);
+  });
+
+  it("retains inbound ownership for a retry-safe response failure", async () => {
+    await expect(deliverAdapterInboundResponses({
+      ok: true,
+      reply: { deliveryId: "reply-2", text: "Try again" },
+    }, {
+      surface,
+      providerMessageId: "provider-2",
+      send: vi.fn(async () => ({
+        ok: false as const,
+        error: "provider unavailable",
+        retryable: true,
+      })),
+    })).resolves.toEqual({
+      terminal: false,
+      error: "provider unavailable",
+    });
   });
 });

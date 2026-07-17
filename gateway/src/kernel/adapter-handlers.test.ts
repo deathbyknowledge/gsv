@@ -181,7 +181,7 @@ function makeContext(
     ...options.ingressReceipts,
   };
 
-  const context = {
+  return {
     env: {
       STORAGE: makeStorageBucket(),
       ...env,
@@ -299,10 +299,6 @@ function makeContext(
     },
     callerOwnerUid: options.callerOwnerUid,
   } as unknown as KernelContext;
-  context.completeAdapterIngressReceipt = vi.fn(async ({ receiptId, claimToken }) => {
-    ingressReceiptStore.complete(receiptId, claimToken);
-  });
-  return context;
 }
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
@@ -1290,16 +1286,17 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
-  it("reclaims a prepared command reply when its durable enqueue failed", async () => {
+  it("reclaims a prepared command reply after completion is interrupted", async () => {
     const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: "pid-1" });
-    const completePrepared = ctx.completeAdapterIngressReceipt;
+    const receipts = ctx.adapters.ingressReceipts;
+    const completePrepared = receipts.complete.bind(receipts);
     let completionAttempts = 0;
-    ctx.completeAdapterIngressReceipt = vi.fn(async (input) => {
+    receipts.complete = vi.fn((receiptId, claimToken) => {
       completionAttempts++;
       if (completionAttempts === 1) {
-        throw new Error("scheduler unavailable");
+        throw new Error("completion interrupted");
       }
-      await completePrepared(input);
+      completePrepared(receiptId, claimToken);
     });
     const inbound = {
       adapter: "whatsapp",
@@ -1312,7 +1309,7 @@ describe("adapter lifecycle handlers", () => {
       },
     };
 
-    await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow("scheduler unavailable");
+    await expect(handleAdapterInbound(inbound, ctx)).rejects.toThrow("completion interrupted");
     const replay = await handleAdapterInbound(inbound, ctx);
 
     expect(replay).toMatchObject({
@@ -1321,12 +1318,7 @@ describe("adapter lifecycle handlers", () => {
       reply: { text: "This chat now uses your personal conversation." },
     });
     expect(ctx.adapters.surfaceRoutes.setRoute).toHaveBeenCalledTimes(1);
-    expect(ctx.completeAdapterIngressReceipt).toHaveBeenCalledTimes(2);
-    const firstDelivery = vi.mocked(ctx.completeAdapterIngressReceipt).mock.calls[0]?.[0]
-      .deliveries[0];
-    const secondDelivery = vi.mocked(ctx.completeAdapterIngressReceipt).mock.calls[1]?.[0]
-      .deliveries[0];
-    expect(secondDelivery?.deliveryId).toBe(firstDelivery?.deliveryId);
+    expect(receipts.complete).toHaveBeenCalledTimes(2);
   });
 
   it("replays a link challenge with one challenge mutation and one delivery id", async () => {

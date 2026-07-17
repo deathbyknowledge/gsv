@@ -31,7 +31,6 @@ import type { ScheduleStore } from "./scheduler";
 import type { AppSessionStore } from "./app-sessions";
 import type { AppFrameContext } from "../protocol/app-frame";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
-import type { AdapterIngressCompletion } from "./adapter-ingress-receipts";
 
 export type KernelContext = {
   env: Env;
@@ -72,7 +71,6 @@ export type KernelContext = {
     identity?: ConnectionIdentity,
     callerOwnerUid?: number,
   ) => Promise<SchedulerRunResult>;
-  completeAdapterIngressReceipt: (input: AdapterIngressCompletion) => Promise<void>;
   addMcpServerConnection: (input: McpAddConnectionInput) => Promise<McpAddConnectionResult>;
   removeMcpServerConnection: (serverId: string) => Promise<void>;
   refreshMcpServerConnection: (serverId: string) => Promise<void>;

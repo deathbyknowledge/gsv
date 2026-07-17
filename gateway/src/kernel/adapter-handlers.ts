@@ -56,7 +56,6 @@ import {
   MAX_MESSAGE_MEDIA_PART_BYTES,
   MAX_MESSAGE_MEDIA_TOTAL_BYTES,
 } from "../shared/message-media-limits";
-import { adapterIngressImmediateDeliveries } from "./adapter-ingress-receipts";
 
 type AdapterServiceBinding = Fetcher & Partial<AdapterWorkerInterface>;
 type AdapterCommandResult = {
@@ -859,15 +858,7 @@ async function handleAdapterInboundOwned(
   const claimToken = receipt.claimToken;
   try {
     if (receipt.state === "prepared") {
-      await finishAdapterIngressReceipt({
-        receiptId,
-        claimToken,
-        adapter,
-        accountId,
-        message,
-        result: receipt.result,
-        ctx,
-      });
+      ctx.adapters.ingressReceipts.complete(receiptId, claimToken);
       return { ...receipt.result, replayed: "completed" };
     }
 
@@ -897,40 +888,12 @@ async function handleAdapterInboundOwned(
         : {}),
     };
     ctx.adapters.ingressReceipts.prepare(receiptId, claimToken, result);
-    await finishAdapterIngressReceipt({
-      receiptId,
-      claimToken,
-      adapter,
-      accountId,
-      message,
-      result,
-      ctx,
-    });
+    ctx.adapters.ingressReceipts.complete(receiptId, claimToken);
     return result;
   } catch (error) {
     ctx.adapters.ingressReceipts.abandon(receiptId, claimToken);
     throw error;
   }
-}
-
-async function finishAdapterIngressReceipt(input: {
-  receiptId: string;
-  claimToken: string;
-  adapter: string;
-  accountId: string;
-  message: AdapterInboundMessage;
-  result: AdapterInboundSyscallResult;
-  ctx: KernelContext;
-}): Promise<void> {
-  const { receiptId, claimToken, adapter, accountId, message, result, ctx } = input;
-  const deliveries = adapterIngressImmediateDeliveries({
-    adapter,
-    accountId,
-    surface: message.surface,
-    providerMessageId: message.messageId,
-    result,
-  });
-  await ctx.completeAdapterIngressReceipt({ receiptId, claimToken, deliveries });
 }
 
 async function resolveClaimedAdapterInbound(input: {

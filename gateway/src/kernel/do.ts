@@ -54,7 +54,6 @@ import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import { ProcessRegistry, type ProcessState } from "./processes";
 import { ConversationRegistry } from "./conversations";
 import { AdapterStore } from "./adapter-store";
-import type { AdapterIngressCompletion } from "./adapter-ingress-receipts";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
 import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
@@ -139,7 +138,6 @@ const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
 const MAX_ONE_SHOT_SCHEDULE_DELIVERY_ATTEMPTS = 10;
 const MAX_ADAPTER_SIGNAL_DELIVERY_ATTEMPTS = 10;
-const ADAPTER_INGRESS_OUTBOX_SWEEP_SECONDS = 60;
 
 type AdapterSignalDeliveryOutcome =
   | { state: "delivered" }
@@ -151,16 +149,6 @@ type AdapterSignalDeliveryRetry = {
   processId: string;
   signal: string;
   payload: unknown;
-  attempt: number;
-};
-
-type AdapterImmediateDeliveryRetry = {
-  adapter: string;
-  accountId: string;
-  surface: AdapterSurface;
-  deliveryId: string;
-  text: string;
-  replyToId?: string;
   attempt: number;
 };
 
@@ -363,17 +351,6 @@ export class Kernel extends Host<Env> {
     for (const callId of this.ipcCalls.recoverDeliveryIds()) {
       this.queueIpcCallDelivery(callId);
     }
-    this.ctx.waitUntil((async () => {
-      await this.scheduleEvery(
-        ADAPTER_INGRESS_OUTBOX_SWEEP_SECONDS,
-        "onAdapterIngressOutboxSweep",
-        {},
-        { retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 } },
-      );
-      await this.onAdapterIngressOutboxSweep();
-    })().catch((error) => {
-      console.warn("[Kernel] Failed to start adapter ingress outbox recovery", error);
-    }));
   }
 
   createMcpOAuthProvider(callbackUrl: string): AgentMcpOAuthProvider {
@@ -1202,107 +1179,6 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private async completeAdapterIngressReceipt(
-    input: AdapterIngressCompletion,
-  ): Promise<void> {
-    // This ordering is the ingress outbox completion barrier: once a receipt
-    // says completed, every immediate response already has a durable schedule.
-    // A crash or scheduling error before that point leaves the prepared result
-    // reclaimable, and its stable delivery ids make enqueue replay harmless.
-    for (const delivery of input.deliveries) {
-      await this.queueAdapterImmediateDelivery({ ...delivery, attempt: 1 });
-    }
-    this.adapters.ingressReceipts.complete(input.receiptId, input.claimToken);
-  }
-
-  async onAdapterIngressOutboxSweep(): Promise<void> {
-    for (const completion of this.adapters.ingressReceipts.claimPreparedCompletions()) {
-      try {
-        await this.completeAdapterIngressReceipt(completion);
-      } catch (error) {
-        this.adapters.ingressReceipts.abandon(
-          completion.receiptId,
-          completion.claimToken,
-        );
-        console.warn(
-          `[Kernel] Adapter ingress outbox recovery failed receipt=${completion.receiptId}`,
-          error,
-        );
-      }
-    }
-  }
-
-  private async attemptAdapterImmediateDelivery(
-    job: AdapterImmediateDeliveryRetry,
-    ctx: KernelContext,
-  ): Promise<void> {
-    const result = await handleAdapterSend({
-      adapter: job.adapter,
-      accountId: job.accountId,
-      deliveryId: job.deliveryId,
-      surface: job.surface,
-      text: job.text,
-      replyToId: job.replyToId,
-    }, ctx);
-    if (result.ok) {
-      if (result.deliveryState === "ambiguous") {
-        console.warn(`[Kernel] Adapter ingress reply ${job.deliveryId} has ambiguous delivery`);
-      }
-      return;
-    }
-    if (result.retryable && job.attempt < MAX_ADAPTER_SIGNAL_DELIVERY_ATTEMPTS) {
-      await this.queueAdapterImmediateDelivery({ ...job, attempt: job.attempt + 1 });
-      return;
-    }
-    console.warn(
-      `[Kernel] Adapter ingress reply ${job.deliveryId} stopped after attempt ${job.attempt}: ${result.error}`,
-    );
-  }
-
-  private async queueAdapterImmediateDelivery(
-    job: AdapterImmediateDeliveryRetry,
-  ): Promise<void> {
-    await this.schedule(
-      new Date(Date.now() + (job.attempt === 1 ? 100 : adapterSignalRetryDelayMs(job.attempt - 1))),
-      "onAdapterImmediateDelivery",
-      job,
-      {
-        idempotent: true,
-        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
-      },
-    );
-  }
-
-  async onAdapterImmediateDelivery(input: AdapterImmediateDeliveryRetry): Promise<void> {
-    if (
-      !input
-      || typeof input.adapter !== "string"
-      || typeof input.accountId !== "string"
-      || typeof input.deliveryId !== "string"
-      || typeof input.text !== "string"
-      || !input.surface
-      || typeof input.surface.id !== "string"
-      || !Number.isSafeInteger(input.attempt)
-      || input.attempt < 1
-    ) {
-      return;
-    }
-    const identity = this.buildServiceBindingIdentity({
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "adapter.send",
-      args: { adapter: input.adapter },
-    } as RequestFrame);
-    if (!identity) {
-      console.warn(`[Kernel] Cannot resume adapter ingress reply ${input.deliveryId}: service identity unavailable`);
-      return;
-    }
-    await this.attemptAdapterImmediateDelivery(
-      input,
-      this.buildKernelContext({ identity }),
-    );
-  }
-
   private updateProcessRuntimeFromSignal(
     processId: string,
     frame: SignalFrame,
@@ -1951,7 +1827,6 @@ export class Kernel extends Host<Env> {
         await this.cancelSchedule(wakeScheduleId);
       },
       runSchedules: this.runSchedules.bind(this),
-      completeAdapterIngressReceipt: this.completeAdapterIngressReceipt.bind(this),
       addMcpServerConnection: this.addMcpServerConnection.bind(this),
       removeMcpServerConnection: this.removeMcpServer.bind(this),
       refreshMcpServerConnection: this.refreshMcpServerConnection.bind(this),

@@ -60,9 +60,6 @@ import type {
   AdapterWorkerInterface,
   BinaryBody,
 } from "../../shared/src/types";
-import type {
-  ChannelOutboundMessage,
-} from "./channel-types";
 
 export { WhatsAppAccount } from "./whatsapp-account";
 
@@ -73,7 +70,7 @@ interface Env {
 type WhatsAppAccountStub = DurableObjectStub & {
   sendMessage(
     accountId: string,
-    message: ChannelOutboundMessage,
+    message: AdapterOutboundMessage,
     body?: BinaryBody,
   ): Promise<AdapterSendResult>;
 };
@@ -185,15 +182,7 @@ export class WhatsAppChannelEntrypoint
   ): Promise<AdapterSendResult> {
     try {
       console.log(`[WhatsAppEntrypoint] send() called for ${accountId} to ${message.surface.id}`);
-      const outbound: ChannelOutboundMessage = {
-        deliveryId: message.deliveryId,
-        peer: message.surface,
-        actorId: message.actorId,
-        text: message.text,
-        media: message.media,
-        replyToId: message.replyToId,
-      };
-      return await this.getDO(accountId).sendMessage(accountId, outbound, body);
+      return await this.getDO(accountId).sendMessage(accountId, message, body);
     } catch (e) {
       await cancelBinaryBody(body, e);
       console.error(`[WhatsAppEntrypoint] send() error:`, e);

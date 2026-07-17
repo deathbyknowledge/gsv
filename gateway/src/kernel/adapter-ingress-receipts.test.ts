@@ -30,14 +30,6 @@ function createMockSql() {
 
   function exec<T = MockSqlRow>(query: string, ...bindings: unknown[]) {
     const normalized = query.trim();
-    if (normalized.includes("WHERE state = 'in_progress' AND result_json IS NOT NULL")) {
-      const [limit] = bindings as [number];
-      const prepared = [...rows.values()]
-        .filter((row) => row.state === "in_progress" && row.result_json !== null)
-        .sort((left, right) => left.claimed_at - right.claimed_at)
-        .slice(0, limit);
-      return cursor(prepared as T[]);
-    }
     if (normalized.startsWith("SELECT receipt_id,")) {
       const row = bindings.length === 1
         ? [...rows.values()].find((candidate) => candidate.receipt_id === bindings[0])
@@ -336,35 +328,6 @@ describe("AdapterIngressReceiptStore", () => {
       state: "completed",
       result: { ok: true },
     });
-  });
-
-  it("rebuilds durable immediate delivery work from a prepared receipt", () => {
-    const sql = createMockSql();
-    const firstStore = new AdapterIngressReceiptStore(sql as unknown as SqlStorage);
-    const first = firstStore.claim({ ...BASE_KEY, receiptId: "receipt-outbox" });
-    if (first.state !== "claimed") throw new Error("receipt was not claimed");
-    firstStore.prepare(first.receiptId, first.claimToken, {
-      ok: true,
-      reply: {
-        deliveryId: "reply-outbox",
-        text: "Command accepted.",
-        replyToId: "provider-thread-reply",
-      },
-    });
-
-    const restartedStore = new AdapterIngressReceiptStore(sql as unknown as SqlStorage);
-    expect(restartedStore.claimPreparedCompletions()).toEqual([{
-      receiptId: "receipt-outbox",
-      claimToken: expect.any(String),
-      deliveries: [{
-        adapter: "telegram",
-        accountId: "bot",
-        surface: { kind: "dm", id: "chat-1" },
-        deliveryId: "reply-outbox",
-        text: "Command accepted.",
-        replyToId: "provider-thread-reply",
-      }],
-    }]);
   });
 
   it("rejects a completed immediate reply without its delivery id", () => {

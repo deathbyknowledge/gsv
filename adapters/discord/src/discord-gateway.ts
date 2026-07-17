@@ -10,8 +10,8 @@
 import { DurableObject } from "cloudflare:workers";
 import { DeliveryLedger } from "../../shared/src/delivery-ledger";
 import {
+  deliverAdapterInboundResponses,
   InboundDeliveryLedger,
-  isTerminalAdapterInboundResult,
 } from "../../shared/src/inbound-delivery";
 import {
   bundleAdapterMedia,
@@ -159,7 +159,7 @@ export class DiscordGateway extends DurableObject<Env> {
     await this.openGatewayConnection();
     
     // Schedule keep-alive to prevent DO hibernation
-    this.scheduleKeepAlive();
+    await this.scheduleKeepAlive();
   }
 
   async stop(): Promise<void> {
@@ -224,13 +224,13 @@ export class DiscordGateway extends DurableObject<Env> {
     if (!this.state.botToken) {
       console.log("[DiscordGateway] No bot token, alarm stopping");
       if (await this.inboundDeliveries.hasPending()) {
-        await this.scheduleInboundRetry();
+        await this.inboundDeliveries.arm(Date.now() + INBOUND_RETRY_DELAY_MS);
       }
       return;
     }
 
     // The same alarm owns keep-alive, heartbeat, reconnect, and ingress retry.
-    this.scheduleKeepAlive();
+    await this.scheduleKeepAlive();
 
     // Reconnect if WebSocket is gone
     if (!this.ws) {
@@ -248,8 +248,10 @@ export class DiscordGateway extends DurableObject<Env> {
     }
   }
   
-  private scheduleKeepAlive(): void {
-    this.ctx.storage.setAlarm(Date.now() + DiscordGateway.KEEP_ALIVE_INTERVAL_MS);
+  private async scheduleKeepAlive(): Promise<void> {
+    await this.inboundDeliveries.arm(
+      Date.now() + DiscordGateway.KEEP_ALIVE_INTERVAL_MS,
+    );
   }
 
   // ─────────────────────────────────────────────────────────
@@ -406,10 +408,11 @@ export class DiscordGateway extends DurableObject<Env> {
     const messageId = data.id as string;
     if (typeof messageId !== "string" || !messageId) return;
 
-    await this.inboundDeliveries.enqueue(messageId, JSON.stringify(data));
-    // The alarm is committed before external I/O so a terminated invocation
-    // cannot strand the durable provider payload.
-    await this.scheduleInboundRetry();
+    await this.inboundDeliveries.enqueueAndArm(
+      messageId,
+      JSON.stringify(data),
+      Date.now() + INBOUND_RETRY_DELAY_MS,
+    );
     await this.deliverPendingInbound(messageId);
   }
 
@@ -427,21 +430,13 @@ export class DiscordGateway extends DurableObject<Env> {
     console.error(
       `[DiscordGateway] Inbound ${messageId} remains pending: ${this.state.lastError}`,
     );
-    await this.scheduleInboundRetry();
+    await this.inboundDeliveries.arm(Date.now() + INBOUND_RETRY_DELAY_MS);
   }
 
   private async retryPendingInbound(): Promise<void> {
     const ids = await this.inboundDeliveries.pendingIds(INBOUND_RETRY_BATCH_SIZE);
     for (const messageId of ids) {
       await this.deliverPendingInbound(messageId);
-    }
-  }
-
-  private async scheduleInboundRetry(): Promise<void> {
-    const retryAt = Date.now() + INBOUND_RETRY_DELAY_MS;
-    const current = await this.ctx.storage.getAlarm();
-    if (current === null || current > retryAt) {
-      await this.ctx.storage.setAlarm(retryAt);
     }
   }
 
@@ -509,12 +504,12 @@ export class DiscordGateway extends DurableObject<Env> {
       },
       media.body,
     );
-    if (!isTerminalAdapterInboundResult(result)) {
-      return {
-        terminal: false,
-        error: "Kernel receipt is still in progress",
-      };
-    }
+    const responseDisposition = await deliverAdapterInboundResponses(result, {
+      surface: message.surface,
+      providerMessageId: messageId,
+      send: (response) => this.sendMessage(response),
+    });
+    if (!responseDisposition.terminal) return responseDisposition;
     if (!result.ok) {
       console.error(
         `[DiscordGateway] Inbound rejected by gateway: ${result.error ?? "unknown error"}`,

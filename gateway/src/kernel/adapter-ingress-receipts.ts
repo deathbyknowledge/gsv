@@ -1,6 +1,5 @@
 import type {
   AdapterInboundResult,
-  AdapterSurface,
   AdapterSurfaceKind,
 } from "@humansandmachines/gsv/protocol";
 
@@ -33,52 +32,6 @@ export type AdapterIngressReceiptClaim =
       receiptId: string;
       result: AdapterInboundResult;
     };
-
-export type AdapterIngressImmediateDelivery = {
-  adapter: string;
-  accountId: string;
-  surface: AdapterSurface;
-  deliveryId: string;
-  text: string;
-  replyToId?: string;
-};
-
-export type AdapterIngressCompletion = {
-  receiptId: string;
-  claimToken: string;
-  deliveries: AdapterIngressImmediateDelivery[];
-};
-
-export function adapterIngressImmediateDeliveries(input: {
-  adapter: string;
-  accountId: string;
-  surface: AdapterSurface;
-  providerMessageId: string;
-  result: AdapterInboundResult;
-}): AdapterIngressImmediateDelivery[] {
-  const deliveries: AdapterIngressImmediateDelivery[] = [];
-  if (input.result.challenge?.prompt) {
-    deliveries.push({
-      adapter: input.adapter,
-      accountId: input.accountId,
-      surface: input.surface,
-      deliveryId: input.result.challenge.deliveryId,
-      text: input.result.challenge.prompt,
-      replyToId: input.providerMessageId,
-    });
-  }
-  if (input.result.reply?.text) {
-    deliveries.push({
-      adapter: input.adapter,
-      accountId: input.accountId,
-      surface: input.surface,
-      deliveryId: input.result.reply.deliveryId,
-      text: input.result.reply.text,
-      replyToId: input.result.reply.replyToId || input.providerMessageId,
-    });
-  }
-  return deliveries;
-}
 
 type AdapterIngressReceiptRow = {
   receipt_id: string;
@@ -113,9 +66,10 @@ const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
  * prepared/completed. The time lease is only a final escape hatch for a
  * request that never reaches its cleanup path.
  *
- * A result is prepared before any immediate reply is enqueued. Completion is a
- * separate token-guarded transition, allowing the Kernel to enforce the
- * invariant that a completed receipt already has durable delivery work.
+ * A result is prepared before completion so a replacement Kernel can return
+ * the exact disposition without replaying its side effects. The adapter keeps
+ * its provider payload until it has delivered any immediate response through
+ * its account-local outbound ledger.
  */
 export class AdapterIngressReceiptStore {
   private readonly activeClaims = new Set<string>();
@@ -217,9 +171,9 @@ export class AdapterIngressReceiptStore {
       return;
     }
 
-    // A prepared replay can steal the claim while the previous request awaits
-    // durable scheduling. Treat an already completed receipt as success; both
-    // requests use the same stable delivery ids.
+    // A prepared replay can reclaim work after a Kernel restart. Treat an
+    // already completed receipt as success; the adapter uses the same stable
+    // response delivery ids on either path.
     const row = this.getByReceiptId(receiptId);
     if (row?.state === "completed" && row.result_json !== null) {
       return;
@@ -236,37 +190,6 @@ export class AdapterIngressReceiptStore {
       receiptId,
       claimToken,
     );
-  }
-
-  claimPreparedCompletions(limit = 100): AdapterIngressCompletion[] {
-    const rows = this.sql.exec<AdapterIngressReceiptRow>(
-      `SELECT receipt_id, adapter, account_id, actor_id, surface_kind,
-              surface_id, thread_id, provider_message_id, state, result_json,
-              progress_json, claim_token, claimed_at
-         FROM adapter_ingress_receipts
-        WHERE state = 'in_progress' AND result_json IS NOT NULL
-        ORDER BY claimed_at ASC
-        LIMIT ?`,
-      Math.max(1, Math.min(100, Math.floor(limit))),
-    ).toArray();
-    const completions: AdapterIngressCompletion[] = [];
-    const activeCutoff = Date.now() - CLAIM_LEASE_MS;
-    for (const row of rows) {
-      if (
-        this.activeClaims.has(row.claim_token)
-        && row.claimed_at > activeCutoff
-      ) {
-        continue;
-      }
-      const reclaimed = this.reclaim(row);
-      if (reclaimed.state !== "prepared") continue;
-      completions.push({
-        receiptId: reclaimed.receiptId,
-        claimToken: reclaimed.claimToken,
-        deliveries: immediateDeliveriesFromRow(row, reclaimed.result),
-      });
-    }
-    return completions;
   }
 
   private prune(now = Date.now()): void {
@@ -394,31 +317,6 @@ function parseReceiptProgress(row: AdapterIngressReceiptRow): unknown {
   } catch {
     throw new Error(`Invalid adapter ingress receipt progress: ${row.receipt_id}`);
   }
-}
-
-function immediateDeliveriesFromRow(
-  row: AdapterIngressReceiptRow,
-  result: AdapterInboundResult,
-): AdapterIngressImmediateDelivery[] {
-  if (!isAdapterSurfaceKind(row.surface_kind)) {
-    throw new Error(`Invalid adapter ingress receipt surface: ${row.receipt_id}`);
-  }
-  const surface: AdapterSurface = {
-    kind: row.surface_kind,
-    id: row.surface_id,
-    ...(row.thread_id ? { threadId: row.thread_id } : {}),
-  };
-  return adapterIngressImmediateDeliveries({
-    adapter: row.adapter,
-    accountId: row.account_id,
-    surface,
-    providerMessageId: row.provider_message_id,
-    result,
-  });
-}
-
-function isAdapterSurfaceKind(value: string): value is AdapterSurfaceKind {
-  return value === "dm" || value === "group" || value === "channel" || value === "thread";
 }
 
 function isAdapterInboundResult(value: unknown): value is AdapterInboundResult {

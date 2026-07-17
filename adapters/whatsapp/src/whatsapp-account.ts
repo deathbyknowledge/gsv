@@ -15,8 +15,8 @@ import {
   fingerprintOutboundDelivery,
 } from "../../shared/src/delivery-ledger";
 import {
+  deliverAdapterInboundResponses,
   InboundDeliveryLedger,
-  isTerminalAdapterInboundResult,
 } from "../../shared/src/inbound-delivery";
 import {
   makeWASocket,
@@ -53,15 +53,13 @@ import type { AdapterMediaPart } from "../../shared/src/media-body";
 import { useDOAuthState, clearAuthState, hasAuthState } from "./auth-store";
 import type { WhatsAppAccountState } from "./types";
 import type {
-  ChannelOutboundMessage,
-  ChannelPeer,
-  ChannelAccountStatus,
-  ChannelMedia,
-} from "./channel-types";
-import type {
+  AdapterAccountStatus,
   AdapterInboundMessage,
   AdapterInboundResult,
+  AdapterMedia,
+  AdapterOutboundMessage,
   AdapterSendResult,
+  AdapterSurface,
   BinaryBody,
   GatewayFrame,
   GatewayRequestFrame,
@@ -359,13 +357,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
     if (result.connected) {
       // Login succeeded - clear pending flag and schedule keep-alive
       await this.ctx.storage.delete("login_pending");
-      this.ctx.storage.setAlarm(Date.now() + 10000);
+      await this.inboundDeliveries.arm(Date.now() + 10000);
       return Response.json({ connected: true, message: "Connected" });
     }
     
     if (result.qr) {
       // Schedule alarm to keep DO alive during QR scan window
-      this.ctx.storage.setAlarm(Date.now() + 5000);
+      await this.inboundDeliveries.arm(Date.now() + 5000);
       
       return Response.json({ 
         connected: false, 
@@ -404,7 +402,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   async sendMessage(
     accountId: string,
-    message: ChannelOutboundMessage,
+    message: AdapterOutboundMessage,
     body?: BinaryBody,
   ): Promise<AdapterSendResult> {
     if (this.state.accountId && this.state.accountId !== accountId) {
@@ -458,10 +456,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
     let requestFingerprint: string;
     try {
-      requestFingerprint = await fingerprintOutboundDelivery({
-        ...message,
-        surface: message.peer,
-      }, mediaBytes);
+      requestFingerprint = await fingerprintOutboundDelivery(message, mediaBytes);
     } catch (error) {
       return {
         ok: false,
@@ -515,7 +510,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       const outboundMediaBytes = media[0]?.url
         ? await this.downloadOutboundMedia(media[0])
         : mediaBytes[0];
-      jid = await this.resolveOutboundWhatsAppJid(message.peer.id);
+      jid = await this.resolveOutboundWhatsAppJid(message.surface.id);
       content = this.buildOutboundContent(message, outboundMediaBytes);
       quoted = this.buildQuotedMessage(jid, message);
     } catch (error) {
@@ -568,7 +563,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       return Response.json({ error: "Not connected" }, { status: 503 });
     }
 
-    const { peer, typing } = await request.json() as { peer: ChannelPeer; typing: boolean };
+    const { peer, typing } = await request.json() as { peer: AdapterSurface; typing: boolean };
     const jid = await this.resolveOutboundWhatsAppJid(peer.id);
 
     try {
@@ -582,7 +577,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private buildOutboundContent(
-    message: ChannelOutboundMessage,
+    message: AdapterOutboundMessage,
     mediaBytes?: Uint8Array,
   ): AnyMessageContent {
     const media = message.media?.[0];
@@ -599,7 +594,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   private buildQuotedMessage(
     remoteJid: string,
-    message: ChannelOutboundMessage,
+    message: AdapterOutboundMessage,
   ): WAMessage | undefined {
     const replyToId = message.replyToId?.trim();
     if (!replyToId) return undefined;
@@ -627,7 +622,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private buildMediaContent(
-    media: ChannelMedia,
+    media: AdapterMedia,
     bytes: Uint8Array | undefined,
     captionText: string,
   ): AnyMessageContent {
@@ -664,7 +659,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private buildMediaUpload(
-    media: ChannelMedia,
+    media: AdapterMedia,
     bytes?: Uint8Array,
   ): Buffer | { url: string } {
     if (bytes) {
@@ -680,7 +675,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     throw new Error("Media attachment must include a binary body or URL");
   }
 
-  private async downloadOutboundMedia(media: ChannelMedia): Promise<Uint8Array> {
+  private async downloadOutboundMedia(media: AdapterMedia): Promise<Uint8Array> {
     let response: Response;
     try {
       response = await fetch(media.url!);
@@ -792,7 +787,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       this.resolveWaiters({ connected: true });
       
       this.notifyGatewayStatus().catch(() => {});
-      this.scheduleKeepAlive();
+      this.ctx.waitUntil(this.scheduleKeepAlive());
     }
 
     if (connection === "close") {
@@ -812,7 +807,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       } else if (isConnectionReplaced) {
         this.ctx.storage.delete("login_pending").catch(() => {});
       } else {
-        this.ctx.storage.setAlarm(Date.now() + 5000);
+        this.ctx.waitUntil(this.inboundDeliveries.arm(Date.now() + 5000));
       }
 
       this.notifyGatewayStatus().catch(() => {});
@@ -829,11 +824,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
       const deliveryId = this.whatsAppInboundDeliveryId(msg);
       const encoded = proto.WebMessageInfo.encode(msg).finish();
-      await this.inboundDeliveries.enqueue(deliveryId, encoded);
-      // Persist both the provider payload and its wake-up before making the
-      // first external call. A consumed media stream is reconstructed from the
-      // protobuf payload for every replay.
-      await this.scheduleInboundRetry();
+      await this.inboundDeliveries.enqueueAndArm(
+        deliveryId,
+        encoded,
+        Date.now() + INBOUND_RETRY_DELAY_MS,
+      );
       await this.deliverPendingInbound(deliveryId);
     }
   }
@@ -860,21 +855,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
     console.error(
       `[WA:${this.state.accountId}] Inbound ${deliveryId} remains pending: ${attempt.error ?? "Gateway receipt is still in progress"}`,
     );
-    await this.scheduleInboundRetry();
+    await this.inboundDeliveries.arm(Date.now() + INBOUND_RETRY_DELAY_MS);
   }
 
   private async retryPendingInbound(): Promise<void> {
     const ids = await this.inboundDeliveries.pendingIds(INBOUND_RETRY_BATCH_SIZE);
     for (const deliveryId of ids) {
       await this.deliverPendingInbound(deliveryId);
-    }
-  }
-
-  private async scheduleInboundRetry(): Promise<void> {
-    const retryAt = Date.now() + INBOUND_RETRY_DELAY_MS;
-    const current = await this.ctx.storage.getAlarm();
-    if (current === null || current > retryAt) {
-      await this.ctx.storage.setAlarm(retryAt);
     }
   }
 
@@ -982,12 +969,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
       },
       media.body,
     );
-    if (!isTerminalAdapterInboundResult(result)) {
-      return {
-        terminal: false,
-        error: "Kernel receipt is still in progress",
-      };
-    }
+    const responseDisposition = await deliverAdapterInboundResponses(result, {
+      surface: inbound.surface,
+      providerMessageId: inbound.messageId,
+      send: (response) => this.sendMessage(this.state.accountId!, response),
+    });
+    if (!responseDisposition.terminal) return responseDisposition;
     if (!result.ok) {
       console.error(
         `[WA:${this.state.accountId}] Gateway RPC inbound rejected: ${result.error || "unknown error"}`,
@@ -1115,7 +1102,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const contentType = getContentType(mContent);
     if (!contentType) return null;
 
-    let mediaType: ChannelMedia["type"];
+    let mediaType: AdapterMedia["type"];
     let mimeType: string;
     let filename: string | undefined;
     let baileysMediaType: string;
@@ -1229,7 +1216,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     if (!this.state.accountId) return;
     
     try {
-      const status: ChannelAccountStatus = {
+      const status: AdapterAccountStatus = {
         accountId: this.state.accountId,
         connected: this.state.connected,
         authenticated: !!this.state.selfJid,
@@ -1318,8 +1305,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   private static readonly KEEP_ALIVE_INTERVAL_MS = 10_000;
 
-  private scheduleKeepAlive(): void {
-    this.ctx.storage.setAlarm(Date.now() + WhatsAppAccount.KEEP_ALIVE_INTERVAL_MS);
+  private async scheduleKeepAlive(): Promise<void> {
+    await this.inboundDeliveries.arm(
+      Date.now() + WhatsAppAccount.KEEP_ALIVE_INTERVAL_MS,
+    );
   }
 
   async alarm(): Promise<void> {
@@ -1328,7 +1317,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     
     // Keep alive during login flow
     if (loginPending && Date.now() - loginPending < 90000) {
-      this.ctx.storage.setAlarm(Date.now() + 5000);
+      await this.inboundDeliveries.arm(Date.now() + 5000);
       return;
     }
     
@@ -1338,7 +1327,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
     if (!hasAuth) return;
     // The same alarm owns keep-alive, reconnect, and ingress retry.
-    this.scheduleKeepAlive();
+    await this.scheduleKeepAlive();
 
     // Reconnect if needed
     if (!this.sock) {

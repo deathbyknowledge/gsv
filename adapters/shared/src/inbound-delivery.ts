@@ -1,4 +1,9 @@
-import type { AdapterInboundResult } from "./types";
+import type {
+  AdapterInboundResult,
+  AdapterOutboundMessage,
+  AdapterSendResult,
+  AdapterSurface,
+} from "./types";
 
 type PendingInboundDelivery<Payload> = {
   payload: Payload;
@@ -38,16 +43,35 @@ export class InboundDeliveryLedger<Payload> {
     }
   }
 
-  async enqueue(deliveryId: string, payload: Payload): Promise<void> {
+  async enqueueAndArm(
+    deliveryId: string,
+    payload: Payload,
+    alarmAt: number,
+  ): Promise<void> {
     const normalizedId = requireDeliveryId(deliveryId);
+    const normalizedAlarmAt = requireAlarmTime(alarmAt);
     const key = this.recordKey(normalizedId);
     await this.storage.transaction(async (txn) => {
-      if (await txn.get(key)) return;
-      const now = Date.now();
-      await txn.put(key, {
-        payload,
-        createdAt: now,
-      } satisfies PendingInboundDelivery<Payload>);
+      if (!await txn.get(key)) {
+        await txn.put(key, {
+          payload,
+          createdAt: Date.now(),
+        } satisfies PendingInboundDelivery<Payload>);
+      }
+      const currentAlarm = await txn.getAlarm();
+      if (currentAlarm === null || currentAlarm > normalizedAlarmAt) {
+        await txn.setAlarm(normalizedAlarmAt);
+      }
+    });
+  }
+
+  async arm(alarmAt: number): Promise<void> {
+    const normalizedAlarmAt = requireAlarmTime(alarmAt);
+    await this.storage.transaction(async (txn) => {
+      const currentAlarm = await txn.getAlarm();
+      if (currentAlarm === null || currentAlarm > normalizedAlarmAt) {
+        await txn.setAlarm(normalizedAlarmAt);
+      }
     });
   }
 
@@ -117,11 +141,70 @@ export class InboundDeliveryLedger<Payload> {
 /** An in-progress replay is an acknowledgement of ownership, not completion. */
 export function isTerminalAdapterInboundResult(
   result: unknown,
-): boolean {
+): result is AdapterInboundResult {
   if (!result || typeof result !== "object") return false;
   const inbound = result as Partial<AdapterInboundResult>;
   return typeof inbound.ok === "boolean"
     && (inbound.replayed === undefined || inbound.replayed === "completed");
+}
+
+/**
+ * Completes the provider-facing half of an inbound handoff.
+ *
+ * The caller must keep its durable inbound payload until this returns terminal.
+ * Stable response delivery ids make replay through the account-local outbound
+ * ledger safe after a transport failure or Durable Object restart.
+ */
+export async function deliverAdapterInboundResponses(
+  result: unknown,
+  input: {
+    surface: AdapterSurface;
+    providerMessageId: string;
+    send: (message: AdapterOutboundMessage) => Promise<AdapterSendResult>;
+  },
+): Promise<InboundDeliveryDisposition> {
+  if (!isTerminalAdapterInboundResult(result)) {
+    return {
+      terminal: false,
+      error: "Kernel receipt is still in progress",
+    };
+  }
+
+  const responses: AdapterOutboundMessage[] = [];
+  if (result.challenge?.prompt) {
+    responses.push({
+      deliveryId: result.challenge.deliveryId,
+      surface: input.surface,
+      text: result.challenge.prompt,
+      replyToId: input.providerMessageId,
+    });
+  }
+  if (result.reply?.text) {
+    responses.push({
+      deliveryId: result.reply.deliveryId,
+      surface: input.surface,
+      text: result.reply.text,
+      replyToId: result.reply.replyToId || input.providerMessageId,
+    });
+  }
+
+  for (const response of responses) {
+    let delivery: AdapterSendResult;
+    try {
+      delivery = await input.send(response);
+    } catch (error) {
+      return { terminal: false, error: toErrorMessage(error) };
+    }
+    if (delivery.ok) continue;
+    if (delivery.retryable) {
+      return { terminal: false, error: delivery.error };
+    }
+    console.warn(
+      `[Adapter] Inbound response ${response.deliveryId} was not delivered: ${delivery.error}`,
+    );
+  }
+
+  return { terminal: true };
 }
 
 function requireDeliveryId(value: string): string {
@@ -130,4 +213,15 @@ function requireDeliveryId(value: string): string {
     throw new Error("Inbound delivery id is required");
   }
   return normalized;
+}
+
+function requireAlarmTime(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("Inbound delivery alarm time must be a non-negative number");
+  }
+  return value;
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

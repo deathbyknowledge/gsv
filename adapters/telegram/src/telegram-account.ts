@@ -6,8 +6,8 @@ import {
 } from "../../shared/src/delivery-ledger";
 import type { DeliveryFailureKind } from "../../shared/src/delivery-ledger";
 import {
+  deliverAdapterInboundResponses,
   InboundDeliveryLedger,
-  isTerminalAdapterInboundResult,
 } from "../../shared/src/inbound-delivery";
 import {
   bundleAdapterMedia,
@@ -285,12 +285,13 @@ export class TelegramAccount extends DurableObject<Env> {
     const updates = [...pending.entries()]
       .sort(([, left], [, right]) => left.updateId - right.updateId);
     for (const [, update] of updates) {
-      await this.inboundDeliveries.enqueue(String(update.updateId), update.message);
+      await this.inboundDeliveries.enqueueAndArm(
+        String(update.updateId),
+        update.message,
+        Date.now() + INBOUND_WAKE_DELAY_MS,
+      );
     }
     if (updates.length > 0) {
-      if (this.canProcessInbound()) {
-        await this.scheduleInboundRetry(INBOUND_WAKE_DELAY_MS);
-      }
       await this.ctx.storage.delete(updates.map(([key]) => key));
     }
 
@@ -993,14 +994,14 @@ export class TelegramAccount extends DurableObject<Env> {
     const deliveryId = updateId === null
       ? `message:${message.chat.id}:${message.message_id}`
       : String(updateId);
-    await this.inboundDeliveries.enqueue(deliveryId, message);
-    // Commit both the provider payload and its wake-up before returning the
-    // webhook acknowledgement. Media can be reconstructed from Telegram file
-    // ids in the stored message on every attempt.
+    await this.inboundDeliveries.enqueueAndArm(
+      deliveryId,
+      message,
+      Date.now() + INBOUND_WAKE_DELAY_MS,
+    );
     if (!this.canProcessInbound()) {
       return { ok: true };
     }
-    await this.scheduleInboundRetry(INBOUND_WAKE_DELAY_MS);
 
     if (updateId === null) {
       const attempt = await this.deliverPendingInbound(deliveryId);
@@ -1042,12 +1043,12 @@ export class TelegramAccount extends DurableObject<Env> {
       },
       inbound.body,
     );
-    if (!isTerminalAdapterInboundResult(result)) {
-      return {
-        terminal: false,
-        error: "Kernel receipt is still in progress",
-      };
-    }
+    const responseDisposition = await deliverAdapterInboundResponses(result, {
+      surface: inbound.message.surface,
+      providerMessageId: inbound.message.messageId,
+      send: (response) => this.sendMessage(response),
+    });
+    if (!responseDisposition.terminal) return responseDisposition;
     if (!result.ok) {
       this.state.lastError = result.error || "Gateway rejected inbound message";
       await this.saveState();
@@ -1089,16 +1090,6 @@ export class TelegramAccount extends DurableObject<Env> {
     return "pending";
   }
 
-  private async scheduleInboundRetry(
-    delayMs = INBOUND_RETRY_DELAY_MS,
-  ): Promise<void> {
-    const retryAt = Date.now() + delayMs;
-    const current = await this.ctx.storage.getAlarm();
-    if (current === null || current > retryAt) {
-      await this.ctx.storage.setAlarm(retryAt);
-    }
-  }
-
   async alarm(): Promise<void> {
     await this.ensureLoaded();
     if (!this.canProcessInbound()) {
@@ -1110,7 +1101,7 @@ export class TelegramAccount extends DurableObject<Env> {
       await this.deliverPendingInbound(deliveryId);
     }
     if (await this.inboundDeliveries.hasPending()) {
-      await this.scheduleInboundRetry();
+      await this.inboundDeliveries.arm(Date.now() + INBOUND_RETRY_DELAY_MS);
     }
   }
 

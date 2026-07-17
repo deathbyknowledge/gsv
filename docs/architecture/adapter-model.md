@@ -61,11 +61,10 @@ This gives GSV:
 Trust is established at deploy time. If the binding exists, that adapter worker
 is part of the trusted deployment.
 
-The protocol source of truth is `gateway/src/adapter-interface.ts` and the
-adapter protocol modules under `packages/gsv/src/protocol/`. Gateway-to-adapter
-bindings expose lifecycle, status, activity, and send operations; adapters call
-the Gateway's single `serviceFrame` entrypoint for `adapter.inbound` and
-`adapter.state.update`.
+The protocol source of truth is `packages/gsv/src/protocol/adapters.ts`.
+Gateway-to-adapter bindings expose lifecycle, status, activity, and send
+operations; adapters call the Gateway's single `serviceFrame` entrypoint for
+`adapter.inbound` and `adapter.state.update`.
 
 ## Inbound flow
 
@@ -131,16 +130,19 @@ message-bearing update payload keyed by update id, and WhatsApp stores the
 protobuf message in their existing account Durable Object storage before the
 first Gateway call. A transport failure or `replayed: "in_progress"` leaves the
 record pending; the account's existing alarm retries it and rebuilds any media
-body from the provider payload. A terminal result deletes the record. This uses
-the account's existing storage and wake-up mechanism rather than introducing a
-second ingress scheduler or blob store.
+body from the provider payload. The payload and its earliest alarm are committed
+in one storage transaction. A terminal result is not released until the adapter
+has also handled any immediate response described below. This uses the account's
+existing storage and wake-up mechanism rather than introducing a second ingress
+scheduler or blob store.
 
 Command replies, link challenges, and HIL acknowledgements use the receipt's
-stable delivery ids. The Kernel prepares their result, durably schedules every
-immediate delivery, and only then marks the receipt completed. A crash or
-scheduler error leaves the prepared result reclaimable without repeating its
-side effects. An idempotent Kernel scheduler sweep recovers prepared outbox
-rows after a restart even if the provider does not replay the inbound event.
+stable delivery ids. The Kernel prepares and completes the receipt with the
+exact result, while the adapter retains its durable provider payload. The
+adapter then passes each immediate response through the same account-local
+outbound ledger used by normal sends before deleting that payload. If either
+side restarts, the adapter replays the provider event, the Kernel returns the
+stored result, and the stable delivery id deduplicates any completed send.
 Completed receipts are capped and retained for seven days.
 
 Outbound messages cross the adapter-worker boundary with a stable
@@ -163,13 +165,12 @@ outcome. Approval attempt one is durably queued before Process acknowledges the
 HIL signal; provider notification failure therefore cannot clear or fail a
 pending approval.
 Link challenges, adapter command responses, and human-approval acknowledgements
-use this same outbound path. The Kernel derives their delivery ids before the
-durable ingress claim, commits that claim, and owns their retry outbox instead
-of making each adapter worker interpret the response. Provider delivery begins
-after the inbound RPC has durably queued the work, avoiding a re-entrant call
-back into the account Durable Object that is still reporting the event. A
-repeated provider event therefore reaches the account-local ledger instead of
-calling a raw platform reply helper.
+use this same outbound ledger. The Kernel derives their delivery ids before the
+durable ingress claim and returns normalized response metadata. Provider
+delivery begins only after the inbound Gateway RPC returns, so it does not make
+a re-entrant call into the account Durable Object that is still reporting the
+event. A repeated provider event therefore reaches the account-local ledger
+instead of calling a raw platform reply helper.
 
 ## Identity linking
 
