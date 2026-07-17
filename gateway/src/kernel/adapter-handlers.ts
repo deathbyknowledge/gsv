@@ -49,7 +49,9 @@ import type { AdapterStatusRecord } from "./adapter-status";
 import type { IdentityLinkRecord } from "./identity-links";
 import {
   assertAdapterMessageDestinationAccess,
+  identityLinkAllowsSurface,
   normalizeAdapterMessageDestination,
+  normalizeAdapterSurface,
 } from "./adapter-destinations";
 import {
   MAX_MESSAGE_MEDIA_ITEMS,
@@ -485,31 +487,6 @@ function isCurrentAutomaticReplyDestination(
     && (route.threadId ?? "") === (surface.threadId?.trim() ?? "");
 }
 
-function normalizeAdapterSurface(surface: AdapterSurface | undefined): AdapterSurface {
-  if (!surface || typeof surface !== "object") {
-    throw new Error("surface is required");
-  }
-  if (
-    surface.kind !== "dm"
-    && surface.kind !== "group"
-    && surface.kind !== "channel"
-    && surface.kind !== "thread"
-  ) {
-    throw new Error("surface.kind is invalid");
-  }
-  if (typeof surface.id !== "string" || !surface.id.trim()) {
-    throw new Error("surface.id is required");
-  }
-  if (surface.threadId !== undefined && typeof surface.threadId !== "string") {
-    throw new Error("surface.threadId must be a string");
-  }
-  return {
-    kind: surface.kind,
-    id: surface.id.trim(),
-    ...(surface.threadId?.trim() ? { threadId: surface.threadId.trim() } : {}),
-  };
-}
-
 function canSendToAdapterSurface(
   ctx: KernelContext,
   adapter: string,
@@ -536,19 +513,8 @@ function canSendToAdapterSurface(
   if (links.length === 0) {
     return false;
   }
-  return links.some((link) => linkAllowsAdapterSurface(link, surface))
+  return links.some((link) => identityLinkAllowsSurface(link, surface))
     || callerOwnsAdapterSurfaceRoute(ctx, adapter, accountId, surface, ownerUid, links);
-}
-
-function linkAllowsAdapterSurface(link: IdentityLinkRecord, surface: AdapterSurface): boolean {
-  const surfaceKind = surface.kind;
-  const surfaceId = surface.id.trim();
-  const linkedSurfaceKind = metadataString(link.metadata, "surfaceKind");
-  const linkedSurfaceId = metadataString(link.metadata, "surfaceId");
-  if (linkedSurfaceKind && linkedSurfaceId) {
-    return linkedSurfaceKind === surfaceKind && linkedSurfaceId === surfaceId;
-  }
-  return false;
 }
 
 function callerOwnsAdapterSurfaceRoute(
@@ -570,11 +536,6 @@ function callerOwnsAdapterSurfaceRoute(
     });
     return route?.uid === ownerUid;
   });
-}
-
-function metadataString(metadata: Record<string, unknown> | null | undefined, key: string): string {
-  const value = metadata?.[key];
-  return typeof value === "string" ? value.trim() : "";
 }
 
 export async function handleAdapterStatus(

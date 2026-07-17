@@ -31,22 +31,35 @@ export function normalizeAdapterMessageDestination(
   const adapter = requiredText(destination.adapter, "adapter destination adapter").toLowerCase();
   const accountId = requiredText(destination.accountId, "adapter destination accountId");
   const actorId = requiredText(destination.actorId, "adapter destination actorId");
-  const kind = destination.surface?.kind;
-  if (!SURFACE_KINDS.has(kind)) {
-    throw new Error(`invalid adapter surface kind: ${String(kind)}`);
-  }
-  const id = requiredText(destination.surface.id, "adapter destination surface.id");
-  const threadId = optionalText(destination.surface.threadId);
   return {
     kind: "adapter",
     adapter,
     accountId,
     actorId,
-    surface: {
-      kind,
-      id,
-      ...(threadId ? { threadId } : {}),
-    },
+    surface: normalizeAdapterSurface(destination.surface),
+  };
+}
+
+export function normalizeAdapterSurface(
+  surface: AdapterSurface | undefined,
+): AdapterSurface {
+  if (!surface || typeof surface !== "object") {
+    throw new Error("surface is required");
+  }
+  if (!SURFACE_KINDS.has(surface.kind)) {
+    throw new Error("surface.kind is invalid");
+  }
+  if (typeof surface.id !== "string" || !surface.id.trim()) {
+    throw new Error("surface.id is required");
+  }
+  if (surface.threadId !== undefined && typeof surface.threadId !== "string") {
+    throw new Error("surface.threadId must be a string");
+  }
+  const threadId = optionalText(surface.threadId);
+  return {
+    kind: surface.kind,
+    id: surface.id.trim(),
+    ...(threadId ? { threadId } : {}),
   };
 }
 
@@ -198,7 +211,7 @@ export function identityLinkAllowsSurface(
   const linkedSurfaceKind = metadataString(link.metadata, "surfaceKind");
   const linkedSurfaceId = metadataString(link.metadata, "surfaceId");
   if (linkedSurfaceKind && linkedSurfaceId) {
-    return linkedSurfaceKind === surface.kind && linkedSurfaceId === surface.id;
+    return linkedSurfaceKind === surface.kind && linkedSurfaceId === surface.id.trim();
   }
   return false;
 }
