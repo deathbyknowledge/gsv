@@ -528,15 +528,15 @@ Runtime behavior:
 | `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
 | `proc.profile.list` | `handleProcProfileList` | Returns system AI profiles plus enabled package-backed profiles visible to the caller. Package entries are sorted by package name and display name. |
 | `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. A default interactive top-level spawn reuses the caller's default conversation executor; custom spawns get UUID pids. |
-| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media entries contain process-scoped keys returned by `proc.media.write` or external URLs; inline `media.data` is not accepted. Media-bearing user messages are admitted immediately and generation starts after background media preparation. Touches workspace activity before forwarding. |
+| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media entries contain process-scoped keys returned by `proc.media.write` or external URLs; inline `media.data` is not accepted. Media-bearing user messages are admitted immediately and generation starts after background media preparation. Kernel-owned delivery paths can preallocate a run id; the Process reconciles it against active, queued, and recorded admissions and reports which state a replay found. Touches workspace activity before forwarding. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
-| `proc.kill` | Process DO | Optionally archives every non-empty conversation under the run-as agent's home, clears process media, and wipes Process DO state. After success the Kernel removes the process registry entry and detaches its conversation executor. |
+| `proc.kill` | Process DO | Optionally archives every non-empty conversation under the run-as agent's home, promotes referenced media into immutable agent-home archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry and detaches its conversation executor. |
 | `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, cursor flags, truncation status, timestamps, pending HIL, and the latest context-pressure state when available. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content; tool results classify completed, failed, user-cancelled, and user-denied outcomes. |
-| `proc.media.read` | Process DO | Reads one process-scoped media object. A successful result returns key, MIME type, and size in `data` and always attaches the media bytes as a response body. |
-| `proc.media.write` | Process DO | Streams one request body directly into process-scoped R2 storage. The body descriptor must declare its exact length so R2 receives a fixed-length stream. Returns a stable media reference for `proc.send`. |
+| `proc.media.read` | Process DO | Reads one process-scoped media object. A successful result returns key, filesystem path, MIME type, and size in `data` and always attaches the media bytes as a response body. |
+| `proc.media.write` | Process DO | Streams one request body directly into process-scoped R2 storage. The body descriptor must declare its exact length so R2 receives a fixed-length stream. An internal caller may supply `mediaId` as an idempotency key: an exact repeated descriptor drains the repeated body and returns the original reference, while conflicting metadata is rejected. Returns a stable media reference for `proc.send`, including its read-only `/var/media/{uid}/{pid}/{id}` filesystem path. |
 | `proc.media.delete` | Process DO | Idempotently deletes one unreferenced process-scoped media object. Keys outside the target process or already referenced by process history are rejected. Used to roll back uploads that are not admitted by `proc.send`. |
 | `proc.conversation.open` | Process DO | Creates or reopens a process-local conversation. If `conversationId` is omitted, the Process DO generates one. Optional `title` is trimmed and stored. |
 | `proc.conversation.list` | Process DO | Lists open conversations by default. `includeClosed: true` includes closed conversations. Each record includes generation, status, title, message count, and timestamps. |
@@ -677,7 +677,7 @@ type ProcessSyscalls = {
 
   "proc.send": {
     args: { pid?: string; conversationId?: string; message: string; media?: MediaInput[] };
-    result: { ok: true; status: "started"; runId: string; queued?: boolean } | OperationError;
+    result: { ok: true; status: "started"; runId: string; queued?: boolean; replayed?: "active" | "queued" | "recorded" } | OperationError;
   };
 
   "proc.ipc.send": {
@@ -717,12 +717,12 @@ type ProcessSyscalls = {
 
   "proc.media.read": {
     args: { pid?: string; key: string };
-    result: { ok: true; key: string; mimeType: string; size: number } | OperationError;
+    result: { ok: true; key: string; path: string; mimeType: string; size: number } | OperationError;
   };
 
   "proc.media.write": {
-    args: { pid?: string; type: "image" | "audio" | "video" | "document"; mimeType: string; filename?: string; duration?: number; transcription?: string };
-    result: { ok: true; media: MediaInput & { key: string; size: number } } | OperationError;
+    args: { pid?: string; type: "image" | "audio" | "video" | "document"; mimeType: string; mediaId?: string; filename?: string; duration?: number; transcription?: string };
+    result: { ok: true; media: MediaInput & { key: string; path: string; size: number } } | OperationError;
   };
 
   "proc.media.delete": {
@@ -1218,22 +1218,56 @@ type AiSyscalls = {
 ## Adapters: `adapter.*`
 
 `adapter.*` is the control plane for external chat or channel connectors.
+Gateway-to-adapter service bindings implement `AdapterWorkerInterface` with
+`adapterConnect`, `adapterDisconnect`, `adapterSend`,
+`adapterSetActivity`, and `adapterStatus`. Adapters call the Gateway's single
+`serviceFrame` entrypoint for `adapter.inbound` and
+`adapter.state.update`; old channel-specific interfaces and direct channel RPC
+names are not part of this contract.
+
+Adapter media metadata stays in JSON. Inline bytes are concatenated into the
+request's single top-level binary body, and each media item identifies its
+exact `{ offset, length }` range. Body ranges must be contiguous and ordered by
+the media array, start at zero, and cover the complete body without trailing
+bytes. A media item may use a body range or `url`, but not both. The Gateway
+accepts at most 10 items, 25 MiB per body-backed item, and 48 MiB total. The
+consumer owns one top-level reader, exposes bounded parts sequentially, and
+consumes or cancels the complete body on every terminal path.
+
+```ts
+type AdapterMedia = {
+  type: "image" | "audio" | "video" | "document";
+  mimeType: string;
+  body?: { offset: number; length: number };
+  url?: string;
+  filename?: string;
+  size?: number;
+  duration?: number;
+  transcription?: string;
+};
+```
 
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
+| `adapter.list` | `handleAdapterList` | Lists configured adapter bindings and caller-visible account status, including which lifecycle, send, status, and activity methods each binding implements. |
 | `adapter.connect` | `handleAdapterConnect` | User-role only. Rejects foreign-owned accounts, serializes lifecycle operations per account, durably assigns new accounts to the caller's owning human, and calls `CHANNEL_<ADAPTER>.adapterConnect(accountId, config)`. Ownership survives failed provisioning so the owner can retry safely. |
 | `adapter.disconnect` | `handleAdapterDisconnect` | Owner-or-root only. Serializes with connect, calls adapter disconnect, upserts local status as disconnected and unauthenticated, then best-effort refreshes live status. |
-| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Lowercases adapter, resolves linked user, drops unlinked non-DM messages, issues link challenges for unlinked DMs, ensures the user init process exists, handles pending HIL confirmations, and otherwise forwards rendered text/media to `proc.send`. |
+| `adapter.inbound` | `handleAdapterInbound` | Service-role only. Requires a stable provider `messageId` and claims a durable receipt keyed by normalized adapter, account, actor, exact surface/thread, and provider message id before link, command, HIL, route, media, or Process side effects. Completed replays return the persisted disposition; a concurrent live claim reports `replayed: "in_progress"`, while an abandoned or post-restart claim is fenced and reclaimed. Optional media bytes are cancelled before staging on any replay. New ingress resolves the exact identity link, issues link challenges for unlinked DMs, and drops unlinked non-DM messages. A linked non-DM message is admitted only when the adapter sets `wasMentioned: true`. Normal messages derive an opaque run id, record the actor/thread-scoped surface, store media idempotently, install the automatic reply route, and reconcile through kernel-only `proc.adapter.deliver`. Immediate replies and link challenges carry deterministic `deliveryId` values and use the adapter's ordinary outbound ledger. Persistent first-party adapters retain the provider payload before this call and retry transport failures or `in_progress` with their existing account alarm until this syscall returns a terminal disposition. |
 | `adapter.state.update` | `handleAdapterStateUpdate` | Service-role only. Updates status without changing ownership and broadcasts a minimal `adapter.status` invalidation to root, the account owner, and linked users. |
-| `adapter.send` | `handleAdapterSend` | Validates adapter/account/surface and forwards outbound text, media, and reply id to the adapter service. Returns adapter message id when available. |
+| `adapter.send` | `handleAdapterSend` | Accepts optional concatenated media bytes, validates the caller's identity link or exact observed surface route, allocates or validates a stable `deliveryId`, and forwards outbound text, media, reply id, and body to the adapter service. During a process run, an explicit send to the current automatic reply surface is rejected unless `also: true` acknowledges the additional message. Returns the delivery id, provider message id when available, and `sent`, `deduplicated`, or `ambiguous` delivery state. A failed result is retryable only when replaying the same delivery id is safe. |
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
 
 Adapter status intentionally remains useful when a live adapter service is unavailable; stale local state may be returned.
 
 ```ts
 type AdapterSyscalls = {
+  "adapter.list": {
+    args: Record<string, never>;
+    result: { adapters: Array<{ adapter: string; available: boolean; supportsConnect: boolean; supportsDisconnect: boolean; supportsSend: boolean; supportsStatus: boolean; supportsActivity: boolean; accounts: AdapterAccountStatus[] }> };
+  };
+
   "adapter.connect": {
     args: { adapter: string; accountId: string; config?: Record<string, unknown> };
     result:
@@ -1247,8 +1281,8 @@ type AdapterSyscalls = {
   };
 
   "adapter.inbound": {
-    args: { adapter: string; accountId: string; message: { messageId: string; surface: AdapterSurface; actor?: { id: string; name?: string; handle?: string }; text: string; media?: MediaInput[]; replyToId?: string; replyToText?: string; timestamp?: number; wasMentioned?: boolean } };
-    result: { ok: boolean; delivered?: { uid: number; pid: string; runId: string; queued: boolean }; reply?: { text: string; replyToId?: string }; challenge?: { code: string; prompt: string; expiresAt: number }; droppedReason?: string; error?: string };
+    args: { adapter: string; accountId: string; message: { messageId: string; surface: AdapterSurface; actor?: { id: string; name?: string; handle?: string }; text: string; media?: AdapterMedia[]; replyToId?: string; replyToText?: string; timestamp?: number; wasMentioned?: boolean } };
+    result: { ok: boolean; delivered?: { uid: number; pid: string; runId: string; queued: boolean }; reply?: { deliveryId: string; text: string; replyToId?: string }; challenge?: { deliveryId: string; code: string; prompt: string; expiresAt: number }; replayed?: "in_progress" | "completed"; droppedReason?: string; error?: string };
   };
 
   "adapter.state.update": {
@@ -1257,8 +1291,10 @@ type AdapterSyscalls = {
   };
 
   "adapter.send": {
-    args: { adapter: string; accountId: string; surface: AdapterSurface; text: string; replyToId?: string; media?: MediaInput[] };
-    result: { ok: true; adapter: string; accountId: string; surfaceId: string; messageId?: string } | OperationError;
+    args: { adapter: string; accountId: string; deliveryId?: string; surface: AdapterSurface; text: string; replyToId?: string; media?: AdapterMedia[]; also?: boolean };
+    result:
+      | { ok: true; adapter: string; accountId: string; surfaceId: string; deliveryId: string; messageId?: string; deliveryState?: "sent" | "deduplicated" | "ambiguous" }
+      | { ok: false; error: string; deliveryId?: string; retryable?: boolean };
   };
 
   "adapter.status": {
@@ -1267,6 +1303,60 @@ type AdapterSyscalls = {
   };
 };
 ```
+
+### Reply and destination routing
+
+An admitted process run receives exactly one automatic route. Client-originated
+runs route to that client connection. Adapter-originated runs route to the
+linked actor's exact adapter, account, surface, and optional thread. HIL and
+terminal run signals use the same route; agents normally return their answer
+without calling `adapter.send`.
+
+An adapter HIL prompt includes the exact pending request identity as
+`hil[requestId]`. An adapter approval or denial is accepted only when it carries
+that current token; a bare or stale decision fails closed. `replyToId` is useful
+for provider threading but is not an authorization mechanism. Native clients
+continue to call `proc.hil` with the exact `requestId`.
+
+Retry-safe adapter notifications and final replies are retained as Kernel
+scheduled work under the same stable delivery id. Typing is stopped after each
+attempt. Final routes are removed on success, permanent failure, ambiguous
+provider outcome, or bounded retry exhaustion, and non-success terminal
+outcomes are appended to process history. HIL state does not depend on adapter
+notification delivery.
+
+Observed adapter surface routes are keyed by adapter, account, actor, surface
+kind, surface id, and thread id. They record the owner uid and selected process.
+The actor dimension allows multiple linked GSV users to use one shared external
+surface without overwriting one another. Userland destination enumeration joins
+these rows back to the caller's live identity links; raw platform ids do not
+become authorized merely because an adapter account exists.
+
+Durable delayed destinations use this minimum stable address:
+
+```ts
+type AdapterMessageDestination = {
+  kind: "adapter";
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  surface: AdapterSurface;
+};
+```
+
+It deliberately omits display labels and the triggering message id. Delivery
+rechecks that the exact linked actor and surface still belong to the schedule or
+run owner.
+
+### Adapter route hard cutover
+
+Kernel schema migrations v009 and v010 reject ambiguous legacy authority rather
+than guessing it. V009 adds process and actor identity to run reply routes and
+deletes existing short-lived run routes. V010 recreates surface routes with
+actor and thread scope and adds `reply_to_id` to run routes. Existing
+per-surface process selections are cleared during this upgrade and are observed
+again on the next authorized inbound message. In-flight legacy replies may lose
+their route during deployment; this is an intentional security hard cutover.
 
 ## Notifications and Watches
 
@@ -1327,8 +1417,7 @@ used only as concrete wake-ups.
 
 The user-facing interface depends on the delivery contract. From a
 process-backed shell, use the following form when each firing should enter the
-current process conversation. The event and any resulting reply are visible in
-its matching Web chat:
+current process conversation:
 
 ```bash
 sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]
@@ -1336,9 +1425,25 @@ sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] |
 
 The shell resolves `--here` into a typed `process.event` target for the current
 process and active conversation. The target remains bound to that process id;
-it does not preserve an external adapter route. `--at` requires a future ISO
-timestamp with `Z` or an explicit numeric UTC offset. Use `crontab` or
-`/var/spool/cron/<user>` for recurring background shell commands. Cron files
+recreate it after killing the process. When the shell belongs to an active
+adapter run, `--here` captures that run's authorized
+`AdapterMessageDestination` in `process.event.replyTo`, so the future
+terminal answer returns to that adapter surface. Without an adapter route, the
+answer remains in the GSV process conversation.
+
+For direct scheduled text that must not run the agent, use:
+
+```bash
+sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
+```
+
+The shell resolves `--to` against known authorized destinations, including an
+offline adapter account, and creates an `adapter.send` target. It does not
+accept `--conversation`.
+
+`--at` requires a future ISO timestamp with `Z` or an explicit numeric UTC
+offset. Use `crontab` or `/var/spool/cron/<user>` for recurring background
+shell commands. Cron files
 are desired state: installing or rewriting a crontab removes and recreates the
 linked `sched.*` records, so crontab-backed schedule ids are operational ids,
 not stable cron identifiers.
@@ -1355,10 +1460,11 @@ Runtime behavior:
 | `sched.remove` | `handleSchedulerRemove` | Removes a schedule and cancels its pending wake when present. |
 | `sched.run` | `handleSchedulerRun` | Runs due schedules or force-runs one schedule. `force` requires `id`. |
 
-Schedule status reports completion of target dispatch, not an implied
-end-to-end delivery contract. For `process.event`, `ok` means the event was
+Schedule status reports completion of target dispatch, not an implied model-run
+completion contract. For `process.event`, `ok` means the event was
 accepted into the target process conversation, not that a model turn or reply
-completed. For `process.spawn`, or a
+completed. For `adapter.send`, `ok` means the adapter accepted the direct
+delivery. For `process.spawn`, or a
 `command.exec` target that invokes `proc spawn`, `ok` means the spawn was
 accepted; it does not mean the child completed or delivered its answer. Child
 answers remain in the child process history unless another mechanism consumes
@@ -1374,7 +1480,8 @@ type ScheduleExpression =
 type ScheduleTarget =
   | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
   | { kind: "process.spawn"; runAs?: string; label?: string; prompt: string; parentPid?: string; cwd?: string; assignment?: unknown }
-  | { kind: "process.event"; pid: string; conversationId?: string; message: string; data?: Record<string, unknown> };
+  | { kind: "process.event"; pid: string; conversationId?: string; message: string; data?: Record<string, unknown>; replyTo?: AdapterMessageDestination }
+  | { kind: "adapter.send"; destination: AdapterMessageDestination; text: string };
 
 type ScheduleRecord = {
   id: string;

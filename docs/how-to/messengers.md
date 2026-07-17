@@ -23,7 +23,9 @@ Try it from your phone, away from your desk: *What's on my Mac's clipboard?*
 /use <agent-name>   start and route this chat to an agent
 ```
 
-When an approval is pending, reply `approve`, `deny`, or `approve always`.
+When a direct-message approval is pending, copy one of the full commands shown
+in that prompt. Each includes a unique `hil[...]` token; do not omit it or reuse
+a command from an older prompt.
 
 ## Discord
 

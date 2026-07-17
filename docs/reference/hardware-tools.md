@@ -59,6 +59,18 @@ When `sessionId` is absent, `input` is a command to start. When
 the wait budget and output caps, so callers should handle both completed and
 running results.
 
+The native shell is self-describing. When a request does not map to an obvious
+tool, search using the user's goal instead of guessing a command name:
+
+```bash
+man --search -- 'put the image from this chat on my laptop'
+man -k 'run this every weekday morning'
+```
+
+Results are ranked across caller-visible native and package commands, skills,
+targets, and ready MCP integrations. Each row includes an exact `NEXT` action.
+Use `man <command>` after discovery for command-specific guidance.
+
 ## Hardware Descriptors
 
 CLI devices register with the Gateway as driver connections. A device descriptor records identity, online state, and implemented syscall patterns.
@@ -99,9 +111,12 @@ Important native paths:
 
 Native shell commands run in the Worker sandbox. They are useful for GSV control-plane work, virtual filesystem inspection, package commands, and HTTP/network operations allowed by the runtime. They do not run on the user's laptop.
 
-Use `skills list`, `skills search <query>`, and `skills show <skill>` in the
-native shell to inspect reusable process workflows populated from layered
-`skills.d` directories.
+`man --search` includes reusable process workflows populated from layered
+`skills.d` directories. Its `NEXT` action opens matching workflows with
+`skills show <skill>`; the specialized `skills list`, `skills search`, and
+`skills tree` commands remain available for direct inspection. `skills create`
+persists a complete reusable workflow in the current program's home and
+`skills validate` checks its frontmatter, path name, and instruction body.
 
 The native shell also includes a `codemode` command for reusable GSV tool
 scripts and an `mcp` command for connected MCP servers:

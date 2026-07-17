@@ -78,9 +78,11 @@ lexically and bounded by `config/ai/max_context_bytes`.
 Skill sources follow the same layered shape: profile `skills.d`, `~/skills.d`,
 workspace `.gsv/skills.d`, and visible package source repos. Use
 `pkg source <package>` to locate package-provided skill files under
-`/src/repos/<owner>/<repo>`. The prompt tells processes to use `skills list`,
-`skills search`, `skills show`, `skills files`, and `skills read` rather than
-embedding long source paths in the index.
+`/src/repos/<owner>/<repo>`. The prompt uses a configurable compact skill index
+(`summary`, `names`, or `off`) and tells processes to start unfamiliar work with
+`man --search -- '<plain-language goal>'`. That live search returns exact next
+actions such as `skills show`; long source paths and full skill bodies are not
+embedded in standing context.
 
 System-provided skills live in the root GSV source tree under `skills/` and are
 seeded into user home `skills.d` during bootstrap when missing.
@@ -106,12 +108,13 @@ set to the PID.
 
 The model response can contain text, thinking blocks, and tool calls:
 
-- Text is emitted through `proc.run.output` and streaming blocks through
-  `proc.run.stream`.
+- Text and final-reply media references are emitted through `proc.run.output`;
+  streaming blocks flow through `proc.run.stream`.
 - Assistant text, thinking blocks, and tool calls are stored in the `messages`
   table.
-- If there are no tool calls, the process emits `proc.run.finished` and finishes the
-  run.
+- If there are no tool calls, the process persists any media registered by
+  `message attach` on the final assistant record, emits `proc.run.finished` with
+  the same references, and finishes the run.
 - If there are tool calls, the process evaluates approval rules and dispatches
   each allowed call as a syscall frame.
 
@@ -172,9 +175,19 @@ Approval outcomes are:
 - `deny`: append a synthetic tool error.
 - `ask`: store `pending_hil` and emit `proc.run.hil.requested`.
 
-The run pauses while a HIL request is pending. A user or adapter reply resumes it
-through `proc.hil` with `approve` or `deny`. Non-interactive profiles such as
-`cron` cannot ask; an `ask` decision becomes a tool error.
+The run pauses while a HIL request is pending. A native client resumes it through
+`proc.hil` with the exact pending `requestId`. An adapter DM prompt renders that
+identity as `hil[requestId]`; its approval or denial must include the exact
+current token, for example `approve hil[...]` or `deny hil[...]`. A bare decision
+or stale token does not call `proc.hil` and receives a reminder for the current
+request. The provider `replyToId` remains threading metadata, not authorization.
+Non-interactive profiles such as `cron` cannot ask; an `ask` decision becomes a
+tool error.
+
+The Kernel broadcasts an admitted HIL request to native clients before handling
+its adapter notification. Adapter notification retries are Kernel-owned durable
+scheduled work with a stable delivery id; notification failure never rolls back
+or clears `pending_hil`.
 
 ## Queueing and Abort
 
@@ -193,12 +206,16 @@ Late tool responses are ignored after their durable dispatch row is cleared.
 ## Media Handling
 
 Incoming process media is stored outside the message table in R2. Message rows
-keep metadata references. Before a model call, the Process DO hydrates stored
-image media back into image content blocks. Audio, video, and document media are
-represented with transcript or descriptive fallback text.
+keep metadata references and the stable `/var/media/{uid}/{pid}/{id}` path.
+Before a model call, the Process DO includes that actionable path in attachment
+text and hydrates stored raster images into native image content blocks. Audio,
+video, vector image, and document media retain the same path alongside transcript
+or descriptive fallback text.
 
-Media is scoped to the process under `var/media/{uid}/{pid}/` and is deleted
-when the process is reset or killed.
+The `/var/media` filesystem mount is read-only and checks process ownership
+instead of relying on R2 object metadata. Root, the process itself, and sibling
+processes owned by the same user can read or stream a file; other users cannot
+enumerate or open it. Media is deleted when the process is reset or killed.
 
 ## Signals and Background Work
 
@@ -212,8 +229,11 @@ loop without pretending to be user chat.
 
 Reset and kill can archive each non-empty conversation under the run-as
 identity's home conversation directory before clearing live Process storage.
-Process media is deleted from R2. A replacement executor can hydrate the primary
-conversation from the recorded home archive.
+Live process media is deleted from R2 after referenced bytes have been promoted
+to immutable media objects under the run-as agent's home and archive records
+have been rewritten to those durable keys. A replacement executor can hydrate
+the primary conversation, attachment paths, and bytes from the recorded home
+archive without depending on the old executor pid.
 
 ## Failure Behavior
 

@@ -89,7 +89,7 @@ Process DOs emit lifecycle and output signals such as `proc.run.started`,
 `proc.run.finished`. The Kernel routes user-visible process signals using
 `run_routes`; `proc.changed` invalidates persisted process state.
 
-For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it maps `runId` to the adapter, account id, surface kind, surface id, and optional thread id. Routes expire after 30 minutes.
+For CLI/browser-originated runs, `run_routes` maps `runId` to the originating WebSocket connection. For adapter-originated runs, it also binds the route to the process, owner, linked actor, adapter account, surface, optional thread, and triggering message id. Terminal cleanup normally removes routes; the 30-day TTL is only a leak guard.
 
 If a run route is missing, the Kernel falls back to broadcasting the signal to connected clients for the owning uid. HIL requests are always broadcast to every connected user client for the owning uid so another session can answer them. Adapter-originated HIL requests are also delivered back to their adapter surface.
 
@@ -103,13 +103,19 @@ Inbound behavior:
 - Unlinked DM actor: return a link challenge such as `gsv auth link CODE`.
 - Unlinked non-DM actor: drop the message as `unlinked_actor`.
 
-The default delivery target is the user's `init:{uid}` process. A `surface_routes` entry can override this for a specific adapter account and surface:
+The default delivery target is the user's `init:{uid}` process. A
+`surface_routes` entry can override this for one linked actor on an exact
+adapter account, surface, and optional thread:
 
 ```text
-adapter + accountId + surface.kind + surface.id -> pid
+adapter + accountId + actorId + surface.kind + surface.id + threadId -> uid + pid
 ```
 
-Human-in-the-loop replies are routed specially. If the target process has a pending HIL request, a DM reply of approval or denial resumes `proc.hil` instead of starting a new chat turn.
+Human-in-the-loop replies are routed specially. If the target process has a
+pending HIL request, its adapter DM prompt includes `hil[requestId]`. Only an
+approval or denial containing that exact current token resumes `proc.hil`;
+bare decisions and stale tokens fail closed. Provider reply threading does not
+authorize a decision.
 
 ## Package App Routing
 
