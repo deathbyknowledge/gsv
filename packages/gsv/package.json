@@ -1,6 +1,7 @@
 {
   "name": "@humansandmachines/gsv",
-  "version": "0.0.6",
+  "version": "0.0.7",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,8 +12,10 @@
     "build": "npm run clean && npm run build:types && npm run build:js",
     "build:js": "node ./scripts/build-js.mjs",
     "build:types": "tsc -p tsconfig.build.json",
+    "check": "npm run typecheck && npm test",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run build",
+    "pack:check": "npm run check && node ../../scripts/validate-public-packages.mjs @humansandmachines/gsv",
+    "prepack": "npm run build",
     "test": "npm run build && node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

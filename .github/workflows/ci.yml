@@ -23,10 +23,11 @@ jobs:
       extension: ${{ steps.filter.outputs.extension }}
       assembler: ${{ steps.filter.outputs.assembler }}
       gateway: ${{ steps.filter.outputs.gateway }}
+      adapters: ${{ steps.filter.outputs.adapters }}
       ripgit: ${{ steps.filter.outputs.ripgit }}
       cli: ${{ steps.filter.outputs.cli }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Detect affected components
         id: filter
@@ -70,6 +71,14 @@ jobs:
               - 'package.json'
               - 'package-lock.json'
               - 'packages/gsv/**'
+              - 'packages/portable-archive/**'
+              - 'packages/worker-runtime/**'
+              - 'packages/cloudflare-release/**'
+              - 'scripts/build-cloudflare-bundles.sh'
+              - 'scripts/public-package-publication.mjs'
+              - 'scripts/public-package-publication.test.mjs'
+              - 'scripts/publish-public-packages.mjs'
+              - 'scripts/validate-public-packages.mjs'
             web:
               - '.github/workflows/ci.yml'
               - 'package.json'
@@ -93,7 +102,14 @@ jobs:
               - 'package.json'
               - 'package-lock.json'
               - 'packages/gsv/**'
+              - 'packages/portable-archive/**'
+              - 'packages/worker-runtime/**'
               - 'gateway/**'
+            adapters:
+              - '.github/workflows/ci.yml'
+              - 'packages/gsv/**'
+              - 'packages/worker-runtime/**'
+              - 'adapters/**'
             ripgit:
               - '.github/workflows/ci.yml'
               - 'scripts/worker-build.sh'
@@ -108,10 +124,10 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.version == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
 
@@ -127,10 +143,10 @@ jobs:
       needs.changes.outputs.web == 'true' ||
       needs.changes.outputs.extension == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: 'npm'
@@ -139,9 +155,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check GSV package
+      - name: Check public packages
         if: needs.changes.outputs.sdk == 'true'
-        run: npm run gsv:check
+        run: npm run public-packages:check
 
       - name: Check web shell
         if: needs.changes.outputs.web == 'true'
@@ -165,17 +181,17 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.assembler == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           targets: wasm32-unknown-unknown
 
@@ -205,10 +221,10 @@ jobs:
       GSV_TEST_OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
       ALCHEMY_CI_STATE_STORE_CHECK: "false"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: 'npm'
@@ -223,23 +239,61 @@ jobs:
       - name: Run unit tests
         run: npm run test:run --workspace gateway
 
+  adapters-test:
+    name: Adapter Tests (${{ matrix.adapter }})
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.adapters == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: [whatsapp, discord, telegram, test]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: adapters/${{ matrix.adapter }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: adapters/${{ matrix.adapter }}
+        run: npm ci
+
+      - name: Type check WhatsApp
+        if: matrix.adapter == 'whatsapp'
+        working-directory: adapters/whatsapp
+        run: npx tsc --noEmit
+
+      - name: Type check adapter
+        if: matrix.adapter != 'whatsapp'
+        working-directory: adapters/${{ matrix.adapter }}
+        run: npm run typecheck
+
+      - name: Test Telegram
+        if: matrix.adapter == 'telegram'
+        working-directory: adapters/telegram
+        run: npm test
+
   ripgit-test:
     name: Ripgit Tests
     runs-on: ubuntu-latest
     needs: [changes]
     if: needs.changes.outputs.ripgit == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: ripgit/package-lock.json
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           targets: wasm32-unknown-unknown
 
@@ -264,10 +318,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       
       - name: Build
         working-directory: cli

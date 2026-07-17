@@ -1,0 +1,79 @@
+{
+  "name": "@humansandmachines/gsv-portable-archive",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./canonical-json": {
+      "types": "./dist/canonical-json.d.ts",
+      "default": "./dist/canonical-json.js"
+    },
+    "./encryption": {
+      "types": "./dist/encryption.d.ts",
+      "default": "./dist/encryption.js"
+    },
+    "./inner": {
+      "types": "./dist/inner.d.ts",
+      "default": "./dist/inner.js"
+    },
+    "./inventory": {
+      "types": "./dist/inventory.d.ts",
+      "default": "./dist/inventory.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./r2": {
+      "types": "./dist/r2.d.ts",
+      "default": "./dist/r2.js"
+    },
+    "./ripgit": {
+      "types": "./dist/ripgit.d.ts",
+      "default": "./dist/ripgit.js"
+    },
+    "./semantic": {
+      "types": "./dist/semantic.d.ts",
+      "default": "./dist/semantic.js"
+    },
+    "./values": {
+      "types": "./dist/values.d.ts",
+      "default": "./dist/values.js"
+    },
+    "./workers-kv": {
+      "types": "./dist/workers-kv.d.ts",
+      "default": "./dist/workers-kv.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "npm run clean && npm run build:types && npm run build:js",
+    "build:js": "node ./scripts/build-js.mjs",
+    "build:types": "tsc -p tsconfig.build.json",
+    "check": "npm run typecheck && npm test && npm run build",
+    "clean": "rm -rf dist",
+    "pack:check": "npm run check && node ../../scripts/validate-public-packages.mjs @humansandmachines/gsv-portable-archive",
+    "prepack": "npm run build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.7",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,186 @@
+{
+  "manifest": {
+    "body": {
+      "format": "gsv-ripgit-logical-sql-v1",
+      "identity": {
+        "owner": "alice",
+        "repo": "memory"
+      },
+      "sourceEpoch": 9,
+      "tables": [
+        {
+          "name": "config",
+          "columns": ["key", "value"],
+          "columnTypes": ["TEXT", "TEXT"],
+          "rowCount": 0
+        },
+        {
+          "name": "blob_groups",
+          "columns": ["group_id", "path_hint", "latest_version"],
+          "columnTypes": ["INTEGER", "TEXT", "INTEGER"],
+          "rowCount": 0
+        },
+        {
+          "name": "commits",
+          "columns": [
+            "hash",
+            "tree_hash",
+            "author",
+            "author_email",
+            "author_time",
+            "committer",
+            "committer_email",
+            "commit_time",
+            "message"
+          ],
+          "columnTypes": [
+            "TEXT",
+            "TEXT",
+            "TEXT",
+            "TEXT",
+            "INTEGER",
+            "TEXT",
+            "TEXT",
+            "INTEGER",
+            "TEXT"
+          ],
+          "rowCount": 0
+        },
+        {
+          "name": "commit_parents",
+          "columns": ["commit_hash", "parent_hash", "ordinal"],
+          "columnTypes": ["TEXT", "TEXT", "INTEGER"],
+          "rowCount": 0
+        },
+        {
+          "name": "trees",
+          "columns": ["tree_hash", "name", "mode", "entry_hash"],
+          "columnTypes": ["TEXT", "TEXT", "INTEGER", "TEXT"],
+          "rowCount": 0
+        },
+        {
+          "name": "blobs",
+          "columns": [
+            "blob_hash",
+            "group_id",
+            "version_in_group",
+            "is_keyframe",
+            "data",
+            "raw_size",
+            "stored_size"
+          ],
+          "columnTypes": [
+            "TEXT",
+            "INTEGER",
+            "INTEGER",
+            "INTEGER",
+            "BLOB",
+            "INTEGER",
+            "INTEGER"
+          ],
+          "rowCount": 1
+        },
+        {
+          "name": "blob_chunks",
+          "columns": ["group_id", "version_in_group", "chunk_index", "data"],
+          "columnTypes": ["INTEGER", "INTEGER", "INTEGER", "BLOB"],
+          "rowCount": 0
+        },
+        {
+          "name": "raw_objects",
+          "columns": ["hash", "data"],
+          "columnTypes": ["TEXT", "BLOB"],
+          "rowCount": 0
+        },
+        {
+          "name": "refs",
+          "columns": ["name", "commit_hash"],
+          "columnTypes": ["TEXT", "TEXT"],
+          "rowCount": 0
+        },
+        {
+          "name": "issues",
+          "columns": [
+            "id",
+            "number",
+            "kind",
+            "title",
+            "body",
+            "author_id",
+            "author_name",
+            "state",
+            "source_branch",
+            "target_branch",
+            "source_hash",
+            "merge_commit_hash",
+            "created_at",
+            "updated_at"
+          ],
+          "columnTypes": [
+            "INTEGER",
+            "INTEGER",
+            "TEXT",
+            "TEXT",
+            "TEXT",
+            "TEXT",
+            "TEXT",
+            "TEXT",
+            "TEXT",
+            "TEXT",
+            "TEXT",
+            "TEXT",
+            "INTEGER",
+            "INTEGER"
+          ],
+          "rowCount": 0
+        },
+        {
+          "name": "issue_comments",
+          "columns": [
+            "id",
+            "issue_id",
+            "author_id",
+            "author_name",
+            "body",
+            "created_at",
+            "updated_at"
+          ],
+          "columnTypes": [
+            "INTEGER",
+            "INTEGER",
+            "TEXT",
+            "TEXT",
+            "TEXT",
+            "INTEGER",
+            "INTEGER"
+          ],
+          "rowCount": 0
+        }
+      ],
+      "rebuiltDerivedTables": ["commit_graph", "fts_head", "fts_commits"],
+      "excludedCacheTables": ["package_build_cache", "package_npm_cache"]
+    },
+    "manifestHash": "c7c4dbf5d0236e56df800c0ba6083150ba0b0d418be4ef591b8d6552f8da9b10"
+  },
+  "page": {
+    "body": {
+      "manifestHash": "c7c4dbf5d0236e56df800c0ba6083150ba0b0d418be4ef591b8d6552f8da9b10",
+      "tableIndex": 5,
+      "table": "blobs",
+      "offset": 0,
+      "nextOffset": 1,
+      "rows": [
+        [
+          {"type": "string", "value": "abc123"},
+          {"type": "integer", "value": "7"},
+          {"type": "integer", "value": "1"},
+          {"type": "integer", "value": "0"},
+          {"type": "blob_base64", "value": "AAH+/w=="},
+          {"type": "integer", "value": "4"},
+          {"type": "null"}
+        ]
+      ]
+    },
+    "pageHash": "74c82318ea5b3780970a9bb05f69ce79ceab2a6639e9f89019bc4dccef5f7de8"
+  }
+}

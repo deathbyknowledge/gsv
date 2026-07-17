@@ -193,6 +193,12 @@ stateful actors, R2 provides object storage, and service bindings connect the
 Gateway, ripgit, assembler, adapters, and AppRunner without running a traditional
 server.
 
+Inference follows the same boundary. A self-hosted gateway uses its native
+`AI` binding. A deployment may instead supply the provider-neutral
+`GSV_INFERENCE` service-binding ABI from the public worker-runtime package.
+GSV knows only the transport; deployment identity, credentials, quotas, and
+provider topology remain owned by the deployment.
+
 The system uses multiple Durable Object roles instead of one monolith:
 
 - Kernel DO: authoritative control plane and router.
@@ -206,6 +212,14 @@ and state boundaries. Long-running local work should happen on devices. Durable
 agent state belongs in Process SQLite and workspace files. Control-plane truth
 belongs in Kernel SQLite. Opaque bytes belong in R2. Versioned work belongs in
 ripgit.
+
+Logical tenant portability follows the same ownership boundaries. The open
+[Portable Archive v1](../reference/portable-archive.md) container represents
+Kernel, process, package, adapter, repository, and object-storage state by
+stable logical identity instead of copying provider database pages or resource
+IDs. A shared codec can now round-trip one explicitly fenced SQLite-backed
+Durable Object, but tenant export and restore remain unavailable until every
+owner implements discovery, quiescence, and its part of the complete snapshot.
 
 ## Design Rules
 
@@ -228,3 +242,4 @@ of chat integrations.
 - [Get Started](../get-started/)
 - [How-to Guides](../how-to/)
 - [Reference](../reference/)
+- [Portable Archive v1](../reference/portable-archive.md)

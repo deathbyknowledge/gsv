@@ -54,6 +54,12 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 - `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
 - `gateway/src/inference/`: provider integration and model transport.
 - `packages/gsv/`: public SDK, client, host bridge, and protocol types.
+- `packages/portable-archive/`: open, provider-neutral tenant archive format and
+  deterministic storage codecs.
+- `packages/worker-runtime/`: shared Workers runtime primitives, schema migration
+  helpers, and fenced logical Durable Object snapshot/restore.
+- `packages/cloudflare-release/`: provider-ID-free release descriptors and
+  bounded Worker-bundle preparation for deployment consumers.
 - `web/`: desktop shell, setup/login, system UI, app hosting, and browser-side gateway integration.
 - `cli/`: user, device, deployment, and administration commands.
 - `adapters/`: platform-specific messaging workers and identity normalization.
@@ -62,6 +68,12 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 - `ripgit/`: git-backed repositories and filesystem storage operations.
 
 Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web shell or package UI. Keep target selection below stable syscall contracts.
+
+Hosted-service control planes live outside this repository. GSV may expose an
+optional, authenticated, provider-neutral administration and portability ABI,
+but public runtime code must not import a hosted service, encode its fleet
+topology, or depend on its private policy. Hosted services consume versioned
+public packages and immutable GSV release artifacts.
 
 ## Runtime invariants
 
@@ -128,6 +140,7 @@ gsv/
 ├── extension/     # Browser target
 ├── assembler/     # Package assembly worker
 ├── ripgit/        # Git-backed repository worker
+├── packages/      # Public SDK, archive, runtime, and release-contract packages
 ├── engineering/   # Detailed implementation and product guidance
 ├── docs/          # Architecture and user/reference documentation
 └── scripts/       # Development and release automation
@@ -153,6 +166,8 @@ Validate only the surfaces affected by the change:
 - Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
+- Portable archive: `npm run portable-archive:check`
+- Shared worker runtime: `npm run worker-runtime:check`
 - CLI/device: `cd cli && cargo fmt --check && cargo test`
 - Assembler: `cd assembler && npm test`
 - ripgit: `cd ripgit && npm test`

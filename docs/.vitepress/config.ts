@@ -147,6 +147,8 @@ export default defineConfig({
             { text: "Hardware Tools", link: "/reference/hardware-tools" },
             { text: "Routing", link: "/reference/routing" },
             { text: "Storage", link: "/reference/r2-storage" },
+            { text: "Portable Archive v1", link: "/reference/portable-archive" },
+            { text: "Cloudflare Release", link: "/reference/cloudflare-release" },
             { text: "Package SDK", link: "/reference/package-sdk" },
           ],
         },

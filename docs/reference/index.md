@@ -13,6 +13,8 @@ need the system model, go to [Architecture](../architecture/).
 - [CLI Commands](./cli-commands.md)
 - [WebSocket Protocol](./websocket-protocol.md)
 - [Syscalls](./syscalls.md)
+- [Portable Archive v1](./portable-archive.md)
+- [Cloudflare release contract](./cloudflare-release.md)
 
 ## Runtime and configuration
 

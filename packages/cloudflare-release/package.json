@@ -1,0 +1,43 @@
+{
+  "name": "@humansandmachines/gsv-cloudflare-release",
+  "version": "0.1.0",
+  "description": "Public, provider-ID-free deployment contract for GSV Cloudflare releases",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "schema",
+    "scripts"
+  ],
+  "bin": {
+    "gsv-cloudflare-release": "scripts/generate-release-descriptor.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema.json": "./schema/gsv-cloudflare-release-v1.schema.json",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "pack:check": "npm test && node ../../scripts/validate-public-packages.mjs @humansandmachines/gsv-cloudflare-release",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepublishOnly": "npm test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "jsonc-parser": "3.3.1",
+    "smol-toml": "1.6.1"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1",
+    "typescript": "^5.9.3"
+  }
+}

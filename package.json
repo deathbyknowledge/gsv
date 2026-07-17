@@ -10,7 +10,7 @@
     "packages/*"
   ],
   "scripts": {
-    "postinstall": "npm run gsv:build",
+    "postinstall": "npm run public-packages:build",
     "setup": "bash ./scripts/setup-deps.sh",
     "dev": "bash ./scripts/dev-stack.sh",
     "extension:check": "npm run check --workspace extension",
@@ -18,6 +18,13 @@
     "extension:package": "bash ./scripts/build-extension-package.sh",
     "gsv:build": "npm run build --workspace packages/gsv",
     "gsv:check": "npm run typecheck --workspace packages/gsv && npm run gsv:build",
+    "public-packages:build": "npm run gsv:build && npm run build --workspace @humansandmachines/gsv-portable-archive && npm run build --workspace @humansandmachines/gsv-worker-runtime && npm run build --workspace @humansandmachines/gsv-cloudflare-release",
+    "cloudflare-release:check": "npm run typecheck --workspace @humansandmachines/gsv-cloudflare-release && npm run pack:check --workspace @humansandmachines/gsv-cloudflare-release",
+    "portable-archive:check": "npm run typecheck --workspace @humansandmachines/gsv-portable-archive && npm test --workspace @humansandmachines/gsv-portable-archive",
+    "worker-runtime:check": "npm run typecheck --workspace @humansandmachines/gsv-worker-runtime && npm test --workspace @humansandmachines/gsv-worker-runtime",
+    "public-packages:check": "npm run public-packages:publication-test && npm run pack:check --workspace packages/gsv && npm run pack:check --workspace @humansandmachines/gsv-portable-archive && npm run pack:check --workspace @humansandmachines/gsv-worker-runtime && npm run cloudflare-release:check",
+    "public-packages:publication-test": "node --test scripts/public-package-publication.test.mjs",
+    "public-packages:publish:dry-run": "node ./scripts/publish-public-packages.mjs",
     "version:show": "node ./scripts/version.mjs show",
     "version:check": "node ./scripts/version.mjs check",
     "version:sync": "node ./scripts/version.mjs sync",

@@ -127,6 +127,8 @@ export type AccountListResult = {
 export type SysSetupArgs = {
   username: string;
   password: string;
+  /** Required by managed deployments that configure a setup-token hash. */
+  setupToken?: string;
   rootPassword?: string;
   /** Optional name for the user's 1:1 personal agent account (defaults to a curated name). */
   agentName?: string;
@@ -217,6 +219,8 @@ export type OnboardingAssistPatch = {
 };
 
 export type SysSetupAssistArgs = {
+  /** Required by managed deployments that configure a setup-token hash. */
+  setupToken?: string;
   lane: OnboardingLane;
   draft: OnboardingDraft;
   messages: OnboardingAssistMessage[];

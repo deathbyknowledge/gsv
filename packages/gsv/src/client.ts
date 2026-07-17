@@ -245,7 +245,7 @@ const DEFAULT_REQUEST_TIMEOUTS_MS: Record<string, number> = {
 
 const DEFAULT_CLIENT_INFO: GsvClientInfo = {
   id: "gsv-js",
-  version: "0.0.6",
+  version: "0.0.7",
   platform: "javascript",
   role: "user",
 };

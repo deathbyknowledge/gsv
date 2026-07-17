@@ -30,8 +30,8 @@ jobs:
       built_at: ${{ steps.channel.outputs.built_at }}
       prerelease: ${{ steps.channel.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
 
@@ -113,10 +113,10 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           targets: ${{ matrix.target }}
 
@@ -166,7 +166,7 @@ jobs:
           mv "cli/target/${{ matrix.target }}/release/${{ matrix.binary }}" "cli/target/${{ matrix.target }}/release/${{ matrix.artifact }}"
 
       - name: Upload CLI binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}
           path: cli/target/${{ matrix.target }}/release/${{ matrix.artifact }}
@@ -177,11 +177,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GSV_RELEASE_REF: ${{ needs.resolve.outputs.release_tag }}
+      GSV_SOURCE_COMMIT_SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: 'npm'
@@ -195,7 +196,7 @@ jobs:
             adapters/telegram/package-lock.json
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           targets: wasm32-unknown-unknown
 
@@ -205,7 +206,7 @@ jobs:
           npm run release:build:cloudflare -- "$GITHUB_WORKSPACE/release"
 
       - name: Upload Cloudflare bundles
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gsv-cloudflare-bundles
           path: |
@@ -215,16 +216,17 @@ jobs:
             release/gsv-cloudflare-channel-whatsapp.tar.gz
             release/gsv-cloudflare-channel-discord.tar.gz
             release/gsv-cloudflare-channel-telegram.tar.gz
+            release/gsv-cloudflare-release.json
             release/cloudflare-checksums.txt
 
   build-browser-extension:
     needs: [resolve]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: 'npm'
@@ -237,7 +239,7 @@ jobs:
         run: npm run extension:package -- "$GITHUB_WORKSPACE/release"
 
       - name: Upload browser extension package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gsv-browser-extension
           path: release/gsv-browser-extension.zip
@@ -253,10 +255,10 @@ jobs:
       SHORT_SHA: ${{ needs.resolve.outputs.short_sha }}
       BUILT_AT: ${{ needs.resolve.outputs.built_at }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
 
@@ -278,6 +280,7 @@ jobs:
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-whatsapp.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-discord.tar.gz release/
           cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-channel-telegram.tar.gz release/
+          cp artifacts/gsv-cloudflare-bundles/gsv-cloudflare-release.json release/
           cp artifacts/gsv-cloudflare-bundles/cloudflare-checksums.txt release/
 
           # Browser extension
@@ -345,6 +348,7 @@ jobs:
           ### Cloudflare Bundles
 
           Cloudflare artifacts are split by component:
+          - \`gsv-cloudflare-release.json\` (deployment contract and artifact inventory)
           - \`gsv-cloudflare-assembler.tar.gz\`
           - \`gsv-cloudflare-gateway.tar.gz\`
           - \`gsv-cloudflare-ripgit.tar.gz\`
@@ -392,7 +396,7 @@ jobs:
           fi
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
@@ -400,7 +404,9 @@ jobs:
           draft: false
           prerelease: ${{ needs.resolve.outputs.prerelease == 'true' }}
           make_latest: ${{ needs.resolve.outputs.kind == 'stable' }}
-          overwrite_files: true
+          # Dev is intentionally moving. Stable tag assets are append-only:
+          # reruns must fail instead of changing an approved release identity.
+          overwrite_files: ${{ needs.resolve.outputs.kind == 'dev' }}
           append_body: false
           body_path: body.md
           files: |
@@ -415,6 +421,7 @@ jobs:
             release/gsv-cloudflare-channel-whatsapp.tar.gz
             release/gsv-cloudflare-channel-discord.tar.gz
             release/gsv-cloudflare-channel-telegram.tar.gz
+            release/gsv-cloudflare-release.json
             release/cloudflare-checksums.txt
             release/gsv-browser-extension.zip
             release/install.sh

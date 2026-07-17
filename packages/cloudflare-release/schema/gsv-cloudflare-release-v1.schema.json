@@ -1,0 +1,473 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gsv.space/schemas/gsv-cloudflare-release-v1.schema.json",
+  "title": "GSV Cloudflare Release v1",
+  "description": "Provider-ID-free deployment topology and immutable artifact inventory for a GSV Cloudflare release.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "format",
+    "schemaVersion",
+    "releaseVersion",
+    "source",
+    "runtime",
+    "portable",
+    "resources",
+    "components"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://gsv.space/schemas/gsv-cloudflare-release-v1.schema.json"
+    },
+    "format": {
+      "const": "gsv-cloudflare-release"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "releaseVersion": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commitSha"],
+      "properties": {
+        "commitSha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "runtime": {
+      "$ref": "#/$defs/runtime"
+    },
+    "portable": {
+      "$ref": "#/$defs/portable"
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/resource"
+      }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/component"
+      }
+    }
+  },
+  "$defs": {
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "componentId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+    },
+    "resourceId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,191}$"
+    },
+    "bindingName": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,127}$"
+    },
+    "className": {
+      "type": "string",
+      "pattern": "^[A-Za-z_$][A-Za-z0-9_$]{0,127}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\\\)[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "managedObjectDescriptorSchemaVersion",
+        "dataFrameStreamVersion"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "managedObjectDescriptorSchemaVersion": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "dataFrameStreamVersion": {
+          "$ref": "#/$defs/positiveInteger"
+        }
+      }
+    },
+    "portable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["archiveFormat", "archiveFormatVersion", "features"],
+      "properties": {
+        "archiveFormat": {
+          "const": "gsv-portable-archive"
+        },
+        "archiveFormatVersion": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "features": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+          }
+        }
+      }
+    },
+    "resource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "kind", "ownerComponent", "className", "lifecycle"],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/resourceId"
+            },
+            "kind": {
+              "const": "durable-object-namespace"
+            },
+            "ownerComponent": {
+              "$ref": "#/$defs/componentId"
+            },
+            "className": {
+              "$ref": "#/$defs/className"
+            },
+            "lifecycle": {
+              "const": "persistent"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "kind", "ownerComponent", "lifecycle"],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/resourceId"
+            },
+            "kind": {
+              "enum": ["r2-bucket", "kv-namespace"]
+            },
+            "ownerComponent": {
+              "$ref": "#/$defs/componentId"
+            },
+            "lifecycle": {
+              "const": "persistent"
+            }
+          }
+        }
+      ]
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "required",
+        "deployOrder",
+        "dependsOn",
+        "artifact",
+        "bundle",
+        "worker"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/componentId"
+        },
+        "kind": {
+          "const": "worker"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "deployOrder": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dependsOn": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/componentId"
+          }
+        },
+        "artifact": {
+          "$ref": "#/$defs/artifact"
+        },
+        "bundle": {
+          "$ref": "#/$defs/bundle"
+        },
+        "worker": {
+          "$ref": "#/$defs/worker"
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "mediaType", "sha256", "size"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$"
+        },
+        "mediaType": {
+          "const": "application/gzip"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size": {
+          "$ref": "#/$defs/positiveInteger"
+        }
+      }
+    },
+    "bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "manifest", "wranglerConfig"],
+      "properties": {
+        "root": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "manifest": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "wranglerConfig": {
+          "$ref": "#/$defs/relativePath"
+        }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entrypoint",
+        "compatibility",
+        "bindings",
+        "durableObjectMigrations"
+      ],
+      "properties": {
+        "entrypoint": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "compatibility": {
+          "$ref": "#/$defs/compatibility"
+        },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/binding"
+          }
+        },
+        "durableObjectMigrations": {
+          "$ref": "#/$defs/migrations"
+        },
+        "assets": {
+          "$ref": "#/$defs/assets"
+        }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["date", "flags"],
+      "properties": {
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "flags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    },
+    "binding": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "resource"],
+          "properties": {
+            "kind": {
+              "enum": ["durable-object", "r2-bucket", "kv-namespace"]
+            },
+            "name": {
+              "$ref": "#/$defs/bindingName"
+            },
+            "resource": {
+              "$ref": "#/$defs/resourceId"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "targetComponent"],
+          "properties": {
+            "kind": {
+              "const": "service"
+            },
+            "name": {
+              "$ref": "#/$defs/bindingName"
+            },
+            "targetComponent": {
+              "$ref": "#/$defs/componentId"
+            },
+            "entrypoint": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": {
+              "enum": ["worker-loader", "workers-ai"]
+            },
+            "name": {
+              "$ref": "#/$defs/bindingName"
+            }
+          }
+        }
+      ]
+    },
+    "migrations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "steps"],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/migration"
+          }
+        }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag"],
+      "minProperties": 2,
+      "properties": {
+        "tag": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "newClasses": {
+          "$ref": "#/$defs/classList"
+        },
+        "newSqliteClasses": {
+          "$ref": "#/$defs/classList"
+        },
+        "deletedClasses": {
+          "$ref": "#/$defs/classList"
+        },
+        "renamedClasses": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from", "to"],
+            "properties": {
+              "from": {
+                "$ref": "#/$defs/className"
+              },
+              "to": {
+                "$ref": "#/$defs/className"
+              }
+            }
+          }
+        }
+      }
+    },
+    "classList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/className"
+      }
+    },
+    "assets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directory", "binding"],
+      "properties": {
+        "directory": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "binding": {
+          "$ref": "#/$defs/bindingName"
+        },
+        "htmlHandling": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "notFoundHandling": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "runWorkerFirst": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^/[^\\u0000-\\u001f\\u007f]*$"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

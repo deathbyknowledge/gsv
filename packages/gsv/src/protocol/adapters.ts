@@ -1,3 +1,28 @@
+export const MAX_ADAPTER_ACCOUNT_ID_LENGTH = 256;
+
+const ADAPTER_ACCOUNT_ID_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+
+/**
+ * Canonical account identity accepted at the gateway/adapter boundary.
+ *
+ * Provider identifiers are intentionally not restricted to hostname-like
+ * characters: phone-number JIDs, bot identities, paths, and Unicode labels
+ * are all legitimate account IDs. Only empty, unbounded, or control-character
+ * values are rejected.
+ */
+export function normalizeAdapterAccountId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (
+    !normalized
+    || normalized.length > MAX_ADAPTER_ACCOUNT_ID_LENGTH
+    || ADAPTER_ACCOUNT_ID_CONTROL_CHARACTERS.test(normalized)
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
 export type AdapterSurfaceKind = "dm" | "group" | "channel" | "thread";
 
 export type AdapterSurface = {

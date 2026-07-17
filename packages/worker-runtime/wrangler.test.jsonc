@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "gsv-worker-runtime-test",
+  "main": "test/worker.ts",
+  "compatibility_date": "2026-07-16",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TEST_OBJECTS",
+        "class_name": "PortableDoFixture"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["PortableDoFixture"]
+    }
+  ],
+  "observability": { "enabled": false }
+}

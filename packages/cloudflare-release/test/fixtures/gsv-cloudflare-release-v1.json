@@ -1,0 +1,141 @@
+{
+  "$schema": "https://gsv.space/schemas/gsv-cloudflare-release-v1.schema.json",
+  "format": "gsv-cloudflare-release",
+  "schemaVersion": 1,
+  "releaseVersion": "v1.2.3",
+  "source": {
+    "commitSha": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "runtime": {
+    "protocolVersion": 1,
+    "managedObjectDescriptorSchemaVersion": 1,
+    "dataFrameStreamVersion": 1
+  },
+  "portable": {
+    "archiveFormat": "gsv-portable-archive",
+    "archiveFormatVersion": 1,
+    "features": [
+      "gsv-do-logical-snapshot-v1",
+      "gsv-r2-logical-snapshot-v1"
+    ]
+  },
+  "resources": [
+    {
+      "id": "gateway.r2.storage",
+      "kind": "r2-bucket",
+      "ownerComponent": "gateway",
+      "lifecycle": "persistent"
+    },
+    {
+      "id": "store.do.store",
+      "kind": "durable-object-namespace",
+      "ownerComponent": "store",
+      "className": "Store",
+      "lifecycle": "persistent"
+    }
+  ],
+  "components": [
+    {
+      "id": "store",
+      "kind": "worker",
+      "required": true,
+      "deployOrder": 10,
+      "dependsOn": [],
+      "artifact": {
+        "file": "gsv-cloudflare-store.tar.gz",
+        "mediaType": "application/gzip",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size": 100
+      },
+      "bundle": {
+        "root": "store",
+        "manifest": "manifest.json",
+        "wranglerConfig": "wrangler.toml"
+      },
+      "worker": {
+        "entrypoint": "worker/index.js",
+        "compatibility": {
+          "date": "2026-06-01",
+          "flags": []
+        },
+        "bindings": [
+          {
+            "kind": "durable-object",
+            "name": "STORE",
+            "resource": "store.do.store"
+          }
+        ],
+        "durableObjectMigrations": {
+          "sha256": "0f847e3ba0d12973076f5fee0916d0e8d5059fb8b9e3f3e6004ca2da9fa6faec",
+          "steps": [
+            {
+              "tag": "v1",
+              "newSqliteClasses": [
+                "Store"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "gateway",
+      "kind": "worker",
+      "required": true,
+      "deployOrder": 20,
+      "dependsOn": [
+        "store"
+      ],
+      "artifact": {
+        "file": "gsv-cloudflare-gateway.tar.gz",
+        "mediaType": "application/gzip",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size": 200
+      },
+      "bundle": {
+        "root": "gateway",
+        "manifest": "manifest.json",
+        "wranglerConfig": "wrangler.jsonc"
+      },
+      "worker": {
+        "entrypoint": "worker/index.js",
+        "compatibility": {
+          "date": "2026-06-02",
+          "flags": [
+            "nodejs_compat"
+          ]
+        },
+        "bindings": [
+          {
+            "kind": "workers-ai",
+            "name": "AI"
+          },
+          {
+            "kind": "r2-bucket",
+            "name": "STORAGE",
+            "resource": "gateway.r2.storage"
+          },
+          {
+            "kind": "service",
+            "name": "STORE",
+            "targetComponent": "store",
+            "entrypoint": "StoreEntrypoint"
+          }
+        ],
+        "durableObjectMigrations": {
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "steps": []
+        },
+        "assets": {
+          "directory": "assets",
+          "binding": "ASSETS",
+          "notFoundHandling": "single-page-application",
+          "runWorkerFirst": [
+            "/ws",
+            "/apps/*"
+          ]
+        }
+      }
+    }
+  ]
+}
