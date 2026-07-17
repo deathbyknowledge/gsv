@@ -2286,7 +2286,7 @@ describe("adapter lifecycle handlers", () => {
     );
     expect(result).toEqual({
       ok: false,
-      error: "Adapter delivery transport failed: service binding disconnected",
+      error: "Telegram delivery is temporarily unavailable",
       deliveryId: "retryable-delivery-1",
       retryable: true,
     });
@@ -2701,10 +2701,10 @@ describe("adapter lifecycle handlers", () => {
     expect(adapterSend).toHaveBeenCalledTimes(1);
   });
 
-  it("forwards reply threading and propagates automatic reply delivery failures", async () => {
+  it("forwards reply threading and sanitizes automatic reply delivery failures", async () => {
     const adapterSend = vi.fn(async () => ({
       ok: false as const,
-      error: "Telegram delivery failed",
+      error: "Telegram API 400 chat_id=chat-42: raw provider response",
       retryable: true,
     }));
     const link = {
@@ -2754,7 +2754,7 @@ describe("adapter lifecycle handlers", () => {
     );
     expect(result).toEqual({
       ok: false,
-      error: "Telegram delivery failed",
+      error: "Telegram delivery is temporarily unavailable",
       deliveryId: "run-1:finished",
       retryable: true,
     });

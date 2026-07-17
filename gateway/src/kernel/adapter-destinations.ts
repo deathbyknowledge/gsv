@@ -6,7 +6,7 @@ import type {
 import type { KernelContext } from "./context";
 import type { IdentityLinkRecord } from "./identity-links";
 import { resolveCallerOwnerUid } from "./context";
-import { adapterTargetId } from "./adapter-targets";
+import { stableOpaqueId } from "../shared/stable-id";
 
 const SURFACE_KINDS = new Set<AdapterSurfaceKind>([
   "dm",
@@ -17,7 +17,6 @@ const SURFACE_KINDS = new Set<AdapterSurfaceKind>([
 
 export type VisibleAdapterMessageDestination = {
   id: string;
-  targetId: string;
   label: string;
   online: boolean;
   destination: AdapterMessageDestination;
@@ -79,10 +78,10 @@ export function assertAdapterMessageDestinationAccess(
   }
 }
 
-export function listVisibleAdapterMessageDestinations(
+export async function listVisibleAdapterMessageDestinations(
   ctx: KernelContext,
   options: { includeOffline?: boolean } = {},
-): VisibleAdapterMessageDestination[] {
+): Promise<VisibleAdapterMessageDestination[]> {
   if (!ctx.identity || ctx.identity.role !== "user") {
     return [];
   }
@@ -110,7 +109,6 @@ export function listVisibleAdapterMessageDestinations(
     const key = destinationKey(destination);
     candidateMap.set(key, {
       id: "",
-      targetId: adapterTargetId(adapter, accountId),
       label: `${adapterDisplayName(adapter)} ${surfaceLabel(destination.surface)}`,
       online,
       destination,
@@ -137,35 +135,26 @@ export function listVisibleAdapterMessageDestinations(
     });
   }
 
-  const candidates = [...candidateMap.values()];
-
-  const counts = new Map<string, number>();
-  for (const candidate of candidates) {
-    counts.set(candidate.targetId, (counts.get(candidate.targetId) ?? 0) + 1);
-  }
-  return candidates
-    .map((candidate) => ({
+  return (await Promise.all([...candidateMap.values()]
+    .map(async (candidate) => ({
       ...candidate,
-      id: counts.get(candidate.targetId) === 1
-        ? candidate.targetId
-        : destinationScopedId(candidate),
-    }))
+      id: await adapterMessageDestinationId(candidate.destination, ownerUid),
+    }))))
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
-export function resolveVisibleAdapterMessageDestination(
+export async function resolveVisibleAdapterMessageDestination(
   query: string,
   ctx: KernelContext,
   options: { includeOffline?: boolean } = {},
-): VisibleAdapterMessageDestination {
+): Promise<VisibleAdapterMessageDestination> {
   const needle = query.trim().toLowerCase();
   if (!needle) {
     throw new Error("message target is required");
   }
-  const destinations = listVisibleAdapterMessageDestinations(ctx, options);
+  const destinations = await listVisibleAdapterMessageDestinations(ctx, options);
   const exact = destinations.filter((entry) =>
     entry.id.toLowerCase() === needle
-    || entry.targetId.toLowerCase() === needle
     || entry.destination.adapter === needle
     || entry.label.toLowerCase() === needle
   );
@@ -184,6 +173,22 @@ export function resolveVisibleAdapterMessageDestination(
   throw new Error(
     `Message destination is ambiguous: ${matches.map((entry) => entry.id).join(", ")}`,
   );
+}
+
+export async function adapterMessageDestinationId(
+  destination: AdapterMessageDestination,
+  ownerUid: number,
+): Promise<string> {
+  const normalized = normalizeAdapterMessageDestination(destination);
+  return stableOpaqueId("message-destination", [
+    ownerUid,
+    normalized.adapter,
+    normalized.accountId,
+    normalized.actorId,
+    normalized.surface.kind,
+    normalized.surface.id,
+    normalized.surface.threadId ?? null,
+  ]);
 }
 
 export function identityLinkAllowsSurface(
@@ -244,17 +249,6 @@ function destinationKey(destination: AdapterMessageDestination): string {
   ].join("\0");
 }
 
-function destinationScopedId(candidate: VisibleAdapterMessageDestination): string {
-  const { destination, targetId } = candidate;
-  return [
-    `${targetId}@${destination.surface.kind}:${encodeURIComponent(destination.surface.id)}`,
-    destination.surface.threadId
-      ? `thread:${encodeURIComponent(destination.surface.threadId)}`
-      : null,
-    `actor:${encodeURIComponent(destination.actorId)}`,
-  ].filter((part): part is string => Boolean(part)).join("/");
-}
-
 function adapterSendServiceAvailable(ctx: KernelContext, adapter: string): boolean {
   const key = `CHANNEL_${adapter.toUpperCase()}`;
   const binding = (ctx.env as unknown as Record<string, unknown>)[key];
@@ -273,5 +267,5 @@ function adapterDisplayName(adapter: string): string {
 
 function surfaceLabel(surface: AdapterSurface): string {
   if (surface.kind === "dm") return "direct message";
-  return `${surface.kind} ${surface.id}`;
+  return surface.kind;
 }

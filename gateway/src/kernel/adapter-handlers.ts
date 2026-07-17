@@ -393,12 +393,10 @@ async function deliverAdapterMessage(
   let result;
   try {
     result = await service.adapterSend(accountId, outbound, body);
-  } catch (error) {
+  } catch {
     return {
       ok: false,
-      error: `Adapter delivery transport failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      error: publicAdapterDeliveryError(adapter, true),
       deliveryId,
       retryable: true,
     };
@@ -418,7 +416,7 @@ async function deliverAdapterMessage(
     }
     return {
       ok: false,
-      error: result.error,
+      error: publicAdapterDeliveryError(adapter, result.retryable === true),
       deliveryId,
       retryable: result.retryable === true,
     };
@@ -433,6 +431,15 @@ async function deliverAdapterMessage(
     messageId: result.messageId,
     deliveryState: result.deduplicated ? "deduplicated" : "sent",
   };
+}
+
+function publicAdapterDeliveryError(adapter: string, retryable: boolean): string {
+  const name = adapter === "whatsapp"
+    ? "WhatsApp"
+    : adapter.charAt(0).toUpperCase() + adapter.slice(1);
+  return retryable
+    ? `${name} delivery is temporarily unavailable`
+    : `${name} rejected the delivery`;
 }
 
 async function rejectAdapterSend(body: BinaryBody | undefined, error: string): Promise<AdapterSendResult> {

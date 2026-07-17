@@ -1330,13 +1330,16 @@ describe("Kernel adapter route replies", () => {
       adapterSend,
     }));
 
-    await expect(kernel.deliverAdapterRouteReply(route, {
+    const outcome = await kernel.deliverAdapterRouteReply(route, {
       deliveryId: "run-adapter-reply:finished",
       text: "retry this",
-    })).resolves.toEqual({
-      state: "retryable",
-      error: "Adapter reply failed (telegram/bot): Telegram temporarily unavailable",
     });
+    expect(outcome).toEqual({
+      state: "retryable",
+      error: "Adapter reply failed (telegram): Telegram delivery is temporarily unavailable",
+    });
+    expect(JSON.stringify(outcome)).not.toContain("bot");
+    expect(JSON.stringify(outcome)).not.toContain("chat-42");
     expect(adapterSend).toHaveBeenCalledWith(
       "bot",
       {

@@ -57,7 +57,7 @@ async function runSchedCommand(args: string[], ctx: KernelContext): Promise<Exec
     }
     case "add": {
       requireCommandCapability(ctx, "sched.add");
-      const parsed = parseSchedAddCommand(rest, ctx);
+      const parsed = await parseSchedAddCommand(rest, ctx);
       const result = await handleSchedulerAdd(parsed, ctx);
       return {
         stdout: `schedule_id=${result.schedule.id} next=${result.schedule.state.nextRunAtMs === null ? "-" : new Date(result.schedule.state.nextRunAtMs).toISOString()}\n`,
@@ -101,7 +101,7 @@ async function runSchedCommand(args: string[], ctx: KernelContext): Promise<Exec
   }
 }
 
-function parseSchedAddCommand(args: string[], ctx: KernelContext): SchedulerAddArgs {
+async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise<SchedulerAddArgs> {
   if (args[0] === "--json") {
     if (args.length !== 2) {
       throw new Error("--json must be the only sched add option");
@@ -235,9 +235,9 @@ function parseSchedAddCommand(args: string[], ctx: KernelContext): SchedulerAddA
       throw new Error("--conversation is only valid with --here");
     }
     requireCommandCapability(ctx, "adapter.send");
-    const destination = resolveVisibleAdapterMessageDestination(to, ctx, {
+    const destination = (await resolveVisibleAdapterMessageDestination(to, ctx, {
       includeOffline: true,
-    }).destination;
+    })).destination;
     return {
       name,
       expression,

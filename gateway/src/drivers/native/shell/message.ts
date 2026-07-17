@@ -10,9 +10,11 @@ import type { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import { handleAdapterSend } from "../../../kernel/adapter-handlers";
 import {
+  adapterMessageDestinationId,
   listVisibleAdapterMessageDestinations,
   resolveVisibleAdapterMessageDestination,
 } from "../../../kernel/adapter-destinations";
+import { resolveCallerOwnerUid } from "../../../kernel/context";
 import type { AdapterRunRoute, RunRoute } from "../../../kernel/run-routes";
 import type { RequestFrame } from "../../../protocol/frames";
 import type {
@@ -67,7 +69,7 @@ async function runMessageCommand(
       return showCurrentReplyDestination(rest, ctx);
     case "destinations":
     case "targets":
-      return listDestinations(rest, ctx);
+      return await listDestinations(rest, ctx);
     case "attach":
       return attachToReply(rest, shellCtx, fs, ctx);
     case "send":
@@ -251,10 +253,10 @@ function showCurrentReplyDestination(args: string[], ctx: KernelContext): ExecRe
   ].join("\n"));
 }
 
-function listDestinations(args: string[], ctx: KernelContext): ExecResult {
+async function listDestinations(args: string[], ctx: KernelContext): Promise<ExecResult> {
   requireCommandCapability(ctx, "adapter.send");
   const flags = parseOnlyFlags(args, new Set(["--json", "--all"]));
-  const destinations = listVisibleAdapterMessageDestinations(ctx, {
+  const destinations = await listVisibleAdapterMessageDestinations(ctx, {
     includeOffline: flags.has("--all"),
   });
   if (flags.has("--json")) {
@@ -340,7 +342,11 @@ async function sendMessage(
 
   const destination = to.trim().toLowerCase() === "here"
     ? destinationFromCurrentRoute(ctx)
-    : resolveVisibleAdapterMessageDestination(to, ctx).destination;
+    : (await resolveVisibleAdapterMessageDestination(to, ctx)).destination;
+  const destinationId = await adapterMessageDestinationId(
+    destination,
+    resolveCallerOwnerUid(ctx),
+  );
   const deliveryId = requestedDeliveryId?.trim() || crypto.randomUUID();
   let result: AdapterSendResult | undefined;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -381,11 +387,9 @@ async function sendMessage(
     `sent=${deliveryConfirmed ? "true" : "false"}`,
     `delivery_confirmed=${deliveryConfirmed ? "true" : "false"}`,
     `adapter=${result.adapter}`,
-    `account=${result.accountId}`,
-    `destination=${result.surfaceId}`,
+    `destination=${destinationId}`,
     `delivery_id=${result.deliveryId}`,
     ...(result.deliveryState ? [`delivery_state=${result.deliveryState}`] : []),
-    ...(result.messageId ? [`message_id=${result.messageId}`] : []),
     "",
   ].join("\n"));
 }
@@ -527,6 +531,7 @@ function messageUsage(): string {
     "`message attach` includes files in that same final response.",
     "`message send` creates an additional outbound message. Use --to here --also only when an",
     "extra message on the current reply surface is intentional.",
+    "Use `message destinations` and copy its opaque GSV id; do not use provider ids.",
     "Copy a remote-device file to GSV first, then pass its local path to --attach.",
     "",
   ].join("\n");

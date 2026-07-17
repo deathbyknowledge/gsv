@@ -1642,7 +1642,7 @@ export class Kernel extends Host<Env> {
       replyToId: message.replyToId ?? route.replyToId,
     }, ctx, body);
     if (!result.ok) {
-      const detail = `Adapter reply failed (${route.adapter}/${route.accountId}): ${result.error}`;
+      const detail = `Adapter reply failed (${route.adapter}): ${result.error}`;
       if (result.retryable) {
         return { state: "retryable", error: detail };
       }

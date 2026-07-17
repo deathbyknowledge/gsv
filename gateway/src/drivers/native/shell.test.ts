@@ -2987,7 +2987,11 @@ describe("pkg shell command", () => {
     expect(duplicate.stderr).toContain("automatic reply destination");
     expect(duplicate.stderr).toContain("--also");
     expect(intentional).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(intentional.stdout).toContain("message_id=msg-1");
+    expect(intentional.stdout).toContain("sent=true");
+    expect(intentional.stdout).toMatch(/destination=message-destination:[0-9a-f]{64}/);
+    expect(intentional.stdout).not.toContain("chat-42");
+    expect(intentional.stdout).not.toContain("account=bot");
+    expect(intentional.stdout).not.toContain("message_id=msg-1");
     expect(adapterSend).toHaveBeenCalledTimes(1);
     expect(adapterSend).toHaveBeenCalledWith(
       "bot",
@@ -2995,6 +2999,35 @@ describe("pkg shell command", () => {
         surface: { kind: "dm", id: "chat-42" },
         text: "extra update",
       }),
+      undefined,
+    );
+  });
+
+  it("lists and resolves opaque destinations without provider identifiers", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "adapter.send"],
+      processRunId: "run-telegram-destinations",
+    });
+    const { adapterSend } = enableTelegramMessaging(ctx);
+
+    const listed = await handleShellExec({ input: "message destinations --json" }, ctx);
+    expect(listed).toMatchObject({ status: "completed", exitCode: 0 });
+    const destinationId = JSON.parse(listed.stdout).destinations[0].id as string;
+    expect(destinationId).toMatch(/^message-destination:[0-9a-f]{64}$/);
+    expect(listed.stdout).toContain("Telegram direct message");
+    expect(listed.stdout).not.toContain("chat-42");
+    expect(listed.stdout).not.toContain('"bot"');
+
+    const sent = await handleShellExec({
+      input: `message send --to ${destinationId} --message "opaque route" --also`,
+    }, ctx);
+    expect(sent).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(sent.stdout).toContain(`destination=${destinationId}`);
+    expect(sent.stdout).not.toContain("chat-42");
+    expect(sent.stdout).not.toContain("msg-1");
+    expect(adapterSend).toHaveBeenCalledWith(
+      "bot",
+      expect.objectContaining({ text: "opaque route" }),
       undefined,
     );
   });
@@ -3012,7 +3045,8 @@ describe("pkg shell command", () => {
     }, ctx);
 
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(result.stdout).toContain("message_id=bytes-3");
+    expect(result.stdout).toContain("sent=true");
+    expect(result.stdout).not.toContain("bytes-3");
     expect(adapterSend).toHaveBeenCalledWith(
       "bot",
       expect.objectContaining({
@@ -3323,10 +3357,10 @@ describe("pkg shell command", () => {
     enableTelegramMessaging(ctx);
 
     const result = await handleShellExec({
-      input: 'sched add --to adapter:telegram:bot --name reminder --after 10m --message "Check the oven."',
+      input: 'sched add --to telegram --name reminder --after 10m --message "Check the oven."',
     }, ctx);
     const invalidConversation = await handleShellExec({
-      input: 'sched add --to adapter:telegram:bot --name invalid --after 10m --message "No." --conversation ops',
+      input: 'sched add --to telegram --name invalid --after 10m --message "No." --conversation ops',
     }, ctx);
 
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
