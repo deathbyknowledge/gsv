@@ -970,6 +970,36 @@ describe("Kernel process signal routing", () => {
     connectionId: "connection-1",
   };
 
+  function hilPayload(runId: string, requestId: string) {
+    return {
+      pid: "proc-1",
+      runId,
+      requestId,
+      conversationId: "default",
+      callId: `call-${requestId}`,
+      toolName: "Shell",
+      syscall: "shell.exec",
+      args: { input: "date" },
+      createdAt: 1,
+    };
+  }
+
+  function historyResponse(pendingHil: ReturnType<typeof hilPayload> | null) {
+    return {
+      type: "res",
+      id: "history-response",
+      ok: true,
+      data: {
+        ok: true,
+        pid: "proc-1",
+        conversationId: "default",
+        messages: [],
+        messageCount: 0,
+        pendingHil,
+      },
+    } as const;
+  }
+
   it("acknowledges HIL only after its durable delivery work is queued", async () => {
     let release!: () => void;
     const queued = new Promise<void>((resolve) => {
@@ -1043,6 +1073,150 @@ describe("Kernel process signal routing", () => {
       }),
       expect.objectContaining({ idempotent: true }),
     );
+  });
+
+  it("suppresses a queued HIL prompt after its approval is resolved", async () => {
+    sendFrameToProcessMock.mockReset();
+    sendFrameToProcessMock.mockResolvedValueOnce(historyResponse(null));
+    const route = {
+      kind: "adapter",
+      runId: "run-hil-resolved",
+      processId: "proc-1",
+      uid: 1000,
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "actor-1",
+      surfaceKind: "dm",
+      surfaceId: "chat-1",
+    };
+    const kernel = buildKernel(route);
+
+    await kernel.onAdapterSignalDelivery({
+      runId: route.runId,
+      processId: route.processId,
+      signal: "proc.run.hil.requested",
+      payload: hilPayload(route.runId, "hil-resolved"),
+      attempt: 2,
+    });
+
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(route.processId, expect.objectContaining({
+      type: "req",
+      call: "proc.history",
+    }));
+    expect(kernel.deliverSignalToAdapter).not.toHaveBeenCalled();
+    expect(kernel.schedule).not.toHaveBeenCalled();
+  });
+
+  it("suppresses an older queued HIL prompt after the run advances to another approval", async () => {
+    sendFrameToProcessMock.mockReset();
+    const route = {
+      kind: "adapter",
+      runId: "run-hil-next",
+      processId: "proc-1",
+      uid: 1000,
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "actor-1",
+      surfaceKind: "dm",
+      surfaceId: "chat-1",
+    };
+    sendFrameToProcessMock.mockResolvedValueOnce(
+      historyResponse(hilPayload(route.runId, "hil-current")),
+    );
+    const kernel = buildKernel(route);
+
+    await kernel.onAdapterSignalDelivery({
+      runId: route.runId,
+      processId: route.processId,
+      signal: "proc.run.hil.requested",
+      payload: hilPayload(route.runId, "hil-old"),
+      attempt: 3,
+    });
+
+    expect(kernel.deliverSignalToAdapter).not.toHaveBeenCalled();
+    expect(kernel.schedule).not.toHaveBeenCalled();
+  });
+
+  it("continues retrying a HIL prompt while that exact approval is pending", async () => {
+    sendFrameToProcessMock.mockReset();
+    const route = {
+      kind: "adapter",
+      runId: "run-hil-pending",
+      processId: "proc-1",
+      uid: 1000,
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "actor-1",
+      surfaceKind: "dm",
+      surfaceId: "chat-1",
+    };
+    const payload = hilPayload(route.runId, "hil-pending");
+    sendFrameToProcessMock.mockResolvedValueOnce(historyResponse(payload));
+    const kernel = buildKernel(route);
+    kernel.deliverSignalToAdapter.mockResolvedValueOnce({
+      state: "retryable",
+      error: "adapter temporarily unavailable",
+    });
+
+    await kernel.onAdapterSignalDelivery({
+      runId: route.runId,
+      processId: route.processId,
+      signal: "proc.run.hil.requested",
+      payload,
+      attempt: 2,
+    });
+
+    expect(kernel.deliverSignalToAdapter).toHaveBeenCalledWith(route, {
+      type: "sig",
+      signal: "proc.run.hil.requested",
+      payload,
+    });
+    expect(kernel.schedule).toHaveBeenCalledWith(
+      expect.any(Date),
+      "onAdapterSignalDelivery",
+      expect.objectContaining({ attempt: 3 }),
+      expect.any(Object),
+    );
+  });
+
+  it("uses request-specific delivery notice identities for approvals in one run", async () => {
+    const route = {
+      kind: "adapter",
+      runId: "run-multiple-hil",
+      processId: "proc-1",
+      uid: 1000,
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "actor-1",
+      surfaceKind: "dm",
+      surfaceId: "chat-1",
+    };
+    const kernel = buildKernel(route);
+
+    await kernel.queueProcessDeliveryNotice(
+      route,
+      {
+        type: "sig",
+        signal: "proc.run.hil.requested",
+        payload: hilPayload(route.runId, "hil-first"),
+      },
+      { state: "permanent", message: "First approval delivery failed." },
+    );
+    await kernel.queueProcessDeliveryNotice(
+      route,
+      {
+        type: "sig",
+        signal: "proc.run.hil.requested",
+        payload: hilPayload(route.runId, "hil-second"),
+      },
+      { state: "permanent", message: "Second approval delivery failed." },
+    );
+
+    const first = kernel.schedule.mock.calls[0][2];
+    const second = kernel.schedule.mock.calls[1][2];
+    expect(first).toMatchObject({ deliveryKind: "hil", requestId: "hil-first" });
+    expect(second).toMatchObject({ deliveryKind: "hil", requestId: "hil-second" });
+    expect(first.noticeId).not.toBe(second.noticeId);
   });
 
   it("keeps ordinary run signals exclusive to their connection route", async () => {
@@ -1153,6 +1327,74 @@ describe("Kernel process signal routing", () => {
     });
 
     expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+  });
+
+  it("suppresses a HIL delivery notice after its approval is resolved", async () => {
+    sendFrameToProcessMock.mockReset();
+    sendFrameToProcessMock.mockResolvedValueOnce(historyResponse(null));
+    const route = {
+      kind: "adapter",
+      runId: "run-hil-notice-stale",
+      processId: "proc-1",
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
+
+    await kernel.onProcessDeliveryNotice({
+      noticeId: "notice:hil:stale",
+      runId: route.runId,
+      processId: route.processId,
+      conversationId: "default",
+      deliveryKind: "hil",
+      requestId: "hil-stale",
+      state: "exhausted",
+      message: "Approval delivery stopped.",
+      cleanupRunRoute: false,
+    });
+
+    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(route.processId, expect.objectContaining({
+      type: "req",
+      call: "proc.history",
+    }));
+    expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
+  });
+
+  it("records a request-specific HIL delivery notice while its approval is pending", async () => {
+    sendFrameToProcessMock.mockReset();
+    const route = {
+      kind: "adapter",
+      runId: "run-hil-notice-current",
+      processId: "proc-1",
+    };
+    const pending = hilPayload(route.runId, "hil-current");
+    sendFrameToProcessMock
+      .mockResolvedValueOnce(historyResponse(pending))
+      .mockResolvedValueOnce(null);
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
+
+    await kernel.onProcessDeliveryNotice({
+      noticeId: "notice:hil:current",
+      runId: route.runId,
+      processId: route.processId,
+      conversationId: "default",
+      deliveryKind: "hil",
+      requestId: pending.requestId,
+      state: "ambiguous",
+      message: "Approval delivery is ambiguous.",
+      cleanupRunRoute: false,
+    });
+
+    expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(route.processId, expect.objectContaining({
+      type: "sig",
+      signal: "proc.delivery.notice",
+      payload: expect.objectContaining({
+        noticeId: "notice:hil:current",
+        requestId: pending.requestId,
+      }),
+    }));
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
   });
 

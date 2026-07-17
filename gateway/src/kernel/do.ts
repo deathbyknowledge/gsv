@@ -169,6 +169,7 @@ type ProcessDeliveryNoticeRetry = {
   processId: string;
   conversationId: string;
   deliveryKind: "hil" | "final";
+  requestId?: string;
   state: "permanent" | "ambiguous" | "exhausted";
   message: string;
   cleanupRunRoute: boolean;
@@ -977,7 +978,21 @@ export class Kernel extends Host<Env> {
   ): Promise<void> {
     let outcome: AdapterSignalDeliveryOutcome;
     try {
-      outcome = await this.deliverSignalToAdapter(route, frame);
+      const hilRequest = frame.signal === "proc.run.hil.requested"
+        ? normalizeAdapterHilRequest(frame.payload, "signal")
+        : null;
+      if (
+        hilRequest
+        && !await this.isAdapterHilRequestPending(
+          route.processId,
+          route.runId,
+          hilRequest.requestId,
+        )
+      ) {
+        outcome = { state: "skipped" };
+      } else {
+        outcome = await this.deliverSignalToAdapter(route, frame);
+      }
     } catch (error) {
       outcome = {
         state: error instanceof AdapterReplyMediaError ? "permanent" : "retryable",
@@ -1056,6 +1071,34 @@ export class Kernel extends Host<Env> {
     }, input.attempt);
   }
 
+  private async isAdapterHilRequestPending(
+    processId: string,
+    runId: string,
+    requestId: string,
+  ): Promise<boolean> {
+    const response = await sendFrameToProcess(processId, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.history",
+      args: { pid: processId, limit: 1, offset: 0 },
+    });
+    if (!response || response.type !== "res" || !response.ok) {
+      throw new Error(`Unable to verify pending approval ${requestId}`);
+    }
+    const data = response.data && typeof response.data === "object"
+      ? response.data as Record<string, unknown>
+      : null;
+    if (!data || data.ok !== true) {
+      throw new Error(`Unable to verify pending approval ${requestId}`);
+    }
+    const pendingValue = data.pendingHil;
+    const pending = normalizeAdapterHilRequest(pendingValue);
+    const pendingRecord = pendingValue && typeof pendingValue === "object"
+      ? pendingValue as Record<string, unknown>
+      : null;
+    return pending?.requestId === requestId && pendingRecord?.runId === runId;
+  }
+
   private async queueProcessDeliveryNotice(
     route: AdapterRunRoute,
     frame: SignalFrame,
@@ -1065,9 +1108,16 @@ export class Kernel extends Host<Env> {
       ? frame.payload as Record<string, unknown>
       : {};
     const deliveryKind = frame.signal === "proc.run.hil.requested" ? "hil" : "final";
+    const requestId = deliveryKind === "hil"
+      ? normalizeAdapterHilRequest(frame.payload, "signal")?.requestId
+      : undefined;
+    if (deliveryKind === "hil" && !requestId) {
+      return;
+    }
     const noticeId = await stableOpaqueId("process-delivery-notice", [
       route.runId,
       deliveryKind,
+      requestId ?? "",
       outcome.state,
     ]);
     await this.schedule(
@@ -1081,6 +1131,7 @@ export class Kernel extends Host<Env> {
           ? payload.conversationId
           : "default",
         deliveryKind,
+        ...(requestId ? { requestId } : {}),
         state: outcome.state,
         message: outcome.message,
         cleanupRunRoute: deliveryKind === "final",
@@ -1100,12 +1151,26 @@ export class Kernel extends Host<Env> {
       || typeof input.processId !== "string"
       || typeof input.conversationId !== "string"
       || typeof input.message !== "string"
+      || (input.deliveryKind === "hil" && (
+        typeof input.requestId !== "string"
+        || input.requestId.length === 0
+      ))
     ) {
       return;
     }
     const route = this.runRoutes.get(input.runId);
     if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
       return;
+    }
+    const requestId = input.requestId;
+    if (input.deliveryKind === "hil") {
+      if (!requestId || !await this.isAdapterHilRequestPending(
+        input.processId,
+        input.runId,
+        requestId,
+      )) {
+        return;
+      }
     }
     await sendFrameToProcess(input.processId, {
       type: "sig",
@@ -1115,6 +1180,7 @@ export class Kernel extends Host<Env> {
         runId: input.runId,
         conversationId: input.conversationId,
         deliveryKind: input.deliveryKind,
+        ...(requestId ? { requestId } : {}),
         state: input.state,
         message: input.message,
       },
