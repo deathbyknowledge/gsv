@@ -48,11 +48,6 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { ToolDefinition, SyscallName } from "../syscalls";
 import { intoSyscallTool, isRoutableSyscall } from "../syscalls";
-import {
-  buildCodeModeMcpToolBindings,
-  buildCodeModeMcpTypeDeclarations,
-  type CodeModeMcpToolSource,
-} from "../codemode/mcp";
 import { hasCapability } from "./capabilities";
 import { resolveAiProviderOAuthApiKey } from "./ai-oauth";
 
@@ -132,8 +127,6 @@ const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "codemode.exec": CODEMODE_EXEC_DEFINITION,
 };
 
-const CODEMODE_MCP_TYPE_HINT_MAX_CHARS = 12_000;
-
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 const DEFAULT_GENERATION_STREAMING = "auto";
 
@@ -192,8 +185,6 @@ export async function handleAiTools(
 
     if (isRoutableSyscall(syscall as SyscallName)) {
       tools.push(intoSyscallTool(baseDef, deviceIds));
-    } else if (syscall === "codemode.exec") {
-      tools.push(canUseMcpTools ? withCodeModeMcpTypeHints(baseDef, ctx, mcpUid) : baseDef);
     } else {
       tools.push(baseDef);
     }
@@ -1610,52 +1601,6 @@ function normalizePositiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-function withCodeModeMcpTypeHints(
-  baseDef: ToolDefinition,
-  ctx: KernelContext,
-  uid: number,
-): ToolDefinition {
-  const bindings = buildCodeModeMcpToolBindings(listReadyMcpToolSources(ctx, uid));
-  const typeDeclarations = buildCodeModeMcpTypeDeclarations(bindings);
-  if (!typeDeclarations) {
-    return baseDef;
-  }
-
-  return {
-    ...baseDef,
-    description: `${baseDef.description}\n\nConnected MCP tools are available as typed CodeMode globals:\n\n\`\`\`ts\n${truncateMcpTypeHints(typeDeclarations)}\n\`\`\``,
-  };
-}
-
-function listReadyMcpToolSources(
-  ctx: KernelContext,
-  uid: number,
-): CodeModeMcpToolSource[] {
-  return ctx.mcpServers.list(uid).flatMap((record) => {
-    const connection = ctx.mcp.mcpConnections[record.serverId] as {
-      connectionState?: unknown;
-    } | undefined;
-    if (connection?.connectionState !== "ready") {
-      return [];
-    }
-
-    const tools = ctx.mcp.listTools({ serverId: record.serverId }) as unknown[];
-    return [{
-      serverId: record.serverId,
-      serverName: record.name,
-      state: "ready",
-      tools: tools
-        .filter(isRecord)
-        .map((tool) => ({
-          name: typeof tool.name === "string" ? tool.name : "tool",
-          description: typeof tool.description === "string" ? tool.description : null,
-          inputSchema: isRecord(tool.inputSchema) ? tool.inputSchema : null,
-          outputSchema: isRecord(tool.outputSchema) ? tool.outputSchema : null,
-        })),
-    }];
-  });
-}
-
 function listReadyMcpServerNames(ctx: KernelContext, uid: number): string[] {
   const names = new Set<string>();
   for (const record of ctx.mcpServers.list(uid)) {
@@ -1667,20 +1612,6 @@ function listReadyMcpServerNames(ctx: KernelContext, uid: number): string[] {
     }
   }
   return [...names].sort((left, right) => left.localeCompare(right));
-}
-
-function truncateMcpTypeHints(typeDeclarations: string): string {
-  if (typeDeclarations.length <= CODEMODE_MCP_TYPE_HINT_MAX_CHARS) {
-    return typeDeclarations;
-  }
-  const trimmed = typeDeclarations
-    .slice(0, CODEMODE_MCP_TYPE_HINT_MAX_CHARS)
-    .replace(/\n[^\n]*$/, "");
-  return `${trimmed}\n// ... additional MCP tool types omitted; inspect mcpTools at runtime for full metadata.`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 async function resolveModelContextWindow(provider: string, model: string): Promise<number | null> {

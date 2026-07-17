@@ -1,9 +1,4 @@
-import {
-  jsonSchemaToType,
-  sanitizeToolName,
-} from "@cloudflare/codemode";
-
-type JsonSchema = Parameters<typeof jsonSchemaToType>[0];
+import { sanitizeToolName } from "@cloudflare/codemode";
 
 export type CodeModeMcpToolSource = {
   serverId: string;
@@ -28,11 +23,6 @@ export type CodeModeMcpToolBinding = {
   description: string | null;
   inputSchema: Record<string, unknown> | null;
   outputSchema: Record<string, unknown> | null;
-};
-
-const DEFAULT_INPUT_SCHEMA = {
-  type: "object",
-  additionalProperties: true,
 };
 
 const RESERVED_MCP_FUNCTION_NAMES = new Set([
@@ -128,52 +118,6 @@ export function buildCodeModeMcpToolBindings(
   return bindings;
 }
 
-export function buildCodeModeMcpTypeDeclarations(
-  bindings: CodeModeMcpToolBinding[],
-): string {
-  if (bindings.length === 0) {
-    return "";
-  }
-
-  const usedTypeNames = new Set<string>();
-  const typeBlocks: string[] = [];
-  const functionBlocks: string[] = [];
-
-  for (const binding of bindings) {
-    const typeBase = uniqueTypeBase(binding.functionName, usedTypeNames);
-    const inputTypeName = `${typeBase}Input`;
-    const outputTypeName = `${typeBase}Output`;
-    const inputParameter = hasRequiredProperties(binding.inputSchema)
-      ? `input: ${inputTypeName}`
-      : `input?: ${inputTypeName}`;
-
-    typeBlocks.push(schemaTypeDeclaration(
-      binding.inputSchema ?? DEFAULT_INPUT_SCHEMA,
-      inputTypeName,
-      "Record<string, unknown>",
-    ));
-    typeBlocks.push(
-      binding.outputSchema
-        ? schemaTypeDeclaration(binding.outputSchema, outputTypeName, "unknown")
-        : `type ${outputTypeName} = unknown;`,
-    );
-
-    functionBlocks.push([
-      "/**",
-      ` * ${escapeJsDoc(`${binding.serverName}.${binding.toolName}`)}`,
-      ...(binding.description ? [` * ${escapeJsDoc(oneLine(binding.description))}`] : []),
-      " */",
-      `declare function ${binding.functionName}(${inputParameter}): Promise<${outputTypeName}>;`,
-    ].join("\n"));
-  }
-
-  return [
-    ...typeBlocks,
-    "",
-    ...functionBlocks,
-  ].join("\n");
-}
-
 function normalizedToolFunctionName(value: string): string {
   const sanitized = sanitizeToolName(value);
   return sanitized && sanitized !== "_" ? sanitized : "tool";
@@ -192,58 +136,6 @@ function uniqueMcpFunctionName(
     return base;
   }
   return `${base}_${shortHash(`${candidate.serverId}:${candidate.toolName}`)}`;
-}
-
-function schemaTypeDeclaration(
-  schema: Record<string, unknown>,
-  typeName: string,
-  fallback: string,
-): string {
-  try {
-    return ensureSemicolon(jsonSchemaToType(schema as JsonSchema, typeName).trim());
-  } catch {
-    return `type ${typeName} = ${fallback};`;
-  }
-}
-
-function uniqueTypeBase(functionName: string, used: Set<string>): string {
-  const base = toPascalTypeName(functionName);
-  let candidate = base;
-  let suffix = 2;
-  while (used.has(`${candidate}Input`) || used.has(`${candidate}Output`)) {
-    candidate = `${base}${suffix}`;
-    suffix += 1;
-  }
-  used.add(`${candidate}Input`);
-  used.add(`${candidate}Output`);
-  return candidate;
-}
-
-function toPascalTypeName(value: string): string {
-  const words = value.split(/[^A-Za-z0-9]+/).filter(Boolean);
-  const joined = words
-    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
-    .join("");
-  if (!joined) {
-    return "McpTool";
-  }
-  return /^[0-9]/.test(joined) ? `Mcp${joined}` : joined;
-}
-
-function ensureSemicolon(value: string): string {
-  return /[;}]$/.test(value) ? value : `${value};`;
-}
-
-function hasRequiredProperties(schema: Record<string, unknown> | null): boolean {
-  return Array.isArray(schema?.required) && schema.required.length > 0;
-}
-
-function oneLine(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function escapeJsDoc(value: string): string {
-  return value.replace(/\*\//g, "* /");
 }
 
 function shortHash(value: string): string {

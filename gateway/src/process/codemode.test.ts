@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
-import { buildCodeModeMcpTypeDeclarations } from "../codemode/mcp";
 import {
   buildCodeModeMcpToolBindings,
   executeCodeMode,
@@ -366,40 +365,4 @@ describe.sequential("CodeMode executor", () => {
     expect(bindings.map((binding) => binding.functionName)).toEqual(["Network_fetch"]);
   });
 
-  it("generates TypeScript declarations for connected MCP functions", () => {
-    const bindings = buildCodeModeMcpToolBindings([
-      {
-        serverId: "server-1",
-        name: "Search",
-        state: "ready",
-        tools: [{
-          name: "lookup-record",
-          description: "Lookup a record",
-          inputSchema: {
-            type: "object",
-            properties: {
-              query: { type: "string" },
-            },
-            required: ["query"],
-          },
-          outputSchema: {
-            type: "object",
-            properties: {
-              title: { type: "string" },
-            },
-            required: ["title"],
-          },
-        }],
-      },
-    ]);
-
-    const declarations = buildCodeModeMcpTypeDeclarations(bindings);
-
-    expect(declarations).toContain("type LookupRecordInput");
-    expect(declarations).toContain("query: string");
-    expect(declarations).toContain("type LookupRecordOutput");
-    expect(declarations).toContain("title: string");
-    expect(declarations).toContain("declare function lookup_record(input: LookupRecordInput): Promise<LookupRecordOutput>;");
-    expect(declarations).toContain("declare function Search_lookup_record(input: SearchLookupRecordInput): Promise<SearchLookupRecordOutput>;");
-  });
 });

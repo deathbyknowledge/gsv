@@ -94,11 +94,12 @@ Each tick builds a `pi-ai` context from the system prompt, stored messages, and
 available tools. MCP tools are not expanded into the direct model tool surface;
 processes use them intentionally through CodeMode's generated async functions
 or the native shell `mcp` command, both of which dispatch back through
-`sys.mcp.*`. When ready MCP tools expose schemas, CodeMode includes generated
-TypeScript declarations in its tool description so agents can see input and
-structured output shapes before writing code. Generated functions unwrap MCP
-result envelopes inside CodeMode, while the underlying syscall path still
-preserves the raw MCP response for shell and low-level callers.
+`sys.mcp.*`. CodeMode keeps a fixed tool description and exposes ready MCP
+function names and schemas through the runtime `mcpTools` array. Processes first
+return a compact index, inspect the selected schema on demand, and then call its
+generated function. Generated functions unwrap MCP result envelopes inside
+CodeMode, while the underlying syscall path still preserves the raw MCP response
+for shell and low-level callers.
 
 The process calls the configured generation service with `sessionAffinityKey`
 set to the PID.
