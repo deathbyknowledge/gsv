@@ -15,7 +15,7 @@ import {
   resolveVisibleAdapterMessageDestination,
 } from "../../../kernel/adapter-destinations";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
-import type { AdapterRunRoute, RunRoute } from "../../../kernel/run-routes";
+import type { RunRoute } from "../../../kernel/run-routes";
 import type { RequestFrame } from "../../../protocol/frames";
 import type {
   ProcessRunAttachRequestFrame,
@@ -460,7 +460,7 @@ function destinationFromCurrentRoute(ctx: KernelContext): AdapterMessageDestinat
   if (route?.kind !== "adapter") {
     throw new Error("the current run does not have an adapter reply destination");
   }
-  return destinationFromAdapterRoute(route);
+  return route.destination;
 }
 
 function currentRunRoute(ctx: KernelContext): RunRoute | null {
@@ -471,31 +471,22 @@ function currentRunRoute(ctx: KernelContext): RunRoute | null {
   return route?.processId === ctx.processId ? route : null;
 }
 
-function destinationFromAdapterRoute(route: AdapterRunRoute): AdapterMessageDestination {
-  return {
-    kind: "adapter",
-    adapter: route.adapter,
-    accountId: route.accountId,
-    actorId: route.actorId,
-    surface: {
-      kind: route.surfaceKind,
-      id: route.surfaceId,
-      ...(route.threadId ? { threadId: route.threadId } : {}),
-    },
-  };
-}
-
 function describeCurrentRoute(route: RunRoute | null): {
   kind: "adapter" | "client" | "conversation";
   label: string;
   transport: "automatic";
 } {
   if (route?.kind === "adapter") {
-    const adapter = route.adapter === "whatsapp"
+    const { adapter, surface } = route.destination;
+    const adapterLabel = adapter === "whatsapp"
       ? "WhatsApp"
-      : route.adapter.charAt(0).toUpperCase() + route.adapter.slice(1);
-    const surface = route.surfaceKind === "dm" ? "direct message" : route.surfaceKind;
-    return { kind: "adapter", label: `${adapter} ${surface}`, transport: "automatic" };
+      : adapter.charAt(0).toUpperCase() + adapter.slice(1);
+    const surfaceLabel = surface.kind === "dm" ? "direct message" : surface.kind;
+    return {
+      kind: "adapter",
+      label: `${adapterLabel} ${surfaceLabel}`,
+      transport: "automatic",
+    };
   }
   if (route?.kind === "connection") {
     return { kind: "client", label: "the GSV client that started this run", transport: "automatic" };

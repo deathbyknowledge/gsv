@@ -478,13 +478,15 @@ function isCurrentAutomaticReplyDestination(
     return false;
   }
   const route = ctx.runRoutes.get(ctx.processRunId);
-  return route?.kind === "adapter"
-    && route.processId === ctx.processId
-    && route.adapter === adapter
-    && route.accountId === accountId
-    && route.surfaceKind === surface.kind
-    && route.surfaceId === surface.id.trim()
-    && (route.threadId ?? "") === (surface.threadId?.trim() ?? "");
+  if (route?.kind !== "adapter" || route.processId !== ctx.processId) {
+    return false;
+  }
+  const { destination } = route;
+  return destination.adapter === adapter
+    && destination.accountId === accountId
+    && destination.surface.kind === surface.kind
+    && destination.surface.id === surface.id.trim()
+    && (destination.surface.threadId ?? "") === (surface.threadId?.trim() ?? "");
 }
 
 function canSendToAdapterSurface(
@@ -1190,12 +1192,13 @@ async function deliverAdapterInboundToProcess(input: {
     runId,
     processId: pid,
     uid,
-    adapter,
-    accountId,
-    actorId,
-    surfaceKind: message.surface.kind,
-    surfaceId: message.surface.id,
-    threadId: message.surface.threadId,
+    destination: {
+      kind: "adapter",
+      adapter,
+      accountId,
+      actorId,
+      surface: message.surface,
+    },
     replyToId: message.messageId,
   });
   await setAdapterActivityForKernel(

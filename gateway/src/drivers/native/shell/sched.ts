@@ -256,17 +256,7 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
   }
   const route = ctx.processRunId ? ctx.runRoutes.get(ctx.processRunId) : null;
   const replyTo = route?.kind === "adapter" && route.processId === processId
-    ? {
-        kind: "adapter" as const,
-        adapter: route.adapter,
-        accountId: route.accountId,
-        actorId: route.actorId,
-        surface: {
-          kind: route.surfaceKind,
-          id: route.surfaceId,
-          ...(route.threadId ? { threadId: route.threadId } : {}),
-        },
-      }
+    ? route.destination
     : undefined;
   const targetConversationId = conversationId ?? caller.activeConversationId ?? "default";
   return {

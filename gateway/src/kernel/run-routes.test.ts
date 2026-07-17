@@ -162,29 +162,37 @@ describe("RunRouteStore", () => {
     const sql = createMockSql();
     const store = new RunRouteStore(sql as unknown as SqlStorage);
 
-    store.setAdapterRoute({
+    const stored = store.setAdapterRoute({
       runId: "run-2",
       processId: "init:1001",
       uid: 1001,
+      destination: {
+        kind: "adapter",
+        adapter: "whatsapp",
+        accountId: "default",
+        actorId: "actor-1",
+        surface: { kind: "thread", id: "surface-a", threadId: "thread-1" },
+      },
+      replyToId: "message-2",
+    }, 1_000);
+    expect(stored.destination).toEqual({
+      kind: "adapter",
       adapter: "whatsapp",
       accountId: "default",
       actorId: "actor-1",
-      surfaceKind: "thread",
-      surfaceId: "surface-a",
-      threadId: "thread-1",
-      replyToId: "message-2",
-    }, 1_000);
+      surface: {
+        kind: "thread",
+        id: "surface-a",
+        threadId: "thread-1",
+      },
+    });
 
     const route = store.get("run-2");
     expect(route).not.toBeNull();
     expect(route?.kind).toBe("adapter");
     if (route?.kind === "adapter") {
-      expect(route.adapter).toBe("whatsapp");
-      expect(route.accountId).toBe("default");
       expect(route.processId).toBe("init:1001");
-      expect(route.actorId).toBe("actor-1");
-      expect(route.surfaceKind).toBe("thread");
-      expect(route.threadId).toBe("thread-1");
+      expect(route.destination).toEqual(stored.destination);
       expect(route.replyToId).toBe("message-2");
       expect(route.expiresAt).toBe(3_000);
     }
@@ -192,12 +200,13 @@ describe("RunRouteStore", () => {
       runId: "run-3",
       processId: "init:1001",
       uid: 1001,
-      adapter: "whatsapp",
-      accountId: "default",
-      actorId: "actor-1",
-      surfaceKind: "thread",
-      surfaceId: "surface-a",
-      threadId: "thread-1",
+      destination: {
+        kind: "adapter",
+        adapter: "whatsapp",
+        accountId: "default",
+        actorId: "actor-1",
+        surface: { kind: "thread", id: "surface-a", threadId: "thread-1" },
+      },
     });
     expect(store.get("run-2")).not.toBeNull();
     expect(store.get("run-3")).not.toBeNull();
@@ -241,11 +250,13 @@ describe("RunRouteStore", () => {
       runId: "run-a1",
       processId: "init:1000",
       uid: 1000,
-      adapter: "discord",
-      accountId: "default",
-      actorId: "actor-1",
-      surfaceKind: "dm",
-      surfaceId: "dm-1",
+      destination: {
+        kind: "adapter",
+        adapter: "discord",
+        accountId: "default",
+        actorId: "actor-1",
+        surface: { kind: "dm", id: "dm-1" },
+      },
     });
 
     store.clearForConnection("conn-a");
@@ -262,11 +273,13 @@ describe("RunRouteStore", () => {
       runId: "run-a",
       processId: "proc-a",
       uid: 1000,
-      adapter: "telegram",
-      accountId: "bot",
-      actorId: "actor",
-      surfaceKind: "dm",
-      surfaceId: "chat",
+      destination: {
+        kind: "adapter",
+        adapter: "telegram",
+        accountId: "bot",
+        actorId: "actor",
+        surface: { kind: "dm", id: "chat" },
+      },
     });
     store.setConnectionRoute({
       runId: "run-b",

@@ -400,11 +400,13 @@ function enableTelegramMessaging(ctx: KernelContext) {
           runId,
           processId: ctx.processId!,
           uid: IDENTITY.uid,
-          adapter: "telegram",
-          accountId: "bot",
-          actorId: "chat-42",
-          surfaceKind: "dm",
-          surfaceId: "chat-42",
+          destination: {
+            kind: "adapter",
+            adapter: "telegram",
+            accountId: "bot",
+            actorId: "chat-42",
+            surface: { kind: "dm", id: "chat-42" },
+          },
           createdAt: 1,
           expiresAt: Date.now() + 60_000,
         }

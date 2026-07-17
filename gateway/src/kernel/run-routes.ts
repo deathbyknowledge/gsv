@@ -1,4 +1,7 @@
-import type { AdapterSurfaceKind } from "../adapter-interface";
+import type {
+  AdapterMessageDestination,
+  AdapterSurfaceKind,
+} from "@humansandmachines/gsv/protocol";
 
 export type ConnectionRunRoute = {
   kind: "connection";
@@ -15,12 +18,7 @@ export type AdapterRunRoute = {
   runId: string;
   processId: string;
   uid: number;
-  adapter: string;
-  accountId: string;
-  actorId: string;
-  surfaceKind: AdapterSurfaceKind;
-  surfaceId: string;
-  threadId?: string;
+  destination: AdapterMessageDestination;
   replyToId?: string;
   createdAt: number;
   expiresAt: number;
@@ -66,22 +64,25 @@ export class RunRouteStore {
       runId: string;
       processId: string;
       uid: number;
-      adapter: string;
-      accountId: string;
-      actorId: string;
-      surfaceKind: AdapterSurfaceKind;
-      surfaceId: string;
-      threadId?: string;
+      destination: AdapterMessageDestination;
       replyToId?: string;
     },
     ttlMs = DEFAULT_TTL_MS,
   ): AdapterRunRoute {
     const now = Date.now();
     const expiresAt = now + ttlMs;
+    const { destination } = input;
     this.upsert({
-      ...input,
+      runId: input.runId,
+      processId: input.processId,
+      uid: input.uid,
       routeKind: "adapter",
-      threadId: input.threadId ?? null,
+      adapter: destination.adapter,
+      accountId: destination.accountId,
+      actorId: destination.actorId,
+      surfaceKind: destination.surface.kind,
+      surfaceId: destination.surface.id,
+      threadId: destination.surface.threadId ?? null,
       replyToId: input.replyToId ?? null,
       createdAt: now,
       expiresAt,
@@ -89,7 +90,11 @@ export class RunRouteStore {
 
     return {
       kind: "adapter",
-      ...input,
+      runId: input.runId,
+      processId: input.processId,
+      uid: input.uid,
+      destination,
+      ...(input.replyToId === undefined ? {} : { replyToId: input.replyToId }),
       createdAt: now,
       expiresAt,
     };
@@ -201,12 +206,14 @@ function toRoute(row: RowShape): RunRoute {
       runId: row.run_id,
       processId: row.process_id ?? "",
       uid: row.uid,
-      adapter: row.adapter ?? "",
-      accountId: row.account_id ?? "",
-      actorId: row.actor_id ?? "",
-      surfaceKind: (row.surface_kind ?? "dm") as AdapterSurfaceKind,
-      surfaceId: row.surface_id ?? "",
-      threadId: row.thread_id ?? undefined,
+      destination: adapterDestinationFromColumns({
+        adapter: row.adapter ?? "",
+        accountId: row.account_id ?? "",
+        actorId: row.actor_id ?? "",
+        surfaceKind: (row.surface_kind ?? "dm") as AdapterSurfaceKind,
+        surfaceId: row.surface_id ?? "",
+        threadId: row.thread_id ?? undefined,
+      }),
       replyToId: row.reply_to_id ?? undefined,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
@@ -221,5 +228,26 @@ function toRoute(row: RowShape): RunRoute {
     connectionId: row.connection_id ?? "",
     createdAt: row.created_at,
     expiresAt: row.expires_at,
+  };
+}
+
+function adapterDestinationFromColumns(input: {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  surfaceKind: AdapterSurfaceKind;
+  surfaceId: string;
+  threadId?: string;
+}): AdapterMessageDestination {
+  return {
+    kind: "adapter",
+    adapter: input.adapter,
+    accountId: input.accountId,
+    actorId: input.actorId,
+    surface: {
+      kind: input.surfaceKind,
+      id: input.surfaceId,
+      ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+    },
   };
 }

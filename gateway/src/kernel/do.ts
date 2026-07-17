@@ -1403,16 +1403,13 @@ export class Kernel extends Host<Env> {
     route: AdapterRunRoute,
     frame: SignalFrame,
   ): Promise<AdapterSignalDeliveryOutcome> {
+    const { adapter, accountId, surface } = route.destination;
     if (frame.signal === "proc.run.started") {
       await setAdapterActivityForKernel(
         this.env,
-        route.adapter,
-        route.accountId,
-        {
-          kind: route.surfaceKind,
-          id: route.surfaceId,
-          threadId: route.threadId,
-        },
+        adapter,
+        accountId,
+        surface,
         { kind: "typing", active: true },
       );
       return { state: "delivered" };
@@ -1423,34 +1420,24 @@ export class Kernel extends Host<Env> {
       if (!request) {
         await setAdapterActivityForKernel(
           this.env,
-          route.adapter,
-          route.accountId,
-          {
-            kind: route.surfaceKind,
-            id: route.surfaceId,
-            threadId: route.threadId,
-          },
+          adapter,
+          accountId,
+          surface,
           { kind: "typing", active: false },
         ).catch(() => undefined);
         return { state: "skipped" };
       }
 
-      const surface = {
-        kind: route.surfaceKind,
-        id: route.surfaceId,
-        threadId: route.threadId,
-      } as const;
-
       try {
         return await this.deliverAdapterRouteReply(route, {
           deliveryId: `${route.runId}:hil:${request.requestId}`,
-          text: renderAdapterHilPrompt(request, route.surfaceKind, "initial"),
+          text: renderAdapterHilPrompt(request, surface.kind, "initial"),
         });
       } finally {
         await setAdapterActivityForKernel(
           this.env,
-          route.adapter,
-          route.accountId,
+          adapter,
+          accountId,
           surface,
           { kind: "typing", active: false },
         ).catch((error) => {
@@ -1475,12 +1462,6 @@ export class Kernel extends Host<Env> {
           ? payload.text
           : "";
 
-    const surface = {
-      kind: route.surfaceKind,
-      id: route.surfaceId,
-      threadId: route.threadId,
-    } as const;
-
     try {
       const attachmentBundle = await this.bundleProcessReplyMedia(
         route.processId,
@@ -1498,8 +1479,8 @@ export class Kernel extends Host<Env> {
     } finally {
       await setAdapterActivityForKernel(
         this.env,
-        route.adapter,
-        route.accountId,
+        adapter,
+        accountId,
         surface,
         { kind: "typing", active: false },
       ).catch((error) => {
@@ -1525,19 +1506,8 @@ export class Kernel extends Host<Env> {
       return { state: "permanent", error: "Reply route references a missing process" };
     }
 
-    const destination = {
-      kind: "adapter",
-      adapter: route.adapter,
-      accountId: route.accountId,
-      actorId: route.actorId,
-      surface: {
-        kind: route.surfaceKind,
-        id: route.surfaceId,
-        threadId: route.threadId,
-      },
-    } as const;
     try {
-      assertAdapterMessageDestinationAccess(destination, route.uid, ctx);
+      assertAdapterMessageDestinationAccess(route.destination, route.uid, ctx);
     } catch (error) {
       await cancelBinaryBody(body, error);
       // Revocation is a permanent delivery outcome, not a transport outage.
@@ -1554,12 +1524,12 @@ export class Kernel extends Host<Env> {
       };
     }
 
-    const result = await deliverAdapterReply(destination, route.uid, {
+    const result = await deliverAdapterReply(route.destination, route.uid, {
       ...message,
       replyToId: message.replyToId ?? route.replyToId,
     }, ctx, body);
     if (!result.ok) {
-      const detail = `Adapter reply failed (${route.adapter}): ${result.error}`;
+      const detail = `Adapter reply failed (${route.destination.adapter}): ${result.error}`;
       if (result.retryable) {
         return { state: "retryable", error: detail };
       }
@@ -3227,12 +3197,7 @@ export class Kernel extends Host<Env> {
           runId,
           processId: target.pid,
           uid: record.ownerUid,
-          adapter: delivery.adapter,
-          accountId: delivery.accountId,
-          actorId: delivery.actorId,
-          surfaceKind: delivery.surface.kind,
-          surfaceId: delivery.surface.id,
-          threadId: delivery.surface.threadId,
+          destination: delivery,
         });
       }
       const request: ProcessScheduleDeliverRequestFrame = {

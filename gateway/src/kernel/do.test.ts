@@ -1047,10 +1047,13 @@ describe("Kernel process signal routing", () => {
       runId: "run-1",
       processId: "proc-1",
       uid: 1000,
-      adapter: "discord",
-      accountId: "account-1",
-      surfaceKind: "dm",
-      surfaceId: "surface-1",
+      destination: {
+        kind: "adapter",
+        adapter: "discord",
+        accountId: "account-1",
+        actorId: "actor-1",
+        surface: { kind: "dm", id: "surface-1" },
+      },
     };
     const kernel = buildKernel(route);
     const frame = {
@@ -1083,11 +1086,13 @@ describe("Kernel process signal routing", () => {
       runId: "run-hil-resolved",
       processId: "proc-1",
       uid: 1000,
-      adapter: "telegram",
-      accountId: "bot",
-      actorId: "actor-1",
-      surfaceKind: "dm",
-      surfaceId: "chat-1",
+      destination: {
+        kind: "adapter",
+        adapter: "telegram",
+        accountId: "bot",
+        actorId: "actor-1",
+        surface: { kind: "dm", id: "chat-1" },
+      },
     };
     const kernel = buildKernel(route);
 
@@ -1114,11 +1119,13 @@ describe("Kernel process signal routing", () => {
       runId: "run-hil-next",
       processId: "proc-1",
       uid: 1000,
-      adapter: "telegram",
-      accountId: "bot",
-      actorId: "actor-1",
-      surfaceKind: "dm",
-      surfaceId: "chat-1",
+      destination: {
+        kind: "adapter",
+        adapter: "telegram",
+        accountId: "bot",
+        actorId: "actor-1",
+        surface: { kind: "dm", id: "chat-1" },
+      },
     };
     sendFrameToProcessMock.mockResolvedValueOnce(
       historyResponse(hilPayload(route.runId, "hil-current")),
@@ -1144,11 +1151,13 @@ describe("Kernel process signal routing", () => {
       runId: "run-hil-pending",
       processId: "proc-1",
       uid: 1000,
-      adapter: "telegram",
-      accountId: "bot",
-      actorId: "actor-1",
-      surfaceKind: "dm",
-      surfaceId: "chat-1",
+      destination: {
+        kind: "adapter",
+        adapter: "telegram",
+        accountId: "bot",
+        actorId: "actor-1",
+        surface: { kind: "dm", id: "chat-1" },
+      },
     };
     const payload = hilPayload(route.runId, "hil-pending");
     sendFrameToProcessMock.mockResolvedValueOnce(historyResponse(payload));
@@ -1185,11 +1194,13 @@ describe("Kernel process signal routing", () => {
       runId: "run-multiple-hil",
       processId: "proc-1",
       uid: 1000,
-      adapter: "telegram",
-      accountId: "bot",
-      actorId: "actor-1",
-      surfaceKind: "dm",
-      surfaceId: "chat-1",
+      destination: {
+        kind: "adapter",
+        adapter: "telegram",
+        accountId: "bot",
+        actorId: "actor-1",
+        surface: { kind: "dm", id: "chat-1" },
+      },
     };
     const kernel = buildKernel(route);
 
@@ -1239,11 +1250,13 @@ describe("Kernel process signal routing", () => {
       runId: "run-retry",
       processId: "proc-1",
       uid: 1000,
-      adapter: "telegram",
-      accountId: "bot",
-      actorId: "actor-1",
-      surfaceKind: "dm",
-      surfaceId: "chat-1",
+      destination: {
+        kind: "adapter",
+        adapter: "telegram",
+        accountId: "bot",
+        actorId: "actor-1",
+        surface: { kind: "dm", id: "chat-1" },
+      },
     };
     const kernel = buildKernel(route);
     kernel.deliverSignalToAdapter.mockResolvedValue({
@@ -1279,11 +1292,13 @@ describe("Kernel process signal routing", () => {
       runId: "run-ambiguous",
       processId: "proc-1",
       uid: 1000,
-      adapter: "whatsapp",
-      accountId: "primary",
-      actorId: "actor-1",
-      surfaceKind: "dm",
-      surfaceId: "chat-1",
+      destination: {
+        kind: "adapter",
+        adapter: "whatsapp",
+        accountId: "primary",
+        actorId: "actor-1",
+        surface: { kind: "dm", id: "chat-1" },
+      },
     };
     const kernel = buildKernel(route);
     kernel.deliverSignalToAdapter.mockResolvedValue({
@@ -1504,11 +1519,13 @@ describe("Kernel adapter route replies", () => {
     runId: "run-adapter-reply",
     processId: "proc-1",
     uid: 1000,
-    adapter: "telegram",
-    accountId: "bot",
-    actorId: "telegram:user:42",
-    surfaceKind: "dm" as const,
-    surfaceId: "chat-42",
+    destination: {
+      kind: "adapter" as const,
+      adapter: "telegram",
+      accountId: "bot",
+      actorId: "telegram:user:42",
+      surface: { kind: "dm" as const, id: "chat-42" },
+    },
     replyToId: "incoming-42",
     createdAt: 1,
     expiresAt: 2,
@@ -1776,11 +1793,7 @@ describe("Kernel scheduled process reply routes", () => {
     expect(setAdapterRoute).toHaveBeenCalledWith(expect.objectContaining({
       processId: "proc-1",
       uid: 1000,
-      adapter: "telegram",
-      accountId: "bot",
-      actorId: "telegram:user:42",
-      surfaceKind: "dm",
-      surfaceId: "chat-42",
+      destination,
     }));
     expect(deleteRoute).not.toHaveBeenCalled();
   });
