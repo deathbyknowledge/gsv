@@ -10,6 +10,10 @@ import type {
   GatewayFrame,
   GatewayRequestFrame,
 } from "./types";
+import {
+  callTelegramApiWithMarkdownCaption,
+  sendTelegramMarkdownMessage,
+} from "./telegram-formatting";
 
 type GatewayAdapterBinding = Fetcher & {
   serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
@@ -140,6 +144,7 @@ type TelegramInputMedia = {
   type: TelegramInputMediaType;
   media: string;
   caption?: string;
+  parse_mode?: "HTML";
 };
 
 type TelegramAccountState = {
@@ -191,6 +196,18 @@ function buildWebhookSecret(): string {
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+class TelegramApiError extends Error {
+  readonly telegramStatus: number;
+  readonly telegramDescription: string;
+
+  constructor(message: string, status: number, description: string) {
+    super(message);
+    this.name = "TelegramApiError";
+    this.telegramStatus = status;
+    this.telegramDescription = description;
+  }
 }
 
 export class TelegramAccount extends DurableObject<Env> {
@@ -265,8 +282,11 @@ export class TelegramAccount extends DurableObject<Env> {
 
     if (!response.ok) {
       const details = parsed && !parsed.ok ? parsed.description : responseText;
-      throw new Error(
-        `Telegram API ${method} failed (${response.status}): ${details || response.statusText}`,
+      const description = details || response.statusText;
+      throw new TelegramApiError(
+        `Telegram API ${method} failed (${response.status}): ${description}`,
+        response.status,
+        description,
       );
     }
 
@@ -276,8 +296,11 @@ export class TelegramAccount extends DurableObject<Env> {
 
     if (!parsed.ok) {
       const code = parsed.error_code ? ` ${parsed.error_code}` : "";
-      throw new Error(
-        `Telegram API ${method} error${code}: ${parsed.description || "Unknown error"}`,
+      const description = parsed.description || "Unknown error";
+      throw new TelegramApiError(
+        `Telegram API ${method} error${code}: ${description}`,
+        parsed.error_code || response.status,
+        description,
       );
     }
 
@@ -419,13 +442,11 @@ export class TelegramAccount extends DurableObject<Env> {
       let sentMessageId: string | undefined;
 
       if (media.length === 0) {
-        const sent = await this.callTelegramApi<TelegramMessage>("sendMessage", {
-          chat_id: message.surface.id,
-          text: trimmedText,
-          ...(Number.isFinite(replyToMessageId)
-            ? { reply_to_message_id: replyToMessageId }
-            : {}),
-        });
+        const sent = await this.sendFormattedTextMessage(
+          message.surface.id,
+          trimmedText,
+          replyToMessageId,
+        );
         sentMessageId = String(sent.message_id);
       } else if (media.length === 1) {
         const sent = await this.sendMediaMessage(
@@ -475,35 +496,49 @@ export class TelegramAccount extends DurableObject<Env> {
     const caption = text.trim() || undefined;
 
     if (media.url) {
-      return this.callTelegramApi<TelegramMessage>(method, {
-        chat_id: chatId,
-        [mediaField]: media.url,
-        ...(caption ? { caption } : {}),
-        ...(Number.isFinite(replyToMessageId)
-          ? { reply_to_message_id: replyToMessageId }
-          : {}),
-      });
+      return callTelegramApiWithMarkdownCaption(
+        (apiMethod, payload) =>
+          this.callTelegramApi<TelegramMessage>(apiMethod, payload),
+        method,
+        caption,
+        (formattedCaption, parseMode) => ({
+          chat_id: chatId,
+          [mediaField]: media.url,
+          ...(formattedCaption ? { caption: formattedCaption } : {}),
+          ...(parseMode ? { parse_mode: parseMode } : {}),
+          ...(Number.isFinite(replyToMessageId)
+            ? { reply_to_message_id: replyToMessageId }
+            : {}),
+        }),
+      );
     }
 
     if (media.data) {
-      const form = new FormData();
-      form.set("chat_id", chatId);
-      if (caption) {
-        form.set("caption", caption);
-      }
-      if (Number.isFinite(replyToMessageId)) {
-        form.set("reply_to_message_id", String(replyToMessageId));
-      }
-
       const filename = this.buildMediaFilename(media);
       const fileBytes = this.decodeBase64(media.data);
-      form.set(
-        mediaField,
-        new Blob([fileBytes], { type: media.mimeType }),
-        filename,
-      );
+      const blob = new Blob([fileBytes], { type: media.mimeType });
 
-      return this.callTelegramApi<TelegramMessage>(method, form);
+      return callTelegramApiWithMarkdownCaption(
+        (apiMethod, payload) =>
+          this.callTelegramApi<TelegramMessage>(apiMethod, payload),
+        method,
+        caption,
+        (formattedCaption, parseMode) => {
+          const form = new FormData();
+          form.set("chat_id", chatId);
+          if (formattedCaption) {
+            form.set("caption", formattedCaption);
+          }
+          if (parseMode) {
+            form.set("parse_mode", parseMode);
+          }
+          if (Number.isFinite(replyToMessageId)) {
+            form.set("reply_to_message_id", String(replyToMessageId));
+          }
+          form.set(mediaField, blob, filename);
+          return form;
+        },
+      );
     }
 
     throw new Error(
@@ -526,20 +561,15 @@ export class TelegramAccount extends DurableObject<Env> {
     this.validateMediaGroupTypes(mediaItems);
 
     const caption = text.trim() || undefined;
-    const hasBinaryUpload = mediaItems.some((item) => !!item.data);
-    const inputMedia: TelegramInputMedia[] = [];
+    const preparedMedia: Array<Pick<TelegramInputMedia, "type" | "media">> = [];
     const uploadEntries: Array<{ field: string; blob: Blob; filename: string }> = [];
 
     for (const [index, media] of mediaItems.entries()) {
       const inputType = this.toTelegramInputMediaType(media.type);
-      const item: TelegramInputMedia = {
+      const item: Pick<TelegramInputMedia, "type" | "media"> = {
         type: inputType,
         media: "",
       };
-
-      if (index === 0 && caption) {
-        item.caption = caption;
-      }
 
       if (media.url) {
         item.media = media.url;
@@ -557,30 +587,46 @@ export class TelegramAccount extends DurableObject<Env> {
         );
       }
 
-      inputMedia.push(item);
+      preparedMedia.push(item);
     }
 
-    if (!hasBinaryUpload) {
-      return this.callTelegramApi<TelegramMessage[]>("sendMediaGroup", {
-        chat_id: chatId,
-        media: inputMedia,
-        ...(Number.isFinite(replyToMessageId)
-          ? { reply_to_message_id: replyToMessageId }
-          : {}),
-      });
-    }
+    return callTelegramApiWithMarkdownCaption(
+      (method, payload) =>
+        this.callTelegramApi<TelegramMessage[]>(method, payload),
+      "sendMediaGroup",
+      caption,
+      (formattedCaption, parseMode) => {
+        const inputMedia = preparedMedia.map<TelegramInputMedia>((media, index) => ({
+          ...media,
+          ...(index === 0 && formattedCaption
+            ? { caption: formattedCaption }
+            : {}),
+          ...(index === 0 && parseMode ? { parse_mode: parseMode } : {}),
+        }));
 
-    const form = new FormData();
-    form.set("chat_id", chatId);
-    form.set("media", JSON.stringify(inputMedia));
-    if (Number.isFinite(replyToMessageId)) {
-      form.set("reply_to_message_id", String(replyToMessageId));
-    }
-    for (const upload of uploadEntries) {
-      form.set(upload.field, upload.blob, upload.filename);
-    }
+        if (uploadEntries.length === 0) {
+          return {
+            chat_id: chatId,
+            media: inputMedia,
+            ...(Number.isFinite(replyToMessageId)
+              ? { reply_to_message_id: replyToMessageId }
+              : {}),
+          };
+        }
 
-    return this.callTelegramApi<TelegramMessage[]>("sendMediaGroup", form);
+        const form = new FormData();
+        form.set("chat_id", chatId);
+        form.set("media", JSON.stringify(inputMedia));
+        if (Number.isFinite(replyToMessageId)) {
+          form.set("reply_to_message_id", String(replyToMessageId));
+        }
+        for (const upload of uploadEntries) {
+          form.set(upload.field, upload.blob, upload.filename);
+        }
+
+        return form;
+      },
+    );
   }
 
   private validateMediaGroupTypes(mediaItems: AdapterMedia[]): void {
@@ -1014,19 +1060,27 @@ export class TelegramAccount extends DurableObject<Env> {
   ): Promise<void> {
     try {
       const replyToMessageId = replyToId ? Number.parseInt(replyToId, 10) : undefined;
-      await this.callTelegramApi<TelegramMessage>("sendMessage", {
-        chat_id: chatId,
-        text,
-        ...(Number.isFinite(replyToMessageId)
-          ? { reply_to_message_id: replyToMessageId }
-          : {}),
-      });
+      await this.sendFormattedTextMessage(chatId, text, replyToMessageId);
     } catch (error) {
       console.warn(
         `[TelegramAccount:${this.getAccountId()}] Failed to send gateway reply:`,
         error,
       );
     }
+  }
+
+  private sendFormattedTextMessage(
+    chatId: string,
+    text: string,
+    replyToMessageId?: number,
+  ): Promise<TelegramMessage> {
+    return sendTelegramMarkdownMessage(
+      (method, payload) =>
+        this.callTelegramApi<TelegramMessage>(method, payload),
+      chatId,
+      text,
+      replyToMessageId,
+    );
   }
 
   private extractMessage(update: TelegramUpdate): TelegramMessage | null {
