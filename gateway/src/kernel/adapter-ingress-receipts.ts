@@ -2,6 +2,7 @@ import type {
   AdapterInboundResult,
   AdapterSurfaceKind,
 } from "@humansandmachines/gsv/protocol";
+import { isAdapterInboundResult } from "@humansandmachines/gsv/protocol";
 
 export type AdapterIngressReceiptKey = {
   adapter: string;
@@ -305,7 +306,7 @@ function parseAdapterInboundResult(row: AdapterIngressReceiptRow): AdapterInboun
   } catch {
     throw new Error(`Invalid adapter ingress receipt result: ${row.receipt_id}`);
   }
-  if (!isAdapterInboundResult(result)) {
+  if (!isAdapterInboundResult(result) || result.replayed !== undefined) {
     throw new Error(`Invalid adapter ingress receipt result: ${row.receipt_id}`);
   }
   return result;
@@ -317,38 +318,6 @@ function parseReceiptProgress(row: AdapterIngressReceiptRow): unknown {
   } catch {
     throw new Error(`Invalid adapter ingress receipt progress: ${row.receipt_id}`);
   }
-}
-
-function isAdapterInboundResult(value: unknown): value is AdapterInboundResult {
-  if (!value || typeof value !== "object") return false;
-  const result = value as Partial<AdapterInboundResult>;
-  if (typeof result.ok !== "boolean") return false;
-  if (result.replayed !== undefined) return false;
-  if (result.reply !== undefined && (
-    !result.reply
-    || typeof result.reply !== "object"
-    || typeof result.reply.deliveryId !== "string"
-    || !result.reply.deliveryId
-    || typeof result.reply.text !== "string"
-    || (
-      result.reply.replyToId !== undefined
-      && typeof result.reply.replyToId !== "string"
-    )
-  )) {
-    return false;
-  }
-  if (result.challenge !== undefined && (
-    !result.challenge
-    || typeof result.challenge !== "object"
-    || typeof result.challenge.deliveryId !== "string"
-    || !result.challenge.deliveryId
-    || typeof result.challenge.code !== "string"
-    || typeof result.challenge.prompt !== "string"
-    || !Number.isFinite(result.challenge.expiresAt)
-  )) {
-    return false;
-  }
-  return true;
 }
 
 function withoutReplayMarker(result: AdapterInboundResult): AdapterInboundResult {

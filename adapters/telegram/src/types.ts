@@ -2,7 +2,6 @@ export type {
   AdapterAccountStatus,
   AdapterActivity,
   AdapterActor,
-  AdapterCapabilities,
   AdapterConnectChallenge,
   AdapterConnectResult,
   AdapterDisconnectResult,

@@ -4,6 +4,7 @@ import type {
   AdapterSendResult,
   AdapterSurface,
 } from "./types";
+import { isAdapterInboundResult } from "../../../packages/gsv/src/protocol/adapters.js";
 
 type PendingInboundDelivery<Payload> = {
   payload: Payload;
@@ -142,10 +143,7 @@ export class InboundDeliveryLedger<Payload> {
 export function isTerminalAdapterInboundResult(
   result: unknown,
 ): result is AdapterInboundResult {
-  if (!result || typeof result !== "object") return false;
-  const inbound = result as Partial<AdapterInboundResult>;
-  return typeof inbound.ok === "boolean"
-    && (inbound.replayed === undefined || inbound.replayed === "completed");
+  return isAdapterInboundResult(result) && result.replayed !== "in_progress";
 }
 
 /**
