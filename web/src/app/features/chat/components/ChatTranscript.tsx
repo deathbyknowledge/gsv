@@ -2,8 +2,8 @@ import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import DOMPurify from "dompurify";
 import { parse as parseMarkdown } from "marked";
-import { Button } from "../../../components/ui/Button";
 import { MessageMeta } from "../../../components/ui/MessageMeta";
+import { ReasoningGlyph } from "../../../components/ui/ReasoningGlyph";
 import { SystemMessage } from "../../../components/ui/SystemMessage";
 import { Hint, Tooltip } from "../../../components/ui/Tooltip";
 import type {
@@ -1414,12 +1414,16 @@ function ActivityLine({
       label={activityGroupTitle(entries, active)}
       status={feedbackStatus}
       action={target && onOpenReasoning ? (
-        <Button
-          variant="link"
-          tone="attention"
-          label="EXPAND REASONING"
-          onClick={() => onOpenReasoning(target)}
-        />
+        <Hint position="top" text="Expand reasoning">
+          <button
+            type="button"
+            class="gsv-chat-reasoning-icon gsv-chat-reasoning-icon--attention"
+            aria-label="Expand reasoning"
+            onClick={() => onOpenReasoning(target)}
+          >
+            <ReasoningGlyph size={16} />
+          </button>
+        </Hint>
       ) : undefined}
     />
   );
@@ -1462,13 +1466,7 @@ function AssistantProcessMessage({
                   aria-label="Expand reasoning"
                   onClick={() => onOpenReasoning({ kind: "message", messageId: message.id })}
                 >
-                  <svg width="13" height="13" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">
-                    <g fill="currentColor">
-                      <rect x="2" y="3" width="12" height="2" />
-                      <rect x="2" y="7" width="9" height="2" />
-                      <rect x="2" y="11" width="5" height="2" />
-                    </g>
-                  </svg>
+                  <ReasoningGlyph size={13} />
                 </button>
               </Hint>
             ) : null}

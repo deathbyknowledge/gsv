@@ -1522,6 +1522,24 @@
   outline: none;
 }
 
+/* Attention-toned variant — the activity line's expand-reasoning button (kept
+   in the line's yellow per the round-1 spec). Padding widens the hit area
+   beyond the 16px glyph without moving the line's layout. */
+.gsv-chat-reasoning-icon--attention {
+  color: var(--update);
+  padding: 6px;
+  margin: -6px;
+}
+
+.gsv-chat-reasoning-icon--attention:hover,
+.gsv-chat-reasoning-icon--attention:focus-visible {
+  color: #ffe08a;
+}
+
+.gsv-chat-reasoning-icon--attention svg {
+  filter: drop-shadow(0 0 3px rgba(255, 210, 77, 0.5));
+}
+
 .gsv-chat-backup-model-badge {
   min-width: 0;
   display: inline-flex;
