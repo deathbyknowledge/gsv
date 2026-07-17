@@ -15,6 +15,10 @@ import {
   fingerprintOutboundDelivery,
 } from "../../shared/src/delivery-ledger";
 import {
+  InboundDeliveryLedger,
+  isTerminalAdapterInboundResult,
+} from "../../shared/src/inbound-delivery";
+import {
   makeWASocket,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
@@ -29,7 +33,7 @@ import {
   type WAMessage,
   type AnyMessageContent,
   type LIDMapping,
-  type proto,
+  proto,
 } from "@whiskeysockets/baileys";
 import {
   getMediaKeys,
@@ -92,6 +96,9 @@ const MEDIA_CONTENT_TYPES = new Set([
 ]);
 const MAX_MEDIA_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_PART_BYTES;
 const MAX_ENCRYPTED_MEDIA_BODY_BYTES = MAX_MEDIA_BODY_BYTES + 32;
+const INBOUND_DELIVERY_PREFIX = "pending_inbound:";
+const INBOUND_RETRY_DELAY_MS = 10_000;
+const INBOUND_RETRY_BATCH_SIZE = 25;
 
 function normalizeByteLength(value: unknown): number | null {
   if (typeof value === "number") {
@@ -237,6 +244,7 @@ function nestedNumber(value: unknown, path: string[]): number | undefined {
 export class WhatsAppAccount extends DurableObject<Env> {
   private sock: WASocket | null = null;
   private readonly deliveries: DeliveryLedger;
+  private readonly inboundDeliveries: InboundDeliveryLedger<Uint8Array>;
   private state: WhatsAppAccountState = {
     accountId: "",
     connected: false,
@@ -247,6 +255,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
+    this.inboundDeliveries = new InboundDeliveryLedger(
+      this.ctx.storage,
+      INBOUND_DELIVERY_PREFIX,
+    );
     // accountId is set from X-Account-Id header on first request
     // and persisted in storage.kv for subsequent requests
     const storedAccountId = this.ctx.storage.kv.get<string>("accountId");
@@ -742,9 +754,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
       });
     });
     this.sock.ev.on("messages.upsert", (m) => {
-      this.handleMessagesUpsert(m).catch((e) => {
-        console.error(`[WA:${this.state.accountId}] Message handling error:`, e);
-      });
+      this.ctx.waitUntil(
+        this.handleMessagesUpsert(m).catch((e) => {
+          console.error(`[WA:${this.state.accountId}] Message handling error:`, e);
+        }),
+      );
     });
   }
 
@@ -810,107 +824,178 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
     for (const msg of m.messages) {
       if (msg.key.fromMe) continue;
+      const messageId = msg.key.id;
+      if (!messageId) continue;
 
-      const extracted = extractMessageContent(msg.message);
-      const contentType = extracted ? getContentType(extracted) : undefined;
-      const contextInfo = getMessageContextInfo(extracted, contentType);
-      const hasMedia = !!contentType && MEDIA_CONTENT_TYPES.has(contentType);
+      const deliveryId = this.whatsAppInboundDeliveryId(msg);
+      const encoded = proto.WebMessageInfo.encode(msg).finish();
+      await this.inboundDeliveries.enqueue(deliveryId, encoded);
+      // Persist both the provider payload and its wake-up before making the
+      // first external call. A consumed media stream is reconstructed from the
+      // protobuf payload for every replay.
+      await this.scheduleInboundRetry();
+      await this.deliverPendingInbound(deliveryId);
+    }
+  }
 
-      const extractedMedia = (hasMedia && extracted && contentType)
-        ? (extracted as Record<string, unknown>)[contentType] as
-            | { caption?: string; text?: string }
-            | undefined
-        : undefined;
+  private whatsAppInboundDeliveryId(msg: WAMessage): string {
+    return [
+      normalizeWhatsAppJid(msg.key.remoteJid) ?? "unknown",
+      normalizeWhatsAppJid(msg.key.participant) ?? "",
+      msg.key.id ?? "",
+    ].join(":");
+  }
 
-      const text = msg.message?.conversation || 
-                   msg.message?.extendedTextMessage?.text ||
-                   extractedMedia?.caption ||
-                   extractedMedia?.text ||
-                   msg.message?.imageMessage?.caption ||
-                   msg.message?.videoMessage?.caption ||
-                   (hasMedia ? "" : undefined);
-      
-      if (text === undefined) continue;
+  private async deliverPendingInbound(deliveryId: string): Promise<void> {
+    const attempt = await this.inboundDeliveries.attempt(
+      deliveryId,
+      async (encoded) => {
+        const decoded = proto.WebMessageInfo.decode(encoded);
+        if (!decoded.key) return { terminal: true };
+        return this.forwardInboundMessage(decoded as WAMessage);
+      },
+    );
+    if (attempt.state !== "pending") return;
 
-      const remoteJid = normalizeWhatsAppJid(msg.key.remoteJid);
-      if (!remoteJid) continue;
-      const remoteJidAlt = normalizeWhatsAppJid(msg.key.remoteJidAlt);
-      const isGroup = remoteJid.endsWith("@g.us");
-      const dmPn = preferredPnJid(remoteJid, remoteJidAlt);
-      const deliveryJid = isGroup ? remoteJid : preferredLidJid(remoteJid, remoteJidAlt) ?? remoteJid;
-      const surfaceJid = isGroup ? remoteJid : dmPn ?? remoteJid;
-      const participantJid = preferredLidJid(msg.key.participant, msg.key.participantAlt);
-      const participantPn = preferredPnJid(msg.key.participant, msg.key.participantAlt);
-      const actorId = isGroup
-        ? await this.resolveStableWhatsAppActorId(
-            participantJid,
-            participantPn,
-          )
-        : await this.resolveStableWhatsAppActorId(
-            deliveryJid,
-            dmPn,
-          );
-      if (!actorId) continue;
-      const wasMentioned = !isGroup || this.isGroupMessageAddressedToSelf(contextInfo);
+    console.error(
+      `[WA:${this.state.accountId}] Inbound ${deliveryId} remains pending: ${attempt.error ?? "Gateway receipt is still in progress"}`,
+    );
+    await this.scheduleInboundRetry();
+  }
 
-      // Download media if present
-      const mediaParts: AdapterMediaPart[] = [];
-      if (hasMedia) {
-        try {
-          const attachment = await this.downloadMedia(msg);
-          if (attachment) {
-            mediaParts.push(attachment);
-          }
-        } catch (e) {
-          console.error(`[WA:${this.state.accountId}] Media download failed:`, e);
-        }
-      }
-      const media = await bundleAdapterMedia(mediaParts);
+  private async retryPendingInbound(): Promise<void> {
+    const ids = await this.inboundDeliveries.pendingIds(INBOUND_RETRY_BATCH_SIZE);
+    for (const deliveryId of ids) {
+      await this.deliverPendingInbound(deliveryId);
+    }
+  }
 
-      // Build inbound message for Gateway
-      const inbound: AdapterInboundMessage = {
-        messageId: msg.key.id!,
-        surface: {
-          kind: isGroup ? "group" : "dm",
-          id: surfaceJid,
-          name: msg.pushName ?? undefined,
-        },
-        actor: {
-          id: actorId,
-          name: msg.pushName ?? undefined,
-          handle: actorId,
-        },
-        text: text || (media.media.length > 0 ? "[Media]" : hasMedia ? "[Media unavailable]" : ""),
-        media: media.media.length > 0 ? media.media : undefined,
-        replyToId: contextInfo?.stanzaId ?? undefined,
-        timestamp: msg.messageTimestamp as number,
-        wasMentioned,
-      };
-      console.log(
-        `[WA:${this.state.accountId}] inbound actorId=${actorId} surfaceJid=${surfaceJid} deliveryJid=${deliveryJid} remoteJid=${remoteJid} remoteJidAlt=${remoteJidAlt ?? ""} participant=${participantJid ?? ""} participantPn=${participantPn ?? ""}`,
-      );
+  private async scheduleInboundRetry(): Promise<void> {
+    const retryAt = Date.now() + INBOUND_RETRY_DELAY_MS;
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || current > retryAt) {
+      await this.ctx.storage.setAlarm(retryAt);
+    }
+  }
 
-      try {
-        const result = await this.callGateway<AdapterInboundResult>(
-          "adapter.inbound",
-          {
-            adapter: "whatsapp",
-            accountId: this.state.accountId,
-            message: inbound,
-          },
-          media.body,
+  private async forwardInboundMessage(
+    msg: WAMessage,
+  ): Promise<{ terminal: boolean; error?: string }> {
+    const extracted = extractMessageContent(msg.message);
+    const contentType = extracted ? getContentType(extracted) : undefined;
+    const contextInfo = getMessageContextInfo(extracted, contentType);
+    const hasMedia = !!contentType && MEDIA_CONTENT_TYPES.has(contentType);
+
+    const extractedMedia = (hasMedia && extracted && contentType)
+      ? (extracted as Record<string, unknown>)[contentType] as
+          | { caption?: string; text?: string }
+          | undefined
+      : undefined;
+
+    const text = msg.message?.conversation
+      || msg.message?.extendedTextMessage?.text
+      || extractedMedia?.caption
+      || extractedMedia?.text
+      || msg.message?.imageMessage?.caption
+      || msg.message?.videoMessage?.caption
+      || (hasMedia ? "" : undefined);
+
+    if (text === undefined) return { terminal: true };
+
+    const remoteJid = normalizeWhatsAppJid(msg.key.remoteJid);
+    if (!remoteJid) return { terminal: true };
+    const remoteJidAlt = normalizeWhatsAppJid(msg.key.remoteJidAlt);
+    const isGroup = remoteJid.endsWith("@g.us");
+    const dmPn = preferredPnJid(remoteJid, remoteJidAlt);
+    const deliveryJid = isGroup
+      ? remoteJid
+      : preferredLidJid(remoteJid, remoteJidAlt) ?? remoteJid;
+    const surfaceJid = isGroup ? remoteJid : dmPn ?? remoteJid;
+    const participantJid = preferredLidJid(
+      msg.key.participant,
+      msg.key.participantAlt,
+    );
+    const participantPn = preferredPnJid(
+      msg.key.participant,
+      msg.key.participantAlt,
+    );
+    const actorId = isGroup
+      ? await this.resolveStableWhatsAppActorId(
+          participantJid,
+          participantPn,
+        )
+      : await this.resolveStableWhatsAppActorId(
+          deliveryJid,
+          dmPn,
         );
-        if (!result.ok) {
-          console.error(
-            `[WA:${this.state.accountId}] Gateway RPC inbound rejected: ${result.error || "unknown error"}`,
-          );
-          continue;
+    if (!actorId) return { terminal: true };
+    const wasMentioned = !isGroup
+      || this.isGroupMessageAddressedToSelf(contextInfo);
+
+    const mediaParts: AdapterMediaPart[] = [];
+    if (hasMedia) {
+      try {
+        const attachment = await this.downloadMedia(msg);
+        if (attachment) {
+          mediaParts.push(attachment);
         }
-        this.state.lastMessageAt = Date.now();
       } catch (e) {
-        console.error(`[WA:${this.state.accountId}] Inbound handling failed:`, e);
+        console.error(`[WA:${this.state.accountId}] Media download failed:`, e);
       }
     }
+    const media = await bundleAdapterMedia(mediaParts);
+
+    const inbound: AdapterInboundMessage = {
+      messageId: msg.key.id!,
+      surface: {
+        kind: isGroup ? "group" : "dm",
+        id: surfaceJid,
+        name: msg.pushName ?? undefined,
+      },
+      actor: {
+        id: actorId,
+        name: msg.pushName ?? undefined,
+        handle: actorId,
+      },
+      text: text || (
+        media.media.length > 0
+          ? "[Media]"
+          : hasMedia
+            ? "[Media unavailable]"
+            : ""
+      ),
+      media: media.media.length > 0 ? media.media : undefined,
+      replyToId: contextInfo?.stanzaId ?? undefined,
+      timestamp: msg.messageTimestamp as number,
+      wasMentioned,
+    };
+    console.log(
+      `[WA:${this.state.accountId}] inbound actorId=${actorId} surfaceJid=${surfaceJid} deliveryJid=${deliveryJid} remoteJid=${remoteJid} remoteJidAlt=${remoteJidAlt ?? ""} participant=${participantJid ?? ""} participantPn=${participantPn ?? ""}`,
+    );
+
+    const result = await this.callGateway<AdapterInboundResult>(
+      "adapter.inbound",
+      {
+        adapter: "whatsapp",
+        accountId: this.state.accountId,
+        message: inbound,
+      },
+      media.body,
+    );
+    if (!isTerminalAdapterInboundResult(result)) {
+      return {
+        terminal: false,
+        error: "Kernel receipt is still in progress",
+      };
+    }
+    if (!result.ok) {
+      console.error(
+        `[WA:${this.state.accountId}] Gateway RPC inbound rejected: ${result.error || "unknown error"}`,
+      );
+      return { terminal: true };
+    }
+    this.state.lastMessageAt = Date.now();
+    return { terminal: true };
   }
 
   private isGroupMessageAddressedToSelf(
@@ -1252,7 +1337,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
 
     if (!hasAuth) return;
-
+    // The same alarm owns keep-alive, reconnect, and ingress retry.
     this.scheduleKeepAlive();
 
     // Reconnect if needed
@@ -1263,5 +1348,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         console.error(`[WA:${this.state.accountId}] Reconnect failed:`, e);
       }
     }
+
+    await this.retryPendingInbound();
   }
 }

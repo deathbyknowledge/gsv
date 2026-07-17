@@ -10,6 +10,10 @@
 import { DurableObject } from "cloudflare:workers";
 import { DeliveryLedger } from "../../shared/src/delivery-ledger";
 import {
+  InboundDeliveryLedger,
+  isTerminalAdapterInboundResult,
+} from "../../shared/src/inbound-delivery";
+import {
   bundleAdapterMedia,
   cancelResponseBody,
   cancelBinaryBody,
@@ -63,6 +67,9 @@ const INTENTS = {
 
 const MAX_MEDIA_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_PART_BYTES;
 const MAX_MEDIA_TOTAL_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES;
+const INBOUND_DELIVERY_PREFIX = "pending_inbound:";
+const INBOUND_RETRY_DELAY_MS = 10_000;
+const INBOUND_RETRY_BATCH_SIZE = 25;
 
 type GatewayChannelBinding = Fetcher & {
   serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
@@ -99,6 +106,7 @@ export class DiscordGateway extends DurableObject<Env> {
   
   private ws: WebSocket | null = null;
   private readonly deliveries: DeliveryLedger;
+  private readonly inboundDeliveries: InboundDeliveryLedger<string>;
   private heartbeatInterval: number = 0;
   private state: GatewayState = {
     accountId: null,
@@ -114,6 +122,10 @@ export class DiscordGateway extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
+    this.inboundDeliveries = new InboundDeliveryLedger(
+      this.ctx.storage,
+      INBOUND_DELIVERY_PREFIX,
+    );
     this.loadState();
   }
 
@@ -205,16 +217,21 @@ export class DiscordGateway extends DurableObject<Env> {
   async alarm() {
     // Reload state in case we hibernated
     await this.loadState();
-    
+
+    await this.retryPendingInbound();
+
     // No token = not started, don't reschedule
     if (!this.state.botToken) {
       console.log("[DiscordGateway] No bot token, alarm stopping");
+      if (await this.inboundDeliveries.hasPending()) {
+        await this.scheduleInboundRetry();
+      }
       return;
     }
-    
-    // Always reschedule to keep DO alive
+
+    // The same alarm owns keep-alive, heartbeat, reconnect, and ingress retry.
     this.scheduleKeepAlive();
-    
+
     // Reconnect if WebSocket is gone
     if (!this.ws) {
       console.log("[DiscordGateway] WebSocket lost, reconnecting...");
@@ -225,11 +242,8 @@ export class DiscordGateway extends DurableObject<Env> {
         this.state.lastError = e instanceof Error ? e.message : String(e);
         await this.saveState();
       }
-      return;
-    }
-    
-    // Send heartbeat if connected
-    if (this.state.connected && this.heartbeatInterval > 0) {
+    } else if (this.state.connected && this.heartbeatInterval > 0) {
+      // Send heartbeat if connected
       await this.sendHeartbeat();
     }
   }
@@ -276,7 +290,9 @@ export class DiscordGateway extends DurableObject<Env> {
     this.ws = ws;
 
     // Set up event handlers
-    ws.addEventListener("message", (event) => this.handleMessage(event.data as string));
+    ws.addEventListener("message", (event) => {
+      this.ctx.waitUntil(this.handleMessage(event.data as string));
+    });
     ws.addEventListener("close", (event) => this.handleClose(event));
     ws.addEventListener("error", (event) => this.handleError(event));
   }
@@ -377,9 +393,9 @@ export class DiscordGateway extends DurableObject<Env> {
     }
   }
 
-  private async handleMessageCreate(data: Record<string, unknown>) {
+  private async handleMessageCreate(data: Record<string, unknown>): Promise<void> {
     const author = data.author as { id: string; username: string; bot?: boolean; discriminator?: string } | undefined;
-    
+
     // Ignore bot messages
     if (author?.bot) return;
 
@@ -387,6 +403,53 @@ export class DiscordGateway extends DurableObject<Env> {
     const hasAttachments = Array.isArray(data.attachments) && data.attachments.length > 0;
     if (!content && !hasAttachments) return;
 
+    const messageId = data.id as string;
+    if (typeof messageId !== "string" || !messageId) return;
+
+    await this.inboundDeliveries.enqueue(messageId, JSON.stringify(data));
+    // The alarm is committed before external I/O so a terminated invocation
+    // cannot strand the durable provider payload.
+    await this.scheduleInboundRetry();
+    await this.deliverPendingInbound(messageId);
+  }
+
+  private async deliverPendingInbound(messageId: string): Promise<void> {
+    const attempt = await this.inboundDeliveries.attempt(
+      messageId,
+      async (serialized) => this.forwardMessageCreate(
+        JSON.parse(serialized) as Record<string, unknown>,
+      ),
+    );
+    if (attempt.state !== "pending") return;
+
+    this.state.lastError = attempt.error ?? "Gateway receipt is still in progress";
+    await this.saveState();
+    console.error(
+      `[DiscordGateway] Inbound ${messageId} remains pending: ${this.state.lastError}`,
+    );
+    await this.scheduleInboundRetry();
+  }
+
+  private async retryPendingInbound(): Promise<void> {
+    const ids = await this.inboundDeliveries.pendingIds(INBOUND_RETRY_BATCH_SIZE);
+    for (const messageId of ids) {
+      await this.deliverPendingInbound(messageId);
+    }
+  }
+
+  private async scheduleInboundRetry(): Promise<void> {
+    const retryAt = Date.now() + INBOUND_RETRY_DELAY_MS;
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || current > retryAt) {
+      await this.ctx.storage.setAlarm(retryAt);
+    }
+  }
+
+  private async forwardMessageCreate(
+    data: Record<string, unknown>,
+  ): Promise<{ terminal: boolean; error?: string }> {
+    const author = data.author as { id: string; username: string; bot?: boolean; discriminator?: string } | undefined;
+    const content = typeof data.content === "string" ? data.content : "";
     const guildId = data.guild_id as string | undefined;
     const channelId = data.channel_id as string;
     const messageId = data.id as string;
@@ -437,31 +500,33 @@ export class DiscordGateway extends DurableObject<Env> {
       wasMentioned,
     };
 
-    // Forward to GSV Gateway via Service Binding RPC.
-    try {
-      const result = await this.callGateway<AdapterInboundResult>(
-        "adapter.inbound",
-        {
-          adapter: "discord",
-          accountId: this.getAccountId(),
-          message,
-        },
-        media.body,
-      );
-      if (!result.ok) {
-        console.error(
-          `[DiscordGateway] Inbound rejected by gateway: ${result.error ?? "unknown error"}`,
-        );
-        return;
-      }
-      this.state.lastError = null;
-      console.log(
-        `[DiscordGateway] Delivered message ${messageId} from ${author?.username}`,
-      );
-    } catch (e) {
-      this.state.lastError = e instanceof Error ? e.message : String(e);
-      console.error("[DiscordGateway] Inbound handling failed:", e);
+    const result = await this.callGateway<AdapterInboundResult>(
+      "adapter.inbound",
+      {
+        adapter: "discord",
+        accountId: this.getAccountId(),
+        message,
+      },
+      media.body,
+    );
+    if (!isTerminalAdapterInboundResult(result)) {
+      return {
+        terminal: false,
+        error: "Kernel receipt is still in progress",
+      };
     }
+    if (!result.ok) {
+      console.error(
+        `[DiscordGateway] Inbound rejected by gateway: ${result.error ?? "unknown error"}`,
+      );
+      return { terminal: true };
+    }
+
+    this.state.lastError = null;
+    console.log(
+      `[DiscordGateway] Delivered message ${messageId} from ${author?.username}`,
+    );
+    return { terminal: true };
   }
 
   private async notifyGatewayStatus(status: AdapterAccountStatus): Promise<void> {
