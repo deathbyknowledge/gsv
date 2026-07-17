@@ -6,6 +6,10 @@ import {
 } from "../../shared/src/delivery-ledger";
 import type { DeliveryFailureKind } from "../../shared/src/delivery-ledger";
 import {
+  InboundDeliveryLedger,
+  isTerminalAdapterInboundResult,
+} from "../../shared/src/inbound-delivery";
+import {
   bundleAdapterMedia,
   cancelResponseBody,
   cancelBinaryBody,
@@ -196,34 +200,24 @@ type TelegramAccountState = {
   webhookUrl: string | null;
   webhookSecret: string | null;
   lastActivity: number | null;
-  lastUpdateId: number | null;
   lastError: string | null;
 };
 
-type TelegramPendingUpdate = {
+type LegacyTelegramPendingUpdate = {
   updateId: number;
   message: TelegramMessage;
-  attempts: number;
-  createdAt: number;
-  updatedAt: number;
-  lastError?: string;
-};
-
-type TelegramProcessedUpdate = {
-  updateId: number;
-  processedAt: number;
 };
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 const TELEGRAM_FILE_BASE = "https://api.telegram.org/file";
 const MAX_MEDIA_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_PART_BYTES;
 const MAX_MEDIA_TOTAL_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES;
-const PENDING_UPDATE_PREFIX = "pending_update:";
-const PENDING_UPDATE_RETRY_BASE_MS = 1000;
-const PENDING_UPDATE_RETRY_MAX_MS = 60_000;
-const PENDING_UPDATE_MAX_ATTEMPTS = 24;
-const PROCESSED_UPDATE_PREFIX = "processed_update:";
-const PROCESSED_UPDATE_RETENTION = 900;
+const INBOUND_DELIVERY_PREFIX = "pending_inbound:";
+const INBOUND_WAKE_DELAY_MS = 1_000;
+const INBOUND_RETRY_DELAY_MS = 10_000;
+const INBOUND_RETRY_BATCH_SIZE = 100;
+const LEGACY_PENDING_UPDATE_PREFIX = "pending_update:";
+const LEGACY_PROCESSED_UPDATE_PREFIX = "processed_update:";
 
 function trimTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, "");
@@ -239,12 +233,16 @@ function toErrorMessage(error: unknown): string {
 
 export class TelegramAccount extends DurableObject<Env> {
   private loaded = false;
-  private readonly processingUpdates = new Set<number>();
   private readonly deliveries: DeliveryLedger;
+  private readonly inboundDeliveries: InboundDeliveryLedger<TelegramMessage>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.deliveries = new DeliveryLedger(this.ctx.storage);
+    this.inboundDeliveries = new InboundDeliveryLedger(
+      this.ctx.storage,
+      INBOUND_DELIVERY_PREFIX,
+    );
   }
 
   private state: TelegramAccountState = {
@@ -257,19 +255,51 @@ export class TelegramAccount extends DurableObject<Env> {
     webhookUrl: null,
     webhookSecret: null,
     lastActivity: null,
-    lastUpdateId: null,
     lastError: null,
   };
 
   private async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
 
-    const stored = await this.ctx.storage.get<TelegramAccountState>("state");
+    const stored = await this.ctx.storage.get<
+      TelegramAccountState & { lastUpdateId?: number | null }
+    >("state");
     if (stored) {
-      this.state = { ...this.state, ...stored };
+      const normalized = { ...stored };
+      const hadLegacyUpdateId = "lastUpdateId" in normalized;
+      delete normalized.lastUpdateId;
+      this.state = { ...this.state, ...normalized };
+      if (hadLegacyUpdateId) {
+        await this.saveState();
+      }
     }
 
+    await this.migrateLegacyInboundUpdates();
     this.loaded = true;
+  }
+
+  private async migrateLegacyInboundUpdates(): Promise<void> {
+    const pending = await this.ctx.storage.list<LegacyTelegramPendingUpdate>({
+      prefix: LEGACY_PENDING_UPDATE_PREFIX,
+    });
+    const updates = [...pending.entries()]
+      .sort(([, left], [, right]) => left.updateId - right.updateId);
+    for (const [, update] of updates) {
+      await this.inboundDeliveries.enqueue(String(update.updateId), update.message);
+    }
+    if (updates.length > 0) {
+      if (this.canProcessInbound()) {
+        await this.scheduleInboundRetry(INBOUND_WAKE_DELAY_MS);
+      }
+      await this.ctx.storage.delete(updates.map(([key]) => key));
+    }
+
+    const processed = await this.ctx.storage.list({
+      prefix: LEGACY_PROCESSED_UPDATE_PREFIX,
+    });
+    if (processed.size > 0) {
+      await this.ctx.storage.delete([...processed.keys()]);
+    }
   }
 
   private async saveState(): Promise<void> {
@@ -416,6 +446,9 @@ export class TelegramAccount extends DurableObject<Env> {
     this.state.lastError = null;
 
     await this.saveState();
+    if (await this.inboundDeliveries.hasPending()) {
+      await this.scheduleInboundRetry(INBOUND_WAKE_DELAY_MS);
+    }
     await this.notifyGatewayStatus();
   }
 
@@ -438,7 +471,6 @@ export class TelegramAccount extends DurableObject<Env> {
     this.state.connected = false;
     this.state.authenticated = false;
     this.state.lastError = null;
-    await this.clearPendingUpdates();
     await this.ctx.storage.deleteAlarm();
     await this.saveState();
     await this.notifyGatewayStatus();
@@ -947,92 +979,78 @@ export class TelegramAccount extends DurableObject<Env> {
 
     const message = this.extractMessage(update);
     const updateId = this.normalizeUpdateId(update.update_id);
-    if (!this.canProcessInbound()) {
-      if (updateId !== null) {
-        await this.markUpdateProcessed(updateId);
-      }
+    if (!message) {
       return { ok: true };
     }
+
+    const deliveryId = updateId === null
+      ? `message:${message.chat.id}:${message.message_id}`
+      : String(updateId);
+    await this.inboundDeliveries.enqueue(deliveryId, message);
+    // Commit both the provider payload and its wake-up before returning the
+    // webhook acknowledgement. Media can be reconstructed from Telegram file
+    // ids in the stored message on every attempt.
+    if (!this.canProcessInbound()) {
+      return { ok: true };
+    }
+    await this.scheduleInboundRetry(INBOUND_WAKE_DELAY_MS);
 
     if (updateId === null) {
-      if (message) {
-        const delivered = await this.processWebhookMessage(message);
-        if (!delivered) {
-          return {
-            ok: false,
-            status: 502,
-            error: this.state.lastError ?? "Failed to process Telegram update",
-          };
-        }
+      const attempt = await this.deliverPendingInbound(deliveryId);
+      if (attempt === "pending") {
+        return {
+          ok: false,
+          status: 502,
+          error: this.state.lastError ?? "Failed to process Telegram update",
+        };
       }
-      return { ok: true };
     }
 
-    if (await this.hasProcessedUpdate(updateId)) {
-      return { ok: true };
-    }
-
-    if (await this.hasPendingUpdate(updateId)) {
-      await this.schedulePendingUpdateRetry(0);
-      return { ok: true };
-    }
-
-    if (!message) {
-      await this.markUpdateProcessed(updateId);
-      return { ok: true };
-    }
-
-    await this.enqueuePendingUpdate(updateId, message);
     return { ok: true };
   }
 
-  private async processWebhookMessage(message: TelegramMessage): Promise<boolean> {
-    try {
-      if (!this.canProcessInbound()) {
-        return true;
-      }
-
-      const inbound = await this.toInboundMessage(message);
-      if (!inbound) {
-        return true;
-      }
-
-      if (!this.canProcessInbound()) {
-        await cancelBinaryBody(inbound.body, "Telegram account stopped before delivery");
-        return true;
-      }
-
-      const result = await this.callGateway<AdapterInboundResult>(
-        "adapter.inbound",
-        {
-          adapter: "telegram",
-          accountId: this.getAccountId(),
-          message: inbound.message,
-        },
-        inbound.body,
-      );
-
-      if (!result.ok) {
-        const error = result.error || "Gateway rejected inbound message";
-        this.state.lastError = error;
-        await this.saveState();
-        return false;
-      }
-
-      if (!this.canProcessInbound()) {
-        return true;
-      }
-
-      this.state.lastActivity = Date.now();
-      this.state.lastError = null;
-      await this.saveState();
-      return true;
-    } catch (error) {
-      const messageText = toErrorMessage(error);
-      this.state.lastError = messageText;
-      await this.saveState();
-      return false;
+  private async forwardWebhookMessage(
+    message: TelegramMessage,
+  ): Promise<{ terminal: boolean; error?: string }> {
+    if (!this.canProcessInbound()) {
+      return { terminal: false, error: "Telegram account is disconnected" };
     }
+
+    const inbound = await this.toInboundMessage(message);
+    if (!inbound) {
+      return { terminal: true };
+    }
+
+    if (!this.canProcessInbound()) {
+      await cancelBinaryBody(inbound.body, "Telegram account stopped before delivery");
+      return { terminal: false, error: "Telegram account is disconnected" };
+    }
+
+    const result = await this.callGateway<AdapterInboundResult>(
+      "adapter.inbound",
+      {
+        adapter: "telegram",
+        accountId: this.getAccountId(),
+        message: inbound.message,
+      },
+      inbound.body,
+    );
+    if (!isTerminalAdapterInboundResult(result)) {
+      return {
+        terminal: false,
+        error: "Kernel receipt is still in progress",
+      };
+    }
+    if (!result.ok) {
+      this.state.lastError = result.error || "Gateway rejected inbound message";
+      await this.saveState();
+      return { terminal: true };
+    }
+
+    this.state.lastActivity = Date.now();
+    this.state.lastError = null;
+    await this.saveState();
+    return { terminal: true };
   }
 
   private normalizeUpdateId(value: unknown): number | null {
@@ -1048,163 +1066,44 @@ export class TelegramAccount extends DurableObject<Env> {
     );
   }
 
-  private processedUpdateKey(updateId: number): string {
-    return `${PROCESSED_UPDATE_PREFIX}${String(updateId).padStart(16, "0")}`;
-  }
-
-  private async hasProcessedUpdate(updateId: number): Promise<boolean> {
-    return Boolean(
-      await this.ctx.storage.get<TelegramProcessedUpdate>(
-        this.processedUpdateKey(updateId),
-      ),
+  private async deliverPendingInbound(
+    deliveryId: string,
+  ): Promise<"completed" | "pending"> {
+    const attempt = await this.inboundDeliveries.attempt(
+      deliveryId,
+      async (message) => this.forwardWebhookMessage(message),
     );
-  }
+    if (attempt.state !== "pending") {
+      return "completed";
+    }
 
-  private async markUpdateProcessed(updateId: number): Promise<void> {
-    await this.ctx.storage.put<TelegramProcessedUpdate>(
-      this.processedUpdateKey(updateId),
-      {
-        updateId,
-        processedAt: Date.now(),
-      },
-    );
-    this.state.lastUpdateId = Math.max(this.state.lastUpdateId ?? -1, updateId);
+    this.state.lastError = attempt.error ?? "Gateway receipt is still in progress";
     await this.saveState();
-    await this.pruneProcessedUpdates();
+    return "pending";
   }
 
-  private async pruneProcessedUpdates(): Promise<void> {
-    const processed = await this.ctx.storage.list<TelegramProcessedUpdate>({
-      prefix: PROCESSED_UPDATE_PREFIX,
-      limit: PROCESSED_UPDATE_RETENTION + 1,
-    });
-    const overflow = processed.size - PROCESSED_UPDATE_RETENTION;
-    if (overflow <= 0) {
-      return;
-    }
-
-    const keys = Array.from(processed.keys()).slice(0, overflow);
-    if (keys.length > 0) {
-      await this.ctx.storage.delete(keys);
-    }
-  }
-
-  private pendingUpdateKey(updateId: number): string {
-    return `${PENDING_UPDATE_PREFIX}${updateId}`;
-  }
-
-  private async hasPendingUpdate(updateId: number): Promise<boolean> {
-    return Boolean(
-      await this.ctx.storage.get<TelegramPendingUpdate>(
-        this.pendingUpdateKey(updateId),
-      ),
-    );
-  }
-
-  private async enqueuePendingUpdate(
-    updateId: number,
-    message: TelegramMessage,
+  private async scheduleInboundRetry(
+    delayMs = INBOUND_RETRY_DELAY_MS,
   ): Promise<void> {
-    const key = this.pendingUpdateKey(updateId);
-    const existing = await this.ctx.storage.get<TelegramPendingUpdate>(key);
-    if (existing) {
-      return;
+    const retryAt = Date.now() + delayMs;
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || current > retryAt) {
+      await this.ctx.storage.setAlarm(retryAt);
     }
-
-    const now = Date.now();
-    await this.ctx.storage.put<TelegramPendingUpdate>(key, {
-      updateId,
-      message,
-      attempts: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await this.schedulePendingUpdateRetry(0);
-  }
-
-  private async clearPendingUpdates(): Promise<void> {
-    const pending = await this.ctx.storage.list<TelegramPendingUpdate>({
-      prefix: PENDING_UPDATE_PREFIX,
-    });
-    const keys = Array.from(pending.keys());
-    if (keys.length > 0) {
-      await this.ctx.storage.delete(keys);
-    }
-  }
-
-  private async processPendingUpdate(updateId: number): Promise<void> {
-    if (this.processingUpdates.has(updateId)) {
-      return;
-    }
-
-    this.processingUpdates.add(updateId);
-    try {
-      const key = this.pendingUpdateKey(updateId);
-      const pending = await this.ctx.storage.get<TelegramPendingUpdate>(key);
-      if (!pending) {
-        return;
-      }
-
-      if (!this.canProcessInbound()) {
-        await this.ctx.storage.delete(key);
-        await this.markUpdateProcessed(updateId);
-        return;
-      }
-
-      const delivered = await this.processWebhookMessage(pending.message);
-      if (delivered) {
-        await this.ctx.storage.delete(key);
-        await this.markUpdateProcessed(updateId);
-        return;
-      }
-
-      if (!this.canProcessInbound()) {
-        await this.ctx.storage.delete(key);
-        await this.markUpdateProcessed(updateId);
-        return;
-      }
-
-      const attempts = pending.attempts + 1;
-      const lastError = this.state.lastError ?? "Telegram update processing failed";
-      if (attempts >= PENDING_UPDATE_MAX_ATTEMPTS) {
-        await this.ctx.storage.delete(key);
-        this.state.lastError =
-          `Dropped Telegram update ${updateId} after ${attempts} failed attempts: ${lastError}`;
-        await this.markUpdateProcessed(updateId);
-        return;
-      }
-
-      await this.ctx.storage.put<TelegramPendingUpdate>(key, {
-        ...pending,
-        attempts,
-        updatedAt: Date.now(),
-        lastError,
-      });
-      await this.schedulePendingUpdateRetry(attempts);
-    } finally {
-      this.processingUpdates.delete(updateId);
-    }
-  }
-
-  private async schedulePendingUpdateRetry(attempts: number): Promise<void> {
-    const delay = Math.min(
-      PENDING_UPDATE_RETRY_MAX_MS,
-      PENDING_UPDATE_RETRY_BASE_MS * 2 ** Math.min(attempts, 6),
-    );
-    await this.ctx.storage.setAlarm(Date.now() + delay);
   }
 
   async alarm(): Promise<void> {
     await this.ensureLoaded();
+    if (!this.canProcessInbound()) {
+      return;
+    }
 
-    const pending = await this.ctx.storage.list<TelegramPendingUpdate>({
-      prefix: PENDING_UPDATE_PREFIX,
-    });
-    const updates = Array.from(pending.values())
-      .sort((left, right) => left.updateId - right.updateId);
-
-    for (const update of updates) {
-      await this.processPendingUpdate(update.updateId);
+    const ids = await this.inboundDeliveries.pendingIds(INBOUND_RETRY_BATCH_SIZE);
+    for (const deliveryId of ids) {
+      await this.deliverPendingInbound(deliveryId);
+    }
+    if (await this.inboundDeliveries.hasPending()) {
+      await this.scheduleInboundRetry();
     }
   }
 
