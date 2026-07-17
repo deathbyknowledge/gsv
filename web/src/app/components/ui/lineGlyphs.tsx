@@ -73,3 +73,20 @@ export function TaskListGlyph({ size = 14 }: LineGlyphProps) {
     </svg>
   );
 }
+
+/** Processor chip — the saved model profiles. */
+export function ModelChipGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="8" y="8" width="8" height="8" rx="1" />
+      <path d="M10 8 V5" />
+      <path d="M14 8 V5" />
+      <path d="M10 19 V16" />
+      <path d="M14 19 V16" />
+      <path d="M8 10 H5" />
+      <path d="M8 14 H5" />
+      <path d="M16 10 H19" />
+      <path d="M16 14 H19" />
+    </svg>
+  );
+}

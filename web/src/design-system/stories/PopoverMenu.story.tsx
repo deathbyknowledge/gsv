@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
-import { ArchiveFolderGlyph, FreeContextGlyph, PlusGlyph, TaskListGlyph } from "../../app/components/ui/lineGlyphs";
+import { ArchiveFolderGlyph, FreeContextGlyph, ModelChipGlyph, PlusGlyph, TaskListGlyph } from "../../app/components/ui/lineGlyphs";
 import { ListRow } from "../../app/components/ui/ListRow";
 import { PopoverMenu } from "../../app/components/ui/PopoverMenu";
 import { Progress } from "../../app/components/ui/Progress";
@@ -22,7 +22,7 @@ function ModelVariation() {
       className="ds-popover-static"
       ariaLabel="Model and reasoning"
       header={{ kind: "echo", label: "@CF/ZAI-ORG/GLM-5.2" }}
-      actions={[{ label: "MANAGE MODELS", onClick: () => {} }]}
+      actions={[{ label: "MANAGE MODELS", onClick: () => {}, glyph: <ModelChipGlyph size={13} /> }]}
     >
       <TwoLevelSelect
         headerLabel="@CF/ZAI-ORG/GLM-5.2"

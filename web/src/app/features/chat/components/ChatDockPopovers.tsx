@@ -1,4 +1,4 @@
-import { ArchiveFolderGlyph, FreeContextGlyph, PlusGlyph, TaskListGlyph } from "../../../components/ui/lineGlyphs";
+import { ArchiveFolderGlyph, FreeContextGlyph, ModelChipGlyph, PlusGlyph, TaskListGlyph } from "../../../components/ui/lineGlyphs";
 import { ListRow } from "../../../components/ui/ListRow";
 import { PopoverMenu, type PopoverActionProps } from "../../../components/ui/PopoverMenu";
 import { Progress } from "../../../components/ui/Progress";
@@ -163,7 +163,7 @@ export function ChatDockPopovers({
         <PopoverMenu
           ariaLabel="Model and reasoning"
           header={{ kind: "echo", label: modelLabel }}
-          actions={[{ label: "MANAGE MODELS", onClick: onOpenModels }]}
+          actions={[{ label: "MANAGE MODELS", onClick: onOpenModels, glyph: <ModelChipGlyph size={13} /> }]}
         >
           <TwoLevelSelect
             headerLabel={modelLabel}
