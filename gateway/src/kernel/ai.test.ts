@@ -216,9 +216,10 @@ describe("handleAiTools", () => {
     ).toBe(true);
     expect(result.mcpServers).toEqual(["Search"]);
     const codeModeTool = result.tools.find((tool) => tool.name === "CodeMode");
-    expect(codeModeTool?.description).toContain("declare function lookup");
-    expect(codeModeTool?.description).toContain("type LookupOutput");
-    expect(ctx.mcp.listTools).toHaveBeenCalledWith({ serverId: "server-1" });
+    expect(codeModeTool?.description).toContain("return mcpTools.map");
+    expect(codeModeTool?.description).toContain("inputSchema/outputSchema");
+    expect(codeModeTool?.description).not.toContain("declare function lookup");
+    expect(ctx.mcp.listTools).not.toHaveBeenCalled();
   });
 
   it("advertises owner-owned MCP tools for service-account agent processes", async () => {
@@ -233,7 +234,8 @@ describe("handleAiTools", () => {
     expect(result.mcpServers).toEqual(["Search"]);
     expect(ctx.mcpServers.list).toHaveBeenCalledWith(1000);
     const codeModeTool = result.tools.find((tool) => tool.name === "CodeMode");
-    expect(codeModeTool?.description).toContain("declare function lookup");
+    expect(codeModeTool?.description).toContain("return mcpTools.map");
+    expect(ctx.mcp.listTools).not.toHaveBeenCalled();
   });
 
   it("does not advertise MCP tools without sys.mcp.call capability", async () => {

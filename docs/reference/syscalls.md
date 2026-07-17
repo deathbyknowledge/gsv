@@ -481,12 +481,14 @@ return { pwd: pwd.output, packageJson: packageJson.content, found };
 Connected MCP tools are generated as direct async functions. A unique MCP tool
 name such as `lookup-record` becomes `lookup_record(args)`, and a
 server-qualified alias such as `Search_lookup_record(args)` is also generated
-for clarity and collision handling. The `CodeMode` tool description includes
-generated TypeScript declarations for ready MCP tools when their schemas are
-known. `mcpTools` lists the generated function names, server ids, original tool
-names, input schemas, and output schemas. Generated functions unwrap MCP result
-envelopes: structured content is returned directly, text-only content is parsed
-as JSON when possible or returned as a string, and MCP tool errors throw.
+for clarity and collision handling. The fixed `CodeMode` tool description shows
+how to discover these functions on demand. `mcpTools` lists the generated
+function names, server ids, original tool names, input schemas, and output
+schemas. Return a compact index first, then return the selected entry to inspect
+its schemas before calling the generated function in a follow-up run. Generated
+functions unwrap MCP result envelopes: structured content is returned directly,
+text-only content is parsed as JSON when possible or returned as a string, and
+MCP tool errors throw.
 
 Inside manual CodeMode runs, `argv` contains positional arguments after `--` and
 `args` contains values from `--arg key=value` or `--args-json`.
