@@ -10,6 +10,26 @@ import type {
   GatewayFrame,
   GatewayRequestFrame,
 } from "./types";
+import {
+  ManagedLifecycleFence,
+  type ManagedLifecycleInventory,
+} from "../../shared/src/managed-lifecycle";
+import {
+  MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+  type ManagedObjectDescriptor,
+} from "@humansandmachines/gsv/protocol/managed-objects";
+import {
+  validateManagedRestoreControl,
+  validateManagedSnapshotRequest,
+  type ManagedObjectRestoreControl,
+  type ManagedObjectSnapshotRequest,
+} from "@humansandmachines/gsv/protocol/data-frame-stream";
+import {
+  prepareManagedAdapterRestoreTarget,
+  readAdapterRestoreTarget,
+  restoreManagedAdapterStorage,
+  snapshotManagedAdapterStorage,
+} from "../../shared/src/managed-portability";
 
 type GatewayAdapterBinding = Fetcher & {
   serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
@@ -17,6 +37,7 @@ type GatewayAdapterBinding = Fetcher & {
 
 interface Env {
   GATEWAY: GatewayAdapterBinding;
+  TELEGRAM_ACCOUNT: DurableObjectNamespace<TelegramAccount>;
 }
 
 type TelegramApiSuccess<T> = {
@@ -194,8 +215,10 @@ function toErrorMessage(error: unknown): string {
 }
 
 export class TelegramAccount extends DurableObject<Env> {
+  private readonly lifecycle: ManagedLifecycleFence;
   private loaded = false;
   private readonly processingUpdates = new Set<number>();
+  private webhookMutationTail: Promise<void> = Promise.resolve();
 
   private state: TelegramAccountState = {
     accountId: "default",
@@ -211,15 +234,28 @@ export class TelegramAccount extends DurableObject<Env> {
     lastError: null,
   };
 
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.lifecycle = new ManagedLifecycleFence(this.ctx.storage);
+    this.ctx.blockConcurrencyWhile(async () => {
+      await this.lifecycle.load();
+      await this.loadState();
+      if (!this.lifecycle.isActive()) {
+        this.state.connected = false;
+        this.state.authenticated = false;
+      }
+    });
+  }
+
+  private async loadState(): Promise<void> {
+    const stored = await this.ctx.storage.get<TelegramAccountState>("state");
+    if (stored) this.state = { ...this.state, ...stored };
+    this.loaded = true;
+  }
+
   private async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
-
-    const stored = await this.ctx.storage.get<TelegramAccountState>("state");
-    if (stored) {
-      this.state = { ...this.state, ...stored };
-    }
-
-    this.loaded = true;
+    await this.loadState();
   }
 
   private async saveState(): Promise<void> {
@@ -230,11 +266,265 @@ export class TelegramAccount extends DurableObject<Env> {
     return this.state.accountId || "default";
   }
 
+  async managedPause(accountId: string): Promise<ManagedLifecycleInventory> {
+    return this.lifecycle.runExclusive(async () => {
+      await this.ensureLoaded();
+      await this.bindAccountId(accountId);
+      await this.lifecycle.pause();
+
+      let cleanupError: unknown;
+      if (this.state.botToken) {
+        try {
+          await this.mutateWebhook(() =>
+            this.callTelegramApi<boolean>("deleteWebhook", {
+              drop_pending_updates: false,
+            }),
+          );
+        } catch (error) {
+          cleanupError = error;
+        }
+      }
+
+      this.state.connected = false;
+      this.state.authenticated = false;
+      this.state.lastError = cleanupError ? toErrorMessage(cleanupError) : null;
+      // Pending gateway deliveries are durable tenant state. Pause the alarm,
+      // but retain every record so resume can continue at-least-once delivery.
+      await this.ctx.storage.deleteAlarm();
+      await this.saveState();
+      if (cleanupError) throw cleanupError;
+      return this.lifecycle.snapshot(this.getAccountId());
+    });
+  }
+
+  async managedResume(accountId: string): Promise<ManagedLifecycleInventory> {
+    return this.lifecycle.runExclusive(async () => {
+      await this.ensureLoaded();
+      await this.bindAccountId(accountId);
+      await this.lifecycle.resume();
+      const epoch = this.lifecycle.activeEpoch();
+
+      if (this.state.botToken && this.state.webhookUrl && this.state.webhookSecret) {
+        try {
+          await this.mutateWebhook(() =>
+            this.callTelegramApi<boolean>(
+              "setWebhook",
+              {
+                url: this.state.webhookUrl!,
+                secret_token: this.state.webhookSecret!,
+                allowed_updates: ["message", "channel_post"],
+              },
+              undefined,
+              epoch,
+            ),
+          );
+        } catch (error) {
+          if (this.lifecycle.isActive(epoch)) {
+            this.state.connected = false;
+            this.state.authenticated = false;
+            this.state.lastError = toErrorMessage(error);
+            await this.saveState();
+          }
+          throw error;
+        }
+        this.lifecycle.assertActive(epoch);
+        this.state.connected = true;
+        this.state.authenticated = true;
+        this.state.lastError = null;
+        await this.saveState();
+        this.lifecycle.assertActive(epoch);
+        await this.notifyGatewayStatus(epoch);
+      }
+
+      await this.rearmPendingUpdates(epoch);
+
+      return this.lifecycle.snapshot(this.getAccountId());
+    });
+  }
+
+  async managedErase(accountId: string): Promise<ManagedLifecycleInventory> {
+    return this.lifecycle.runExclusive(async () => {
+      await this.ensureLoaded();
+      await this.bindAccountId(accountId);
+      await this.lifecycle.erase();
+      this.state.connected = false;
+      this.state.authenticated = false;
+      await this.ctx.storage.deleteAlarm();
+
+      if (this.state.botToken) {
+        try {
+          await this.mutateWebhook(() =>
+            this.callTelegramApi<boolean>("deleteWebhook", {
+              drop_pending_updates: true,
+            }),
+          );
+        } catch (error) {
+          this.state.lastError = toErrorMessage(error);
+          await this.saveState();
+          throw error;
+        }
+      }
+
+      const erasedState: TelegramAccountState = {
+        accountId: this.getAccountId(),
+        botToken: null,
+        botUserId: null,
+        botUsername: null,
+        connected: false,
+        authenticated: false,
+        webhookUrl: null,
+        webhookSecret: null,
+        lastActivity: null,
+        lastUpdateId: null,
+        lastError: null,
+      };
+      await this.lifecycle.eraseStorage({ state: erasedState });
+      this.processingUpdates.clear();
+      this.state = erasedState;
+      return this.lifecycle.snapshot(this.getAccountId());
+    });
+  }
+
+  async managedDescriptor(): Promise<ManagedObjectDescriptor> {
+    await this.ensureLoaded();
+    const stored = await this.ctx.storage.get<TelegramAccountState>("state");
+    const lifecycle = this.lifecycle.snapshot(this.getAccountId());
+    if (!stored) {
+      return {
+        schemaVersion: MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+        kind: "adapter_account",
+        providerId: this.ctx.id.toString(),
+        logicalName: null,
+        classification: "uninitialized",
+        lifecycle: { status: "uninitialized", epoch: lifecycle.epoch },
+      };
+    }
+    return {
+      schemaVersion: MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+      kind: "adapter_account",
+      providerId: this.ctx.id.toString(),
+      logicalName: this.getAccountId(),
+      classification: lifecycle.status === "erased" ? "erased" : "initialized",
+      lifecycle: { status: lifecycle.status, epoch: lifecycle.epoch },
+    };
+  }
+
+  async managedSnapshot(input: ManagedObjectSnapshotRequest): Promise<ReadableStream<Uint8Array>> {
+    const request = validateManagedSnapshotRequest(input);
+    this.assertManagedPortableIdentity(
+      request.component,
+      request.kind,
+      request.logicalName,
+      request.providerId,
+      request.fenceEpoch,
+    );
+    const descriptor = await this.managedDescriptor();
+    if (
+      descriptor.classification !== "initialized"
+      || descriptor.logicalName !== request.logicalName
+      || descriptor.lifecycle.status !== "paused"
+    ) {
+      throw new Error("Telegram account is not a paused initialized snapshot source");
+    }
+    return snapshotManagedAdapterStorage(
+      this.ctx.storage,
+      request.objectId,
+      () => this.lifecycle.assertPaused(request.fenceEpoch),
+    );
+  }
+
+  async managedRestore(
+    input: ManagedObjectRestoreControl,
+    stream: ReadableStream<Uint8Array>,
+  ) {
+    return this.lifecycle.runExclusive(async () => {
+      try {
+        const control = validateManagedRestoreControl(input);
+        this.assertManagedTargetIdentity(control);
+        if (!readAdapterRestoreTarget(this.ctx.storage)) {
+          if (await this.ctx.storage.get("state") !== undefined) {
+            throw new Error("Telegram restore target is not fresh");
+          }
+          await this.lifecycle.prepareRestore(control.fenceEpoch);
+          await this.ctx.storage.deleteAlarm();
+        }
+        this.lifecycle.assertPaused(control.fenceEpoch);
+        await prepareManagedAdapterRestoreTarget(this.ctx.storage, control);
+        const result = await restoreManagedAdapterStorage(
+          this.ctx.storage,
+          stream,
+          control,
+          () => this.lifecycle.assertPaused(control.fenceEpoch),
+        );
+        this.loaded = false;
+        await this.loadState();
+        this.state.connected = false;
+        this.state.authenticated = false;
+        const descriptor = await this.managedDescriptor();
+        if (
+          descriptor.classification !== "initialized"
+          || descriptor.logicalName !== control.logicalName
+          || descriptor.providerId !== this.ctx.id.toString()
+        ) {
+          throw new Error("Restored Telegram identity does not match its target");
+        }
+        return { ...result, providerId: descriptor.providerId };
+      } catch (error) {
+        if (!stream.locked) await stream.cancel(error).catch(() => {});
+        throw error;
+      }
+    });
+  }
+
+  private assertManagedTargetIdentity(control: ManagedObjectRestoreControl): void {
+    if (
+      control.component !== "telegram"
+      || control.kind !== "adapter_account"
+      || this.env.TELEGRAM_ACCOUNT.idFromName(control.logicalName).toString()
+        !== this.ctx.id.toString()
+    ) {
+      throw new Error("Telegram managed restore identity is invalid");
+    }
+  }
+
+  private assertManagedPortableIdentity(
+    component: string,
+    kind: string,
+    logicalName: string,
+    providerId: string,
+    fenceEpoch: number,
+  ): void {
+    if (
+      component !== "telegram"
+      || kind !== "adapter_account"
+      || providerId !== this.ctx.id.toString()
+      || this.env.TELEGRAM_ACCOUNT.idFromName(logicalName).toString() !== providerId
+    ) {
+      throw new Error("Telegram managed portable identity is invalid");
+    }
+    this.lifecycle.assertPaused(fenceEpoch);
+  }
+
+  private async bindAccountId(accountId: string, epoch?: number): Promise<void> {
+    if (epoch !== undefined) this.lifecycle.assertActive(epoch);
+    const normalized = accountId.trim() || "default";
+    if (this.state.accountId !== "default" && this.state.accountId !== normalized) {
+      throw new Error("Telegram account ID does not match durable account");
+    }
+    if (this.state.accountId !== normalized) {
+      this.state.accountId = normalized;
+      await this.saveState();
+      if (epoch !== undefined) this.lifecycle.assertActive(epoch);
+    }
+  }
+
   private async callTelegramApi<T>(
     method: string,
     payload: Record<string, unknown> | FormData,
     botToken?: string,
+    epoch?: number,
   ): Promise<T> {
+    if (epoch !== undefined) this.lifecycle.assertActive(epoch);
     const token = botToken ?? this.state.botToken;
     if (!token) {
       throw new Error("Telegram bot token is not configured");
@@ -252,8 +542,10 @@ export class TelegramAccount extends DurableObject<Env> {
           },
       body: isFormDataPayload ? payload : JSON.stringify(payload),
     });
+    if (epoch !== undefined) this.lifecycle.assertActive(epoch);
 
     const responseText = await response.text();
+    if (epoch !== undefined) this.lifecycle.assertActive(epoch);
     let parsed: TelegramApiResponse<T> | null = null;
     if (responseText) {
       try {
@@ -284,6 +576,20 @@ export class TelegramAccount extends DurableObject<Env> {
     return parsed.result;
   }
 
+  private async mutateWebhook<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.webhookMutationTail;
+    let release = (): void => {};
+    this.webhookMutationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
   async start(
     botToken: string,
     accountId: string,
@@ -291,6 +597,7 @@ export class TelegramAccount extends DurableObject<Env> {
     providedSecret?: string,
   ): Promise<void> {
     await this.ensureLoaded();
+    const epoch = this.lifecycle.activeEpoch();
 
     const normalizedToken = botToken.trim();
     if (!normalizedToken) {
@@ -303,6 +610,7 @@ export class TelegramAccount extends DurableObject<Env> {
     }
 
     const normalizedAccountId = accountId.trim() || "default";
+    await this.bindAccountId(normalizedAccountId, epoch);
     const webhookSecret =
       (providedSecret && providedSecret.trim()) ||
       this.state.webhookSecret ||
@@ -313,17 +621,22 @@ export class TelegramAccount extends DurableObject<Env> {
       "getMe",
       {},
       normalizedToken,
+      epoch,
     );
 
-    await this.callTelegramApi<boolean>(
-      "setWebhook",
-      {
-        url: webhookUrl,
-        secret_token: webhookSecret,
-        allowed_updates: ["message", "channel_post"],
-      },
-      normalizedToken,
+    await this.mutateWebhook(() =>
+      this.callTelegramApi<boolean>(
+        "setWebhook",
+        {
+          url: webhookUrl,
+          secret_token: webhookSecret,
+          allowed_updates: ["message", "channel_post"],
+        },
+        normalizedToken,
+        epoch,
+      ),
     );
+    this.lifecycle.assertActive(epoch);
 
     this.state.accountId = normalizedAccountId;
     this.state.botToken = normalizedToken;
@@ -336,17 +649,25 @@ export class TelegramAccount extends DurableObject<Env> {
     this.state.lastError = null;
 
     await this.saveState();
-    await this.notifyGatewayStatus();
+    this.lifecycle.assertActive(epoch);
+    await this.notifyGatewayStatus(epoch);
+    await this.rearmPendingUpdates(epoch);
   }
 
   async stop(): Promise<void> {
     await this.ensureLoaded();
+    const epoch = this.lifecycle.activeEpoch();
 
     if (this.state.botToken) {
       try {
-        await this.callTelegramApi<boolean>("deleteWebhook", {
-          drop_pending_updates: false,
-        });
+        await this.mutateWebhook(() =>
+          this.callTelegramApi<boolean>(
+            "deleteWebhook",
+            { drop_pending_updates: false },
+            undefined,
+            epoch,
+          ),
+        );
       } catch (error) {
         console.warn(
           `[TelegramAccount:${this.getAccountId()}] deleteWebhook failed:`,
@@ -359,20 +680,25 @@ export class TelegramAccount extends DurableObject<Env> {
     this.state.authenticated = false;
     this.state.lastError = null;
     await this.clearPendingUpdates();
+    this.lifecycle.assertActive(epoch);
     await this.ctx.storage.deleteAlarm();
     await this.saveState();
-    await this.notifyGatewayStatus();
+    this.lifecycle.assertActive(epoch);
+    await this.notifyGatewayStatus(epoch);
   }
 
   async getStatus(): Promise<AdapterAccountStatus> {
     await this.ensureLoaded();
 
     let pendingUpdateCount: number | undefined;
-    if (this.state.botToken) {
+    const epoch = this.lifecycle.isActive() ? this.lifecycle.activeEpoch() : null;
+    if (this.state.botToken && epoch !== null) {
       try {
         const info = await this.callTelegramApi<TelegramWebhookInfo>(
           "getWebhookInfo",
           {},
+          undefined,
+          epoch,
         );
         pendingUpdateCount = info.pending_update_count;
       } catch {
@@ -392,6 +718,7 @@ export class TelegramAccount extends DurableObject<Env> {
         botUsername: this.state.botUsername ?? undefined,
         webhookUrl: this.state.webhookUrl ?? undefined,
         pendingUpdateCount,
+        managedLifecycle: this.lifecycle.snapshot(this.getAccountId()),
       },
     };
   }
@@ -400,6 +727,7 @@ export class TelegramAccount extends DurableObject<Env> {
     message: AdapterOutboundMessage,
   ): Promise<{ ok: boolean; messageId?: string; error?: string }> {
     await this.ensureLoaded();
+    const epoch = this.lifecycle.activeEpoch();
 
     if (!this.state.botToken || !this.state.authenticated) {
       return { ok: false, error: "Telegram account is not authenticated" };
@@ -419,13 +747,18 @@ export class TelegramAccount extends DurableObject<Env> {
       let sentMessageId: string | undefined;
 
       if (media.length === 0) {
-        const sent = await this.callTelegramApi<TelegramMessage>("sendMessage", {
-          chat_id: message.surface.id,
-          text: trimmedText,
-          ...(Number.isFinite(replyToMessageId)
-            ? { reply_to_message_id: replyToMessageId }
-            : {}),
-        });
+        const sent = await this.callTelegramApi<TelegramMessage>(
+          "sendMessage",
+          {
+            chat_id: message.surface.id,
+            text: trimmedText,
+            ...(Number.isFinite(replyToMessageId)
+              ? { reply_to_message_id: replyToMessageId }
+              : {}),
+          },
+          undefined,
+          epoch,
+        );
         sentMessageId = String(sent.message_id);
       } else if (media.length === 1) {
         const sent = await this.sendMediaMessage(
@@ -433,6 +766,7 @@ export class TelegramAccount extends DurableObject<Env> {
           media[0],
           trimmedText,
           replyToMessageId,
+          epoch,
         );
         sentMessageId = String(sent.message_id);
       } else {
@@ -448,19 +782,24 @@ export class TelegramAccount extends DurableObject<Env> {
           media,
           trimmedText,
           replyToMessageId,
+          epoch,
         );
         sentMessageId = sent[0] ? String(sent[0].message_id) : undefined;
       }
 
+      this.lifecycle.assertActive(epoch);
       this.state.lastActivity = Date.now();
       this.state.lastError = null;
       await this.saveState();
+      this.lifecycle.assertActive(epoch);
 
       return { ok: true, messageId: sentMessageId };
     } catch (error) {
       const messageText = toErrorMessage(error);
-      this.state.lastError = messageText;
-      await this.saveState();
+      if (this.lifecycle.isActive(epoch)) {
+        this.state.lastError = messageText;
+        await this.saveState();
+      }
       return { ok: false, error: messageText };
     }
   }
@@ -470,19 +809,25 @@ export class TelegramAccount extends DurableObject<Env> {
     media: AdapterMedia,
     text: string,
     replyToMessageId?: number,
+    epoch?: number,
   ): Promise<TelegramMessage> {
     const { method, mediaField } = this.getTelegramSendMethod(media.type);
     const caption = text.trim() || undefined;
 
     if (media.url) {
-      return this.callTelegramApi<TelegramMessage>(method, {
-        chat_id: chatId,
-        [mediaField]: media.url,
-        ...(caption ? { caption } : {}),
-        ...(Number.isFinite(replyToMessageId)
-          ? { reply_to_message_id: replyToMessageId }
-          : {}),
-      });
+      return this.callTelegramApi<TelegramMessage>(
+        method,
+        {
+          chat_id: chatId,
+          [mediaField]: media.url,
+          ...(caption ? { caption } : {}),
+          ...(Number.isFinite(replyToMessageId)
+            ? { reply_to_message_id: replyToMessageId }
+            : {}),
+        },
+        undefined,
+        epoch,
+      );
     }
 
     if (media.data) {
@@ -503,7 +848,7 @@ export class TelegramAccount extends DurableObject<Env> {
         filename,
       );
 
-      return this.callTelegramApi<TelegramMessage>(method, form);
+      return this.callTelegramApi<TelegramMessage>(method, form, undefined, epoch);
     }
 
     throw new Error(
@@ -516,6 +861,7 @@ export class TelegramAccount extends DurableObject<Env> {
     mediaItems: AdapterMedia[],
     text: string,
     replyToMessageId?: number,
+    epoch?: number,
   ): Promise<TelegramMessage[]> {
     if (mediaItems.length < 2) {
       throw new Error(
@@ -561,13 +907,18 @@ export class TelegramAccount extends DurableObject<Env> {
     }
 
     if (!hasBinaryUpload) {
-      return this.callTelegramApi<TelegramMessage[]>("sendMediaGroup", {
-        chat_id: chatId,
-        media: inputMedia,
-        ...(Number.isFinite(replyToMessageId)
-          ? { reply_to_message_id: replyToMessageId }
-          : {}),
-      });
+      return this.callTelegramApi<TelegramMessage[]>(
+        "sendMediaGroup",
+        {
+          chat_id: chatId,
+          media: inputMedia,
+          ...(Number.isFinite(replyToMessageId)
+            ? { reply_to_message_id: replyToMessageId }
+            : {}),
+        },
+        undefined,
+        epoch,
+      );
     }
 
     const form = new FormData();
@@ -580,7 +931,12 @@ export class TelegramAccount extends DurableObject<Env> {
       form.set(upload.field, upload.blob, upload.filename);
     }
 
-    return this.callTelegramApi<TelegramMessage[]>("sendMediaGroup", form);
+    return this.callTelegramApi<TelegramMessage[]>(
+      "sendMediaGroup",
+      form,
+      undefined,
+      epoch,
+    );
   }
 
   private validateMediaGroupTypes(mediaItems: AdapterMedia[]): void {
@@ -682,17 +1038,24 @@ export class TelegramAccount extends DurableObject<Env> {
 
   async setTyping(surface: AdapterSurface, typing: boolean): Promise<void> {
     await this.ensureLoaded();
+    const epoch = this.lifecycle.activeEpoch();
 
     if (!typing || !this.state.botToken || !this.state.authenticated) {
       return;
     }
 
     try {
-      await this.callTelegramApi<boolean>("sendChatAction", {
-        chat_id: surface.id,
-        action: "typing",
-      });
+      await this.callTelegramApi<boolean>(
+        "sendChatAction",
+        {
+          chat_id: surface.id,
+          action: "typing",
+        },
+        undefined,
+        epoch,
+      );
     } catch (error) {
+      if (!this.lifecycle.isActive(epoch)) throw error;
       console.warn(
         `[TelegramAccount:${this.getAccountId()}] setTyping failed:`,
         error,
@@ -701,11 +1064,13 @@ export class TelegramAccount extends DurableObject<Env> {
   }
 
   async handleWebhook(
-    update: TelegramUpdate,
+    update: unknown,
     secretToken: string | null,
   ): Promise<{ ok: boolean; status?: number; error?: string }> {
     await this.ensureLoaded();
-
+    if (this.lifecycle.status() === "erased") {
+      return { ok: false, status: 410, error: "Telegram account was erased" };
+    }
     if (!this.state.webhookSecret) {
       return {
         ok: false,
@@ -721,6 +1086,11 @@ export class TelegramAccount extends DurableObject<Env> {
         error: "Invalid webhook secret token",
       };
     }
+    if (!this.lifecycle.isActive()) {
+      // A webhook already in flight during pause is acknowledged and dropped.
+      return { ok: true };
+    }
+    const epoch = this.lifecycle.activeEpoch();
 
     if (!update || typeof update !== "object") {
       return {
@@ -730,18 +1100,17 @@ export class TelegramAccount extends DurableObject<Env> {
       };
     }
 
-    const message = this.extractMessage(update);
-    const updateId = this.normalizeUpdateId(update.update_id);
-    if (!this.canProcessInbound()) {
-      if (updateId !== null) {
-        await this.markUpdateProcessed(updateId);
-      }
+    const telegramUpdate = update as TelegramUpdate;
+    const message = this.extractMessage(telegramUpdate);
+    const updateId = this.normalizeUpdateId(telegramUpdate.update_id);
+    if (!this.canProcessInbound(epoch)) {
       return { ok: true };
     }
 
     if (updateId === null) {
       if (message) {
-        const delivered = await this.processWebhookMessage(message);
+        const delivered = await this.processWebhookMessage(message, epoch);
+        if (!this.lifecycle.isActive(epoch)) return { ok: true };
         if (!delivered) {
           return {
             ok: false,
@@ -756,33 +1125,64 @@ export class TelegramAccount extends DurableObject<Env> {
     if (await this.hasProcessedUpdate(updateId)) {
       return { ok: true };
     }
+    if (!this.lifecycle.isActive(epoch)) return { ok: true };
 
     if (await this.hasPendingUpdate(updateId)) {
-      await this.schedulePendingUpdateRetry(0);
+      if (this.lifecycle.isActive(epoch)) {
+        await this.schedulePendingUpdateRetry(0, epoch);
+      }
       return { ok: true };
     }
+    if (!this.lifecycle.isActive(epoch)) return { ok: true };
 
     if (!message) {
-      await this.markUpdateProcessed(updateId);
+      await this.markUpdateProcessed(updateId, epoch);
       return { ok: true };
     }
 
-    await this.enqueuePendingUpdate(updateId, message);
+    await this.enqueuePendingUpdate(updateId, message, epoch);
     return { ok: true };
   }
 
-  private async processWebhookMessage(message: TelegramMessage): Promise<boolean> {
+  async authorizeWebhook(
+    secretToken: string,
+  ): Promise<
+    | { ok: true; acceptBody: boolean }
+    | { ok: false; status: number; error: string }
+  > {
+    await this.ensureLoaded();
+    if (this.lifecycle.status() === "erased") {
+      return { ok: false, status: 410, error: "Telegram account was erased" };
+    }
+    if (!this.state.webhookSecret) {
+      return {
+        ok: false,
+        status: 409,
+        error: "Telegram account webhook is not initialized",
+      };
+    }
+    if (secretToken !== this.state.webhookSecret) {
+      return { ok: false, status: 401, error: "Invalid webhook secret token" };
+    }
+    return { ok: true, acceptBody: this.lifecycle.isActive() };
+  }
+
+  private async processWebhookMessage(
+    message: TelegramMessage,
+    epoch: number,
+  ): Promise<boolean> {
     try {
-      if (!this.canProcessInbound()) {
+      if (!this.canProcessInbound(epoch)) {
         return true;
       }
 
       const inbound = await this.toInboundMessage(message);
+      if (!this.lifecycle.isActive(epoch)) return true;
       if (!inbound) {
         return true;
       }
 
-      if (!this.canProcessInbound()) {
+      if (!this.canProcessInbound(epoch)) {
         return true;
       }
 
@@ -794,15 +1194,18 @@ export class TelegramAccount extends DurableObject<Env> {
           message: inbound,
         },
       );
+      if (!this.lifecycle.isActive(epoch)) return true;
 
       if (!result.ok) {
         const error = result.error || "Gateway rejected inbound message";
-        this.state.lastError = error;
-        await this.saveState();
+        if (this.lifecycle.isActive(epoch)) {
+          this.state.lastError = error;
+          await this.saveState();
+        }
         return false;
       }
 
-      if (!this.canProcessInbound()) {
+      if (!this.canProcessInbound(epoch)) {
         return true;
       }
 
@@ -811,7 +1214,9 @@ export class TelegramAccount extends DurableObject<Env> {
           String(message.chat.id),
           result.challenge.prompt,
           String(message.message_id),
+          epoch,
         );
+        if (!this.lifecycle.isActive(epoch)) return true;
       }
 
       if (result.reply?.text) {
@@ -819,17 +1224,23 @@ export class TelegramAccount extends DurableObject<Env> {
           String(message.chat.id),
           result.reply.text,
           result.reply.replyToId || String(message.message_id),
+          epoch,
         );
+        if (!this.lifecycle.isActive(epoch)) return true;
       }
 
+      if (!this.lifecycle.isActive(epoch)) return true;
       this.state.lastActivity = Date.now();
       this.state.lastError = null;
       await this.saveState();
+      this.lifecycle.assertActive(epoch);
       return true;
     } catch (error) {
       const messageText = toErrorMessage(error);
-      this.state.lastError = messageText;
-      await this.saveState();
+      if (this.lifecycle.isActive(epoch)) {
+        this.state.lastError = messageText;
+        await this.saveState();
+      }
       return false;
     }
   }
@@ -841,8 +1252,9 @@ export class TelegramAccount extends DurableObject<Env> {
     return value;
   }
 
-  private canProcessInbound(): boolean {
+  private canProcessInbound(epoch?: number): boolean {
     return Boolean(
+      this.lifecycle.isActive(epoch) &&
       this.state.connected && this.state.authenticated && this.state.botToken,
     );
   }
@@ -859,7 +1271,8 @@ export class TelegramAccount extends DurableObject<Env> {
     );
   }
 
-  private async markUpdateProcessed(updateId: number): Promise<void> {
+  private async markUpdateProcessed(updateId: number, epoch: number): Promise<void> {
+    this.lifecycle.assertActive(epoch);
     await this.ctx.storage.put<TelegramProcessedUpdate>(
       this.processedUpdateKey(updateId),
       {
@@ -867,16 +1280,20 @@ export class TelegramAccount extends DurableObject<Env> {
         processedAt: Date.now(),
       },
     );
+    this.lifecycle.assertActive(epoch);
     this.state.lastUpdateId = Math.max(this.state.lastUpdateId ?? -1, updateId);
     await this.saveState();
-    await this.pruneProcessedUpdates();
+    this.lifecycle.assertActive(epoch);
+    await this.pruneProcessedUpdates(epoch);
   }
 
-  private async pruneProcessedUpdates(): Promise<void> {
+  private async pruneProcessedUpdates(epoch: number): Promise<void> {
+    this.lifecycle.assertActive(epoch);
     const processed = await this.ctx.storage.list<TelegramProcessedUpdate>({
       prefix: PROCESSED_UPDATE_PREFIX,
       limit: PROCESSED_UPDATE_RETENTION + 1,
     });
+    this.lifecycle.assertActive(epoch);
     const overflow = processed.size - PROCESSED_UPDATE_RETENTION;
     if (overflow <= 0) {
       return;
@@ -903,9 +1320,12 @@ export class TelegramAccount extends DurableObject<Env> {
   private async enqueuePendingUpdate(
     updateId: number,
     message: TelegramMessage,
+    epoch: number,
   ): Promise<void> {
+    this.lifecycle.assertActive(epoch);
     const key = this.pendingUpdateKey(updateId);
     const existing = await this.ctx.storage.get<TelegramPendingUpdate>(key);
+    this.lifecycle.assertActive(epoch);
     if (existing) {
       return;
     }
@@ -918,7 +1338,8 @@ export class TelegramAccount extends DurableObject<Env> {
       createdAt: now,
       updatedAt: now,
     });
-    await this.schedulePendingUpdateRetry(0);
+    this.lifecycle.assertActive(epoch);
+    await this.schedulePendingUpdateRetry(0, epoch);
   }
 
   private async clearPendingUpdates(): Promise<void> {
@@ -931,7 +1352,8 @@ export class TelegramAccount extends DurableObject<Env> {
     }
   }
 
-  private async processPendingUpdate(updateId: number): Promise<void> {
+  private async processPendingUpdate(updateId: number, epoch: number): Promise<void> {
+    this.lifecycle.assertActive(epoch);
     if (this.processingUpdates.has(updateId)) {
       return;
     }
@@ -940,36 +1362,32 @@ export class TelegramAccount extends DurableObject<Env> {
     try {
       const key = this.pendingUpdateKey(updateId);
       const pending = await this.ctx.storage.get<TelegramPendingUpdate>(key);
+      if (!this.lifecycle.isActive(epoch)) return;
       if (!pending) {
         return;
       }
 
-      if (!this.canProcessInbound()) {
-        await this.ctx.storage.delete(key);
-        await this.markUpdateProcessed(updateId);
-        return;
-      }
+      if (!this.canProcessInbound(epoch)) return;
 
-      const delivered = await this.processWebhookMessage(pending.message);
+      const delivered = await this.processWebhookMessage(pending.message, epoch);
+      if (!this.lifecycle.isActive(epoch)) return;
       if (delivered) {
         await this.ctx.storage.delete(key);
-        await this.markUpdateProcessed(updateId);
+        this.lifecycle.assertActive(epoch);
+        await this.markUpdateProcessed(updateId, epoch);
         return;
       }
 
-      if (!this.canProcessInbound()) {
-        await this.ctx.storage.delete(key);
-        await this.markUpdateProcessed(updateId);
-        return;
-      }
+      if (!this.canProcessInbound(epoch)) return;
 
       const attempts = pending.attempts + 1;
       const lastError = this.state.lastError ?? "Telegram update processing failed";
       if (attempts >= PENDING_UPDATE_MAX_ATTEMPTS) {
         await this.ctx.storage.delete(key);
+        this.lifecycle.assertActive(epoch);
         this.state.lastError =
           `Dropped Telegram update ${updateId} after ${attempts} failed attempts: ${lastError}`;
-        await this.markUpdateProcessed(updateId);
+        await this.markUpdateProcessed(updateId, epoch);
         return;
       }
 
@@ -979,13 +1397,18 @@ export class TelegramAccount extends DurableObject<Env> {
         updatedAt: Date.now(),
         lastError,
       });
-      await this.schedulePendingUpdateRetry(attempts);
+      this.lifecycle.assertActive(epoch);
+      await this.schedulePendingUpdateRetry(attempts, epoch);
     } finally {
       this.processingUpdates.delete(updateId);
     }
   }
 
-  private async schedulePendingUpdateRetry(attempts: number): Promise<void> {
+  private async schedulePendingUpdateRetry(
+    attempts: number,
+    epoch: number,
+  ): Promise<void> {
+    this.lifecycle.assertActive(epoch);
     const delay = Math.min(
       PENDING_UPDATE_RETRY_MAX_MS,
       PENDING_UPDATE_RETRY_BASE_MS * 2 ** Math.min(attempts, 6),
@@ -993,17 +1416,33 @@ export class TelegramAccount extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(Date.now() + delay);
   }
 
+  private async rearmPendingUpdates(epoch: number): Promise<void> {
+    this.lifecycle.assertActive(epoch);
+    if (!this.canProcessInbound(epoch)) return;
+    const pending = await this.ctx.storage.list<TelegramPendingUpdate>({
+      prefix: PENDING_UPDATE_PREFIX,
+      limit: 1,
+    });
+    this.lifecycle.assertActive(epoch);
+    if (pending.size > 0) {
+      await this.schedulePendingUpdateRetry(0, epoch);
+    }
+  }
+
   async alarm(): Promise<void> {
     await this.ensureLoaded();
+    const epoch = this.lifecycle.activeEpoch();
 
     const pending = await this.ctx.storage.list<TelegramPendingUpdate>({
       prefix: PENDING_UPDATE_PREFIX,
     });
+    this.lifecycle.assertActive(epoch);
     const updates = Array.from(pending.values())
       .sort((left, right) => left.updateId - right.updateId);
 
     for (const update of updates) {
-      await this.processPendingUpdate(update.updateId);
+      if (!this.lifecycle.isActive(epoch)) return;
+      await this.processPendingUpdate(update.updateId, epoch);
     }
   }
 
@@ -1011,17 +1450,24 @@ export class TelegramAccount extends DurableObject<Env> {
     chatId: string,
     text: string,
     replyToId?: string,
+    epoch?: number,
   ): Promise<void> {
     try {
       const replyToMessageId = replyToId ? Number.parseInt(replyToId, 10) : undefined;
-      await this.callTelegramApi<TelegramMessage>("sendMessage", {
-        chat_id: chatId,
-        text,
-        ...(Number.isFinite(replyToMessageId)
-          ? { reply_to_message_id: replyToMessageId }
-          : {}),
-      });
+      await this.callTelegramApi<TelegramMessage>(
+        "sendMessage",
+        {
+          chat_id: chatId,
+          text,
+          ...(Number.isFinite(replyToMessageId)
+            ? { reply_to_message_id: replyToMessageId }
+            : {}),
+        },
+        undefined,
+        epoch,
+      );
     } catch (error) {
+      if (epoch !== undefined && !this.lifecycle.isActive(epoch)) throw error;
       console.warn(
         `[TelegramAccount:${this.getAccountId()}] Failed to send gateway reply:`,
         error,
@@ -1436,14 +1882,17 @@ export class TelegramAccount extends DurableObject<Env> {
     return false;
   }
 
-  private async notifyGatewayStatus(): Promise<void> {
+  private async notifyGatewayStatus(epoch: number): Promise<void> {
+    if (!this.lifecycle.isActive(epoch)) return;
     try {
       const status = await this.getStatus();
+      if (!this.lifecycle.isActive(epoch)) return;
       await this.callGateway("adapter.state.update", {
         adapter: "telegram",
         accountId: this.getAccountId(),
         status,
       });
+      this.lifecycle.assertActive(epoch);
     } catch (error) {
       console.error(
         `[TelegramAccount:${this.getAccountId()}] Failed to notify status:`,

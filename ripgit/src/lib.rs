@@ -2,6 +2,7 @@ mod api;
 mod diff;
 mod git;
 mod hyperspace;
+mod managed;
 mod pack;
 mod packages;
 mod schema;
@@ -41,41 +42,33 @@ fn unauthorized_401() -> Result<Response> {
 }
 
 async fn forward_hyperspace_request(
-    mut req: Request,
+    req: Request,
     env: &Env,
     url: &Url,
     parts: &[&str],
 ) -> Result<Response> {
     let owner = parts[2];
     let repo = parts[3];
-    let do_name = format!("{}/{}", owner, repo);
     let namespace = env.durable_object("REPOSITORY")?;
-    let id = namespace.id_from_name(&do_name)?;
-    let stub = id.get_stub()?;
+    let id = namespace.id_from_name(&format!("{}/{}", owner, repo))?;
+    let identity = match managed::RepositoryIdentity::new(owner, repo, &id.to_string()) {
+        Ok(identity) => identity,
+        Err(error) => return error.into_response(),
+    };
 
     let mut target_path = format!("/{}/{}/hyperspace", owner, repo);
     if parts.len() > 4 {
         target_path.push('/');
         target_path.push_str(&parts[4..].join("/"));
     }
+    let mutation = managed::is_mutation(req.method(), &target_path);
     if let Some(query) = url.query() {
         target_path.push('?');
         target_path.push_str(query);
     }
 
     let target_url = format!("{}{}", url.origin().ascii_serialization(), target_path);
-    let method = req.method();
-    let headers = req.headers().clone();
-    let mut init = RequestInit::new();
-    init.with_method(method.clone());
-    init.with_headers(headers);
-    if !matches!(method, Method::Get | Method::Head) {
-        let body = req.bytes().await?;
-        init.with_body(Some(js_sys::Uint8Array::from(body.as_slice()).into()));
-    }
-
-    let forwarded = Request::new_with_init(&target_url, &init)?;
-    stub.fetch_with_request(forwarded).await
+    managed::admit_and_forward_named(req, env, identity, &target_url, mutation).await
 }
 
 #[event(fetch)]
@@ -83,6 +76,13 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let url = req.url()?;
     let path = url.path();
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+
+    if managed::is_managed_service_path(path) {
+        return managed::handle_managed_request(req, &env).await;
+    }
+    if managed::is_reserved_managed_path(path) {
+        return Response::error("Not Found", 404);
+    }
 
     if parts.len() >= 4
         && parts[0] == "hyperspace"
@@ -97,8 +97,12 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         let do_name = format!("{}/{}", parts[0], parts[1]);
         let namespace = env.durable_object("REPOSITORY")?;
         let id = namespace.id_from_name(&do_name)?;
-        let stub = id.get_stub()?;
-        return stub.fetch_with_request(req).await;
+        let identity = match managed::RepositoryIdentity::new(parts[0], parts[1], &id.to_string()) {
+            Ok(identity) => identity,
+            Err(error) => return error.into_response(),
+        };
+        let mutation = managed::is_mutation(req.method(), path);
+        return managed::admit_and_forward_named(req, &env, identity, url.as_str(), mutation).await;
     }
 
     Response::from_json(&serde_json::json!({
@@ -116,6 +120,39 @@ pub struct Repository {
     env: Env,
 }
 
+#[durable_object]
+pub struct ManagedRepositoryRegistry {
+    pub(crate) sql: SqlStorage,
+    pub(crate) provider_id: String,
+    pub(crate) is_singleton: bool,
+}
+
+impl DurableObject for ManagedRepositoryRegistry {
+    fn new(state: State, env: Env) -> Self {
+        let provider_id = state.id().to_string();
+        let is_singleton = env
+            .durable_object("MANAGED_REPOSITORY_REGISTRY")
+            .map(|namespace| {
+                namespace
+                    .id_from_name(managed::REGISTRY_NAME)
+                    .map(|id| id.to_string() == provider_id)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        let sql = state.storage().sql();
+        schema::init_managed_registry(&sql).expect("initialize managed repository registry");
+        Self {
+            sql,
+            provider_id,
+            is_singleton,
+        }
+    }
+
+    async fn fetch(&self, req: Request) -> Result<Response> {
+        self.fetch_request(req).await
+    }
+}
+
 impl DurableObject for Repository {
     fn new(state: State, env: Env) -> Self {
         let state = state;
@@ -127,6 +164,11 @@ impl DurableObject for Repository {
     async fn fetch(&self, mut req: Request) -> Result<Response> {
         let url = req.url()?;
         let path = url.path();
+
+        if path.starts_with(managed::REPOSITORY_MANAGED_PREFIX) {
+            return managed::handle_repository_managed_request(&self.state, &self.sql, req).await;
+        }
+
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
 
         if parts.len() < 2 {
@@ -138,6 +180,19 @@ impl DurableObject for Repository {
         let repo_slug = format!("{}/{}", owner, repo_name);
         let action = if parts.len() >= 3 { parts[2] } else { "" };
         let actor = actor_from_request(&req);
+        let (identity, gate) = match managed::identity_and_gate_from_headers(&req) {
+            Ok(values) => values,
+            Err(error) => return error.into_response(),
+        };
+        if let Err(error) = managed::ensure_repository_identity(&self.sql, &self.state, &identity) {
+            return error.into_response();
+        }
+        if gate.status == managed::GateStatus::Active {
+            if let Err(error) = managed::synchronize_repository_epoch(&self.sql, &gate) {
+                return error.into_response();
+            }
+        }
+        let mutation_epoch = managed::is_mutation(req.method(), path).then_some(gate.epoch);
 
         match (req.method(), action) {
             (Method::Get, "hyperspace") | (Method::Post, "hyperspace") => {
@@ -160,10 +215,20 @@ impl DurableObject for Repository {
                         hyperspace::handle_compare(&self.sql, &req).await
                     }
                     "apply" if req.method() == Method::Post => {
-                        hyperspace::handle_apply(&self.sql, &mut req).await
+                        hyperspace::handle_apply(
+                            &self.sql,
+                            &mut req,
+                            mutation_epoch.expect("apply is classified as a mutation"),
+                        )
+                        .await
                     }
                     "import" if req.method() == Method::Post => {
-                        hyperspace::handle_import(&self.sql, &mut req).await
+                        hyperspace::handle_import(
+                            &self.sql,
+                            &mut req,
+                            mutation_epoch.expect("import is classified as a mutation"),
+                        )
+                        .await
                     }
                     "packages" => match (req.method(), parts.get(4).copied().unwrap_or("")) {
                         (Method::Get, "analyze") => {
@@ -199,6 +264,12 @@ impl DurableObject for Repository {
                     return resp;
                 }
                 let body = req.bytes().await?;
+                if let Err(error) = managed::assert_repository_mutation_epoch(
+                    &self.sql,
+                    mutation_epoch.expect("receive-pack is classified as a mutation"),
+                ) {
+                    return error.into_response();
+                }
                 git::handle_receive_pack(&self.sql, &body)
             }
             (Method::Post, "git-upload-pack") => {
@@ -209,7 +280,15 @@ impl DurableObject for Repository {
                 if let Some(resp) = check_write_access(&req, &actor, owner) {
                     return resp;
                 }
-                self.state.storage().delete_all().await?;
+                if let Err(error) = managed::assert_repository_mutation_epoch(
+                    &self.sql,
+                    mutation_epoch.expect("delete is classified as a mutation"),
+                ) {
+                    return error.into_response();
+                }
+                if let Err(error) = managed::delete_repository_contents(&self.sql) {
+                    return error.into_response();
+                }
                 Response::ok("deleted")
             }
             (Method::Get, "refs") => api::handle_refs(&self.sql),
@@ -238,6 +317,12 @@ impl DurableObject for Repository {
             (Method::Put, "admin") => {
                 if let Some(resp) = check_write_access(&req, &actor, owner) {
                     return resp;
+                }
+                if let Err(error) = managed::assert_repository_mutation_epoch(
+                    &self.sql,
+                    mutation_epoch.expect("admin PUT is classified as a mutation"),
+                ) {
+                    return error.into_response();
                 }
                 let sub = parts.get(3).unwrap_or(&"");
                 match *sub {

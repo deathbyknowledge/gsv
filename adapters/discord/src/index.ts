@@ -7,7 +7,9 @@
  */
 
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { normalizeAdapterAccountId } from "@humansandmachines/gsv/protocol/adapters";
 import {
+  inferMediaMimeType,
   isHelpCommand,
   parseAttachArgs,
   parseShellWords,
@@ -27,19 +29,35 @@ import type {
   StopResult,
   SendResult,
 } from "./types";
+import {
+  describeManagedAdapterAccounts,
+  assertManagedAdapterDescriptorRequest,
+  runManagedLifecycleAction,
+} from "../../shared/src/managed-lifecycle";
+import {
+  restoreManagedAdapterAccount,
+  snapshotManagedAdapterAccount,
+} from "../../shared/src/managed-portability";
+import {
+  MANAGED_ADMISSION_GATE_NAME,
+  ManagedAdmissionGate,
+  describeManagedAdmissionObjects,
+  runWithManagedAdmission,
+} from "../../shared/src/managed-admission";
+import type { DiscordGateway } from "./discord-gateway";
 
 export { DiscordGateway } from "./discord-gateway";
+export { ManagedAdmissionGate } from "../../shared/src/managed-admission";
 
 // Re-export interface types for consumers
 export type * from "./types";
 
 interface Env {
-  DISCORD_GATEWAY: DurableObjectNamespace;
+  DISCORD_GATEWAY: DurableObjectNamespace<DiscordGateway>;
+  MANAGED_ADMISSION: DurableObjectNamespace<ManagedAdmissionGate>;
   // Secrets
   DISCORD_BOT_TOKEN?: string;
 }
-
-const DISCORD_API = "https://discord.com/api/v10";
 
 /**
  * Discord Channel Entrypoint
@@ -60,6 +78,56 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
     editing: true,
     deletion: true,
   };
+
+  async managedPause(accountIds: string[]): Promise<{ accountIds: string[] }> {
+    return runManagedLifecycleAction(accountIds, "managedPause", (accountId) =>
+      this.getGatewayDO(accountId),
+    );
+  }
+
+  async managedResume(accountIds: string[]): Promise<{ accountIds: string[] }> {
+    return runManagedLifecycleAction(accountIds, "managedResume", (accountId) =>
+      this.getGatewayDO(accountId),
+    );
+  }
+
+  async managedErase(accountIds: string[]): Promise<{ accountIds: string[] }> {
+    return runManagedLifecycleAction(accountIds, "managedErase", (accountId) =>
+      this.getGatewayDO(accountId),
+    );
+  }
+
+  async managedDescribeObjects(input: unknown) {
+    assertManagedAdapterDescriptorRequest(input);
+    return input.kind === "adapter_account"
+      ? describeManagedAdapterAccounts(this.env.DISCORD_GATEWAY, input.providerIds)
+      : describeManagedAdmissionObjects(this.env.MANAGED_ADMISSION, input.providerIds);
+  }
+
+  async managedSnapshot(input: unknown) {
+    return snapshotManagedAdapterAccount(this.env.DISCORD_GATEWAY, "discord", input);
+  }
+
+  async managedRestore(input: unknown, stream: ReadableStream<Uint8Array>) {
+    return restoreManagedAdapterAccount(
+      this.env.DISCORD_GATEWAY,
+      "discord",
+      input,
+      stream,
+    );
+  }
+
+  async managedFenceAll() {
+    return this.managedAdmission().managedFenceAll();
+  }
+
+  async managedResumeAll() {
+    return this.managedAdmission().managedResumeAll();
+  }
+
+  async managedEraseAll() {
+    return this.managedAdmission().managedEraseAll();
+  }
 
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
@@ -110,9 +178,11 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
     }
 
     try {
-      const gateway = this.getGatewayDO(accountId);
-      await gateway.start(botToken, accountId);
-      return { ok: true };
+      return await this.withManagedAdmission(`start:${accountId}`, async () => {
+        const gateway = this.getGatewayDO(accountId);
+        await gateway.start(botToken, accountId);
+        return { ok: true };
+      });
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -123,9 +193,11 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
    */
   async stop(accountId: string): Promise<StopResult> {
     try {
-      const gateway = this.getGatewayDO(accountId);
-      await gateway.stop();
-      return { ok: true };
+      return await this.withManagedAdmission(`stop:${accountId}`, async () => {
+        const gateway = this.getGatewayDO(accountId);
+        await gateway.stop();
+        return { ok: true };
+      });
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -160,62 +232,18 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
       replyToId?: string;
     },
   ): Promise<SendResult> {
-    const botToken = await this.resolveBotToken(accountId);
-    if (!botToken) {
-      return { ok: false, error: "No bot token configured" };
-    }
-
     try {
-      const channelId = message.surface.id;
-      const body: Record<string, unknown> = {};
-      const hasText = message.text.trim().length > 0;
-      const media = message.media ?? [];
-
-      if (!hasText && media.length === 0) {
-        return { ok: false, error: "Discord messages require text or media" };
-      }
-
-      if (hasText) {
-        body.content = message.text;
-      }
-
-      if (message.replyToId) {
-        body.message_reference = {
-          message_id: message.replyToId,
-        };
-      }
-
-      let requestBody: BodyInit;
-      if (media.length > 0) {
-        const form = new FormData();
-        const attachments: Array<{ id: number; filename: string }> = [];
-
-        for (const [index, attachment] of media.entries()) {
-          const file = await this.prepareUploadFile(attachment, index);
-          form.append(`files[${index}]`, file.blob, file.filename);
-          attachments.push({ id: index, filename: file.filename });
-        }
-
-        body.attachments = attachments;
-        form.append("payload_json", JSON.stringify(body));
-        requestBody = form;
-      } else {
-        requestBody = JSON.stringify(body);
-      }
-
-      const response = await this.discordFetch(`/channels/${channelId}/messages`, {
-        method: "POST",
-        botToken,
-        body: requestBody,
+      return await this.withManagedAdmission(`send:${accountId}`, async () => {
+        const result = await this.getGatewayDO(accountId).sendMessage({
+          surface: message.surface,
+          text: message.text,
+          media: message.media,
+          replyToId: message.replyToId,
+        });
+        return result.ok
+          ? { ok: true, messageId: result.messageId }
+          : { ok: false, error: result.error || "Failed to send Discord message" };
       });
-
-      if (!response.ok) {
-        const error = await response.text();
-        return { ok: false, error: `Discord API error: ${response.status} ${error}` };
-      }
-
-      const data = await response.json<{ id: string }>();
-      return { ok: true, messageId: data.id };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -253,13 +281,9 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
   async setTyping(accountId: string, peer: ChannelPeer, typing: boolean): Promise<void> {
     if (!typing) return; // Discord doesn't have "stop typing"
 
-    const botToken = await this.resolveBotToken(accountId);
-    if (!botToken) return;
-
-    await this.discordFetch(`/channels/${peer.id}/typing`, {
-      method: "POST",
-      botToken,
-    });
+    await this.withManagedAdmission(`typing:${accountId}`, () =>
+      this.getGatewayDO(accountId).setTyping(peer),
+    );
   }
 
   async adapterShellExec(accountId: string, args: ShellExecArgs): Promise<ShellExecResult> {
@@ -309,17 +333,17 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
       if (!channelId || !messageId || !emoji) {
         return shellFail("usage: react <channel-id> <message-id> <emoji>");
       }
-      const botToken = await this.resolveBotToken(accountId);
-      if (!botToken) {
-        return shellFail("No bot token configured");
-      }
-      const response = await this.discordFetch(
-        `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/@me`,
-        { method: "PUT", botToken },
+      const result = await this.withManagedAdmission<
+        { ok: true } | { ok: false; error: string }
+      >(
+        `react:${accountId}`,
+        () => this.getGatewayDO(accountId).react(
+          channelId,
+          messageId,
+          emoji,
+        ) as unknown as Promise<{ ok: true } | { ok: false; error: string }>,
       );
-      return response.ok
-        ? shellOk("reacted")
-        : shellFail(`Discord API error: ${response.status} ${await response.text()}`);
+      return result.ok ? shellOk("reacted") : shellFail(result.error);
     }
 
     if (command === "attach") {
@@ -344,107 +368,21 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements ChannelWork
   // ─────────────────────────────────────────────────────────
 
   private getGatewayDO(accountId: string) {
-    const id = this.env.DISCORD_GATEWAY.idFromName(accountId);
-    return this.env.DISCORD_GATEWAY.get(id) as unknown as DiscordGatewayStub;
+    const normalized = normalizeAdapterAccountId(accountId);
+    if (!normalized) throw new TypeError("Discord account ID is invalid");
+    const id = this.env.DISCORD_GATEWAY.idFromName(normalized);
+    return this.env.DISCORD_GATEWAY.get(id);
   }
 
-  private async resolveBotToken(accountId: string): Promise<string | null> {
-    const gateway = this.getGatewayDO(accountId);
-    const persistedToken = await gateway.getBotToken();
-    return persistedToken || this.env.DISCORD_BOT_TOKEN || null;
+  private managedAdmission() {
+    return this.env.MANAGED_ADMISSION.getByName(MANAGED_ADMISSION_GATE_NAME);
   }
 
-  private async discordFetch(
-    path: string,
-    init: RequestInit & { botToken: string }
-  ): Promise<Response> {
-    const headers = new Headers(init.headers || {});
-    headers.set("Authorization", `Bot ${init.botToken}`);
-    const isFormDataBody = typeof FormData !== "undefined" && init.body instanceof FormData;
-    if (!headers.has("Content-Type") && init.body && !isFormDataBody) {
-      headers.set("Content-Type", "application/json; charset=utf-8");
-    }
-
-    const response = await fetch(`${DISCORD_API}${path}`, { ...init, headers });
-
-    // Handle rate limiting
-    if (response.status === 429) {
-      const data = await response.json<{ retry_after?: number }>();
-      const retryAfterMs = Math.ceil((data.retry_after ?? 1) * 1000);
-      await new Promise((r) => setTimeout(r, retryAfterMs));
-      return fetch(`${DISCORD_API}${path}`, { ...init, headers });
-    }
-
-    return response;
-  }
-
-  private async prepareUploadFile(
-    media: ChannelMedia,
-    index: number,
-  ): Promise<{ blob: Blob; filename: string }> {
-    const filename =
-      media.filename ||
-      `attachment-${index + 1}.${this.getExtensionFromMime(media.mimeType, media.type)}`;
-
-    if (media.data) {
-      const bytes = this.decodeBase64(media.data);
-      return {
-        blob: new Blob([bytes], { type: media.mimeType }),
-        filename,
-      };
-    }
-
-    if (media.url) {
-      const response = await fetch(media.url);
-      if (!response.ok) {
-        throw new Error(
-          `Failed to fetch media from url (${response.status} ${response.statusText})`,
-        );
-      }
-      const arrayBuffer = await response.arrayBuffer();
-      return {
-        blob: new Blob([arrayBuffer], { type: media.mimeType }),
-        filename,
-      };
-    }
-
-    throw new Error("Media attachment must include base64 data or url");
-  }
-
-  private decodeBase64(base64: string): Uint8Array {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  }
-
-  private getExtensionFromMime(
-    mimeType: string,
-    mediaType: ChannelMedia["type"],
-  ): string {
-    const normalized = mimeType.split(";")[0].trim().toLowerCase();
-    const mapping: Record<string, string> = {
-      "image/jpeg": "jpg",
-      "image/png": "png",
-      "image/gif": "gif",
-      "image/webp": "webp",
-      "audio/ogg": "ogg",
-      "audio/opus": "opus",
-      "audio/mpeg": "mp3",
-      "audio/mp3": "mp3",
-      "audio/mp4": "m4a",
-      "audio/wav": "wav",
-      "audio/webm": "webm",
-      "video/mp4": "mp4",
-      "video/webm": "webm",
-      "application/pdf": "pdf",
-    };
-
-    const fromMime = mapping[normalized];
-    if (fromMime) return fromMime;
-    return mediaType === "document" ? "bin" : mediaType;
+  private withManagedAdmission<T>(
+    owner: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return runWithManagedAdmission(this.env.MANAGED_ADMISSION, owner, operation);
   }
 }
 
@@ -453,13 +391,7 @@ function discordSurface(id: string): ChannelPeer {
 }
 
 async function mediaFromUrl(url: string, filename?: string): Promise<ChannelMedia> {
-  let mimeType = "application/octet-stream";
-  try {
-    const response = await fetch(url, { method: "HEAD" });
-    mimeType = response.headers.get("Content-Type")?.split(";")[0].trim() || mimeType;
-  } catch {
-    // The upload path can still fetch the URL later; content type falls back.
-  }
+  const mimeType = inferMediaMimeType(url, filename);
 
   return {
     type: mediaTypeFromMime(mimeType),
@@ -499,14 +431,6 @@ function shellFail(error: string): ShellExecResult {
     stdout: "",
     stderr: error,
   };
-}
-
-// Type for DO stub methods
-interface DiscordGatewayStub {
-  start(botToken: string, accountId?: string): Promise<void>;
-  stop(): Promise<void>;
-  getStatus(): Promise<ChannelAccountStatus>;
-  getBotToken(): Promise<string | null>;
 }
 
 // Default export: HTTP handler for direct requests

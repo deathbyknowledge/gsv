@@ -10,10 +10,12 @@ import type { KernelContext } from "../../kernel/context";
 import { resolveCallerOwnerUid } from "../../kernel/context";
 import { createCronFileService } from "../../kernel/crontab";
 import { handleRepoList } from "../../kernel/repo";
+import { r2ObjectLimit } from "../../fs/storage-policy";
 
 export function createNativeFileSystem(ctx: KernelContext): GsvFs {
   const identity = ctx.identity!.process;
   const ownerUid = resolveCallerOwnerUid(ctx);
+  const maxR2ObjectBytes = r2ObjectLimit(ctx.env);
   const sourceBackend = createProcessSourceBackend({
     identity,
     storage: ctx.env.STORAGE,
@@ -21,6 +23,7 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
     repos: handleRepoList(undefined, ctx).repos,
     processId: ctx.processId ?? null,
     config: ctx.config,
+    maxR2ObjectBytes,
   });
 
   return new GsvFs(
@@ -44,7 +47,9 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
       auth: ctx.auth,
       ownerUid,
       isRoot: identity.uid === 0,
+      maxR2ObjectBytes,
     }),
     createPackageBackend(identity, ctx.packages, { uid: ownerUid }),
+    maxR2ObjectBytes,
   );
 }

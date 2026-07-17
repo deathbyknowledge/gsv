@@ -89,6 +89,12 @@ export interface CreateAccountInput {
    * on the result.
    */
   accessGroupName?: string;
+  /**
+   * Persist owner-specific metadata before account-home I/O begins. The
+   * callback must be synchronous so an interrupted external provisioning step
+   * remains unambiguously owned and recoverable.
+   */
+  onDurableCreate?: (created: CreatedAccount) => void;
 }
 
 export interface CreatedAccount {
@@ -193,6 +199,8 @@ export async function createAccount(
 
   const entry = auth.getPasswdByUid(uid)!;
   const identity = accountIdentity(auth, entry);
+  const created = { identity, created: true, accessGroupGid };
+  input.onDurableCreate?.(created);
   const userContextUsername = input.kind === "agent" && ownerUsername
     ? ownerUsername
     : identity.username;
@@ -210,7 +218,7 @@ export async function createAccount(
     await seedContextFile(env, identity, file.name, file.text);
   }
 
-  return { identity, created: true, accessGroupGid };
+  return created;
 }
 
 /**

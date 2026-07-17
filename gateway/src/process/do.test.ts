@@ -10,6 +10,7 @@ import {
   bodyToBytes,
   bodyToText,
   REQUEST_CANCEL_SIGNAL,
+  decodeDataFrameStream,
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame, ResponseOkFrame } from "../protocol/frames";
@@ -3642,6 +3643,43 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("rejects managed media above the tenant object ceiling before upload", async () => {
+      const stub = await initProcess("mech-media-managed-limit", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        const put = vi.fn();
+        let cancelled = false;
+        process.env = {
+          ...originalEnv,
+          GSV_MAX_R2_OBJECT_BYTES: "2",
+          STORAGE: { ...originalEnv.STORAGE, put },
+        };
+        try {
+          const result = await process.handleProcMediaWrite(
+            { type: "image", mimeType: "image/png" },
+            {
+              length: 3,
+              stream: new ReadableStream<Uint8Array>({
+                cancel() {
+                  cancelled = true;
+                },
+              }),
+            },
+          );
+          expect(result).toEqual({
+            ok: false,
+            error: "EFBIG: storage object exceeds 2 bytes",
+          });
+          expect(cancelled).toBe(true);
+          expect(put).not.toHaveBeenCalled();
+        } finally {
+          process.env = originalEnv;
+        }
+      });
+    });
+
     it("deletes an upload that finishes after a process reset", async () => {
       const pid = "mech-media-reset-race";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -6125,6 +6163,137 @@ describe("Process DO — mechanical", () => {
         .map((entry) => (entry.payload as any).event)
         .filter(Boolean);
       expect(lifecycleEvents).toEqual([]);
+    });
+  });
+
+  describe("managed update fencing", () => {
+    it("streams a paused process snapshot with exact provider and logical identity", async () => {
+      const pid = "mech-managed-portable-snapshot";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const records = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("user", "portable private history");
+        await process.managedPause();
+        const descriptor = process.managedDescriptor();
+        const stream = process.managedSnapshot({
+          component: "gateway",
+          kind: "process",
+          providerId: descriptor.providerId,
+          logicalName: pid,
+          objectId: "archive-process-object",
+          fenceEpoch: descriptor.lifecycle.epoch,
+        });
+        const output: Array<{ kind: string; objectId: string; body: string }> = [];
+        for await (const record of decodeDataFrameStream(stream)) {
+          output.push({
+            kind: record.kind,
+            objectId: record.objectId,
+            body: record.kind === "do.sqlite.cell"
+              ? "<binary>"
+              : new TextDecoder().decode(record.body),
+          });
+        }
+        return output;
+      });
+
+      expect(records[0]).toMatchObject({
+        kind: "do.descriptor",
+        objectId: "archive-process-object",
+      });
+      expect(records.some((record) => record.kind === "do.sqlite.rows")).toBe(true);
+      expect(records.map((record) => record.body).join("\n")).not.toContain("__gsv:managed:");
+      expect(records.map((record) => record.body).join("\n")).not.toContain(
+        "_gsv_schema_migrations",
+      );
+    });
+
+    it("cancels a restore stream before rejecting a mismatched target identity", async () => {
+      const pid = "mech-managed-restore-target";
+      const stub = env.PROCESS.getByName(pid);
+      let cancelled = false;
+      const stream = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true;
+        },
+      });
+      await expect(runInDurableObject(stub, async (instance: Process) => {
+        await (instance as any).managedRestore({
+          component: "gateway",
+          kind: "process",
+          logicalName: `${pid}-wrong`,
+          objectId: "archive-process-object",
+          restoreId: "restore-process-object",
+          fenceEpoch: 1,
+          frameCount: "0",
+          bodyBytes: "0",
+          semanticSha256: "A".repeat(43),
+        }, stream);
+      })).rejects.toThrow(/restore identity/);
+      expect(cancelled).toBe(true);
+    });
+
+    it("aborts the active run, preserves queued input, and resumes it explicitly", async () => {
+      const pid = "mech-managed-update-fence";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.sendSignal = vi.fn(async () => {});
+        process.scheduleTick = vi.fn(async () => {});
+        process.currentRun = { runId: "run-active", conversationId: "default" };
+        process.store.enqueue("run-queued", "keep this input", undefined, "default");
+
+        await process.managedPause();
+        const rejected = await process.recvFrame(makeReq("proc.history", {}));
+        const paused = {
+          persisted: process.ctx.storage.kv.get("__gsv:managed:paused"),
+          currentRun: process.currentRun,
+          queueSize: process.store.queueSize(),
+        };
+
+        await process.managedResume();
+        await process.managedActivate();
+        return {
+          rejected,
+          paused,
+          resumed: {
+            persisted: process.ctx.storage.kv.get("__gsv:managed:paused"),
+            currentRun: process.currentRun,
+            queueSize: process.store.queueSize(),
+            scheduled: process.scheduleTick.mock.calls,
+          },
+        };
+      });
+
+      expect(result.rejected).toMatchObject({
+        ok: false,
+        error: { code: 503, message: "Tenant runtime is being updated" },
+      });
+      expect(result.paused).toEqual({ persisted: true, currentRun: null, queueSize: 1 });
+      expect(result.resumed).toMatchObject({
+        persisted: undefined,
+        currentRun: { runId: "run-queued", conversationId: "default" },
+        queueSize: 0,
+      });
+      expect(result.resumed.scheduled).toEqual([["run-queued"]]);
+    });
+
+    it("keeps a durable erased tombstone after wiping process data", async () => {
+      const stub = await initProcess("mech-managed-erased", ROOT_IDENTITY);
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        await process.managedErase();
+        return {
+          tombstone: process.ctx.storage.kv.get("__gsv:managed:erased"),
+          response: await process.recvFrame(makeReq("proc.history", {})),
+        };
+      });
+
+      expect(result.tombstone).toBe(true);
+      expect(result.response).toMatchObject({
+        ok: false,
+        error: { code: 410, message: "Process no longer exists" },
+      });
     });
   });
 

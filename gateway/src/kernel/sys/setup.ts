@@ -1,4 +1,5 @@
 import { hashPassword, isLocked, makeShadowEntry } from "../../auth/shadow";
+import { authorizeSetupToken } from "../../auth/setup-token";
 import type { KernelContext } from "../context";
 import { SERVER_RELEASE } from "../../version";
 import type { PasswdEntry } from "../../auth/passwd";
@@ -7,8 +8,10 @@ import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
 import { seedRepoSkillsToHome } from "./skills-seed";
-import { ensurePersonalAgent } from "../agents";
+import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "../agents";
 import { provisionEnabledPackagesForCaller } from "../package-agents";
+import { assertSafeBootstrapArgs } from "./bootstrap-source";
+import type { SetupRecoveryRecord } from "../setup-recovery";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -21,10 +24,14 @@ async function timeSetupStep<T>(
   timings: SetupTiming[],
   label: string,
   run: () => T | Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
   const startedAt = Date.now();
   try {
-    return await run();
+    signal?.throwIfAborted();
+    const result = await run();
+    signal?.throwIfAborted();
+    return result;
   } finally {
     timings.push({ label, ms: Date.now() - startedAt });
   }
@@ -90,7 +97,6 @@ function parseSetupIdentity(args: SysSetupArgs): { username: string; password: s
 }
 
 function parseSetupAgentName(
-  auth: KernelContext["auth"],
   value: unknown,
   username: string,
 ): string | undefined {
@@ -102,10 +108,23 @@ function parseSetupAgentName(
   if (agentName === username) {
     throw new Error("agentName must be different from username");
   }
-  if (auth.getPasswdByUsername(agentName) || auth.getGroupByName(agentName)) {
-    throw new Error(`agentName is unavailable: ${agentName}`);
-  }
   return agentName;
+}
+
+function parseBootstrapConfig(value: unknown): SysSetupArgs["bootstrap"] {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("bootstrap must be an object");
+  }
+  assertSafeBootstrapArgs(value);
+  const raw = value as Record<string, unknown>;
+  const remoteUrl = readOptionalString(raw.remoteUrl);
+  const repo = readOptionalString(raw.repo);
+  const ref = readOptionalString(raw.ref);
+  if (remoteUrl === undefined && repo === undefined && ref === undefined) {
+    return undefined;
+  }
+  return { remoteUrl, repo, ref };
 }
 
 function parseAiConfig(args: SysSetupArgs): { provider?: string; model?: string; apiKey?: string } {
@@ -153,6 +172,69 @@ function parseNodeConfig(args: SysSetupArgs): {
   };
 }
 
+async function setupPlanFingerprint(input: {
+  username: string;
+  rootPasswordPresent: boolean;
+  agentName?: string;
+  bootstrap?: SysSetupArgs["bootstrap"];
+  ai: { provider?: string; model?: string; apiKey?: string };
+  timezone?: string;
+  node: ReturnType<typeof parseNodeConfig>;
+}): Promise<string> {
+  const canonical = JSON.stringify({
+    version: 1,
+    username: input.username,
+    rootPasswordPresent: input.rootPasswordPresent,
+    agentName: input.agentName ?? null,
+    bootstrap: input.bootstrap
+      ? {
+          remoteUrl: input.bootstrap.remoteUrl ?? null,
+          repo: input.bootstrap.repo ?? null,
+          ref: input.bootstrap.ref ?? null,
+        }
+      : null,
+    ai: {
+      provider: input.ai.provider ?? null,
+      model: input.ai.model ?? null,
+      apiKeyPresent: input.ai.apiKey !== undefined,
+    },
+    timezone: input.timezone ?? null,
+    node: input.node
+      ? {
+          deviceId: input.node.deviceId,
+          label: input.node.label ?? null,
+          // Expiry is issuance freshness, not tenant topology. Preserve its
+          // presence while allowing an authenticated retry to move a now-stale
+          // absolute timestamp forward.
+          expiresAtPresent: input.node.expiresAt !== undefined,
+        }
+      : null,
+  });
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical)),
+  );
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function assertRecoveryMatches(
+  recovery: SetupRecoveryRecord,
+  username: string,
+  planFingerprint: string,
+): void {
+  if (recovery.username !== username || recovery.planFingerprint !== planFingerprint) {
+    throw new Error("Setup recovery request does not match the interrupted setup");
+  }
+}
+
+function assertAgentNameAvailable(
+  auth: KernelContext["auth"],
+  agentName: string | undefined,
+): void {
+  if (agentName && (auth.getPasswdByUsername(agentName) || auth.getGroupByName(agentName))) {
+    throw new Error(`agentName is unavailable: ${agentName}`);
+  }
+}
+
 export async function handleSysSetup(
   args: SysSetupArgs,
   ctx: KernelContext,
@@ -164,12 +246,13 @@ export async function handleSysSetup(
     : "<unknown>";
   const startedAt = Date.now();
   const timings: SetupTiming[] = [];
+  const runSetupStep = <T>(label: string, run: () => T | Promise<T>): Promise<T> => (
+    timeSetupStep(timings, label, run, ctx.requestSignal)
+  );
 
-  if (!auth.isSetupMode()) {
-    throw new Error("System already initialized");
-  }
-
+  ctx.requestSignal?.throwIfAborted();
   const { username, password } = parseSetupIdentity(args);
+  const bootstrapConfig = parseBootstrapConfig(rawArgs.bootstrap);
   const ai = parseAiConfig(args);
   const timezone = parseTimezone(args);
   const node = parseNodeConfig(args);
@@ -178,17 +261,101 @@ export async function handleSysSetup(
     throw new Error("rootPassword must be at least 8 characters");
   }
 
-  const passwdEntries = auth.getPasswdEntries();
-  ensureSingleUserBootstrap(passwdEntries);
-  if (auth.getPasswdByUsername(username)) {
-    throw new Error(`User already exists: ${username}`);
+  const agentName = parseSetupAgentName(rawArgs.agentName, username);
+  const planFingerprint = await setupPlanFingerprint({
+    username,
+    rootPasswordPresent: rootPassword !== undefined,
+    agentName,
+    bootstrap: bootstrapConfig,
+    ai,
+    timezone,
+    node,
+  });
+  ctx.requestSignal?.throwIfAborted();
+  let recovery = ctx.setupRecovery.current();
+  if (!recovery && !auth.isSetupMode()) {
+    throw new Error("System already initialized");
   }
-  const agentName = parseSetupAgentName(auth, (args as Record<string, unknown>).agentName, username);
 
-  const uid = auth.nextUid();
+  let uid: number;
+  let gid: number;
+  if (recovery) {
+    assertRecoveryMatches(recovery, username, planFingerprint);
+    const authenticated = await auth.authenticate(username, password);
+    ctx.requestSignal?.throwIfAborted();
+    if (
+      !authenticated.ok
+      || authenticated.identity.uid !== recovery.uid
+      || authenticated.identity.gid !== recovery.gid
+    ) {
+      throw new Error("Setup recovery authentication failed");
+    }
+    uid = recovery.uid;
+    gid = recovery.gid;
+  } else {
+    await authorizeSetupToken(
+      ctx.env,
+      rawArgs.setupToken,
+      Date.now(),
+      ctx.managedSetupTokenPolicy,
+    );
+    ctx.requestSignal?.throwIfAborted();
+
+    const passwdEntries = auth.getPasswdEntries();
+    ensureSingleUserBootstrap(passwdEntries);
+    if (auth.getPasswdByUsername(username)) {
+      throw new Error(`User already exists: ${username}`);
+    }
+    assertAgentNameAvailable(auth, agentName);
+
+    uid = auth.nextUid();
+    gid = uid;
+    const [hashedPassword, rootHash] = await Promise.all([
+      hashPassword(password),
+      rootPassword ? hashPassword(rootPassword) : Promise.resolve(undefined),
+    ]);
+    ctx.requestSignal?.throwIfAborted();
+    recovery = {
+      username,
+      uid,
+      gid,
+      planFingerprint,
+      createdAt: Date.now(),
+    };
+    await runSetupStep("write-auth-state", () => {
+      ctx.setupRecovery.start(recovery!, () => {
+        ensureSingleUserBootstrap(auth.getPasswdEntries());
+        if (auth.getPasswdByUsername(username)) {
+          throw new Error(`User already exists: ${username}`);
+        }
+        assertAgentNameAvailable(auth, agentName);
+
+        auth.addUser({
+          username,
+          uid,
+          gid,
+          gecos: username,
+          home: `/home/${username}`,
+          shell: "/bin/init",
+        });
+        auth.setShadow(makeShadowEntry(username, hashedPassword));
+
+        if (!auth.getGroupByName(username) && !auth.getGroupByGid(gid)) {
+          auth.addGroup({ name: username, gid, members: [] });
+        }
+        const usersGroup = auth.getGroupByName("users");
+        if (usersGroup && !usersGroup.members.includes(username)) {
+          auth.updateGroupMembers("users", [...usersGroup.members, username]);
+        }
+        if (!auth.setPasswordHash("root", rootHash ?? hashedPassword)) {
+          throw new Error("Root account credentials are unavailable");
+        }
+      });
+    });
+  }
+
   // User Private Group (UPG): each user gets a unique primary group with gid = uid.
   // Shared capabilities still flow through supplementary membership in `users` (gid 100).
-  const gid = uid;
   const home = `/home/${username}`;
   const bootstrapProcessIdentity: ProcessIdentity = {
     uid,
@@ -216,55 +383,22 @@ export async function handleSysSetup(
 
   try {
     if (ctx.env.RIPGIT) {
-      bootstrap = await timeSetupStep(
-        timings,
+      bootstrap = await runSetupStep(
         "bootstrap-system",
-        () => handleSysBootstrap(rawArgs.bootstrap as SysSetupArgs["bootstrap"], {
+        () => handleSysBootstrap(bootstrapConfig, {
           ...ctx,
           identity: bootstrapIdentity,
         }),
       );
     }
 
-    await timeSetupStep(timings, "write-auth-state", async () => {
-      auth.addUser({
-        username,
-        uid,
-        gid,
-        gecos: username,
-        home,
-        shell: "/bin/init",
-      });
-
-      const hashedPassword = await hashPassword(password);
-      auth.setShadow(makeShadowEntry(username, hashedPassword));
-
-      // Private primary group (gid = uid) owned by this user.
-      if (!auth.getGroupByName(username) && !auth.getGroupByGid(gid)) {
-        auth.addGroup({ name: username, gid, members: [] });
-      }
-
-      const usersGroup = auth.getGroupByName("users");
-      if (usersGroup && !usersGroup.members.includes(username)) {
-        auth.updateGroupMembers("users", [...usersGroup.members, username]);
-      }
-
-      if (rootPassword) {
-        const rootHash = await hashPassword(rootPassword);
-        await auth.setPassword("root", rootHash);
-      } else {
-        await auth.setPassword("root", hashedPassword);
-      }
-
-    });
-
-    await timeSetupStep(timings, "write-system-config", () => {
+    await runSetupStep("write-system-config", () => {
       if (timezone !== undefined) {
         config.set("config/server/timezone", timezone);
       }
     });
 
-    await timeSetupStep(timings, "write-ai-config", () => {
+    await runSetupStep("write-ai-config", () => {
       if (ai.provider !== undefined) {
         config.set("config/ai/provider", ai.provider);
       }
@@ -276,33 +410,7 @@ export async function handleSysSetup(
       }
     });
 
-    if (node) {
-      nodeToken = await timeSetupStep(timings, "issue-node-token", async () => {
-        const issued = await auth.issueToken({
-          uid,
-          kind: "node",
-          label: node.label ?? `node:${node.deviceId}`,
-          allowedRole: "driver",
-          allowedDeviceId: node.deviceId,
-          expiresAt: node.expiresAt,
-        });
-        return {
-          tokenId: issued.tokenId,
-          token: issued.token,
-          tokenPrefix: issued.tokenPrefix,
-          uid: issued.uid,
-          kind: "node",
-          label: issued.label,
-          allowedRole: "driver",
-          allowedDeviceId: issued.allowedDeviceId,
-          createdAt: issued.createdAt,
-          expiresAt: issued.expiresAt,
-        };
-      });
-    }
-
-    await timeSetupStep(
-      timings,
+    await runSetupStep(
       "ensure-home-layout",
       async () => {
         await ensureAccountHomeLayout(ctx.env, rootProcessIdentity, {
@@ -323,8 +431,7 @@ export async function handleSysSetup(
         repo: "gsv",
         branch: bootstrapResult.head ?? bootstrapResult.ref,
       };
-      await timeSetupStep(
-        timings,
+      await runSetupStep(
         "seed-root-skills",
         () => seedRepoSkillsToHome(ripgit, sourceRepo, rootProcessIdentity),
       );
@@ -339,16 +446,49 @@ export async function handleSysSetup(
       cwd: home,
     };
 
-    await timeSetupStep(timings, "provision-personal-agent", async () => {
+    await runSetupStep("provision-personal-agent", async () => {
       await ensurePersonalAgent(ctx, processIdentity, agentName);
     });
 
-    await timeSetupStep(timings, "provision-package-agents", async () => {
+    await runSetupStep("provision-package-agents", async () => {
       await provisionEnabledPackagesForCaller(
         { ...ctx, identity: bootstrapIdentity },
         ctx.packages.list({ enabled: true }),
       );
     });
+
+    await runSetupStep("provision-default-conversation", () => (
+      ensureDefaultConversationExecutor(ctx, processIdentity)
+    ));
+
+    const preparedNodeToken = node
+      ? await runSetupStep("prepare-node-token", () => auth.prepareToken({
+          uid,
+          kind: "node",
+          label: node.label ?? `node:${node.deviceId}`,
+          allowedRole: "driver",
+          allowedDeviceId: node.deviceId,
+          expiresAt: node.expiresAt,
+        }))
+      : undefined;
+    nodeToken = await runSetupStep("commit-setup", () => (
+      ctx.setupRecovery.finish(recovery!, () => {
+        if (!preparedNodeToken) return undefined;
+        const issued = auth.persistPreparedToken(preparedNodeToken);
+        return {
+          tokenId: issued.tokenId,
+          token: issued.token,
+          tokenPrefix: issued.tokenPrefix,
+          uid: issued.uid,
+          kind: "node" as const,
+          label: issued.label,
+          allowedRole: "driver" as const,
+          allowedDeviceId: issued.allowedDeviceId,
+          createdAt: issued.createdAt,
+          expiresAt: issued.expiresAt,
+        };
+      })
+    ));
 
     const rootShadow = auth.getShadowByUsername("root");
     const rootLocked = rootShadow ? isLocked(rootShadow) : true;

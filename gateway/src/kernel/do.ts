@@ -30,14 +30,22 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   BinaryBodyChannel,
+  MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+  normalizeAdapterAccountId,
   REQUEST_CANCEL_SIGNAL,
+  validateManagedRestoreControl,
+  validateManagedSnapshotRequest,
   type BinaryFrameDescriptor,
+  type ManagedObjectRestoreControl,
+  type ManagedObjectSnapshotRequest,
+  type ManagedObjectDescriptor,
   type OutgoingBinaryBody,
 } from "@humansandmachines/gsv/protocol";
 import type { SyscallName } from "../syscalls";
 import type {
   AdapterOutboundMessage,
 } from "../adapter-interface";
+import { SetupTokenError } from "../auth/setup-token";
 import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
@@ -77,7 +85,6 @@ import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { sendFrameToProcess } from "../shared/utils";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
-import { buildAppRunnerName } from "../protocol/app-session";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import { completeOAuthCallback as completeOAuthCallbackFlow } from "./sys/oauth";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
@@ -112,10 +119,59 @@ import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import { SERVER_VERSION } from "../version";
+import { AppRunnerRegistry, type ManagedAppRunnerRecord } from "./app-runner-registry";
+import {
+  SetupAssistBudget,
+  SetupAssistRateLimitError,
+} from "./setup-assist-budget";
+import {
+  WebSocketAdmission,
+  webSocketMessageSize,
+} from "./websocket-admission";
+import { FirstBootAdmission } from "./first-boot-admission";
+import { SetupTokenPolicyStore } from "./setup-token-policy";
+import { SetupRecoveryStore } from "./setup-recovery";
+import type {
+  SetupTokenPolicy,
+  SetupTokenPolicyInstallResult,
+} from "../auth/setup-token-policy";
+import { r2ObjectLimit } from "../fs/storage-policy";
+import {
+  prepareManagedRestoreTarget,
+  readManagedRestoreTarget,
+  restoreManagedOwner,
+  snapshotManagedOwner,
+} from "../managed/do-portability";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
+const MANAGED_LIFECYCLE_KEY = "__gsv:managed:lifecycle";
+const MANAGED_EPOCH_KEY = "__gsv:managed:epoch";
+const MANAGED_FENCE_REQUEST_SETTLE_TIMEOUT_MS = 30_000;
+
+function waitForManagedRequestSettlement(requests: Promise<void>[]): Promise<void> {
+  if (requests.length === 0) return Promise.resolve();
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error("Timed out waiting for active tenant requests to stop"));
+    }, MANAGED_FENCE_REQUEST_SETTLE_TIMEOUT_MS);
+  });
+
+  return Promise.race([
+    Promise.allSettled(requests).then(() => undefined),
+    timeout,
+  ]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
+}
+
+type ManagedLifecycle = "active" | "updating" | "erasing" | "erased";
+type ManagedAdapterName = "whatsapp" | "discord" | "telegram";
+type ManagedAdapterAccountInventory = Record<ManagedAdapterName, string[]>;
+type ManagedAdapterAccountCounts = Record<ManagedAdapterName, number>;
 
 type ConnectionState = {
   step: "pending" | "connected" | "superseded";
@@ -197,6 +253,12 @@ export class Kernel extends Host<Env> {
   private readonly schedules: ScheduleStore;
   private readonly appSessions: AppSessionStore;
   private readonly packages: PackageStore;
+  private readonly appRunners: AppRunnerRegistry;
+  private readonly setupAssistBudget: SetupAssistBudget;
+  private readonly setupTokenPolicies: SetupTokenPolicyStore;
+  private readonly setupRecovery: SetupRecoveryStore;
+  private readonly webSocketAdmission = new WebSocketAdmission();
+  private readonly firstBootAdmission = new FirstBootAdmission();
   private readonly oauth: OAuthStore;
   private readonly mcpServers: McpServerStore;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
@@ -209,17 +271,37 @@ export class Kernel extends Host<Env> {
   >();
   private readonly activeRequests = new Map<
     string,
-    { origin: RouteOrigin; controller: AbortController }
+    {
+      origin: RouteOrigin;
+      controller: AbortController;
+      settled: Promise<void>;
+      settle: () => void;
+    }
   >();
   private readonly cancelledProcessRequests = new Map<
     string,
     { expiresAt: number; reason: string }
   >();
+  private managedLifecycle: ManagedLifecycle = "active";
+  private managedEpoch = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    const storedManagedLifecycle = ctx.storage.kv.get(MANAGED_LIFECYCLE_KEY);
+    this.managedLifecycle = storedManagedLifecycle === "updating"
+      || storedManagedLifecycle === "erasing"
+      || storedManagedLifecycle === "erased"
+      ? storedManagedLifecycle
+      : "active";
+    const storedManagedEpoch = ctx.storage.kv.get<number>(MANAGED_EPOCH_KEY);
+    this.managedEpoch = Number.isSafeInteger(storedManagedEpoch) && storedManagedEpoch! >= 0
+      ? storedManagedEpoch!
+      : 0;
     const sql = ctx.storage.sql;
     runKernelSqlMigrations(ctx.storage);
+
+    this.setupTokenPolicies = new SetupTokenPolicyStore(ctx.storage);
+    this.setupRecovery = new SetupRecoveryStore(ctx.storage);
 
     this.auth = new AuthStore(sql);
 
@@ -252,7 +334,11 @@ export class Kernel extends Host<Env> {
 
     this.appSessions = new AppSessionStore(sql);
 
-    this.packages = new PackageStore(sql, env.STORAGE);
+    this.packages = new PackageStore(sql, env.STORAGE, r2ObjectLimit(env));
+
+    this.appRunners = new AppRunnerRegistry(sql);
+
+    this.setupAssistBudget = new SetupAssistBudget(sql);
 
     this.oauth = new OAuthStore(sql);
 
@@ -278,9 +364,15 @@ export class Kernel extends Host<Env> {
       this.broadcastMcpChanged();
     });
 
-    this.rehydrateConnections();
-    for (const callId of this.ipcCalls.recoverDeliveryIds()) {
-      this.queueIpcCallDelivery(callId);
+    if (this.managedLifecycle === "active") {
+      this.rehydrateConnections();
+      for (const callId of this.ipcCalls.recoverDeliveryIds()) {
+        this.queueIpcCallDelivery(callId);
+      }
+    } else {
+      for (const connection of this.getConnections()) {
+        connection.close(1001, this.managedUnavailableMessage());
+      }
     }
   }
 
@@ -296,6 +388,12 @@ export class Kernel extends Host<Env> {
   }
 
   async onRequest(request: Request): Promise<Response> {
+    if (this.managedLifecycle !== "active") {
+      return new Response(this.managedUnavailableMessage(), {
+        status: 503,
+        headers: { "cache-control": "no-store" },
+      });
+    }
     const url = new URL(request.url);
     if (url.pathname !== "/oauth/callback" || request.method !== "GET") {
       return new Response("Not Found", { status: 404 });
@@ -407,11 +505,21 @@ export class Kernel extends Host<Env> {
   }
 
   onConnect(connection: Connection): void {
+    if (this.managedLifecycle !== "active") {
+      connection.close(1001, this.managedUnavailableMessage());
+      return;
+    }
+    const admission = this.webSocketAdmission.open(connection.id);
+    if (!admission.admitted) {
+      connection.close(1008, "Connection admission limit reached");
+      return;
+    }
     const state: ConnectionState = { step: "pending" };
     connection.setState(state);
   }
 
   onClose(connection: Connection): void {
+    this.webSocketAdmission.close(connection.id);
     this.closeFrameBodyChannel(connection.id);
     const state = connection.state as ConnectionState | undefined;
     if (!state) return;
@@ -441,6 +549,30 @@ export class Kernel extends Host<Env> {
   }
 
   async onMessage(connection: Connection<ConnectionState>, message: WSMessage): Promise<void> {
+    if (this.managedLifecycle !== "active") {
+      connection.close(1001, this.managedUnavailableMessage());
+      return;
+    }
+    const size = webSocketMessageSize(message);
+    const admission = this.webSocketAdmission.admit(
+      connection.id,
+      connection.state?.step === "connected" ? "connected" : "pending",
+      size.kind,
+      size.bytes,
+    );
+    if (!admission.admitted) {
+      console.warn(JSON.stringify({
+        event: "gateway_websocket_admission",
+        outcome: "rejected",
+        reason: admission.reason,
+      }));
+      this.webSocketAdmission.close(connection.id);
+      connection.close(
+        admission.reason === "frame_too_large" ? 1009 : 1008,
+        admission.reason === "frame_too_large" ? "Frame too large" : "Message admission limit reached",
+      );
+      return;
+    }
     if (typeof message !== "string") {
       this.handleBinaryMessage(connection, message);
       return;
@@ -515,6 +647,17 @@ export class Kernel extends Host<Env> {
    * via process.recvFrame callback).
    */
   async recvFrame(processId: string, frame: Frame): Promise<Frame | null> {
+    if (this.managedLifecycle !== "active") {
+      const message = this.managedUnavailableMessage();
+      if (frame.type === "req") {
+        await cancelUnlockedBody(frame.body, message);
+        return errFrame(frame.id, 503, message);
+      }
+      if (frame.type === "res") {
+        await cancelResponseFrameBody(frame, message);
+      }
+      return null;
+    }
     if (frame.type === "req") {
       try {
         return await this.handleProcessReq(processId, frame);
@@ -548,6 +691,10 @@ export class Kernel extends Host<Env> {
     args: NetFetchArgs,
     options: ProcessNetFetchOptions = {},
   ): Promise<ResponseOkFrame<"net.fetch">> {
+    if (this.managedLifecycle !== "active") {
+      await cancelUnlockedBody(options.body, this.managedUnavailableMessage());
+      throw new Error(this.managedUnavailableMessage());
+    }
     let controller: AbortController | null = null;
     const origin: RouteOrigin = { type: "process", id: processId };
     try {
@@ -611,6 +758,17 @@ export class Kernel extends Host<Env> {
    * Accepts the same frame format as WS connections/process RPC.
    */
   async serviceFrame(frame: Frame): Promise<Frame | null> {
+    if (this.managedLifecycle !== "active") {
+      const message = this.managedUnavailableMessage();
+      if (frame.type === "req") {
+        await cancelUnlockedBody(frame.body, message);
+        return errFrame(frame.id, 503, message);
+      }
+      if (frame.type === "res") {
+        await cancelResponseFrameBody(frame, message);
+      }
+      return null;
+    }
     if (frame.type !== "req") {
       return null;
     }
@@ -623,6 +781,11 @@ export class Kernel extends Host<Env> {
   }
 
   async appRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame> {
+    if (this.managedLifecycle !== "active") {
+      const message = this.managedUnavailableMessage();
+      await cancelUnlockedBody(frame.body, message);
+      return errFrame(frame.id, 503, message);
+    }
     try {
       return await this.handleAppRequest(appFrame, frame);
     } finally {
@@ -693,6 +856,9 @@ export class Kernel extends Host<Env> {
     input: ResolvePackageAppRpcInput,
     mode: "resolve" | "refresh",
   ): Promise<ResolvePackageAppRpcResult> {
+    if (this.managedLifecycle !== "active") {
+      return { ok: false, status: 503, message: this.managedUnavailableMessage() };
+    }
     const packageName = input.packageName?.trim() ?? "";
     const sessionId = input.sessionId.trim();
     const secret = input.secret.trim();
@@ -756,6 +922,9 @@ export class Kernel extends Host<Env> {
   }
 
   async authorizeGitHttp(input: AuthorizeGitHttpInput): Promise<AuthorizeGitHttpResult> {
+    if (this.managedLifecycle !== "active") {
+      return { ok: false, status: 503, message: this.managedUnavailableMessage() };
+    }
     const owner = input.owner.trim();
     const repo = input.repo.trim();
     const username = input.username?.trim() ?? "";
@@ -818,6 +987,9 @@ export class Kernel extends Host<Env> {
   }
 
   async listPublicPackages(): Promise<PkgPublicListResult> {
+    if (this.managedLifecycle !== "active") {
+      throw new Error(this.managedUnavailableMessage());
+    }
     const serverName = this.config.get("config/server/name")?.trim() || "gsv";
     return {
       serverName,
@@ -1273,12 +1445,16 @@ export class Kernel extends Host<Env> {
     return result.response;
   }
 
-  private buildContext(connection: Connection<ConnectionState>): KernelContext {
+  private buildContext(
+    connection: Connection<ConnectionState>,
+    options: { requestSignal?: AbortSignal } = {},
+  ): KernelContext {
     const state = connection.state;
     if (!state) throw new Error("Connection state is missing");
     return this.buildKernelContext({
       connection,
       identity: state.identity as ConnectionIdentity | undefined,
+      requestSignal: options.requestSignal,
     });
   }
 
@@ -1319,6 +1495,9 @@ export class Kernel extends Host<Env> {
       callerOwnerUid: options.callerOwnerUid,
       appFrame: options.appFrame,
       serverVersion: SERVER_VERSION,
+      managedSetupTokenPolicy: this.setupTokenPolicies.current(),
+      setupRecovery: this.setupRecovery,
+      consumeSetupAssistAllowance: this.setupAssistBudget.consume.bind(this.setupAssistBudget),
       broadcastToUserUid: this.broadcastToUserUid.bind(this),
       getAppRunner: this.getAppRunner.bind(this),
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
@@ -1343,8 +1522,339 @@ export class Kernel extends Host<Env> {
     };
   }
 
-  private getAppRunner(uid: number, packageId: string): unknown {
-    return this.ctx.exports.AppRunner.getByName(buildAppRunnerName(uid, packageId));
+  registerManagedAppRunner(uid: number, packageId: string): ManagedAppRunnerRecord {
+    if (this.managedLifecycle !== "active") {
+      throw new Error(this.managedUnavailableMessage());
+    }
+    return this.appRunners.register(uid, packageId);
+  }
+
+  listManagedAppRunners(): ManagedAppRunnerRecord[] {
+    return this.appRunners.list();
+  }
+
+  removeManagedAppRunner(runnerName: string): boolean {
+    return this.appRunners.remove(runnerName);
+  }
+
+  removeManagedProcess(processId: string): boolean {
+    return this.procs.kill(processId);
+  }
+
+  installManagedSetupTokenPolicy(
+    policy: SetupTokenPolicy,
+  ): SetupTokenPolicyInstallResult {
+    if (this.managedLifecycle === "erasing" || this.managedLifecycle === "erased") {
+      throw new Error("Tenant runtime is being erased");
+    }
+    return this.setupTokenPolicies.install(policy);
+  }
+
+  managedStatus(): {
+    setupMode: boolean;
+    processes: number;
+    appRunners: number;
+    adapters: ManagedAdapterAccountCounts;
+    lifecycle: "active" | "fenced" | "erasing" | "erased";
+  } {
+    return {
+      setupMode: this.auth.isSetupMode(),
+      processes: this.procs.list().length,
+      appRunners: this.appRunners.list().length,
+      adapters: this.managedAdapterCounts(),
+      lifecycle: this.managedLifecycle === "updating" ? "fenced" : this.managedLifecycle,
+    };
+  }
+
+  managedDescriptor(): ManagedObjectDescriptor {
+    const providerId = this.ctx.id.toString();
+    if (this.env.KERNEL.idFromName("singleton").toString() !== providerId) {
+      return {
+        schemaVersion: MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+        kind: "kernel",
+        providerId,
+        logicalName: null,
+        classification: this.managedLifecycle === "erased" ? "erased" : "uninitialized",
+        lifecycle: this.managedLifecycle === "erased"
+          ? { status: "erased", epoch: this.managedEpoch }
+          : { status: "uninitialized", epoch: this.managedEpoch },
+      };
+    }
+    return {
+      schemaVersion: MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+      kind: "kernel",
+      providerId,
+      logicalName: "singleton",
+      classification: this.managedLifecycle === "erased" ? "erased" : "initialized",
+      lifecycle: {
+        status: this.managedLifecycle,
+        epoch: this.managedEpoch,
+      },
+    };
+  }
+
+  managedSnapshot(input: ManagedObjectSnapshotRequest): ReadableStream<Uint8Array> {
+    const request = validateManagedSnapshotRequest(input);
+    this.assertManagedPortableIdentity(
+      request.component,
+      request.kind,
+      request.logicalName,
+      request.providerId,
+      request.fenceEpoch,
+    );
+    const descriptor = this.managedDescriptor();
+    if (
+      descriptor.classification !== "initialized"
+      || descriptor.logicalName !== request.logicalName
+      || descriptor.lifecycle.status !== "updating"
+    ) {
+      throw new Error("Managed kernel is not a fenced initialized snapshot source");
+    }
+    return snapshotManagedOwner(this.ctx.storage, {
+      objectId: request.objectId,
+      assertFenced: () => this.assertManagedPortableFence(request.fenceEpoch),
+    });
+  }
+
+  async managedRestore(
+    control: ManagedObjectRestoreControl,
+    stream: ReadableStream<Uint8Array>,
+  ): Promise<{
+    status: "applied" | "replayed";
+    providerId: string;
+    frameCount: string;
+    bodyBytes: string;
+    semanticSha256: string;
+  }> {
+    try {
+      control = validateManagedRestoreControl(control);
+      this.assertManagedPortableIdentity(
+        control.component,
+        control.kind,
+        control.logicalName,
+        this.ctx.id.toString(),
+        control.fenceEpoch,
+      );
+      if (!readManagedRestoreTarget(this.ctx.storage)) {
+        const inventory = this.managedRuntimeInventory();
+        if (
+          !this.auth.isSetupMode()
+          || inventory.processIds.length !== 0
+          || inventory.appRunnerNames.length !== 0
+          || Object.values(inventory.adapters).some((accountIds) => accountIds.length !== 0)
+        ) {
+          throw new Error("Managed kernel restore target is not a fresh tenant runtime");
+        }
+      }
+      await prepareManagedRestoreTarget(this.ctx.storage, control);
+      this.assertManagedPortableFence(control.fenceEpoch);
+      const result = await restoreManagedOwner(
+        this.ctx.storage,
+        stream,
+        control,
+        () => this.assertManagedPortableFence(control.fenceEpoch),
+      );
+      const descriptor = this.managedDescriptor();
+      if (
+        descriptor.classification !== "initialized"
+        || descriptor.logicalName !== control.logicalName
+        || descriptor.providerId !== this.ctx.id.toString()
+      ) {
+        throw new Error("Restored kernel identity does not match its target");
+      }
+      return { ...result, providerId: descriptor.providerId };
+    } catch (error) {
+      if (!stream.locked) await stream.cancel(error).catch(() => {});
+      throw error;
+    }
+  }
+
+  private assertManagedPortableIdentity(
+    component: string,
+    kind: string,
+    logicalName: string,
+    providerId: string,
+    fenceEpoch: number,
+  ): void {
+    if (
+      component !== "gateway"
+      || kind !== "kernel"
+      || logicalName !== "singleton"
+      || providerId !== this.ctx.id.toString()
+      || this.env.KERNEL.idFromName(logicalName).toString() !== providerId
+    ) {
+      throw new Error("Managed kernel portable identity is invalid");
+    }
+    this.assertManagedPortableFence(fenceEpoch);
+  }
+
+  private assertManagedPortableFence(fenceEpoch: number): void {
+    if (this.managedLifecycle !== "updating" || this.managedEpoch !== fenceEpoch) {
+      throw new Error("Managed kernel portable operation lost its exact update fence");
+    }
+  }
+
+  async managedPrepareErase(): Promise<{
+    processIds: string[];
+    appRunnerNames: string[];
+    adapters: ManagedAdapterAccountInventory;
+  }> {
+    if (this.managedLifecycle === "erased") {
+      return this.managedRuntimeInventory();
+    }
+    if (this.managedLifecycle !== "erasing") {
+      this.advanceManagedEpoch();
+      this.managedLifecycle = "erasing";
+      this.ctx.storage.kv.put(MANAGED_LIFECYCLE_KEY, "erasing");
+    }
+    await this.managedFenceActiveRuntime();
+
+    return this.managedRuntimeInventory();
+  }
+
+  async managedPrepareUpdate(): Promise<{
+    processIds: string[];
+    appRunnerNames: string[];
+    adapters: ManagedAdapterAccountInventory;
+  }> {
+    if (this.managedLifecycle === "erasing" || this.managedLifecycle === "erased") {
+      throw new Error("Tenant runtime is being erased");
+    }
+    if (this.managedLifecycle !== "updating") {
+      this.advanceManagedEpoch();
+      this.managedLifecycle = "updating";
+      this.ctx.storage.kv.put(MANAGED_LIFECYCLE_KEY, "updating");
+    }
+    await this.managedFenceActiveRuntime();
+    return this.managedRuntimeInventory();
+  }
+
+  managedResumeUpdate(): void {
+    if (this.managedLifecycle === "erasing" || this.managedLifecycle === "erased") {
+      throw new Error("Tenant runtime is being erased");
+    }
+    if (this.managedLifecycle === "active") {
+      return;
+    }
+    this.managedLifecycle = "active";
+    this.advanceManagedEpoch();
+    this.ctx.storage.kv.delete(MANAGED_LIFECYCLE_KEY);
+  }
+
+  managedActivate(): void {
+    if (this.managedLifecycle !== "active") {
+      throw new Error(this.managedUnavailableMessage());
+    }
+    this.rehydrateConnections();
+    for (const callId of this.ipcCalls.recoverDeliveryIds()) {
+      this.queueIpcCallDelivery(callId);
+    }
+    for (const schedule of this.schedules.listDue(Date.now())) {
+      this.ctx.waitUntil(this.onScheduleDue(schedule.id));
+    }
+  }
+
+  private async managedFenceActiveRuntime(): Promise<void> {
+    const message = this.managedUnavailableMessage();
+    const reason = new Error(message);
+    const activeRequests = [...this.activeRequests.values()];
+    for (const request of activeRequests) {
+      request.controller.abort(reason);
+    }
+    for (const connection of this.getConnections<ConnectionState>()) {
+      this.webSocketAdmission.close(connection.id);
+      connection.close(1001, message);
+    }
+    this.connections.clear();
+    const bodyCancellations = [...this.routedBodies.values()].map((body) => (
+      body.cancel(reason).catch(() => {})
+    ));
+    this.routedBodies.clear();
+    for (const channel of this.frameBodyChannels.values()) {
+      channel.close(reason);
+    }
+    this.frameBodyChannels.clear();
+    await Promise.all(bodyCancellations);
+    await waitForManagedRequestSettlement(
+      activeRequests.map((request) => request.settled),
+    );
+  }
+
+  private managedRuntimeInventory(): {
+    processIds: string[];
+    appRunnerNames: string[];
+    adapters: ManagedAdapterAccountInventory;
+  } {
+    return {
+      processIds: this.procs.list().map((record) => record.processId),
+      appRunnerNames: this.appRunners.list().map((record) => record.runnerName),
+      adapters: this.managedAdapterInventory(),
+    };
+  }
+
+  private managedAdapterInventory(): ManagedAdapterAccountInventory {
+    const inventory: ManagedAdapterAccountInventory = {
+      whatsapp: [],
+      discord: [],
+      telegram: [],
+    };
+    const cleanup = this.adapters.status.cleanupInvalidManagedAccounts(
+      Object.keys(inventory),
+    );
+    if (cleanup.blocked > 0) {
+      throw new Error(
+        "Managed adapter inventory contains an invalid account that may own live state",
+      );
+    }
+    for (const account of this.adapters.status.listAll()) {
+      const adapter = account.adapter.trim().toLowerCase();
+      const accountId = normalizeAdapterAccountId(account.accountId);
+      if (!accountId || !(adapter in inventory)) continue;
+      inventory[adapter as keyof ManagedAdapterAccountInventory].push(accountId);
+    }
+    for (const accountIds of Object.values(inventory)) {
+      accountIds.sort();
+      for (let index = accountIds.length - 1; index > 0; index -= 1) {
+        if (accountIds[index] === accountIds[index - 1]) accountIds.splice(index, 1);
+      }
+    }
+    return inventory;
+  }
+
+  private managedAdapterCounts(): ManagedAdapterAccountCounts {
+    const inventory = this.managedAdapterInventory();
+    return {
+      whatsapp: inventory.whatsapp.length,
+      discord: inventory.discord.length,
+      telegram: inventory.telegram.length,
+    };
+  }
+
+  private managedUnavailableMessage(): string {
+    return this.managedLifecycle === "erasing" || this.managedLifecycle === "erased"
+      ? "Tenant runtime is being erased"
+      : "Tenant runtime is being updated";
+  }
+
+  async managedErase(): Promise<void> {
+    if (this.managedLifecycle !== "erased") this.advanceManagedEpoch();
+    this.managedLifecycle = "erased";
+    const erasedEpoch = this.managedEpoch;
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.setupTokenPolicies.clearAfterErase();
+    this.ctx.storage.kv.put(MANAGED_LIFECYCLE_KEY, "erased");
+    this.ctx.storage.kv.put(MANAGED_EPOCH_KEY, erasedEpoch);
+  }
+
+  private advanceManagedEpoch(): void {
+    this.managedEpoch += 1;
+    this.ctx.storage.kv.put(MANAGED_EPOCH_KEY, this.managedEpoch);
+  }
+
+  private getAppRunner(uid: number, packageId: string) {
+    const record = this.registerManagedAppRunner(uid, packageId);
+    return this.env.APP_RUNNER.getByName(record.runnerName);
   }
 
   private buildDispatchDeps(): DispatchDeps {
@@ -1490,7 +2000,11 @@ export class Kernel extends Host<Env> {
       }
     }
     const controller = new AbortController();
-    this.activeRequests.set(requestId, { origin, controller });
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    this.activeRequests.set(requestId, { origin, controller, settled, settle });
     return controller;
   }
 
@@ -1510,8 +2024,10 @@ export class Kernel extends Host<Env> {
   }
 
   private finishActiveRequest(requestId: string, controller: AbortController): void {
-    if (this.activeRequests.get(requestId)?.controller === controller) {
+    const active = this.activeRequests.get(requestId);
+    if (active?.controller === controller) {
       this.activeRequests.delete(requestId);
+      active.settle();
     }
   }
 
@@ -2126,7 +2642,7 @@ export class Kernel extends Host<Env> {
       issuedAt: now,
       expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
     };
-    const runner = this.ctx.exports.AppRunner.getByName(buildAppRunnerName(user.uid, record.packageId));
+    const runner = this.getAppRunner(user.uid, record.packageId);
     await runner.ensureRuntime({
       packageId: record.packageId,
       packageName: record.manifest.name,
@@ -2262,21 +2778,50 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    const ctx = this.buildContext(connection);
-    await ensureKernelBootstrapped(ctx);
+    const lease = this.firstBootAdmission.beginSetup();
+    if (!lease) {
+      this.sendError(connection, frame.id, 409, "Setup already in progress");
+      return;
+    }
 
-    if (!this.auth.isSetupMode()) {
-      this.sendError(connection, frame.id, 409, "System already initialized");
+    const origin: RouteOrigin = { type: "connection", id: connection.id };
+    let controller: AbortController;
+    try {
+      controller = this.registerActiveRequest(origin, frame.id);
+    } catch (error) {
+      this.firstBootAdmission.finishSetup(lease);
+      this.sendError(
+        connection,
+        frame.id,
+        409,
+        error instanceof Error ? error.message : String(error),
+      );
       return;
     }
 
     try {
+      const ctx = this.buildContext(connection, { requestSignal: controller.signal });
+      await ensureKernelBootstrapped(ctx);
+      controller.signal.throwIfAborted();
+
+      if (!this.auth.isSetupMode()) {
+        this.sendError(connection, frame.id, 409, "System already initialized");
+        return;
+      }
+
       const data = await handleKernelSetup(frame.args, ctx);
-      await ensureDefaultConversationExecutor(ctx, data.user);
       this.sendOk(connection, frame.id, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.sendError(connection, frame.id, 400, message);
+      this.sendError(
+        connection,
+        frame.id,
+        err instanceof SetupTokenError ? err.status : 400,
+        message,
+      );
+    } finally {
+      this.finishActiveRequest(frame.id, controller);
+      this.firstBootAdmission.finishSetup(lease);
     }
   }
 
@@ -2295,20 +2840,57 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    const ctx = this.buildContext(connection);
-    await ensureKernelBootstrapped(ctx);
-
-    if (!this.auth.isSetupMode()) {
-      this.sendError(connection, frame.id, 409, "System already initialized");
+    const lease = this.firstBootAdmission.beginAssist();
+    if (!lease) {
+      this.sendError(connection, frame.id, 409, "Setup already in progress");
       return;
     }
 
+    const origin: RouteOrigin = { type: "connection", id: connection.id };
+    let controller: AbortController;
     try {
+      controller = this.registerActiveRequest(origin, frame.id);
+    } catch (error) {
+      this.sendError(
+        connection,
+        frame.id,
+        409,
+        error instanceof Error ? error.message : String(error),
+      );
+      return;
+    }
+
+    const ctx = this.buildContext(connection, { requestSignal: controller.signal });
+
+    try {
+      await ensureKernelBootstrapped(ctx);
+      controller.signal.throwIfAborted();
+      if (!this.auth.isSetupMode()) {
+        this.sendError(connection, frame.id, 409, "System already initialized");
+        return;
+      }
       const data = await handleSysSetupAssist(frame.args, ctx);
+      if (!this.firstBootAdmission.isAssistCurrent(lease) || !this.auth.isSetupMode()) {
+        this.sendError(connection, frame.id, 409, "Setup assistance was superseded");
+        return;
+      }
       this.sendOk(connection, frame.id, data);
     } catch (err) {
+      if (!this.firstBootAdmission.isAssistCurrent(lease) || !this.auth.isSetupMode()) {
+        this.sendError(connection, frame.id, 409, "Setup assistance was superseded");
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
-      this.sendError(connection, frame.id, 400, message);
+      this.sendError(
+        connection,
+        frame.id,
+        err instanceof SetupTokenError || err instanceof SetupAssistRateLimitError
+          ? err.status
+          : 400,
+        message,
+      );
+    } finally {
+      this.finishActiveRequest(frame.id, controller);
     }
   }
 
@@ -2465,6 +3047,9 @@ export class Kernel extends Host<Env> {
   }
 
   async onScheduleDue(scheduleId: string, wake?: { id?: unknown }): Promise<void> {
+    if (this.managedLifecycle !== "active") {
+      return;
+    }
     const record = this.schedules.getStored(scheduleId);
     const wakeId = typeof wake?.id === "string" ? wake.id : null;
     if (wakeId && record?.wakeScheduleId !== wakeId) {
@@ -2957,11 +3542,17 @@ export class Kernel extends Host<Env> {
    * but our local maps must be reconstructed per constructor invocation.
    */
   private rehydrateConnections(): void {
-    const live = this.getConnections<ConnectionState>();
+    const live = [...this.getConnections<ConnectionState>()]
+      .sort((left, right) => left.id.localeCompare(right.id));
 
     const onlineTargets = new Set<string>();
 
     for (const connection of live) {
+      const admission = this.webSocketAdmission.open(connection.id);
+      if (!admission.admitted) {
+        connection.close(1008, "Connection admission limit reached");
+        continue;
+      }
       const state = connection.state;
       if (!state || state.step !== "connected" || !state.identity) continue;
 
@@ -3032,6 +3623,12 @@ export function findAppFrameEntrypoint(
 async function cancelUnlockedBody(body: FrameBody | undefined, reason: string): Promise<void> {
   if (body && !body.stream.locked) {
     await body.stream.cancel(reason).catch(() => {});
+  }
+}
+
+async function cancelResponseFrameBody(frame: ResponseFrame, reason: string): Promise<void> {
+  if (frame.ok) {
+    await cancelUnlockedBody(frame.body, reason);
   }
 }
 

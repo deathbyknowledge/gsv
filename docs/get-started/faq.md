@@ -20,7 +20,7 @@ Today, GSV is for people who run more than one machine and want an AI that spans
 
 ### What does it cost?
 
-About $5/month for infrastructure (a Cloudflare Workers Paid plan), plus your own model costs. You can bring your own API keys, so you pay your model provider directly for what you use. You can also use models through Cloudflare. There's no GSV subscription on top of that today.
+For open-source, self-hosted GSV, expect about $5/month for infrastructure (a Cloudflare Workers Paid plan), plus your own model costs. You can bring your own API keys, so you pay your model provider directly for what you use. You can also use models through Cloudflare. Self-hosted GSV has no GSV subscription or license fee. We're also developing an optional managed service for people who would rather not set up Cloudflare themselves; its pricing and availability have not been announced.
 
 ### Why do I need a paid Cloudflare plan?
 

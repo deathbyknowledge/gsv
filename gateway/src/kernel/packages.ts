@@ -19,6 +19,10 @@ import type {
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { decodeBase64Bytes } from "../shared/base64";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
+import {
+  assertR2ObjectSize,
+  contentBytes,
+} from "../fs/storage-policy";
 
 /**
  * Package model for GSV kernel-managed packages.
@@ -383,11 +387,22 @@ export function packageArtifactPublicBase(hash: string): string {
   return `/public/gsv/packages/${packageArtifactPublicSegment(hash)}`;
 }
 
-export async function storePackageArtifact(bucket: R2Bucket, artifact: PackageArtifact): Promise<void> {
+export async function storePackageArtifact(
+  bucket: R2Bucket,
+  artifact: PackageArtifact,
+  maxR2ObjectBytes?: number,
+): Promise<void> {
+  const loaderRecord = JSON.stringify(packageArtifactLoaderRecord(artifact));
+  assertR2ObjectSize(maxR2ObjectBytes, contentBytes(loaderRecord));
+  for (const file of artifact.publicFiles ?? []) {
+    const content = resolvePackagePublicFileContent(artifact.hash, file);
+    assertR2ObjectSize(maxR2ObjectBytes, contentBytes(content));
+  }
+
   await storePackagePublicFiles(bucket, artifact);
   await bucket.put(
     packageArtifactStorageKey(artifact.hash),
-    JSON.stringify(packageArtifactLoaderRecord(artifact)),
+    loaderRecord,
     {
       httpMetadata: {
         contentType: "application/json; charset=utf-8",
@@ -673,6 +688,7 @@ export class PackageStore {
   constructor(
     private readonly sql: SqlStorage,
     private readonly bucket: R2Bucket,
+    private readonly maxR2ObjectBytes?: number,
   ) {}
 
   async install(input: PackageInstallRecordInput): Promise<InstalledPackageRecord> {
@@ -691,7 +707,7 @@ export class PackageStore {
     };
 
     assertValidPackageRecord(record);
-    await storePackageArtifact(this.bucket, input.artifact);
+    await storePackageArtifact(this.bucket, input.artifact, this.maxR2ObjectBytes);
 
     this.sql.exec(
       `INSERT OR REPLACE INTO packages

@@ -69,6 +69,7 @@ import {
   resolveWorkersAiModelContextWindow,
 } from "../inference/workers-ai";
 import { resolveModelContextWindowFromRegistry } from "../inference/model-registry";
+import { resolveWorkersAiBinding } from "../inference/service-binding";
 import {
   createGenerationService,
   extractGeneratedText,
@@ -488,7 +489,7 @@ export async function handleAiTranscriptionCreate(
     }
     try {
       const result = await transcribeAudio({
-        workersAi: ctx.env.AI,
+        workersAi: resolveWorkersAiBinding(ctx.env),
       }, {
         data: base64,
         provider: stack.transcriptionProvider,
@@ -555,7 +556,7 @@ export async function handleAiImageRead(
     timeoutMs: media.imageReadingTimeoutMs,
   };
   const result = isWorkersAiProvider(media.imageReadingProvider)
-    ? await readImageWithWorkersAi(ctx.env.AI, request)
+    ? await readImageWithWorkersAi(resolveWorkersAiBinding(ctx.env), request)
     : await readImageWithPiAi(request);
   if (!result) {
     throw new Error("Image reading unavailable");
@@ -576,7 +577,7 @@ export async function handleAiImageGenerate(
   }
 
   const result = await generateImage({
-    workersAi: ctx.env.AI,
+    workersAi: resolveWorkersAiBinding(ctx.env),
   }, {
     provider: media.imageGenerationProvider,
     apiKey: media.imageGenerationApiKey,
@@ -645,7 +646,7 @@ export async function handleAiSpeechCreate(
   const timeoutMs = media.speechTimeoutMs;
 
   const result = await synthesizeSpeech({
-    workersAi: ctx.env.AI,
+    workersAi: resolveWorkersAiBinding(ctx.env),
   }, {
     provider: media.speechProvider,
     apiKey: media.speechApiKey,

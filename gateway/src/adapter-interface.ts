@@ -69,4 +69,7 @@ export interface AdapterWorkerInterface {
     activity: AdapterActivity,
   ): Promise<{ ok: true } | { ok: false; error: string }>;
   adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]>;
+  managedPause(accountIds: string[]): Promise<{ accountIds: string[] }>;
+  managedResume(accountIds: string[]): Promise<{ accountIds: string[] }>;
+  managedErase(accountIds: string[]): Promise<{ accountIds: string[] }>;
 }

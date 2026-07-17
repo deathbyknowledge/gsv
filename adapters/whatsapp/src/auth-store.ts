@@ -38,18 +38,26 @@ function authValueReviver(key: string, value: unknown): unknown {
 /**
  * Create a SignalKeyStore backed by DO storage
  */
-function createDOSignalKeyStore(storage: StorageKV): SignalKeyStoreWithTransaction {
+function createDOSignalKeyStore(
+  storage: StorageKV,
+  canAccess: () => boolean,
+): SignalKeyStoreWithTransaction {
   const PREFIX = "signal:";
+  const assertAccess = (): void => {
+    if (!canAccess()) throw new Error("WhatsApp credential generation is stale");
+  };
 
   const store: SignalKeyStoreWithTransaction = {
     async get<T extends keyof import("@whiskeysockets/baileys").SignalDataTypeMap>(
       type: T,
       ids: string[],
     ) {
+      assertAccess();
       const result: Record<string, unknown> = {};
       for (const id of ids) {
         const key = `${PREFIX}${type}:${id}`;
         const value = await storage.get<string>(key);
+        assertAccess();
         if (value) {
           try {
             result[id] = deserializeAuthValue(value);
@@ -62,6 +70,7 @@ function createDOSignalKeyStore(storage: StorageKV): SignalKeyStoreWithTransacti
     },
 
     async set(data: SignalDataSet): Promise<void> {
+      assertAccess();
       const puts: Record<string, string> = {};
       const deletes: string[] = [];
       for (const [type, entries] of Object.entries(data)) {
@@ -79,14 +88,18 @@ function createDOSignalKeyStore(storage: StorageKV): SignalKeyStoreWithTransacti
         Object.keys(puts).length > 0 ? storage.put(puts) : Promise.resolve(),
         deletes.length > 0 ? storage.delete(deletes) : Promise.resolve(),
       ]);
+      assertAccess();
     },
 
     async clear(): Promise<void> {
+      assertAccess();
       // List all keys with prefix and delete them
       const entries = await storage.list({ prefix: PREFIX });
+      assertAccess();
       const keys = [...entries.keys()];
       if (keys.length > 0) {
         await storage.delete(keys);
+        assertAccess();
       }
     },
 
@@ -113,15 +126,21 @@ function createDOSignalKeyStore(storage: StorageKV): SignalKeyStoreWithTransacti
  */
 export async function useDOAuthState(
   storage: StorageKV,
+  canAccess: () => boolean = () => true,
 ): Promise<{
   state: AuthenticationState;
   saveCreds: () => Promise<void>;
 }> {
   const CREDS_KEY = "auth:creds";
+  const assertAccess = (): void => {
+    if (!canAccess()) throw new Error("WhatsApp credential generation is stale");
+  };
 
   // Load or initialize credentials
+  assertAccess();
   let creds: AuthenticationCreds;
   const storedCreds = await storage.get<string>(CREDS_KEY);
+  assertAccess();
   
   if (storedCreds) {
     try {
@@ -137,11 +156,13 @@ export async function useDOAuthState(
   }
 
   // Create key store
-  const keys = createDOSignalKeyStore(storage);
+  const keys = createDOSignalKeyStore(storage, canAccess);
 
   // Save credentials function
   const saveCreds = async () => {
+    assertAccess();
     await storage.put(CREDS_KEY, serializeAuthValue(creds));
+    assertAccess();
     console.log("[AuthStore] Credentials saved");
   };
 

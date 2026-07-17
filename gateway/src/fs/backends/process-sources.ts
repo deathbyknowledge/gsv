@@ -13,6 +13,10 @@ import {
   type RipgitRepoRef,
 } from "../ripgit/client";
 import { concatBytes, normalizePath } from "../utils";
+import {
+  assertR2ObjectSize,
+  contentBytes,
+} from "../storage-policy";
 
 const TEXT_DECODER = new TextDecoder();
 const TEXT_ENCODER = new TextEncoder();
@@ -30,6 +34,7 @@ export type ProcessSourceBackendOptions = {
   repos?: RepoSummary[] | null;
   processId?: string | null;
   config?: SourceConfig | null;
+  maxR2ObjectBytes?: number;
 };
 
 type SourceRepo = {
@@ -160,6 +165,7 @@ class ProcessSourceBackend implements MountBackend {
   private readonly repos: SourceRepo[];
   private readonly processId: string | null;
   private readonly config: SourceConfig | null;
+  private readonly maxR2ObjectBytes?: number;
 
   constructor(options: ProcessSourceBackendOptions) {
     this.identity = options.identity;
@@ -167,6 +173,7 @@ class ProcessSourceBackend implements MountBackend {
     this.ripgit = options.ripgit!;
     this.processId = options.processId ?? null;
     this.config = options.config ?? null;
+    this.maxR2ObjectBytes = options.maxR2ObjectBytes;
     this.repos = visibleSourceRepos(options.repos);
   }
 
@@ -621,6 +628,7 @@ class ProcessSourceBackend implements MountBackend {
     const storage = this.storage!;
     const overlay = await this.readOverlay(repo);
     const contentKey = overlayContentKey(this.processId!, repo, relativePath);
+    assertR2ObjectSize(this.maxR2ObjectBytes, content.byteLength);
     await storage.put(contentKey, content);
     const now = Date.now();
     overlay.changes[relativePath] = {
@@ -631,7 +639,7 @@ class ProcessSourceBackend implements MountBackend {
       updatedAt: now,
     };
     overlay.updatedAt = now;
-    await writeOverlayManifest(storage, this.processId!, repo, overlay);
+    await writeOverlayManifest(storage, this.processId!, repo, overlay, this.maxR2ObjectBytes);
   }
 
   private async stageOverlayDelete(
@@ -657,7 +665,7 @@ class ProcessSourceBackend implements MountBackend {
       updatedAt: now,
     };
     overlay.updatedAt = now;
-    await writeOverlayManifest(storage, this.processId!, repo, overlay);
+    await writeOverlayManifest(storage, this.processId!, repo, overlay, this.maxR2ObjectBytes);
   }
 
   private async searchOverlay(
@@ -1389,13 +1397,16 @@ async function writeOverlayManifest(
   processId: string,
   repo: SourceRepo,
   overlay: SourceOverlayManifest,
+  maxR2ObjectBytes?: number,
 ): Promise<void> {
   const key = overlayManifestKey(processId, repo);
   if (Object.keys(overlay.changes).length === 0) {
     await storage.delete(key);
     return;
   }
-  await storage.put(key, `${JSON.stringify(overlay, null, 2)}\n`, {
+  const content = `${JSON.stringify(overlay, null, 2)}\n`;
+  assertR2ObjectSize(maxR2ObjectBytes, contentBytes(content));
+  await storage.put(key, content, {
     httpMetadata: { contentType: "application/json" },
   });
 }

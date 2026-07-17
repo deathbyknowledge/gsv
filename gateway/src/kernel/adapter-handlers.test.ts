@@ -357,6 +357,22 @@ describe("adapter lifecycle handlers", () => {
     ]);
   });
 
+  it("rejects invalid service status identities before persistence", () => {
+    const status = { upsert: vi.fn() };
+    const ctx = makeContext({}, status);
+
+    expect(() => handleAdapterStateUpdate({
+      adapter: "whatsapp",
+      accountId: "x".repeat(257),
+      status: {
+        accountId: "x".repeat(257),
+        connected: false,
+        authenticated: false,
+      },
+    }, ctx)).toThrow("accountId is invalid");
+    expect(status.upsert).not.toHaveBeenCalled();
+  });
+
   it("adapter.list filters cached accounts to non-root identity links", () => {
     const rows = [
       {
@@ -809,6 +825,29 @@ describe("adapter lifecycle handlers", () => {
     if (!result.ok) {
       expect(result.error).toContain("does not implement connect");
     }
+  });
+
+  it("rejects invalid account IDs before claiming ownership or calling an adapter", async () => {
+    const adapterConnect = vi.fn(async () => ({
+      ok: true as const,
+      connected: true,
+      authenticated: true,
+    }));
+    const setOwner = vi.fn();
+    const upsert = vi.fn();
+    const ctx = makeContext(
+      { CHANNEL_WHATSAPP: { adapterConnect } },
+      { setOwner, upsert },
+      { identity: userIdentity() },
+    );
+
+    await expect(handleAdapterConnect({
+      adapter: "whatsapp",
+      accountId: "x".repeat(257),
+    }, ctx)).resolves.toEqual({ ok: false, error: "accountId is invalid" });
+    expect(setOwner).not.toHaveBeenCalled();
+    expect(upsert).not.toHaveBeenCalled();
+    expect(adapterConnect).not.toHaveBeenCalled();
   });
 
   it.each([

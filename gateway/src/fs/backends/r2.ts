@@ -18,6 +18,7 @@ import type {
 } from "../mount";
 import { concatBytes, inferContentType, isTextContentType, normalizePath } from "../utils";
 import { bindStreamToAbort } from "../../shared/streams";
+import { assertR2ObjectSize } from "../storage-policy";
 
 const READ_BIT = 4;
 const WRITE_BIT = 2;
@@ -28,6 +29,7 @@ export class R2MountBackend implements MountBackend {
   constructor(
     private readonly bucket: R2Bucket,
     private readonly identity: ProcessIdentity,
+    private readonly maxObjectBytes?: number,
   ) {}
 
   handles(_path: string): boolean {
@@ -102,6 +104,7 @@ export class R2MountBackend implements MountBackend {
     const key = toKey(p);
     const existing = await this.bucket.head(key);
     if (existing) this.assertMode(existing, WRITE_BIT, p);
+    this.assertObjectSize(contentBytes(content));
 
     await this.bucket.put(key, content, {
       httpMetadata: {
@@ -123,6 +126,12 @@ export class R2MountBackend implements MountBackend {
     options: WriteFileStreamOptions,
   ): Promise<WriteFileStreamResult> {
     assertExpectedSize(options?.expectedSize);
+    try {
+      this.assertObjectSize(options.expectedSize);
+    } catch (error) {
+      await content.cancel(error).catch(() => {});
+      throw error;
+    }
     options.signal?.throwIfAborted();
     const p = normalizePath(path);
     const key = toKey(p);
@@ -161,6 +170,7 @@ export class R2MountBackend implements MountBackend {
       this.assertMode(existing, WRITE_BIT, p);
       const old = new Uint8Array(await existing.arrayBuffer());
       const appended = concatBytes(old, typeof content === "string" ? TEXT_ENCODER.encode(content) : content);
+      this.assertObjectSize(appended.byteLength);
       await this.bucket.put(key, appended, {
         httpMetadata: existing.httpMetadata,
         customMetadata: existing.customMetadata,
@@ -360,6 +370,7 @@ export class R2MountBackend implements MountBackend {
     if (existing) {
       throw new Error(`EEXIST: file already exists, symlink '${p}'`);
     }
+    this.assertObjectSize(TEXT_ENCODER.encode(target).byteLength);
 
     await this.bucket.put(key, target, {
       httpMetadata: { contentType: "text/plain" },
@@ -526,6 +537,7 @@ export class R2MountBackend implements MountBackend {
     if (this.identity.uid !== 0 && this.identity.uid !== fileUid) {
       throw new Error(`EPERM: operation not permitted, chmod '${p}'`);
     }
+    this.assertObjectSize(obj.size);
 
     const octal = mode.toString(8).padStart(3, "0");
     const stream = new FixedLengthStream(obj.size);
@@ -546,6 +558,7 @@ export class R2MountBackend implements MountBackend {
     if (this.identity.uid !== 0) {
       throw new Error(`EPERM: operation not permitted, chown '${p}'`);
     }
+    this.assertObjectSize(obj.size);
 
     const meta = { ...obj.customMetadata };
     if (newUid !== undefined) meta.uid = String(newUid);
@@ -590,6 +603,22 @@ export class R2MountBackend implements MountBackend {
 
     throw new Error(`EACCES: permission denied, '${path}'`);
   }
+
+  private assertObjectSize(size: number): void {
+    if (
+      this.maxObjectBytes !== undefined
+      && (!Number.isSafeInteger(this.maxObjectBytes) || this.maxObjectBytes < 1)
+    ) {
+      throw new Error("R2 object limit is invalid");
+    }
+    assertR2ObjectSize(this.maxObjectBytes, size);
+  }
+}
+
+function contentBytes(content: FileContent): number {
+  return typeof content === "string"
+    ? TEXT_ENCODER.encode(content).byteLength
+    : content.byteLength;
 }
 
 function toKey(path: string): string {

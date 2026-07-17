@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(8);
+    expect(KERNEL_MIGRATIONS).toHaveLength(11);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -63,6 +63,18 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[7]).toMatchObject({
       id: 8,
       name: "bind_routes_to_driver_connections",
+    });
+    expect(KERNEL_MIGRATIONS[8]).toMatchObject({
+      id: 9,
+      name: "register_app_runners",
+    });
+    expect(KERNEL_MIGRATIONS[9]).toMatchObject({
+      id: 10,
+      name: "limit_setup_assistance",
+    });
+    expect(KERNEL_MIGRATIONS[10]).toMatchObject({
+      id: 11,
+      name: "recover_interrupted_setup",
     });
   });
 
@@ -100,6 +112,9 @@ describe("kernel schema migrations", () => {
       "oauth_flows",
       "oauth_accounts",
       "user_mcp_servers",
+      "managed_app_runners",
+      "setup_assist_usage",
+      "setup_recovery",
     ]);
   });
 
@@ -168,6 +183,31 @@ describe("kernel schema migrations", () => {
       "ALTER TABLE routing_table ADD COLUMN driver_connection_id TEXT",
     );
     expect(createTableStatement("routing_table")).not.toContain("driver_connection_id");
+  });
+
+  it("registers app runner durable objects without rewriting the baseline", () => {
+    const statements = normalizedStatements();
+    expect(createTableStatement("managed_app_runners")).toContain("runner_name TEXT PRIMARY KEY");
+    expect(statements.some((statement) => (
+      statement.startsWith("INSERT OR IGNORE INTO managed_app_runners")
+      && statement.includes("FROM app_sessions")
+      && statement.includes("GROUP BY uid, package_id")
+    ))).toBe(true);
+  });
+
+  it("adds a durable setup-assistance budget", () => {
+    const usage = createTableStatement("setup_assist_usage");
+    expect(usage).toContain("scope INTEGER PRIMARY KEY CHECK (scope = 1)");
+    expect(usage).toContain("hourly_requests INTEGER NOT NULL");
+    expect(usage).toContain("daily_requests INTEGER NOT NULL");
+  });
+
+  it("adds non-secret interrupted-setup recovery state", () => {
+    const recovery = createTableStatement("setup_recovery");
+    expect(recovery).toContain("scope INTEGER PRIMARY KEY CHECK (scope = 1)");
+    expect(recovery).toContain("username TEXT NOT NULL");
+    expect(recovery).toContain("plan_fingerprint TEXT NOT NULL");
+    expect(recovery).not.toMatch(/password|token|api_key|prompt/);
   });
 
   it("includes current indexes owned by the kernel stores", () => {

@@ -218,6 +218,30 @@ describe("ensurePackageAgent", () => {
     expect(groups.find((group) => group.name === accessGroup)?.members).toEqual(["bob"]);
   });
 
+  it("repairs a provably owned package account after home provisioning fails", async () => {
+    const { ctx, passwd, config } = createCtx();
+    const storage = ctx.env.STORAGE as unknown as {
+      put: ReturnType<typeof vi.fn>;
+    };
+    storage.put.mockRejectedValueOnce(new Error("injected account-home failure"));
+    const pkg = record([BUILDER]);
+    const username = packageAgentUsername("wiki", "builder");
+
+    await expect(ensurePackageAgent(ctx, pkg, BUILDER, 1000)).rejects.toThrow(
+      "injected account-home failure",
+    );
+    const partial = passwd.find((entry) => entry.username === username);
+    expect(partial).toBeTruthy();
+    expect(config.get(`users/${partial!.uid}/pkg/owner`)).toBe(pkg.packageId);
+    expect(config.get(`users/${partial!.uid}/pkg/profile`)).toBe(BUILDER.name);
+
+    await expect(ensurePackageAgent(ctx, pkg, BUILDER, 1000)).resolves.toMatchObject({
+      username,
+      uid: partial!.uid,
+    });
+    expect(passwd.filter((entry) => entry.username === username)).toHaveLength(1);
+  });
+
   it("is idempotent across enabling humans (one shared account)", async () => {
     const { ctx, passwd, groups } = createCtx();
     const first = await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);

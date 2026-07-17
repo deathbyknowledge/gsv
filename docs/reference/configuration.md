@@ -124,6 +124,24 @@ Default policies:
 | `config/process/init_label` | `init ({username})` | Default init process label template. |
 | `config/process/max_per_user` | `0` | Maximum processes per user. `0` means unlimited. |
 
+## Optional deployment bindings
+
+These values belong to the Worker deployment environment rather than the
+Kernel's SQLite configuration store:
+
+| Binding or variable | Default | Description |
+|---|---|---|
+| `AI` | Self-hosted Wrangler configuration | Native Workers AI binding. |
+| `GSV_INFERENCE` | absent | Optional provider-neutral inference service binding. When present it replaces `AI` for Workers AI calls; malformed explicit bindings fail closed. |
+| `GSV_MAX_R2_OBJECT_BYTES` | absent | Optional positive integer ceiling applied to GSV-owned R2 object write paths. Absence means no application-level per-object ceiling. |
+
+`GSV_INFERENCE` uses the bounded HTTP codec exported from
+`@humansandmachines/gsv-worker-runtime/inference-transport`. The request signal
+is carried by `Request.signal`, JSON and binary envelopes are validated before
+use, and streaming or raw `Response` results are not buffered. Deployment
+identity, credentials, provider policy, and quotas are deliberately outside the
+public ABI; a service provider supplies those through its binding configuration.
+
 The protocol's `server.version` is this semantic product version. `server.release`
 identifies the deployed build: stable release bundles use their exact `vX.Y.Z` tag,
 while local and dev builds report `dev`. The release identifier is build metadata,

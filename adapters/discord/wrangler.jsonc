@@ -12,6 +12,10 @@
       {
         "name": "DISCORD_GATEWAY",
         "class_name": "DiscordGateway"
+      },
+      {
+        "name": "MANAGED_ADMISSION",
+        "class_name": "ManagedAdmissionGate"
       }
     ]
   },
@@ -19,6 +23,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["DiscordGateway"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["ManagedAdmissionGate"]
     }
   ],
   "services": [

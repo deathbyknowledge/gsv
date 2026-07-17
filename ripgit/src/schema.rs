@@ -142,14 +142,143 @@ const V001_INITIAL_SCHEMA: SqlMigration = SqlMigration {
     statements: V001_INITIAL_STATEMENTS,
 };
 
-const MIGRATIONS: &[SqlMigration] = &[V001_INITIAL_SCHEMA];
+const V002_MANAGED_PORTABILITY_STATEMENTS: &[&str] = &[
+    "CREATE TABLE IF NOT EXISTS managed_repository_identity (
+        singleton   INTEGER PRIMARY KEY CHECK (singleton = 1),
+        owner       TEXT    NOT NULL,
+        repo        TEXT    NOT NULL,
+        provider_id TEXT    NOT NULL UNIQUE,
+        created_at  INTEGER NOT NULL
+    )",
+    "CREATE TABLE IF NOT EXISTS managed_repository_lifecycle (
+        singleton  INTEGER PRIMARY KEY CHECK (singleton = 1),
+        status     TEXT    NOT NULL CHECK (status IN ('active', 'paused')),
+        epoch      INTEGER NOT NULL CHECK (epoch >= 0),
+        updated_at INTEGER NOT NULL
+    )",
+    "CREATE TABLE IF NOT EXISTS managed_restore_journals (
+        restore_id       TEXT    PRIMARY KEY,
+        manifest_hash    TEXT    NOT NULL,
+        manifest_json    TEXT    NOT NULL,
+        status           TEXT    NOT NULL CHECK (status IN ('applying', 'sealed')),
+        next_table_index INTEGER NOT NULL CHECK (next_table_index >= 0),
+        next_offset      INTEGER NOT NULL CHECK (next_offset >= 0),
+        applied_pages    INTEGER NOT NULL DEFAULT 0 CHECK (applied_pages >= 0),
+        applied_rows     INTEGER NOT NULL DEFAULT 0 CHECK (applied_rows >= 0),
+        created_at       INTEGER NOT NULL,
+        updated_at       INTEGER NOT NULL
+    )",
+    "CREATE TABLE IF NOT EXISTS managed_restore_pages (
+        restore_id TEXT    NOT NULL,
+        page_key   TEXT    NOT NULL,
+        page_hash  TEXT    NOT NULL,
+        row_count  INTEGER NOT NULL CHECK (row_count > 0),
+        applied_at INTEGER NOT NULL,
+        PRIMARY KEY (restore_id, page_key)
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_managed_restore_pages_restore
+     ON managed_restore_pages(restore_id, applied_at)",
+];
+
+const V002_MANAGED_PORTABILITY: SqlMigration = SqlMigration {
+    id: 2,
+    name: "managed_repository_portability",
+    statements: V002_MANAGED_PORTABILITY_STATEMENTS,
+};
+
+const V003_MANAGED_ERASURE_STATEMENTS: &[&str] = &[
+    "CREATE TABLE IF NOT EXISTS managed_repository_erasure (
+        singleton  INTEGER PRIMARY KEY CHECK (singleton = 1),
+        status     TEXT    NOT NULL CHECK (status IN ('ready', 'erased')),
+        epoch      INTEGER NOT NULL CHECK (epoch >= 0),
+        updated_at INTEGER NOT NULL
+    )",
+    "INSERT OR IGNORE INTO managed_repository_erasure(singleton, status, epoch, updated_at)
+     VALUES (1, 'ready', 0, 0)",
+];
+
+const V003_MANAGED_ERASURE: SqlMigration = SqlMigration {
+    id: 3,
+    name: "managed_repository_erasure",
+    statements: V003_MANAGED_ERASURE_STATEMENTS,
+};
+
+const MIGRATIONS: &[SqlMigration] = &[
+    V001_INITIAL_SCHEMA,
+    V002_MANAGED_PORTABILITY,
+    V003_MANAGED_ERASURE,
+];
+
+const REGISTRY_SCHEMA_COMPONENT: &str = "ripgit_managed_registry";
+
+const REGISTRY_V001_STATEMENTS: &[&str] = &[
+    "CREATE TABLE IF NOT EXISTS managed_gate (
+        singleton  INTEGER PRIMARY KEY CHECK (singleton = 1),
+        status     TEXT    NOT NULL CHECK (status IN ('active', 'paused', 'resuming')),
+        epoch      INTEGER NOT NULL CHECK (epoch >= 0),
+        updated_at INTEGER NOT NULL
+    )",
+    "INSERT OR IGNORE INTO managed_gate(singleton, status, epoch, updated_at)
+     VALUES (1, 'active', 0, 0)",
+    "CREATE TABLE IF NOT EXISTS managed_repositories (
+        provider_id   TEXT    PRIMARY KEY,
+        owner         TEXT    NOT NULL,
+        repo          TEXT    NOT NULL,
+        do_name       TEXT    NOT NULL UNIQUE,
+        applied_status TEXT,
+        applied_epoch INTEGER,
+        registered_at INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL,
+        UNIQUE (owner, repo),
+        CHECK (applied_status IS NULL OR applied_status IN ('active', 'paused')),
+        CHECK (applied_epoch IS NULL OR applied_epoch >= 0)
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_managed_repositories_inventory
+     ON managed_repositories(provider_id)",
+];
+
+const REGISTRY_V001: SqlMigration = SqlMigration {
+    id: 1,
+    name: "managed_repository_registry",
+    statements: REGISTRY_V001_STATEMENTS,
+};
+
+const REGISTRY_V002_ERASURE_STATEMENTS: &[&str] = &[
+    "CREATE TABLE IF NOT EXISTS managed_registry_erasure (
+        singleton    INTEGER PRIMARY KEY CHECK (singleton = 1),
+        status       TEXT    NOT NULL CHECK (status IN ('ready', 'erasing', 'erased')),
+        epoch        INTEGER NOT NULL CHECK (epoch >= 0),
+        started_at   INTEGER,
+        completed_at INTEGER,
+        updated_at   INTEGER NOT NULL,
+        CHECK ((status = 'ready' AND started_at IS NULL AND completed_at IS NULL)
+            OR (status = 'erasing' AND started_at IS NOT NULL AND completed_at IS NULL)
+            OR (status = 'erased' AND started_at IS NOT NULL AND completed_at IS NOT NULL))
+    )",
+    "INSERT OR IGNORE INTO managed_registry_erasure
+     (singleton, status, epoch, started_at, completed_at, updated_at)
+     VALUES (1, 'ready', 0, NULL, NULL, 0)",
+];
+
+const REGISTRY_V002_ERASURE: SqlMigration = SqlMigration {
+    id: 2,
+    name: "managed_registry_erasure",
+    statements: REGISTRY_V002_ERASURE_STATEMENTS,
+};
+
+const REGISTRY_MIGRATIONS: &[SqlMigration] = &[REGISTRY_V001, REGISTRY_V002_ERASURE];
 
 /// Initialize the current repository schema by applying unapplied migrations.
 pub fn init(sql: &SqlStorage) -> Result<()> {
-    run_migrations(sql, MIGRATIONS)
+    run_migrations(sql, SCHEMA_COMPONENT, MIGRATIONS)
 }
 
-fn run_migrations(sql: &SqlStorage, migrations: &[SqlMigration]) -> Result<()> {
+/// Initialize the authoritative managed repository registry schema.
+pub fn init_managed_registry(sql: &SqlStorage) -> Result<()> {
+    run_migrations(sql, REGISTRY_SCHEMA_COMPONENT, REGISTRY_MIGRATIONS)
+}
+
+fn run_migrations(sql: &SqlStorage, component: &str, migrations: &[SqlMigration]) -> Result<()> {
     validate_migrations(migrations)?;
     ensure_migration_table(sql)?;
 
@@ -162,7 +291,7 @@ fn run_migrations(sql: &SqlStorage, migrations: &[SqlMigration]) -> Result<()> {
                  ORDER BY id",
                 MIGRATIONS_TABLE
             ),
-            vec![SqlStorageValue::from(SCHEMA_COMPONENT.to_string())],
+            vec![SqlStorageValue::from(component.to_string())],
         )?
         .to_array()?;
 
@@ -172,7 +301,7 @@ fn run_migrations(sql: &SqlStorage, migrations: &[SqlMigration]) -> Result<()> {
             if existing.name != migration.name || existing.checksum != checksum {
                 return Err(Error::RustError(format!(
                     "Schema migration {}:{} has changed after being applied",
-                    SCHEMA_COMPONENT, migration.id
+                    component, migration.id
                 )));
             }
             continue;
@@ -192,7 +321,7 @@ fn run_migrations(sql: &SqlStorage, migrations: &[SqlMigration]) -> Result<()> {
                 MIGRATIONS_TABLE
             ),
             vec![
-                SqlStorageValue::from(SCHEMA_COMPONENT.to_string()),
+                SqlStorageValue::from(component.to_string()),
                 SqlStorageValue::from(migration.id),
                 SqlStorageValue::from(migration.name.to_string()),
                 SqlStorageValue::from(checksum),
@@ -261,4 +390,44 @@ fn migration_checksum(migration: &SqlMigration) -> String {
         hash = hash.wrapping_mul(16777619);
     }
     format!("{:08x}", hash)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_erasure_is_an_additive_upgrade() {
+        assert_eq!(
+            (
+                migration_checksum(&V001_INITIAL_SCHEMA),
+                migration_checksum(&V002_MANAGED_PORTABILITY),
+                migration_checksum(&REGISTRY_V001),
+            ),
+            (
+                "55351523".to_string(),
+                "b6a89092".to_string(),
+                "ee463319".to_string(),
+            ),
+            "shipped schemas must remain byte-for-byte stable so existing V001 registries upgrade",
+        );
+        assert_eq!(
+            MIGRATIONS
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert_eq!(
+            REGISTRY_MIGRATIONS
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
+        assert_eq!(REGISTRY_MIGRATIONS[0].name, "managed_repository_registry");
+        assert_eq!(REGISTRY_MIGRATIONS[1].name, "managed_registry_erasure");
+        validate_migrations(MIGRATIONS).unwrap();
+        validate_migrations(REGISTRY_MIGRATIONS).unwrap();
+    }
 }

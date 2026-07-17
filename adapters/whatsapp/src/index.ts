@@ -48,7 +48,9 @@ const _clearTimeout = globalThis.clearTimeout;
 // This is done via wrangler.jsonc alias configuration.
 
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { normalizeAdapterAccountId } from "@humansandmachines/gsv/protocol/adapters";
 import {
+  inferMediaMimeType,
   isHelpCommand,
   parseAttachArgs,
   parseShellWords,
@@ -57,6 +59,23 @@ import type {
   ShellExecArgs,
   ShellExecResult,
 } from "../../shared/src/types";
+import {
+  describeManagedAdapterAccounts,
+  assertManagedAdapterDescriptorRequest,
+  runManagedLifecycleAction,
+} from "../../shared/src/managed-lifecycle";
+import {
+  restoreManagedAdapterAccount,
+  snapshotManagedAdapterAccount,
+} from "../../shared/src/managed-portability";
+import {
+  MANAGED_ADMISSION_GATE_NAME,
+  ManagedAdmissionGate,
+  ManagedAdmissionUnavailableError,
+  describeManagedAdmissionObjects,
+  runWithManagedAdmission,
+} from "../../shared/src/managed-admission";
+import type { WhatsAppAccount } from "./whatsapp-account";
 import type {
   ChannelWorkerInterface,
   ChannelCapabilities,
@@ -71,9 +90,11 @@ import type {
 } from "./channel-types";
 
 export { WhatsAppAccount } from "./whatsapp-account";
+export { ManagedAdmissionGate } from "../../shared/src/managed-admission";
 
 interface Env {
-  WHATSAPP_ACCOUNT: DurableObjectNamespace;
+  WHATSAPP_ACCOUNT: DurableObjectNamespace<WhatsAppAccount>;
+  MANAGED_ADMISSION: DurableObjectNamespace<ManagedAdmissionGate>;
 }
 
 /**
@@ -94,6 +115,56 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     deletion: false,
     qrLogin: true,
   };
+
+  async managedPause(accountIds: string[]): Promise<{ accountIds: string[] }> {
+    return runManagedLifecycleAction(accountIds, "managedPause", (accountId) =>
+      this.getDO(accountId),
+    );
+  }
+
+  async managedResume(accountIds: string[]): Promise<{ accountIds: string[] }> {
+    return runManagedLifecycleAction(accountIds, "managedResume", (accountId) =>
+      this.getDO(accountId),
+    );
+  }
+
+  async managedErase(accountIds: string[]): Promise<{ accountIds: string[] }> {
+    return runManagedLifecycleAction(accountIds, "managedErase", (accountId) =>
+      this.getDO(accountId),
+    );
+  }
+
+  async managedDescribeObjects(input: unknown) {
+    assertManagedAdapterDescriptorRequest(input);
+    return input.kind === "adapter_account"
+      ? describeManagedAdapterAccounts(this.env.WHATSAPP_ACCOUNT, input.providerIds)
+      : describeManagedAdmissionObjects(this.env.MANAGED_ADMISSION, input.providerIds);
+  }
+
+  async managedSnapshot(input: unknown) {
+    return snapshotManagedAdapterAccount(this.env.WHATSAPP_ACCOUNT, "whatsapp", input);
+  }
+
+  async managedRestore(input: unknown, stream: ReadableStream<Uint8Array>) {
+    return restoreManagedAdapterAccount(
+      this.env.WHATSAPP_ACCOUNT,
+      "whatsapp",
+      input,
+      stream,
+    );
+  }
+
+  async managedFenceAll() {
+    return this.managedAdmission().managedFenceAll();
+  }
+
+  async managedResumeAll() {
+    return this.managedAdmission().managedResumeAll();
+  }
+
+  async managedEraseAll() {
+    return this.managedAdmission().managedEraseAll();
+  }
 
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
@@ -149,10 +220,6 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     };
   }
 
-  async connect(accountId: string, config: Record<string, unknown> = {}) {
-    return this.adapterConnect(accountId, config);
-  }
-
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
    */
@@ -173,9 +240,11 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
 
   async start(accountId: string, _config: Record<string, unknown>): Promise<StartResult> {
     try {
-      const res = await this.doFetch(accountId, "/wake", { method: "POST" });
-      const data = await res.json() as { success?: boolean; error?: string };
-      return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to start" };
+      return await this.withManagedAdmission(`start:${accountId}`, async () => {
+        const res = await this.doFetch(accountId, "/wake", { method: "POST" });
+        const data = await res.json() as { success?: boolean; error?: string };
+        return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to start" };
+      });
     } catch (e) {
       return { ok: false, error: String(e) };
     }
@@ -183,9 +252,11 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
 
   async stop(accountId: string): Promise<StopResult> {
     try {
-      const res = await this.doFetch(accountId, "/stop", { method: "POST" });
-      const data = await res.json() as { success?: boolean; error?: string };
-      return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to stop" };
+      return await this.withManagedAdmission(`stop:${accountId}`, async () => {
+        const res = await this.doFetch(accountId, "/stop", { method: "POST" });
+        const data = await res.json() as { success?: boolean; error?: string };
+        return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to stop" };
+      });
     } catch (e) {
       return { ok: false, error: String(e) };
     }
@@ -231,23 +302,25 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     },
   ): Promise<SendResult> {
     try {
-      console.log(`[WhatsAppEntrypoint] send() called for ${accountId} to ${message.surface.id}`);
-      const outbound: ChannelOutboundMessage = {
-        peer: message.surface,
-        text: message.text,
-        media: message.media,
-        replyToId: message.replyToId,
-      };
-      const res = await this.doFetch(accountId, "/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(outbound),
+      return await this.withManagedAdmission(`send:${accountId}`, async () => {
+        console.log(`[WhatsAppEntrypoint] send() called for ${accountId} to ${message.surface.id}`);
+        const outbound: ChannelOutboundMessage = {
+          peer: message.surface,
+          text: message.text,
+          media: message.media,
+          replyToId: message.replyToId,
+        };
+        const res = await this.doFetch(accountId, "/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(outbound),
+        });
+        const data = await res.json() as { success?: boolean; messageId?: string; error?: string };
+        if (data.success) {
+          return { ok: true, messageId: data.messageId };
+        }
+        return { ok: false, error: data.error || "Failed to send" };
       });
-      const data = await res.json() as { success?: boolean; messageId?: string; error?: string };
-      if (data.success) {
-        return { ok: true, messageId: data.messageId };
-      }
-      return { ok: false, error: data.error || "Failed to send" };
     } catch (e) {
       console.error(`[WhatsAppEntrypoint] send() error:`, e);
       return { ok: false, error: String(e) };
@@ -282,12 +355,15 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
 
   async setTyping(accountId: string, peer: ChannelPeer, typing: boolean): Promise<void> {
     try {
-      await this.doFetch(accountId, "/typing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ peer, typing }),
-      });
+      await this.withManagedAdmission(`typing:${accountId}`, () =>
+        this.doFetch(accountId, "/typing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ peer, typing }),
+        }).then(() => undefined),
+      );
     } catch (e) {
+      if (e instanceof ManagedAdmissionUnavailableError) throw e;
       console.error(`[WhatsAppEntrypoint] setTyping() error:`, e);
     }
   }
@@ -302,18 +378,20 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     },
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
-      const res = await this.doFetch(accountId, "/react", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          peer: args.surface,
-          messageId: args.messageId,
-          emoji: args.emoji,
-          participant: args.participant,
-        }),
+      return await this.withManagedAdmission(`react:${accountId}`, async () => {
+        const res = await this.doFetch(accountId, "/react", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            peer: args.surface,
+            messageId: args.messageId,
+            emoji: args.emoji,
+            participant: args.participant,
+          }),
+        });
+        const data = await res.json() as { success?: boolean; error?: string };
+        return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to react" };
       });
-      const data = await res.json() as { success?: boolean; error?: string };
-      return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to react" };
     } catch (e) {
       return { ok: false, error: String(e) };
     }
@@ -385,21 +463,23 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
 
   async login(accountId: string, options?: { force?: boolean; traceId?: string }): Promise<LoginResult> {
     try {
-      const traceId = options?.traceId?.trim() || "no-trace";
-      const path = options?.force ? "/login?force=true" : "/login";
-      console.log(`[whatsapp.login:${traceId}] forwarding accountId=${accountId} path=${path}`);
-      const res = await this.doFetch(accountId, path, { method: "POST" }, traceId);
-      const data = await res.json() as { connected?: boolean; qr?: string; message?: string; error?: string };
-      console.log(
-        `[whatsapp.login:${traceId}] response status=${res.status} connected=${Boolean(data.connected)} qr=${Boolean(data.qr)} error=${data.error ?? ""}`,
-      );
-      if (data.connected) {
-        return { ok: true, message: data.message || "Connected" };
-      }
-      if (data.qr) {
-        return { ok: true, qrDataUrl: data.qr, message: data.message || "Scan QR code" };
-      }
-      return { ok: false, error: data.error || "Login failed" };
+      return await this.withManagedAdmission(`login:${accountId}`, async () => {
+        const traceId = options?.traceId?.trim() || "no-trace";
+        const path = options?.force ? "/login?force=true" : "/login";
+        console.log(`[whatsapp.login:${traceId}] forwarding accountId=${accountId} path=${path}`);
+        const res = await this.doFetch(accountId, path, { method: "POST" }, traceId);
+        const data = await res.json() as { connected?: boolean; qr?: string; message?: string; error?: string };
+        console.log(
+          `[whatsapp.login:${traceId}] response status=${res.status} connected=${Boolean(data.connected)} qr=${Boolean(data.qr)} error=${data.error ?? ""}`,
+        );
+        if (data.connected) {
+          return { ok: true, message: data.message || "Connected" };
+        }
+        if (data.qr) {
+          return { ok: true, qrDataUrl: data.qr, message: data.message || "Scan QR code" };
+        }
+        return { ok: false, error: data.error || "Login failed" };
+      });
     } catch (e) {
       return { ok: false, error: String(e) };
     }
@@ -407,17 +487,32 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
 
   async logout(accountId: string): Promise<LogoutResult> {
     try {
-      const res = await this.doFetch(accountId, "/logout", { method: "POST" });
-      const data = await res.json() as { success?: boolean; error?: string };
-      return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to logout" };
+      return await this.withManagedAdmission(`logout:${accountId}`, async () => {
+        const res = await this.doFetch(accountId, "/logout", { method: "POST" });
+        const data = await res.json() as { success?: boolean; error?: string };
+        return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to logout" };
+      });
     } catch (e) {
       return { ok: false, error: String(e) };
     }
   }
 
   private getDO(accountId: string) {
-    const id = this.env.WHATSAPP_ACCOUNT.idFromName(accountId);
+    const normalized = normalizeAdapterAccountId(accountId);
+    if (!normalized) throw new TypeError("WhatsApp account ID is invalid");
+    const id = this.env.WHATSAPP_ACCOUNT.idFromName(normalized);
     return this.env.WHATSAPP_ACCOUNT.get(id);
+  }
+
+  private managedAdmission() {
+    return this.env.MANAGED_ADMISSION.getByName(MANAGED_ADMISSION_GATE_NAME);
+  }
+
+  private withManagedAdmission<T>(
+    owner: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return runWithManagedAdmission(this.env.MANAGED_ADMISSION, owner, operation);
   }
 
   private doFetch(
@@ -474,13 +569,7 @@ async function mediaFromUrl(
   url: string,
   filename?: string,
 ): Promise<NonNullable<ChannelOutboundMessage["media"]>[number]> {
-  let mimeType = "application/octet-stream";
-  try {
-    const response = await fetch(url, { method: "HEAD" });
-    mimeType = response.headers.get("Content-Type")?.split(";")[0].trim() || mimeType;
-  } catch {
-    // The send path can still fetch the URL later; content type falls back.
-  }
+  const mimeType = inferMediaMimeType(url, filename);
 
   return {
     type: mediaTypeFromMime(mimeType),

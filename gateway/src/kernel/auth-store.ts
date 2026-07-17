@@ -56,6 +56,11 @@ export type IssuedAuthToken = {
   expiresAt: number | null;
 };
 
+export type PreparedAuthToken = {
+  issued: IssuedAuthToken;
+  tokenHash: string;
+};
+
 export type AuthTokenRecord = {
   tokenId: string;
   uid: number;
@@ -226,7 +231,7 @@ export class AuthStore {
     );
   }
 
-  async setPassword(username: string, hash: string): Promise<boolean> {
+  setPasswordHash(username: string, hash: string): boolean {
     const existing = this.getShadowByUsername(username);
     if (!existing) return false;
 
@@ -238,7 +243,16 @@ export class AuthStore {
     return true;
   }
 
+  async setPassword(username: string, hash: string): Promise<boolean> {
+    return this.setPasswordHash(username, hash);
+  }
+
   isSetupMode(): boolean {
+    const recovery = this.sql.exec<{ c: number }>(
+      "SELECT COUNT(*) as c FROM setup_recovery WHERE scope = 1",
+    ).toArray()[0]?.c ?? 0;
+    if (recovery > 0) return true;
+
     const root = this.getShadowByUsername("root");
     if (!root) return true;
     if (!isLocked(root)) return false;
@@ -430,7 +444,7 @@ export class AuthStore {
     };
   }
 
-  async issueToken(input: AuthTokenIssueInput): Promise<IssuedAuthToken> {
+  async prepareToken(input: AuthTokenIssueInput): Promise<PreparedAuthToken> {
     const user = this.getPasswdByUid(input.uid);
     if (!user) {
       throw new Error(`Unknown uid: ${input.uid}`);
@@ -446,34 +460,45 @@ export class AuthStore {
       throw new Error("allowedDeviceId is required for driver-bound tokens");
     }
 
+    return {
+      issued: {
+        tokenId,
+        token: rawToken,
+        tokenPrefix,
+        uid: input.uid,
+        kind: input.kind,
+        label: input.label ?? null,
+        allowedRole,
+        allowedDeviceId: input.allowedDeviceId ?? null,
+        createdAt: now,
+        expiresAt: input.expiresAt ?? null,
+      },
+      tokenHash,
+    };
+  }
+
+  persistPreparedToken(prepared: PreparedAuthToken): IssuedAuthToken {
+    const { issued, tokenHash } = prepared;
     this.sql.exec(
       `INSERT INTO auth_tokens
         (token_id, uid, kind, label, token_hash, token_prefix, allowed_role, allowed_device_id, created_at, expires_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      tokenId,
-      input.uid,
-      input.kind,
-      input.label ?? null,
+      issued.tokenId,
+      issued.uid,
+      issued.kind,
+      issued.label,
       tokenHash,
-      tokenPrefix,
-      allowedRole,
-      input.allowedDeviceId ?? null,
-      now,
-      input.expiresAt ?? null,
+      issued.tokenPrefix,
+      issued.allowedRole,
+      issued.allowedDeviceId,
+      issued.createdAt,
+      issued.expiresAt,
     );
+    return { ...issued };
+  }
 
-    return {
-      tokenId,
-      token: rawToken,
-      tokenPrefix,
-      uid: input.uid,
-      kind: input.kind,
-      label: input.label ?? null,
-      allowedRole,
-      allowedDeviceId: input.allowedDeviceId ?? null,
-      createdAt: now,
-      expiresAt: input.expiresAt ?? null,
-    };
+  async issueToken(input: AuthTokenIssueInput): Promise<IssuedAuthToken> {
+    return this.persistPreparedToken(await this.prepareToken(input));
   }
 
   listTokens(uid?: number): AuthTokenRecord[] {

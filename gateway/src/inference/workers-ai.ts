@@ -18,6 +18,7 @@ import { calculateCost, createAssistantMessageEventStream } from "@earendil-work
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { DEFAULT_WORKERS_AI_MODEL } from "./default-models";
 import { TimeoutError, isTimeoutError, withTimeout } from "./timeout";
+import { resolveWorkersAiBinding } from "./service-binding";
 
 export const WORKERS_AI_PROVIDER = "workers-ai";
 export const WORKERS_AI_PROVIDER_ALIAS = "workersai";
@@ -164,7 +165,7 @@ export async function resolveWorkersAiModelContextWindow(modelName: string): Pro
 export async function completeWithWorkersAi(
   request: WorkersAiRequest,
 ): Promise<AssistantMessage> {
-  const ai = env.AI as unknown as DynamicWorkersAiBinding | undefined;
+  const ai = resolveWorkersAiBinding(env) as unknown as DynamicWorkersAiBinding | undefined;
   if (!ai) {
     throw new Error("Workers AI binding is not configured for this worker");
   }
@@ -218,7 +219,7 @@ async function pumpWorkersAiStream(
   request: WorkersAiRequest,
   stream: AssistantMessageEventStream,
 ): Promise<void> {
-  const ai = env.AI as unknown as DynamicWorkersAiBinding | undefined;
+  const ai = resolveWorkersAiBinding(env) as unknown as DynamicWorkersAiBinding | undefined;
   if (!ai) {
     pushWorkersAiError(stream, request.modelName, "Workers AI binding is not configured for this worker");
     return;
@@ -908,7 +909,7 @@ function parseJsonObject(input: string): Record<string, unknown> | null {
 }
 
 async function lookupWorkersAiModelContextWindow(modelName: string): Promise<number | null> {
-  const ai = env.AI as unknown as WorkersAiCatalogBinding | undefined;
+  const ai = resolveWorkersAiBinding(env) as unknown as WorkersAiCatalogBinding | undefined;
   if (!ai || typeof ai.models !== "function") {
     return null;
   }

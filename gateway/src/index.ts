@@ -14,6 +14,7 @@ import {
   matchPublicAssetPath,
   servePublicAssetRequest,
 } from "./public-assets";
+import { handleManagedRequest, isManagedRoute } from "./managed/http";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -23,6 +24,10 @@ export { AppRunner, GsvApiBinding } from "./app-runner";
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
+
+    if (isManagedRoute(url.pathname)) {
+      return handleManagedRequest(request, env, ctx);
+    }
 
     if (url.pathname === "/health") {
       return Response.json({ status: "healthy" });
@@ -467,7 +472,7 @@ async function handlePackageAppSessionRequest(
         },
       });
     }
-    return handlePackageAppSocketRequest(request, env, ctx, match);
+    return handlePackageAppSocketRequest(request, env, match);
   }
 
   if (match.suffix === "/refresh") {
@@ -486,7 +491,11 @@ async function handlePackageAppSessionRequest(
     return new Response(resolved.message, { status: resolved.status });
   }
 
-  const runner = ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
+  const runner = await getRegisteredAppRunner(
+    env,
+    resolved.auth.uid,
+    resolved.packageId,
+  );
   await runner.ensureRuntime({
     packageId: resolved.packageId,
     packageName: resolved.packageName,
@@ -498,6 +507,16 @@ async function handlePackageAppSessionRequest(
 
   const response = await runner.gsvFetch(buildPackageWorkerRequest(request, resolved, match.suffix));
   return await withPackageAppClientSession(response, resolved);
+}
+
+async function getRegisteredAppRunner(
+  env: Env,
+  uid: number,
+  packageId: string,
+) {
+  const kernel = await getAgentByName(env.KERNEL, "singleton");
+  await kernel.registerManagedAppRunner(uid, packageId);
+  return env.APP_RUNNER.getByName(buildAppRunnerName(uid, packageId));
 }
 
 async function handlePackageAppSessionLaunchRequest(
@@ -578,7 +597,6 @@ async function handlePackageAppSessionRefreshRequest(
 async function handlePackageAppSocketRequest(
   request: Request,
   env: Env,
-  ctx: ExecutionContext,
   match: PackageAppSessionPathMatch,
 ): Promise<Response> {
   if (!match.clientId) {
@@ -594,7 +612,11 @@ async function handlePackageAppSocketRequest(
       headers: { "cache-control": "no-store" },
     });
   }
-  const runner = ctx.exports.AppRunner.getByName(buildAppRunnerName(resolved.auth.uid, resolved.packageId));
+  const runner = await getRegisteredAppRunner(
+    env,
+    resolved.auth.uid,
+    resolved.packageId,
+  );
   await runner.ensureRuntime({
     packageId: resolved.packageId,
     packageName: resolved.packageName,

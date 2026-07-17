@@ -1,9 +1,15 @@
 import type { AdapterAccountStatus } from "../adapter-interface";
+import { normalizeAdapterAccountId } from "@humansandmachines/gsv/protocol";
 
 export type AdapterStatusRecord = AdapterAccountStatus & {
   adapter: string;
   ownerUid: number | null;
   updatedAt: number;
+};
+
+export type InvalidAdapterAccountCleanup = {
+  removed: number;
+  blocked: number;
 };
 
 const STATUS_COLUMNS = `adapter, account_id, connected, authenticated, mode,
@@ -15,6 +21,10 @@ export class AdapterStatusStore {
   constructor(private readonly sql: SqlStorage) {}
 
   upsert(adapter: string, accountId: string, status: AdapterAccountStatus): AdapterStatusRecord {
+    const normalizedAccountId = requireAdapterAccountId(accountId);
+    if (normalizeAdapterAccountId(status.accountId) !== normalizedAccountId) {
+      throw new Error("Adapter status account ID does not match its storage identity");
+    }
     const now = Date.now();
     const rows = this.sql.exec<RowShape>(
       `INSERT INTO adapter_status
@@ -30,7 +40,7 @@ export class AdapterStatusStore {
          updated_at = excluded.updated_at
        RETURNING ${STATUS_COLUMNS}`,
       adapter,
-      accountId,
+      normalizedAccountId,
       status.connected ? 1 : 0,
       status.authenticated ? 1 : 0,
       status.mode ?? null,
@@ -55,20 +65,22 @@ export class AdapterStatusStore {
   }
 
   setOwner(adapter: string, accountId: string, ownerUid: number): void {
+    const normalizedAccountId = requireAdapterAccountId(accountId);
     this.sql.exec(
       `INSERT INTO adapter_status
        (adapter, account_id, connected, authenticated, owner_uid, updated_at)
        VALUES (?, ?, 0, 0, ?, ?)
        ON CONFLICT(adapter, account_id) DO UPDATE SET owner_uid = excluded.owner_uid`,
       adapter,
-      accountId,
+      normalizedAccountId,
       ownerUid,
       Date.now(),
     );
   }
 
   beginLifecycle(adapter: string, accountId: string): void {
-    const key = `${adapter}\0${accountId}`;
+    const normalizedAccountId = requireAdapterAccountId(accountId);
+    const key = `${adapter}\0${normalizedAccountId}`;
     if (this.activeLifecycles.has(key)) {
       throw new Error(`Adapter account ${adapter}/${accountId} already has a lifecycle operation`);
     }
@@ -76,7 +88,78 @@ export class AdapterStatusStore {
   }
 
   endLifecycle(adapter: string, accountId: string): void {
-    this.activeLifecycles.delete(`${adapter}\0${accountId}`);
+    const normalizedAccountId = normalizeAdapterAccountId(accountId);
+    if (normalizedAccountId) {
+      this.activeLifecycles.delete(`${adapter}\0${normalizedAccountId}`);
+    }
+  }
+
+  /**
+   * Removes only historical invalid rows that have the exact shape of an
+   * owner claim which never reached a connected/authenticated status and has
+   * no identity, route, challenge, or run references. Anything else may own a
+   * live adapter Durable Object and must block lifecycle enumeration.
+   */
+  cleanupInvalidManagedAccounts(managedAdapters: readonly string[]): InvalidAdapterAccountCleanup {
+    const managed = new Set(managedAdapters.map((adapter) => adapter.trim().toLowerCase()));
+    const rows = this.sql.exec<InvalidAccountRow>(
+      `SELECT adapter, account_id, connected, authenticated, mode,
+              last_activity, error, extra_json
+       FROM adapter_status`,
+    ).toArray();
+    let removed = 0;
+    let blocked = 0;
+    for (const row of rows) {
+      const normalizedAdapter = row.adapter.trim().toLowerCase();
+      if (
+        !managed.has(normalizedAdapter)
+        || normalizeAdapterAccountId(row.account_id) !== null
+      ) {
+        continue;
+      }
+      const pristine = row.connected === 0
+        && row.authenticated === 0
+        && row.mode === null
+        && row.last_activity === null
+        && row.error === null
+        && row.extra_json === null
+        && !this.hasAccountReferences(row.adapter, row.account_id)
+        && !this.activeLifecycles.has(`${row.adapter}\0${row.account_id}`);
+      if (!pristine) {
+        blocked += 1;
+        continue;
+      }
+      this.sql.exec(
+        `DELETE FROM adapter_status WHERE adapter = ? AND account_id = ?`,
+        row.adapter,
+        row.account_id,
+      );
+      removed += 1;
+    }
+    return { removed, blocked };
+  }
+
+  private hasAccountReferences(adapter: string, accountId: string): boolean {
+    const row = this.sql.exec<{ found: number }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM identity_links WHERE adapter = ? AND account_id = ?
+         UNION ALL
+         SELECT 1 FROM surface_routes WHERE adapter = ? AND account_id = ?
+         UNION ALL
+         SELECT 1 FROM link_challenges WHERE adapter = ? AND account_id = ?
+         UNION ALL
+         SELECT 1 FROM run_routes WHERE adapter = ? AND account_id = ?
+       ) AS found`,
+      adapter,
+      accountId,
+      adapter,
+      accountId,
+      adapter,
+      accountId,
+      adapter,
+      accountId,
+    ).toArray()[0];
+    return row?.found === 1;
   }
 
   listByOwner(ownerUid: number): AdapterStatusRecord[] {
@@ -131,6 +214,26 @@ type RowShape = {
   owner_uid: number | null;
   updated_at: number;
 };
+
+type InvalidAccountRow = Pick<
+  RowShape,
+  | "adapter"
+  | "account_id"
+  | "connected"
+  | "authenticated"
+  | "mode"
+  | "last_activity"
+  | "error"
+  | "extra_json"
+>;
+
+function requireAdapterAccountId(accountId: unknown): string {
+  const normalized = normalizeAdapterAccountId(accountId);
+  if (!normalized) {
+    throw new Error("Adapter account ID is invalid");
+  }
+  return normalized;
+}
 
 function toRecord(row: RowShape): AdapterStatusRecord {
   return {

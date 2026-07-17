@@ -10,13 +10,20 @@ declare namespace Cloudflare {
 		STORAGE: R2Bucket;
 		LOADER: WorkerLoader;
 		AI: Ai;
+		GSV_INFERENCE?: Service;
+		GSV_MAX_R2_OBJECT_BYTES?: string;
 		ASSETS: Fetcher;
 		RIPGIT_INTERNAL_KEY: string;
 		GSV_TEST_OPENAI_KEY: string;
 		KERNEL: DurableObjectNamespace<import("./src/index").Kernel>;
 		PROCESS: DurableObjectNamespace<import("./src/index").Process>;
+		APP_RUNNER: DurableObjectNamespace<import("./src/index").AppRunner>;
+		TEST_MANAGED_ADMISSION: DurableObjectNamespace<import("../adapters/shared/src/managed-admission").ManagedAdmissionGate>;
+		MANAGED_ADMISSION: DurableObjectNamespace<import("../adapters/shared/src/managed-admission").ManagedAdmissionGate>;
+		GSV_MANAGED_ADMISSION_LEASE_TTL_MS: string;
 		CHANNEL_WHATSAPP: Service /* entrypoint WhatsAppChannelEntrypoint from gsv-channel-whatsapp */;
 		CHANNEL_DISCORD: Service /* entrypoint DiscordChannel from gsv-channel-discord */;
+		CHANNEL_TELEGRAM: Service /* entrypoint TelegramChannel from gsv-channel-telegram */;
 		RIPGIT: Fetcher /* ripgit */;
 		ASSEMBLER: Fetcher /* gsv-assembler */;
 	}

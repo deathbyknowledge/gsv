@@ -39,7 +39,11 @@ export function useSessionScreensState({
   session,
   snapshot,
 }: UseSessionScreensStateOptions) {
-  const [onboarding] = useState(() => createOnboardingService(session.client, snapshot.username));
+  const [onboarding] = useState(() => createOnboardingService(
+    session.client,
+    snapshot.username,
+    session.withSetupAuthorization,
+  ));
   const [onboardingSnapshot, setOnboardingSnapshot] = useState<OnboardingSnapshot>(() => onboarding.snapshot());
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [lastAdminMode, setLastAdminMode] = useState<AdminMode>(onboardingSnapshot.draft.admin.mode);

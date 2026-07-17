@@ -1,3 +1,5 @@
+import type { ManagedLifecycleWorkerInterface } from "./managed-lifecycle";
+
 export type AdapterSurfaceKind = "dm" | "group" | "channel" | "thread";
 
 export type AdapterSurface = {
@@ -167,7 +169,16 @@ export type GatewayResponseFrame = {
 
 export type GatewayFrame = GatewayRequestFrame | GatewayResponseFrame;
 
-export interface AdapterWorkerInterface {
+export type {
+  ManagedLifecycleAccountStub,
+  ManagedLifecycleInventory,
+  ManagedLifecycleResult,
+  ManagedLifecycleState,
+  ManagedLifecycleStatus,
+  ManagedLifecycleWorkerInterface,
+} from "./managed-lifecycle";
+
+export interface AdapterWorkerInterface extends ManagedLifecycleWorkerInterface {
   readonly adapterId: string;
   adapterConnect(
     accountId: string,
@@ -209,7 +220,7 @@ export type SendResult = AdapterSendResult;
 export type LoginResult = { ok: true; qrDataUrl?: string; message: string } | { ok: false; error: string };
 export type LogoutResult = { ok: true } | { ok: false; error: string };
 
-export interface ChannelWorkerInterface {
+export interface ChannelWorkerInterface extends ManagedLifecycleWorkerInterface {
   readonly channelId: string;
   readonly capabilities: ChannelCapabilities;
 

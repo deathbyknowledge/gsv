@@ -31,6 +31,8 @@ import type { ScheduleStore } from "./scheduler";
 import type { AppSessionStore } from "./app-sessions";
 import type { AppFrameContext } from "../protocol/app-frame";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
+import type { SetupTokenPolicy } from "../auth/setup-token-policy";
+import type { SetupRecoveryStore } from "./setup-recovery";
 
 export type KernelContext = {
   env: Env;
@@ -60,6 +62,9 @@ export type KernelContext = {
   callerOwnerUid?: number;
   appFrame?: AppFrameContext;
   serverVersion: string;
+  managedSetupTokenPolicy?: SetupTokenPolicy;
+  setupRecovery: SetupRecoveryStore;
+  consumeSetupAssistAllowance: () => void;
   broadcastToUserUid: (uid: number, signal: string, payload?: unknown) => void;
   getAppRunner: (uid: number, packageId: string) => unknown;
   scheduleIpcCallTimeout: (callId: string, deadlineAt: number) => Promise<string>;

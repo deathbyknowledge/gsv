@@ -18,6 +18,10 @@
       {
         "name": "WHATSAPP_ACCOUNT",
         "class_name": "WhatsAppAccount"
+      },
+      {
+        "name": "MANAGED_ADMISSION",
+        "class_name": "ManagedAdmissionGate"
       }
     ]
   },
@@ -32,6 +36,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["WhatsAppAccount"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["ManagedAdmissionGate"]
     }
   ]
 }

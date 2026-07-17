@@ -65,10 +65,11 @@ export class GsvFs implements IFileSystem {
     sourceBackend?: MountBackend | null,
     accountHomeBackend?: MountBackend | null,
     packageBackend?: MountBackend | null,
+    maxR2ObjectBytes?: number,
   ) {
     this.identity = identity;
     this.kernel = kernel ?? null;
-    this.r2Backend = new R2MountBackend(bucket, identity);
+    this.r2Backend = new R2MountBackend(bucket, identity, maxR2ObjectBytes);
     this.kernelBackend = new KernelMountBackend(identity, this.kernel, selfPid ?? null);
     this.sourceBackend = sourceBackend ?? null;
     this.accountHomeBackend = accountHomeBackend ?? null;

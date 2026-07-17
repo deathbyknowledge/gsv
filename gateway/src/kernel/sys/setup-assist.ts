@@ -7,6 +7,11 @@ import type {
   SysSetupAssistResult,
 } from "@humansandmachines/gsv/protocol";
 import { SETUP_ASSIST_SYSTEM_PROMPT } from "../../prompts/setup-assist";
+import { authorizeSetupToken } from "../../auth/setup-token";
+import {
+  assertSafeBootstrapSource,
+  assertSafeBootstrapText,
+} from "./bootstrap-source";
 
 const ALLOWED_PATCH_PATHS = new Set<OnboardingAssistPatch["path"]>([
   "account.username",
@@ -24,6 +29,10 @@ const ALLOWED_PATCH_PATHS = new Set<OnboardingAssistPatch["path"]>([
   "device.label",
   "device.expiryDays",
 ]);
+const MAX_ASSIST_MESSAGE_BYTES = 4 * 1024;
+const MAX_ASSIST_MESSAGES = 128;
+const MAX_ASSIST_PROMPT_BYTES = 32 * 1024;
+const MAX_DRAFT_FIELD_BYTES = 2 * 1024;
 
 export async function handleSysSetupAssist(
   args: SysSetupAssistArgs,
@@ -33,15 +42,20 @@ export async function handleSysSetupAssist(
     throw new Error("System already initialized");
   }
 
+  await authorizeSetupToken(
+    ctx.env,
+    args.setupToken,
+    Date.now(),
+    ctx.managedSetupTokenPolicy,
+  );
+  const input = parseAssistInput(args);
+  ctx.consumeSetupAssistAllowance();
+
   const result = await handleAiTextGenerate({
     systemPrompt: SETUP_ASSIST_SYSTEM_PROMPT,
     messages: [{
       role: "user",
-      content: JSON.stringify({
-        lane: args.lane,
-        draft: redactDraft(args.draft),
-        messages: args.messages.slice(-8),
-      }, null, 2),
+      content: input.prompt,
       timestamp: Date.now(),
     }],
     sessionAffinityKey: "setup-assist",
@@ -52,6 +66,35 @@ export async function handleSysSetupAssist(
   }
 
   return parseAssistResponse(result.text ?? "");
+}
+
+function parseAssistInput(args: SysSetupAssistArgs): { prompt: string } {
+  const record = asRecord(args);
+  const lane = record?.lane;
+  if (lane !== "quick" && lane !== "customize" && lane !== "advanced") {
+    throw new Error("Invalid setup assistance request");
+  }
+  const draft = sanitizeDraft(record?.draft);
+  if (!Array.isArray(record?.messages) || record.messages.length > MAX_ASSIST_MESSAGES) {
+    throw new Error("Invalid setup assistance request");
+  }
+  const messages = record.messages.slice(-8).map((value) => {
+    const message = asRecord(value);
+    if (
+      (message?.role !== "user" && message?.role !== "assistant")
+      || typeof message.content !== "string"
+      || byteLength(message.content) > MAX_ASSIST_MESSAGE_BYTES
+    ) {
+      throw new Error("Invalid setup assistance request");
+    }
+    assertSafeBootstrapText(message.content);
+    return { role: message.role, content: message.content };
+  });
+  const prompt = JSON.stringify({ lane, draft, messages }, null, 2);
+  if (byteLength(prompt) > MAX_ASSIST_PROMPT_BYTES) {
+    throw new Error("Invalid setup assistance request");
+  }
+  return { prompt };
 }
 
 function parseAssistResponse(raw: string): SysSetupAssistResult {
@@ -98,6 +141,9 @@ function parsePatch(value: unknown): OnboardingAssistPatch[] {
   ) {
     return [];
   }
+  if (path === "source.value" && typeof record.value === "string") {
+    assertSafeBootstrapSource(record.value);
+  }
 
   return [{
     op,
@@ -106,24 +152,90 @@ function parsePatch(value: unknown): OnboardingAssistPatch[] {
   }];
 }
 
-function redactDraft(draft: OnboardingDraft): OnboardingDraft {
+function sanitizeDraft(value: unknown): OnboardingDraft {
+  const draft = requireRecord(value);
+  const account = requireRecord(draft.account);
+  const admin = requireRecord(draft.admin);
+  const system = requireRecord(draft.system);
+  const ai = requireRecord(draft.ai);
+  const source = requireRecord(draft.source);
+  const device = requireRecord(draft.device);
+  if (
+    !isOneOf(draft.lane, ["quick", "customize", "advanced"])
+    || !isOneOf(draft.mode, ["manual", "guided"])
+    || !isOneOf(draft.stage, ["welcome", "details", "review"])
+    || !isOneOf(draft.detailStep, ["account", "admin", "system", "ai", "source", "device"])
+    || !isOneOf(admin.mode, ["same", "custom"])
+    || typeof ai.enabled !== "boolean"
+    || typeof source.enabled !== "boolean"
+    || typeof device.enabled !== "boolean"
+  ) {
+    throw new Error("Invalid setup assistance request");
+  }
+  const sourceValue = readDraftString(source.value);
+  assertSafeBootstrapSource(sourceValue);
   return {
-    ...draft,
+    lane: draft.lane,
+    mode: draft.mode,
+    stage: draft.stage,
+    detailStep: draft.detailStep,
     account: {
-      ...draft.account,
+      username: readDraftString(account.username),
+      agentName: readDraftString(account.agentName),
       password: "",
       passwordConfirm: "",
     },
     admin: {
-      ...draft.admin,
+      mode: admin.mode,
       password: "",
       passwordConfirm: "",
     },
+    system: { timezone: readDraftString(system.timezone) },
     ai: {
-      ...draft.ai,
+      enabled: ai.enabled,
+      provider: readDraftString(ai.provider),
+      model: readDraftString(ai.model),
       apiKey: "",
     },
+    source: {
+      enabled: source.enabled,
+      value: sourceValue,
+      ref: readDraftString(source.ref),
+    },
+    device: {
+      enabled: device.enabled,
+      deviceId: readDraftString(device.deviceId),
+      label: readDraftString(device.label),
+      expiryDays: readDraftString(device.expiryDays),
+    },
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function requireRecord(value: unknown): Record<string, unknown> {
+  const record = asRecord(value);
+  if (!record) throw new Error("Invalid setup assistance request");
+  return record;
+}
+
+function readDraftString(value: unknown): string {
+  if (typeof value !== "string" || byteLength(value) > MAX_DRAFT_FIELD_BYTES) {
+    throw new Error("Invalid setup assistance request");
+  }
+  return value;
+}
+
+function isOneOf<T extends string>(value: unknown, values: readonly T[]): value is T {
+  return typeof value === "string" && values.includes(value as T);
+}
+
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
 }
 
 function extractJsonObject(raw: string): string {

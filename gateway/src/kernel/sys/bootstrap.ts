@@ -4,6 +4,7 @@ import { RipgitClient, type RipgitRepoRef } from "../../fs/ripgit/client";
 import { seedRepoSkillsToHome } from "./skills-seed";
 import { setRepoVisibility } from "../repo-visibility";
 import { SERVER_RELEASE } from "../../version";
+import { assertSafeBootstrapSource } from "./bootstrap-source";
 
 const DEFAULT_GSV_UPSTREAM_URL = "https://github.com/deathbyknowledge/gsv";
 const DEFAULT_GSV_UPSTREAM_REF = /^v\d+\.\d+\.\d+$/.test(SERVER_RELEASE)
@@ -146,7 +147,7 @@ export async function handleSysBootstrap(
 function githubRepoUrl(repo: string): string {
   const trimmed = repo.replace(/^\/+|\/+$/g, "");
   if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(trimmed)) {
-    throw new Error(`Invalid bootstrap repo: ${repo}`);
+    throw new Error("Invalid bootstrap repo");
   }
   return `https://github.com/${trimmed}`;
 }
@@ -163,6 +164,7 @@ function resolveBootstrapUpstream(
     ?? (explicitRepo ? githubRepoUrl(explicitRepo) : undefined)
     ?? configured?.remoteUrl
     ?? DEFAULT_GSV_UPSTREAM_URL;
+  assertSafeBootstrapSource(remoteUrl);
   const ref = readNonEmptyString(args?.ref)
     ?? readEnvString(env, GSV_BOOTSTRAP_REF_ENV)
     ?? configured?.ref
@@ -174,8 +176,10 @@ function resolveBootstrapUpstream(
 function resolveManualBootstrapUpstream(env: Env): { remoteUrl: string; ref: string } {
   const configuredUpstream = readEnvString(env, GSV_MANUAL_BOOTSTRAP_UPSTREAM_ENV);
   const configured = configuredUpstream ? parseConfiguredUpstream(configuredUpstream) : undefined;
+  const remoteUrl = configured?.remoteUrl ?? DEFAULT_GSV_MANUAL_UPSTREAM_URL;
+  assertSafeBootstrapSource(remoteUrl);
   return {
-    remoteUrl: configured?.remoteUrl ?? DEFAULT_GSV_MANUAL_UPSTREAM_URL,
+    remoteUrl,
     ref: readEnvString(env, GSV_MANUAL_BOOTSTRAP_REF_ENV)
       ?? configured?.ref
       ?? DEFAULT_GSV_MANUAL_UPSTREAM_REF,

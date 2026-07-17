@@ -97,6 +97,20 @@ function createMockSql() {
       return mockSqlRows<T>();
     }
 
+    if (q.startsWith("UPDATE app_rpc_schedules") && q.includes("WHERE running_at IS NOT NULL")) {
+      const [retryAt, updatedAt] = bindings as [number, number];
+      for (const [key, row] of table) {
+        if (typeof row.running_at !== "number") continue;
+        table.set(key, {
+          ...row,
+          running_at: null,
+          next_run_at: retryAt,
+          updated_at: updatedAt,
+        });
+      }
+      return mockSqlRows<T>();
+    }
+
     if (q.startsWith("SELECT * FROM app_rpc_schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?")) {
       const [now] = bindings as [number];
       const matches = sortRecords(
@@ -214,5 +228,23 @@ describe("AppRpcScheduleStore", () => {
     expect(finished?.nextRunAt).toBe(80_010);
     expect(finished?.lastStatus).toBe("error");
     expect(finished?.lastError).toBe("temporary failure");
+  });
+
+  it("makes interrupted running schedules due for retry", () => {
+    const store = new AppRpcScheduleStore(createMockSql() as unknown as SqlStorage);
+    const created = store.upsert({
+      key: "wiki:loop",
+      rpcMethod: "curateInbox",
+      schedule: { kind: "every", everyMs: 60_000 },
+    }, 10_000);
+    store.markRunning(created.key, created.version, 70_000);
+
+    store.releaseRunning(70_100);
+
+    expect(store.due(70_100)).toMatchObject([{
+      key: "wiki:loop",
+      runningAt: null,
+      nextRunAt: 70_100,
+    }]);
   });
 });

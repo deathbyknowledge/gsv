@@ -170,7 +170,11 @@ pub fn handle_receive_pack(sql: &SqlStorage, body: &[u8]) -> Result<Response> {
 /// the pack bytes (which stay in memory as the request body), delta chains are
 /// resolved iteratively, and the result is stored in permanent tables then
 /// dropped. Only one resolved object exists in memory at a time.
-pub(crate) fn process_pack_streaming(sql: &SqlStorage, pack_data: &[u8], bulk_mode: bool) -> Result<()> {
+pub(crate) fn process_pack_streaming(
+    sql: &SqlStorage,
+    pack_data: &[u8],
+    bulk_mode: bool,
+) -> Result<()> {
     // --- Build lightweight index ---
     let (index, offset_to_idx) = pack::build_index(pack_data).map_err(|e| Error::RustError(e.0))?;
 
@@ -361,13 +365,17 @@ impl Default for RemoteFetchOptions {
     }
 }
 
-pub async fn fetch_remote_ref_with_options(
+pub async fn fetch_remote_ref_with_options<F>(
     sql: &SqlStorage,
     remote_url: &str,
     remote_ref: &str,
     local_ref: &str,
     options: RemoteFetchOptions,
-) -> Result<RemoteFetchResult> {
+    before_mutation: F,
+) -> Result<RemoteFetchResult>
+where
+    F: FnOnce() -> Result<()>,
+{
     let remote = normalize_remote_base_url(remote_url)?;
     let advertised = fetch_advertised_refs(&remote).await?;
     let remote_ref_name = normalize_remote_ref_name(remote_ref);
@@ -396,6 +404,7 @@ pub async fn fetch_remote_ref_with_options(
         )));
     }
 
+    before_mutation()?;
     process_pack_streaming(sql, &pack_bytes, false)?;
     store::update_ref(
         sql,
@@ -687,7 +696,10 @@ async fn fetch_advertised_refs(remote_base: &str) -> Result<AdvertisedRefs> {
 
 fn build_remote_upload_pack_request(want_hash: &str) -> Vec<u8> {
     let mut body = Vec::new();
-    pkt_line_bytes(&mut body, format!("want {} ofs-delta\n", want_hash).as_bytes());
+    pkt_line_bytes(
+        &mut body,
+        format!("want {} ofs-delta\n", want_hash).as_bytes(),
+    );
     body.extend_from_slice(b"0000");
     pkt_line_bytes(&mut body, b"done\n");
     body
@@ -695,7 +707,7 @@ fn build_remote_upload_pack_request(want_hash: &str) -> Vec<u8> {
 
 async fn fetch_upload_pack_result(remote_base: &str, body: &[u8]) -> Result<Vec<u8>> {
     let url = format!("{}/git-upload-pack", remote_base.trim_end_matches('/'));
-    let mut headers = Headers::new();
+    let headers = Headers::new();
     headers.set("Content-Type", "application/x-git-upload-pack-request")?;
     headers.set("Accept", "application/x-git-upload-pack-result")?;
 

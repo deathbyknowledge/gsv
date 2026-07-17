@@ -6,6 +6,7 @@ vi.mock("../shared/utils", () => ({
 
 import { sendFrameToProcess } from "../shared/utils";
 import { Kernel } from "./do";
+import { FirstBootAdmission } from "./first-boot-admission";
 import {
   BINARY_FRAME_CANCEL,
   BINARY_FRAME_DATA,
@@ -16,10 +17,78 @@ import {
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
+function createTestKernel(): Kernel {
+  const kernel = Object.create(Kernel.prototype) as Kernel & Record<string, unknown>;
+  Object.assign(kernel, {
+    managedLifecycle: "active",
+    setupTokenPolicies: { current: () => undefined },
+    setupAssistBudget: { consume: () => undefined },
+    firstBootAdmission: new FirstBootAdmission(),
+    webSocketAdmission: {
+      open: () => ({ admitted: true }),
+      admit: () => ({ admitted: true }),
+      close: () => undefined,
+    },
+  });
+  return kernel;
+}
+
+describe("Kernel managed adapter inventory", () => {
+  it("drops only cleaned invalid claims while preserving provider-style IDs for erase", async () => {
+    const providerId = "15551234567:4@s.whatsapp.net/device";
+    const cleanupInvalidManagedAccounts = vi.fn(() => ({ removed: 1, blocked: 0 }));
+    const kernel = createTestKernel() as any;
+    kernel.ctx = { storage: { kv: { put: vi.fn() } } };
+    kernel.managedFenceActiveRuntime = vi.fn(async () => undefined);
+    kernel.procs = { list: vi.fn(() => []) };
+    kernel.appRunners = { list: vi.fn(() => []) };
+    kernel.adapters = {
+      status: {
+        cleanupInvalidManagedAccounts,
+        listAll: vi.fn(() => [
+          { adapter: "whatsapp", accountId: providerId },
+          { adapter: "whatsapp", accountId: "x".repeat(257) },
+        ]),
+      },
+    };
+
+    await expect(kernel.managedPrepareErase()).resolves.toMatchObject({
+      adapters: {
+        whatsapp: [providerId],
+        discord: [],
+        telegram: [],
+      },
+    });
+    expect(cleanupInvalidManagedAccounts).toHaveBeenCalledWith([
+      "whatsapp",
+      "discord",
+      "telegram",
+    ]);
+  });
+
+  it("fails closed when an invalid historical account may own live state", async () => {
+    const kernel = createTestKernel() as any;
+    kernel.ctx = { storage: { kv: { put: vi.fn() } } };
+    kernel.managedFenceActiveRuntime = vi.fn(async () => undefined);
+    kernel.procs = { list: vi.fn(() => []) };
+    kernel.appRunners = { list: vi.fn(() => []) };
+    kernel.adapters = {
+      status: {
+        cleanupInvalidManagedAccounts: vi.fn(() => ({ removed: 0, blocked: 1 })),
+        listAll: vi.fn(() => []),
+      },
+    };
+
+    await expect(kernel.managedPrepareErase()).rejects.toThrow(
+      "invalid account that may own live state",
+    );
+  });
+});
+
 describe("Kernel frame bodies", () => {
   it("passes request cancellation to Agents SDK MCP calls", async () => {
     const callTool = vi.fn(async () => ({ content: [] }));
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.mcp = { callTool };
     const controller = new AbortController();
     const ctx = kernel.buildKernelContext({ requestSignal: controller.signal });
@@ -38,7 +107,7 @@ describe("Kernel frame bodies", () => {
   });
 
   it("decodes WebSocket body frames into a byte stream", async () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.frameBodyChannels = new Map();
     const connection = { id: "conn-1", send: vi.fn() };
 
@@ -65,7 +134,7 @@ describe("Kernel frame bodies", () => {
   it("announces a response body before sending its chunks", async () => {
     const sends: Array<string | ArrayBuffer> = [];
     const pending: Promise<unknown>[] = [];
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.frameBodyChannels = new Map();
     kernel.ctx = { waitUntil: (promise: Promise<unknown>) => pending.push(promise) };
     const connection = {
@@ -98,7 +167,7 @@ describe("Kernel frame bodies", () => {
   });
 
   it("cancels an unfinished request body when a device responds early", async () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.pendingAppResponses = new Map();
     kernel.devices = {
       get: () => ({ online: true }),
@@ -134,7 +203,7 @@ describe("Kernel frame bodies", () => {
 
   it("cancels a request body when device routing fails before send", async () => {
     const cancel = vi.fn();
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.devices = { get: () => null };
 
     await expect(kernel.requestDevice("offline-device", "fs.transfer.receive", {}, {
@@ -150,7 +219,7 @@ describe("Kernel frame bodies", () => {
   });
 
   it("cancels the route and upload when a device request is aborted", async () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.pendingAppResponses = new Map();
     kernel.devices = {
       get: () => ({ online: true }),
@@ -194,7 +263,7 @@ describe("Kernel frame bodies", () => {
 
   it("cancels announced bodies on requests rejected before dispatch", async () => {
     const sends: Array<string | ArrayBuffer> = [];
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.frameBodyChannels = new Map();
     kernel.auth = { isSetupMode: () => false };
     const connection = {
@@ -224,7 +293,7 @@ describe("Kernel frame bodies", () => {
   });
 
   it("rejects bodies that do not match their declared length", async () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.frameBodyChannels = new Map();
     const connection = { id: "conn-1", send: vi.fn() };
     const body = kernel.receiveFrameBody(connection, { streamId: 8, length: 3 });
@@ -242,7 +311,7 @@ describe("Kernel frame bodies", () => {
   });
 
   it("does not register bodies from an invalid response route", () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.frameBodyChannels = new Map();
     kernel.routes = {
       get: () => ({ deviceId: "expected-device", driverConnectionId: null }),
@@ -267,7 +336,7 @@ describe("Kernel frame bodies", () => {
       call: "fs.read",
       scheduleId: null,
     };
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.routes = {
       get: vi.fn(() => route),
       remove: vi.fn(),
@@ -294,7 +363,7 @@ describe("Kernel frame bodies", () => {
       call: "fs.read",
       scheduleId: null,
     };
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.routes = {
       get: vi.fn(() => route),
       remove: vi.fn(() => route),
@@ -329,7 +398,7 @@ describe("Kernel frame bodies", () => {
       call: "net.fetch",
       scheduleId: "schedule-1",
     };
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.frameBodyChannels = new Map();
     kernel.routes = {
       get: vi.fn(() => route),
@@ -371,7 +440,7 @@ describe("Kernel frame bodies", () => {
 
   it("cancels a response body that arrives after its route is gone", async () => {
     const sends: ArrayBuffer[] = [];
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.frameBodyChannels = new Map();
     kernel.routes = { get: () => null };
     const connection = {
@@ -402,7 +471,7 @@ describe("Kernel frame bodies", () => {
       call: "net.fetch",
       scheduleId: null,
     };
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.routes = {
       get: () => route,
       remove: () => route,
@@ -425,7 +494,7 @@ describe("Kernel frame bodies", () => {
 
   it("sends a cancellation frame when an inbound body is discarded", async () => {
     const sends: ArrayBuffer[] = [];
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.frameBodyChannels = new Map();
     const connection = {
       id: "conn-1",
@@ -445,7 +514,7 @@ describe("Kernel frame bodies", () => {
     const sends: Array<string | ArrayBuffer> = [];
     const pending: Promise<unknown>[] = [];
     let cancelled = false;
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.frameBodyChannels = new Map();
     kernel.ctx = { waitUntil: (promise: Promise<unknown>) => pending.push(promise) };
     const connection = {
@@ -502,7 +571,7 @@ describe("Kernel frame bodies", () => {
         sourceCancellation = reason;
       },
     }, { highWaterMark: 0 });
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.activeRequests = new Map();
     kernel.cancelledProcessRequests = new Map();
     kernel.routes = { get: () => null };
@@ -595,10 +664,34 @@ describe("Kernel frame bodies", () => {
   });
 });
 
+describe("Kernel managed adapter inventory", () => {
+  it("normalizes, deduplicates, and excludes unsupported adapter accounts", () => {
+    const kernel = createTestKernel() as any;
+    kernel.adapters = {
+      status: {
+        cleanupInvalidManagedAccounts: () => ({ removed: 0, blocked: 0 }),
+        listAll: () => [
+          { adapter: "WhatsApp", accountId: "primary" },
+          { adapter: "whatsapp", accountId: "primary" },
+          { adapter: "discord", accountId: "ops" },
+          { adapter: "telegram", accountId: " bot " },
+          { adapter: "custom", accountId: "ignored" },
+        ],
+      },
+    };
+
+    expect(kernel.managedAdapterInventory()).toEqual({
+      whatsapp: ["primary"],
+      discord: ["ops"],
+      telegram: ["bot"],
+    });
+  });
+});
+
 describe("Kernel nested dispatch", () => {
   it("cancels request bodies rejected by nested capability checks", async () => {
     let cancelled: unknown;
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     const response = await kernel.requestDispatchedFrame(
       {
         type: "req",
@@ -638,7 +731,7 @@ describe("Kernel nested dispatch", () => {
       },
     };
     let route: any = null;
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.pendingAppResponses = new Map();
     kernel.activeRequests = new Map();
     kernel.cancelledProcessRequests = new Map();
@@ -765,7 +858,7 @@ describe("Kernel device connection cleanup", () => {
       }),
       close: vi.fn(),
     };
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.connections = new Map([[oldConnection.id, oldConnection]]);
 
     kernel.activateConnection(replacement, {
@@ -797,7 +890,7 @@ describe("Kernel device connection cleanup", () => {
         identity: { role: "driver", device: "browser" },
       },
     };
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.connections = new Map([[replacement.id, replacement]]);
     kernel.activeRequests = new Map();
     kernel.closeFrameBodyChannel = vi.fn();
@@ -825,7 +918,7 @@ describe("Kernel device connection cleanup", () => {
         identity: { role: "driver", device: "browser" },
       },
     };
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.connections = new Map([[connection.id, connection]]);
     kernel.sendWebSocketFrame = vi.fn();
 
@@ -850,7 +943,7 @@ describe("Kernel device connection cleanup", () => {
       id: "connection-1",
       state: { step: "connected", identity: { role: "user" } },
     };
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.connections = new Map([[connection.id, connection]]);
     kernel.activeRequests = new Map([
       ["request-1", {
@@ -891,7 +984,7 @@ describe("Kernel device connection cleanup", () => {
       },
       close: vi.fn(),
     };
-    const kernel = Object.create(Kernel.prototype) as {
+    const kernel = createTestKernel() as {
       connections: Map<string, unknown>;
       disconnectDeviceConnections(deviceId: string, reason: string): void;
       failRoutesForDevice: ReturnType<typeof vi.fn>;
@@ -928,7 +1021,7 @@ describe("Kernel user signal broadcasts", () => {
     const otherUser = { state: { identity: { role: "user", process: { uid: 2000 } } }, send: vi.fn() };
     const driver = { state: { identity: { role: "driver", process: { uid: 1000 } } }, send: vi.fn() };
     const service = { state: { identity: { role: "service", process: { uid: 1000 } } }, send: vi.fn() };
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.connections = new Map([
       ["user", user],
       ["other-user", otherUser],
@@ -951,7 +1044,7 @@ describe("Kernel user signal broadcasts", () => {
 
 describe("Kernel process signal routing", () => {
   function buildKernel(route: Record<string, unknown>) {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
     kernel.dispatchSignalWatches = vi.fn(async () => {});
     kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
@@ -1023,7 +1116,7 @@ describe("Kernel process signal routing", () => {
 
 describe("Kernel package invalidations", () => {
   it("broadcasts package changes only within their package scope", () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.broadcastToRole = vi.fn();
     kernel.broadcastToUserUid = vi.fn();
 
@@ -1060,7 +1153,7 @@ describe("Kernel package invalidations", () => {
 
 describe("Kernel package app authorization", () => {
   it("uses account capabilities without elevating from the package manifest", () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.auth = {
       getPasswdByUid: vi.fn(() => ({
         uid: 1000,
@@ -1093,7 +1186,7 @@ describe("Kernel package app authorization", () => {
 
 describe("Kernel service binding identity", () => {
   it("rejects service calls instead of fabricating a missing root account", async () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.auth = { getPasswdByUid: vi.fn(() => null) };
     kernel.caps = { resolve: vi.fn(() => []) };
 
@@ -1114,7 +1207,7 @@ describe("Kernel service binding identity", () => {
 
 describe("Kernel MCP connection cleanup", () => {
   it("removes newly registered MCP servers when the initial connection fails", async () => {
-    const kernel = Object.create(Kernel.prototype) as {
+    const kernel = createTestKernel() as {
       addMcpServerConnection(input: {
         uid: number;
         name: string;
@@ -1163,7 +1256,7 @@ describe("Kernel MCP connection cleanup", () => {
         };
       };
     };
-    const kernel = Object.create(Kernel.prototype) as {
+    const kernel = createTestKernel() as {
       addMcpServerConnection(input: {
         uid: number;
         name: string;
@@ -1247,7 +1340,7 @@ describe("Kernel process device requests", () => {
         redirected: false,
       },
     }));
-    const kernel = Object.create(Kernel.prototype) as {
+    const kernel = createTestKernel() as {
       env: Record<string, never>;
       procs: { getIdentity: ReturnType<typeof vi.fn> };
       caps: { resolve: ReturnType<typeof vi.fn> };
@@ -1390,7 +1483,7 @@ describe("Kernel process device requests", () => {
   });
 
   it("only lets the owning process cancel an active request", () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     const controller = new AbortController();
     kernel.activeRequests = new Map([
       ["fetch-1", { origin: { type: "process", id: "proc_1" }, controller }],
@@ -1405,7 +1498,7 @@ describe("Kernel process device requests", () => {
   });
 
   it("forwards routed cancellation only for the owning process", () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.activeRequests = new Map();
     kernel.cancelledProcessRequests = new Map();
     kernel.routes = {
@@ -1432,7 +1525,7 @@ describe("Kernel process device requests", () => {
   });
 
   it("cancels a connection request without exposing the control signal", () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     const controller = new AbortController();
     kernel.activeRequests = new Map([
       ["request-1", { origin: { type: "connection", id: "conn-1" }, controller }],
@@ -1474,7 +1567,7 @@ describe("Kernel process runtime projection", () => {
       releaseStarted = resolve;
     });
     const events: string[] = [];
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.pendingProcessSignals = new Map();
     kernel.extractRunId = vi.fn((payload) => payload.runId);
     kernel.updateProcessRuntimeFromSignal = vi.fn(() => true);
@@ -1520,7 +1613,7 @@ describe("Kernel process runtime projection", () => {
     const updateRuntimeState = vi.fn((_pid: string, patch: Record<string, unknown>) => {
       Object.assign(record, patch);
     });
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.procs = {
       get: vi.fn(() => record),
       updateRuntimeState,
@@ -1572,7 +1665,7 @@ describe("Kernel IPC completion", () => {
   });
 
   it("schedules timeout callbacks no earlier than their deadline", async () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.schedule = vi.fn(async () => ({ id: "ipc-timeout" }));
     const deadlineAt = Date.now() + 1_250;
 
@@ -1591,7 +1684,7 @@ describe("Kernel IPC completion", () => {
   it("cancels pending calls owned by an aborted source run", async () => {
     const cancelBySourceRun = vi.fn();
     const completeByRun = vi.fn(() => []);
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
     kernel.ipcCalls = { cancelBySourceRun, completeByRun };
 
@@ -1619,7 +1712,7 @@ describe("Kernel IPC completion", () => {
     "includes source-run correlation in %s payloads",
     async (signal) => {
       sendFrameToProcessMock.mockResolvedValue(null);
-      const kernel = Object.create(Kernel.prototype) as any;
+      const kernel = createTestKernel() as any;
       const call = {
         callId: "call-1",
         sourcePid: "proc-source",
@@ -1669,7 +1762,7 @@ describe("Kernel IPC completion", () => {
     };
     const releaseDelivery = vi.fn();
     const remove = vi.fn();
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.ipcCalls = {
       claimDelivery: vi.fn(() => call),
       releaseDelivery,
@@ -1694,7 +1787,7 @@ describe("Kernel IPC completion", () => {
   });
 
   it("queues terminal IPC delivery as an idempotent retrying job", () => {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createTestKernel() as any;
     kernel.ctx = { waitUntil: vi.fn() };
     kernel.schedule = vi.fn(async () => ({ id: "ipc-delivery" }));
 

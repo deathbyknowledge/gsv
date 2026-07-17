@@ -3,22 +3,22 @@ main = "build/index.js"
 compatibility_date = "2026-03-18"
 workers_dev = false
 
-# Repo registry — tracks which repos exist per owner so the profile page
-# can list them. Populated on first successful push.
-# Create with: wrangler kv namespace create REGISTRY
-[[kv_namespaces]]
-binding = "REGISTRY"
 [build]
 command = "bash ../scripts/worker-build.sh ripgit --release"
 
 [durable_objects]
 bindings = [
-  { name = "REPOSITORY", class_name = "Repository" }
+  { name = "REPOSITORY", class_name = "Repository" },
+  { name = "MANAGED_REPOSITORY_REGISTRY", class_name = "ManagedRepositoryRegistry" }
 ]
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Repository"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["ManagedRepositoryRegistry"]
 
 [observability]
 [observability.logs]

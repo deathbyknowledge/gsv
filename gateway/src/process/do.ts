@@ -97,8 +97,16 @@ import type {
   ProcResetResult,
   ProcKillResult,
   ProcSpawnAssignment,
+  ManagedObjectRestoreControl,
+  ManagedObjectSnapshotRequest,
+  ManagedObjectDescriptor,
 } from "@humansandmachines/gsv/protocol";
-import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
+import {
+  MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+  REQUEST_CANCEL_SIGNAL,
+  validateManagedRestoreControl,
+  validateManagedSnapshotRequest,
+} from "@humansandmachines/gsv/protocol";
 import type { AdapterSurface } from "../adapter-interface";
 import type {
   ProcessInboundFrame,
@@ -169,6 +177,7 @@ import {
   hasWorkersAiModelPricing,
   isWorkersAiProvider,
 } from "../inference/workers-ai";
+import { resolveWorkersAiBinding } from "../inference/service-binding";
 import { isVectorImageMimeType } from "../inference/image-mime";
 import { assembleSystemPrompt } from "./context";
 import {
@@ -211,6 +220,16 @@ import {
   requestToNetFetchArgs,
   responseFromNetFetchResult,
 } from "../kernel/net";
+import {
+  assertR2ObjectSize,
+  r2ObjectLimit,
+} from "../fs/storage-policy";
+import {
+  prepareManagedRestoreTarget,
+  readManagedRestoreTarget,
+  restoreManagedOwner,
+  snapshotManagedOwner,
+} from "../managed/do-portability";
 
 type RunState = {
   runId: string;
@@ -296,6 +315,10 @@ const HANDLED_IPC_CALLS_KEY = "handledIpcCalls";
 const ABORTED_RUN_IDS_KEY = "abortedRunIds";
 const PROCESS_RESET_AT_KEY = "processResetAt";
 const PENDING_RUN_FINISHES_KEY = "pendingRunFinishes";
+const MANAGED_PAUSED_KEY = "__gsv:managed:paused";
+const MANAGED_ERASED_KEY = "__gsv:managed:erased";
+const MANAGED_EPOCH_KEY = "__gsv:managed:epoch";
+const MANAGED_LOGICAL_NAME_KEY = "__gsv:managed:logicalName";
 const IPC_TOMBSTONE_LIMIT = 256;
 const SHELL_SESSION_TARGET_KEY_PREFIX = "shellSessionTarget:";
 const UNKNOWN_SHELL_SESSION_TARGET_MESSAGE =
@@ -842,14 +865,26 @@ export class Process extends Host<Env> {
   private readonly deferredTickRunIds = new Set<string>();
   private lifecycleTransition: Promise<void> = Promise.resolve();
   private lifecycleEpoch = 0;
+  private managedEpoch = 0;
   private queuedSendAdmission: Promise<void> = Promise.resolve();
   private killed = false;
+  private managedErased = false;
+  private managedLogicalName: string | null = null;
+  private managedPaused = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     runProcessSqlMigrations(ctx.storage);
     this.store = new ProcessStore(ctx.storage.sql);
     this.store.ensureConversation(DEFAULT_CONVERSATION_ID);
+    this.managedErased = ctx.storage.kv.get(MANAGED_ERASED_KEY) === true;
+    this.killed = this.managedErased;
+    this.managedPaused = ctx.storage.kv.get(MANAGED_PAUSED_KEY) === true;
+    this.managedLogicalName = ctx.storage.kv.get<string>(MANAGED_LOGICAL_NAME_KEY) ?? null;
+    const storedManagedEpoch = ctx.storage.kv.get<number>(MANAGED_EPOCH_KEY);
+    this.managedEpoch = Number.isSafeInteger(storedManagedEpoch) && storedManagedEpoch! >= 0
+      ? storedManagedEpoch!
+      : 0;
     this.ripgit = env.RIPGIT
       ? new RipgitClient(env.RIPGIT)
       : null;
@@ -862,7 +897,9 @@ export class Process extends Host<Env> {
       this.currentRun = recoveredRun;
     }
     if (
-      recoveredRun
+      !this.killed
+      && !this.managedPaused
+      && recoveredRun
       && !this.store.getPendingHilForRun(recoveredRun.runId)
       && recoveredRun.pendingMediaMessageId === undefined
     ) {
@@ -871,8 +908,10 @@ export class Process extends Host<Env> {
     const pendingFinishes = JSON.parse(
       this.store.getValue(PENDING_RUN_FINISHES_KEY) ?? "[]",
     ) as Array<{ runId: string }>;
-    for (const finish of pendingFinishes) {
-      this.ctx.waitUntil(this.onRunFinishDelivery(finish.runId));
+    if (!this.killed && !this.managedPaused) {
+      for (const finish of pendingFinishes) {
+        this.ctx.waitUntil(this.onRunFinishDelivery(finish.runId));
+      }
     }
   }
 
@@ -943,6 +982,21 @@ export class Process extends Host<Env> {
    * Single entry point — called by the Kernel to deliver frames.
    */
   async recvFrame(frame: ProcessInboundFrame) {
+    if (this.managedPaused) {
+      if (frame.type === "req") {
+        await frame.body?.stream.cancel("Tenant runtime is being updated").catch(() => {});
+        return {
+          type: "res",
+          id: frame.id,
+          ok: false,
+          error: { code: 503, message: "Tenant runtime is being updated" },
+        } satisfies ResponseErrFrame;
+      }
+      if (frame.type === "res") {
+        await cancelResponseBody(frame, "Tenant runtime is being updated");
+      }
+      return null;
+    }
     if (this.killed) {
       if (frame.type === "req") {
         await frame.body?.stream.cancel("Process no longer exists").catch(() => {});
@@ -1520,12 +1574,12 @@ export class Process extends Host<Env> {
     media: ProcSendArgs["media"],
   ): Promise<StoreIncomingProcessMediaOptions> {
     if (!media || media.length === 0) {
-      return { ai: this.env.AI };
+      return { ai: resolveWorkersAiBinding(this.env) };
     }
 
     const config = await this.resolveAiConfig();
     return {
-      ai: this.env.AI,
+      ai: resolveWorkersAiBinding(this.env),
       audioTranscriptionProvider: config.media?.transcriptionProvider,
       audioTranscriptionModel: config.media?.transcriptionModel,
       audioTranscriptionApiKey: config.media?.transcriptionApiKey,
@@ -2104,6 +2158,15 @@ export class Process extends Host<Env> {
     if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0) {
       await body.stream.cancel("Missing media body length").catch(() => {});
       return { ok: false, error: "proc.media.write requires an exact body length" };
+    }
+    try {
+      assertR2ObjectSize(r2ObjectLimit(this.env), length);
+    } catch (error) {
+      await body.stream.cancel(error).catch(() => {});
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Media object is too large",
+      };
     }
     if (!["image", "audio", "video", "document"].includes(args.type)) {
       await body.stream.cancel("Invalid media type").catch(() => {});
@@ -3190,6 +3253,269 @@ export class Process extends Host<Env> {
     }
   }
 
+  async managedErase(): Promise<void> {
+    const releaseLifecycle = await this.acquireLifecycleTransition();
+    try {
+      if (this.managedErased) {
+        const logicalName = this.managedLogicalName;
+        await this.ctx.storage.deleteAlarm();
+        await this.ctx.storage.deleteAll();
+        this.ctx.storage.kv.put(MANAGED_ERASED_KEY, true);
+        this.ctx.storage.kv.put(MANAGED_EPOCH_KEY, this.managedEpoch);
+        if (logicalName) this.ctx.storage.kv.put(MANAGED_LOGICAL_NAME_KEY, logicalName);
+        return;
+      }
+      // Fence all running work before the first asynchronous delete. Run
+      // continuations compare lifecycleEpoch before committing late output.
+      this.killed = true;
+      this.managedErased = true;
+      this.managedLogicalName = this.store.getValue("pid");
+      this.lifecycleEpoch += 1;
+      this.advanceManagedEpoch();
+      const erasedEpoch = this.managedEpoch;
+      this.cancelPendingRequests(null, "Tenant runtime is being erased");
+      this.rejectCodeModeWaiters(null, "Tenant runtime is being erased");
+      await this.ctx.storage.deleteAlarm();
+      await this.ctx.storage.deleteAll();
+      this.ctx.storage.kv.put(MANAGED_ERASED_KEY, true);
+      this.ctx.storage.kv.put(MANAGED_EPOCH_KEY, erasedEpoch);
+      if (this.managedLogicalName) {
+        this.ctx.storage.kv.put(MANAGED_LOGICAL_NAME_KEY, this.managedLogicalName);
+      }
+    } finally {
+      releaseLifecycle();
+    }
+  }
+
+  async managedPause(): Promise<void> {
+    const releaseLifecycle = await this.acquireLifecycleTransition();
+    try {
+      if (this.killed || this.managedPaused) {
+        return;
+      }
+      this.managedPaused = true;
+      this.ctx.storage.kv.put(MANAGED_PAUSED_KEY, true);
+      this.lifecycleEpoch += 1;
+      this.advanceManagedEpoch();
+
+      const run = this.currentRun;
+      this.cancelPendingRequests(null, "Tenant runtime is being updated");
+      this.rejectCodeModeWaiters(null, "Tenant runtime is being updated");
+      if (!run) {
+        return;
+      }
+
+      this.rememberAbortedRun(run.runId);
+      const pendingHil = this.store.getPendingHilForRun(run.runId);
+      this.ingestToolResults(run.runId, this.store.getResults(run.runId), {
+        interruptPending: "Tenant runtime is being updated",
+      });
+      if (pendingHil) {
+        this.resolveCodeModeApproval(pendingHil.requestId, false);
+      }
+      this.store.clearPendingHil();
+      this.emitRunFinished(run, {
+        text: null,
+        status: "aborted",
+        reason: "managed.update",
+      });
+      this.currentRun = null;
+    } finally {
+      releaseLifecycle();
+    }
+  }
+
+  async managedResume(): Promise<void> {
+    const releaseLifecycle = await this.acquireLifecycleTransition();
+    try {
+      if (this.killed || !this.managedPaused) {
+        return;
+      }
+      this.managedPaused = false;
+      this.ctx.storage.kv.delete(MANAGED_PAUSED_KEY);
+      this.lifecycleEpoch += 1;
+      this.advanceManagedEpoch();
+    } finally {
+      releaseLifecycle();
+    }
+  }
+
+  managedDescriptor(): ManagedObjectDescriptor {
+    if (this.managedErased) {
+      return {
+        schemaVersion: MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+        kind: "process",
+        providerId: this.ctx.id.toString(),
+        logicalName: this.managedLogicalName,
+        classification: "erased",
+        lifecycle: { status: "erased", epoch: this.managedEpoch },
+      };
+    }
+    const logicalName = this.store.getValue("pid");
+    if (!this.isInitialized() || !logicalName) {
+      return {
+        schemaVersion: MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+        kind: "process",
+        providerId: this.ctx.id.toString(),
+        logicalName: null,
+        classification: "uninitialized",
+        lifecycle: { status: "uninitialized", epoch: this.managedEpoch },
+      };
+    }
+    return {
+      schemaVersion: MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+      kind: "process",
+      providerId: this.ctx.id.toString(),
+      logicalName,
+      classification: "initialized",
+      lifecycle: {
+        status: this.managedPaused ? "paused" : "active",
+        epoch: this.managedEpoch,
+      },
+    };
+  }
+
+  managedSnapshot(input: ManagedObjectSnapshotRequest): ReadableStream<Uint8Array> {
+    const request = validateManagedSnapshotRequest(input);
+    this.assertManagedPortableIdentity(
+      request.component,
+      request.kind,
+      request.logicalName,
+      request.providerId,
+      request.fenceEpoch,
+    );
+    const descriptor = this.managedDescriptor();
+    if (
+      descriptor.classification !== "initialized"
+      || descriptor.logicalName !== request.logicalName
+      || descriptor.lifecycle.status !== "paused"
+    ) {
+      throw new Error("Managed process is not a paused initialized snapshot source");
+    }
+    return snapshotManagedOwner(this.ctx.storage, {
+      objectId: request.objectId,
+      assertFenced: () => this.assertManagedPortableFence(request.fenceEpoch),
+    });
+  }
+
+  async managedRestore(
+    control: ManagedObjectRestoreControl,
+    stream: ReadableStream<Uint8Array>,
+  ): Promise<{
+    status: "applied" | "replayed";
+    providerId: string;
+    frameCount: string;
+    bodyBytes: string;
+    semanticSha256: string;
+  }> {
+    const releaseLifecycle = await this.acquireLifecycleTransition();
+    try {
+      control = validateManagedRestoreControl(control);
+      this.assertManagedTargetIdentity(control);
+      const restoreTarget = readManagedRestoreTarget(this.ctx.storage);
+      if (!restoreTarget) {
+        if (this.killed || this.managedErased || this.isInitialized()) {
+          throw new Error("Managed process restore target is not fresh");
+        }
+        if (!this.managedPaused) {
+          if (control.fenceEpoch !== this.managedEpoch + 1) {
+            throw new Error("Managed process restore fence epoch is invalid");
+          }
+          this.managedPaused = true;
+          this.ctx.storage.kv.put(MANAGED_PAUSED_KEY, true);
+          this.lifecycleEpoch += 1;
+          this.advanceManagedEpoch();
+        }
+        this.managedLogicalName = control.logicalName;
+        this.ctx.storage.kv.put(MANAGED_LOGICAL_NAME_KEY, control.logicalName);
+      }
+      this.assertManagedPortableFence(control.fenceEpoch);
+      await prepareManagedRestoreTarget(this.ctx.storage, control);
+      const result = await restoreManagedOwner(
+        this.ctx.storage,
+        stream,
+        control,
+        () => this.assertManagedPortableFence(control.fenceEpoch),
+      );
+      const descriptor = this.managedDescriptor();
+      if (
+        descriptor.classification !== "initialized"
+        || descriptor.logicalName !== control.logicalName
+        || descriptor.providerId !== this.ctx.id.toString()
+      ) {
+        throw new Error("Restored process identity does not match its target");
+      }
+      return { ...result, providerId: descriptor.providerId };
+    } catch (error) {
+      if (!stream.locked) await stream.cancel(error).catch(() => {});
+      throw error;
+    } finally {
+      releaseLifecycle();
+    }
+  }
+
+  private assertManagedTargetIdentity(control: ManagedObjectRestoreControl): void {
+    if (
+      control.component !== "gateway"
+      || control.kind !== "process"
+      || this.env.PROCESS.idFromName(control.logicalName).toString() !== this.ctx.id.toString()
+    ) {
+      throw new Error("Managed process restore identity is invalid");
+    }
+  }
+
+  private assertManagedPortableIdentity(
+    component: string,
+    kind: string,
+    logicalName: string,
+    providerId: string,
+    fenceEpoch: number,
+  ): void {
+    if (
+      component !== "gateway"
+      || kind !== "process"
+      || providerId !== this.ctx.id.toString()
+      || this.env.PROCESS.idFromName(logicalName).toString() !== providerId
+    ) {
+      throw new Error("Managed process portable identity is invalid");
+    }
+    this.assertManagedPortableFence(fenceEpoch);
+  }
+
+  private assertManagedPortableFence(fenceEpoch: number): void {
+    if (
+      this.killed
+      || this.managedErased
+      || !this.managedPaused
+      || this.managedEpoch !== fenceEpoch
+    ) {
+      throw new Error("Managed process portable operation lost its exact pause fence");
+    }
+  }
+
+  private advanceManagedEpoch(): void {
+    this.managedEpoch += 1;
+    this.ctx.storage.kv.put(MANAGED_EPOCH_KEY, this.managedEpoch);
+  }
+
+  async managedActivate(): Promise<void> {
+    const releaseLifecycle = await this.acquireLifecycleTransition();
+    try {
+      if (this.killed || this.managedPaused) {
+        return;
+      }
+      this.promoteNextQueuedRun();
+      const pendingFinishes = JSON.parse(
+        this.store.getValue(PENDING_RUN_FINISHES_KEY) ?? "[]",
+      ) as Array<{ runId: string }>;
+      for (const finish of pendingFinishes) {
+        this.ctx.waitUntil(this.onRunFinishDelivery(finish.runId));
+      }
+    } finally {
+      releaseLifecycle();
+    }
+  }
+
   private async resetExecutionState(reason: string, emitFinish = true): Promise<void> {
     this.lifecycleEpoch += 1;
     this.store.setValue(PROCESS_RESET_AT_KEY, String(Date.now()));
@@ -3574,6 +3900,9 @@ export class Process extends Host<Env> {
 
   private async runTick(runId: string): Promise<void> {
     await this.lifecycleTransition;
+    if (this.managedPaused) {
+      return;
+    }
     let run = this.currentRun;
     if (!run || run.runId !== runId) {
       return;
@@ -4799,7 +5128,9 @@ export class Process extends Host<Env> {
       pending.push(payload);
       this.store.setValue(PENDING_RUN_FINISHES_KEY, JSON.stringify(pending));
     }
-    this.ctx.waitUntil(this.onRunFinishDelivery(run.runId));
+    if (!this.managedPaused) {
+      this.ctx.waitUntil(this.onRunFinishDelivery(run.runId));
+    }
   }
 
   private runFinishedPayload(
@@ -4823,6 +5154,9 @@ export class Process extends Host<Env> {
   }
 
   async onRunFinishDelivery(runId: string): Promise<void> {
+    if (this.managedPaused) {
+      return;
+    }
     const pending = JSON.parse(
       this.store.getValue(PENDING_RUN_FINISHES_KEY) ?? "[]",
     ) as Array<Record<string, unknown> & { runId: string }>;
@@ -5004,6 +5338,10 @@ export class Process extends Host<Env> {
     const compressed = await raceWithAbort(
       new Response(gzipMessageRecords(messages, signal)).arrayBuffer(),
       signal,
+    );
+    assertR2ObjectSize(
+      r2ObjectLimit(this.env),
+      compressed.byteLength,
     );
     const upload = this.env.STORAGE.put(key, compressed, {
       httpMetadata: { contentType: "application/gzip" },

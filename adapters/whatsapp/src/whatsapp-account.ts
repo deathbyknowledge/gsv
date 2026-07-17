@@ -47,6 +47,27 @@ import type {
   GatewayFrame,
   GatewayRequestFrame,
 } from "../../shared/src/types";
+import {
+  ManagedLifecycleFence,
+  ManagedLifecycleUnavailableError,
+  type ManagedLifecycleInventory,
+} from "../../shared/src/managed-lifecycle";
+import {
+  MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+  type ManagedObjectDescriptor,
+} from "@humansandmachines/gsv/protocol/managed-objects";
+import {
+  validateManagedRestoreControl,
+  validateManagedSnapshotRequest,
+  type ManagedObjectRestoreControl,
+  type ManagedObjectSnapshotRequest,
+} from "@humansandmachines/gsv/protocol/data-frame-stream";
+import {
+  prepareManagedAdapterRestoreTarget,
+  readAdapterRestoreTarget,
+  restoreManagedAdapterStorage,
+  snapshotManagedAdapterStorage,
+} from "../../shared/src/managed-portability";
 
 type GatewayChannelBinding = Fetcher & {
   serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
@@ -55,6 +76,7 @@ type GatewayChannelBinding = Fetcher & {
 interface Env {
   // Direct service binding to Gateway entrypoint.
   GATEWAY: GatewayChannelBinding;
+  WHATSAPP_ACCOUNT: DurableObjectNamespace<WhatsAppAccount>;
 }
 
 // Quiet logger for Baileys - suppresses verbose output
@@ -166,6 +188,7 @@ function jidActorId(jid: string): string {
 }
 
 export class WhatsAppAccount extends DurableObject<Env> {
+  private readonly lifecycle: ManagedLifecycleFence;
   private sock: WASocket | null = null;
   private state: WhatsAppAccountState = {
     accountId: "",
@@ -176,10 +199,188 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    // accountId is set from X-Account-Id header on first request
-    // and persisted in storage.kv for subsequent requests
-    const storedAccountId = this.ctx.storage.kv.get<string>("accountId");
-    this.state.accountId = storedAccountId || "";
+    this.lifecycle = new ManagedLifecycleFence(this.ctx.storage);
+    this.ctx.blockConcurrencyWhile(async () => {
+      await this.lifecycle.load();
+      this.state.accountId =
+        (await this.ctx.storage.get<string>("accountId")) || "";
+      if (!this.lifecycle.isActive()) {
+        this.state.connected = false;
+      }
+    });
+  }
+
+  async managedPause(accountId: string): Promise<ManagedLifecycleInventory> {
+    return this.lifecycle.runExclusive(async () => {
+      await this.bindAccountId(accountId);
+      await this.lifecycle.pause();
+      this.closeSocket("Managed account paused");
+      this.state.connected = false;
+      this.state.lastDisconnectedAt = Date.now();
+      this.qrCode = null;
+      this.resolveWaiters({});
+      await Promise.all([
+        this.ctx.storage.delete("login_pending"),
+        this.ctx.storage.deleteAlarm(),
+      ]);
+      return this.lifecycle.snapshot(this.state.accountId);
+    });
+  }
+
+  async managedResume(accountId: string): Promise<ManagedLifecycleInventory> {
+    return this.lifecycle.runExclusive(async () => {
+      await this.bindAccountId(accountId);
+      await this.lifecycle.resume();
+      const epoch = this.lifecycle.activeEpoch();
+      if (await hasAuthState(this.ctx.storage)) {
+        this.lifecycle.assertActive(epoch);
+        if (!this.sock) {
+          await this.startSocket(epoch);
+        }
+        if (this.lifecycle.isActive(epoch)) {
+          await this.scheduleKeepAlive(epoch);
+        }
+      }
+      return this.lifecycle.snapshot(this.state.accountId);
+    });
+  }
+
+  async managedErase(accountId: string): Promise<ManagedLifecycleInventory> {
+    return this.lifecycle.runExclusive(async () => {
+      await this.bindAccountId(accountId);
+      await this.lifecycle.erase();
+      this.closeSocket("Managed account erased");
+      this.resolveWaiters({});
+      await this.ctx.storage.deleteAlarm();
+      await this.lifecycle.eraseStorage({ accountId: this.state.accountId });
+      this.state = {
+        accountId: this.state.accountId,
+        connected: false,
+      };
+      this.qrCode = null;
+      return this.lifecycle.snapshot(this.state.accountId);
+    });
+  }
+
+  async managedDescriptor(): Promise<ManagedObjectDescriptor> {
+    const lifecycle = this.lifecycle.snapshot(this.state.accountId);
+    if (!this.state.accountId) {
+      return {
+        schemaVersion: MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+        kind: "adapter_account",
+        providerId: this.ctx.id.toString(),
+        logicalName: null,
+        classification: "uninitialized",
+        lifecycle: { status: "uninitialized", epoch: lifecycle.epoch },
+      };
+    }
+    return {
+      schemaVersion: MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+      kind: "adapter_account",
+      providerId: this.ctx.id.toString(),
+      logicalName: this.state.accountId,
+      classification: lifecycle.status === "erased" ? "erased" : "initialized",
+      lifecycle: { status: lifecycle.status, epoch: lifecycle.epoch },
+    };
+  }
+
+  async managedSnapshot(input: ManagedObjectSnapshotRequest): Promise<ReadableStream<Uint8Array>> {
+    const request = validateManagedSnapshotRequest(input);
+    this.assertManagedPortableIdentity(
+      request.component,
+      request.kind,
+      request.logicalName,
+      request.providerId,
+      request.fenceEpoch,
+    );
+    const descriptor = await this.managedDescriptor();
+    if (
+      descriptor.classification !== "initialized"
+      || descriptor.logicalName !== request.logicalName
+      || descriptor.lifecycle.status !== "paused"
+    ) {
+      throw new Error("WhatsApp account is not a paused initialized snapshot source");
+    }
+    return snapshotManagedAdapterStorage(
+      this.ctx.storage,
+      request.objectId,
+      () => this.lifecycle.assertPaused(request.fenceEpoch),
+    );
+  }
+
+  async managedRestore(
+    input: ManagedObjectRestoreControl,
+    stream: ReadableStream<Uint8Array>,
+  ) {
+    return this.lifecycle.runExclusive(async () => {
+      try {
+        const control = validateManagedRestoreControl(input);
+        this.assertManagedTargetIdentity(control);
+        if (!readAdapterRestoreTarget(this.ctx.storage)) {
+          if (this.state.accountId !== "") {
+            throw new Error("WhatsApp restore target is not fresh");
+          }
+          await this.lifecycle.prepareRestore(control.fenceEpoch);
+          this.closeSocket("Managed account is being restored");
+          this.resolveWaiters({});
+          await this.ctx.storage.deleteAlarm();
+        }
+        this.lifecycle.assertPaused(control.fenceEpoch);
+        await prepareManagedAdapterRestoreTarget(this.ctx.storage, control);
+        const result = await restoreManagedAdapterStorage(
+          this.ctx.storage,
+          stream,
+          control,
+          () => this.lifecycle.assertPaused(control.fenceEpoch),
+        );
+        this.state = {
+          accountId: (await this.ctx.storage.get<string>("accountId")) ?? "",
+          connected: false,
+        };
+        this.qrCode = null;
+        const descriptor = await this.managedDescriptor();
+        if (
+          descriptor.classification !== "initialized"
+          || descriptor.logicalName !== control.logicalName
+          || descriptor.providerId !== this.ctx.id.toString()
+        ) {
+          throw new Error("Restored WhatsApp identity does not match its target");
+        }
+        return { ...result, providerId: descriptor.providerId };
+      } catch (error) {
+        if (!stream.locked) await stream.cancel(error).catch(() => {});
+        throw error;
+      }
+    });
+  }
+
+  private assertManagedTargetIdentity(control: ManagedObjectRestoreControl): void {
+    if (
+      control.component !== "whatsapp"
+      || control.kind !== "adapter_account"
+      || this.env.WHATSAPP_ACCOUNT.idFromName(control.logicalName).toString()
+        !== this.ctx.id.toString()
+    ) {
+      throw new Error("WhatsApp managed restore identity is invalid");
+    }
+  }
+
+  private assertManagedPortableIdentity(
+    component: string,
+    kind: string,
+    logicalName: string,
+    providerId: string,
+    fenceEpoch: number,
+  ): void {
+    if (
+      component !== "whatsapp"
+      || kind !== "adapter_account"
+      || providerId !== this.ctx.id.toString()
+      || this.env.WHATSAPP_ACCOUNT.idFromName(logicalName).toString() !== providerId
+    ) {
+      throw new Error("WhatsApp managed portable identity is invalid");
+    }
+    this.lifecycle.assertPaused(fenceEpoch);
   }
 
   /**
@@ -190,8 +391,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const headerAccountId = request.headers.get("X-Account-Id");
     const traceId = request.headers.get("X-Trace-Id")?.trim() || "no-trace";
     if (headerAccountId && !this.state.accountId) {
-      this.state.accountId = headerAccountId;
-      this.ctx.storage.kv.put("accountId", headerAccountId);
+      await this.bindAccountId(headerAccountId);
       console.log(`[WA] Set accountId from header: ${headerAccountId}`);
     }
     
@@ -206,6 +406,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
     );
 
     try {
+      if (path !== "/status") {
+        this.lifecycle.activeEpoch();
+      }
       switch (path) {
         case "/status":
           return this.handleStatus();
@@ -227,6 +430,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
           return new Response("Not Found", { status: 404 });
       }
     } catch (e) {
+      if (e instanceof ManagedLifecycleUnavailableError) {
+        return Response.json(
+          { error: e.message },
+          { status: e.status === "erased" ? 410 : 503 },
+        );
+      }
       console.error(`[WhatsAppAccount] Error handling ${path}:`, e);
       return Response.json({ error: String(e) }, { status: 500 });
     }
@@ -241,10 +450,34 @@ export class WhatsAppAccount extends DurableObject<Env> {
       lastConnectedAt: this.state.lastConnectedAt,
       lastMessageAt: this.state.lastMessageAt,
       hasSocket: this.sock !== null,
+      managedLifecycle: this.lifecycle.snapshot(this.state.accountId),
     });
   }
 
+  private async bindAccountId(accountId: string): Promise<void> {
+    const normalized = accountId.trim();
+    if (!normalized) {
+      throw new Error("WhatsApp account ID is required");
+    }
+    if (this.state.accountId && this.state.accountId !== normalized) {
+      throw new Error("WhatsApp account ID does not match durable account");
+    }
+    if (!this.state.accountId) {
+      await this.ctx.storage.put("accountId", normalized);
+      this.state.accountId = normalized;
+    }
+  }
+
+  private closeSocket(reason: string): void {
+    const socket = this.sock;
+    this.sock = null;
+    if (socket) {
+      socket.end(new Error(reason));
+    }
+  }
+
   private async handleLogin(url: URL, isPost: boolean, traceId: string): Promise<Response> {
+    const epoch = this.lifecycle.activeEpoch();
     const force = url.searchParams.get("force") === "true";
     console.log(
       `[whatsapp.do:${traceId}] handleLogin accountId=${this.state.accountId} force=${force ? "true" : "false"} isPost=${isPost ? "true" : "false"} connected=${this.state.connected ? "true" : "false"} hasSocket=${this.sock ? "true" : "false"}`,
@@ -259,24 +492,28 @@ export class WhatsAppAccount extends DurableObject<Env> {
     // Only clear auth if explicitly requested with force=true
     // This prevents rate-limiting issues from repeated new device pairing attempts
     const hasAuth = await hasAuthState(this.ctx.storage);
+    this.lifecycle.assertActive(epoch);
     console.log(`[whatsapp.do:${traceId}] handleLogin hasAuth=${hasAuth ? "true" : "false"}`);
     if (force && hasAuth) {
       console.log(`[WA] Force login: clearing existing auth state`);
       await clearAuthState(this.ctx.storage);
+      this.lifecycle.assertActive(epoch);
     }
 
     // Mark login as pending BEFORE starting socket
     // This prevents alarm from interfering with the login flow
     await this.ctx.storage.put("login_pending", Date.now());
+    this.lifecycle.assertActive(epoch);
     
     // Start the socket
     if (!this.sock) {
       console.log(`[whatsapp.do:${traceId}] handleLogin starting socket`);
-      await this.startSocket();
+      await this.startSocket(epoch);
     }
 
     // Wait for QR code to be generated (60s to allow time for scanning)
     const result = await this.waitForQrOrConnection(60000);
+    this.lifecycle.assertActive(epoch);
     console.log(
       `[whatsapp.do:${traceId}] handleLogin wait result connected=${result.connected ? "true" : "false"} qr=${result.qr ? "true" : "false"}`,
     );
@@ -284,13 +521,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
     if (result.connected) {
       // Login succeeded - clear pending flag and schedule keep-alive
       await this.ctx.storage.delete("login_pending");
-      this.ctx.storage.setAlarm(Date.now() + 10000);
+      await this.scheduleKeepAlive(epoch);
       return Response.json({ connected: true, message: "Connected" });
     }
     
     if (result.qr) {
       // Schedule alarm to keep DO alive during QR scan window
-      this.ctx.storage.setAlarm(Date.now() + 5000);
+      await this.ctx.storage.setAlarm(Date.now() + 5000);
       
       return Response.json({ 
         connected: false, 
@@ -308,6 +545,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private async handleLogout(): Promise<Response> {
+    const epoch = this.lifecycle.activeEpoch();
     console.log(`[WA] Logout requested`);
     
     if (this.sock) {
@@ -316,6 +554,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
 
     await clearAuthState(this.ctx.storage);
+    this.lifecycle.assertActive(epoch);
     await this.ctx.storage.delete("login_pending");
     
     this.state = {
@@ -328,6 +567,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private async handleStop(): Promise<Response> {
+    const epoch = this.lifecycle.activeEpoch();
     if (this.sock) {
       this.sock.end(undefined);
       this.sock = null;
@@ -337,15 +577,17 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.state.lastDisconnectedAt = Date.now();
 
     // Notify Gateway of status change
-    await this.notifyGatewayStatus();
+    await this.notifyGatewayStatus(epoch);
 
     return Response.json({ success: true, message: "Stopped" });
   }
 
   private async handleWake(): Promise<Response> {
+    const epoch = this.lifecycle.activeEpoch();
     const actions: string[] = [];
     
     const hasAuth = await hasAuthState(this.ctx.storage);
+    this.lifecycle.assertActive(epoch);
     if (!hasAuth) {
       return Response.json({ 
         success: false, 
@@ -358,8 +600,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
     if (!this.sock || !this.state.connected) {
       console.log(`[WhatsAppAccount:${this.state.accountId}] Wake: Reconnecting...`);
       actions.push("reconnecting_whatsapp");
-      await this.startSocket();
+      await this.startSocket(epoch);
       await new Promise(resolve => setTimeout(resolve, 3000));
+      this.lifecycle.assertActive(epoch);
     } else {
       actions.push("whatsapp_already_connected");
     }
@@ -379,16 +622,19 @@ export class WhatsAppAccount extends DurableObject<Env> {
    * Handle outbound message from Gateway (via WorkerEntrypoint)
    */
   private async handleSend(request: Request): Promise<Response> {
+    const epoch = this.lifecycle.activeEpoch();
     if (!this.sock || !this.state.connected) {
       return Response.json({ error: "Not connected" }, { status: 503 });
     }
 
     const message = await request.json() as ChannelOutboundMessage;
-    const jid = await this.resolveOutboundWhatsAppJid(message.peer.id);
+    const jid = await this.resolveOutboundWhatsAppJid(message.peer.id, epoch);
+    this.lifecycle.assertActive(epoch);
 
     try {
       const content = this.buildOutboundContent(message);
       const sent = await this.sock.sendMessage(jid, content);
+      this.lifecycle.assertActive(epoch);
       console.log(`[WA] Sent to ${jid}: "${message.text.substring(0, 50)}..."`);
       return Response.json({ success: true, messageId: sent?.key?.id });
     } catch (e) {
@@ -401,6 +647,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
    * Handle explicit reaction from adapter shell.
    */
   private async handleReact(request: Request): Promise<Response> {
+    const epoch = this.lifecycle.activeEpoch();
     if (!this.sock || !this.state.connected) {
       return Response.json({ error: "Not connected" }, { status: 503 });
     }
@@ -419,7 +666,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
       );
     }
 
-    const remote = await this.resolveOutboundMessageKeyJid(body.peer.id);
+    const remote = await this.resolveOutboundMessageKeyJid(body.peer.id, epoch);
+    this.lifecycle.assertActive(epoch);
     const jid = remote.jid;
     const key: WAMessageKey = {
       remoteJid: jid,
@@ -430,7 +678,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       key.remoteJidAlt = remote.alt;
     }
     if (body.participant) {
-      const participant = await this.resolveOutboundMessageKeyJid(body.participant);
+      const participant = await this.resolveOutboundMessageKeyJid(body.participant, epoch);
       key.participant = participant.jid;
       if (participant.alt) {
         key.participantAlt = participant.alt;
@@ -444,6 +692,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
           key,
         },
       });
+      this.lifecycle.assertActive(epoch);
       return Response.json({ success: true });
     } catch (e) {
       console.error(`[WA] React failed:`, e);
@@ -455,16 +704,19 @@ export class WhatsAppAccount extends DurableObject<Env> {
    * Handle typing indicator from Gateway
    */
   private async handleTyping(request: Request): Promise<Response> {
+    const epoch = this.lifecycle.activeEpoch();
     if (!this.sock || !this.state.connected) {
       return Response.json({ error: "Not connected" }, { status: 503 });
     }
 
     const { peer, typing } = await request.json() as { peer: ChannelPeer; typing: boolean };
-    const jid = await this.resolveOutboundWhatsAppJid(peer.id);
+    const jid = await this.resolveOutboundWhatsAppJid(peer.id, epoch);
+    this.lifecycle.assertActive(epoch);
 
     try {
       const presence = typing ? "composing" : "paused";
       await this.sock.sendPresenceUpdate(presence, jid);
+      this.lifecycle.assertActive(epoch);
       return Response.json({ ok: true });
     } catch (e) {
       // Typing is best-effort
@@ -528,31 +780,43 @@ export class WhatsAppAccount extends DurableObject<Env> {
     throw new Error("Media attachment must include base64 data or url");
   }
 
-  private async resolveOutboundWhatsAppJid(jidOrPhone: string): Promise<string> {
+  private async resolveOutboundWhatsAppJid(
+    jidOrPhone: string,
+    epoch: number,
+  ): Promise<string> {
     const jid = normalizeOutboundWhatsAppJid(jidOrPhone);
     if (!isPnWhatsAppJid(jid)) {
       return jid;
     }
 
-    const lid = await this.lookupLidForPN(jid);
+    const lid = await this.lookupLidForPN(jid, epoch);
     return lid ?? jid;
   }
 
-  private async resolveOutboundMessageKeyJid(jidOrPhone: string): Promise<{ jid: string; alt?: string }> {
+  private async resolveOutboundMessageKeyJid(
+    jidOrPhone: string,
+    epoch: number,
+  ): Promise<{ jid: string; alt?: string }> {
     const jid = normalizeOutboundWhatsAppJid(jidOrPhone);
     if (!isPnWhatsAppJid(jid)) {
       return { jid };
     }
 
-    const lid = await this.lookupLidForPN(jid);
+    const lid = await this.lookupLidForPN(jid, epoch);
     return lid ? { jid: lid, alt: jid } : { jid };
   }
 
-  private async startSocket(): Promise<void> {
-    const { state: authState, saveCreds } = await useDOAuthState(this.ctx.storage);
+  private async startSocket(epoch: number): Promise<void> {
+    this.lifecycle.assertActive(epoch);
+    const { state: authState, saveCreds } = await useDOAuthState(
+      this.ctx.storage,
+      () => this.lifecycle.isActive(epoch),
+    );
+    this.lifecycle.assertActive(epoch);
     const { version } = await fetchLatestBaileysVersion();
+    this.lifecycle.assertActive(epoch);
 
-    this.sock = makeWASocket({
+    const socket = makeWASocket({
       auth: {
         creds: authState.creds,
         keys: makeCacheableSignalKeyStore(authState.keys, noopLogger),
@@ -564,27 +828,53 @@ export class WhatsAppAccount extends DurableObject<Env> {
       syncFullHistory: false,
       markOnlineOnConnect: false,
     });
+    if (!this.lifecycle.isActive(epoch)) {
+      socket.end(new Error("Managed lifecycle changed while opening socket"));
+      this.lifecycle.assertActive(epoch);
+    }
+    this.sock = socket;
 
-    this.sock.ev.on("creds.update", saveCreds);
-    this.sock.ev.on("connection.update", (update) => this.handleConnectionUpdate(update));
-    this.sock.ev.on("lid-mapping.update", (mapping) => {
-      this.rememberLidPnMapping(mapping).catch((e) => {
+    socket.ev.on("creds.update", () => {
+      if (!this.isCurrentSocket(epoch, socket)) return;
+      saveCreds().catch((e) => {
+        console.error(`[WA:${this.state.accountId}] Credential update failed:`, e);
+      });
+    });
+    socket.ev.on("connection.update", (update) => {
+      this.handleConnectionUpdate(update, epoch, socket).catch((e) => {
+        console.error(`[WA:${this.state.accountId}] Connection update failed:`, e);
+      });
+    });
+    socket.ev.on("lid-mapping.update", (mapping) => {
+      if (!this.isCurrentSocket(epoch, socket)) return;
+      this.rememberLidPnMapping(mapping, epoch).catch((e) => {
         console.error(`[WA:${this.state.accountId}] LID mapping update failed:`, e);
       });
     });
-    this.sock.ev.on("messaging-history.set", ({ lidPnMappings }) => {
-      this.rememberLidPnMappings(lidPnMappings).catch((e) => {
+    socket.ev.on("messaging-history.set", ({ lidPnMappings }) => {
+      if (!this.isCurrentSocket(epoch, socket)) return;
+      this.rememberLidPnMappings(lidPnMappings, epoch).catch((e) => {
         console.error(`[WA:${this.state.accountId}] History LID mappings update failed:`, e);
       });
     });
-    this.sock.ev.on("messages.upsert", (m) => {
-      this.handleMessagesUpsert(m).catch((e) => {
+    socket.ev.on("messages.upsert", (m) => {
+      if (!this.isCurrentSocket(epoch, socket)) return;
+      this.handleMessagesUpsert(m, epoch, socket).catch((e) => {
         console.error(`[WA:${this.state.accountId}] Message handling error:`, e);
       });
     });
   }
 
-  private handleConnectionUpdate(update: Partial<BaileysEventMap["connection.update"]>): void {
+  private isCurrentSocket(epoch: number, socket: WASocket): boolean {
+    return this.lifecycle.isActive(epoch) && this.sock === socket;
+  }
+
+  private async handleConnectionUpdate(
+    update: Partial<BaileysEventMap["connection.update"]>,
+    epoch: number,
+    socket: WASocket,
+  ): Promise<void> {
+    if (!this.isCurrentSocket(epoch, socket)) return;
     const { connection, lastDisconnect, qr } = update;
     const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
     console.log(
@@ -598,6 +888,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
 
     if (connection === "open") {
+      if (!this.isCurrentSocket(epoch, socket)) return;
       this.state.connected = true;
       this.state.lastConnectedAt = Date.now();
       this.state.selfJid = this.sock?.user?.id;
@@ -609,15 +900,19 @@ export class WhatsAppAccount extends DurableObject<Env> {
         }
       }
       
-      this.ctx.storage.delete("login_pending").catch(() => {});
+      await this.ctx.storage.delete("login_pending");
+      if (!this.isCurrentSocket(epoch, socket)) return;
       console.log(`[WA:${this.state.accountId}] Connected as ${this.state.selfE164 || this.state.selfJid}`);
       this.resolveWaiters({ connected: true });
       
-      this.notifyGatewayStatus().catch(() => {});
-      this.scheduleKeepAlive();
+      await this.notifyGatewayStatus(epoch);
+      if (this.isCurrentSocket(epoch, socket)) {
+        await this.scheduleKeepAlive(epoch);
+      }
     }
 
     if (connection === "close") {
+      if (!this.isCurrentSocket(epoch, socket)) return;
       const isLoggedOut = statusCode === DisconnectReason.loggedOut;
       const isConnectionReplaced = statusCode === 515;
       
@@ -629,22 +924,31 @@ export class WhatsAppAccount extends DurableObject<Env> {
       if (isLoggedOut) {
         this.state.selfJid = undefined;
         this.state.selfE164 = undefined;
-        clearAuthState(this.ctx.storage);
-        this.ctx.storage.delete("login_pending").catch(() => {});
+        await clearAuthState(this.ctx.storage);
+        if (!this.lifecycle.isActive(epoch)) return;
+        await this.ctx.storage.delete("login_pending");
       } else if (isConnectionReplaced) {
-        this.ctx.storage.delete("login_pending").catch(() => {});
+        await this.ctx.storage.delete("login_pending");
       } else {
-        this.ctx.storage.setAlarm(Date.now() + 5000);
+        await this.ctx.storage.setAlarm(Date.now() + 5000);
       }
 
-      this.notifyGatewayStatus().catch(() => {});
+      if (this.lifecycle.isActive(epoch)) {
+        await this.notifyGatewayStatus(epoch);
+      }
     }
   }
 
-  private async handleMessagesUpsert(m: BaileysEventMap["messages.upsert"]): Promise<void> {
+  private async handleMessagesUpsert(
+    m: BaileysEventMap["messages.upsert"],
+    epoch: number,
+    socket: WASocket,
+  ): Promise<void> {
+    if (!this.isCurrentSocket(epoch, socket)) return;
     if (m.type !== "notify") return;
 
     for (const msg of m.messages) {
+      if (!this.isCurrentSocket(epoch, socket)) return;
       if (msg.key.fromMe) continue;
 
       const extracted = extractMessageContent(msg.message);
@@ -677,14 +981,17 @@ export class WhatsAppAccount extends DurableObject<Env> {
       const participantJid = preferredLidJid(msg.key.participant, msg.key.participantAlt);
       const participantPn = preferredPnJid(msg.key.participant, msg.key.participantAlt);
       const actorId = isGroup
-        ? await this.resolveStableWhatsAppActorId(
+          ? await this.resolveStableWhatsAppActorId(
             participantJid,
             participantPn,
+            epoch,
           )
         : await this.resolveStableWhatsAppActorId(
             deliveryJid,
             dmPn,
+            epoch,
           );
+      if (!this.isCurrentSocket(epoch, socket)) return;
       if (!actorId) continue;
 
       // Download media if present
@@ -692,6 +999,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       if (hasMedia) {
         try {
           const attachment = await this.downloadMedia(msg);
+          if (!this.isCurrentSocket(epoch, socket)) return;
           if (attachment) {
             media.push(attachment);
           }
@@ -699,6 +1007,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
           console.error(`[WA:${this.state.accountId}] Media download failed:`, e);
         }
       }
+      if (!this.isCurrentSocket(epoch, socket)) return;
 
       // Build inbound message for Gateway
       const inbound: AdapterInboundMessage = {
@@ -731,26 +1040,30 @@ export class WhatsAppAccount extends DurableObject<Env> {
             message: inbound,
           },
         );
+        if (!this.isCurrentSocket(epoch, socket)) return;
         if (!result.ok) {
           console.error(
             `[WA:${this.state.accountId}] Gateway RPC inbound rejected: ${result.error || "unknown error"}`,
           );
           continue;
         }
-        if (result.challenge?.prompt && !isGroup && this.sock) {
+        if (result.challenge?.prompt && !isGroup && this.isCurrentSocket(epoch, socket)) {
           try {
-            await this.sock.sendMessage(deliveryJid, { text: result.challenge.prompt });
+            await socket.sendMessage(deliveryJid, { text: result.challenge.prompt });
+            if (!this.isCurrentSocket(epoch, socket)) return;
           } catch (err) {
             console.error(`[WA:${this.state.accountId}] Failed to send challenge prompt:`, err);
           }
         }
-        if (result.reply?.text && !isGroup && this.sock) {
+        if (result.reply?.text && !isGroup && this.isCurrentSocket(epoch, socket)) {
           try {
-            await this.sock.sendMessage(deliveryJid, { text: result.reply.text });
+            await socket.sendMessage(deliveryJid, { text: result.reply.text });
+            if (!this.isCurrentSocket(epoch, socket)) return;
           } catch (err) {
             console.error(`[WA:${this.state.accountId}] Failed to send gateway reply:`, err);
           }
         }
+        if (!this.isCurrentSocket(epoch, socket)) return;
         this.state.lastMessageAt = Date.now();
       } catch (e) {
         console.error(`[WA:${this.state.accountId}] Gateway RPC inbound failed:`, e);
@@ -761,30 +1074,37 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private async resolveStableWhatsAppActorId(
     jid: string | null | undefined,
     alternatePnJid?: string,
+    epoch?: number,
   ): Promise<string | null> {
+    if (epoch !== undefined) this.lifecycle.assertActive(epoch);
     const normalizedJid = normalizeWhatsAppJid(jid);
     if (!normalizedJid) return null;
 
     const phoneDigits = phoneDigitsFromJid(alternatePnJid) ?? phoneDigitsFromJid(normalizedJid);
     if (phoneDigits) {
       const canonical = phoneActorId(phoneDigits);
-      await this.rememberActorAlias(jidActorId(normalizedJid), canonical);
-      await this.rememberLidAliasForPhone(phoneDigits, canonical);
+      await this.rememberActorAlias(jidActorId(normalizedJid), canonical, epoch);
+      await this.rememberLidAliasForPhone(phoneDigits, canonical, epoch);
       return canonical;
     }
 
     const rawActorId = jidActorId(normalizedJid);
-    const aliased = await this.lookupActorAlias(rawActorId);
+    const aliased = await this.lookupActorAlias(rawActorId, epoch);
     return aliased ?? rawActorId;
   }
 
-  private async rememberLidAliasForPhone(phoneDigits: string, canonicalActorId: string): Promise<void> {
-    const lid = await this.lookupLidForPN(`${phoneDigits}@s.whatsapp.net`);
+  private async rememberLidAliasForPhone(
+    phoneDigits: string,
+    canonicalActorId: string,
+    epoch?: number,
+  ): Promise<void> {
+    const lid = await this.lookupLidForPN(`${phoneDigits}@s.whatsapp.net`, epoch);
     if (!lid) return;
-    await this.rememberActorAlias(jidActorId(lid), canonicalActorId);
+    await this.rememberActorAlias(jidActorId(lid), canonicalActorId, epoch);
   }
 
-  private async lookupLidForPN(pnJid: string): Promise<string | null> {
+  private async lookupLidForPN(pnJid: string, epoch?: number): Promise<string | null> {
+    if (epoch !== undefined) this.lifecycle.assertActive(epoch);
     if (!this.sock) return null;
 
     const normalizedPn = normalizeWhatsAppJid(pnJid);
@@ -792,9 +1112,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
     try {
       const lid = await this.sock.signalRepository.lidMapping.getLIDForPN(normalizedPn);
+      if (epoch !== undefined) this.lifecycle.assertActive(epoch);
       const normalizedLid = normalizeWhatsAppJid(lid);
       if (!isLidWhatsAppJid(normalizedLid)) return null;
-      await this.rememberLidPnMapping({ pn: normalizedPn, lid: normalizedLid });
+      await this.rememberLidPnMapping({ pn: normalizedPn, lid: normalizedLid }, epoch);
       return normalizedLid;
     } catch (error) {
       console.warn(`[WA:${this.state.accountId}] Failed to resolve LID for ${normalizedPn}`, error);
@@ -802,28 +1123,41 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
   }
 
-  private async rememberLidPnMappings(mappings: LIDMapping[] | undefined): Promise<void> {
+  private async rememberLidPnMappings(
+    mappings: LIDMapping[] | undefined,
+    epoch?: number,
+  ): Promise<void> {
     if (!mappings?.length) return;
-    await Promise.all(mappings.map((mapping) => this.rememberLidPnMapping(mapping)));
+    await Promise.all(
+      mappings.map((mapping) => this.rememberLidPnMapping(mapping, epoch)),
+    );
   }
 
-  private async rememberLidPnMapping(mapping: LIDMapping): Promise<void> {
+  private async rememberLidPnMapping(mapping: LIDMapping, epoch?: number): Promise<void> {
+    if (epoch !== undefined) this.lifecycle.assertActive(epoch);
     const pn = normalizeWhatsAppJid(mapping.pn);
     const lid = normalizeWhatsAppJid(mapping.lid);
     if (!isPnWhatsAppJid(pn) || !isLidWhatsAppJid(lid)) return;
 
     const phoneDigits = phoneDigitsFromJid(pn);
     const canonicalActorId = phoneDigits ? phoneActorId(phoneDigits) : jidActorId(pn);
-    await this.rememberActorAlias(jidActorId(lid), canonicalActorId);
+    await this.rememberActorAlias(jidActorId(lid), canonicalActorId, epoch);
   }
 
-  private async rememberActorAlias(aliasActorId: string, canonicalActorId: string): Promise<void> {
+  private async rememberActorAlias(
+    aliasActorId: string,
+    canonicalActorId: string,
+    epoch?: number,
+  ): Promise<void> {
+    if (epoch !== undefined) this.lifecycle.assertActive(epoch);
     if (!aliasActorId || !canonicalActorId || aliasActorId === canonicalActorId) return;
     await this.ctx.storage.put(`actor_alias:${aliasActorId}`, canonicalActorId);
   }
 
-  private async lookupActorAlias(aliasActorId: string): Promise<string | null> {
+  private async lookupActorAlias(aliasActorId: string, epoch?: number): Promise<string | null> {
+    if (epoch !== undefined) this.lifecycle.assertActive(epoch);
     const alias = await this.ctx.storage.get<string>(`actor_alias:${aliasActorId}`);
+    if (epoch !== undefined) this.lifecycle.assertActive(epoch);
     return typeof alias === "string" && alias.trim().length > 0 ? alias : null;
   }
 
@@ -933,7 +1267,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
   /**
    * Notify Gateway of status change via Service Binding RPC.
    */
-  private async notifyGatewayStatus(): Promise<void> {
+  private async notifyGatewayStatus(epoch: number): Promise<void> {
+    if (!this.lifecycle.isActive(epoch)) return;
     if (!this.state.accountId) return;
     
     try {
@@ -954,6 +1289,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
           status,
         },
       );
+      this.lifecycle.assertActive(epoch);
     } catch (e) {
       // Status updates are best-effort.
       console.error(`[WA:${this.state.accountId}] Gateway RPC status failed:`, e);
@@ -1014,17 +1350,23 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   private static readonly KEEP_ALIVE_INTERVAL_MS = 10_000;
 
-  private scheduleKeepAlive(): void {
-    this.ctx.storage.setAlarm(Date.now() + WhatsAppAccount.KEEP_ALIVE_INTERVAL_MS);
+  private async scheduleKeepAlive(epoch: number): Promise<void> {
+    this.lifecycle.assertActive(epoch);
+    await this.ctx.storage.setAlarm(
+      Date.now() + WhatsAppAccount.KEEP_ALIVE_INTERVAL_MS,
+    );
   }
 
   async alarm(): Promise<void> {
+    const epoch = this.lifecycle.activeEpoch();
     const hasAuth = await hasAuthState(this.ctx.storage);
+    this.lifecycle.assertActive(epoch);
     const loginPending = await this.ctx.storage.get<number>("login_pending");
+    this.lifecycle.assertActive(epoch);
     
     // Keep alive during login flow
     if (loginPending && Date.now() - loginPending < 90000) {
-      this.ctx.storage.setAlarm(Date.now() + 5000);
+      await this.ctx.storage.setAlarm(Date.now() + 5000);
       return;
     }
     
@@ -1034,12 +1376,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
     if (!hasAuth) return;
 
-    this.scheduleKeepAlive();
+    await this.scheduleKeepAlive(epoch);
 
     // Reconnect if needed
     if (!this.sock) {
       try {
-        await this.startSocket();
+        await this.startSocket(epoch);
       } catch (e) {
         console.error(`[WA:${this.state.accountId}] Reconnect failed:`, e);
       }

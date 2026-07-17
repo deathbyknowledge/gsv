@@ -12,6 +12,10 @@
       {
         "name": "TELEGRAM_ACCOUNT",
         "class_name": "TelegramAccount"
+      },
+      {
+        "name": "MANAGED_ADMISSION",
+        "class_name": "ManagedAdmissionGate"
       }
     ]
   },
@@ -19,6 +23,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["TelegramAccount"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["ManagedAdmissionGate"]
     }
   ],
   "services": [

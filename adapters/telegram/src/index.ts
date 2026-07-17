@@ -1,5 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { normalizeAdapterAccountId } from "@humansandmachines/gsv/protocol/adapters";
 import {
+  inferMediaMimeType,
   isHelpCommand,
   parseAttachArgs,
   parseShellWords,
@@ -18,34 +20,36 @@ import type {
   ShellExecArgs,
   ShellExecResult,
 } from "./types";
+import {
+  describeManagedAdapterAccounts,
+  assertManagedAdapterDescriptorRequest,
+  runManagedLifecycleAction,
+} from "../../shared/src/managed-lifecycle";
+import {
+  restoreManagedAdapterAccount,
+  snapshotManagedAdapterAccount,
+} from "../../shared/src/managed-portability";
+import {
+  MANAGED_ADMISSION_GATE_NAME,
+  ManagedAdmissionGate,
+  ManagedAdmissionUnavailableError,
+  describeManagedAdmissionObjects,
+  runWithManagedAdmission,
+} from "../../shared/src/managed-admission";
+import type { TelegramAccount } from "./telegram-account";
+import { handleTelegramWebhookRequest } from "./webhook-handler";
 
 export { TelegramAccount } from "./telegram-account";
+export { ManagedAdmissionGate } from "../../shared/src/managed-admission";
 export type * from "./types";
 
 interface Env {
-  TELEGRAM_ACCOUNT: DurableObjectNamespace;
+  TELEGRAM_ACCOUNT: DurableObjectNamespace<TelegramAccount>;
+  MANAGED_ADMISSION: DurableObjectNamespace<ManagedAdmissionGate>;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_BASE_URL?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
 }
-
-type WebhookResult = { ok: boolean; status?: number; error?: string };
-
-type TelegramAccountStub = {
-  start(
-    botToken: string,
-    accountId: string,
-    webhookBaseUrl: string,
-    webhookSecret?: string,
-  ): Promise<void>;
-  stop(): Promise<void>;
-  getStatus(): Promise<AdapterAccountStatus>;
-  sendMessage(
-    message: AdapterOutboundMessage,
-  ): Promise<{ ok: boolean; messageId?: string; error?: string }>;
-  setTyping(surface: AdapterSurface, typing: boolean): Promise<void>;
-  handleWebhook(update: unknown, secretToken: string | null): Promise<WebhookResult>;
-};
 
 function accountFromPath(pathname: string): string | null {
   const match = pathname.match(/^\/webhook\/([^/]+)$/);
@@ -58,10 +62,6 @@ function accountFromPath(pathname: string): string | null {
   } catch {
     return null;
   }
-}
-
-function toJsonError(message: string, status = 500): Response {
-  return Response.json({ ok: false, error: message }, { status });
 }
 
 export class TelegramChannel
@@ -80,6 +80,56 @@ export class TelegramChannel
     editing: false,
     deletion: false,
   };
+
+  async managedPause(accountIds: string[]): Promise<{ accountIds: string[] }> {
+    return runManagedLifecycleAction(accountIds, "managedPause", (accountId) =>
+      this.getAccountDO(accountId),
+    );
+  }
+
+  async managedResume(accountIds: string[]): Promise<{ accountIds: string[] }> {
+    return runManagedLifecycleAction(accountIds, "managedResume", (accountId) =>
+      this.getAccountDO(accountId),
+    );
+  }
+
+  async managedErase(accountIds: string[]): Promise<{ accountIds: string[] }> {
+    return runManagedLifecycleAction(accountIds, "managedErase", (accountId) =>
+      this.getAccountDO(accountId),
+    );
+  }
+
+  async managedDescribeObjects(input: unknown) {
+    assertManagedAdapterDescriptorRequest(input);
+    return input.kind === "adapter_account"
+      ? describeManagedAdapterAccounts(this.env.TELEGRAM_ACCOUNT, input.providerIds)
+      : describeManagedAdmissionObjects(this.env.MANAGED_ADMISSION, input.providerIds);
+  }
+
+  async managedSnapshot(input: unknown) {
+    return snapshotManagedAdapterAccount(this.env.TELEGRAM_ACCOUNT, "telegram", input);
+  }
+
+  async managedRestore(input: unknown, stream: ReadableStream<Uint8Array>) {
+    return restoreManagedAdapterAccount(
+      this.env.TELEGRAM_ACCOUNT,
+      "telegram",
+      input,
+      stream,
+    );
+  }
+
+  async managedFenceAll() {
+    return this.managedAdmission().managedFenceAll();
+  }
+
+  async managedResumeAll() {
+    return this.managedAdmission().managedResumeAll();
+  }
+
+  async managedEraseAll() {
+    return this.managedAdmission().managedEraseAll();
+  }
 
   async adapterConnect(
     accountId: string,
@@ -231,9 +281,11 @@ export class TelegramChannel
     }
 
     try {
-      const account = this.getAccountDO(accountId);
-      await account.start(botToken, accountId, webhookBaseUrl, webhookSecret);
-      return { ok: true };
+      return await this.withManagedAdmission(`start:${accountId}`, async () => {
+        const account = this.getAccountDO(accountId);
+        await account.start(botToken, accountId, webhookBaseUrl, webhookSecret);
+        return { ok: true };
+      });
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -241,9 +293,11 @@ export class TelegramChannel
 
   async stop(accountId: string): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
-      const account = this.getAccountDO(accountId);
-      await account.stop();
-      return { ok: true };
+      return await this.withManagedAdmission(`stop:${accountId}`, async () => {
+        const account = this.getAccountDO(accountId);
+        await account.stop();
+        return { ok: true };
+      });
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -273,12 +327,14 @@ export class TelegramChannel
 
   async send(accountId: string, message: AdapterOutboundMessage): Promise<AdapterSendResult> {
     try {
-      const account = this.getAccountDO(accountId);
-      const result = await account.sendMessage(message);
-      if (!result.ok) {
-        return { ok: false, error: result.error || "Failed to send Telegram message" };
-      }
-      return { ok: true, messageId: result.messageId };
+      return await this.withManagedAdmission(`send:${accountId}`, async () => {
+        const account = this.getAccountDO(accountId);
+        const result = await account.sendMessage(message);
+        if (!result.ok) {
+          return { ok: false, error: result.error || "Failed to send Telegram message" };
+        }
+        return { ok: true, messageId: result.messageId };
+      });
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -286,62 +342,66 @@ export class TelegramChannel
 
   async setTyping(accountId: string, surface: AdapterSurface, typing: boolean): Promise<void> {
     try {
-      const account = this.getAccountDO(accountId);
-      await account.setTyping(surface, typing);
+      await this.withManagedAdmission(`typing:${accountId}`, () =>
+        this.getAccountDO(accountId).setTyping(surface, typing),
+      );
     } catch (error) {
+      if (error instanceof ManagedAdmissionUnavailableError) throw error;
       console.warn(`[TelegramChannel] setTyping failed for ${accountId}:`, error);
     }
   }
 
-  private getAccountDO(accountId: string): TelegramAccountStub {
-    const id = this.env.TELEGRAM_ACCOUNT.idFromName(accountId);
-    return this.env.TELEGRAM_ACCOUNT.get(id) as unknown as TelegramAccountStub;
+  private getAccountDO(accountId: string) {
+    const normalized = normalizeAdapterAccountId(accountId);
+    if (!normalized) throw new TypeError("Telegram account ID is invalid");
+    const id = this.env.TELEGRAM_ACCOUNT.idFromName(normalized);
+    return this.env.TELEGRAM_ACCOUNT.get(id);
+  }
+
+  private managedAdmission() {
+    return this.env.MANAGED_ADMISSION.getByName(MANAGED_ADMISSION_GATE_NAME);
+  }
+
+  private withManagedAdmission<T>(
+    owner: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return runWithManagedAdmission(this.env.MANAGED_ADMISSION, owner, operation);
   }
 }
 
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
+export async function handleTelegramRequest(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
 
-    if (url.pathname === "/" || url.pathname === "/health") {
-      return Response.json({
-        service: "gsv-channel-telegram",
-        status: "ok",
-        hasBotToken: !!env.TELEGRAM_BOT_TOKEN,
-        hasWebhookBaseUrl: !!env.TELEGRAM_WEBHOOK_BASE_URL,
-      });
-    }
+  if (url.pathname === "/" || url.pathname === "/health") {
+    return Response.json({
+      service: "gsv-channel-telegram",
+      status: "ok",
+      hasBotToken: !!env.TELEGRAM_BOT_TOKEN,
+      hasWebhookBaseUrl: !!env.TELEGRAM_WEBHOOK_BASE_URL,
+    });
+  }
 
-    if (request.method === "POST") {
-      const accountId = accountFromPath(url.pathname);
-      if (!accountId) {
-        return new Response("Not Found", { status: 404 });
-      }
-
-      const id = env.TELEGRAM_ACCOUNT.idFromName(accountId);
-      const account = env.TELEGRAM_ACCOUNT.get(id) as unknown as TelegramAccountStub;
-
-      let updatePayload: unknown;
-      try {
-        updatePayload = await request.json();
-      } catch {
-        return toJsonError("Invalid JSON payload", 400);
-      }
-
-      const secretToken = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-      const result = await account.handleWebhook(updatePayload, secretToken);
-      if (!result.ok) {
-        return toJsonError(
-          result.error || "Failed to handle Telegram webhook",
-          result.status || 500,
-        );
-      }
-
-      return Response.json({ ok: true });
-    }
-
+  const accountId = normalizeAdapterAccountId(accountFromPath(url.pathname));
+  if (!accountId) {
+    await request.body?.cancel("Telegram route was not found").catch(() => {});
     return new Response("Not Found", { status: 404 });
-  },
+  }
+
+  const id = env.TELEGRAM_ACCOUNT.idFromName(accountId);
+  return runWithManagedAdmission(env.MANAGED_ADMISSION, `webhook:${accountId}`, () =>
+    handleTelegramWebhookRequest(request, env.TELEGRAM_ACCOUNT.get(id)),
+  ).catch(async (error) => {
+    await request.body?.cancel("Telegram webhook admission was rejected").catch(() => {});
+    return new Response(
+      error instanceof Error ? error.message : "Telegram webhook admission was rejected",
+      { status: 503 },
+    );
+  });
+}
+
+export default {
+  fetch: handleTelegramRequest,
 };
 
 function telegramSurface(id: string): AdapterSurface {
@@ -356,13 +416,7 @@ function telegramSurface(id: string): AdapterSurface {
 }
 
 async function mediaFromUrl(url: string, filename?: string): Promise<AdapterMedia> {
-  let mimeType = "application/octet-stream";
-  try {
-    const response = await fetch(url, { method: "HEAD" });
-    mimeType = response.headers.get("Content-Type")?.split(";")[0].trim() || mimeType;
-  } catch {
-    // The send path can still fetch the URL later; content type falls back.
-  }
+  const mimeType = inferMediaMimeType(url, filename);
 
   return {
     type: mediaTypeFromMime(mimeType),

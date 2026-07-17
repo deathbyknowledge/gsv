@@ -17,10 +17,16 @@ base64 = "0.22"
 json5 = "0.4"
 xpatch = "0.4"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+async-stream = "0.3"
+futures-util = "0.3"
 sha1_smol = "1"
+sha2 = "0.10"
 similar = "2"
 js-sys = "0.3"
 oxc_allocator = "0.123.0"
 oxc_ast = "0.123.0"
 oxc_parser = "0.123.0"
 oxc_span = "0.123.0"
+
+[dev-dependencies]
+futures-executor = "0.3"

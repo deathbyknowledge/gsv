@@ -37,6 +37,7 @@ import {
   createAccount,
   isUsernameAvailable,
   normalizeAccountName,
+  seedPersona,
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
@@ -189,6 +190,11 @@ export async function ensurePersonalAgent(
         userContextUsername: human.username,
         seedPromptContext: true,
       });
+      await seedPersona(
+        ctx.env,
+        identity,
+        defaultPersonaContext(identity.username, human.username),
+      );
       return { identity, created: false };
     }
     // Stale mapping (account removed) — fall through and recreate.
@@ -369,20 +375,73 @@ export async function resolveConversationExecutor(
   });
   ctx.conversations.setActivePid(conversation.conversationId, pid);
 
-  await sendFrameToProcess(pid, {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.setidentity",
-    args: {
-      pid,
-      identity: agentIdentity,
-      interactive,
-      conversationId: conversation.conversationId,
-      ...(conversation.latestArchive ? { hydrateFrom: conversation.latestArchive } : {}),
-    },
-  } as RequestFrame);
+  try {
+    const requestId = crypto.randomUUID();
+    const response = await sendFrameToProcess(pid, {
+      type: "req",
+      id: requestId,
+      call: "proc.setidentity",
+      args: {
+        pid,
+        identity: agentIdentity,
+        interactive,
+        conversationId: conversation.conversationId,
+        ...(conversation.latestArchive ? { hydrateFrom: conversation.latestArchive } : {}),
+      },
+    } as RequestFrame);
+    if (!response || response.type !== "res" || response.id !== requestId) {
+      throw new Error("proc.setidentity returned no valid response");
+    }
+    if (!response.ok) {
+      throw new Error(response.error.message);
+    }
+    if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
+      throw new Error("proc.setidentity rejected initialization");
+    }
+  } catch (error) {
+    let cleanupError: unknown;
+    try {
+      await terminateConversationExecutor(pid);
+    } catch (caught) {
+      cleanupError = caught;
+    } finally {
+      // Registry state owns reuse. Always clear it so a setup retry cannot
+      // mistake a half-initialized executor for a live conversation process.
+      ctx.conversations.clearActivePid(pid);
+      ctx.procs.kill(pid);
+    }
+    if (cleanupError) {
+      throw new Error(
+        `Failed to initialize conversation executor: ${errorMessage(error)}; cleanup failed: ${errorMessage(cleanupError)}`,
+      );
+    }
+    throw error;
+  }
 
   return pid;
+}
+
+async function terminateConversationExecutor(pid: string): Promise<void> {
+  const requestId = crypto.randomUUID();
+  const response = await sendFrameToProcess(pid, {
+    type: "req",
+    id: requestId,
+    call: "proc.kill",
+    args: { pid, archive: false },
+  });
+  if (!response || response.type !== "res" || response.id !== requestId) {
+    throw new Error("proc.kill returned no valid response");
+  }
+  if (!response.ok) {
+    throw new Error(response.error.message);
+  }
+  if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
+    throw new Error("proc.kill rejected rollback");
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**

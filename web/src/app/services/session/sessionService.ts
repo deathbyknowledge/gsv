@@ -7,6 +7,7 @@ import type {
   SysSetupArgs,
   SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
+import { consumeSetupTokenFromFragment } from "./setupToken";
 
 const STORAGE_USERNAME = "gsv.ui.gateway.username";
 const STORAGE_SESSION_TOKEN = "gsv.ui.session.token.v1";
@@ -48,10 +49,11 @@ export type SessionLoginInput = {
   token?: string;
 };
 
-export type SessionSetupInput = SysSetupArgs;
+export type SessionSetupInput = Omit<SysSetupArgs, "setupToken">;
 
 export type SessionService = {
   client: GSVClient;
+  withSetupAuthorization: <T extends object>(input: T) => T & { setupToken?: string };
   snapshot: () => SessionSnapshot;
   subscribe: (listener: (snapshot: SessionSnapshot) => void) => () => void;
   login: (input: SessionLoginInput) => Promise<ConnectResult>;
@@ -242,6 +244,12 @@ async function probeSetupMode(client: GSVClient, url: string): Promise<boolean> 
 }
 
 export function createSessionService(client: GSVClient): SessionService {
+  let pendingSetupToken = consumeSetupTokenFromFragment(window.location, window.history);
+  const withSetupAuthorization = <T extends object>(input: T): T & { setupToken?: string } => (
+    pendingSetupToken === undefined
+      ? input
+      : { ...input, setupToken: pendingSetupToken }
+  );
   const listeners = new Set<(snapshot: SessionSnapshot) => void>();
 
   let currentSessionToken: PersistedSessionToken | null = readPersistedToken();
@@ -626,6 +634,7 @@ export function createSessionService(client: GSVClient): SessionService {
 
     try {
       const result = await client.connect(options);
+      pendingSetupToken = undefined;
       storeValue(STORAGE_USERNAME, username);
       pendingSetupLogin = null;
 
@@ -658,6 +667,7 @@ export function createSessionService(client: GSVClient): SessionService {
         throw error;
       }
 
+      pendingSetupToken = undefined;
       setSnapshot({
         phase: "locked",
         url,
@@ -685,8 +695,11 @@ export function createSessionService(client: GSVClient): SessionService {
       setupResult: null,
     });
 
+    const request: SysSetupArgs = withSetupAuthorization(input);
+
     try {
-      const result = await client.requestOnce(url, "sys.setup", input);
+      const result = await client.requestOnce(url, "sys.setup", request);
+      pendingSetupToken = undefined;
       pendingSetupLogin = { username, password };
       storeValue(STORAGE_USERNAME, username);
 
@@ -779,6 +792,7 @@ export function createSessionService(client: GSVClient): SessionService {
 
   const lock = (reason = "Session locked"): void => {
     cancelSilentReconnect();
+    pendingSetupToken = undefined;
     const previousTokenId = currentSessionToken?.tokenId ?? null;
     clearStoredSessionToken();
     pendingSetupLogin = null;
@@ -822,6 +836,7 @@ export function createSessionService(client: GSVClient): SessionService {
           setupResult: null,
         });
       } else {
+        pendingSetupToken = undefined;
         setSnapshot({
           phase: "locked",
           url,
@@ -847,6 +862,7 @@ export function createSessionService(client: GSVClient): SessionService {
           setupResult: null,
         });
       } else {
+        pendingSetupToken = undefined;
         setSnapshot({
           phase: "locked",
           url,
@@ -875,6 +891,7 @@ export function createSessionService(client: GSVClient): SessionService {
         token: persisted.token,
       });
 
+      pendingSetupToken = undefined;
       setSnapshot({
         phase: "ready",
         url,
@@ -901,6 +918,7 @@ export function createSessionService(client: GSVClient): SessionService {
         return;
       }
 
+      pendingSetupToken = undefined;
       setSnapshot({
         phase: "locked",
         url,
@@ -914,6 +932,7 @@ export function createSessionService(client: GSVClient): SessionService {
 
   return {
     client,
+    withSetupAuthorization,
     snapshot: () => snapshot,
     subscribe: (listener) => {
       listeners.add(listener);

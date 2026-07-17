@@ -10,6 +10,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 
 const STORAGE_ONBOARDING = "gsv.ui.onboarding.v1";
+const MAX_PERSISTED_ASSIST_MESSAGES = 16;
 
 export type OnboardingSnapshot = {
   draft: OnboardingDraft;
@@ -211,6 +212,9 @@ function detailStepFromPatchPath(path: OnboardingAssistPatch["path"]): Onboardin
 export function createOnboardingService(
   client: GSVClient,
   initialUsername = "",
+  withSetupAuthorization: <T extends object>(input: T) => T & { setupToken?: string } = (
+    input,
+  ) => input,
 ): OnboardingService {
   const listeners = new Set<(snapshot: OnboardingSnapshot) => void>();
   let state = readPersistedDraft(initialUsername);
@@ -342,7 +346,8 @@ export function createOnboardingService(
       const url = deriveGatewayUrlFromOrigin();
       const currentState = state;
       const userMessage: OnboardingAssistMessage = { role: "user", content: trimmed };
-      const nextMessages = [...currentState.messages, userMessage];
+      const nextMessages = [...currentState.messages, userMessage]
+        .slice(-MAX_PERSISTED_ASSIST_MESSAGES);
       setState({
         ...currentState,
         busy: true,
@@ -352,11 +357,11 @@ export function createOnboardingService(
       });
 
       try {
-        const result = await client.requestOnce(url, "sys.setup.assist", {
+        const result = await client.requestOnce(url, "sys.setup.assist", withSetupAuthorization({
           lane: currentState.draft.lane,
           draft: sanitizeDraftForStorage(currentState.draft),
           messages: nextMessages,
-        });
+        }));
         const latestState = state;
         let nextDraft = latestState.draft;
         for (const patch of result.patches) {
@@ -376,13 +381,18 @@ export function createOnboardingService(
         const settledMessages = latestState.messages.length >= nextMessages.length
           ? latestState.messages
           : nextMessages;
+        const assistantMessage: OnboardingAssistMessage = {
+          role: "assistant",
+          content: result.message,
+        };
         setState({
           draft: nextDraft,
           busy: false,
           error: null,
           focus: result.focus ?? null,
           reviewReady: result.reviewReady,
-          messages: [...settledMessages, { role: "assistant", content: result.message }],
+          messages: [...settledMessages, assistantMessage]
+            .slice(-MAX_PERSISTED_ASSIST_MESSAGES),
         });
       } catch (error) {
         setState({

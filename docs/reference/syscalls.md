@@ -991,7 +991,7 @@ Runtime behavior:
 |---|---|---|
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and starts/reconciles the user init process. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, and optional system bootstrap. Username, password, and timezone are validated. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates the first user, root password, groups/home, optional timezone, optional AI config, optional node token, system source, personal/package agents, and the default conversation. Username, password, and timezone are validated. An interrupted setup remains in setup mode and may be resumed only by the same non-secret setup plan plus the committed first-user password. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv` and `root/gsv-manual`, registers both as public system repositories, and seeds repository skills into the caller's home. By default, stable gateway builds pin `root/gsv` to their matching `vX.Y.Z` release tag; dev and other non-release builds use `main`. Explicit args win, followed by `GSV_BOOTSTRAP_REF` and a ref embedded in `GSV_BOOTSTRAP_UPSTREAM`; the upstream accepts `owner/repo`, a git URL, or either form with `#ref`. The manual remains on its independently configured ref, defaulting to `main`. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
@@ -1017,6 +1017,23 @@ Runtime behavior:
 | `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase link challenge code for the caller uid, marks the challenge used, and creates/replaces the identity link. Invalid, expired, or used codes throw. |
 
 `sys.connect`, `sys.setup`, and `sys.setup.assist` are special-cased before normal auth/capability dispatch. Other `sys.*` calls require a connected identity and are denied in setup mode.
+
+First-user authentication state and a singleton recovery marker commit in one
+Kernel SQLite transaction. The marker stores only the username, allocated ids,
+timestamp, and a fingerprint of the non-secret setup plan; it never stores a
+password, setup token, API key, root password, prompt, or raw node token. While
+the marker exists, `sys.connect` continues to report setup mode. A retry must
+match the original non-secret plan, including whether secret-valued fields were
+present, and authenticate with the committed first-user password. Root password
+state is not rewritten during recovery. Existing idempotent provisioning paths
+are rerun, including default-conversation provisioning. Optional node-token
+persistence and marker removal are the final atomic transaction, after all
+fallible provisioning.
+
+Once that final transaction commits, setup is complete and remains one-shot.
+If the success response is lost, GSV does not retain the raw node token for
+replay. Log in with the first-user password and issue a replacement with
+`sys.token.create`; raw token values are returned only once.
 
 OAuth callbacks are handled by the Gateway HTTP route `GET /oauth/callback`.
 Gateway forwards that route to the Kernel, where the inherited Agent MCP client

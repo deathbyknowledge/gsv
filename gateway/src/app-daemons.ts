@@ -180,6 +180,16 @@ export class AppRpcScheduleStore {
     return updated;
   }
 
+  releaseRunning(retryAt: number): void {
+    this.sql.exec(
+      `UPDATE app_rpc_schedules
+       SET running_at = NULL, next_run_at = ?, updated_at = ?
+       WHERE running_at IS NOT NULL`,
+      retryAt,
+      retryAt,
+    );
+  }
+
   finishRun(args: {
     key: string;
     version: number;

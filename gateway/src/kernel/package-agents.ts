@@ -92,17 +92,20 @@ export async function ensurePackageAgent(
       capabilities: [...PACKAGE_AGENT_BASELINE, ...(profile.capabilities ?? [])],
       accessGroupName,
       contextFiles: profile.contextFiles.map((file) => ({ name: file.name, text: file.text })),
+      onDurableCreate: ({ identity }) => {
+        ctx.config.set(packageAgentOwnerKey(identity.uid), record.packageId);
+        ctx.config.set(packageAgentProfileKey(identity.uid), profile.name);
+        ctx.config.set(
+          packageAgentContextFilesKey(identity.uid),
+          JSON.stringify(profileContextFileNames(profile)),
+        );
+        ctx.config.set(packageAgentAccessGroupKey(identity.uid), accessGroupName);
+        if (profile.approvalPolicy) {
+          ctx.config.set(`users/${identity.uid}/ai/tools/approval`, profile.approvalPolicy);
+        }
+      },
     });
     entry = auth.getPasswdByUid(created.identity.uid)!;
-    // Stamp the owning package so a later, different package that sanitizes to
-    // the same username cannot silently reuse (and hijack) this account.
-    ctx.config.set(packageAgentOwnerKey(entry.uid), record.packageId);
-    ctx.config.set(packageAgentProfileKey(entry.uid), profile.name);
-    ctx.config.set(packageAgentContextFilesKey(entry.uid), JSON.stringify(profileContextFileNames(profile)));
-    ctx.config.set(packageAgentAccessGroupKey(entry.uid), accessGroupName);
-    if (profile.approvalPolicy) {
-      ctx.config.set(`users/${entry.uid}/ai/tools/approval`, profile.approvalPolicy);
-    }
   } else {
     // Guard against cross-package collisions: the username derives from
     // (sanitized, truncated) package + profile name, which is not globally

@@ -18,11 +18,24 @@ import {
   type AppRpcScheduleUpsertInput,
 } from "./app-daemons";
 import { runAppRunnerSqlMigrations } from "./app-runner/schema/migrations";
+import { WebSocketAdmission, webSocketMessageSize } from "./kernel/websocket-admission";
 import {
   BinaryBodyChannel,
+  MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+  validateManagedRestoreControl,
+  validateManagedSnapshotRequest,
   type BinaryBody,
   type BinaryFrameDescriptor,
+  type ManagedObjectRestoreControl,
+  type ManagedObjectSnapshotRequest,
+  type ManagedObjectDescriptor,
 } from "@humansandmachines/gsv/protocol";
+import {
+  prepareManagedRestoreTarget,
+  readManagedRestoreTarget,
+  restoreManagedOwner,
+  snapshotManagedOwner,
+} from "./managed/do-portability";
 
 type AppRunnerProps = {
   packageId: string;
@@ -56,6 +69,7 @@ type AppSocketContext = {
 type AppSocketAttachment = {
   kind: "app-client";
   connected: boolean;
+  connectionId?: string;
   session?: AppSessionInfo;
   appFrame?: AppFrameContext;
   connectedAt?: number;
@@ -142,23 +156,36 @@ type AppSignalEntrypointStub = Rpc.WorkerEntrypointBranded & {
 };
 
 type AppRunnerDaemonStub = Rpc.RpcTargetBranded & {
-  upsertRpcSchedule(input: unknown): Promise<unknown>;
-  removeRpcSchedule(key: string): Promise<{ removed: boolean }>;
-  listRpcSchedules(): Promise<unknown[]>;
-  packageSqlExec(statement: string, bindings?: unknown[]): Promise<unknown[]>;
-  emitAppEvent(event: string, payload?: unknown, clientId?: string, sessionId?: string): Promise<{ delivered: number }>;
+  kernelRequestFrameFromRuntime(
+    runtimeEpoch: number,
+    appFrame: AppFrameContext,
+    call: string,
+    args?: unknown,
+    options?: { body?: BinaryBody },
+  ): Promise<{ data: unknown; body?: BinaryBody }>;
+  upsertRpcSchedule(runtimeEpoch: number, input: unknown): Promise<unknown>;
+  removeRpcSchedule(runtimeEpoch: number, key: string): Promise<{ removed: boolean }>;
+  listRpcSchedules(runtimeEpoch: number): Promise<unknown[]>;
+  packageSqlExec(runtimeEpoch: number, statement: string, bindings?: unknown[]): Promise<unknown[]>;
+  emitAppEvent(runtimeEpoch: number, event: string, payload?: unknown, clientId?: string, sessionId?: string): Promise<{ delivered: number }>;
 };
 
 type GsvApiBindingProps = {
   appRunnerName: string;
+  runtimeEpoch: number;
   runtimeAccess?: PackageRuntimeAccess;
 };
 
 const PROPS_KEY = "app-runner:props";
+const MANAGED_PAUSED_KEY = "__gsv:managed:paused";
+const MANAGED_EPOCH_KEY = "__gsv:managed:epoch";
+const MANAGED_ERASED_KEY = "__gsv:managed:erased";
+const MANAGED_LOGICAL_NAME_KEY = "__gsv:managed:logicalName";
 const RUNTIME_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
 type RegisteredAppClient = {
   socket: WebSocket;
+  connectionId: string;
   session: AppSessionInfo;
   appFrame: AppFrameContext;
   registeredAt: number;
@@ -173,6 +200,58 @@ function appClientKeyFor(sessionId: string, clientId: string): string {
 }
 
 const APP_SOCKET_TAG = "app-client";
+
+export type AppSocketLifetime = {
+  sessionExpiresAt: number;
+  appFrameExpiresAt: number;
+};
+
+export type AppSocketAdmissionResult =
+  | { admitted: true }
+  | {
+      admitted: false;
+      reason: "expired" | "connection_limit" | "frame_too_large" | "message_rate";
+    };
+
+/** Applies the same connection, frame, and rate limits as the Kernel socket boundary. */
+export class AppSocketAdmission {
+  private readonly admission = new WebSocketAdmission();
+
+  open(
+    connectionId: string,
+    lifetime: AppSocketLifetime,
+    now = Date.now(),
+  ): AppSocketAdmissionResult {
+    if (!this.canDeliver(lifetime, now)) {
+      return { admitted: false, reason: "expired" };
+    }
+    return this.admission.open(connectionId, now);
+  }
+
+  admit(
+    connectionId: string,
+    lifetime: AppSocketLifetime,
+    kind: "json" | "binary",
+    bytes: number,
+    now = Date.now(),
+  ): AppSocketAdmissionResult {
+    if (!this.canDeliver(lifetime, now)) {
+      return { admitted: false, reason: "expired" };
+    }
+    return this.admission.admit(connectionId, "connected", kind, bytes, now);
+  }
+
+  canDeliver(lifetime: AppSocketLifetime, now = Date.now()): boolean {
+    return Number.isSafeInteger(lifetime.sessionExpiresAt) &&
+      Number.isSafeInteger(lifetime.appFrameExpiresAt) &&
+      lifetime.sessionExpiresAt > now &&
+      lifetime.appFrameExpiresAt > now;
+  }
+
+  close(connectionId: string): void {
+    this.admission.close(connectionId);
+  }
+}
 
 function stableJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -196,6 +275,7 @@ export function appRunnerWorkerCodeKey(props: {
   appFrame: { uid: number };
   packageId: string;
   artifact: { hash: string; runtimeAccess?: PackageRuntimeAccess };
+  runtimeEpoch?: number;
 }): string {
   return [
     "app-runtime",
@@ -203,6 +283,7 @@ export function appRunnerWorkerCodeKey(props: {
     props.packageId,
     props.artifact.hash,
     encodeURIComponent(JSON.stringify(stableJsonValue(props.artifact.runtimeAccess ?? null))),
+    `epoch-${props.runtimeEpoch ?? 0}`,
   ].join(":");
 }
 
@@ -219,6 +300,10 @@ class AppSocketError extends Error {
 export class AppSocketBodyTransport {
   private readonly channels = new Map<WebSocket, BinaryBodyChannel>();
 
+  constructor(
+    private readonly canSend: (socket: WebSocket) => boolean = () => true,
+  ) {}
+
   receive(socket: WebSocket, descriptor: BinaryFrameDescriptor): BinaryBody {
     return this.channel(socket).receive(descriptor);
   }
@@ -229,12 +314,12 @@ export class AppSocketBodyTransport {
 
   async send(socket: WebSocket, frame: AppSocketFrame, body?: BinaryBody): Promise<void> {
     if (!body) {
-      socket.send(JSON.stringify(frame));
+      this.sendFrame(socket, JSON.stringify(frame));
       return;
     }
     const outgoing = this.channel(socket).prepare(body);
     try {
-      socket.send(JSON.stringify({
+      this.sendFrame(socket, JSON.stringify({
         ...frame,
         body: outgoing.descriptor,
       }));
@@ -251,15 +336,29 @@ export class AppSocketBodyTransport {
     this.channels.delete(socket);
   }
 
+  closeAll(reason = "App sockets closed"): void {
+    for (const channel of this.channels.values()) {
+      channel.close(new Error(reason));
+    }
+    this.channels.clear();
+  }
+
   private channel(socket: WebSocket): BinaryBodyChannel {
     let channel = this.channels.get(socket);
     if (!channel) {
       channel = new BinaryBodyChannel({
-        sendFrame: (binary) => socket.send(binary),
+        sendFrame: (binary) => this.sendFrame(socket, binary),
       });
       this.channels.set(socket, channel);
     }
     return channel;
+  }
+
+  private sendFrame(socket: WebSocket, frame: string | ArrayBuffer): void {
+    if (!this.canSend(socket)) {
+      throw new Error("App socket delivery is no longer allowed");
+    }
+    socket.send(frame);
   }
 }
 
@@ -308,28 +407,33 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
     args?: unknown,
     options: { body?: BinaryBody } = {},
   ): Promise<{ data: unknown; body?: BinaryBody }> {
-    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
-    return await requestAppKernelFrame(kernel, appFrame, call, args, options);
+    return this.#getRunner().kernelRequestFrameFromRuntime(
+      this.#runtimeEpoch(),
+      appFrame,
+      call,
+      args,
+      options,
+    );
   }
 
   async upsertRpcSchedule(input: unknown): Promise<unknown> {
     this.#requireDaemonAccess();
-    return this.#getRunner().upsertRpcSchedule(input);
+    return this.#getRunner().upsertRpcSchedule(this.#runtimeEpoch(), input);
   }
 
   async removeRpcSchedule(key: string): Promise<{ removed: boolean }> {
     this.#requireDaemonAccess();
-    return this.#getRunner().removeRpcSchedule(key);
+    return this.#getRunner().removeRpcSchedule(this.#runtimeEpoch(), key);
   }
 
   async listRpcSchedules(): Promise<unknown[]> {
     this.#requireDaemonAccess();
-    return this.#getRunner().listRpcSchedules();
+    return this.#getRunner().listRpcSchedules(this.#runtimeEpoch());
   }
 
   async packageSqlExec(statement: string, bindings?: unknown[]): Promise<unknown[]> {
     this.#requireStorageSqlAccess();
-    return this.#getRunner().packageSqlExec(statement, bindings);
+    return this.#getRunner().packageSqlExec(this.#runtimeEpoch(), statement, bindings);
   }
 
   async emitAppEvent(
@@ -338,7 +442,13 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
     clientId?: string,
     sessionId?: string,
   ): Promise<{ delivered: number }> {
-    return this.#getRunner().emitAppEvent(event, payload, clientId, sessionId);
+    return this.#getRunner().emitAppEvent(
+      this.#runtimeEpoch(),
+      event,
+      payload,
+      clientId,
+      sessionId,
+    );
   }
 
   #getRunner(): AppRunnerDaemonStub {
@@ -346,7 +456,15 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
     if (!runnerName) {
       throw new Error("GSV_API requires appRunnerName");
     }
-    return this.ctx.exports.AppRunner.getByName(runnerName) as unknown as AppRunnerDaemonStub;
+    return this.env.APP_RUNNER.getByName(runnerName) as unknown as AppRunnerDaemonStub;
+  }
+
+  #runtimeEpoch(): number {
+    const epoch = this.ctx.props?.runtimeEpoch;
+    if (!Number.isSafeInteger(epoch) || epoch < 0) {
+      throw new Error("GSV_API requires a valid runtime epoch");
+    }
+    return epoch;
   }
 
   #requireDaemonAccess(): void {
@@ -365,16 +483,36 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
 export class AppRunner extends DurableObject<Env> {
   private readonly daemonSchedules: AppRpcScheduleStore;
   private readonly appClients = new Map<string, RegisteredAppClient>();
-  private readonly appSocketBodies = new AppSocketBodyTransport();
+  private readonly appSocketAdmission = new AppSocketAdmission();
+  private readonly appSocketBodies = new AppSocketBodyTransport(
+    (socket) => this.#canDeliverToSocket(socket),
+  );
+  private appClientsRestored = false;
+  private erased = false;
+  private managedPaused = false;
+  private managedEpoch = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     runAppRunnerSqlMigrations(ctx.storage);
     this.daemonSchedules = new AppRpcScheduleStore(ctx.storage.sql);
-    this.#restoreAppClients();
+    this.erased = ctx.storage.kv.get(MANAGED_ERASED_KEY) === true;
+    this.managedPaused = ctx.storage.kv.get(MANAGED_PAUSED_KEY) === true;
+    const storedManagedEpoch = ctx.storage.kv.get<number>(MANAGED_EPOCH_KEY);
+    this.managedEpoch = Number.isSafeInteger(storedManagedEpoch) && storedManagedEpoch! >= 0
+      ? storedManagedEpoch!
+      : 0;
+    if (this.erased) {
+      this.#closeManagedSockets("Tenant runtime is being erased");
+    } else if (this.managedPaused) {
+      this.#closeManagedSockets("Tenant runtime is being updated");
+    } else {
+      this.#restoreAppClients();
+    }
   }
 
   async ensureRuntime(props: AppRunnerProps): Promise<void> {
+    this.#requireActive();
     const previous = this.ctx.storage.kv.get<AppRunnerProps>(PROPS_KEY);
     if (
       previous
@@ -394,10 +532,15 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async gsvFetch(request: Request): Promise<Response> {
-    return this.#getAppEntrypoint(this.#defaultRuntime()).fetch(request);
+    return this.#runInActiveEpoch(
+      () => this.#getAppEntrypoint(this.#defaultRuntime()).fetch(request),
+      undefined,
+      async (response) => response.body?.cancel("Tenant runtime was superseded"),
+    );
   }
 
   async fetch(request: Request): Promise<Response> {
+    this.#requireActive();
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
       return this.#acceptAppSocket(request);
     }
@@ -405,11 +548,39 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async deliverSignal(input: AppRunnerSignalInput): Promise<void> {
-    const runtime = this.#runtimeForSignal(input);
-    await this.#getSignalEntrypoint(runtime, input).run(input.signal);
+    await this.#runInActiveEpoch(async () => {
+      const runtime = this.#runtimeForSignal(input);
+      await this.#getSignalEntrypoint(runtime, input).run(input.signal);
+    });
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (this.erased || this.managedPaused) {
+      this.#closeSocket(
+        ws,
+        1001,
+        this.erased ? "AppRunner no longer exists" : "Tenant runtime is being updated",
+      );
+      return;
+    }
+    this.#restoreAppClients();
+    const client = this.#clientForSocket(ws);
+    if (!client) {
+      this.#closeSocket(ws, 1008, "App socket is not connected");
+      return;
+    }
+    const messageSize = webSocketMessageSize(message);
+    const admission = this.appSocketAdmission.admit(
+      client.connectionId,
+      this.#appSocketLifetime(client.session, client.appFrame),
+      messageSize.kind,
+      messageSize.bytes,
+    );
+    if (!admission.admitted) {
+      this.#closeSocketForAdmission(ws, admission.reason);
+      return;
+    }
+    const runtimeEpoch = this.managedEpoch;
     if (message instanceof ArrayBuffer) {
       if (!this.appSocketBodies.handleBinary(ws, message)) {
         this.#closeSocket(ws, 1003, "Invalid binary app frame");
@@ -434,6 +605,14 @@ export class AppRunner extends DurableObject<Env> {
     try {
       body = frame.body ? this.appSocketBodies.receive(ws, frame.body) : undefined;
       const response = await this.#handleAppSocketRequest(ws, frame, body);
+      if (!this.#isActiveEpoch(runtimeEpoch)) {
+        await cancelUnlockedBody(response.body, "Tenant runtime was superseded");
+        return;
+      }
+      if (!this.#canDeliverToSocket(ws)) {
+        await cancelUnlockedBody(response.body, "App session expired");
+        return;
+      }
       await this.appSocketBodies.send(ws, {
         type: "res",
         id: frame.id,
@@ -441,6 +620,9 @@ export class AppRunner extends DurableObject<Env> {
         ...(response.data === undefined ? {} : { data: response.data }),
       }, response.body);
     } catch (error) {
+      if (!this.#isActiveEpoch(runtimeEpoch)) {
+        return;
+      }
       const { code, message: errorMessage } = this.#frameError(error);
       this.#sendSocketFrame(ws, {
         type: "res",
@@ -458,58 +640,92 @@ export class AppRunner extends DurableObject<Env> {
 
   webSocketClose(ws: WebSocket): void {
     this.appSocketBodies.close(ws);
-    this.#removeAppClientBySocket(ws);
+    this.#forgetAppSocket(ws);
   }
 
   webSocketError(ws: WebSocket): void {
     this.appSocketBodies.close(ws, "App socket failed");
-    this.#removeAppClientBySocket(ws);
+    this.#forgetAppSocket(ws);
   }
 
   async invokeAppRpc(method: string, args: unknown, runtime: AppRuntimeContext): Promise<unknown> {
-    return this.#getRpcEntrypoint(runtime).invoke(method, args);
+    return this.#runInActiveEpoch(
+      () => this.#getRpcEntrypoint(runtime).invoke(method, args),
+    );
   }
 
   async runCommand(input: AppRunnerCommandInput): Promise<unknown> {
-    const props = this.#getProps();
-    const now = Date.now();
-    const runtime = this.#runtimeForAppFrame({
-      uid: input.uid,
-      username: input.username,
-      packageId: props.packageId,
-      packageName: props.packageName,
-      entrypointName: input.commandName,
-      routeBase: props.routeBase,
-      issuedAt: now,
-      expiresAt: now + RUNTIME_TTL_MS,
-    });
-    return this.#getCommandEntrypoint(runtime, input.commandName).run({
-      commandName: input.commandName,
-      args: input.args,
-      cwd: input.cwd,
-      uid: input.uid,
-      gid: input.gid,
-      username: input.username,
+    return this.#runInActiveEpoch(() => {
+      const props = this.#getProps();
+      const now = Date.now();
+      const runtime = this.#runtimeForAppFrame({
+        uid: input.uid,
+        username: input.username,
+        packageId: props.packageId,
+        packageName: props.packageName,
+        entrypointName: input.commandName,
+        routeBase: props.routeBase,
+        issuedAt: now,
+        expiresAt: now + RUNTIME_TTL_MS,
+      });
+      return this.#getCommandEntrypoint(runtime, input.commandName).run({
+        commandName: input.commandName,
+        args: input.args,
+        cwd: input.cwd,
+        uid: input.uid,
+        gid: input.gid,
+        username: input.username,
+      });
     });
   }
 
-  async upsertRpcSchedule(input: unknown): Promise<unknown> {
+  async kernelRequestFrameFromRuntime(
+    runtimeEpoch: number,
+    appFrame: AppFrameContext,
+    call: string,
+    args?: unknown,
+    options: { body?: BinaryBody } = {},
+  ): Promise<{ data: unknown; body?: BinaryBody }> {
+    let response: { data: unknown; body?: BinaryBody } | undefined;
+    try {
+      return await this.#runInActiveEpoch(async () => {
+        const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
+        response = await requestAppKernelFrame(kernel, appFrame, call, args, options);
+        return response;
+      }, runtimeEpoch);
+    } catch (error) {
+      await cancelUnlockedBody(response?.body, "Tenant runtime was superseded");
+      throw error;
+    }
+  }
+
+  async upsertRpcSchedule(runtimeEpoch: number, input: unknown): Promise<unknown> {
+    this.#requireActive(runtimeEpoch);
     const record = this.daemonSchedules.upsert(this.#normalizeRpcScheduleInput(input));
-    await this.#syncDaemonAlarm();
+    await this.#syncDaemonAlarm(runtimeEpoch);
+    this.#requireActive(runtimeEpoch);
     return this.#serializeDaemonRecord(record);
   }
 
-  async removeRpcSchedule(key: string): Promise<{ removed: boolean }> {
+  async removeRpcSchedule(runtimeEpoch: number, key: string): Promise<{ removed: boolean }> {
+    this.#requireActive(runtimeEpoch);
     const removed = this.daemonSchedules.remove(key);
-    await this.#syncDaemonAlarm();
+    await this.#syncDaemonAlarm(runtimeEpoch);
+    this.#requireActive(runtimeEpoch);
     return { removed };
   }
 
-  async listRpcSchedules(): Promise<unknown[]> {
+  async listRpcSchedules(runtimeEpoch: number): Promise<unknown[]> {
+    this.#requireActive(runtimeEpoch);
     return this.daemonSchedules.list().map((record) => this.#serializeDaemonRecord(record));
   }
 
-  async packageSqlExec(statement: string, bindings?: unknown[]): Promise<unknown[]> {
+  async packageSqlExec(
+    runtimeEpoch: number,
+    statement: string,
+    bindings?: unknown[],
+  ): Promise<unknown[]> {
+    this.#requireActive(runtimeEpoch);
     const normalizedStatement = typeof statement === "string" ? statement.trim() : "";
     if (!normalizedStatement) {
       throw new Error("package sql statement is required");
@@ -525,11 +741,13 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async emitAppEvent(
+    runtimeEpoch: number,
     event: string,
     payload?: unknown,
     clientId?: string,
     sessionId?: string,
   ): Promise<{ delivered: number }> {
+    this.#requireActive(runtimeEpoch);
     const normalizedEvent = typeof event === "string" ? event.trim() : "";
     if (!normalizedEvent) {
       throw new Error("app event name is required");
@@ -541,6 +759,7 @@ export class AppRunner extends DurableObject<Env> {
       ? sessionId.trim()
       : null;
     const delivered = await this.#emitAppEventToClients(normalizedEvent, payload, targetClientId, targetSessionId);
+    this.#requireActive(runtimeEpoch);
     return { delivered };
   }
 
@@ -552,15 +771,11 @@ export class AppRunner extends DurableObject<Env> {
 
     this.#restoreAppClients();
     let closed = 0;
-    for (const [key, registration] of [...this.appClients.entries()]) {
+    for (const registration of [...this.appClients.values()]) {
       if (registration.session.sessionId !== normalizedSessionId) {
         continue;
       }
-      this.appClients.delete(key);
-      try {
-        registration.socket.close(1000, "app session closed");
-      } catch {
-      }
+      this.#closeSocket(registration.socket, 1000, "app session closed");
       closed += 1;
     }
     return { closed };
@@ -579,11 +794,7 @@ export class AppRunner extends DurableObject<Env> {
     if (!registration) {
       return { closed: 0 };
     }
-    this.appClients.delete(key);
-    try {
-      registration.socket.close(1000, "app client detached");
-    } catch {
-    }
+    this.#closeSocket(registration.socket, 1000, "app client detached");
     return { closed: 1 };
   }
 
@@ -596,9 +807,38 @@ export class AppRunner extends DurableObject<Env> {
       });
     }
 
+    this.#restoreAppClients();
+    const previous = this.appClients.get(appClientKey(context.session));
+    if (previous) {
+      this.#closeSocket(previous.socket, 1000, "Replaced by newer app connection");
+    }
+    const connectionId = crypto.randomUUID();
+    const admission = this.appSocketAdmission.open(
+      connectionId,
+      this.#appSocketLifetime(context.session, context.appFrame),
+    );
+    if (!admission.admitted) {
+      return new Response(
+        admission.reason === "expired" ? "App socket context has expired" : "Too many app sockets",
+        {
+          status: admission.reason === "expired" ? 401 : 429,
+          headers: { "cache-control": "no-store" },
+        },
+      );
+    }
+
     const [client, server] = Object.values(new WebSocketPair());
-    this.ctx.acceptWebSocket(server, [APP_SOCKET_TAG]);
-    this.#registerAppSocket(server, context.session, context.appFrame);
+    try {
+      this.ctx.acceptWebSocket(server, [APP_SOCKET_TAG]);
+      this.#registerAppSocket(server, connectionId, context.session, context.appFrame);
+    } catch (error) {
+      this.appSocketAdmission.close(connectionId);
+      try {
+        server.close(1011, "App socket setup failed");
+      } catch {
+      }
+      throw error;
+    }
     return new Response(null, {
       status: 101,
       webSocket: client,
@@ -661,11 +901,18 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
+    if (this.erased || this.managedPaused) {
+      return;
+    }
+    const runtimeEpoch = this.managedEpoch;
     const due = this.daemonSchedules.due(Date.now());
     for (const record of due) {
-      await this.#runDueRpcSchedule(record);
+      if (!this.#isActiveEpoch(runtimeEpoch)) {
+        return;
+      }
+      await this.#runDueRpcSchedule(record, runtimeEpoch);
     }
-    await this.#syncDaemonAlarm();
+    await this.#syncDaemonAlarm(runtimeEpoch);
   }
 
   #defaultRuntime(
@@ -717,40 +964,100 @@ export class AppRunner extends DurableObject<Env> {
     };
   }
 
-  #registerAppSocket(ws: WebSocket, session: AppSessionInfo, appFrame: AppFrameContext): void {
+  #registerAppSocket(
+    ws: WebSocket,
+    connectionId: string,
+    session: AppSessionInfo,
+    appFrame: AppFrameContext,
+  ): void {
     const key = appClientKey(session);
     const previous = this.appClients.get(key);
     if (previous && previous.socket !== ws) {
       this.#closeSocket(previous.socket, 1000, "Replaced by newer app connection");
     }
+    const registeredAt = Date.now();
     ws.serializeAttachment({
       kind: "app-client",
       connected: true,
+      connectionId,
       session,
       appFrame,
-      connectedAt: Date.now(),
+      connectedAt: registeredAt,
     } satisfies AppSocketAttachment);
     this.appClients.set(key, {
       socket: ws,
+      connectionId,
       session,
       appFrame,
-      registeredAt: Date.now(),
+      registeredAt,
     });
   }
 
   #restoreAppClients(): void {
+    if (this.appClientsRestored) {
+      return;
+    }
+    this.appClientsRestored = true;
     this.appClients.clear();
+    const now = Date.now();
+    const usedConnectionIds = new Set<string>();
+    const candidates: RegisteredAppClient[] = [];
     for (const socket of this.ctx.getWebSockets(APP_SOCKET_TAG)) {
       const attachment = this.#getSocketAttachment(socket);
       if (!attachment?.connected || !attachment.session || !attachment.appFrame) {
+        this.#closeSocket(socket, 1008, "Invalid app socket attachment");
         continue;
       }
-      this.appClients.set(appClientKey(attachment.session), {
+      let connectionId = attachment.connectionId;
+      if (!connectionId || usedConnectionIds.has(connectionId)) {
+        connectionId = crypto.randomUUID();
+      }
+      usedConnectionIds.add(connectionId);
+      const registeredAt = Number.isSafeInteger(attachment.connectedAt) && attachment.connectedAt! >= 0
+        ? attachment.connectedAt!
+        : now;
+      if (connectionId !== attachment.connectionId || registeredAt !== attachment.connectedAt) {
+        try {
+          socket.serializeAttachment({
+            ...attachment,
+            connectionId,
+            connectedAt: registeredAt,
+          } satisfies AppSocketAttachment);
+        } catch {
+          this.#closeSocket(socket, 1008, "Invalid app socket attachment");
+          continue;
+        }
+      }
+      candidates.push({
         socket,
+        connectionId,
         session: attachment.session,
         appFrame: attachment.appFrame,
-        registeredAt: attachment.connectedAt ?? Date.now(),
+        registeredAt,
       });
+    }
+
+    candidates.sort((left, right) =>
+      right.registeredAt - left.registeredAt || left.connectionId.localeCompare(right.connectionId)
+    );
+    const restoredKeys = new Set<string>();
+    for (const candidate of candidates) {
+      const key = appClientKey(candidate.session);
+      if (restoredKeys.has(key)) {
+        this.#closeSocket(candidate.socket, 1000, "Replaced by newer app connection");
+        continue;
+      }
+      const admission = this.appSocketAdmission.open(
+        candidate.connectionId,
+        this.#appSocketLifetime(candidate.session, candidate.appFrame),
+        now,
+      );
+      if (!admission.admitted) {
+        this.#closeSocketForAdmission(candidate.socket, admission.reason);
+        continue;
+      }
+      restoredKeys.add(key);
+      this.appClients.set(key, candidate);
     }
   }
 
@@ -777,15 +1084,16 @@ export class AppRunner extends DurableObject<Env> {
     let delivered = 0;
     for (const [key, registration] of targets) {
       try {
-        this.#sendSocketFrame(registration.socket, {
+        if (!this.#sendSocketFrame(registration.socket, {
           type: "sig",
           signal: event,
           payload,
-        });
+        })) {
+          continue;
+        }
         delivered += 1;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[app-runner] app event delivery failed for ${registration.session.clientId}: ${message}`);
+      } catch {
+        console.warn(JSON.stringify({ event: "app_event_delivery", outcome: "failed" }));
         this.#removeAppClient(key);
       }
     }
@@ -797,11 +1105,7 @@ export class AppRunner extends DurableObject<Env> {
     if (!registration) {
       return;
     }
-    this.appClients.delete(key);
-    try {
-      registration.socket.close(1011, "app client removed");
-    } catch {
-    }
+    this.#closeSocket(registration.socket, 1011, "app client removed");
   }
 
   #removeAppClientBySocket(socket: WebSocket): void {
@@ -813,27 +1117,54 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #clientForSocket(socket: WebSocket): RegisteredAppClient | null {
+    const registered = this.#registrationForSocket(socket);
+    if (registered) {
+      if (this.#canDeliverToClient(registered)) {
+        return registered;
+      }
+      this.#closeSocketForAdmission(socket, "expired");
+      return null;
+    }
     const attachment = this.#getSocketAttachment(socket);
-    if (!attachment?.connected || !attachment.session || !attachment.appFrame) {
+    if (
+      !attachment?.connected ||
+      !attachment.connectionId ||
+      !attachment.session ||
+      !attachment.appFrame
+    ) {
       return null;
     }
     const key = appClientKey(attachment.session);
     const existing = this.appClients.get(key);
-    if (existing?.socket === socket) {
-      return existing;
+    if (existing) {
+      this.#closeSocket(socket, 1000, "Replaced by newer app connection");
+      return null;
     }
-    const restored = {
+    const restored: RegisteredAppClient = {
       socket,
+      connectionId: attachment.connectionId,
       session: attachment.session,
       appFrame: attachment.appFrame,
       registeredAt: attachment.connectedAt ?? Date.now(),
     };
+    const admission = this.appSocketAdmission.open(
+      restored.connectionId,
+      this.#appSocketLifetime(restored.session, restored.appFrame),
+    );
+    if (!admission.admitted) {
+      this.#closeSocketForAdmission(socket, admission.reason);
+      return null;
+    }
     this.appClients.set(key, restored);
     return restored;
   }
 
   #appSessionForClientId(clientId: string, sessionId?: string | null): AppSessionInfo | undefined {
-    for (const registration of this.appClients.values()) {
+    for (const registration of [...this.appClients.values()]) {
+      if (!this.#canDeliverToClient(registration)) {
+        this.#closeSocketForAdmission(registration.socket, "expired");
+        continue;
+      }
       if (
         registration.session.clientId === clientId &&
         (!sessionId || registration.session.sessionId === sessionId)
@@ -844,22 +1175,92 @@ export class AppRunner extends DurableObject<Env> {
     return undefined;
   }
 
-  #sendSocketFrame(socket: WebSocket, frame: AppSocketFrame): void {
+  #sendSocketFrame(socket: WebSocket, frame: AppSocketFrame): boolean {
+    if (!this.#canDeliverToSocket(socket)) {
+      return false;
+    }
     socket.send(JSON.stringify(frame));
+    return true;
   }
 
   #closeSocket(socket: WebSocket, code: number, reason: string): void {
     this.appSocketBodies.close(socket, reason);
-    this.#removeAppClientBySocket(socket);
+    this.#forgetAppSocket(socket);
+    try {
+      socket.serializeAttachment({
+        kind: "app-client",
+        connected: false,
+      } satisfies AppSocketAttachment);
+    } catch {
+    }
     try {
       socket.close(code, reason);
     } catch {
     }
   }
 
+  #forgetAppSocket(socket: WebSocket): void {
+    const registration = this.#registrationForSocket(socket);
+    const connectionId = registration?.connectionId ?? this.#getSocketAttachment(socket)?.connectionId;
+    if (connectionId) {
+      this.appSocketAdmission.close(connectionId);
+    }
+    this.#removeAppClientBySocket(socket);
+  }
+
+  #registrationForSocket(socket: WebSocket): RegisteredAppClient | undefined {
+    for (const registration of this.appClients.values()) {
+      if (registration.socket === socket) {
+        return registration;
+      }
+    }
+    return undefined;
+  }
+
+  #canDeliverToSocket(socket: WebSocket): boolean {
+    return this.#clientForSocket(socket) !== null;
+  }
+
+  #canDeliverToClient(client: RegisteredAppClient, now = Date.now()): boolean {
+    return this.appSocketAdmission.canDeliver(
+      this.#appSocketLifetime(client.session, client.appFrame),
+      now,
+    );
+  }
+
+  #appSocketLifetime(session: AppSessionInfo, appFrame: AppFrameContext): AppSocketLifetime {
+    return {
+      sessionExpiresAt: session.expiresAt,
+      appFrameExpiresAt: appFrame.expiresAt,
+    };
+  }
+
+  #closeSocketForAdmission(
+    socket: WebSocket,
+    reason: Exclude<AppSocketAdmissionResult, { admitted: true }>["reason"],
+  ): void {
+    switch (reason) {
+      case "expired":
+        this.#closeSocket(socket, 1008, "App session expired");
+        return;
+      case "frame_too_large":
+        this.#closeSocket(socket, 1009, "App socket frame too large");
+        return;
+      case "message_rate":
+        this.#closeSocket(socket, 1008, "App socket message rate exceeded");
+        return;
+      case "connection_limit":
+        this.#closeSocket(socket, 1008, "App socket connection limit exceeded");
+    }
+  }
+
   #getSocketAttachment(socket: WebSocket): AppSocketAttachment | null {
-    const attachment = socket.deserializeAttachment();
-    return this.#isAppSocketAttachment(attachment) ? attachment : null;
+    try {
+      const attachment = socket.deserializeAttachment();
+      return this.#isAppSocketAttachment(attachment) ? attachment : null;
+    } catch {
+      return null;
+    }
   }
 
   #appSocketContextFromRequest(request: Request): AppSocketContext | null {
@@ -893,7 +1294,14 @@ export class AppRunner extends DurableObject<Env> {
     if (!record.connected) {
       return true;
     }
-    return this.#isAppSessionInfo(record.session) && this.#isAppFrameContext(record.appFrame);
+    return this.#isAppSessionInfo(record.session) &&
+      this.#isAppFrameContext(record.appFrame) &&
+      (record.connectionId === undefined || (
+        typeof record.connectionId === "string" && record.connectionId.trim().length > 0
+      )) &&
+      (record.connectedAt === undefined || (
+        Number.isSafeInteger(record.connectedAt) && (record.connectedAt as number) >= 0
+      ));
   }
 
   #isAppSocketContext(value: unknown): value is AppSocketContext {
@@ -909,10 +1317,10 @@ export class AppRunner extends DurableObject<Env> {
     const session = this.#record(value);
     return Boolean(
       session &&
-      typeof session.sessionId === "string" &&
-      typeof session.clientId === "string" &&
-      typeof session.rpcBase === "string" &&
-      typeof session.expiresAt === "number",
+      typeof session.sessionId === "string" && session.sessionId.trim().length > 0 &&
+      typeof session.clientId === "string" && session.clientId.trim().length > 0 &&
+      typeof session.rpcBase === "string" && session.rpcBase.trim().length > 0 &&
+      Number.isSafeInteger(session.expiresAt) && (session.expiresAt as number) >= 0,
     );
   }
 
@@ -920,14 +1328,15 @@ export class AppRunner extends DurableObject<Env> {
     const appFrame = this.#record(value);
     return Boolean(
       appFrame &&
-      typeof appFrame.uid === "number" &&
-      typeof appFrame.username === "string" &&
-      typeof appFrame.packageId === "string" &&
-      typeof appFrame.packageName === "string" &&
-      typeof appFrame.entrypointName === "string" &&
-      typeof appFrame.routeBase === "string" &&
-      typeof appFrame.issuedAt === "number" &&
-      typeof appFrame.expiresAt === "number",
+      Number.isSafeInteger(appFrame.uid) && (appFrame.uid as number) >= 0 &&
+      typeof appFrame.username === "string" && appFrame.username.trim().length > 0 &&
+      typeof appFrame.packageId === "string" && appFrame.packageId.trim().length > 0 &&
+      typeof appFrame.packageName === "string" && appFrame.packageName.trim().length > 0 &&
+      typeof appFrame.entrypointName === "string" && appFrame.entrypointName.trim().length > 0 &&
+      typeof appFrame.routeBase === "string" && appFrame.routeBase.trim().length > 0 &&
+      Number.isSafeInteger(appFrame.issuedAt) && (appFrame.issuedAt as number) >= 0 &&
+      Number.isSafeInteger(appFrame.expiresAt) &&
+      (appFrame.expiresAt as number) >= (appFrame.issuedAt as number),
     );
   }
 
@@ -966,6 +1375,7 @@ export class AppRunner extends DurableObject<Env> {
         GSV_API: this.ctx.exports.GsvApiBinding({
           props: {
             appRunnerName: buildAppRunnerName(props.appFrame.uid, props.packageId),
+            runtimeEpoch: this.managedEpoch,
             runtimeAccess: props.artifact.runtimeAccess,
           },
         }),
@@ -1030,10 +1440,13 @@ export class AppRunner extends DurableObject<Env> {
   }
 
   #codeKey(props: AppRunnerProps): string {
-    return appRunnerWorkerCodeKey(props);
+    return appRunnerWorkerCodeKey({ ...props, runtimeEpoch: this.managedEpoch });
   }
 
-  async #runDueRpcSchedule(record: AppRpcScheduleRecord): Promise<void> {
+  async #runDueRpcSchedule(record: AppRpcScheduleRecord, runtimeEpoch: number): Promise<void> {
+    if (!this.#isActiveEpoch(runtimeEpoch)) {
+      return;
+    }
     const firedAt = Date.now();
     const running = this.daemonSchedules.markRunning(record.key, record.version, firedAt);
     if (!running) {
@@ -1054,7 +1467,12 @@ export class AppRunner extends DurableObject<Env> {
     } catch (error) {
       status = "error";
       errorMessage = error instanceof Error ? error.message : String(error);
-      console.warn(`[app-runner] daemon rpc ${record.rpcMethod} (${record.key}) failed: ${errorMessage}`);
+      if (this.#isActiveEpoch(runtimeEpoch)) {
+        console.warn(JSON.stringify({ event: "app_daemon_rpc", outcome: "failed" }));
+      }
+    }
+    if (!this.#isActiveEpoch(runtimeEpoch)) {
+      return;
     }
     this.daemonSchedules.finishRun({
       key: record.key,
@@ -1066,13 +1484,20 @@ export class AppRunner extends DurableObject<Env> {
     });
   }
 
-  async #syncDaemonAlarm(): Promise<void> {
+  async #syncDaemonAlarm(runtimeEpoch: number = this.managedEpoch): Promise<void> {
+    if (!this.#isActiveEpoch(runtimeEpoch)) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
     const nextAlarmAt = this.daemonSchedules.nextAlarmAt();
     if (nextAlarmAt === null) {
       await this.ctx.storage.deleteAlarm();
       return;
     }
     await this.ctx.storage.setAlarm(nextAlarmAt);
+    if (!this.#isActiveEpoch(runtimeEpoch)) {
+      await this.ctx.storage.deleteAlarm();
+    }
   }
 
   #normalizeRpcScheduleInput(input: unknown): AppRpcScheduleUpsertInput {
@@ -1116,6 +1541,239 @@ export class AppRunner extends DurableObject<Env> {
       lastError: record.lastError,
       lastDurationMs: record.lastDurationMs,
     };
+  }
+
+  async managedErase(): Promise<void> {
+    if (!this.erased) this.#advanceManagedEpoch();
+    const erasedEpoch = this.managedEpoch;
+    const props = this.ctx.storage.kv.get<AppRunnerProps>(PROPS_KEY);
+    const logicalName = this.ctx.storage.kv.get<string>(MANAGED_LOGICAL_NAME_KEY)
+      ?? (props ? buildAppRunnerName(props.appFrame.uid, props.packageId) : null);
+    this.erased = true;
+    this.#closeManagedSockets("Tenant runtime is being erased");
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.ctx.storage.kv.put(MANAGED_ERASED_KEY, true);
+    this.ctx.storage.kv.put(MANAGED_EPOCH_KEY, erasedEpoch);
+    if (logicalName) this.ctx.storage.kv.put(MANAGED_LOGICAL_NAME_KEY, logicalName);
+  }
+
+  async managedPause(): Promise<void> {
+    if (this.erased) {
+      return;
+    }
+    if (!this.managedPaused) {
+      this.#advanceManagedEpoch();
+      this.managedPaused = true;
+      this.ctx.storage.kv.put(MANAGED_PAUSED_KEY, true);
+    }
+    this.daemonSchedules.releaseRunning(Date.now());
+    this.#closeManagedSockets("Tenant runtime is being updated");
+    await this.ctx.storage.deleteAlarm();
+  }
+
+  async managedResume(): Promise<void> {
+    if (this.erased || !this.managedPaused) {
+      return;
+    }
+    this.#advanceManagedEpoch();
+    this.managedPaused = false;
+    this.ctx.storage.kv.delete(MANAGED_PAUSED_KEY);
+  }
+
+  managedDescriptor(): ManagedObjectDescriptor {
+    if (this.erased) {
+      return {
+        schemaVersion: MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+        kind: "app_runner",
+        providerId: this.ctx.id.toString(),
+        logicalName: this.ctx.storage.kv.get<string>(MANAGED_LOGICAL_NAME_KEY) ?? null,
+        classification: "erased",
+        lifecycle: { status: "erased", epoch: this.managedEpoch },
+      };
+    }
+    const props = this.ctx.storage.kv.get<AppRunnerProps>(PROPS_KEY);
+    if (!props) {
+      return {
+        schemaVersion: MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+        kind: "app_runner",
+        providerId: this.ctx.id.toString(),
+        logicalName: null,
+        classification: "uninitialized",
+        lifecycle: { status: "uninitialized", epoch: this.managedEpoch },
+      };
+    }
+    return {
+      schemaVersion: MANAGED_OBJECT_DESCRIPTOR_SCHEMA_VERSION,
+      kind: "app_runner",
+      providerId: this.ctx.id.toString(),
+      logicalName: buildAppRunnerName(props.appFrame.uid, props.packageId),
+      classification: "initialized",
+      lifecycle: {
+        status: this.managedPaused ? "paused" : "active",
+        epoch: this.managedEpoch,
+      },
+    };
+  }
+
+  managedSnapshot(input: ManagedObjectSnapshotRequest): ReadableStream<Uint8Array> {
+    const request = validateManagedSnapshotRequest(input);
+    this.assertManagedPortableIdentity(
+      request.component,
+      request.kind,
+      request.logicalName,
+      request.providerId,
+      request.fenceEpoch,
+    );
+    const descriptor = this.managedDescriptor();
+    if (
+      descriptor.classification !== "initialized"
+      || descriptor.logicalName !== request.logicalName
+      || descriptor.lifecycle.status !== "paused"
+    ) {
+      throw new Error("Managed app runner is not a paused initialized snapshot source");
+    }
+    return snapshotManagedOwner(this.ctx.storage, {
+      objectId: request.objectId,
+      assertFenced: () => this.assertManagedPortableFence(request.fenceEpoch),
+    });
+  }
+
+  async managedRestore(
+    control: ManagedObjectRestoreControl,
+    stream: ReadableStream<Uint8Array>,
+  ): Promise<{
+    status: "applied" | "replayed";
+    providerId: string;
+    frameCount: string;
+    bodyBytes: string;
+    semanticSha256: string;
+  }> {
+    try {
+      control = validateManagedRestoreControl(control);
+      this.assertManagedTargetIdentity(control);
+      const restoreTarget = readManagedRestoreTarget(this.ctx.storage);
+      if (!restoreTarget) {
+        if (this.erased || this.ctx.storage.kv.get<AppRunnerProps>(PROPS_KEY)) {
+          throw new Error("Managed app runner restore target is not fresh");
+        }
+        if (!this.managedPaused) {
+          if (control.fenceEpoch !== this.managedEpoch + 1) {
+            throw new Error("Managed app runner restore fence epoch is invalid");
+          }
+          this.#advanceManagedEpoch();
+          this.managedPaused = true;
+          this.ctx.storage.kv.put(MANAGED_PAUSED_KEY, true);
+        }
+        this.ctx.storage.kv.put(MANAGED_LOGICAL_NAME_KEY, control.logicalName);
+        this.#closeManagedSockets("Tenant runtime is being restored");
+        await this.ctx.storage.deleteAlarm();
+      }
+      this.assertManagedPortableFence(control.fenceEpoch);
+      await prepareManagedRestoreTarget(this.ctx.storage, control);
+      const result = await restoreManagedOwner(
+        this.ctx.storage,
+        stream,
+        control,
+        () => this.assertManagedPortableFence(control.fenceEpoch),
+      );
+      const descriptor = this.managedDescriptor();
+      if (
+        descriptor.classification !== "initialized"
+        || descriptor.logicalName !== control.logicalName
+        || descriptor.providerId !== this.ctx.id.toString()
+      ) {
+        throw new Error("Restored app runner identity does not match its target");
+      }
+      return { ...result, providerId: descriptor.providerId };
+    } catch (error) {
+      if (!stream.locked) await stream.cancel(error).catch(() => {});
+      throw error;
+    }
+  }
+
+  private assertManagedTargetIdentity(control: ManagedObjectRestoreControl): void {
+    if (
+      control.component !== "gateway"
+      || control.kind !== "app_runner"
+      || this.env.APP_RUNNER.idFromName(control.logicalName).toString() !== this.ctx.id.toString()
+    ) {
+      throw new Error("Managed app runner restore identity is invalid");
+    }
+  }
+
+  private assertManagedPortableIdentity(
+    component: string,
+    kind: string,
+    logicalName: string,
+    providerId: string,
+    fenceEpoch: number,
+  ): void {
+    if (
+      component !== "gateway"
+      || kind !== "app_runner"
+      || providerId !== this.ctx.id.toString()
+      || this.env.APP_RUNNER.idFromName(logicalName).toString() !== providerId
+    ) {
+      throw new Error("Managed app runner portable identity is invalid");
+    }
+    this.assertManagedPortableFence(fenceEpoch);
+  }
+
+  private assertManagedPortableFence(fenceEpoch: number): void {
+    if (this.erased || !this.managedPaused || this.managedEpoch !== fenceEpoch) {
+      throw new Error("Managed app runner portable operation lost its exact pause fence");
+    }
+  }
+
+  async managedActivate(): Promise<void> {
+    this.#requireActive();
+    await this.#syncDaemonAlarm();
+  }
+
+  #closeManagedSockets(reason: string): void {
+    for (const socket of this.ctx.getWebSockets(APP_SOCKET_TAG)) {
+      this.#closeSocket(socket, 1001, reason);
+    }
+    this.appClients.clear();
+    this.appClientsRestored = true;
+    this.appSocketBodies.closeAll(reason);
+  }
+
+  #isActiveEpoch(runtimeEpoch: number): boolean {
+    return !this.erased && !this.managedPaused && runtimeEpoch === this.managedEpoch;
+  }
+
+  #advanceManagedEpoch(): void {
+    this.managedEpoch += 1;
+    this.ctx.storage.kv.put(MANAGED_EPOCH_KEY, this.managedEpoch);
+  }
+
+  async #runInActiveEpoch<T>(
+    action: (runtimeEpoch: number) => Promise<T>,
+    expectedEpoch?: number,
+    discard?: (result: T) => Promise<unknown>,
+  ): Promise<T> {
+    this.#requireActive(expectedEpoch);
+    const runtimeEpoch = this.managedEpoch;
+    const result = await action(runtimeEpoch);
+    if (!this.#isActiveEpoch(runtimeEpoch)) {
+      await discard?.(result).catch(() => {});
+      this.#requireActive(runtimeEpoch);
+    }
+    return result;
+  }
+
+  #requireActive(expectedEpoch?: number): void {
+    if (this.erased) {
+      throw new Error("AppRunner no longer exists");
+    }
+    if (this.managedPaused) {
+      throw new Error("Tenant runtime is being updated");
+    }
+    if (expectedEpoch !== undefined && expectedEpoch !== this.managedEpoch) {
+      throw new Error("Package runtime was superseded");
+    }
   }
 
   #normalizeSqlBindingValue(value: unknown): string | number | null {

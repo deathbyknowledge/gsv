@@ -226,6 +226,44 @@ describe("handleSysBootstrap", () => {
     expect(applyMock).not.toHaveBeenCalled();
   });
 
+  it("reconciles a partial parallel import on retry", async () => {
+    let manualAttempts = 0;
+    importFromUpstreamMock.mockImplementation((
+      repo: { repo: string },
+      _actor: string,
+      _email: string,
+      _message: string,
+      remoteUrl: string,
+      ref: string,
+    ) => {
+      if (repo.repo === "gsv-manual" && manualAttempts++ === 0) {
+        return Promise.reject(new Error("injected manual import failure"));
+      }
+      return Promise.resolve({
+        remoteUrl,
+        remoteRef: ref,
+        head: "abc123",
+        changed: manualAttempts === 0,
+      });
+    });
+    const ctx = makeContext();
+
+    await expect(handleSysBootstrap(undefined, ctx)).rejects.toThrow(
+      "injected manual import failure",
+    );
+    await expect(handleSysBootstrap(undefined, ctx)).resolves.toMatchObject({
+      repo: "root/gsv",
+      head: "abc123",
+      manual: { repo: "root/gsv-manual", head: "abc123" },
+    });
+
+    expect(importFromUpstreamMock.mock.calls.filter(([repo]) => repo.repo === "gsv")).toHaveLength(2);
+    expect(importFromUpstreamMock.mock.calls.filter(([repo]) => repo.repo === "gsv-manual")).toHaveLength(2);
+    expect(applyMock).toHaveBeenCalledTimes(1);
+    expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv/visibility", "public");
+    expect(ctx.config.set).toHaveBeenCalledWith("repos/root/gsv-manual/visibility", "public");
+  });
+
   it("uses the configured upstream env when args are omitted", async () => {
     const ctx = makeContext();
     setBootstrapEnv(ctx, "example/dev-gsv#feature/bootstrap");
@@ -298,11 +336,50 @@ describe("handleSysBootstrap", () => {
     );
   });
 
+  it.each([
+    "https://bootstrap-user:super-secret@git.example.com/team/gsv.git",
+    "https://bootstrap-token@git.example.com/team/gsv.git",
+    "ssh://git@git.example.com/team/gsv.git",
+    "https://git.example.com/team/gsv.git?access_token=super-secret",
+    "https://git.example.com/team/gsv.git?x-amz-credential=super-secret",
+    "https://git.example.com/team/gsv.git?api%5Fkey=super-secret",
+    "https://git.example.com/team/gsv.git#access_token=super-secret",
+    "https://git.example.com/team/gsv.git?x=ghp_super-secret",
+    "ghp_super-secret@github.com:team/gsv.git",
+  ])("rejects credential-bearing remote URLs before ripgit or logging: %s", async (remoteUrl) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(handleSysBootstrap({ remoteUrl }, makeContext())).rejects.toThrow(
+        "Bootstrap repository URLs must not include credentials",
+      );
+      expect(importFromUpstreamMock).not.toHaveBeenCalled();
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it.each([
+    "ssh://git.example.com/team/gsv.git",
+    "git@git.example.com:team/gsv.git",
+  ])("keeps credential-free HTTPS and SSH remote forms supported: %s", async (remoteUrl) => {
+    await handleSysBootstrap({ remoteUrl, ref: "stable" }, makeContext());
+
+    expect(importFromUpstreamMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      "root",
+      "root@gsv.local",
+      `bootstrap root/gsv from ${remoteUrl}#stable`,
+      remoteUrl,
+      "stable",
+    );
+  });
+
   it("rejects invalid repo shorthand", async () => {
     const ctx = makeContext();
 
     await expect(handleSysBootstrap({ repo: "not valid" }, ctx)).rejects.toThrow(
-      "Invalid bootstrap repo: not valid",
+      "Invalid bootstrap repo",
     );
   });
 

@@ -78,6 +78,30 @@ describe("package artifacts", () => {
     expect(packageArtifactPublicBase("sha256:abc123")).toBe("/public/gsv/packages/sha256-abc123");
   });
 
+  it("rejects every artifact object before writing when an object exceeds the deployment limit", async () => {
+    const bucket = makeBucket();
+    const artifact: PackageArtifact = {
+      hash: "sha256:oversized",
+      mainModule: "__gsv__/main.ts",
+      modules: [{
+        path: "__gsv__/main.ts",
+        kind: "esm",
+        content: "export default {};",
+      }],
+      publicFiles: [{
+        path: "large.txt",
+        contentType: "text/plain",
+        encoding: "utf-8",
+        content: "12345",
+      }],
+    };
+
+    await expect(storePackageArtifact(bucket, artifact, 4)).rejects.toThrow(
+      "storage object exceeds 4 bytes",
+    );
+    expect(bucket.puts).toEqual([]);
+  });
+
   it("defaults dynamic worker outbound fetch to denied", () => {
     const artifact: PackageArtifact = {
       hash: "sha256:abc123",

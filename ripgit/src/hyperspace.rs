@@ -1,4 +1,4 @@
-use crate::{KEYFRAME_INTERVAL, api, diff, git, packages, store};
+use crate::{api, diff, git, managed, packages, store, KEYFRAME_INTERVAL};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use worker::*;
 
@@ -196,8 +196,15 @@ fn package_source_locator(req: &Request, repo: &str) -> Result<packages::Package
     })
 }
 
-pub async fn handle_apply(sql: &SqlStorage, req: &mut Request) -> Result<Response> {
+pub async fn handle_apply(
+    sql: &SqlStorage,
+    req: &mut Request,
+    expected_epoch: i64,
+) -> Result<Response> {
     let body = req.bytes().await?;
+    if let Err(error) = managed::assert_repository_mutation_epoch(sql, expected_epoch) {
+        return error.into_response();
+    }
     let apply: ApplyRequest = serde_json::from_slice(&body)
         .map_err(|err| Error::RustError(format!("invalid apply request: {}", err)))?;
 
@@ -335,8 +342,15 @@ pub async fn handle_apply(sql: &SqlStorage, req: &mut Request) -> Result<Respons
     Response::from_json(&response)
 }
 
-pub async fn handle_import(sql: &SqlStorage, req: &mut Request) -> Result<Response> {
+pub async fn handle_import(
+    sql: &SqlStorage,
+    req: &mut Request,
+    expected_epoch: i64,
+) -> Result<Response> {
     let body = req.bytes().await?;
+    if let Err(error) = managed::assert_repository_mutation_epoch(sql, expected_epoch) {
+        return error.into_response();
+    }
     let import: ImportRequest = serde_json::from_slice(&body)
         .map_err(|err| Error::RustError(format!("invalid import request: {}", err)))?;
 
@@ -354,11 +368,6 @@ pub async fn handle_import(sql: &SqlStorage, req: &mut Request) -> Result<Respon
     let tracking_ref = upstream_tracking_ref_name(&remote_ref)?;
     let local_head_before = api::resolve_ref(sql, &ref_name)?;
     let previous_upstream_head = api::resolve_ref(sql, &tracking_ref)?;
-    store::set_config(sql, "upstream.remote_url", &remote_url)?;
-    store::set_config(sql, "upstream.remote_ref", &remote_ref)?;
-    store::set_config(sql, "upstream.tracking_ref", &tracking_ref)?;
-    store::set_config(sql, "upstream.source", "git-upload-pack")?;
-
     let fetched = git::fetch_remote_ref_with_options(
         sql,
         &remote_url,
@@ -368,8 +377,22 @@ pub async fn handle_import(sql: &SqlStorage, req: &mut Request) -> Result<Respon
             update_default_branch: false,
             rebuild_fts: false,
         },
+        || {
+            managed::assert_repository_mutation_epoch(sql, expected_epoch)
+                .map_err(|error| Error::RustError(format!("{}: {}", error.code, error.message)))
+        },
     )
-    .await?;
+    .await;
+
+    if let Err(error) = managed::assert_repository_mutation_epoch(sql, expected_epoch) {
+        return error.into_response();
+    }
+    let fetched = fetched?;
+
+    store::set_config(sql, "upstream.remote_url", &remote_url)?;
+    store::set_config(sql, "upstream.remote_ref", &remote_ref)?;
+    store::set_config(sql, "upstream.tracking_ref", &tracking_ref)?;
+    store::set_config(sql, "upstream.source", "git-upload-pack")?;
 
     let mut local_head = local_head_before.clone();
     let mut local_changed = false;

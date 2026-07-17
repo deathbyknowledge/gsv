@@ -10,14 +10,16 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@humansandmachines/gsv": "file:../../packages/gsv",
+    "@humansandmachines/gsv-worker-runtime": "file:../../packages/worker-runtime",
     "@whiskeysockets/baileys": "7.0.0-rc13",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250214.0",
+    "@cloudflare/workers-types": "^5.20260716.1",
     "@types/qrcode": "^1.5.6",
     "patch-package": "^8.0.1",
     "typescript": "^5.8.2",
-    "wrangler": "^4.3.1"
+    "wrangler": "^4.111.0"
   }
 }

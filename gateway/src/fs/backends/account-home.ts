@@ -46,6 +46,7 @@ export type AccountHomeBackendOptions = {
   /** Owning human uid for delegated agent-home routing. Defaults to viewer uid. */
   ownerUid?: number;
   isRoot?: boolean;
+  maxR2ObjectBytes?: number;
 };
 
 export function createAccountHomeBackend(
@@ -61,7 +62,7 @@ export function createAccountHomeBackend(
   const client = new RipgitClient(ripgitBinding);
   const primary = new AccountHomeMountBackend(
     client,
-    new R2MountBackend(bucket, identity),
+    new R2MountBackend(bucket, identity, options?.maxR2ObjectBytes),
     identity,
   );
 
@@ -77,6 +78,7 @@ export function createAccountHomeBackend(
     options.auth,
     options.ownerUid ?? identity.uid,
     options.isRoot ?? identity.uid === 0,
+    options.maxR2ObjectBytes,
   );
 }
 
@@ -687,6 +689,7 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
     private readonly auth: AuthStore,
     private readonly ownerUid: number,
     private readonly isRoot: boolean,
+    private readonly maxR2ObjectBytes?: number,
   ) {}
 
   handles(path: string): boolean {
@@ -808,7 +811,7 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
       const targetIdentity = accountIdentity(this.auth, entry);
       delegate = new AccountHomeMountBackend(
         this.client,
-        new R2MountBackend(this.bucket, this.viewerIdentity),
+        new R2MountBackend(this.bucket, this.viewerIdentity, this.maxR2ObjectBytes),
         targetIdentity,
         this.isRoot,
       );

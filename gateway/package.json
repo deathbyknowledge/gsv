@@ -23,6 +23,7 @@
     "@cloudflare/codemode": "^0.3.4",
     "@earendil-works/pi-ai": "^0.80.2",
     "@humansandmachines/gsv": "file:../packages/gsv",
+    "@humansandmachines/gsv-worker-runtime": "file:../packages/worker-runtime",
     "agents": "^0.16.0",
     "just-bash": "^2.12.6",
     "marked": "^16.4.2"

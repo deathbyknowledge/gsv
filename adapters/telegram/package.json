@@ -6,11 +6,17 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --minify",
+    "test": "vitest run --root .. shared/src/managed-lifecycle.test.ts telegram/src",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@humansandmachines/gsv": "file:../../packages/gsv",
+    "@humansandmachines/gsv-worker-runtime": "file:../../packages/worker-runtime"
+  },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250109.0",
+    "@cloudflare/workers-types": "^5.20260716.1",
     "typescript": "^5.7.3",
-    "wrangler": "^3.101.0"
+    "vitest": "^4.1.10",
+    "wrangler": "^4.111.0"
   }
 }

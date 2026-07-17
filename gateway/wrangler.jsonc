@@ -11,6 +11,9 @@
 	"define": {
 		"__GSV_RELEASE__": "\"dev\""
 	},
+	"limits": {
+		"cpu_ms": 10000
+	},
 	"migrations": [
 		{
 			"new_sqlite_classes": ["Kernel"],
@@ -34,6 +37,10 @@
 			{
 				"class_name": "Process",
 				"name": "PROCESS"
+			},
+			{
+				"class_name": "AppRunner",
+				"name": "APP_RUNNER"
 			}
 		]
 	},
@@ -55,10 +62,15 @@
 		"directory": "../web/dist/",
 		"binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/ws", "/apps/*", "/git/*", "/public/*", "/runtime/*", "/downloads/*", "/oauth/*", "/.well-known/*"]
+    "run_worker_first": ["/__gsv/managed/*", "/ws", "/apps/*", "/git/*", "/public/*", "/runtime/*", "/downloads/*", "/oauth/*", "/.well-known/*"]
 	},
 	// Channel service bindings (Gateway → Channel RPC)
 	"services": [
+		{
+			"binding": "CHANNEL_WHATSAPP",
+			"service": "gsv-channel-whatsapp",
+			"entrypoint": "WhatsAppChannelEntrypoint"
+		},
 		{
 			"binding": "CHANNEL_TELEGRAM",
 			"service": "gsv-channel-telegram",

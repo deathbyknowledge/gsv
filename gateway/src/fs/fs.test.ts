@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
 import type { KernelRefs } from "./index";
@@ -1830,5 +1830,18 @@ describe("GsvFs search", () => {
 
     await expect(search).rejects.toBe(reason);
     expect(cancelled).toBe(true);
+  });
+
+  it("rejects R2 objects above the configured deployment ceiling", async () => {
+    const put = vi.fn();
+    const backend = new R2MountBackend({
+      head: async () => null,
+      put,
+    } as unknown as R2Bucket, SAM, 4);
+
+    await expect(backend.writeFile("/oversized.txt", "12345")).rejects.toThrow(
+      "storage object exceeds 4 bytes",
+    );
+    expect(put).not.toHaveBeenCalled();
   });
 });

@@ -53,6 +53,38 @@ export function parseAttachArgs(tokens: string[]): ParsedAttachArgs {
   };
 }
 
+export function inferMediaMimeType(url: string, filename?: string): string {
+  let candidate = filename?.trim() || "";
+  if (!candidate) {
+    try {
+      candidate = new URL(url).pathname;
+    } catch {
+      candidate = url;
+    }
+  }
+  const extension = candidate.split(/[./\\]/).pop()?.toLowerCase() || "";
+  const mimeByExtension: Record<string, string> = {
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    gif: "image/gif",
+    webp: "image/webp",
+    mp3: "audio/mpeg",
+    ogg: "audio/ogg",
+    opus: "audio/opus",
+    wav: "audio/wav",
+    m4a: "audio/mp4",
+    mp4: "video/mp4",
+    webm: "video/webm",
+    mov: "video/quicktime",
+    pdf: "application/pdf",
+    json: "application/json",
+    txt: "text/plain",
+    zip: "application/zip",
+  };
+  return mimeByExtension[extension] || "application/octet-stream";
+}
+
 function looksLikeFilename(value: string | undefined): value is string {
   if (!value) return false;
   if (value.includes("/") || value.includes("\\")) return true;

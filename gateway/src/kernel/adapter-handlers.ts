@@ -27,7 +27,10 @@ import type {
   ProcMediaInput,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
-import { bodyFromBytes } from "@humansandmachines/gsv/protocol";
+import {
+  bodyFromBytes,
+  normalizeAdapterAccountId,
+} from "@humansandmachines/gsv/protocol";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
 import type { Frame, RequestFrame, ResponseOkFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
@@ -74,10 +77,10 @@ export async function handleAdapterConnect(
   ctx: KernelContext,
 ): Promise<AdapterConnectSyscallResult> {
   const adapter = normalizeAdapterName(args.adapter);
-  const accountId = args.accountId.trim();
+  const accountId = normalizeAdapterAccountId(args.accountId);
 
   if (!adapter) return { ok: false, error: "adapter is required" };
-  if (!accountId) return { ok: false, error: "accountId is required" };
+  if (!accountId) return { ok: false, error: adapterAccountIdError(args.accountId) };
   const ownerUid = requireAdapterControlOwnerUid(ctx, "adapter.connect");
 
   const service = resolveAdapterService(ctx.env, adapter);
@@ -143,10 +146,10 @@ export async function handleAdapterDisconnect(
   ctx: KernelContext,
 ): Promise<AdapterDisconnectSyscallResult> {
   const adapter = normalizeAdapterName(args.adapter);
-  const accountId = args.accountId.trim();
+  const accountId = normalizeAdapterAccountId(args.accountId);
 
   if (!adapter) return { ok: false, error: "adapter is required" };
-  if (!accountId) return { ok: false, error: "accountId is required" };
+  if (!accountId) return { ok: false, error: adapterAccountIdError(args.accountId) };
 
   const ownerUid = requireAdapterControlOwnerUid(ctx, "adapter.disconnect");
   if (ownerUid !== 0 && ctx.adapters.status.get(adapter, accountId)?.ownerUid !== ownerUid) {
@@ -230,10 +233,10 @@ export async function handleAdapterSend(
   ctx: KernelContext,
 ): Promise<AdapterSendResult> {
   const adapter = args.adapter.trim().toLowerCase();
-  const accountId = args.accountId.trim();
+  const accountId = normalizeAdapterAccountId(args.accountId);
 
   if (!adapter) return { ok: false, error: "adapter is required" };
-  if (!accountId) return { ok: false, error: "accountId is required" };
+  if (!accountId) return { ok: false, error: adapterAccountIdError(args.accountId) };
   if (!args.surface?.id?.trim()) return { ok: false, error: "surface.id is required" };
   if (!canSendToAdapterSurface(ctx, adapter, accountId, args.surface)) {
     return { ok: false, error: "Permission denied" };
@@ -329,12 +332,12 @@ export async function handleAdapterShellExec(
   ctx: KernelContext,
 ): Promise<ShellExecResult> {
   const normalizedAdapter = adapter.trim().toLowerCase();
-  const normalizedAccountId = accountId.trim();
+  const normalizedAccountId = normalizeAdapterAccountId(accountId);
   if (!normalizedAdapter) {
     return failedShellResult("adapter is required");
   }
   if (!normalizedAccountId) {
-    return failedShellResult("accountId is required");
+    return failedShellResult(adapterAccountIdError(accountId));
   }
   if (!isVisibleAdapterTarget(ctx, normalizedAdapter, normalizedAccountId)) {
     throw new Error(`Access denied to adapter target: ${normalizedAdapter}`);
@@ -359,7 +362,14 @@ export async function handleAdapterStatus(
 ): Promise<AdapterStatusResult> {
   const adapter = normalizeAdapterName(args.adapter);
   if (!adapter) throw new Error("adapter is required");
-  const accountId = args.accountId?.trim() || undefined;
+  let accountId: string | undefined;
+  if (args.accountId !== undefined) {
+    const normalized = normalizeAdapterAccountId(args.accountId);
+    if (!normalized) {
+      throw new Error(adapterAccountIdError(args.accountId));
+    }
+    accountId = normalized;
+  }
 
   const service = resolveAdapterService(ctx.env, adapter);
   if (service && typeof service.adapterStatus === "function") {
@@ -369,10 +379,17 @@ export async function handleAdapterStatus(
         const statuses = await service.adapterStatus(refreshAccountId);
         const allowedAccountIds = refreshAccountId ? new Set([refreshAccountId]) : null;
         for (const status of statuses) {
-          if (allowedAccountIds && !allowedAccountIds.has(status.accountId.trim())) {
+          const normalizedStatusAccountId = normalizeAdapterAccountId(status.accountId);
+          if (
+            !normalizedStatusAccountId
+            || (allowedAccountIds && !allowedAccountIds.has(normalizedStatusAccountId))
+          ) {
             continue;
           }
-          ctx.adapters.status.upsert(adapter, status.accountId, status);
+          ctx.adapters.status.upsert(adapter, normalizedStatusAccountId, {
+            ...status,
+            accountId: normalizedStatusAccountId,
+          });
         }
       } catch {
         // status syscall should still return last known state when live check fails
@@ -532,11 +549,11 @@ export async function handleAdapterInbound(
   }
 
   const adapter = args.adapter.trim().toLowerCase();
-  const accountId = args.accountId.trim();
+  const accountId = normalizeAdapterAccountId(args.accountId);
   const message = args.message;
 
   if (!adapter) return { ok: false, error: "adapter is required" };
-  if (!accountId) return { ok: false, error: "accountId is required" };
+  if (!accountId) return { ok: false, error: adapterAccountIdError(args.accountId) };
   if (!message?.surface?.id?.trim()) return { ok: false, error: "message.surface.id is required" };
 
   const actorId = resolveActorId(message);
@@ -806,12 +823,12 @@ export function handleAdapterStateUpdate(
   }
 
   const adapter = args.adapter.trim().toLowerCase();
-  const accountId = args.accountId.trim();
+  const accountId = normalizeAdapterAccountId(args.accountId);
   if (!adapter) {
     throw new Error("adapter is required");
   }
   if (!accountId) {
-    throw new Error("accountId is required");
+    throw new Error(adapterAccountIdError(args.accountId));
   }
 
   const status = ctx.adapters.status.upsert(adapter, accountId, {
@@ -841,6 +858,12 @@ function adapterNameFromBindingKey(key: string): string | null {
 
 function normalizeAdapterName(adapter: string): string {
   return adapter.trim().toLowerCase();
+}
+
+function adapterAccountIdError(value: unknown): string {
+  return typeof value === "string" && value.trim().length === 0
+    ? "accountId is required"
+    : "accountId is invalid";
 }
 
 function adapterListEntry(adapter: string, service: AdapterServiceBinding | null): AdapterListEntry {
@@ -909,9 +932,16 @@ async function refreshAdapterStatus(
   try {
     const statuses = await service.adapterStatus(accountId);
     for (const status of statuses) {
-      ctx.adapters.status.upsert(adapter, status.accountId, status);
+      const normalizedStatusAccountId = normalizeAdapterAccountId(status.accountId);
+      if (normalizedStatusAccountId !== accountId) continue;
+      const normalizedStatus = {
+        ...status,
+        accountId: normalizedStatusAccountId,
+      };
+      ctx.adapters.status.upsert(adapter, normalizedStatusAccountId, normalizedStatus);
+      return normalizedStatus;
     }
-    return statuses.find((status) => status.accountId === accountId) ?? null;
+    return null;
   } catch (error) {
     console.error(`[adapter.status] refresh failed adapter=${adapter} accountId=${accountId}`, error);
     return null;

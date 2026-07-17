@@ -54,7 +54,6 @@ import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleNetFetch, normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
-import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
   handlePkgAdd,
   handlePkgCheckout,
@@ -510,8 +509,7 @@ async function dispatchNative(
       case "sys.connect":
         return errFrame(frame.id, 400, "sys.connect handled separately");
       case "sys.setup.assist":
-        data = await handleSysSetupAssist(frame.args, ctx);
-        break;
+        return errFrame(frame.id, 400, "sys.setup.assist handled separately");
       case "sys.setup":
         return errFrame(frame.id, 400, "sys.setup handled separately");
       case "sys.bootstrap":
