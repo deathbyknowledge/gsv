@@ -17,6 +17,15 @@
   display: none;
 }
 
+/* The shell paints thin colored scrollbars on EVERY element
+   (`.gsv-shell-root *`, gsvShell.css) — same (0,1,0) specificity as the bare
+   class above, so in-app the tie falls to bundle order; and once
+   scrollbar-width computes `thin`, WebKit ignores the ::-webkit-scrollbar
+   fallback too. The suppression must out-specify the shell global. */
+.gsv-shell-root .gsv-chat-swipe {
+  scrollbar-width: none;
+}
+
 .gsv-chat-swipe-track {
   display: flex;
   align-items: stretch;
