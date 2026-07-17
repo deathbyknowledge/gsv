@@ -1054,6 +1054,7 @@ export function ChatDock({
         contextTitle={contextTitle}
         effectiveStatus={effectiveStatus}
         hasActiveProcess={hasActiveProcess}
+        mobileLayout={mobileLayout}
         modelLabel={currentModelLabel}
         openPopover={openPopover}
         reasoningLabel={currentReasoningLabel}

@@ -63,6 +63,7 @@ import messageInput from "./stories/MessageInput.story";
 import systemMessage from "./stories/SystemMessage.story";
 import messageMeta from "./stories/MessageMeta.story";
 import chatMessageTypography from "./stories/ChatMessageTypography.story";
+import chatDockHeader from "./stories/ChatDockHeader.story";
 import tabs from "./stories/Tabs.story";
 import popoverMenu from "./stories/PopoverMenu.story";
 import confirmModal from "./stories/ConfirmModal.story";
@@ -124,6 +125,7 @@ const STORIES: Story[] = [
   systemMessage,
   messageMeta,
   chatMessageTypography,
+  chatDockHeader,
   tabs,
   link,
   // Composite

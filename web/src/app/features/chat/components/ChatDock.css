@@ -2316,6 +2316,112 @@
   min-height: 44px;
 }
 
+/* Mobile header: [avatar | rows | cluster+context], two views behind the ⋮/←
+   toggle. Every control meets the 44px touch floor; min/max are not rendered
+   on mobile (the shell's swipe/edge affordances close the drawer). */
+.gsv-shell-viewport.is-mobile .gsv-chat-head {
+  align-items: center;
+  min-height: 0;
+  padding: 10px;
+  gap: 10px;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-agent {
+  flex: 1;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-agent-main {
+  flex: none;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-m-rows {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-m-rows > * {
+  width: 100%;
+  min-height: 44px;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-actions {
+  flex: none;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-m-cluster {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Cluster buttons (start/abort + the ⋮/← toggle) — scoped tight so the
+   context cell below keeps its own sizing. Chrome (border/bg/color) comes
+   from the shared `.gsv-chat-actions button` rule. */
+.gsv-shell-viewport.is-mobile .gsv-chat-m-cluster button {
+  width: 44px;
+  height: 44px;
+}
+
+/* Context → compact %-only cell under the cluster (out-specifies the desktop
+   width:0/min-width:100% stretch); stretches to the cluster's width. */
+.gsv-shell-viewport.is-mobile .gsv-chat-actions .gsv-chat-context-control {
+  width: auto;
+  min-width: 0;
+  min-height: 44px;
+  align-self: stretch;
+  justify-content: center;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-actions .gsv-chat-context-control .gsv-pr {
+  display: none;
+}
+
+/* Speech mode row (the "more" view) — labeled twin of the desktop speaker
+   toggle; speechStatus text ellipsizes (it can carry long failure strings). */
+.gsv-shell-viewport.is-mobile .gsv-chat-agent-speech {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: #b6b1ff;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-agent-speech span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-agent-speech svg {
+  flex: none;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-agent-speech.is-active {
+  color: var(--online);
+}
+
+/* The header's height is content-driven on mobile — decouple the scrim from
+   the desktop 112px magic number (header z55 out-paints scrim z50, and the
+   full-body sheet covers the body anyway). */
+.gsv-shell-viewport.is-mobile .gsv-chat-popover-scrim {
+  inset: 0;
+}
+
 @keyframes gsvMobileChatIn {
   from {
     transform: translateX(100%);
