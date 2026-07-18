@@ -279,7 +279,7 @@ function targetToEntryOrNull(target: TargetDescriptor | null): TargetListEntry |
 function targetToEntry(target: TargetDescriptor): TargetListEntry {
   return {
     id: target.targetId,
-    provider: target.providerId,
+    provider: "device",
     owner: target.ownerUsername
       ? `${target.ownerUsername} (uid ${target.ownerUid})`
       : `uid ${target.ownerUid}`,
@@ -293,10 +293,8 @@ function targetToEntry(target: TargetDescriptor): TargetListEntry {
     lastSeenAt: target.lastSeenAt,
     connectedAt: target.connectedAt,
     disconnectedAt: target.disconnectedAt,
-    metadataWritable: target.metadataWritable,
-    route: target.route.kind === "connection"
-      ? "connection"
-      : `adapter-shell:${target.route.adapter}:${target.route.accountId}`,
+    metadataWritable: true,
+    route: "connection",
   };
 }
 

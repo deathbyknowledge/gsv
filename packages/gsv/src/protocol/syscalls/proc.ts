@@ -13,6 +13,8 @@ export type ProcMediaInput = {
   type: "image" | "audio" | "video" | "document";
   mimeType: string;
   key?: string;
+  /** Server-derived read-only filesystem path for a process-scoped media key. */
+  path?: string;
   url?: string;
   filename?: string;
   size?: number;
@@ -133,7 +135,14 @@ export type ProcHilResult =
   | { ok: false; error: string };
 
 export type ProcSendResult =
-  | { ok: true; status: "started"; runId: string; queued?: boolean }
+  | {
+      ok: true;
+      status: "started";
+      runId: string;
+      queued?: boolean;
+      /** Existing admission reconciled for the caller-provided run id. */
+      replayed?: "active" | "queued" | "recorded";
+    }
   | { ok: false; error: string };
 
 export type ProcIpcMetadata = Record<string, unknown>;
@@ -391,19 +400,22 @@ export type ProcMediaReadResult =
   | {
       ok: true;
       key: string;
+      path: string;
       mimeType: string;
       size: number;
     }
   | { ok: false; error: string };
 
-export type ProcMediaWriteArgs = Omit<ProcMediaInput, "key" | "url" | "size"> & {
+export type ProcMediaWriteArgs = Omit<ProcMediaInput, "key" | "path" | "url" | "size"> & {
   pid?: string;
+  /** Caller-preallocated idempotency key for a staged process media object. */
+  mediaId?: string;
 };
 
 export type ProcMediaWriteResult =
   | {
       ok: true;
-      media: ProcMediaInput & { key: string; size: number };
+      media: ProcMediaInput & { key: string; path: string; size: number };
     }
   | { ok: false; error: string };
 

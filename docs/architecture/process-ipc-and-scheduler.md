@@ -366,7 +366,7 @@ owner explicitly allows it.
 The previous Kernel automation path has been removed. The old archivist/curator
 mechanism is not the desired scheduler foundation.
 
-The existing `sched.*` syscall names should become the public scheduler surface:
+The `sched.*` syscalls are the public scheduler surface:
 
 - `sched.list`
 - `sched.add`
@@ -374,9 +374,9 @@ The existing `sched.*` syscall names should become the public scheduler surface:
 - `sched.remove`
 - `sched.run`
 
-The scheduler should be Kernel-owned. It should store schedule definitions,
-calculate next fire times, run due work, enforce permissions, track run history,
-and dispatch typed targets.
+The scheduler is Kernel-owned. It stores schedule definitions, calculates next
+fire times, runs due work, enforces permissions, tracks run history, and
+dispatches typed targets.
 
 Schedule records should include:
 
@@ -399,50 +399,80 @@ Example target shape:
 ```ts
 type ScheduleTarget =
   | {
+      kind: "command.exec";
+      command: string;
+      cwd?: string;
+      timeoutMs?: number;
+    }
+  | {
       kind: "process.spawn";
-      profile: string;
+      runAs?: string;
+      label?: string;
       prompt: string;
-      workspace?: unknown;
+      parentPid?: string;
+      cwd?: string;
+      assignment?: ProcSpawnAssignment;
     }
   | {
       kind: "process.event";
       pid: string;
       conversationId?: string;
-      event: ProcessEventInput;
+      message: string;
+      data?: Record<string, unknown>;
+      replyTo?: AdapterMessageDestination;
     }
   | {
-      kind: "process.lifecycle";
-      pid: string;
-      conversationId?: string;
-      action: "compact" | "reset" | "checkpoint";
-      options?: unknown;
-    }
-  | {
-      kind: "package.event";
-      packageId: string;
-      entrypoint: string;
-      event: string;
-      payload?: unknown;
+      kind: "adapter.send";
+      destination: AdapterMessageDestination;
+      text: string;
     };
 ```
 
-The first implementation should support:
+The current implementation supports:
 
 - `at`
+- `after`
 - `every`
+- timezone-aware five-field `cron`
+- `command.exec`
 - `process.spawn`
 - `process.event`
-- `process.lifecycle` for compact, reset, and checkpoint
+- `adapter.send`
 
-Cron expressions, package events, advanced retry behavior, and cross-user run-as
-rules can follow after the basic lifecycle is working.
+Package events, process lifecycle targets, advanced retry behavior, and
+cross-user run-as rules remain future work.
+
+### Chat delivery contracts
+
+The native shell exposes two intentionally different schedule forms:
+
+```bash
+sched add --here --name NAME --after 10m --message "Run the agent"
+sched add --to DESTINATION --name NAME --after 10m --message "Send this text"
+```
+
+`--here` requires a process-backed shell and creates a `process.event` for
+the current process and conversation. When called during an adapter run, it
+captures the current authorized adapter destination in `replyTo`; the future
+event runs the agent, and its terminal answer follows that destination. Without
+an adapter route, the result remains in the process conversation.
+
+`--to` resolves a known authorized adapter destination, including one whose
+account is currently offline, and creates an `adapter.send` scheduled action.
+It sends the stored text directly without running an agent.
+
+An adapter destination contains adapter, account, linked actor, surface, and
+optional thread. It omits the triggering platform message id and display labels.
+The scheduler validates destination ownership when schedules are created or
+updated, and delivery rechecks the actor/surface authority. A successful
+`process.event` schedule run means event admission, not model completion.
 
 ## Linux-Like Views
 
-The structured syscall/API model should be the source of truth. Filesystem views
-can make the system legible to users and agents.
+The structured syscall/API model is the source of truth. Filesystem views make
+the same state legible to users and agents.
 
-Potential views:
+Implemented views:
 
 - `/proc/<pid>/conversations`
 - `/proc/<pid>/conversations/<conversationId>`
@@ -451,7 +481,7 @@ Potential views:
 - `/var/spool/cron`
 - `/var/log/gsv/scheduler`
 
-These should be views over Kernel and Process state, not separate stores.
+These are views over Kernel and Process state, not separate stores.
 
 ## Implementation Plan
 
@@ -525,10 +555,7 @@ Implemented:
 
 - async mail
 - bounded call
-
-Still pending:
-
-- delegation helper
+- durable `proc delegate` helper
 
 Defer cross-user IPC until ACLs are in place.
 
@@ -540,6 +567,9 @@ Implemented:
 - `at`, `after`, `every`, and timezone-aware five-field cron expressions.
 - `process.spawn` targets for scheduled background work.
 - `process.event` targets that enter process context as visible process events.
+- optional `process.event.replyTo` destinations captured by `sched add --here`
+  during an adapter run.
+- direct `adapter.send` scheduled actions created by `sched add --to`.
 - Cloudflare Agent schedules as one-shot wake-ups only; GSV stores the schedule
   definition and computes the next fire time.
 
@@ -550,8 +580,8 @@ Still pending:
 
 ### 8. Add filesystem views
 
-Expose process conversations and scheduler state through Linux-like virtual
-paths after the underlying state model is stable.
+Implemented process conversation and scheduler state as Linux-like virtual
+paths backed by the owning Process and Kernel state.
 
 ### 9. Add packages and cross-user access
 

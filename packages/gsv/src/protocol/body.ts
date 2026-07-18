@@ -14,6 +14,8 @@ export const BODY_SYSCALL_NAMES = [
   "ai.image.read",
   "ai.image.generate",
   "ai.speech.create",
+  "adapter.inbound",
+  "adapter.send",
 ] as const;
 
 export type BodySyscallName = typeof BODY_SYSCALL_NAMES[number];

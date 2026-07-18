@@ -19,6 +19,10 @@ import type {
   SignalFrame,
 } from "../protocol/frames";
 import type {
+  AdapterMedia,
+  AdapterMediaPart,
+  AdapterSurface,
+  BinaryBody,
   ConnectionIdentity,
   NetFetchArgs,
   PkgPublicListResult,
@@ -31,13 +35,12 @@ import type {
 import {
   BinaryBodyChannel,
   REQUEST_CANCEL_SIGNAL,
+  bundleAdapterMedia,
+  cancelBinaryBody,
   type BinaryFrameDescriptor,
   type OutgoingBinaryBody,
 } from "@humansandmachines/gsv/protocol";
 import type { SyscallName } from "../syscalls";
-import type {
-  AdapterOutboundMessage,
-} from "../adapter-interface";
 import { AuthStore } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
 import { ConfigStore } from "./config";
@@ -76,6 +79,18 @@ import { bindStreamToAbort } from "../shared/streams";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
 import { sendFrameToProcess } from "../shared/utils";
+import { stableOpaqueId } from "../shared/stable-id";
+import {
+  MAX_MESSAGE_MEDIA_ITEMS,
+  MAX_MESSAGE_MEDIA_PART_BYTES,
+  MAX_MESSAGE_MEDIA_TOTAL_BYTES,
+} from "../shared/message-media-limits";
+import {
+  agentArchiveMediaPath,
+  isValidAgentArchiveMediaObject,
+  processMediaPath,
+  processMediaPrefix,
+} from "../shared/process-media-path";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
 import { buildAppRunnerName } from "../protocol/app-session";
 import { handleSysSetupAssist } from "./sys/setup-assist";
@@ -85,11 +100,13 @@ import { installMcpDiscoveryCompatibility } from "./mcp-compat";
 import { oauthCallbackHtmlResponse } from "../oauth-http";
 import { isInternalOnlySyscall } from "./syscall-exposure";
 import {
+  handleAdapterSend,
+  deliverAdapterReply,
   normalizeAdapterHilRequest,
   renderAdapterHilPrompt,
-  resolveAdapterService,
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
+import { assertAdapterMessageDestinationAccess } from "./adapter-destinations";
 import {
   PackageStore,
   type PackageEntrypoint,
@@ -102,7 +119,10 @@ import {
   type AppFrameContext,
 } from "../protocol/app-frame";
 import type { AppClientSessionContext } from "../protocol/app-session";
-import type { ProcessScheduleDeliverRequestFrame } from "../protocol/process-frames";
+import type {
+  ProcessScheduleDeliverRequestFrame,
+  ProcessScheduleDeliverResponseFrame,
+} from "../protocol/process-frames";
 import { listLocalPublicPackages } from "./pkg";
 import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
@@ -116,6 +136,55 @@ import { SERVER_VERSION } from "../version";
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
+const MAX_ONE_SHOT_SCHEDULE_DELIVERY_ATTEMPTS = 10;
+const MAX_ADAPTER_SIGNAL_DELIVERY_ATTEMPTS = 10;
+
+type AdapterSignalDeliveryOutcome =
+  | { state: "delivered" }
+  | { state: "skipped" }
+  | { state: "retryable" | "permanent" | "ambiguous"; error: string };
+
+type AdapterSignalDeliveryRetry = {
+  runId: string;
+  processId: string;
+  signal: string;
+  payload: unknown;
+  attempt: number;
+};
+
+type ProcessDeliveryNoticeRetry = {
+  noticeId: string;
+  runId: string;
+  processId: string;
+  conversationId: string;
+  deliveryKind: "hil" | "final";
+  requestId?: string;
+  state: "permanent" | "ambiguous" | "exhausted";
+  message: string;
+  cleanupRunRoute: boolean;
+};
+
+class ScheduleTargetDispatchError extends Error {
+  constructor(message: string, readonly retryable: boolean) {
+    super(message);
+    this.name = "ScheduleTargetDispatchError";
+  }
+}
+
+class AdapterReplyMediaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AdapterReplyMediaError";
+  }
+}
+
+function scheduleDeliveryRetryDelayMs(attempt: number): number {
+  return Math.min(5 * 60_000, 5_000 * (2 ** Math.max(0, attempt - 1)));
+}
+
+function adapterSignalRetryDelayMs(attempt: number): number {
+  return Math.min(30_000, 1_000 * (2 ** Math.max(0, attempt - 1)));
+}
 
 type ConnectionState = {
   step: "pending" | "connected" | "superseded";
@@ -533,8 +602,13 @@ export class Kernel extends Host<Env> {
       }
       const delivered = this.enqueueProcessSignal(processId, frame);
       this.completeIpcCallsForProcessSignal(processId, frame);
-      if (frame.signal === "proc.run.finished") {
+      if (
+        frame.signal === "proc.run.finished"
+        || frame.signal === "proc.run.hil.requested"
+      ) {
         await delivered;
+      } else {
+        this.ctx.waitUntil(delivered.catch(() => undefined));
       }
       return null;
     }
@@ -565,9 +639,6 @@ export class Kernel extends Host<Env> {
       const device = getVisibleTarget(ctx, target, { includeOffline: true });
       if (!device) {
         throw new Error(`Access denied to device: ${target}`);
-      }
-      if (device.providerId !== "device" || device.route.kind !== "connection") {
-        throw new Error(`Target does not support device requests: ${target}`);
       }
       if (options.requestId) {
         controller = this.registerActiveRequest(origin, options.requestId);
@@ -611,14 +682,14 @@ export class Kernel extends Host<Env> {
    * Accepts the same frame format as WS connections/process RPC.
    */
   async serviceFrame(frame: Frame): Promise<Frame | null> {
-    if (frame.type !== "req") {
-      return null;
-    }
-
+    const body = "body" in frame ? frame.body : undefined;
     try {
+      if (frame.type !== "req") {
+        return null;
+      }
       return await this.handleServiceReq(frame);
     } finally {
-      await cancelUnlockedBody(frame.body, "Service request completed");
+      await cancelUnlockedBody(body, "Service request completed");
     }
   }
 
@@ -857,7 +928,7 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    if (route.uid !== ownerUid) {
+    if (route.uid !== ownerUid || route.processId !== processId) {
       this.runRoutes.delete(runId);
       return;
     }
@@ -872,9 +943,236 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    await this.deliverSignalToAdapter(route, frame);
+    if (frame.signal === "proc.run.hil.requested") {
+      // HIL admission waits only for a durable outbox write, never for provider
+      // delivery. This prevents a Kernel crash during the first provider call
+      // from losing the approval notification after Process has entered HIL.
+      await this.queueAdapterSignalDelivery(route, frame, 1);
+      return;
+    }
     if (frame.signal === "proc.run.finished") {
-      this.runRoutes.delete(runId);
+      await this.attemptAdapterSignalDelivery(route, frame, 1);
+      return;
+    }
+    await this.deliverSignalToAdapter(route, frame);
+  }
+
+  private async attemptAdapterSignalDelivery(
+    route: AdapterRunRoute,
+    frame: SignalFrame,
+    attempt: number,
+  ): Promise<void> {
+    let outcome: AdapterSignalDeliveryOutcome;
+    try {
+      const hilRequest = frame.signal === "proc.run.hil.requested"
+        ? normalizeAdapterHilRequest(frame.payload, "signal")
+        : null;
+      if (
+        hilRequest
+        && !await this.isAdapterHilRequestPending(
+          route.processId,
+          route.runId,
+          hilRequest.requestId,
+        )
+      ) {
+        outcome = { state: "skipped" };
+      } else {
+        outcome = await this.deliverSignalToAdapter(route, frame);
+      }
+    } catch (error) {
+      outcome = {
+        state: error instanceof AdapterReplyMediaError ? "permanent" : "retryable",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    if (outcome.state === "retryable" && attempt < MAX_ADAPTER_SIGNAL_DELIVERY_ATTEMPTS) {
+      await this.queueAdapterSignalDelivery(route, frame, attempt + 1);
+      return;
+    }
+
+    if (outcome.state === "delivered" || outcome.state === "skipped") {
+      if (frame.signal === "proc.run.finished") {
+        this.runRoutes.delete(route.runId);
+      }
+      return;
+    }
+
+    const terminalState = outcome.state === "retryable" ? "exhausted" : outcome.state;
+    const deliveryError = outcome.error;
+    const label = frame.signal === "proc.run.hil.requested"
+      ? "approval notification"
+      : "automatic reply";
+    await this.queueProcessDeliveryNotice(route, frame, {
+      state: terminalState,
+      message: terminalState === "ambiguous"
+        ? `The ${label} reached the adapter, but provider delivery is ambiguous. It was not retried to avoid a duplicate.`
+        : terminalState === "permanent"
+          ? `The ${label} could not be delivered: ${deliveryError}`
+          : `The ${label} stopped after ${attempt} retry-safe delivery attempts: ${deliveryError}`,
+    });
+  }
+
+  private async queueAdapterSignalDelivery(
+    route: AdapterRunRoute,
+    frame: SignalFrame,
+    attempt: number,
+  ): Promise<void> {
+    await this.schedule(
+      new Date(Date.now() + (attempt === 1 ? 10 : adapterSignalRetryDelayMs(attempt - 1))),
+      "onAdapterSignalDelivery",
+      {
+        runId: route.runId,
+        processId: route.processId,
+        signal: frame.signal,
+        payload: frame.payload,
+        attempt,
+      } satisfies AdapterSignalDeliveryRetry,
+      {
+        idempotent: true,
+        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
+      },
+    );
+  }
+
+  async onAdapterSignalDelivery(input: AdapterSignalDeliveryRetry): Promise<void> {
+    if (
+      !input
+      || typeof input.runId !== "string"
+      || typeof input.processId !== "string"
+      || typeof input.signal !== "string"
+      || !Number.isSafeInteger(input.attempt)
+      || input.attempt < 1
+    ) {
+      return;
+    }
+    const route = this.runRoutes.get(input.runId);
+    if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
+      return;
+    }
+    await this.attemptAdapterSignalDelivery(route, {
+      type: "sig",
+      signal: input.signal,
+      payload: input.payload,
+    }, input.attempt);
+  }
+
+  private async isAdapterHilRequestPending(
+    processId: string,
+    runId: string,
+    requestId: string,
+  ): Promise<boolean> {
+    const response = await sendFrameToProcess(processId, {
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.history",
+      args: { pid: processId, limit: 1, offset: 0 },
+    });
+    if (!response || response.type !== "res" || !response.ok) {
+      throw new Error(`Unable to verify pending approval ${requestId}`);
+    }
+    const data = response.data && typeof response.data === "object"
+      ? response.data as Record<string, unknown>
+      : null;
+    if (!data || data.ok !== true) {
+      throw new Error(`Unable to verify pending approval ${requestId}`);
+    }
+    const pendingValue = data.pendingHil;
+    const pending = normalizeAdapterHilRequest(pendingValue);
+    const pendingRecord = pendingValue && typeof pendingValue === "object"
+      ? pendingValue as Record<string, unknown>
+      : null;
+    return pending?.requestId === requestId && pendingRecord?.runId === runId;
+  }
+
+  private async queueProcessDeliveryNotice(
+    route: AdapterRunRoute,
+    frame: SignalFrame,
+    outcome: { state: "permanent" | "ambiguous" | "exhausted"; message: string },
+  ): Promise<void> {
+    const payload = frame.payload && typeof frame.payload === "object"
+      ? frame.payload as Record<string, unknown>
+      : {};
+    const deliveryKind = frame.signal === "proc.run.hil.requested" ? "hil" : "final";
+    const requestId = deliveryKind === "hil"
+      ? normalizeAdapterHilRequest(frame.payload, "signal")?.requestId
+      : undefined;
+    if (deliveryKind === "hil" && !requestId) {
+      return;
+    }
+    const noticeId = await stableOpaqueId("process-delivery-notice", [
+      route.runId,
+      deliveryKind,
+      requestId ?? "",
+      outcome.state,
+    ]);
+    await this.schedule(
+      new Date(Date.now() + 10),
+      "onProcessDeliveryNotice",
+      {
+        noticeId,
+        runId: route.runId,
+        processId: route.processId,
+        conversationId: typeof payload.conversationId === "string"
+          ? payload.conversationId
+          : "default",
+        deliveryKind,
+        ...(requestId ? { requestId } : {}),
+        state: outcome.state,
+        message: outcome.message,
+        cleanupRunRoute: deliveryKind === "final",
+      } satisfies ProcessDeliveryNoticeRetry,
+      {
+        idempotent: true,
+        retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
+      },
+    );
+  }
+
+  async onProcessDeliveryNotice(input: ProcessDeliveryNoticeRetry): Promise<void> {
+    if (
+      !input
+      || typeof input.noticeId !== "string"
+      || typeof input.runId !== "string"
+      || typeof input.processId !== "string"
+      || typeof input.conversationId !== "string"
+      || typeof input.message !== "string"
+      || (input.deliveryKind === "hil" && (
+        typeof input.requestId !== "string"
+        || input.requestId.length === 0
+      ))
+    ) {
+      return;
+    }
+    const route = this.runRoutes.get(input.runId);
+    if (!route || route.kind !== "adapter" || route.processId !== input.processId) {
+      return;
+    }
+    const requestId = input.requestId;
+    if (input.deliveryKind === "hil") {
+      if (!requestId || !await this.isAdapterHilRequestPending(
+        input.processId,
+        input.runId,
+        requestId,
+      )) {
+        return;
+      }
+    }
+    await sendFrameToProcess(input.processId, {
+      type: "sig",
+      signal: "proc.delivery.notice",
+      payload: {
+        noticeId: input.noticeId,
+        runId: input.runId,
+        conversationId: input.conversationId,
+        deliveryKind: input.deliveryKind,
+        ...(requestId ? { requestId } : {}),
+        state: input.state,
+        message: input.message,
+      },
+    });
+    if (input.cleanupRunRoute) {
+      this.runRoutes.delete(input.runId);
     }
   }
 
@@ -1098,35 +1396,55 @@ export class Kernel extends Host<Env> {
     conn.send(JSON.stringify(frame));
   }
 
-  private async deliverSignalToAdapter(route: AdapterRunRoute, frame: SignalFrame): Promise<void> {
+  private async deliverSignalToAdapter(
+    route: AdapterRunRoute,
+    frame: SignalFrame,
+  ): Promise<AdapterSignalDeliveryOutcome> {
+    const { adapter, accountId, surface } = route.destination;
+    if (frame.signal === "proc.run.started") {
+      await setAdapterActivityForKernel(
+        this.env,
+        adapter,
+        accountId,
+        surface,
+        { kind: "typing", active: true },
+      );
+      return { state: "delivered" };
+    }
+
     if (frame.signal === "proc.run.hil.requested") {
       const request = normalizeAdapterHilRequest(frame.payload, "signal");
       if (!request) {
-        return;
+        await setAdapterActivityForKernel(
+          this.env,
+          adapter,
+          accountId,
+          surface,
+          { kind: "typing", active: false },
+        ).catch(() => undefined);
+        return { state: "skipped" };
       }
 
-      const surface = {
-        kind: route.surfaceKind,
-        id: route.surfaceId,
-        threadId: route.threadId,
-      } as const;
-
-      await this.sendAdapterMessage(route.adapter, route.accountId, {
-        surface,
-        text: renderAdapterHilPrompt(request, route.surfaceKind, "initial"),
-      });
-      await setAdapterActivityForKernel(
-        this.env,
-        route.adapter,
-        route.accountId,
-        surface,
-        { kind: "typing", active: false },
-      );
-      return;
+      try {
+        return await this.deliverAdapterRouteReply(route, {
+          deliveryId: `${route.runId}:hil:${request.requestId}`,
+          text: renderAdapterHilPrompt(request, surface.kind, "initial"),
+        });
+      } finally {
+        await setAdapterActivityForKernel(
+          this.env,
+          adapter,
+          accountId,
+          surface,
+          { kind: "typing", active: false },
+        ).catch((error) => {
+          console.warn(`[Kernel] Failed to stop adapter typing for ${route.runId}:`, error);
+        });
+      }
     }
 
     if (frame.signal !== "proc.run.finished") {
-      return;
+      return { state: "skipped" };
     }
 
     const payload =
@@ -1141,46 +1459,194 @@ export class Kernel extends Host<Env> {
           ? payload.text
           : "";
 
-    const surface = {
-      kind: route.surfaceKind,
-      id: route.surfaceId,
-      threadId: route.threadId,
-    } as const;
+    try {
+      const attachmentBundle = await this.bundleProcessReplyMedia(
+        route.processId,
+        payload.media,
+      );
 
-    if (text.trim()) {
-      await this.sendAdapterMessage(route.adapter, route.accountId, {
-        surface,
+      if (!text.trim() && attachmentBundle.media.length === 0) {
+        return { state: "delivered" };
+      }
+      return await this.deliverAdapterRouteReply(route, {
+        deliveryId: `${route.runId}:finished`,
         text,
+        ...(attachmentBundle.media.length > 0 ? { media: attachmentBundle.media } : {}),
+      }, attachmentBundle.body);
+    } finally {
+      await setAdapterActivityForKernel(
+        this.env,
+        adapter,
+        accountId,
+        surface,
+        { kind: "typing", active: false },
+      ).catch((error) => {
+        console.warn(`[Kernel] Failed to stop adapter typing for ${route.runId}:`, error);
       });
     }
-
-    await setAdapterActivityForKernel(
-      this.env,
-      route.adapter,
-      route.accountId,
-      surface,
-      { kind: "typing", active: false },
-    );
   }
 
-  private async sendAdapterMessage(
-    adapter: string,
-    accountId: string,
-    message: AdapterOutboundMessage,
-  ): Promise<void> {
-    const service = resolveAdapterService(this.env, adapter);
-    if (!service || typeof service.adapterSend !== "function") {
-      console.warn(`[Kernel] Adapter service unavailable for ${adapter}`);
-      return;
+  private async deliverAdapterRouteReply(
+    route: AdapterRunRoute,
+    message: {
+      deliveryId: string;
+      text: string;
+      media?: AdapterMedia[];
+      replyToId?: string;
+    },
+    body?: BinaryBody,
+  ): Promise<AdapterSignalDeliveryOutcome> {
+    const ctx = this.buildProcessContext(route.processId, route.runId);
+    if (!ctx) {
+      await cancelBinaryBody(body, "Reply route references a missing process");
+      console.warn(`[Kernel] Reply route references missing process ${route.processId}`);
+      return { state: "permanent", error: "Reply route references a missing process" };
     }
 
     try {
-      const result = await service.adapterSend(accountId, message);
-      if (!result.ok) {
-        console.warn(`[Kernel] Adapter send failed (${adapter}/${accountId}): ${result.error}`);
+      assertAdapterMessageDestinationAccess(route.destination, route.uid, ctx);
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      // Revocation is a permanent delivery outcome, not a transport outage.
+      // A HIL signal was already broadcast to any connected GSV client, and a
+      // terminal result must not retry forever after the user removes access.
+      console.warn(
+        `[Kernel] Dropping revoked adapter reply route ${route.runId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return {
+        state: "permanent",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    const result = await deliverAdapterReply(route.destination, route.uid, {
+      ...message,
+      replyToId: message.replyToId ?? route.replyToId,
+    }, ctx, body);
+    if (!result.ok) {
+      const detail = `Adapter reply failed (${route.destination.adapter}): ${result.error}`;
+      if (result.retryable) {
+        return { state: "retryable", error: detail };
       }
-    } catch (err) {
-      console.warn(`[Kernel] Adapter send threw (${adapter}/${accountId}):`, err);
+      console.warn(`[Kernel] Dropping permanent adapter delivery ${message.deliveryId}: ${detail}`);
+      return { state: "permanent", error: detail };
+    }
+    if (result.deliveryState === "ambiguous") {
+      return {
+        state: "ambiguous",
+        error: `Adapter delivery ${message.deliveryId} is ambiguous`,
+      };
+    }
+    return { state: "delivered" };
+  }
+
+  private async bundleProcessReplyMedia(
+    processId: string,
+    value: unknown,
+  ): Promise<{ media: AdapterMedia[]; body?: BinaryBody }> {
+    if (value === undefined) {
+      return { media: [] };
+    }
+    if (!Array.isArray(value)) {
+      throw new AdapterReplyMediaError("Process reply media must be an array");
+    }
+    if (value.length > MAX_MESSAGE_MEDIA_ITEMS) {
+      throw new AdapterReplyMediaError(
+        `Process reply media exceeds item limit (${MAX_MESSAGE_MEDIA_ITEMS})`,
+      );
+    }
+    const process = this.procs.get(processId);
+    if (!process) {
+      throw new AdapterReplyMediaError(`Unknown process for reply media: ${processId}`);
+    }
+
+    const prefix = processMediaPrefix(process.uid, processId);
+    const parts: AdapterMediaPart[] = [];
+    let totalBytes = 0;
+    try {
+      for (const raw of value) {
+        if (!raw || typeof raw !== "object") {
+          throw new AdapterReplyMediaError("Process reply media entries must be objects");
+        }
+        const item = raw as Record<string, unknown>;
+        const key = typeof item.key === "string" ? item.key.trim() : "";
+        const activePath = key.startsWith(prefix) ? processMediaPath(key) : null;
+        const archivePath = key ? agentArchiveMediaPath(process.home, key) : null;
+        const path = activePath ?? archivePath;
+        if (!key || !path || item.path !== path) {
+          throw new AdapterReplyMediaError("Process reply media key is outside the emitting process");
+        }
+        if (!(["image", "audio", "video", "document"] as unknown[]).includes(item.type)) {
+          throw new AdapterReplyMediaError("Process reply media has an invalid type");
+        }
+        const mimeType = typeof item.mimeType === "string" ? item.mimeType.trim() : "";
+        if (!mimeType) {
+          throw new AdapterReplyMediaError("Process reply media requires mimeType");
+        }
+        const object = await this.env.STORAGE.get(key);
+        if (!object) {
+          throw new AdapterReplyMediaError(`Process reply media not found: ${key}`);
+        }
+        if (
+          archivePath
+          && !isValidAgentArchiveMediaObject({
+            home: process.home,
+            key,
+            uid: process.uid,
+            gid: process.gid,
+            object,
+            expectedContentType: mimeType,
+          })
+        ) {
+          await object.body.cancel("Process reply archive metadata mismatch").catch(() => {});
+          throw new AdapterReplyMediaError(
+            `Process reply media archive metadata does not match the emitting process: ${key}`,
+          );
+        }
+        if (object.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
+          await object.body.cancel("Process reply media exceeds the per-item limit").catch(() => {});
+          throw new AdapterReplyMediaError(
+            `Process reply media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
+          );
+        }
+        totalBytes += object.size;
+        if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
+          await object.body.cancel("Process reply media exceeds the total limit").catch(() => {});
+          throw new AdapterReplyMediaError(
+            `Process reply media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+          );
+        }
+        const storedMimeType = object.httpMetadata?.contentType || "application/octet-stream";
+        if (storedMimeType !== mimeType || item.size !== object.size) {
+          await object.body.cancel("Process reply media descriptor mismatch").catch(() => {});
+          throw new AdapterReplyMediaError(
+            `Process reply media descriptor does not match stored data: ${key}`,
+          );
+        }
+        parts.push({
+          media: {
+            type: item.type as AdapterMedia["type"],
+            mimeType,
+            size: object.size,
+            ...(typeof item.filename === "string" && item.filename
+              ? { filename: item.filename }
+              : {}),
+            ...(typeof item.duration === "number" && Number.isFinite(item.duration)
+              ? { duration: item.duration }
+              : {}),
+            ...(typeof item.transcription === "string" && item.transcription
+              ? { transcription: item.transcription }
+              : {}),
+          },
+          body: { stream: object.body, length: object.size },
+        });
+      }
+      return await bundleAdapterMedia(parts);
+    } catch (error) {
+      await Promise.all(parts.map((part) => cancelBinaryBody(part.body, error)));
+      throw error;
     }
   }
 
@@ -2537,19 +3003,48 @@ export class Kernel extends Host<Env> {
     let status: "ok" | "error" = "ok";
     let error: string | undefined;
     let result: unknown;
+    let retryableFailure = false;
+    const oneShot = running.expression.kind === "at" || running.expression.kind === "after";
+    const occurrenceKey = this.schedules.occurrenceKey(
+      running,
+      mode,
+      scheduledAtMs,
+      startedAtMs,
+    );
+    const oneShotAttemptNumber = this.schedules.oneShotAttemptNumber(running, mode);
 
     try {
-      result = await this.dispatchScheduleTarget(record, scheduledAtMs, startedAtMs);
+      result = await this.dispatchScheduleTarget(
+        record,
+        scheduledAtMs,
+        startedAtMs,
+        occurrenceKey,
+      );
     } catch (err) {
       status = "error";
       error = err instanceof Error ? err.message : String(err);
+      retryableFailure = err instanceof ScheduleTargetDispatchError && err.retryable;
       result = { error };
     }
 
     const finishedAtMs = Date.now();
+    const retryOneShot = mode === "due"
+      && oneShot
+      && status === "error"
+      && retryableFailure
+      && oneShotAttemptNumber !== null
+      && oneShotAttemptNumber < MAX_ONE_SHOT_SCHEDULE_DELIVERY_ATTEMPTS;
     const next = mode === "force"
       ? { enabled: record.enabled, nextRunAtMs: record.state.nextRunAtMs }
-      : computeNextRunAfterFinish(record.expression, Math.max(finishedAtMs, scheduledAtMs ?? finishedAtMs));
+      : retryOneShot
+        ? {
+            enabled: true,
+            nextRunAtMs: finishedAtMs + scheduleDeliveryRetryDelayMs(oneShotAttemptNumber),
+          }
+        : computeNextRunAfterFinish(
+            record.expression,
+            Math.max(finishedAtMs, scheduledAtMs ?? finishedAtMs),
+          );
     const updated = this.schedules.finishRun({
       scheduleId: record.id,
       ownerUid: record.ownerUid,
@@ -2561,6 +3056,8 @@ export class Kernel extends Host<Env> {
       result,
       nextRunAtMs: next.nextRunAtMs,
       enabled: next.enabled,
+      oneShotOccurrenceId: running.oneShotOccurrenceId,
+      countOneShotAttempt: oneShotAttemptNumber !== null,
     });
 
     if (updated?.enabled && updated.state.nextRunAtMs !== null && mode !== "force") {
@@ -2584,6 +3081,7 @@ export class Kernel extends Host<Env> {
     record: ScheduleRecord,
     scheduledAtMs: number | null,
     firedAtMs: number,
+    occurrenceKey: string,
   ): Promise<unknown> {
     const target = record.target;
     const ctx = this.buildScheduleContext(record);
@@ -2641,9 +3139,45 @@ export class Kernel extends Host<Env> {
       };
     }
 
+    if (target.kind === "adapter.send") {
+      if (!hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")) {
+        throw new Error("Permission denied: adapter.send");
+      }
+      const delivery = await deliverAdapterReply(
+        target.destination,
+        record.ownerUid,
+        {
+          deliveryId: await stableOpaqueId("adapter-delivery", [
+            "schedule",
+            record.id,
+            occurrenceKey,
+          ]),
+          text: target.text,
+        },
+        ctx,
+      );
+      if (!delivery.ok) {
+        throw new ScheduleTargetDispatchError(delivery.error, delivery.retryable === true);
+      }
+      return {
+        kind: "adapter.send",
+        adapter: delivery.adapter,
+        accountId: delivery.accountId,
+        surfaceId: delivery.surfaceId,
+        messageId: delivery.messageId,
+        deliveryState: delivery.deliveryState,
+      };
+    }
+
     if (target.kind === "process.event") {
       if (!hasCapability(ctx.identity?.capabilities ?? [], "proc.send")) {
         throw new Error("Permission denied: proc.send");
+      }
+      if (target.replyTo) {
+        if (!hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")) {
+          throw new Error("Permission denied: adapter.send");
+        }
+        assertAdapterMessageDestinationAccess(target.replyTo, record.ownerUid, ctx);
       }
       const proc = this.procs.get(target.pid);
       if (!proc) {
@@ -2653,31 +3187,67 @@ export class Kernel extends Host<Env> {
         throw new Error(`Permission denied: schedule ${record.id} cannot access process ${target.pid}`);
       }
 
+      const runId = await stableOpaqueId("schedule-run", [record.id, occurrenceKey]);
+      const delivery = target.replyTo;
+      if (delivery) {
+        this.runRoutes.setAdapterRoute({
+          runId,
+          processId: target.pid,
+          uid: record.ownerUid,
+          destination: delivery,
+        });
+      }
       const request: ProcessScheduleDeliverRequestFrame = {
         type: "req",
         id: crypto.randomUUID(),
         call: "proc.schedule.deliver",
         args: {
+          runId,
           scheduleId: record.id,
           scheduleName: record.name,
           conversationId: target.conversationId,
           message: target.message,
           data: target.data,
+          replyTo: target.replyTo,
           scheduledAtMs,
           firedAtMs,
         },
       };
-      const response = await sendFrameToProcess(target.pid, request);
+      let admittedRunId = runId;
+      let response: ProcessScheduleDeliverResponseFrame | null;
+      try {
+        response = await sendFrameToProcess(target.pid, request);
+      } catch (error) {
+        // As with adapter ingress, a thrown DO transport may have lost the
+        // response after admission. Preserve a preallocated reply route so an
+        // actually admitted run can still complete its delivery.
+        throw new ScheduleTargetDispatchError(
+          error instanceof Error ? error.message : String(error),
+          true,
+        );
+      }
       if (!response || response.type !== "res" || response.id !== request.id) {
-        throw new Error("proc.schedule.deliver did not return a response");
+        throw new ScheduleTargetDispatchError(
+          "proc.schedule.deliver did not return a response",
+          true,
+        );
       }
       if (!response.ok) {
-        throw new Error(response.error.message);
+        throw new ScheduleTargetDispatchError(response.error.message, true);
+      }
+      admittedRunId = response.data.runId;
+      if (delivery && response.data.runId !== runId) {
+        this.runRoutes.delete(runId);
+        throw new ScheduleTargetDispatchError(
+          "proc.schedule.deliver admitted an unexpected reply run",
+          false,
+        );
       }
       return {
         kind: "process.event",
         pid: target.pid,
         conversationId: target.conversationId ?? "default",
+        runId: admittedRunId,
       };
     }
 
@@ -3068,6 +3638,15 @@ function scheduleResultSummary(record: ScheduleRecord, result: unknown): string 
   }
   if (record.target.kind === "process.event") {
     return `delivered event to process ${record.target.pid}`;
+  }
+  if (record.target.kind === "adapter.send") {
+    if (value?.deliveryState === "ambiguous") {
+      return `message delivery through ${record.target.destination.adapter} is ambiguous`;
+    }
+    if (value?.deliveryState === "deduplicated") {
+      return `message through ${record.target.destination.adapter} was already delivered`;
+    }
+    return `sent message through ${record.target.destination.adapter}`;
   }
   return "schedule ran";
 }

@@ -14,6 +14,8 @@ The source of truth is:
 
 - `gateway/src/protocol/frames.ts`
 - `packages/gsv/src/protocol/request-cancel.ts`
+- `packages/gsv/src/protocol/adapters.ts`
+- `packages/gsv/src/protocol/adapter-media-body.ts`
 - `packages/gsv/src/protocol/syscalls/system.ts`
 - `gateway/src/kernel/connect.ts`
 - `gateway/src/kernel/dispatch.ts`
@@ -251,9 +253,16 @@ Current role defaults from `buildSignalList()`:
 - `proc.run.stream`
 - `proc.run.retrying`
 - `proc.run.output`
+  - Carries assembled assistant text/thinking and, when present, process-owned
+    `media` references registered for the automatic final reply.
 - `proc.run.tool.started`
 - `proc.run.hil.requested`
+  - Native clients answer with `proc.hil` and the exact `requestId`. Adapter DM
+    prompts render the same identity as `hil[requestId]`; bare or stale
+    decisions fail closed, and provider reply threading is not authorization.
 - `proc.run.finished`
+  - Repeats final-reply `media` references after they have been persisted on the
+    assistant history record.
 - `process.exit`
 - `device.status`
 - `adapter.status`
@@ -372,6 +381,8 @@ The current body-bearing syscalls are:
 | `ai.image.read` | Required image bytes | No |
 | `ai.image.generate` | No | Generated image bytes when returned inline |
 | `ai.speech.create` | No | Synthesized audio bytes unless the result is skipped or empty |
+| `adapter.inbound` | Optional concatenated media bytes referenced by metadata ranges | No |
+| `adapter.send` | Optional concatenated media bytes referenced by metadata ranges | No |
 
 The JSON `args` and `data` carry metadata; the top-level body carries bytes.
 This avoids syscall-specific stream identifiers and JSON/base64 expansion. In
@@ -379,6 +390,39 @@ the JavaScript SDK, use `client.request()` for these calls and consume or cancel
 the returned body. `client.call()` and generated namespace methods are
 data-only, and body-bearing calls are intentionally omitted from those
 namespaces.
+
+Adapter requests may describe several media items inside that one body. Each
+body-backed `AdapterMedia` item carries `body: { offset, length }`. Ranges
+start at zero, are contiguous in media-array order, use safe non-negative
+integers, and must describe the complete body. An item may use a body range or a
+URL, never both. The Gateway currently caps adapter media at 10 items, 25 MiB
+per body-backed item, and 48 MiB total.
+
+The adapter media consumer keeps sole ownership of the top-level reader and
+provides one bounded part stream at a time. The callback must consume that part
+before returning. Success consumes the body through its exact end; validation
+failure, cancellation, or a downstream error cancels the stream and prevents
+later parts from being processed. Adapter service bindings use the same
+metadata/body ownership contract even though they do not encode the stream as
+WebSocket binary chunks between workers.
+
+Adapter retry identity remains in JSON, not in the binary framing layer.
+Inbound events must reuse their provider `message.messageId`. The Kernel claims
+the normalized adapter/account/actor/surface/thread/message tuple before any
+side effect; completed replays return the persisted disposition, while a live
+concurrent replay returns `in_progress` and its body is cancelled. Persistent
+adapter account Durable Objects retain the compact provider payload before the
+first RPC and retry transport failures or `in_progress` with their existing
+alarm until a terminal disposition. Immediate inbound
+replies carry a deterministic delivery id and therefore enter the same adapter
+delivery ledger as every other outbound message. Outbound
+`adapter.send` calls that are retried must reuse `deliveryId`; the successful
+result echoes it and reports `deliveryState` as `sent`, `deduplicated`, or
+`ambiguous`. A retryable failure means only that replaying the same delivery id
+with the same destination and content is safe. Adapter account ledgers bind the
+id to a request fingerprint and reject a replay whose destination, reply
+context, text, media metadata, or binary media bytes differ. A new id always
+denotes a new logical message.
 
 ## See also
 

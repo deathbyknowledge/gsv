@@ -25,6 +25,22 @@ export type AdapterInteractionOrigin = {
   messageId?: string;
 };
 
+/**
+ * A durable, authorized adapter destination. Unlike an interaction origin this
+ * intentionally omits display labels and the triggering message id: it is the
+ * minimum stable address needed to deliver a later message after rechecking
+ * the linked actor's authority.
+ */
+export type AdapterMessageDestination = {
+  kind: "adapter";
+  adapter: string;
+  accountId: string;
+  surface: AdapterSurface;
+  actorId: string;
+};
+
+export type EventReplyTarget = AdapterMessageDestination;
+
 export type DeviceInteractionOrigin = {
   kind: "device";
   deviceId: string;
@@ -40,6 +56,7 @@ export type ProcessInteractionOrigin = {
 export type SchedulerInteractionOrigin = {
   kind: "scheduler";
   scheduleId: string;
+  replyTo?: EventReplyTarget;
 };
 
 export type InteractionOrigin =

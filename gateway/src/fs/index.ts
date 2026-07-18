@@ -12,6 +12,8 @@ export type {
   FsSearchBackendResult,
 } from "./mount";
 export { KernelMountBackend } from "./backends/kernel";
+export { ProcessMediaMountBackend } from "./backends/process-media";
+export { isProcessMediaPath } from "../shared/process-media-path";
 export { createAccountHomeBackend } from "./backends/account-home";
 export { createPackageBackend, isPackageMountPath } from "./backends/packages";
 export {

@@ -10,7 +10,7 @@ import { accountHomeRepoRef } from "../../fs";
 const CONFIG: AiConfigResult = {
   executor: { kind: "process", pid: "proc-test" },
   provider: "anthropic",
-  model: "claude-sonnet-4-20250514",
+  model: "claude-sonnet-4-6",
   apiKey: "test-key",
   reasoning: "off",
   maxTokens: 4096,
@@ -272,6 +272,24 @@ describe("createSkillIndexProvider", () => {
     expect(prompt).toContain("<description>Build and update packages.</description>");
     expect(prompt).not.toContain("/src/packages/");
     expect(prompt).not.toContain("system.context:");
+  });
+
+  it("renders names-only skill context when configured", async () => {
+    const prompt = await assembleSystemPrompt(makeInput({
+      config: { ...CONFIG, skillIndexMode: "names" },
+    }), resolvePromptProviders("task"));
+
+    expect(prompt).toContain("<name>package-development</name>");
+    expect(prompt).not.toContain("<description>Build and update packages.</description>");
+  });
+
+  it("omits prompt skill enumeration without disabling live discovery", async () => {
+    const prompt = await assembleSystemPrompt(makeInput({
+      config: { ...CONFIG, skillIndexMode: "off" },
+    }), resolvePromptProviders("task"));
+
+    expect(prompt).not.toContain("<available_skills>");
+    expect(prompt).not.toContain("package-development");
   });
 });
 

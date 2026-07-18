@@ -91,6 +91,9 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/context.d/10-runtime.md": GSV_RUNTIME_FACTS,
   "config/ai/context.d/20-discovery.md": GSV_CONTEXT_DISCOVERY,
   "config/ai/context.d/30-process-orchestration.md": GSV_PROCESS_ORCHESTRATION,
+  // Prompt-visible skill enumeration. Detailed skill discovery remains available
+  // through `man --search` and `skills` even when this is `off`.
+  "config/ai/skills/index_mode": "summary",
   // Max total bytes for ~/context.d/ files included in the prompt.
   "config/ai/max_context_bytes": "32768",
   // Maximum time to wait for a single model generation before releasing the run.

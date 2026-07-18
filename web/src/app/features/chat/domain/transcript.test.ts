@@ -25,6 +25,66 @@ function history(messages: ChatHistory["messages"]): ChatHistory {
 }
 
 describe("chat transcript rows", () => {
+  it("renders media attached to a historical assistant reply", () => {
+    const media = {
+      type: "document",
+      mimeType: "application/pdf",
+      filename: "report.pdf",
+      key: "var/media/1000/proc-1/report",
+      path: "/var/media/1000/proc-1/report",
+      size: 3,
+    };
+    const rows = transcriptRowsFromHistory(history([{
+      id: 1,
+      clientId: "1",
+      role: "assistant",
+      runId: "run-1",
+      content: { text: "Here is the report.", media: [media] },
+      text: "Here is the report.",
+      timestamp: 1,
+      origin: undefined,
+      metadata: undefined,
+    }]));
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        role: "assistant",
+        text: "Here is the report.",
+        media: [media],
+      }),
+    ]);
+  });
+
+  it("shows final reply media from the live output signal", () => {
+    const media = {
+      type: "image",
+      mimeType: "image/png",
+      key: "var/media/1000/proc-1/image",
+      path: "/var/media/1000/proc-1/image",
+      size: 3,
+    };
+    const state = applyChatSignal(
+      emptyChatRuntimeState("proc-1", "default"),
+      "proc.run.output",
+      {
+        pid: "proc-1",
+        runId: "run-1",
+        conversationId: "default",
+        text: "Generated image.",
+        media: [media],
+      },
+      { pid: "proc-1", conversationId: "default" },
+    ).state;
+
+    expect(state.rows).toEqual([
+      expect.objectContaining({
+        role: "assistant",
+        text: "Generated image.",
+        media: [media],
+      }),
+    ]);
+  });
+
   it("keeps assistant text and folds tool results into tool rows", () => {
     const rows = transcriptRowsFromHistory(history([
       {

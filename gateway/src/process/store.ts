@@ -1458,6 +1458,20 @@ export class ProcessStore {
     ];
     return rows[0]?.cnt ?? 0;
   }
+
+  locateRunAdmission(runId: string): "queued" | "recorded" | null {
+    const queued = this.sql.exec<{ present: number }>(
+      "SELECT 1 AS present FROM message_queue WHERE run_id = ? LIMIT 1",
+      runId,
+    ).toArray()[0]?.present === 1;
+    if (queued) return "queued";
+
+    const recorded = this.sql.exec<{ present: number }>(
+      "SELECT 1 AS present FROM messages WHERE run_id = ? LIMIT 1",
+      runId,
+    ).toArray()[0]?.present === 1;
+    return recorded ? "recorded" : null;
+  }
 }
 
 function normalizeCompactionCut(

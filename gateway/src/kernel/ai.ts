@@ -170,13 +170,9 @@ export async function handleAiTools(
     && hasCapability(capabilities, "sys.mcp.call");
   const mcpUid = resolveCallerOwnerUid(ctx);
 
-  const onlineDevices: AiToolsDevice[] = [];
-  const deviceIds: string[] = [];
-
-  for (const target of listVisibleTargets(ctx)) {
-    deviceIds.push(target.targetId);
-    onlineDevices.push(targetToAiDevice(target));
-  }
+  const visibleTargets = listVisibleTargets(ctx);
+  const onlineDevices: AiToolsDevice[] = visibleTargets.map(targetToAiDevice);
+  const deviceIds = visibleTargets.map((target) => target.targetId);
 
   const tools: ToolDefinition[] = [];
 
@@ -326,12 +322,15 @@ export async function handleAiConfig(
     processOverrides,
   );
   const timezone = config.get("config/server/timezone") ?? "UTC";
-  const skillIndex = await collectPromptSkillIndex(ctx).catch((error) => {
-    console.warn(
-      `[Prompt] failed to collect skills.d index: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return [];
-  });
+  const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
+  const skillIndex = skillIndexMode === "off"
+    ? []
+    : await collectPromptSkillIndex(ctx).catch((error) => {
+      console.warn(
+        `[Prompt] failed to collect skills.d index: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return [];
+    });
 
   return {
     owner,
@@ -354,6 +353,7 @@ export async function handleAiConfig(
       timezone,
     },
     skillIndex,
+    skillIndexMode,
     accountApprovalPolicy,
     capabilities: [...(ctx.identity?.capabilities ?? [])],
     maxContextBytes,
@@ -1591,6 +1591,11 @@ function parsePositiveInt(value: string | null | undefined): number | null {
 function normalizeGenerationStreaming(value: string | null | undefined): "auto" | "off" {
   const normalized = value?.trim().toLowerCase();
   return normalized === "off" ? "off" : DEFAULT_GENERATION_STREAMING;
+}
+
+function normalizeSkillIndexMode(value: string | null | undefined): "summary" | "names" | "off" {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "names" || normalized === "off" ? normalized : "summary";
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {

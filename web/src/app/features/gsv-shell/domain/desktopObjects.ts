@@ -96,7 +96,6 @@ export function buildDesktopObjectsFromConsole(data: ConsoleOverviewData | null 
     machines: {
       id: "machines",
       children: safeArray(data?.targets)
-        .filter(isMachineTarget)
         .map(targetToChild)
         .sort(compareChildren),
     },
@@ -287,10 +286,6 @@ function classifyApplications(packages: readonly ConsolePackage[]): DesktopChild
 
   children.sort(compareChildren);
   return children;
-}
-
-function isMachineTarget(target: ConsoleTarget): boolean {
-  return target.kind !== "adapter";
 }
 
 function isApplicationPackage(pkg: ConsolePackage): boolean {

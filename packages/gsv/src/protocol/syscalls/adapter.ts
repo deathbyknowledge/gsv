@@ -49,10 +49,14 @@ export type AdapterDisconnectResult =
 export type AdapterSendArgs = {
   adapter: string;
   accountId: string;
+  /** Stable idempotency key. Omitted for a new one-shot explicit send. */
+  deliveryId?: string;
   surface: AdapterSurface;
   text: string;
   replyToId?: string;
   media?: AdapterMedia[];
+  /** Acknowledge that this explicit send intentionally duplicates the active run's automatic reply destination. */
+  also?: boolean;
 };
 
 export type AdapterSendResult =
@@ -61,11 +65,17 @@ export type AdapterSendResult =
       adapter: string;
       accountId: string;
       surfaceId: string;
+      deliveryId: string;
       messageId?: string;
+      deliveryState?: "sent" | "deduplicated" | "ambiguous";
     }
   | {
       ok: false;
       error: string;
+      /** Stable id to reuse when reconciling or retrying this delivery. */
+      deliveryId?: string;
+      /** True only when retrying the same deliveryId is safe. */
+      retryable?: boolean;
     };
 
 export type AdapterStatusArgs = {
@@ -87,7 +97,6 @@ export type AdapterListEntry = {
   supportsDisconnect: boolean;
   supportsSend: boolean;
   supportsStatus: boolean;
-  supportsShellExec: boolean;
   supportsActivity: boolean;
   accounts: AdapterAccountStatus[];
 };
@@ -99,6 +108,8 @@ export type AdapterListResult = {
 export type AdapterInboundArgs = {
   adapter: string;
   accountId: string;
+  /** Stable account-scoped identity for the complete provider event. */
+  deliveryId: string;
   message: AdapterInboundMessage;
 };
 

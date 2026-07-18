@@ -10,6 +10,17 @@
 
 import { DurableObject } from "cloudflare:workers";
 import {
+  classifyNonIdempotentProviderStatus,
+  DeliveryLedger,
+  fingerprintOutboundDelivery,
+} from "../../shared/src/delivery-ledger";
+import {
+  adapterInboundResultDisposition,
+  InboundDeliveryLedger,
+} from "../../shared/src/inbound-delivery";
+import { callAdapterGateway } from "../../shared/src/gateway-rpc";
+import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
+import {
   makeWASocket,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
@@ -24,37 +35,39 @@ import {
   type WAMessage,
   type AnyMessageContent,
   type LIDMapping,
-  type WAMessageKey,
+  proto,
 } from "@whiskeysockets/baileys";
 import {
   getMediaKeys,
   getUrlFromDirectPath,
 } from "@whiskeysockets/baileys/lib/Utils/messages-media";
+import {
+  binaryBodyFromOwnedBytes,
+  bundleAdapterMedia,
+  cancelResponseBody,
+  cancelBinaryBody,
+  readResponseBodyBytes,
+  readAdapterMediaBody,
+  validateAdapterMediaBody,
+  SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+} from "../../shared/src/media-body";
+import type { AdapterMediaPart } from "../../shared/src/media-body";
 import { useDOAuthState, clearAuthState, hasAuthState } from "./auth-store";
+import type { WhatsAppAccountState } from "./types";
 import type {
-  WhatsAppAccountState,
-  MediaAttachment,
-} from "./types";
-import type {
-  ChannelOutboundMessage,
-  ChannelPeer,
-  ChannelAccountStatus,
-  ChannelMedia,
-} from "./channel-types";
-import type {
+  AdapterAccountStatus,
   AdapterInboundMessage,
   AdapterInboundResult,
-  GatewayFrame,
-  GatewayRequestFrame,
+  AdapterMedia,
+  AdapterOutboundMessage,
+  AdapterSendResult,
+  AdapterSurface,
+  BinaryBody,
 } from "../../shared/src/types";
-
-type GatewayChannelBinding = Fetcher & {
-  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
-};
 
 interface Env {
   // Direct service binding to Gateway entrypoint.
-  GATEWAY: GatewayChannelBinding;
+  GATEWAY: Fetcher & AdapterGatewayBinding;
 }
 
 // Quiet logger for Baileys - suppresses verbose output
@@ -75,18 +88,37 @@ const MEDIA_CONTENT_TYPES = new Set([
   "audioMessage",
   "documentMessage",
 ]);
+const MAX_MEDIA_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_PART_BYTES;
+const MAX_ENCRYPTED_MEDIA_BODY_BYTES = MAX_MEDIA_BODY_BYTES + 32;
+const INBOUND_DELIVERY_PREFIX = "pending_inbound:";
+const INBOUND_RETRY_DELAY_MS = 10_000;
+const INBOUND_RETRY_BATCH_SIZE = 25;
 
-const BYTE_TO_BASE64_CHUNK_SIZE = 0x1000; // 4KB (avoids argument-list stack overflows)
-
-function uint8ArrayToBase64(data: Uint8Array): string {
-  if (data.length === 0) return "";
-
-  const chunks: string[] = [];
-  for (let i = 0; i < data.length; i += BYTE_TO_BASE64_CHUNK_SIZE) {
-    const chunk = data.subarray(i, i + BYTE_TO_BASE64_CHUNK_SIZE);
-    chunks.push(String.fromCharCode(...chunk));
+function normalizeByteLength(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
   }
-  return btoa(chunks.join(""));
+  let serialized: string;
+  try {
+    if (typeof value === "bigint" || typeof value === "string") {
+      serialized = String(value);
+    } else if (
+      value
+      && typeof value === "object"
+      && typeof (value as { toString?: unknown }).toString === "function"
+    ) {
+      serialized = (value as { toString(): string }).toString();
+    } else {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  if (!/^\d+$/.test(serialized)) {
+    return null;
+  }
+  const parsed = Number(serialized);
+  return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 function normalizeWhatsAppJid(jid: string | null | undefined): string | null {
@@ -146,11 +178,6 @@ function normalizeOutboundWhatsAppJid(jid: string | null | undefined): string {
   return normalizeWhatsAppJid(normalized) ?? normalized.toLowerCase();
 }
 
-function base64Payload(data: string): string {
-  const dataUrl = /^data:[^;,]+;base64,(.*)$/is.exec(data.trim());
-  return dataUrl ? dataUrl[1] : data;
-}
-
 function phoneDigitsFromJid(jid: string | null | undefined): string | null {
   const normalized = normalizeWhatsAppJid(jid);
   const match = normalized?.match(/^(\d+)@s\.whatsapp\.net$/);
@@ -165,8 +192,53 @@ function jidActorId(jid: string): string {
   return `wa:jid:${jid}`;
 }
 
+function getMessageContextInfo(
+  message: proto.IMessage | null | undefined,
+  contentType: keyof proto.IMessage | undefined,
+): proto.IContextInfo | undefined {
+  if (!message || !contentType) return undefined;
+  const content = message[contentType];
+  if (!content || typeof content !== "object") return undefined;
+  return (content as { contextInfo?: proto.IContextInfo | null }).contextInfo ?? undefined;
+}
+
+class WhatsAppPreparationError extends Error {
+  constructor(message: string, readonly retryable: boolean) {
+    super(message);
+  }
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function classifyWhatsAppSendFailure(
+  error: unknown,
+): "retryable" | "permanent" | "ambiguous" {
+  const status = nestedNumber(error, ["output", "statusCode"])
+    ?? nestedNumber(error, ["statusCode"])
+    ?? nestedNumber(error, ["status"]);
+  if (status === undefined) {
+    return "ambiguous";
+  }
+  return classifyNonIdempotentProviderStatus(status);
+}
+
+function nestedNumber(value: unknown, path: string[]): number | undefined {
+  let current = value;
+  for (const key of path) {
+    if (!current || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === "number" && Number.isFinite(current)
+    ? current
+    : undefined;
+}
+
 export class WhatsAppAccount extends DurableObject<Env> {
   private sock: WASocket | null = null;
+  private readonly deliveries: DeliveryLedger;
+  private readonly inboundDeliveries: InboundDeliveryLedger<Uint8Array>;
   private state: WhatsAppAccountState = {
     accountId: "",
     connected: false,
@@ -176,6 +248,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.deliveries = new DeliveryLedger(this.ctx.storage);
+    this.inboundDeliveries = new InboundDeliveryLedger(
+      this.ctx.storage,
+      INBOUND_DELIVERY_PREFIX,
+    );
     // accountId is set from X-Account-Id header on first request
     // and persisted in storage.kv for subsequent requests
     const storedAccountId = this.ctx.storage.kv.get<string>("accountId");
@@ -213,14 +290,6 @@ export class WhatsAppAccount extends DurableObject<Env> {
           return await this.handleLogin(url, request.method === "POST", traceId);
         case "/logout":
           return await this.handleLogout();
-        case "/stop":
-          return await this.handleStop();
-        case "/wake":
-          return await this.handleWake();
-        case "/send":
-          return await this.handleSend(request);
-        case "/react":
-          return await this.handleReact(request);
         case "/typing":
           return await this.handleTyping(request);
         default:
@@ -284,13 +353,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
     if (result.connected) {
       // Login succeeded - clear pending flag and schedule keep-alive
       await this.ctx.storage.delete("login_pending");
-      this.ctx.storage.setAlarm(Date.now() + 10000);
+      await this.inboundDeliveries.arm(Date.now() + 10000);
       return Response.json({ connected: true, message: "Connected" });
     }
     
     if (result.qr) {
       // Schedule alarm to keep DO alive during QR scan window
-      this.ctx.storage.setAlarm(Date.now() + 5000);
+      await this.inboundDeliveries.arm(Date.now() + 5000);
       
       return Response.json({ 
         connected: false, 
@@ -327,128 +396,159 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return Response.json({ success: true, message: "Logged out" });
   }
 
-  private async handleStop(): Promise<Response> {
-    if (this.sock) {
-      this.sock.end(undefined);
-      this.sock = null;
+  async sendMessage(
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
+    if (this.state.accountId && this.state.accountId !== accountId) {
+      await cancelBinaryBody(body, "WhatsApp account ID mismatch");
+      return { ok: false, error: "WhatsApp account ID mismatch" };
     }
-
-    this.state.connected = false;
-    this.state.lastDisconnectedAt = Date.now();
-
-    // Notify Gateway of status change
-    await this.notifyGatewayStatus();
-
-    return Response.json({ success: true, message: "Stopped" });
-  }
-
-  private async handleWake(): Promise<Response> {
-    const actions: string[] = [];
-    
-    const hasAuth = await hasAuthState(this.ctx.storage);
-    if (!hasAuth) {
-      return Response.json({ 
-        success: false, 
-        message: "No auth credentials. Call /login first.",
-        actions,
-      }, { status: 400 });
+    if (!this.state.accountId) {
+      this.state.accountId = accountId;
+      this.ctx.storage.kv.put("accountId", accountId);
     }
-
-    // Check WhatsApp connection
     if (!this.sock || !this.state.connected) {
-      console.log(`[WhatsAppAccount:${this.state.accountId}] Wake: Reconnecting...`);
-      actions.push("reconnecting_whatsapp");
-      await this.startSocket();
-      await new Promise(resolve => setTimeout(resolve, 3000));
-    } else {
-      actions.push("whatsapp_already_connected");
+      await cancelBinaryBody(body, "WhatsApp account is not connected");
+      return {
+        ok: false,
+        error: "WhatsApp account is not connected",
+        retryable: true,
+      };
     }
-
-    return Response.json({
-      success: true,
-      message: "Wake complete",
-      actions,
-      status: {
-        whatsappConnected: this.state.connected,
-        selfJid: this.state.selfJid,
-      },
-    });
-  }
-
-  /**
-   * Handle outbound message from Gateway (via WorkerEntrypoint)
-   */
-  private async handleSend(request: Request): Promise<Response> {
-    if (!this.sock || !this.state.connected) {
-      return Response.json({ error: "Not connected" }, { status: 503 });
+    const media = message.media ?? [];
+    if (media.length > 1) {
+      await cancelBinaryBody(body, "WhatsApp supports one media attachment per message");
+      return {
+        ok: false,
+        error: "WhatsApp supports one media attachment per message",
+      };
     }
-
-    const message = await request.json() as ChannelOutboundMessage;
-    const jid = await this.resolveOutboundWhatsAppJid(message.peer.id);
 
     try {
-      const content = this.buildOutboundContent(message);
-      const sent = await this.sock.sendMessage(jid, content);
-      console.log(`[WA] Sent to ${jid}: "${message.text.substring(0, 50)}..."`);
-      return Response.json({ success: true, messageId: sent?.key?.id });
-    } catch (e) {
-      console.error(`[WA] Send failed:`, e);
-      return Response.json({ success: false, error: String(e) }, { status: 500 });
-    }
-  }
-
-  /**
-   * Handle explicit reaction from adapter shell.
-   */
-  private async handleReact(request: Request): Promise<Response> {
-    if (!this.sock || !this.state.connected) {
-      return Response.json({ error: "Not connected" }, { status: 503 });
+      validateAdapterMediaBody(media, body, {
+        maxBytes: MAX_MEDIA_BODY_BYTES,
+        maxPartBytes: MAX_MEDIA_BODY_BYTES,
+      });
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      return { ok: false, error: toErrorMessage(error) };
     }
 
-    const body = await request.json() as {
-      peer: ChannelPeer;
-      messageId: string;
-      emoji: string;
-      participant?: string;
+    let mediaBytes: Array<Uint8Array | undefined>;
+    try {
+      mediaBytes = await readAdapterMediaBody(media, body, {
+        maxBytes: MAX_MEDIA_BODY_BYTES,
+        maxPartBytes: MAX_MEDIA_BODY_BYTES,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Could not read WhatsApp media body: ${toErrorMessage(error)}`,
+        retryable: true,
+      };
+    }
+
+    let requestFingerprint: string;
+    try {
+      requestFingerprint = await fingerprintOutboundDelivery(message, mediaBytes);
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Could not fingerprint WhatsApp delivery: ${toErrorMessage(error)}`,
+        retryable: true,
+      };
+    }
+
+    let claim;
+    try {
+      claim = await this.deliveries.claim(message.deliveryId, requestFingerprint);
+    } catch (error) {
+      return {
+        ok: false,
+        error: `WhatsApp delivery ledger unavailable: ${toErrorMessage(error)}`,
+        retryable: true,
+      };
+    }
+    if (!claim.claimed) {
+      return claim.result;
+    }
+
+    const { attemptId } = claim;
+    const fail = async (
+      kind: "retryable" | "permanent" | "ambiguous",
+      error: string,
+    ): Promise<AdapterSendResult> => {
+      try {
+        if (kind === "retryable") {
+          await this.deliveries.releaseRetryable(message.deliveryId, attemptId);
+        } else if (kind === "ambiguous") {
+          await this.deliveries.failAmbiguous(message.deliveryId, attemptId, error);
+        } else {
+          await this.deliveries.failPermanent(message.deliveryId, attemptId, error);
+        }
+      } catch (ledgerError) {
+        console.error(`[WA:${this.state.accountId}] Failed to persist delivery outcome`, ledgerError);
+      }
+      return {
+        ok: false,
+        error,
+        ...(kind === "retryable" ? { retryable: true } : {}),
+        ...(kind === "ambiguous" ? { ambiguous: true } : {}),
+      };
     };
 
-    if (!body.peer?.id || !body.messageId || typeof body.emoji !== "string") {
-      return Response.json(
-        { success: false, error: "peer.id, messageId, and emoji are required" },
-        { status: 400 },
+    let jid: string;
+    let content: AnyMessageContent;
+    let quoted: WAMessage | undefined;
+    try {
+      const outboundMediaBytes = media[0]?.url
+        ? await this.downloadOutboundMedia(media[0])
+        : mediaBytes[0];
+      jid = await this.resolveOutboundWhatsAppJid(message.surface.id);
+      content = this.buildOutboundContent(message, outboundMediaBytes);
+      quoted = this.buildQuotedMessage(jid, message);
+    } catch (error) {
+      const kind = error instanceof WhatsAppPreparationError && error.retryable
+        ? "retryable"
+        : "permanent";
+      return await fail(kind, toErrorMessage(error));
+    }
+
+    const socket = this.sock;
+    if (!socket || !this.state.connected) {
+      return await fail("retryable", "WhatsApp account disconnected before delivery");
+    }
+
+    let sent: Awaited<ReturnType<WASocket["sendMessage"]>>;
+    try {
+      sent = await socket.sendMessage(jid, content, quoted ? { quoted } : undefined);
+    } catch (error) {
+      console.error("[WA] Send failed after provider attempt:", error);
+      const kind = classifyWhatsAppSendFailure(error);
+      const detail = kind === "ambiguous"
+        ? "WhatsApp send outcome is unknown"
+        : "WhatsApp rejected the send";
+      return await fail(
+        kind,
+        `${detail}: ${toErrorMessage(error)}`,
       );
     }
 
-    const remote = await this.resolveOutboundMessageKeyJid(body.peer.id);
-    const jid = remote.jid;
-    const key: WAMessageKey = {
-      remoteJid: jid,
-      id: body.messageId,
-      fromMe: false,
-    };
-    if (remote.alt) {
-      key.remoteJidAlt = remote.alt;
-    }
-    if (body.participant) {
-      const participant = await this.resolveOutboundMessageKeyJid(body.participant);
-      key.participant = participant.jid;
-      if (participant.alt) {
-        key.participantAlt = participant.alt;
-      }
-    }
-
+    const messageId = sent?.key?.id ?? undefined;
     try {
-      await this.sock.sendMessage(jid, {
-        react: {
-          text: body.emoji,
-          key,
-        },
-      });
-      return Response.json({ success: true });
-    } catch (e) {
-      console.error(`[WA] React failed:`, e);
-      return Response.json({ success: false, error: String(e) }, { status: 500 });
+      await this.deliveries.succeed(message.deliveryId, attemptId, messageId);
+    } catch (error) {
+      console.error(`[WA:${this.state.accountId}] Failed to persist successful delivery`, error);
+      return {
+        ok: false,
+        error: "WhatsApp accepted the delivery but its durable outcome could not be recorded",
+        ambiguous: true,
+      };
     }
+    console.log(`[WA] Sent to ${jid}: "${message.text.substring(0, 50)}..."`);
+    return { ok: true, messageId };
   }
 
   /**
@@ -459,7 +559,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       return Response.json({ error: "Not connected" }, { status: 503 });
     }
 
-    const { peer, typing } = await request.json() as { peer: ChannelPeer; typing: boolean };
+    const { peer, typing } = await request.json() as { peer: AdapterSurface; typing: boolean };
     const jid = await this.resolveOutboundWhatsAppJid(peer.id);
 
     try {
@@ -472,10 +572,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
   }
 
-  private buildOutboundContent(message: ChannelOutboundMessage): AnyMessageContent {
+  private buildOutboundContent(
+    message: AdapterOutboundMessage,
+    mediaBytes?: Uint8Array,
+  ): AnyMessageContent {
     const media = message.media?.[0];
     if (media) {
-      return this.buildMediaContent(media, message.text);
+      return this.buildMediaContent(media, mediaBytes, message.text);
     }
 
     const text = message.text.trim();
@@ -485,8 +588,41 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return { text };
   }
 
-  private buildMediaContent(media: ChannelMedia, captionText: string): AnyMessageContent {
-    const upload = this.buildMediaUpload(media);
+  private buildQuotedMessage(
+    remoteJid: string,
+    message: AdapterOutboundMessage,
+  ): WAMessage | undefined {
+    const replyToId = message.replyToId?.trim();
+    if (!replyToId) return undefined;
+
+    let participant: string | undefined;
+    if (message.actorId) {
+      try {
+        participant = normalizeOutboundWhatsAppJid(message.actorId);
+      } catch {
+        participant = undefined;
+      }
+    }
+    return {
+      key: {
+        id: replyToId,
+        remoteJid,
+        fromMe: false,
+        ...(participant ? { participant } : {}),
+      },
+      participant,
+      // The gateway intentionally transports only the stable provider message
+      // id. Baileys still needs a message shape to construct reply context.
+      message: { conversation: "" },
+    };
+  }
+
+  private buildMediaContent(
+    media: AdapterMedia,
+    bytes: Uint8Array | undefined,
+    captionText: string,
+  ): AnyMessageContent {
+    const upload = this.buildMediaUpload(media, bytes);
     const caption = captionText.trim() || undefined;
 
     switch (media.type) {
@@ -518,14 +654,55 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
   }
 
-  private buildMediaUpload(media: ChannelMedia): Buffer | { url: string } {
+  private buildMediaUpload(
+    media: AdapterMedia,
+    bytes?: Uint8Array,
+  ): Buffer | { url: string } {
+    if (bytes) {
+      return Buffer.from(
+        bytes.buffer as ArrayBuffer,
+        bytes.byteOffset,
+        bytes.byteLength,
+      );
+    }
     if (media.url) {
-      return { url: media.url };
+      throw new Error("WhatsApp URL media must be downloaded before upload");
     }
-    if (media.data) {
-      return Buffer.from(base64Payload(media.data), "base64");
+    throw new Error("Media attachment must include a binary body or URL");
+  }
+
+  private async downloadOutboundMedia(media: AdapterMedia): Promise<Uint8Array> {
+    let response: Response;
+    try {
+      response = await fetch(media.url!);
+    } catch (error) {
+      throw new WhatsAppPreparationError(
+        `Could not download WhatsApp media: ${toErrorMessage(error)}`,
+        true,
+      );
     }
-    throw new Error("Media attachment must include base64 data or url");
+    if (!response.ok) {
+      await cancelResponseBody(response, "WhatsApp media download failed");
+      throw new WhatsAppPreparationError(
+        `Failed to fetch WhatsApp media (${response.status} ${response.statusText})`,
+        response.status === 408
+          || response.status === 429
+          || response.status >= 500,
+      );
+    }
+    try {
+      return await readResponseBodyBytes(response, {
+        maxBytes: MAX_MEDIA_BODY_BYTES,
+        expectedBytes: media.size,
+        label: "WhatsApp media",
+      });
+    } catch (error) {
+      const detail = toErrorMessage(error);
+      throw new WhatsAppPreparationError(
+        detail,
+        !detail.includes("exceeds transfer limit"),
+      );
+    }
   }
 
   private async resolveOutboundWhatsAppJid(jidOrPhone: string): Promise<string> {
@@ -536,16 +713,6 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
     const lid = await this.lookupLidForPN(jid);
     return lid ?? jid;
-  }
-
-  private async resolveOutboundMessageKeyJid(jidOrPhone: string): Promise<{ jid: string; alt?: string }> {
-    const jid = normalizeOutboundWhatsAppJid(jidOrPhone);
-    if (!isPnWhatsAppJid(jid)) {
-      return { jid };
-    }
-
-    const lid = await this.lookupLidForPN(jid);
-    return lid ? { jid: lid, alt: jid } : { jid };
   }
 
   private async startSocket(): Promise<void> {
@@ -578,9 +745,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
       });
     });
     this.sock.ev.on("messages.upsert", (m) => {
-      this.handleMessagesUpsert(m).catch((e) => {
-        console.error(`[WA:${this.state.accountId}] Message handling error:`, e);
-      });
+      this.ctx.waitUntil(
+        this.handleMessagesUpsert(m).catch((e) => {
+          console.error(`[WA:${this.state.accountId}] Message handling error:`, e);
+        }),
+      );
     });
   }
 
@@ -614,7 +783,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       this.resolveWaiters({ connected: true });
       
       this.notifyGatewayStatus().catch(() => {});
-      this.scheduleKeepAlive();
+      this.ctx.waitUntil(this.scheduleKeepAlive());
     }
 
     if (connection === "close") {
@@ -634,7 +803,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       } else if (isConnectionReplaced) {
         this.ctx.storage.delete("login_pending").catch(() => {});
       } else {
-        this.ctx.storage.setAlarm(Date.now() + 5000);
+        this.ctx.waitUntil(this.inboundDeliveries.arm(Date.now() + 5000));
       }
 
       this.notifyGatewayStatus().catch(() => {});
@@ -646,116 +815,209 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
     for (const msg of m.messages) {
       if (msg.key.fromMe) continue;
+      const messageId = msg.key.id;
+      if (!messageId) continue;
 
-      const extracted = extractMessageContent(msg.message);
-      const contentType = extracted ? getContentType(extracted) : undefined;
-      const hasMedia = !!contentType && MEDIA_CONTENT_TYPES.has(contentType);
-
-      const extractedMedia = (hasMedia && extracted && contentType)
-        ? (extracted as Record<string, unknown>)[contentType] as
-            | { caption?: string; text?: string }
-            | undefined
-        : undefined;
-
-      const text = msg.message?.conversation || 
-                   msg.message?.extendedTextMessage?.text ||
-                   extractedMedia?.caption ||
-                   extractedMedia?.text ||
-                   msg.message?.imageMessage?.caption ||
-                   msg.message?.videoMessage?.caption ||
-                   (hasMedia ? "" : undefined);
-      
-      if (text === undefined) continue;
-
-      const remoteJid = normalizeWhatsAppJid(msg.key.remoteJid);
-      if (!remoteJid) continue;
-      const remoteJidAlt = normalizeWhatsAppJid(msg.key.remoteJidAlt);
-      const isGroup = remoteJid.endsWith("@g.us");
-      const dmPn = preferredPnJid(remoteJid, remoteJidAlt);
-      const deliveryJid = isGroup ? remoteJid : preferredLidJid(remoteJid, remoteJidAlt) ?? remoteJid;
-      const surfaceJid = isGroup ? remoteJid : dmPn ?? remoteJid;
-      const participantJid = preferredLidJid(msg.key.participant, msg.key.participantAlt);
-      const participantPn = preferredPnJid(msg.key.participant, msg.key.participantAlt);
-      const actorId = isGroup
-        ? await this.resolveStableWhatsAppActorId(
-            participantJid,
-            participantPn,
-          )
-        : await this.resolveStableWhatsAppActorId(
-            deliveryJid,
-            dmPn,
-          );
-      if (!actorId) continue;
-
-      // Download media if present
-      const media: MediaAttachment[] = [];
-      if (hasMedia) {
-        try {
-          const attachment = await this.downloadMedia(msg);
-          if (attachment) {
-            media.push(attachment);
-          }
-        } catch (e) {
-          console.error(`[WA:${this.state.accountId}] Media download failed:`, e);
-        }
-      }
-
-      // Build inbound message for Gateway
-      const inbound: AdapterInboundMessage = {
-        messageId: msg.key.id!,
-        surface: {
-          kind: isGroup ? "group" : "dm",
-          id: surfaceJid,
-          name: msg.pushName ?? undefined,
-        },
-        actor: {
-          id: actorId,
-          name: msg.pushName ?? undefined,
-          handle: actorId,
-        },
-        text: text || (media.length > 0 ? "[Media]" : hasMedia ? "[Media unavailable]" : ""),
-        media: media.length > 0 ? media : undefined,
-        replyToId: msg.message?.extendedTextMessage?.contextInfo?.stanzaId ?? undefined,
-        timestamp: msg.messageTimestamp as number,
-      };
-      console.log(
-        `[WA:${this.state.accountId}] inbound actorId=${actorId} surfaceJid=${surfaceJid} deliveryJid=${deliveryJid} remoteJid=${remoteJid} remoteJidAlt=${remoteJidAlt ?? ""} participant=${participantJid ?? ""} participantPn=${participantPn ?? ""}`,
+      const deliveryId = this.whatsAppInboundDeliveryId(msg);
+      const encoded = proto.WebMessageInfo.encode(msg).finish();
+      await this.inboundDeliveries.enqueueAndArm(
+        deliveryId,
+        encoded,
+        Date.now() + INBOUND_RETRY_DELAY_MS,
       );
+      await this.deliverPendingInbound(deliveryId);
+    }
+  }
 
-      try {
-        const result = await this.callGateway<AdapterInboundResult>(
-          "adapter.inbound",
-          {
-            adapter: "whatsapp",
-            accountId: this.state.accountId,
-            message: inbound,
-          },
+  private whatsAppInboundDeliveryId(msg: WAMessage): string {
+    return [
+      normalizeWhatsAppJid(msg.key.remoteJid) ?? "unknown",
+      normalizeWhatsAppJid(msg.key.participant) ?? "",
+      msg.key.id ?? "",
+    ].join(":");
+  }
+
+  private async deliverPendingInbound(deliveryId: string): Promise<void> {
+    const attempt = await this.inboundDeliveries.attempt(
+      deliveryId,
+      async (encoded) => {
+        const decoded = proto.WebMessageInfo.decode(encoded);
+        if (!decoded.key) return { terminal: true };
+        return this.forwardInboundMessage(decoded as WAMessage, deliveryId);
+      },
+      async (response) => this.sendMessage(this.state.accountId!, response),
+    );
+    if (attempt.state !== "pending") return;
+
+    console.error(
+      `[WA:${this.state.accountId}] Inbound ${deliveryId} remains pending: ${attempt.error ?? "Gateway receipt is still in progress"}`,
+    );
+    await this.inboundDeliveries.arm(Date.now() + INBOUND_RETRY_DELAY_MS);
+  }
+
+  private async retryPendingInbound(): Promise<void> {
+    const ids = await this.inboundDeliveries.pendingIds(INBOUND_RETRY_BATCH_SIZE);
+    for (const deliveryId of ids) {
+      await this.deliverPendingInbound(deliveryId);
+    }
+  }
+
+  private async forwardInboundMessage(
+    msg: WAMessage,
+    deliveryId: string,
+  ): Promise<{ terminal: boolean; error?: string }> {
+    const extracted = extractMessageContent(msg.message);
+    const contentType = extracted ? getContentType(extracted) : undefined;
+    const contextInfo = getMessageContextInfo(extracted, contentType);
+    const hasMedia = !!contentType && MEDIA_CONTENT_TYPES.has(contentType);
+
+    const extractedMedia = (hasMedia && extracted && contentType)
+      ? (extracted as Record<string, unknown>)[contentType] as
+          | { caption?: string; text?: string }
+          | undefined
+      : undefined;
+
+    const text = msg.message?.conversation
+      || msg.message?.extendedTextMessage?.text
+      || extractedMedia?.caption
+      || extractedMedia?.text
+      || msg.message?.imageMessage?.caption
+      || msg.message?.videoMessage?.caption
+      || (hasMedia ? "" : undefined);
+
+    if (text === undefined) return { terminal: true };
+
+    const remoteJid = normalizeWhatsAppJid(msg.key.remoteJid);
+    if (!remoteJid) return { terminal: true };
+    const remoteJidAlt = normalizeWhatsAppJid(msg.key.remoteJidAlt);
+    const isGroup = remoteJid.endsWith("@g.us");
+    const dmPn = preferredPnJid(remoteJid, remoteJidAlt);
+    const deliveryJid = isGroup
+      ? remoteJid
+      : preferredLidJid(remoteJid, remoteJidAlt) ?? remoteJid;
+    const surfaceJid = isGroup ? remoteJid : dmPn ?? remoteJid;
+    const participantJid = preferredLidJid(
+      msg.key.participant,
+      msg.key.participantAlt,
+    );
+    const participantPn = preferredPnJid(
+      msg.key.participant,
+      msg.key.participantAlt,
+    );
+    const actorId = isGroup
+      ? await this.resolveStableWhatsAppActorId(
+          participantJid,
+          participantPn,
+        )
+      : await this.resolveStableWhatsAppActorId(
+          deliveryJid,
+          dmPn,
         );
-        if (!result.ok) {
-          console.error(
-            `[WA:${this.state.accountId}] Gateway RPC inbound rejected: ${result.error || "unknown error"}`,
-          );
-          continue;
+    if (!actorId) return { terminal: true };
+    const wasMentioned = !isGroup
+      || this.isGroupMessageAddressedToSelf(contextInfo);
+
+    const mediaParts: AdapterMediaPart[] = [];
+    if (hasMedia) {
+      try {
+        const attachment = await this.downloadMedia(msg);
+        if (attachment) {
+          mediaParts.push(attachment);
         }
-        if (result.challenge?.prompt && !isGroup && this.sock) {
-          try {
-            await this.sock.sendMessage(deliveryJid, { text: result.challenge.prompt });
-          } catch (err) {
-            console.error(`[WA:${this.state.accountId}] Failed to send challenge prompt:`, err);
-          }
-        }
-        if (result.reply?.text && !isGroup && this.sock) {
-          try {
-            await this.sock.sendMessage(deliveryJid, { text: result.reply.text });
-          } catch (err) {
-            console.error(`[WA:${this.state.accountId}] Failed to send gateway reply:`, err);
-          }
-        }
-        this.state.lastMessageAt = Date.now();
       } catch (e) {
-        console.error(`[WA:${this.state.accountId}] Gateway RPC inbound failed:`, e);
+        console.error(`[WA:${this.state.accountId}] Media download failed:`, e);
       }
     }
+    const media = await bundleAdapterMedia(mediaParts);
+
+    const inbound: AdapterInboundMessage = {
+      messageId: msg.key.id!,
+      surface: {
+        kind: isGroup ? "group" : "dm",
+        id: surfaceJid,
+        name: msg.pushName ?? undefined,
+      },
+      actor: {
+        id: actorId,
+        name: msg.pushName ?? undefined,
+        handle: actorId,
+      },
+      text: text || (
+        media.media.length > 0
+          ? "[Media]"
+          : hasMedia
+            ? "[Media unavailable]"
+            : ""
+      ),
+      media: media.media.length > 0 ? media.media : undefined,
+      replyToId: contextInfo?.stanzaId ?? undefined,
+      timestamp: msg.messageTimestamp as number,
+      wasMentioned,
+    };
+    console.log(
+      `[WA:${this.state.accountId}] inbound actorId=${actorId} surfaceJid=${surfaceJid} deliveryJid=${deliveryJid} remoteJid=${remoteJid} remoteJidAlt=${remoteJidAlt ?? ""} participant=${participantJid ?? ""} participantPn=${participantPn ?? ""}`,
+    );
+
+    const result = await callAdapterGateway<AdapterInboundResult>(
+      this.env.GATEWAY,
+      "adapter.inbound",
+      {
+        adapter: "whatsapp",
+        accountId: this.state.accountId,
+        deliveryId,
+        message: inbound,
+      },
+      media.body,
+    );
+    const responseDisposition = adapterInboundResultDisposition(result, {
+      surface: inbound.surface,
+      providerMessageId: inbound.messageId,
+    });
+    if (!responseDisposition.terminal) return responseDisposition;
+    if (!result.ok) {
+      console.error(
+        `[WA:${this.state.accountId}] Gateway RPC inbound rejected: ${result.error || "unknown error"}`,
+      );
+      return responseDisposition;
+    }
+    this.state.lastMessageAt = Date.now();
+    return responseDisposition;
+  }
+
+  private isGroupMessageAddressedToSelf(
+    contextInfo: proto.IContextInfo | undefined,
+  ): boolean {
+    if (!contextInfo) return false;
+
+    const ownJids = new Set<string>();
+    const addOwnJid = (jid: string | null | undefined): void => {
+      const normalized = normalizeWhatsAppJid(jid);
+      if (normalized) ownJids.add(normalized);
+    };
+
+    addOwnJid(this.state.selfJid);
+    addOwnJid(this.sock?.user?.id);
+    addOwnJid(this.sock?.user?.lid);
+    addOwnJid(this.sock?.user?.phoneNumber);
+    const selfPhoneDigits = this.state.selfE164?.replace(/\D/g, "");
+    if (selfPhoneDigits) {
+      addOwnJid(`${selfPhoneDigits}@s.whatsapp.net`);
+    }
+    if (ownJids.size === 0) return false;
+
+    const matchesSelf = (jid: string | null | undefined): boolean => {
+      const normalized = normalizeWhatsAppJid(jid);
+      return normalized ? ownJids.has(normalized) : false;
+    };
+
+    if (contextInfo.mentionedJid?.some((jid) => matchesSelf(jid))) {
+      return true;
+    }
+
+    return Boolean(
+      contextInfo.quotedMessage
+      && matchesSelf(contextInfo.participant),
+    );
   }
 
   private async resolveStableWhatsAppActorId(
@@ -830,7 +1092,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   /**
    * Download media from a WhatsApp message
    */
-  private async downloadMedia(msg: WAMessage): Promise<MediaAttachment | null> {
+  private async downloadMedia(msg: WAMessage): Promise<AdapterMediaPart | null> {
     if (!this.sock) return null;
 
     const mContent = extractMessageContent(msg.message);
@@ -839,7 +1101,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const contentType = getContentType(mContent);
     if (!contentType) return null;
 
-    let mediaType: MediaAttachment["type"];
+    let mediaType: AdapterMedia["type"];
     let mimeType: string;
     let filename: string | undefined;
     let baileysMediaType: string;
@@ -852,7 +1114,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
           url?: string;
           directPath?: string;
           mediaKey?: Uint8Array | Buffer;
-          fileLength?: number;
+          fileLength?: unknown;
         }
       | undefined;
 
@@ -886,6 +1148,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
     if (!media || typeof media !== "object") return null;
     if (!media.url && !media.directPath) return null;
     if (!media.mediaKey) return null;
+    if (media.fileLength !== undefined) {
+      const fileLength = normalizeByteLength(media.fileLength);
+      if (fileLength === null || fileLength > MAX_MEDIA_BODY_BYTES) {
+        return null;
+      }
+    }
 
     const isValidMediaUrl = media.url?.startsWith("https://mmg.whatsapp.net/");
     const downloadUrl = isValidMediaUrl ? media.url : getUrlFromDirectPath(media.directPath!);
@@ -898,11 +1166,18 @@ export class WhatsAppAccount extends DurableObject<Env> {
     });
 
     if (!response.ok) {
+      await cancelResponseBody(response, "WhatsApp media download failed");
       throw new Error(`Media download failed: HTTP ${response.status}`);
     }
 
-    const encryptedData = new Uint8Array(await response.arrayBuffer());
-    const ciphertext = encryptedData.slice(0, -10);
+    const encryptedData = await readResponseBodyBytes(response, {
+      maxBytes: MAX_ENCRYPTED_MEDIA_BODY_BYTES,
+      label: "Encrypted WhatsApp media",
+    });
+    if (encryptedData.byteLength <= 10) {
+      throw new Error("Encrypted WhatsApp media is truncated");
+    }
+    const ciphertext = encryptedData.subarray(0, -10);
 
     const cryptoKey = await crypto.subtle.importKey(
       "raw",
@@ -919,14 +1194,17 @@ export class WhatsAppAccount extends DurableObject<Env> {
     );
 
     const decryptedArray = new Uint8Array(decrypted);
-    const base64 = uint8ArrayToBase64(decryptedArray);
-
+    if (decryptedArray.byteLength > MAX_MEDIA_BODY_BYTES) {
+      throw new Error("WhatsApp media exceeds transfer limit");
+    }
     return {
-      type: mediaType,
-      mimeType,
-      data: base64,
-      filename,
-      size: decryptedArray.byteLength,
+      media: {
+        type: mediaType,
+        mimeType,
+        filename,
+        size: decryptedArray.byteLength,
+      },
+      body: binaryBodyFromOwnedBytes(decryptedArray),
     };
   }
 
@@ -937,7 +1215,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     if (!this.state.accountId) return;
     
     try {
-      const status: ChannelAccountStatus = {
+      const status: AdapterAccountStatus = {
         accountId: this.state.accountId,
         connected: this.state.connected,
         authenticated: !!this.state.selfJid,
@@ -946,7 +1224,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
         extra: { selfJid: this.state.selfJid, selfE164: this.state.selfE164 },
       };
 
-      await this.callGateway(
+      await callAdapterGateway(
+        this.env.GATEWAY,
         "adapter.state.update",
         {
           adapter: "whatsapp",
@@ -958,25 +1237,6 @@ export class WhatsAppAccount extends DurableObject<Env> {
       // Status updates are best-effort.
       console.error(`[WA:${this.state.accountId}] Gateway RPC status failed:`, e);
     }
-  }
-
-  private async callGateway<T = unknown>(call: string, args: unknown): Promise<T> {
-    const frame: GatewayRequestFrame = {
-      type: "req",
-      id: crypto.randomUUID(),
-      call,
-      args,
-    };
-
-    const response = await this.env.GATEWAY.serviceFrame(frame);
-    if (!response || response.type !== "res") {
-      throw new Error("No response from gateway serviceFrame");
-    }
-    if (!response.ok) {
-      throw new Error(response.error?.message || `Gateway error on ${call}`);
-    }
-
-    return (response.data ?? {}) as T;
   }
 
   private waitForQrOrConnection(timeoutMs: number): Promise<{ connected?: boolean; qr?: string }> {
@@ -1014,8 +1274,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   private static readonly KEEP_ALIVE_INTERVAL_MS = 10_000;
 
-  private scheduleKeepAlive(): void {
-    this.ctx.storage.setAlarm(Date.now() + WhatsAppAccount.KEEP_ALIVE_INTERVAL_MS);
+  private async scheduleKeepAlive(): Promise<void> {
+    await this.inboundDeliveries.arm(
+      Date.now() + WhatsAppAccount.KEEP_ALIVE_INTERVAL_MS,
+    );
   }
 
   async alarm(): Promise<void> {
@@ -1024,7 +1286,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     
     // Keep alive during login flow
     if (loginPending && Date.now() - loginPending < 90000) {
-      this.ctx.storage.setAlarm(Date.now() + 5000);
+      await this.inboundDeliveries.arm(Date.now() + 5000);
       return;
     }
     
@@ -1033,8 +1295,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
 
     if (!hasAuth) return;
-
-    this.scheduleKeepAlive();
+    // The same alarm owns keep-alive, reconnect, and ingress retry.
+    await this.scheduleKeepAlive();
 
     // Reconnect if needed
     if (!this.sock) {
@@ -1044,5 +1306,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         console.error(`[WA:${this.state.accountId}] Reconnect failed:`, e);
       }
     }
+
+    await this.retryPendingInbound();
   }
 }

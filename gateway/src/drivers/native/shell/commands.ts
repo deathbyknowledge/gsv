@@ -14,6 +14,7 @@ import { buildCrontabCommand } from "./crontab";
 import { buildLsCommand } from "./ls";
 import { buildLlmCommand } from "./llm";
 import { buildMediaCommands } from "./media";
+import { buildMessageCommand } from "./message";
 import { buildMcpCommand } from "./mcp";
 import { buildNetCommands } from "./net";
 import { buildOAuthCommand } from "./oauth";
@@ -25,6 +26,7 @@ import { buildSkillsCommand } from "./skills";
 import { buildStatCommand } from "./stat";
 import { buildTargetsCommands } from "./targets";
 import { buildWikiCommand } from "./wiki";
+import { ShellDiscoveryCatalog } from "./discovery";
 
 export type NativeShellCommandOptions = {
   fsCopyTransport?: FsCopyDeviceTransport;
@@ -41,7 +43,8 @@ export function buildCustomCommands(
   ctx: KernelContext,
   options?: NativeShellCommandOptions,
 ) {
-  const coreCommands = buildCoreCommands(fs, identity, ctx);
+  const discovery = new ShellDiscoveryCatalog(fs, identity, ctx);
+  const coreCommands = buildCoreCommands(fs, identity, ctx, discovery);
   const ls = buildLsCommand(fs, identity, ctx);
   const llm = buildLlmCommand(ctx, options?.netFetchTransport);
   const stat = buildStatCommand(fs, identity, ctx);
@@ -57,17 +60,17 @@ export function buildCustomCommands(
   const sched = buildSchedCommand(ctx);
   const targets = buildTargetsCommands(ctx);
   const mediaCommands = buildMediaCommands(fs, ctx);
+  const message = buildMessageCommand(fs, ctx);
   const netCommands = buildNetCommands(ctx, options?.netFetchTransport);
   const oauth = buildOAuthCommand(ctx);
   const notifyCommands = buildNotifyCommands(ctx);
-  const packageCommands = buildPackageCommands(identity, ctx);
   const flynn = defineCommand("flynn", async (): Promise<ExecResult> => ({
     stdout: `General Systems Vehicle ${ctx.config.get("config/server/version") ?? "0.1.6"} - Steve James.\n\n"I kept dreaming of a world I thought I'd never see. And then, one day... I got in."`,
     stderr: "",
     exitCode: 0,
   }));
 
-  return [
+  const nativeCommands = [
     ...coreCommands,
     ls,
     stat,
@@ -83,11 +86,19 @@ export function buildCustomCommands(
     oauth,
     llm,
     ...mediaCommands,
+    message,
     pkg,
     skills,
     wiki,
     flynn,
     ...notifyCommands,
-    ...packageCommands,
   ];
+  const packageCommands = buildPackageCommands(
+    identity,
+    ctx,
+    new Set(nativeCommands.map((command) => command.name)),
+  );
+  const commands = [...nativeCommands, ...packageCommands];
+  discovery.registerCommands(commands);
+  return commands;
 }

@@ -31,7 +31,6 @@ function mockAdapter(adapter: string, accounts: number): ConsoleAdapter {
     supportsDisconnect: true,
     supportsSend: true,
     supportsStatus: true,
-    supportsShellExec: false,
     supportsActivity: true,
     accounts: Array.from({ length: accounts }, (_, i) => ({
       adapter,

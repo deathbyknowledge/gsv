@@ -39,16 +39,14 @@ describe("console normalization", () => {
     });
   });
 
-  it("infers target presentation kind from device id and platform", () => {
+  it("classifies browser and native device targets", () => {
     expect(normalizeTargetsPayload({
       devices: [
         { deviceId: "browser:brave", label: "Brave", platform: "browser-extension", online: true },
-        { deviceId: "adapter:discord:ops", label: "Discord", platform: "adapter", online: true },
         { deviceId: "macbook", label: "MacBook", platform: "darwin", online: true, implements: ["net.fetch", "fs.*"] },
       ],
     })).toMatchObject([
       { deviceId: "browser:brave", kind: "browser" },
-      { deviceId: "adapter:discord:ops", kind: "adapter" },
       { deviceId: "macbook", kind: "native-device", implements: ["fs.*", "net.fetch"] },
     ]);
   });

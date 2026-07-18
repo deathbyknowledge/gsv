@@ -1,6 +1,6 @@
 # GSV Engineering Contract
 
-GSV is an open-source, user-owned personal intelligence operating environment. Its gateway is a lightweight, globally reachable control plane; agents are durable processes; capabilities gate syscalls; and machines, browsers, and adapters implement common primitives behind target routing.
+GSV is an open-source, user-owned personal intelligence operating environment. Its gateway is a lightweight, globally reachable control plane; agents are durable processes; capabilities gate syscalls; machines and browsers implement common primitives behind target routing; and adapters own messaging transport.
 
 This document is the root engineering contract for the repository. It explains how to change GSV without eroding that model. Use the code as the source of truth, and update this file when the architecture deliberately changes.
 
@@ -88,7 +88,7 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 
 - Enforce authorization in the Kernel, not only in UI or callers.
 - Never hardcode or log secrets, raw authentication material, QR payloads, prompts, tool arguments, or private file contents.
-- Store process media once in R2, persist references in history, scope keys to the owning process, and hydrate only while building model context.
+- Store live process media once in R2, persist references in history, and scope keys to the owning process. Before live cleanup, promote archived references to immutable media under the run-as agent home. Hydrate bytes only while building model context or serving an explicit media read.
 - Packages remain source-inspectable and capability-gated.
 - Telemetry uses an explicit allowlist and records timings and outcomes rather than user content.
 

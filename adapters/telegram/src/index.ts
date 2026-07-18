@@ -1,22 +1,15 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import {
-  isHelpCommand,
-  parseAttachArgs,
-  parseShellWords,
-} from "../../shared/src/command";
+import { cancelBinaryBody } from "../../shared/src/media-body";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
-  AdapterCapabilities,
   AdapterConnectResult,
   AdapterDisconnectResult,
-  AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,
   AdapterSurface,
   AdapterWorkerInterface,
-  ShellExecArgs,
-  ShellExecResult,
+  BinaryBody,
 } from "./types";
 
 export { TelegramAccount } from "./telegram-account";
@@ -42,7 +35,8 @@ type TelegramAccountStub = {
   getStatus(): Promise<AdapterAccountStatus>;
   sendMessage(
     message: AdapterOutboundMessage,
-  ): Promise<{ ok: boolean; messageId?: string; error?: string }>;
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult>;
   setTyping(surface: AdapterSurface, typing: boolean): Promise<void>;
   handleWebhook(update: unknown, secretToken: string | null): Promise<WebhookResult>;
 };
@@ -69,141 +63,11 @@ export class TelegramChannel
   implements AdapterWorkerInterface
 {
   readonly adapterId = "telegram";
-  readonly channelId = "telegram";
-
-  readonly capabilities: AdapterCapabilities = {
-    chatTypes: ["dm", "group", "channel"],
-    media: true,
-    reactions: false,
-    threads: false,
-    typing: true,
-    editing: false,
-    deletion: false,
-  };
 
   async adapterConnect(
     accountId: string,
     config: Record<string, unknown> = {},
   ): Promise<AdapterConnectResult> {
-    const started = await this.start(accountId, config);
-    if (!started.ok) {
-      return { ok: false, error: started.error };
-    }
-
-    const [status] = await this.adapterStatus(accountId);
-    return {
-      ok: true,
-      connected: status?.connected ?? true,
-      authenticated: status?.authenticated ?? true,
-      message: "Connected",
-    };
-  }
-
-  async adapterDisconnect(accountId: string): Promise<AdapterDisconnectResult> {
-    const stopped = await this.stop(accountId);
-    if (!stopped.ok) {
-      return { ok: false, error: stopped.error };
-    }
-    return { ok: true, message: "Disconnected" };
-  }
-
-  async adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]> {
-    return this.status(accountId);
-  }
-
-  async adapterSend(
-    accountId: string,
-    message: AdapterOutboundMessage,
-  ): Promise<AdapterSendResult> {
-    return this.send(accountId, message);
-  }
-
-  async adapterSetActivity(
-    accountId: string,
-    surface: AdapterSurface,
-    activity: AdapterActivity,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
-    if (activity.kind !== "typing") {
-      return { ok: true };
-    }
-
-    try {
-      await this.setTyping(accountId, surface, activity.active);
-      return { ok: true };
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
-  }
-
-  async adapterShellExec(
-    accountId: string,
-    args: ShellExecArgs,
-  ): Promise<ShellExecResult> {
-    const tokens = parseShellWords(args.input);
-    const command = tokens[0] ?? "help";
-
-    if (isHelpCommand(command)) {
-      return shellOk([
-        "telegram adapter commands:",
-        "  help | -h | --help",
-        "  send <chat-id-or-handle> <text>",
-        "  reply <chat-id-or-handle> <message-id> <text>",
-        "  attach <chat-id-or-handle> <url> [--filename <name>] [caption]",
-        "",
-        "Normal back-and-forth replies should use the adapter conversation route.",
-      ].join("\n"));
-    }
-
-    if (command === "send") {
-      const [chatId, ...textParts] = tokens.slice(1);
-      const text = textParts.join(" ").trim();
-      if (!chatId || !text) {
-        return shellFail("usage: send <chat-id-or-handle> <text>");
-      }
-      const result = await this.adapterSend(accountId, {
-        surface: telegramSurface(chatId),
-        text,
-      });
-      return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
-    }
-
-    if (command === "reply") {
-      const [chatId, messageId, ...textParts] = tokens.slice(1);
-      const text = textParts.join(" ").trim();
-      if (!chatId || !messageId || !text) {
-        return shellFail("usage: reply <chat-id-or-handle> <message-id> <text>");
-      }
-      const result = await this.adapterSend(accountId, {
-        surface: telegramSurface(chatId),
-        text,
-        replyToId: messageId,
-      });
-      return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
-    }
-
-    if (command === "attach") {
-      const { targetId: chatId, url, filename, caption } = parseAttachArgs(tokens.slice(1));
-      if (!chatId || !url) {
-        return shellFail(
-          "usage: attach <chat-id-or-handle> <url> [--filename <name>] [caption]",
-        );
-      }
-      const media = await mediaFromUrl(url, filename);
-      const result = await this.adapterSend(accountId, {
-        surface: telegramSurface(chatId),
-        text: caption,
-        media: [media],
-      });
-      return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
-    }
-
-    return shellFail(`unknown command: ${command}`);
-  }
-
-  async start(
-    accountId: string,
-    config: Record<string, unknown>,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
     const botToken =
       (typeof config.botToken === "string" ? config.botToken : undefined) ||
       this.env.TELEGRAM_BOT_TOKEN;
@@ -233,23 +97,36 @@ export class TelegramChannel
     try {
       const account = this.getAccountDO(accountId);
       await account.start(botToken, accountId, webhookBaseUrl, webhookSecret);
-      return { ok: true };
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
+
+    const [status] = await this.adapterStatus(accountId);
+    return {
+      ok: true,
+      connected: status?.connected ?? true,
+      authenticated: status?.authenticated ?? true,
+      message: "Connected",
+    };
   }
 
-  async stop(accountId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  async adapterDisconnect(accountId: string): Promise<AdapterDisconnectResult> {
     try {
       const account = this.getAccountDO(accountId);
       await account.stop();
-      return { ok: true };
+      return { ok: true, message: "Disconnected" };
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 
-  async status(accountId?: string): Promise<AdapterAccountStatus[]> {
+  async adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]> {
     if (!accountId) {
       // Account listing is not tracked yet.
       return [];
@@ -271,25 +148,40 @@ export class TelegramChannel
     }
   }
 
-  async send(accountId: string, message: AdapterOutboundMessage): Promise<AdapterSendResult> {
+  async adapterSend(
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
     try {
       const account = this.getAccountDO(accountId);
-      const result = await account.sendMessage(message);
-      if (!result.ok) {
-        return { ok: false, error: result.error || "Failed to send Telegram message" };
-      }
-      return { ok: true, messageId: result.messageId };
+      const result = await account.sendMessage(message, body);
+      return result;
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      await cancelBinaryBody(body, error);
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        retryable: true,
+      };
     }
   }
 
-  async setTyping(accountId: string, surface: AdapterSurface, typing: boolean): Promise<void> {
+  async adapterSetActivity(
+    accountId: string,
+    surface: AdapterSurface,
+    activity: AdapterActivity,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (activity.kind !== "typing") {
+      return { ok: true };
+    }
+
     try {
       const account = this.getAccountDO(accountId);
-      await account.setTyping(surface, typing);
+      await account.setTyping(surface, activity.active);
+      return { ok: true };
     } catch (error) {
-      console.warn(`[TelegramChannel] setTyping failed for ${accountId}:`, error);
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
@@ -343,63 +235,3 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 };
-
-function telegramSurface(id: string): AdapterSurface {
-  const trimmed = id.trim();
-  if (trimmed.startsWith("@")) {
-    return { kind: "channel", id: trimmed, handle: trimmed };
-  }
-  if (/^\d+$/.test(trimmed)) {
-    return { kind: "dm", id: trimmed };
-  }
-  return { kind: "group", id: trimmed };
-}
-
-async function mediaFromUrl(url: string, filename?: string): Promise<AdapterMedia> {
-  let mimeType = "application/octet-stream";
-  try {
-    const response = await fetch(url, { method: "HEAD" });
-    mimeType = response.headers.get("Content-Type")?.split(";")[0].trim() || mimeType;
-  } catch {
-    // The send path can still fetch the URL later; content type falls back.
-  }
-
-  return {
-    type: mediaTypeFromMime(mimeType),
-    mimeType,
-    url,
-    ...(filename ? { filename } : {}),
-  };
-}
-
-function mediaTypeFromMime(mimeType: string): AdapterMedia["type"] {
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType.startsWith("video/")) return "video";
-  return "document";
-}
-
-function shellOk(output: string): ShellExecResult {
-  return {
-    status: "completed",
-    output,
-    exitCode: 0,
-    ok: true,
-    pid: 0,
-    stdout: output,
-    stderr: "",
-  };
-}
-
-function shellFail(error: string): ShellExecResult {
-  return {
-    status: "failed",
-    output: error,
-    error,
-    exitCode: 1,
-    ok: false,
-    pid: 0,
-    stdout: "",
-    stderr: error,
-  };
-}

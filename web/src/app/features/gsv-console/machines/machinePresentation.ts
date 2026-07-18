@@ -10,7 +10,6 @@ import type { ConsoleTarget } from "../domain/consoleModels";
 
 export function iconForTarget(target: ConsoleTarget): string {
   if (target.kind === "browser") return "bookmark";
-  if (target.kind === "adapter") return "chat";
   return "computer";
 }
 

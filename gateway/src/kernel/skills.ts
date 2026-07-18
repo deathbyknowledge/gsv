@@ -1,4 +1,7 @@
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type {
+  AiSkillIndexMode,
+  ProcessIdentity,
+} from "@humansandmachines/gsv/protocol";
 import {
   accountHomeRepoRef,
   packageSourcePathNameMap,
@@ -38,6 +41,15 @@ export type SkillDocument = {
 };
 
 export type SkillIndexEntry = Pick<SkillDocument, "id" | "name" | "description" | "source">;
+
+export type SkillValidationResult = {
+  ok: true;
+  name: string;
+  description: string;
+} | {
+  ok: false;
+  errors: string[];
+};
 
 type SkillFile = {
   idBase: string;
@@ -190,7 +202,94 @@ export function parseSkillMarkdown(content: string, fallbackName: string): {
   };
 }
 
-export function renderSkillIndex(entries: SkillIndexEntry[]): string {
+/** Validate the persisted GSV skill contract for authoring and inspection tools. */
+export function validateSkillMarkdown(
+  content: string,
+  expectedName?: string,
+): SkillValidationResult {
+  const normalized = content.replace(/\r\n?/g, "\n");
+  const lines = normalized.split("\n");
+  const errors: string[] = [];
+
+  if (normalized.includes("\0")) {
+    errors.push("SKILL.md must be UTF-8 text without NUL bytes");
+  }
+
+  if (lines[0] !== "---") {
+    return {
+      ok: false,
+      errors: ["SKILL.md must start with a YAML frontmatter delimiter (`---`)"],
+    };
+  }
+
+  const closingIndex = lines.indexOf("---", 1);
+  if (closingIndex === -1) {
+    return {
+      ok: false,
+      errors: ["SKILL.md frontmatter must end with a delimiter (`---`) on its own line"],
+    };
+  }
+
+  const frontmatterLines = lines.slice(1, closingIndex);
+  const duplicateKeys = ["name", "description"].filter((key) =>
+    frontmatterLines.filter((line) => new RegExp(`^${key}:`).test(line)).length > 1
+  );
+  for (const key of duplicateKeys) {
+    errors.push(`frontmatter field '${key}' must appear exactly once`);
+  }
+
+  const { frontmatter, body } = parseFrontmatter(normalized);
+  const rawName = frontmatter.get("name")?.trim() ?? "";
+  const description = (frontmatter.get("description") ?? "").replace(/\s+/g, " ").trim();
+
+  if (!frontmatter.has("name") || !rawName) {
+    errors.push("frontmatter field 'name' is required");
+  } else {
+    if (rawName.length >= 64 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(rawName)) {
+      errors.push("frontmatter field 'name' must be under 64 characters and use lowercase letters, digits, and single hyphens");
+    }
+    if (expectedName && rawName !== expectedName) {
+      errors.push(`frontmatter name '${rawName}' must match skill path name '${expectedName}'`);
+    }
+  }
+
+  if (!frontmatter.has("description") || !description) {
+    errors.push("frontmatter field 'description' is required");
+  } else if (description.length > MAX_DESCRIPTION_LENGTH) {
+    errors.push(`frontmatter field 'description' must be at most ${MAX_DESCRIPTION_LENGTH} characters`);
+  }
+
+  if (!body.trim()) {
+    errors.push("SKILL.md must include non-empty workflow instructions after frontmatter");
+  }
+
+  return errors.length > 0
+    ? { ok: false, errors }
+    : { ok: true, name: rawName, description };
+}
+
+export function renderSkillMarkdown(input: {
+  name: string;
+  description: string;
+  body: string;
+}): string {
+  const description = input.description.replace(/\s+/g, " ").trim();
+  return [
+    "---",
+    `name: ${input.name}`,
+    "description: >",
+    `  ${description}`,
+    "---",
+    "",
+    input.body.trim(),
+    "",
+  ].join("\n");
+}
+
+export function renderSkillIndex(
+  entries: SkillIndexEntry[],
+  mode: Exclude<AiSkillIndexMode, "off"> = "summary",
+): string {
   if (entries.length === 0) {
     return [
       "Available skills are top-level only. Use `skills list <skill>` or `skills tree <skill>` to inspect nested skills.",
@@ -204,16 +303,21 @@ export function renderSkillIndex(entries: SkillIndexEntry[]): string {
     "",
   ];
   for (const entry of entries) {
-    lines.push(formatPromptSkillEntry(entry));
+    lines.push(formatPromptSkillEntry(entry, mode));
   }
   return lines.join("\n");
 }
 
-function formatPromptSkillEntry(entry: SkillIndexEntry): string {
+function formatPromptSkillEntry(
+  entry: SkillIndexEntry,
+  mode: Exclude<AiSkillIndexMode, "off">,
+): string {
   return [
     "<skill>",
     `<name>${escapePromptText(entry.id)}</name>`,
-    `<description>${escapePromptText(entry.description || "No description.")}</description>`,
+    ...(mode === "summary"
+      ? [`<description>${escapePromptText(entry.description || "No description.")}</description>`]
+      : []),
     "</skill>",
   ].join("\n");
 }

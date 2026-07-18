@@ -8,16 +8,34 @@
  */
 
 import { DurableObject } from "cloudflare:workers";
+import { DeliveryLedger } from "../../shared/src/delivery-ledger";
+import {
+  adapterInboundResultDisposition,
+  InboundDeliveryLedger,
+} from "../../shared/src/inbound-delivery";
+import { callAdapterGateway } from "../../shared/src/gateway-rpc";
+import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
+import {
+  bundleAdapterMedia,
+  cancelResponseBody,
+  responseBodyToBinaryBody,
+  SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+  SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
+} from "../../shared/src/media-body";
 import type {
-  ChannelAccountStatus,
-  ChannelMedia,
-} from "./types";
+  AdapterMediaBundle,
+  AdapterMediaPart,
+} from "../../shared/src/media-body";
 import type {
+  AdapterAccountStatus,
   AdapterInboundMessage,
   AdapterInboundResult,
-  GatewayFrame,
-  GatewayRequestFrame,
+  AdapterMedia,
+  AdapterOutboundMessage,
+  AdapterSendResult,
+  BinaryBody,
 } from "../../shared/src/types";
+import { deliverDiscordMessage } from "./discord-delivery";
 
 const DISCORD_GATEWAY_URL = "https://discord.com/api/v10/gateway";
 
@@ -46,12 +64,11 @@ const INTENTS = {
   MESSAGE_CONTENT: 1 << 15,
 } as const;
 
-const MAX_INLINE_MEDIA_BYTES = 25 * 1024 * 1024; // 25MB
-const BYTE_TO_BASE64_CHUNK_SIZE = 0x1000; // 4KB (avoids argument-list stack overflows)
-
-type GatewayChannelBinding = Fetcher & {
-  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
-};
+const MAX_MEDIA_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_PART_BYTES;
+const MAX_MEDIA_TOTAL_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES;
+const INBOUND_DELIVERY_PREFIX = "pending_inbound:";
+const INBOUND_RETRY_DELAY_MS = 10_000;
+const INBOUND_RETRY_BATCH_SIZE = 25;
 
 type DiscordAttachment = {
   id: string;
@@ -75,13 +92,16 @@ type GatewayState = {
 };
 
 interface Env {
-  GATEWAY: GatewayChannelBinding;
+  GATEWAY: Fetcher & AdapterGatewayBinding;
+  DISCORD_BOT_TOKEN?: string;
 }
 
 export class DiscordGateway extends DurableObject<Env> {
   private static readonly KEEP_ALIVE_INTERVAL_MS = 10_000; // 10 seconds
   
   private ws: WebSocket | null = null;
+  private readonly deliveries: DeliveryLedger;
+  private readonly inboundDeliveries: InboundDeliveryLedger<string>;
   private heartbeatInterval: number = 0;
   private state: GatewayState = {
     accountId: null,
@@ -96,6 +116,11 @@ export class DiscordGateway extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.deliveries = new DeliveryLedger(this.ctx.storage);
+    this.inboundDeliveries = new InboundDeliveryLedger(
+      this.ctx.storage,
+      INBOUND_DELIVERY_PREFIX,
+    );
     this.loadState();
   }
 
@@ -129,7 +154,7 @@ export class DiscordGateway extends DurableObject<Env> {
     await this.openGatewayConnection();
     
     // Schedule keep-alive to prevent DO hibernation
-    this.scheduleKeepAlive();
+    await this.scheduleKeepAlive();
   }
 
   async stop(): Promise<void> {
@@ -142,7 +167,7 @@ export class DiscordGateway extends DurableObject<Env> {
     await this.ctx.storage.deleteAlarm();
   }
 
-  async getStatus(): Promise<ChannelAccountStatus> {
+  async getStatus(): Promise<AdapterAccountStatus> {
     return {
       accountId: this.getAccountId(),
       connected: this.state.connected,
@@ -161,6 +186,19 @@ export class DiscordGateway extends DurableObject<Env> {
     await this.loadState();
     return this.state.botToken;
   }
+
+  async sendMessage(
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
+    await this.loadState();
+    return await deliverDiscordMessage(
+      this.deliveries,
+      this.state.botToken || this.env.DISCORD_BOT_TOKEN || null,
+      message,
+      body,
+    );
+  }
   
   /** Get the account ID name (e.g., "default"), falling back to hex DO id */
   private getAccountId(): string {
@@ -174,16 +212,23 @@ export class DiscordGateway extends DurableObject<Env> {
   async alarm() {
     // Reload state in case we hibernated
     await this.loadState();
-    
+
+    // An alarm is cleared when it starts. Persist the next wake-up before any
+    // retry performs external I/O so a crash cannot strand durable ingress.
+    await this.inboundDeliveries.armIfPending(
+      Date.now() + INBOUND_RETRY_DELAY_MS,
+    );
+    await this.retryPendingInbound();
+
     // No token = not started, don't reschedule
     if (!this.state.botToken) {
       console.log("[DiscordGateway] No bot token, alarm stopping");
       return;
     }
-    
-    // Always reschedule to keep DO alive
-    this.scheduleKeepAlive();
-    
+
+    // The same alarm owns keep-alive, heartbeat, reconnect, and ingress retry.
+    await this.scheduleKeepAlive();
+
     // Reconnect if WebSocket is gone
     if (!this.ws) {
       console.log("[DiscordGateway] WebSocket lost, reconnecting...");
@@ -194,17 +239,16 @@ export class DiscordGateway extends DurableObject<Env> {
         this.state.lastError = e instanceof Error ? e.message : String(e);
         await this.saveState();
       }
-      return;
-    }
-    
-    // Send heartbeat if connected
-    if (this.state.connected && this.heartbeatInterval > 0) {
+    } else if (this.state.connected && this.heartbeatInterval > 0) {
+      // Send heartbeat if connected
       await this.sendHeartbeat();
     }
   }
   
-  private scheduleKeepAlive(): void {
-    this.ctx.storage.setAlarm(Date.now() + DiscordGateway.KEEP_ALIVE_INTERVAL_MS);
+  private async scheduleKeepAlive(): Promise<void> {
+    await this.inboundDeliveries.arm(
+      Date.now() + DiscordGateway.KEEP_ALIVE_INTERVAL_MS,
+    );
   }
 
   // ─────────────────────────────────────────────────────────
@@ -245,7 +289,9 @@ export class DiscordGateway extends DurableObject<Env> {
     this.ws = ws;
 
     // Set up event handlers
-    ws.addEventListener("message", (event) => this.handleMessage(event.data as string));
+    ws.addEventListener("message", (event) => {
+      this.ctx.waitUntil(this.handleMessage(event.data as string));
+    });
     ws.addEventListener("close", (event) => this.handleClose(event));
     ws.addEventListener("error", (event) => this.handleError(event));
   }
@@ -346,16 +392,57 @@ export class DiscordGateway extends DurableObject<Env> {
     }
   }
 
-  private async handleMessageCreate(data: Record<string, unknown>) {
+  private async handleMessageCreate(data: Record<string, unknown>): Promise<void> {
     const author = data.author as { id: string; username: string; bot?: boolean; discriminator?: string } | undefined;
-    
+
     // Ignore bot messages
     if (author?.bot) return;
 
     const content = typeof data.content === "string" ? data.content : "";
-    const media = await this.extractMediaAttachments(data);
-    if (!content && media.length === 0) return;
+    const hasAttachments = Array.isArray(data.attachments) && data.attachments.length > 0;
+    if (!content && !hasAttachments) return;
 
+    const messageId = data.id as string;
+    if (typeof messageId !== "string" || !messageId) return;
+
+    await this.inboundDeliveries.enqueueAndArm(
+      messageId,
+      JSON.stringify(data),
+      Date.now() + INBOUND_RETRY_DELAY_MS,
+    );
+    await this.deliverPendingInbound(messageId);
+  }
+
+  private async deliverPendingInbound(messageId: string): Promise<void> {
+    const attempt = await this.inboundDeliveries.attempt(
+      messageId,
+      async (serialized) => this.forwardMessageCreate(
+        JSON.parse(serialized) as Record<string, unknown>,
+      ),
+      async (response) => this.sendMessage(response),
+    );
+    if (attempt.state !== "pending") return;
+
+    this.state.lastError = attempt.error ?? "Gateway receipt is still in progress";
+    await this.saveState();
+    console.error(
+      `[DiscordGateway] Inbound ${messageId} remains pending: ${this.state.lastError}`,
+    );
+    await this.inboundDeliveries.arm(Date.now() + INBOUND_RETRY_DELAY_MS);
+  }
+
+  private async retryPendingInbound(): Promise<void> {
+    const ids = await this.inboundDeliveries.pendingIds(INBOUND_RETRY_BATCH_SIZE);
+    for (const messageId of ids) {
+      await this.deliverPendingInbound(messageId);
+    }
+  }
+
+  private async forwardMessageCreate(
+    data: Record<string, unknown>,
+  ): Promise<{ terminal: boolean; error?: string }> {
+    const author = data.author as { id: string; username: string; bot?: boolean; discriminator?: string } | undefined;
+    const content = typeof data.content === "string" ? data.content : "";
     const guildId = data.guild_id as string | undefined;
     const channelId = data.channel_id as string;
     const messageId = data.id as string;
@@ -368,8 +455,20 @@ export class DiscordGateway extends DurableObject<Env> {
       ? (data.mentions as Array<{ id?: string }>)
       : [];
     const botUser = await this.ctx.storage.get<{ id: string }>("botUser");
-    const wasMentioned = mentions?.some(m => m.id === botUser?.id) ?? false;
+    const referencedMessage = data.referenced_message as
+      | { author?: { id?: string } }
+      | null
+      | undefined;
+    const botUserId = botUser?.id;
+    const wasMentioned = Boolean(
+      botUserId
+      && (
+        mentions.some((mention) => mention.id === botUserId)
+        || referencedMessage?.author?.id === botUserId
+      ),
+    );
     const actorId = author ? `discord:user:${author.id}` : undefined;
+    const media = await this.extractMediaAttachments(data);
 
     // Build inbound message
     const message: AdapterInboundMessage = {
@@ -384,8 +483,8 @@ export class DiscordGateway extends DurableObject<Env> {
         name: author.username,
         handle: author.discriminator ? `${author.username}#${author.discriminator}` : author.username,
       } : undefined,
-      text: content || "[Media]",
-      media: media.length > 0 ? media : undefined,
+      text: content || (media.media.length > 0 ? "[Media]" : "[Media unavailable]"),
+      media: media.media.length > 0 ? media.media : undefined,
       replyToId:
         messageReference && typeof messageReference.message_id === "string"
           ? messageReference.message_id
@@ -394,40 +493,40 @@ export class DiscordGateway extends DurableObject<Env> {
       wasMentioned,
     };
 
-    // Forward to GSV Gateway via Service Binding RPC.
-    try {
-      const result = await this.callGateway<AdapterInboundResult>(
-        "adapter.inbound",
-        {
-          adapter: "discord",
-          accountId: this.getAccountId(),
-          message,
-        },
+    const result = await callAdapterGateway<AdapterInboundResult>(
+      this.env.GATEWAY,
+      "adapter.inbound",
+      {
+        adapter: "discord",
+        accountId: this.getAccountId(),
+        deliveryId: messageId,
+        message,
+      },
+      media.body,
+    );
+    const responseDisposition = adapterInboundResultDisposition(result, {
+      surface: message.surface,
+      providerMessageId: messageId,
+    });
+    if (!responseDisposition.terminal) return responseDisposition;
+    if (!result.ok) {
+      console.error(
+        `[DiscordGateway] Inbound rejected by gateway: ${result.error ?? "unknown error"}`,
       );
-      if (!result.ok) {
-        console.error(
-          `[DiscordGateway] Inbound rejected by gateway: ${result.error ?? "unknown error"}`,
-        );
-        return;
-      }
-      if (result.challenge?.prompt) {
-        await this.sendChannelText(channelId, result.challenge.prompt, messageReference?.message_id);
-      }
-      if (result.reply?.text) {
-        await this.sendChannelText(channelId, result.reply.text, result.reply.replyToId || messageReference?.message_id);
-      }
-      console.log(
-        `[DiscordGateway] Delivered message ${messageId} from ${author?.username}`,
-      );
-    } catch (e) {
-      console.error("[DiscordGateway] Failed to deliver inbound via RPC:", e);
+      return responseDisposition;
     }
+
+    this.state.lastError = null;
+    console.log(
+      `[DiscordGateway] Delivered message ${messageId} from ${author?.username}`,
+    );
+    return responseDisposition;
   }
 
-  private async notifyGatewayStatus(status: ChannelAccountStatus): Promise<void> {
+  private async notifyGatewayStatus(status: AdapterAccountStatus): Promise<void> {
     const accountId = this.getAccountId();
     try {
-      await this.callGateway("adapter.state.update", {
+      await callAdapterGateway(this.env.GATEWAY, "adapter.state.update", {
         adapter: "discord",
         accountId,
         status,
@@ -437,68 +536,30 @@ export class DiscordGateway extends DurableObject<Env> {
     }
   }
 
-  private async callGateway<T = unknown>(call: string, args: unknown): Promise<T> {
-    const frame: GatewayRequestFrame = {
-      type: "req",
-      id: crypto.randomUUID(),
-      call,
-      args,
-    };
-
-    const response = await this.env.GATEWAY.serviceFrame(frame);
-    if (!response || response.type !== "res") {
-      throw new Error("No response from gateway serviceFrame");
-    }
-    if (!response.ok) {
-      throw new Error(response.error?.message || `Gateway error on ${call}`);
-    }
-
-    return (response.data ?? {}) as T;
-  }
-
-  private async sendChannelText(channelId: string, text: string, replyToId?: string): Promise<void> {
-    if (!this.state.botToken) return;
-    const body: Record<string, unknown> = { content: text };
-    if (replyToId) {
-      body.message_reference = { message_id: replyToId };
-    }
-
-    try {
-      const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bot ${this.state.botToken}`,
-          "Content-Type": "application/json; charset=utf-8",
-        },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) {
-        console.warn(`[DiscordGateway] Failed to send challenge prompt: ${response.status}`);
-      }
-    } catch (e) {
-      console.warn("[DiscordGateway] Error sending challenge prompt:", e);
-    }
-  }
-
   private async extractMediaAttachments(
     data: Record<string, unknown>,
-  ): Promise<ChannelMedia[]> {
+  ): Promise<AdapterMediaBundle> {
     if (!Array.isArray(data.attachments)) {
-      return [];
+      return { media: [] };
     }
 
-    const media: ChannelMedia[] = [];
-    for (const rawAttachment of data.attachments) {
+    const media: AdapterMediaPart[] = [];
+    let bodyBytes = 0;
+    for (const rawAttachment of data.attachments.slice(0, 10)) {
       const attachment = this.parseAttachment(rawAttachment);
       if (!attachment) continue;
 
-      const converted = await this.attachmentToMedia(attachment);
+      const converted = await this.attachmentToMedia(
+        attachment,
+        MAX_MEDIA_TOTAL_BODY_BYTES - bodyBytes,
+      );
       if (converted) {
         media.push(converted);
+        bodyBytes += converted.body?.length ?? 0;
       }
     }
 
-    return media;
+    return await bundleAdapterMedia(media);
   }
 
   private parseAttachment(raw: unknown): DiscordAttachment | null {
@@ -536,74 +597,70 @@ export class DiscordGateway extends DurableObject<Env> {
 
   private async attachmentToMedia(
     attachment: DiscordAttachment,
-  ): Promise<ChannelMedia | null> {
+    remainingBodyBytes: number,
+  ): Promise<AdapterMediaPart | null> {
     const mimeType =
       attachment.contentType || this.inferMimeTypeFromFilename(attachment.filename);
     const type = this.inferMediaTypeFromMime(mimeType);
     const url = attachment.url || attachment.proxyUrl;
 
-    const base: ChannelMedia = {
+    const base: Omit<AdapterMedia, "body"> = {
       type,
       mimeType,
-      url,
       filename: attachment.filename,
       size: attachment.size,
       duration: attachment.duration,
     };
 
-    if (!url) {
-      return base;
+    if (!url || remainingBodyBytes <= 0) {
+      return null;
     }
 
-    if (attachment.size && attachment.size > MAX_INLINE_MEDIA_BYTES) {
+    const maxBytes = Math.min(MAX_MEDIA_BODY_BYTES, remainingBodyBytes);
+    if (
+      attachment.size !== undefined
+      && (!Number.isSafeInteger(attachment.size) || attachment.size < 0)
+    ) {
       console.log(
-        `[DiscordGateway] Attachment ${attachment.id} too large for inline data (${attachment.size} bytes)`,
+        `[DiscordGateway] Attachment ${attachment.id} has an invalid size`,
       );
-      return base;
+      return null;
+    }
+    if (attachment.size !== undefined && attachment.size > maxBytes) {
+      console.log(
+        `[DiscordGateway] Attachment ${attachment.id} exceeds transfer limit (${attachment.size} bytes)`,
+      );
+      return null;
     }
 
     try {
       const response = await fetch(url);
       if (!response.ok) {
+        await cancelResponseBody(response, "Discord attachment download failed");
         console.warn(
           `[DiscordGateway] Failed to download attachment ${attachment.id}: HTTP ${response.status}`,
         );
-        return base;
+        return null;
       }
 
-      const contentLength = parseInt(
-        response.headers.get("content-length") || "0",
-        10,
-      );
-      if (contentLength > MAX_INLINE_MEDIA_BYTES) {
-        console.log(
-          `[DiscordGateway] Attachment ${attachment.id} content-length exceeds inline limit (${contentLength} bytes)`,
-        );
-        return base;
-      }
-
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength > MAX_INLINE_MEDIA_BYTES) {
-        console.log(
-          `[DiscordGateway] Attachment ${attachment.id} body exceeds inline limit (${bytes.byteLength} bytes)`,
-        );
-        return base;
-      }
-
+      const body = await responseBodyToBinaryBody(response, {
+        maxBytes,
+        expectedBytes: attachment.size,
+        label: "Discord attachment",
+      });
       return {
-        ...base,
-        data: this.bytesToBase64(bytes),
-        size: attachment.size ?? bytes.byteLength,
+        media: { ...base, size: body.length },
+        body,
       };
     } catch (e) {
       console.warn(
         `[DiscordGateway] Error downloading attachment ${attachment.id}: ${e}`,
       );
-      return base;
+      return null;
     }
   }
 
-  private inferMediaTypeFromMime(mimeType: string): ChannelMedia["type"] {
+  private inferMediaTypeFromMime(mimeType: string): AdapterMedia["type"] {
     const normalized = mimeType.split(";")[0].trim().toLowerCase();
     if (normalized.startsWith("image/")) return "image";
     if (normalized.startsWith("audio/")) return "audio";
@@ -630,18 +687,6 @@ export class DiscordGateway extends DurableObject<Env> {
       pdf: "application/pdf",
     };
     return map[extension] || "application/octet-stream";
-  }
-
-  private bytesToBase64(bytes: Uint8Array): string {
-    if (bytes.length === 0) return "";
-
-    const chunks: string[] = [];
-    for (let i = 0; i < bytes.length; i += BYTE_TO_BASE64_CHUNK_SIZE) {
-      chunks.push(
-        String.fromCharCode(...bytes.subarray(i, i + BYTE_TO_BASE64_CHUNK_SIZE)),
-      );
-    }
-    return btoa(chunks.join(""));
   }
 
   private async identify() {

@@ -1,4 +1,30 @@
 import { DurableObject } from "cloudflare:workers";
+import {
+  classifyNonIdempotentProviderStatus,
+  DeliveryLedger,
+  fingerprintOutboundDelivery,
+} from "../../shared/src/delivery-ledger";
+import type { DeliveryFailureKind } from "../../shared/src/delivery-ledger";
+import {
+  adapterInboundResultDisposition,
+  InboundDeliveryLedger,
+} from "../../shared/src/inbound-delivery";
+import { callAdapterGateway } from "../../shared/src/gateway-rpc";
+import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
+import {
+  bundleAdapterMedia,
+  cancelResponseBody,
+  cancelBinaryBody,
+  readAdapterMediaBody,
+  responseBodyToBinaryBody,
+  validateAdapterMediaBody,
+  SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+  SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
+} from "../../shared/src/media-body";
+import type {
+  AdapterMediaBundle,
+  AdapterMediaPart,
+} from "../../shared/src/media-body";
 import type {
   AdapterAccountStatus,
   AdapterActor,
@@ -6,21 +32,17 @@ import type {
   AdapterInboundResult,
   AdapterMedia,
   AdapterOutboundMessage,
+  AdapterSendResult,
   AdapterSurface,
-  GatewayFrame,
-  GatewayRequestFrame,
+  BinaryBody,
 } from "./types";
 import {
   callTelegramApiWithMarkdownCaption,
   sendTelegramMarkdownMessage,
 } from "./telegram-formatting";
 
-type GatewayAdapterBinding = Fetcher & {
-  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
-};
-
 interface Env {
-  GATEWAY: GatewayAdapterBinding;
+  GATEWAY: Fetcher & AdapterGatewayBinding;
 }
 
 type TelegramApiSuccess<T> = {
@@ -35,6 +57,18 @@ type TelegramApiFailure = {
 };
 
 type TelegramApiResponse<T> = TelegramApiSuccess<T> | TelegramApiFailure;
+
+class TelegramDeliveryError extends Error {
+  constructor(
+    message: string,
+    readonly kind: DeliveryFailureKind,
+    readonly telegramStatus?: number,
+    readonly telegramDescription?: string,
+  ) {
+    super(message);
+    this.name = "TelegramDeliveryError";
+  }
+}
 
 type TelegramChatType = "private" | "group" | "supergroup" | "channel";
 
@@ -138,6 +172,11 @@ type TelegramInboundMediaSource = {
   duration?: number;
 };
 
+type TelegramInboundTransfer = {
+  message: AdapterInboundMessage;
+  body?: BinaryBody;
+};
+
 type TelegramInputMediaType = "photo" | "video" | "audio" | "document";
 
 type TelegramInputMedia = {
@@ -157,34 +196,24 @@ type TelegramAccountState = {
   webhookUrl: string | null;
   webhookSecret: string | null;
   lastActivity: number | null;
-  lastUpdateId: number | null;
   lastError: string | null;
 };
 
-type TelegramPendingUpdate = {
+type LegacyTelegramPendingUpdate = {
   updateId: number;
   message: TelegramMessage;
-  attempts: number;
-  createdAt: number;
-  updatedAt: number;
-  lastError?: string;
-};
-
-type TelegramProcessedUpdate = {
-  updateId: number;
-  processedAt: number;
 };
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 const TELEGRAM_FILE_BASE = "https://api.telegram.org/file";
-const MAX_INLINE_MEDIA_BYTES = 25 * 1024 * 1024;
-const BYTE_TO_BASE64_CHUNK_SIZE = 0x1000;
-const PENDING_UPDATE_PREFIX = "pending_update:";
-const PENDING_UPDATE_RETRY_BASE_MS = 1000;
-const PENDING_UPDATE_RETRY_MAX_MS = 60_000;
-const PENDING_UPDATE_MAX_ATTEMPTS = 24;
-const PROCESSED_UPDATE_PREFIX = "processed_update:";
-const PROCESSED_UPDATE_RETENTION = 900;
+const MAX_MEDIA_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_PART_BYTES;
+const MAX_MEDIA_TOTAL_BODY_BYTES = SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES;
+const INBOUND_DELIVERY_PREFIX = "pending_inbound:";
+const INBOUND_WAKE_DELAY_MS = 1_000;
+const INBOUND_RETRY_DELAY_MS = 10_000;
+const INBOUND_RETRY_BATCH_SIZE = 100;
+const LEGACY_PENDING_UPDATE_PREFIX = "pending_update:";
+const LEGACY_PROCESSED_UPDATE_PREFIX = "processed_update:";
 
 function trimTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, "");
@@ -198,21 +227,19 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-class TelegramApiError extends Error {
-  readonly telegramStatus: number;
-  readonly telegramDescription: string;
-
-  constructor(message: string, status: number, description: string) {
-    super(message);
-    this.name = "TelegramApiError";
-    this.telegramStatus = status;
-    this.telegramDescription = description;
-  }
-}
-
 export class TelegramAccount extends DurableObject<Env> {
   private loaded = false;
-  private readonly processingUpdates = new Set<number>();
+  private readonly deliveries: DeliveryLedger;
+  private readonly inboundDeliveries: InboundDeliveryLedger<TelegramMessage>;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.deliveries = new DeliveryLedger(this.ctx.storage);
+    this.inboundDeliveries = new InboundDeliveryLedger(
+      this.ctx.storage,
+      INBOUND_DELIVERY_PREFIX,
+    );
+  }
 
   private state: TelegramAccountState = {
     accountId: "default",
@@ -224,23 +251,67 @@ export class TelegramAccount extends DurableObject<Env> {
     webhookUrl: null,
     webhookSecret: null,
     lastActivity: null,
-    lastUpdateId: null,
     lastError: null,
   };
 
   private async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
 
-    const stored = await this.ctx.storage.get<TelegramAccountState>("state");
+    const stored = await this.ctx.storage.get<
+      TelegramAccountState & { lastUpdateId?: number | null }
+    >("state");
     if (stored) {
-      this.state = { ...this.state, ...stored };
+      const normalized = { ...stored };
+      const hadLegacyUpdateId = "lastUpdateId" in normalized;
+      delete normalized.lastUpdateId;
+      this.state = { ...this.state, ...normalized };
+      if (hadLegacyUpdateId) {
+        await this.saveState();
+      }
     }
 
+    await this.migrateLegacyInboundUpdates();
     this.loaded = true;
+  }
+
+  private async migrateLegacyInboundUpdates(): Promise<void> {
+    const pending = await this.ctx.storage.list<LegacyTelegramPendingUpdate>({
+      prefix: LEGACY_PENDING_UPDATE_PREFIX,
+    });
+    const updates = [...pending.entries()]
+      .sort(([, left], [, right]) => left.updateId - right.updateId);
+    for (const [, update] of updates) {
+      await this.inboundDeliveries.enqueueAndArm(
+        String(update.updateId),
+        update.message,
+        Date.now() + INBOUND_WAKE_DELAY_MS,
+      );
+    }
+    if (updates.length > 0) {
+      await this.ctx.storage.delete(updates.map(([key]) => key));
+    }
+
+    const processed = await this.ctx.storage.list({
+      prefix: LEGACY_PROCESSED_UPDATE_PREFIX,
+    });
+    if (processed.size > 0) {
+      await this.ctx.storage.delete([...processed.keys()]);
+    }
   }
 
   private async saveState(): Promise<void> {
     await this.ctx.storage.put("state", this.state);
+  }
+
+  private async commitLifecycleState(alarmAt: number | null): Promise<void> {
+    await this.ctx.storage.transaction(async (txn) => {
+      await txn.put("state", this.state);
+      if (alarmAt === null) {
+        await txn.deleteAlarm();
+      } else {
+        await txn.setAlarm(alarmAt);
+      }
+    });
   }
 
   private getAccountId(): string {
@@ -260,17 +331,35 @@ export class TelegramAccount extends DurableObject<Env> {
     const isFormDataPayload =
       typeof FormData !== "undefined" && payload instanceof FormData;
 
-    const response = await fetch(`${TELEGRAM_API_BASE}/bot${token}/${method}`, {
-      method: "POST",
-      headers: isFormDataPayload
-        ? undefined
-        : {
-            "Content-Type": "application/json; charset=utf-8",
-          },
-      body: isFormDataPayload ? payload : JSON.stringify(payload),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${TELEGRAM_API_BASE}/bot${token}/${method}`, {
+        method: "POST",
+        headers: isFormDataPayload
+          ? undefined
+          : {
+              "Content-Type": "application/json; charset=utf-8",
+            },
+        body: isFormDataPayload ? payload : JSON.stringify(payload),
+      });
+    } catch (error) {
+      throw new TelegramDeliveryError(
+        `Telegram API ${method} transport failed: ${toErrorMessage(error)}`,
+        "ambiguous",
+      );
+    }
 
-    const responseText = await response.text();
+    let responseText: string;
+    try {
+      responseText = await response.text();
+    } catch (error) {
+      throw new TelegramDeliveryError(
+        `Telegram API ${method} response could not be read: ${toErrorMessage(error)}`,
+        response.ok
+          ? "ambiguous"
+          : classifyNonIdempotentProviderStatus(response.status),
+      );
+    }
     let parsed: TelegramApiResponse<T> | null = null;
     if (responseText) {
       try {
@@ -283,23 +372,29 @@ export class TelegramAccount extends DurableObject<Env> {
     if (!response.ok) {
       const details = parsed && !parsed.ok ? parsed.description : responseText;
       const description = details || response.statusText;
-      throw new TelegramApiError(
+      throw new TelegramDeliveryError(
         `Telegram API ${method} failed (${response.status}): ${description}`,
+        classifyNonIdempotentProviderStatus(response.status),
         response.status,
         description,
       );
     }
 
     if (!parsed) {
-      throw new Error(`Telegram API ${method} returned an empty response`);
+      throw new TelegramDeliveryError(
+        `Telegram API ${method} returned an empty or invalid response`,
+        "ambiguous",
+      );
     }
 
     if (!parsed.ok) {
       const code = parsed.error_code ? ` ${parsed.error_code}` : "";
+      const status = parsed.error_code ?? response.status;
       const description = parsed.description || "Unknown error";
-      throw new TelegramApiError(
+      throw new TelegramDeliveryError(
         `Telegram API ${method} error${code}: ${description}`,
-        parsed.error_code || response.status,
+        classifyNonIdempotentProviderStatus(status),
+        status,
         description,
       );
     }
@@ -358,7 +453,7 @@ export class TelegramAccount extends DurableObject<Env> {
     this.state.webhookSecret = webhookSecret;
     this.state.lastError = null;
 
-    await this.saveState();
+    await this.commitLifecycleState(Date.now() + INBOUND_WAKE_DELAY_MS);
     await this.notifyGatewayStatus();
   }
 
@@ -381,9 +476,7 @@ export class TelegramAccount extends DurableObject<Env> {
     this.state.connected = false;
     this.state.authenticated = false;
     this.state.lastError = null;
-    await this.clearPendingUpdates();
-    await this.ctx.storage.deleteAlarm();
-    await this.saveState();
+    await this.commitLifecycleState(null);
     await this.notifyGatewayStatus();
   }
 
@@ -421,10 +514,12 @@ export class TelegramAccount extends DurableObject<Env> {
 
   async sendMessage(
     message: AdapterOutboundMessage,
-  ): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
     await this.ensureLoaded();
 
     if (!this.state.botToken || !this.state.authenticated) {
+      await cancelBinaryBody(body, "Telegram account is not authenticated");
       return { ok: false, error: "Telegram account is not authenticated" };
     }
 
@@ -432,8 +527,101 @@ export class TelegramAccount extends DurableObject<Env> {
     const media = message.media ?? [];
 
     if (!trimmedText && media.length === 0) {
+      await cancelBinaryBody(body, "Telegram requires text or media");
       return { ok: false, error: "Telegram requires text or media" };
     }
+    if (media.length > 10) {
+      await cancelBinaryBody(body, "Telegram media groups support at most 10 attachments");
+      return {
+        ok: false,
+        error: "Telegram media groups support at most 10 attachments",
+      };
+    }
+
+    try {
+      validateAdapterMediaBody(media, body, {
+        maxBytes: MAX_MEDIA_TOTAL_BODY_BYTES,
+        maxPartBytes: MAX_MEDIA_BODY_BYTES,
+      });
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      return { ok: false, error: toErrorMessage(error) };
+    }
+
+    let mediaBytes: Array<Uint8Array | undefined>;
+    try {
+      mediaBytes = await readAdapterMediaBody(media, body, {
+        maxBytes: MAX_MEDIA_TOTAL_BODY_BYTES,
+        maxPartBytes: MAX_MEDIA_BODY_BYTES,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Could not read Telegram media body: ${toErrorMessage(error)}`,
+        retryable: true,
+      };
+    }
+
+    let requestFingerprint: string;
+    try {
+      requestFingerprint = await fingerprintOutboundDelivery(message, mediaBytes);
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Could not fingerprint Telegram delivery: ${toErrorMessage(error)}`,
+        retryable: true,
+      };
+    }
+
+    let claim;
+    try {
+      claim = await this.deliveries.claim(message.deliveryId, requestFingerprint);
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Telegram delivery ledger unavailable: ${toErrorMessage(error)}`,
+        retryable: true,
+      };
+    }
+    if (!claim.claimed) {
+      return claim.result;
+    }
+
+    const { attemptId } = claim;
+    const fail = async (
+      kind: DeliveryFailureKind,
+      error: string,
+    ): Promise<AdapterSendResult> => {
+      try {
+        if (kind === "retryable") {
+          await this.deliveries.releaseRetryable(message.deliveryId, attemptId);
+        } else if (kind === "ambiguous") {
+          await this.deliveries.failAmbiguous(message.deliveryId, attemptId, error);
+        } else {
+          await this.deliveries.failPermanent(message.deliveryId, attemptId, error);
+        }
+      } catch (ledgerError) {
+        console.error(
+          `[TelegramAccount:${this.getAccountId()}] Failed to persist delivery outcome`,
+          ledgerError,
+        );
+      }
+      this.state.lastError = error;
+      try {
+        await this.saveState();
+      } catch (stateError) {
+        console.error(
+          `[TelegramAccount:${this.getAccountId()}] Failed to persist adapter error`,
+          stateError,
+        );
+      }
+      return {
+        ok: false,
+        error,
+        ...(kind === "retryable" ? { retryable: true } : {}),
+        ...(kind === "ambiguous" ? { ambiguous: true } : {}),
+      };
+    };
 
     try {
       const replyToMessageId = message.replyToId
@@ -452,43 +640,69 @@ export class TelegramAccount extends DurableObject<Env> {
         const sent = await this.sendMediaMessage(
           message.surface.id,
           media[0],
+          mediaBytes[0],
           trimmedText,
           replyToMessageId,
         );
         sentMessageId = String(sent.message_id);
       } else {
-        if (media.length > 10) {
-          return {
-            ok: false,
-            error: "Telegram media groups support at most 10 attachments",
-          };
-        }
-
         const sent = await this.sendMediaGroupMessage(
           message.surface.id,
           media,
+          mediaBytes,
           trimmedText,
           replyToMessageId,
         );
         sentMessageId = sent[0] ? String(sent[0].message_id) : undefined;
       }
 
+      try {
+        await this.deliveries.succeed(message.deliveryId, attemptId, sentMessageId);
+      } catch (error) {
+        return {
+          ok: false,
+          error: "Telegram accepted the delivery but its durable outcome could not be recorded",
+          ambiguous: true,
+        };
+      }
+
       this.state.lastActivity = Date.now();
       this.state.lastError = null;
-      await this.saveState();
-
+      try {
+        await this.saveState();
+      } catch (error) {
+        console.error(
+          `[TelegramAccount:${this.getAccountId()}] Failed to persist send activity`,
+          error,
+        );
+      }
       return { ok: true, messageId: sentMessageId };
     } catch (error) {
-      const messageText = toErrorMessage(error);
-      this.state.lastError = messageText;
-      await this.saveState();
-      return { ok: false, error: messageText };
+      const kind = error instanceof TelegramDeliveryError
+        ? error.kind
+        : "permanent";
+      return await fail(kind, toErrorMessage(error));
     }
+  }
+
+  private sendFormattedTextMessage(
+    chatId: string,
+    text: string,
+    replyToMessageId?: number,
+  ): Promise<TelegramMessage> {
+    return sendTelegramMarkdownMessage(
+      (method, payload) =>
+        this.callTelegramApi<TelegramMessage>(method, payload),
+      chatId,
+      text,
+      replyToMessageId,
+    );
   }
 
   private async sendMediaMessage(
     chatId: string,
     media: AdapterMedia,
+    bytes: Uint8Array | undefined,
     text: string,
     replyToMessageId?: number,
   ): Promise<TelegramMessage> {
@@ -513,10 +727,9 @@ export class TelegramAccount extends DurableObject<Env> {
       );
     }
 
-    if (media.data) {
+    if (bytes) {
       const filename = this.buildMediaFilename(media);
-      const fileBytes = this.decodeBase64(media.data);
-      const blob = new Blob([fileBytes], { type: media.mimeType });
+      const blob = new Blob([bytes], { type: media.mimeType });
 
       return callTelegramApiWithMarkdownCaption(
         (apiMethod, payload) =>
@@ -542,13 +755,14 @@ export class TelegramAccount extends DurableObject<Env> {
     }
 
     throw new Error(
-      "Telegram media attachment must include either base64 data or a URL",
+      "Telegram media attachment must include either a binary body or a URL",
     );
   }
 
   private async sendMediaGroupMessage(
     chatId: string,
     mediaItems: AdapterMedia[],
+    mediaBytes: Array<Uint8Array | undefined>,
     text: string,
     replyToMessageId?: number,
   ): Promise<TelegramMessage[]> {
@@ -573,17 +787,17 @@ export class TelegramAccount extends DurableObject<Env> {
 
       if (media.url) {
         item.media = media.url;
-      } else if (media.data) {
+      } else if (mediaBytes[index]) {
         const field = `file${index + 1}`;
         item.media = `attach://${field}`;
         uploadEntries.push({
           field,
-          blob: new Blob([this.decodeBase64(media.data)], { type: media.mimeType }),
+          blob: new Blob([mediaBytes[index]], { type: media.mimeType }),
           filename: this.buildMediaFilename(media),
         });
       } else {
         throw new Error(
-          "Telegram media attachment must include either base64 data or a URL",
+          "Telegram media attachment must include either a binary body or a URL",
         );
       }
 
@@ -692,15 +906,6 @@ export class TelegramAccount extends DurableObject<Env> {
     return `attachment.${ext}`;
   }
 
-  private decodeBase64(base64: string): Uint8Array {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  }
-
   private getExtensionFromMime(
     mimeType: string,
     mediaType: AdapterMedia["type"],
@@ -778,106 +983,80 @@ export class TelegramAccount extends DurableObject<Env> {
 
     const message = this.extractMessage(update);
     const updateId = this.normalizeUpdateId(update.update_id);
+    if (!message) {
+      return { ok: true };
+    }
+
+    const deliveryId = updateId === null
+      ? `message:${message.chat.id}:${message.message_id}`
+      : String(updateId);
+    await this.inboundDeliveries.enqueueAndArm(
+      deliveryId,
+      message,
+      Date.now() + INBOUND_WAKE_DELAY_MS,
+    );
     if (!this.canProcessInbound()) {
-      if (updateId !== null) {
-        await this.markUpdateProcessed(updateId);
-      }
       return { ok: true };
     }
 
     if (updateId === null) {
-      if (message) {
-        const delivered = await this.processWebhookMessage(message);
-        if (!delivered) {
-          return {
-            ok: false,
-            status: 502,
-            error: this.state.lastError ?? "Failed to process Telegram update",
-          };
-        }
+      const attempt = await this.deliverPendingInbound(deliveryId);
+      if (attempt === "pending") {
+        return {
+          ok: false,
+          status: 502,
+          error: this.state.lastError ?? "Failed to process Telegram update",
+        };
       }
-      return { ok: true };
     }
 
-    if (await this.hasProcessedUpdate(updateId)) {
-      return { ok: true };
-    }
-
-    if (await this.hasPendingUpdate(updateId)) {
-      await this.schedulePendingUpdateRetry(0);
-      return { ok: true };
-    }
-
-    if (!message) {
-      await this.markUpdateProcessed(updateId);
-      return { ok: true };
-    }
-
-    await this.enqueuePendingUpdate(updateId, message);
     return { ok: true };
   }
 
-  private async processWebhookMessage(message: TelegramMessage): Promise<boolean> {
-    try {
-      if (!this.canProcessInbound()) {
-        return true;
-      }
-
-      const inbound = await this.toInboundMessage(message);
-      if (!inbound) {
-        return true;
-      }
-
-      if (!this.canProcessInbound()) {
-        return true;
-      }
-
-      const result = await this.callGateway<AdapterInboundResult>(
-        "adapter.inbound",
-        {
-          adapter: "telegram",
-          accountId: this.getAccountId(),
-          message: inbound,
-        },
-      );
-
-      if (!result.ok) {
-        const error = result.error || "Gateway rejected inbound message";
-        this.state.lastError = error;
-        await this.saveState();
-        return false;
-      }
-
-      if (!this.canProcessInbound()) {
-        return true;
-      }
-
-      if (result.challenge?.prompt) {
-        await this.sendTextReply(
-          String(message.chat.id),
-          result.challenge.prompt,
-          String(message.message_id),
-        );
-      }
-
-      if (result.reply?.text) {
-        await this.sendTextReply(
-          String(message.chat.id),
-          result.reply.text,
-          result.reply.replyToId || String(message.message_id),
-        );
-      }
-
-      this.state.lastActivity = Date.now();
-      this.state.lastError = null;
-      await this.saveState();
-      return true;
-    } catch (error) {
-      const messageText = toErrorMessage(error);
-      this.state.lastError = messageText;
-      await this.saveState();
-      return false;
+  private async forwardWebhookMessage(
+    message: TelegramMessage,
+    deliveryId: string,
+  ): Promise<{ terminal: boolean; error?: string }> {
+    if (!this.canProcessInbound()) {
+      return { terminal: false, error: "Telegram account is disconnected" };
     }
+
+    const inbound = await this.toInboundMessage(message);
+    if (!inbound) {
+      return { terminal: true };
+    }
+
+    if (!this.canProcessInbound()) {
+      await cancelBinaryBody(inbound.body, "Telegram account stopped before delivery");
+      return { terminal: false, error: "Telegram account is disconnected" };
+    }
+
+    const result = await callAdapterGateway<AdapterInboundResult>(
+      this.env.GATEWAY,
+      "adapter.inbound",
+      {
+        adapter: "telegram",
+        accountId: this.getAccountId(),
+        deliveryId,
+        message: inbound.message,
+      },
+      inbound.body,
+    );
+    const responseDisposition = adapterInboundResultDisposition(result, {
+      surface: inbound.message.surface,
+      providerMessageId: inbound.message.messageId,
+    });
+    if (!responseDisposition.terminal) return responseDisposition;
+    if (!result.ok) {
+      this.state.lastError = result.error || "Gateway rejected inbound message";
+      await this.saveState();
+      return responseDisposition;
+    }
+
+    this.state.lastActivity = Date.now();
+    this.state.lastError = null;
+    await this.saveState();
+    return responseDisposition;
   }
 
   private normalizeUpdateId(value: unknown): number | null {
@@ -893,201 +1072,45 @@ export class TelegramAccount extends DurableObject<Env> {
     );
   }
 
-  private processedUpdateKey(updateId: number): string {
-    return `${PROCESSED_UPDATE_PREFIX}${String(updateId).padStart(16, "0")}`;
-  }
-
-  private async hasProcessedUpdate(updateId: number): Promise<boolean> {
-    return Boolean(
-      await this.ctx.storage.get<TelegramProcessedUpdate>(
-        this.processedUpdateKey(updateId),
-      ),
+  private async deliverPendingInbound(
+    deliveryId: string,
+  ): Promise<"completed" | "pending"> {
+    const attempt = await this.inboundDeliveries.attempt(
+      deliveryId,
+      async (message) => this.forwardWebhookMessage(message, deliveryId),
+      async (response) => this.sendMessage(response),
     );
-  }
+    if (attempt.state !== "pending") {
+      return "completed";
+    }
 
-  private async markUpdateProcessed(updateId: number): Promise<void> {
-    await this.ctx.storage.put<TelegramProcessedUpdate>(
-      this.processedUpdateKey(updateId),
-      {
-        updateId,
-        processedAt: Date.now(),
-      },
-    );
-    this.state.lastUpdateId = Math.max(this.state.lastUpdateId ?? -1, updateId);
+    this.state.lastError = attempt.error ?? "Gateway receipt is still in progress";
     await this.saveState();
-    await this.pruneProcessedUpdates();
-  }
-
-  private async pruneProcessedUpdates(): Promise<void> {
-    const processed = await this.ctx.storage.list<TelegramProcessedUpdate>({
-      prefix: PROCESSED_UPDATE_PREFIX,
-      limit: PROCESSED_UPDATE_RETENTION + 1,
-    });
-    const overflow = processed.size - PROCESSED_UPDATE_RETENTION;
-    if (overflow <= 0) {
-      return;
-    }
-
-    const keys = Array.from(processed.keys()).slice(0, overflow);
-    if (keys.length > 0) {
-      await this.ctx.storage.delete(keys);
-    }
-  }
-
-  private pendingUpdateKey(updateId: number): string {
-    return `${PENDING_UPDATE_PREFIX}${updateId}`;
-  }
-
-  private async hasPendingUpdate(updateId: number): Promise<boolean> {
-    return Boolean(
-      await this.ctx.storage.get<TelegramPendingUpdate>(
-        this.pendingUpdateKey(updateId),
-      ),
-    );
-  }
-
-  private async enqueuePendingUpdate(
-    updateId: number,
-    message: TelegramMessage,
-  ): Promise<void> {
-    const key = this.pendingUpdateKey(updateId);
-    const existing = await this.ctx.storage.get<TelegramPendingUpdate>(key);
-    if (existing) {
-      return;
-    }
-
-    const now = Date.now();
-    await this.ctx.storage.put<TelegramPendingUpdate>(key, {
-      updateId,
-      message,
-      attempts: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
-    await this.schedulePendingUpdateRetry(0);
-  }
-
-  private async clearPendingUpdates(): Promise<void> {
-    const pending = await this.ctx.storage.list<TelegramPendingUpdate>({
-      prefix: PENDING_UPDATE_PREFIX,
-    });
-    const keys = Array.from(pending.keys());
-    if (keys.length > 0) {
-      await this.ctx.storage.delete(keys);
-    }
-  }
-
-  private async processPendingUpdate(updateId: number): Promise<void> {
-    if (this.processingUpdates.has(updateId)) {
-      return;
-    }
-
-    this.processingUpdates.add(updateId);
-    try {
-      const key = this.pendingUpdateKey(updateId);
-      const pending = await this.ctx.storage.get<TelegramPendingUpdate>(key);
-      if (!pending) {
-        return;
-      }
-
-      if (!this.canProcessInbound()) {
-        await this.ctx.storage.delete(key);
-        await this.markUpdateProcessed(updateId);
-        return;
-      }
-
-      const delivered = await this.processWebhookMessage(pending.message);
-      if (delivered) {
-        await this.ctx.storage.delete(key);
-        await this.markUpdateProcessed(updateId);
-        return;
-      }
-
-      if (!this.canProcessInbound()) {
-        await this.ctx.storage.delete(key);
-        await this.markUpdateProcessed(updateId);
-        return;
-      }
-
-      const attempts = pending.attempts + 1;
-      const lastError = this.state.lastError ?? "Telegram update processing failed";
-      if (attempts >= PENDING_UPDATE_MAX_ATTEMPTS) {
-        await this.ctx.storage.delete(key);
-        this.state.lastError =
-          `Dropped Telegram update ${updateId} after ${attempts} failed attempts: ${lastError}`;
-        await this.markUpdateProcessed(updateId);
-        return;
-      }
-
-      await this.ctx.storage.put<TelegramPendingUpdate>(key, {
-        ...pending,
-        attempts,
-        updatedAt: Date.now(),
-        lastError,
-      });
-      await this.schedulePendingUpdateRetry(attempts);
-    } finally {
-      this.processingUpdates.delete(updateId);
-    }
-  }
-
-  private async schedulePendingUpdateRetry(attempts: number): Promise<void> {
-    const delay = Math.min(
-      PENDING_UPDATE_RETRY_MAX_MS,
-      PENDING_UPDATE_RETRY_BASE_MS * 2 ** Math.min(attempts, 6),
-    );
-    await this.ctx.storage.setAlarm(Date.now() + delay);
+    return "pending";
   }
 
   async alarm(): Promise<void> {
     await this.ensureLoaded();
-
-    const pending = await this.ctx.storage.list<TelegramPendingUpdate>({
-      prefix: PENDING_UPDATE_PREFIX,
-    });
-    const updates = Array.from(pending.values())
-      .sort((left, right) => left.updateId - right.updateId);
-
-    for (const update of updates) {
-      await this.processPendingUpdate(update.updateId);
+    if (!this.canProcessInbound()) {
+      return;
     }
-  }
 
-  private async sendTextReply(
-    chatId: string,
-    text: string,
-    replyToId?: string,
-  ): Promise<void> {
-    try {
-      const replyToMessageId = replyToId ? Number.parseInt(replyToId, 10) : undefined;
-      await this.sendFormattedTextMessage(chatId, text, replyToMessageId);
-    } catch (error) {
-      console.warn(
-        `[TelegramAccount:${this.getAccountId()}] Failed to send gateway reply:`,
-        error,
-      );
-    }
-  }
-
-  private sendFormattedTextMessage(
-    chatId: string,
-    text: string,
-    replyToMessageId?: number,
-  ): Promise<TelegramMessage> {
-    return sendTelegramMarkdownMessage(
-      (method, payload) =>
-        this.callTelegramApi<TelegramMessage>(method, payload),
-      chatId,
-      text,
-      replyToMessageId,
+    // Re-arm before provider or Gateway I/O. If this alarm invocation crashes,
+    // the durable record still has another scheduled owner.
+    await this.inboundDeliveries.armIfPending(
+      Date.now() + INBOUND_RETRY_DELAY_MS,
     );
+    const ids = await this.inboundDeliveries.pendingIds(INBOUND_RETRY_BATCH_SIZE);
+    for (const deliveryId of ids) {
+      await this.deliverPendingInbound(deliveryId);
+    }
   }
 
   private extractMessage(update: TelegramUpdate): TelegramMessage | null {
     return update.message || update.channel_post || null;
   }
 
-  private async toInboundMessage(message: TelegramMessage): Promise<AdapterInboundMessage | null> {
+  private async toInboundMessage(message: TelegramMessage): Promise<TelegramInboundTransfer | null> {
     if (message.from?.is_bot && message.from.id === this.state.botUserId) {
       return null;
     }
@@ -1105,25 +1128,28 @@ export class TelegramAccount extends DurableObject<Env> {
     const media = await this.extractMediaAttachments(message);
 
     return {
-      messageId: String(message.message_id),
-      surface: {
-        kind: surfaceKind,
-        id: String(message.chat.id),
-        name: surfaceName,
-        handle: message.chat.username ? `@${message.chat.username}` : undefined,
+      message: {
+        messageId: String(message.message_id),
+        surface: {
+          kind: surfaceKind,
+          id: String(message.chat.id),
+          name: surfaceName,
+          handle: message.chat.username ? `@${message.chat.username}` : undefined,
+        },
+        actor,
+        text,
+        replyToId: message.reply_to_message
+          ? String(message.reply_to_message.message_id)
+          : undefined,
+        replyToText:
+          message.reply_to_message?.text ||
+          message.reply_to_message?.caption ||
+          undefined,
+        timestamp: message.date * 1000,
+        wasMentioned,
+        media: media.media.length > 0 ? media.media : undefined,
       },
-      actor,
-      text,
-      replyToId: message.reply_to_message
-        ? String(message.reply_to_message.message_id)
-        : undefined,
-      replyToText:
-        message.reply_to_message?.text ||
-        message.reply_to_message?.caption ||
-        undefined,
-      timestamp: message.date * 1000,
-      wasMentioned,
-      media: media.length > 0 ? media : undefined,
+      ...(media.body ? { body: media.body } : {}),
     };
   }
 
@@ -1150,15 +1176,23 @@ export class TelegramAccount extends DurableObject<Env> {
 
   private async extractMediaAttachments(
     message: TelegramMessage,
-  ): Promise<AdapterMedia[]> {
+  ): Promise<AdapterMediaBundle> {
     const sources = this.getTelegramMediaSources(message);
-    const media: AdapterMedia[] = [];
+    const media: AdapterMediaPart[] = [];
+    let bodyBytes = 0;
 
     for (const source of sources) {
-      media.push(await this.sourceToAdapterMedia(source));
+      const part = await this.sourceToAdapterMedia(
+        source,
+        MAX_MEDIA_TOTAL_BODY_BYTES - bodyBytes,
+      );
+      if (part) {
+        media.push(part);
+        bodyBytes += part.body?.length ?? 0;
+      }
     }
 
-    return media;
+    return await bundleAdapterMedia(media);
   }
 
   private getTelegramMediaSources(
@@ -1309,8 +1343,9 @@ export class TelegramAccount extends DurableObject<Env> {
 
   private async sourceToAdapterMedia(
     source: TelegramInboundMediaSource,
-  ): Promise<AdapterMedia> {
-    const base: AdapterMedia = {
+    remainingBodyBytes: number,
+  ): Promise<AdapterMediaPart | null> {
+    const base: Omit<AdapterMedia, "body"> = {
       type: source.type,
       mimeType: source.mimeType,
       filename: source.filename,
@@ -1318,11 +1353,24 @@ export class TelegramAccount extends DurableObject<Env> {
       duration: source.duration,
     };
 
-    if (typeof source.size === "number" && source.size > MAX_INLINE_MEDIA_BYTES) {
+    if (remainingBodyBytes <= 0) {
+      return null;
+    }
+    if (
+      source.size !== undefined
+      && (!Number.isSafeInteger(source.size) || source.size < 0)
+    ) {
       console.log(
-        `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} too large for inline data (${source.size} bytes)`,
+        `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} has an invalid size`,
       );
-      return base;
+      return null;
+    }
+    const maxBytes = Math.min(MAX_MEDIA_BODY_BYTES, remainingBodyBytes);
+    if (typeof source.size === "number" && source.size > maxBytes) {
+      console.log(
+        `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} exceeds transfer limit (${source.size} bytes)`,
+      );
+      return null;
     }
 
     try {
@@ -1330,44 +1378,47 @@ export class TelegramAccount extends DurableObject<Env> {
         file_id: source.fileId,
       });
       const size = file.file_size ?? source.size;
-      const withSize: AdapterMedia = { ...base, size };
+      const withSize: Omit<AdapterMedia, "body"> = { ...base, size };
 
       if (!file.file_path) {
-        return withSize;
+        return null;
       }
-      if (typeof size === "number" && size > MAX_INLINE_MEDIA_BYTES) {
+      if (
+        size !== undefined
+        && (!Number.isSafeInteger(size) || size < 0)
+      ) {
+        return null;
+      }
+      if (typeof size === "number" && size > maxBytes) {
         console.log(
-          `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} too large for inline data (${size} bytes)`,
+          `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} exceeds transfer limit (${size} bytes)`,
         );
-        return withSize;
+        return null;
       }
 
-      const bytes = await this.downloadTelegramFile(file.file_path);
-      if (!bytes) {
-        return withSize;
-      }
-      if (bytes.byteLength > MAX_INLINE_MEDIA_BYTES) {
-        console.log(
-          `[TelegramAccount:${this.getAccountId()}] Media ${source.fileId} body exceeds inline limit (${bytes.byteLength} bytes)`,
-        );
-        return { ...withSize, size: bytes.byteLength };
+      const body = await this.downloadTelegramFile(file.file_path, size, maxBytes);
+      if (!body) {
+        return null;
       }
 
       return {
-        ...withSize,
-        data: this.bytesToBase64(bytes),
-        size: bytes.byteLength,
+        media: { ...withSize, size: body.length },
+        body,
       };
     } catch (error) {
       console.warn(
         `[TelegramAccount:${this.getAccountId()}] Failed to download media ${source.fileId}:`,
         error,
       );
-      return base;
+      return null;
     }
   }
 
-  private async downloadTelegramFile(filePath: string): Promise<Uint8Array | null> {
+  private async downloadTelegramFile(
+    filePath: string,
+    expectedSize?: number,
+    maxBytes = MAX_MEDIA_BODY_BYTES,
+  ): Promise<BinaryBody | null> {
     if (!this.state.botToken) {
       return null;
     }
@@ -1377,21 +1428,18 @@ export class TelegramAccount extends DurableObject<Env> {
       `${TELEGRAM_FILE_BASE}/bot${this.state.botToken}/${encodedPath}`,
     );
     if (!response.ok) {
+      await cancelResponseBody(response, "Telegram media download failed");
       console.warn(
         `[TelegramAccount:${this.getAccountId()}] Telegram file download failed: HTTP ${response.status}`,
       );
       return null;
     }
 
-    const contentLength = Number.parseInt(
-      response.headers.get("content-length") || "0",
-      10,
-    );
-    if (contentLength > MAX_INLINE_MEDIA_BYTES) {
-      return null;
-    }
-
-    return new Uint8Array(await response.arrayBuffer());
+    return await responseBodyToBinaryBody(response, {
+      maxBytes,
+      expectedBytes: expectedSize,
+      label: "Telegram media",
+    });
   }
 
   private inferMediaTypeFromMime(mimeType: string): AdapterMedia["type"] {
@@ -1400,18 +1448,6 @@ export class TelegramAccount extends DurableObject<Env> {
     if (normalized.startsWith("audio/")) return "audio";
     if (normalized.startsWith("video/")) return "video";
     return "document";
-  }
-
-  private bytesToBase64(bytes: Uint8Array): string {
-    if (bytes.length === 0) return "";
-
-    const chunks: string[] = [];
-    for (let i = 0; i < bytes.length; i += BYTE_TO_BASE64_CHUNK_SIZE) {
-      chunks.push(
-        String.fromCharCode(...bytes.subarray(i, i + BYTE_TO_BASE64_CHUNK_SIZE)),
-      );
-    }
-    return btoa(chunks.join(""));
   }
 
   private mapSurfaceKind(chatType: TelegramChatType): "dm" | "group" | "channel" {
@@ -1493,7 +1529,7 @@ export class TelegramAccount extends DurableObject<Env> {
   private async notifyGatewayStatus(): Promise<void> {
     try {
       const status = await this.getStatus();
-      await this.callGateway("adapter.state.update", {
+      await callAdapterGateway(this.env.GATEWAY, "adapter.state.update", {
         adapter: "telegram",
         accountId: this.getAccountId(),
         status,
@@ -1504,24 +1540,5 @@ export class TelegramAccount extends DurableObject<Env> {
         error,
       );
     }
-  }
-
-  private async callGateway<T = unknown>(call: string, args: unknown): Promise<T> {
-    const frame: GatewayRequestFrame = {
-      type: "req",
-      id: crypto.randomUUID(),
-      call,
-      args,
-    };
-
-    const response = await this.env.GATEWAY.serviceFrame(frame);
-    if (!response || response.type !== "res") {
-      throw new Error("No response from gateway serviceFrame");
-    }
-    if (!response.ok) {
-      throw new Error(response.error?.message || `Gateway error on ${call}`);
-    }
-
-    return (response.data ?? {}) as T;
   }
 }

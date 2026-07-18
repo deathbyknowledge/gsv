@@ -127,6 +127,7 @@ function makeContext(
     adapters: {
       identityLinks: { list: vi.fn(() => []) },
       status: {
+        listByOwner: vi.fn(() => []),
         list: vi.fn(() => []),
         listAll: vi.fn(() => []),
       },
@@ -260,102 +261,6 @@ describe("handleAiTools", () => {
     expect(result.tools.some((tool) => tool.name.startsWith("MCP_"))).toBe(false);
     expect(result.mcpServers).toEqual([]);
     expect(ctx.mcp.listTools).not.toHaveBeenCalled();
-  });
-
-  it("advertises visible adapter targets through the routable Shell target list", async () => {
-    const ctx = {
-      ...makeContext("ready"),
-      env: {
-        CHANNEL_WHATSAPP: { adapterShellExec: vi.fn() },
-      },
-      adapters: {
-        identityLinks: {
-          list: vi.fn(() => [{
-            adapter: "whatsapp",
-            accountId: "primary",
-            actorId: "wa:jid:123@s.whatsapp.net",
-            uid: 1000,
-            createdAt: 1,
-            linkedByUid: 1000,
-            metadata: null,
-          }]),
-        },
-        status: {
-          list: vi.fn(() => [{
-            adapter: "whatsapp",
-            accountId: "primary",
-            connected: true,
-            authenticated: true,
-            mode: "websocket",
-            updatedAt: 2,
-          }]),
-        },
-      },
-    } as unknown as KernelContext;
-
-    const result = await handleAiTools(ctx);
-
-    expect(result.devices).toContainEqual(expect.objectContaining({
-      id: "adapter:whatsapp:primary",
-      label: "WhatsApp",
-      platform: "adapter",
-      implements: ["shell.exec"],
-    }));
-    const shell = result.tools.find((tool) => tool.name === "Shell");
-    expect(JSON.stringify(shell?.inputSchema)).toContain("adapter:whatsapp:primary");
-  });
-
-  it("advertises owner-linked adapter targets for service-account agent processes", async () => {
-    const listLinks = vi.fn((filterUid?: number) =>
-      filterUid === 1000
-        ? [{
-            adapter: "telegram",
-            accountId: "bot",
-            actorId: "telegram:user:1",
-            uid: 1000,
-            createdAt: 1,
-            linkedByUid: 1000,
-            metadata: null,
-          }]
-        : []
-    );
-    const ctx = {
-      ...makeContext("ready", {
-        uid: 2000,
-        ownerUid: 1000,
-        processId: "proc-agent",
-      }),
-      env: {
-        CHANNEL_TELEGRAM: { adapterShellExec: vi.fn() },
-      },
-      adapters: {
-        identityLinks: {
-          list: listLinks,
-        },
-        status: {
-          list: vi.fn(() => [{
-            adapter: "telegram",
-            accountId: "bot",
-            connected: true,
-            authenticated: true,
-            mode: "polling",
-            updatedAt: 2,
-          }]),
-        },
-      },
-    } as unknown as KernelContext;
-
-    const result = await handleAiTools(ctx);
-
-    expect(listLinks).toHaveBeenCalledWith(1000);
-    expect(result.devices).toContainEqual(expect.objectContaining({
-      id: "adapter:telegram:bot",
-      label: "Telegram",
-      platform: "adapter",
-      implements: ["shell.exec"],
-    }));
-    const shell = result.tools.find((tool) => tool.name === "Shell");
-    expect(JSON.stringify(shell?.inputSchema)).toContain("adapter:telegram:bot");
   });
 
   it("caps routable tool target descriptions when many targets are online", async () => {
@@ -510,6 +415,18 @@ describe("handleAiConfig", () => {
     await expect(handleAiConfig({}, makeAiConfigContext({
       "config/ai/generation/streaming": "invalid",
     }))).resolves.toMatchObject({ generationStreaming: "auto" });
+  });
+
+  it("resolves prompt skill enumeration independently from live skills", async () => {
+    await expect(handleAiConfig({}, makeAiConfigContext()))
+      .resolves.toMatchObject({ skillIndexMode: "summary" });
+    await expect(handleAiConfig({}, makeAiConfigContext({
+      "config/ai/skills/index_mode": "off",
+    }))).resolves.toMatchObject({ skillIndexMode: "off", skillIndex: [] });
+    await expect(handleAiConfig({}, makeAiConfigContext({
+      "config/ai/skills/index_mode": "off",
+      "users/1000/ai/skills/index_mode": "names",
+    }))).resolves.toMatchObject({ skillIndexMode: "names" });
   });
 
   it("returns the text executor for kernel and process callers", async () => {

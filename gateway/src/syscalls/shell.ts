@@ -4,7 +4,7 @@ import { SHELL_EXEC, SYSCALL_TOOL_NAMES } from "./constants";
 export const SHELL_EXEC_DEFINITION: ToolDefinition = {
   name: SYSCALL_TOOL_NAMES[SHELL_EXEC],
   description:
-    "Run a shell command or continue a running shell session. New commands use input as the command; calls with sessionId use input as stdin, with an empty string polling for more output.",
+    "Run a shell command or continue a running shell session. Before guessing command syntax or saying a requested workflow is unavailable, search the live GSV capability manual on target \"gsv\" with `man --search -- '<plain-language goal>'`, then follow the result's NEXT action. New commands use input as the command; calls with sessionId use input as stdin, with an empty string polling for more output.",
   inputSchema: {
     type: "object",
     properties: {

@@ -4,8 +4,17 @@ import { GsvFs } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { renderManualPage } from "../man-pages";
+import {
+  formatShellDiscoveryResults,
+  type ShellDiscoveryCatalog,
+} from "./discovery";
 
-export function buildCoreCommands(fs: GsvFs, identity: ProcessIdentity, ctx: KernelContext) {
+export function buildCoreCommands(
+  fs: GsvFs,
+  identity: ProcessIdentity,
+  ctx: KernelContext,
+  discovery: ShellDiscoveryCatalog,
+) {
   const whoami = defineCommand("whoami", async (): Promise<ExecResult> => ({
     stdout: identity.username + "\n",
     stderr: "",
@@ -106,12 +115,44 @@ export function buildCoreCommands(fs: GsvFs, identity: ProcessIdentity, ctx: Ker
   });
 
   const man = defineCommand("man", async (args): Promise<ExecResult> => {
-    const page = renderManualPage(args[0]);
+    const first = String(args[0] ?? "").trim();
+    if (first === "--search" || first === "-k") {
+      const json = args.includes("--json");
+      const query = args
+        .slice(1)
+        .filter((arg) => arg !== "--" && arg !== "--json")
+        .join(" ")
+        .trim();
+      if (!query) {
+        return {
+          stdout: "",
+          stderr: "man: usage: man --search -- 'plain-language goal'\n",
+          exitCode: 1,
+        };
+      }
+      const matches = await discovery.search(query);
+      return {
+        stdout: json
+          ? `${JSON.stringify({ query, matches }, null, 2)}\n`
+          : formatShellDiscoveryResults(query, matches),
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+
+    if (!first || first === "help" || first === "--help" || first === "-h") {
+      return {
+        stdout: discovery.renderIndex(),
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+
+    const page = renderManualPage(first) ?? discovery.renderCommandManual(first);
     if (!page) {
-      const topic = String(args[0] ?? "").trim();
       return {
         stdout: "",
-        stderr: `man: no manual entry for ${topic || "that topic"}\n`,
+        stderr: `man: no manual entry for ${first}\nTry: man --search -- ${quoteForMessage(first)}\n`,
         exitCode: 1,
       };
     }
@@ -123,4 +164,8 @@ export function buildCoreCommands(fs: GsvFs, identity: ProcessIdentity, ctx: Ker
   });
 
   return [whoami, id, hostname, uname, chown, chmod, ps, man];
+}
+
+function quoteForMessage(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }

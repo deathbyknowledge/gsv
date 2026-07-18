@@ -383,7 +383,6 @@ function normalizeAdapterEntry(value: unknown, adapterFallback: string): Console
     supportsDisconnect: record.supportsDisconnect === true,
     supportsSend: record.supportsSend === true,
     supportsStatus: record.supportsStatus === true,
-    supportsShellExec: record.supportsShellExec === true,
     supportsActivity: record.supportsActivity === true,
     accounts,
   };
@@ -465,9 +464,6 @@ function normalizeTargetKind(deviceId: string, platform: string): ConsoleTargetK
     normalizedPlatform === "browser-extension"
   ) {
     return "browser";
-  }
-  if (normalizedDeviceId.startsWith("adapter:") || normalizedPlatform === "adapter") {
-    return "adapter";
   }
   if (normalizedPlatform) return "native-device";
   return "unknown";

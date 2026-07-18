@@ -20,6 +20,10 @@ import type {
   ScheduleRunResult,
   ScheduleTarget,
 } from "@humansandmachines/gsv/protocol";
+import {
+  assertAdapterMessageDestinationAccess,
+  normalizeAdapterMessageDestination,
+} from "./adapter-destinations";
 
 const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 500;
@@ -38,6 +42,8 @@ type ScheduleRow = {
   target_json: string;
   overlap_policy: string;
   wake_schedule_id: string | null;
+  one_shot_occurrence_id: string | null;
+  one_shot_attempt_count: number;
   next_run_at: number | null;
   running_at: number | null;
   last_run_at: number | null;
@@ -82,6 +88,8 @@ type CronFileScheduleRow = {
 
 type StoredScheduleRecord = ScheduleRecord & {
   wakeScheduleId: string | null;
+  oneShotOccurrenceId: string | null;
+  oneShotAttemptCount: number;
 };
 
 export class ScheduleStore {
@@ -100,13 +108,19 @@ export class ScheduleStore {
   }): ScheduleRecord {
     const id = crypto.randomUUID();
     const nextRunAt = input.enabled ? computeNextRunAt(input.expression, input.now) : null;
+    const oneShotOccurrenceId = armedOneShotOccurrenceId(
+      input.expression,
+      input.enabled,
+      nextRunAt,
+    );
     this.sql.exec(
       `INSERT INTO schedules (
         schedule_id, owner_uid, creator_json, run_as_json, name, description,
         enabled, expression_json, target_json, overlap_policy, wake_schedule_id,
-        next_run_at, running_at, last_run_at, last_status, last_error,
+        one_shot_occurrence_id, one_shot_attempt_count, next_run_at,
+        running_at, last_run_at, last_status, last_error,
         last_duration_ms, run_count, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'skip', NULL, ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'skip', NULL, ?, 0, ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?)`,
       id,
       input.ownerUid,
       JSON.stringify(input.creator),
@@ -116,6 +130,7 @@ export class ScheduleStore {
       input.enabled ? 1 : 0,
       JSON.stringify(input.expression),
       JSON.stringify(input.target),
+      oneShotOccurrenceId,
       nextRunAt,
       input.now,
       input.now,
@@ -221,6 +236,20 @@ export class ScheduleStore {
           ? computeNextRunAt(expression, patch.now)
           : current.state.nextRunAtMs)
       : null;
+    const startsNewOccurrence = patch.enabled !== undefined
+      || patch.expression !== undefined
+      || patch.target !== undefined;
+    const armedOneShot = enabled
+      && nextRunAt !== null
+      && isOneShotExpression(expression);
+    const oneShotOccurrenceId = armedOneShot
+      ? !startsNewOccurrence && current.oneShotOccurrenceId
+        ? current.oneShotOccurrenceId
+        : crypto.randomUUID()
+      : null;
+    const oneShotAttemptCount = oneShotOccurrenceId === current.oneShotOccurrenceId
+      ? current.oneShotAttemptCount
+      : 0;
 
     this.sql.exec(
       `UPDATE schedules
@@ -229,6 +258,8 @@ export class ScheduleStore {
               enabled = ?,
               expression_json = ?,
               target_json = ?,
+              one_shot_occurrence_id = ?,
+              one_shot_attempt_count = ?,
               next_run_at = ?,
               updated_at = ?
         WHERE schedule_id = ?`,
@@ -237,6 +268,8 @@ export class ScheduleStore {
       enabled ? 1 : 0,
       JSON.stringify(expression),
       JSON.stringify(patch.target ?? current.target),
+      oneShotOccurrenceId,
+      oneShotAttemptCount,
       nextRunAt,
       patch.now,
       id,
@@ -267,7 +300,7 @@ export class ScheduleStore {
     );
   }
 
-  markRunning(id: string, startedAt: number): ScheduleRecord | null {
+  markRunning(id: string, startedAt: number): StoredScheduleRecord | null {
     const current = this.getStored(id);
     if (!current) {
       return null;
@@ -275,13 +308,61 @@ export class ScheduleStore {
     if (current.state.runningAtMs !== null) {
       return null;
     }
+    const oneShotOccurrenceId = isOneShotExpression(current.expression)
+      && current.enabled
+      && current.state.nextRunAtMs !== null
+      ? current.oneShotOccurrenceId ?? crypto.randomUUID()
+      : null;
+    const oneShotAttemptCount = oneShotOccurrenceId
+      ? current.oneShotOccurrenceId === oneShotOccurrenceId
+        ? current.oneShotAttemptCount
+        : 0
+      : 0;
     this.sql.exec(
-      "UPDATE schedules SET running_at = ?, updated_at = ? WHERE schedule_id = ? AND running_at IS NULL",
+      `UPDATE schedules
+          SET running_at = ?,
+              one_shot_occurrence_id = ?,
+              one_shot_attempt_count = ?,
+              updated_at = ?
+        WHERE schedule_id = ? AND running_at IS NULL`,
       startedAt,
+      oneShotOccurrenceId,
+      oneShotAttemptCount,
       startedAt,
       id,
     );
-    return this.get(id);
+    return this.getStored(id);
+  }
+
+  occurrenceKey(
+    record: StoredScheduleRecord,
+    mode: "due" | "force",
+    scheduledAtMs: number | null,
+    startedAtMs: number,
+  ): string {
+    if (mode === "force") {
+      return `force:${crypto.randomUUID()}`;
+    }
+    if (!isOneShotExpression(record.expression)) {
+      return `due:${scheduledAtMs ?? startedAtMs}`;
+    }
+    if (!record.oneShotOccurrenceId) {
+      throw new Error(`Armed one-shot schedule ${record.id} is missing its occurrence id`);
+    }
+    return `one-shot:${record.oneShotOccurrenceId}`;
+  }
+
+  oneShotAttemptNumber(
+    record: StoredScheduleRecord,
+    mode: "due" | "force",
+  ): number | null {
+    if (mode !== "due" || !isOneShotExpression(record.expression)) {
+      return null;
+    }
+    if (!record.oneShotOccurrenceId) {
+      throw new Error(`Armed one-shot schedule ${record.id} is missing its occurrence id`);
+    }
+    return record.oneShotAttemptCount + 1;
   }
 
   finishRun(input: {
@@ -295,8 +376,32 @@ export class ScheduleStore {
     result?: unknown;
     nextRunAtMs: number | null;
     enabled: boolean;
+    oneShotOccurrenceId: string | null;
+    countOneShotAttempt: boolean;
   }): ScheduleRecord | null {
     const durationMs = Math.max(0, input.finishedAtMs - input.startedAtMs);
+    const current = this.getStored(input.scheduleId);
+    const occurrenceSuperseded = input.oneShotOccurrenceId !== null
+      && current?.oneShotOccurrenceId !== input.oneShotOccurrenceId;
+    const enabled = occurrenceSuperseded ? current?.enabled ?? input.enabled : input.enabled;
+    const nextRunAtMs = occurrenceSuperseded
+      ? current?.state.nextRunAtMs ?? input.nextRunAtMs
+      : input.nextRunAtMs;
+    const keepOneShotOccurrence = current
+      && isOneShotExpression(current.expression)
+      && enabled
+      && nextRunAtMs !== null;
+    const oneShotOccurrenceId = keepOneShotOccurrence
+      ? current.oneShotOccurrenceId
+      : null;
+    const oneShotAttemptCount = oneShotOccurrenceId && current
+      ? current.oneShotAttemptCount + (
+          input.countOneShotAttempt
+          && oneShotOccurrenceId === input.oneShotOccurrenceId
+            ? 1
+            : 0
+        )
+      : 0;
     this.sql.exec(
       `UPDATE schedules
           SET enabled = ?,
@@ -306,16 +411,20 @@ export class ScheduleStore {
               last_error = ?,
               last_duration_ms = ?,
               run_count = run_count + ?,
+              one_shot_occurrence_id = ?,
+              one_shot_attempt_count = ?,
               next_run_at = ?,
               updated_at = ?
         WHERE schedule_id = ?`,
-      input.enabled ? 1 : 0,
+      enabled ? 1 : 0,
       input.finishedAtMs,
       input.status,
       input.error ?? null,
       durationMs,
       input.status === "skipped" ? 0 : 1,
-      input.nextRunAtMs,
+      oneShotOccurrenceId,
+      oneShotAttemptCount,
+      nextRunAtMs,
       input.finishedAtMs,
       input.scheduleId,
     );
@@ -496,13 +605,14 @@ export async function handleSchedulerUpdate(
   const nextTarget = args.patch.target === undefined
     ? existing.target
     : normalizeScheduleTarget(args.patch.target);
-  validateScheduleTargetAccess(nextTarget, ctx);
-
   const now = Date.now();
   const nextExpression = args.patch.expression === undefined
     ? existing.expression
     : normalizeScheduleExpression(args.patch.expression, ctx);
   const nextEnabled = args.patch.enabled ?? existing.enabled;
+  if (nextEnabled || args.patch.target !== undefined) {
+    validateScheduleTargetAccess(nextTarget, ctx);
+  }
   if (args.patch.expression !== undefined || args.patch.enabled === true) {
     assertSchedulableAtExpression(nextExpression, nextEnabled, now);
   }
@@ -602,6 +712,20 @@ export function computeNextRunAt(expression: ScheduleExpression, afterMs: number
     case "cron":
       return computeCronNextRunAt(expression, afterMs);
   }
+}
+
+function isOneShotExpression(expression: ScheduleExpression): boolean {
+  return expression.kind === "at" || expression.kind === "after";
+}
+
+function armedOneShotOccurrenceId(
+  expression: ScheduleExpression,
+  enabled: boolean,
+  nextRunAtMs: number | null,
+): string | null {
+  return enabled && nextRunAtMs !== null && isOneShotExpression(expression)
+    ? crypto.randomUUID()
+    : null;
 }
 
 function assertSchedulableAtExpression(
@@ -708,6 +832,17 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
         ? { conversationId: normalizeRequiredText(target.conversationId, "process.event conversationId") }
         : {}),
       ...(target.data === undefined ? {} : { data: normalizePlainObject(target.data, "process.event data") }),
+      ...(target.replyTo === undefined
+        ? {}
+        : { replyTo: normalizeAdapterMessageDestination(target.replyTo) }),
+    };
+  }
+
+  if (target.kind === "adapter.send") {
+    return {
+      kind: "adapter.send",
+      destination: normalizeAdapterMessageDestination(target.destination),
+      text: normalizeRequiredText(target.text, "adapter.send text"),
     };
   }
 
@@ -733,6 +868,18 @@ function validateScheduleTargetAccess(target: ScheduleTarget, ctx: KernelContext
     if (ownerUid !== 0 && proc.ownerUid !== ownerUid) {
       throw new Error(`Permission denied: cannot schedule process ${target.pid}`);
     }
+    if (target.replyTo) {
+      if (!hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")) {
+        throw new Error("Permission denied: adapter.send");
+      }
+      assertAdapterMessageDestinationAccess(target.replyTo, ownerUid, ctx);
+    }
+  }
+  if (target.kind === "adapter.send") {
+    if (!hasCapability(ctx.identity?.capabilities ?? [], "adapter.send")) {
+      throw new Error("Permission denied: adapter.send");
+    }
+    assertAdapterMessageDestinationAccess(target.destination, ownerUid, ctx);
   }
   if (target.kind === "process.spawn" && target.parentPid) {
     const parent = ctx.procs.get(target.parentPid);
@@ -1021,6 +1168,8 @@ function toRecord(row: ScheduleRow): StoredScheduleRecord {
       runCount: row.run_count,
     },
     wakeScheduleId: row.wake_schedule_id,
+    oneShotOccurrenceId: row.one_shot_occurrence_id,
+    oneShotAttemptCount: row.one_shot_attempt_count,
   };
 }
 

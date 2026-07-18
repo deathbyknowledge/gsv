@@ -12,9 +12,14 @@ Prompt context is collected in provider order:
 4. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`, when the process has a workspace.
 5. **Process context** supplied by the current assignment or runtime.
 
-GSV also assembles a compact skill index from layered `skills.d` directories.
-The prompt lists skill ids and descriptions only. Use `skills list`,
-`skills search <query>`, and `skills show <skill>` to inspect full skill bodies.
+GSV can also assemble a compact skill index from layered `skills.d`
+directories. `config/ai/skills/index_mode`, or the per-user override
+`users/{uid}/ai/skills/index_mode`, controls the prompt representation:
+`summary` (the default) includes ids and descriptions, `names` includes ids
+only, and `off` omits the index. This setting does not disable skills or live
+discovery. Start unfamiliar tasks with
+`man --search -- '<plain-language goal>'`; follow its `NEXT` action to open a
+matching command, skill, target, or connected integration.
 
 System context is operator-managed runtime guidance shared by every profile. Profile files are operator-managed instructions for roles such as `task`, `review`, `cron`, `mcp`, and `app`. They may use template keys such as `identity.home`, `workspace`, `devices`, `mcpServers`, and `known_paths`.
 
@@ -43,11 +48,14 @@ pitfalls to avoid.
 Skill sources are layered:
 
 ```text
-config/ai/profile/{profile}/skills.d/
-~/skills.d/
-/workspaces/{workspaceId}/.gsv/skills.d/
-package source repos, resolved with `pkg source <package>`
+the owning user's ~/skills.d/
+the run-as agent's ~/skills.d/, when distinct from the owner
+visible enabled package source repos, resolved with `pkg source <package>`
 ```
+
+For a process running as a distinct agent account, owner skills are considered
+before agent-specific skills. Profile and workspace context directories affect
+prompt context, but they are not skill discovery roots.
 
 The root GSV source repo can ship system skills under `skills/`. During
 `sys.bootstrap`, those files are copied into each bootstrapped user's
@@ -65,6 +73,21 @@ Processes should use `skills show <skill>` before relying on a workflow.
 That command prints the full `SKILL.md`, source path, and whether the source is
 writable. Package skills follow repo source rules: writable package edits are
 staged until `rgit commit`.
+
+When a user asks to automate, save, or reuse a proven workflow, draft a concise
+Markdown instruction body and persist it through the existing home filesystem:
+
+```sh
+skills create <name> --description '<what it does and when to use it>' --from <body-file>
+skills validate <name>
+skills show <name>
+```
+
+Creation writes `~/skills.d/<name>/SKILL.md` and refuses to overwrite an
+existing skill. Read the current skill first and pass `--replace` only for an
+intentional revision. Do not silently persist one-off workflows, credentials,
+private content, or transient account, message, and target identifiers. The
+seeded `skill-authoring` skill contains the full authoring workflow.
 
 ## Workspace Context: `.gsv/context.d/`
 

@@ -48,27 +48,18 @@ const _clearTimeout = globalThis.clearTimeout;
 // This is done via wrangler.jsonc alias configuration.
 
 import { WorkerEntrypoint } from "cloudflare:workers";
-import {
-  isHelpCommand,
-  parseAttachArgs,
-  parseShellWords,
-} from "../../shared/src/command";
+import { cancelBinaryBody } from "../../shared/src/media-body";
 import type {
-  ShellExecArgs,
-  ShellExecResult,
+  AdapterAccountStatus,
+  AdapterActivity,
+  AdapterConnectResult,
+  AdapterDisconnectResult,
+  AdapterOutboundMessage,
+  AdapterSendResult,
+  AdapterSurface,
+  AdapterWorkerInterface,
+  BinaryBody,
 } from "../../shared/src/types";
-import type {
-  ChannelWorkerInterface,
-  ChannelCapabilities,
-  ChannelOutboundMessage,
-  ChannelPeer,
-  ChannelAccountStatus,
-  StartResult,
-  StopResult,
-  SendResult,
-  LoginResult,
-  LogoutResult,
-} from "./channel-types";
 
 export { WhatsAppAccount } from "./whatsapp-account";
 
@@ -76,24 +67,28 @@ interface Env {
   WHATSAPP_ACCOUNT: DurableObjectNamespace;
 }
 
+type WhatsAppAccountStub = DurableObjectStub & {
+  sendMessage(
+    accountId: string,
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult>;
+};
+
+type LoginAttemptResult =
+  | { ok: true; qrDataUrl?: string; message: string }
+  | { ok: false; error: string };
+
 /**
  * WhatsApp Channel Entrypoint for Service Binding RPC
  * 
  * Gateway calls these methods via Service Bindings to send outbound messages.
  */
-export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements ChannelWorkerInterface {
-  readonly channelId = "whatsapp";
+export class WhatsAppChannelEntrypoint
+  extends WorkerEntrypoint<Env>
+  implements AdapterWorkerInterface
+{
   readonly adapterId = "whatsapp";
-  readonly capabilities: ChannelCapabilities = {
-    chatTypes: ["dm", "group"],
-    media: true,
-    reactions: true,
-    threads: false,
-    typing: true,
-    editing: false,
-    deletion: false,
-    qrLogin: true,
-  };
 
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
@@ -101,16 +96,10 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
   // DONT RENAME TO connect() because Cloudflare service bindings already expose
   // a built-in socket connect() method, which hijacks the RPC call before it
   // reaches this worker entrypoint.
-  async adapterConnect(accountId: string, config: Record<string, unknown> = {}): Promise<
-    | {
-        ok: true;
-        connected: boolean;
-        authenticated: boolean;
-        message?: string;
-        challenge?: { type: string; message?: string; data?: string };
-      }
-    | { ok: false; error: string }
-  > {
+  async adapterConnect(
+    accountId: string,
+    config: Record<string, unknown> = {},
+  ): Promise<AdapterConnectResult> {
     const force = config.force === true || config.force === "true";
     const traceId =
       typeof config.__traceId === "string" && config.__traceId.trim().length > 0
@@ -119,7 +108,7 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     console.log(
       `[whatsapp.connect:${traceId}] start accountId=${accountId} force=${force ? "true" : "false"}`,
     );
-    const login = await this.login(accountId, { force, traceId });
+    const login = await this.requestLogin(accountId, { force, traceId });
     console.log(
       `[whatsapp.connect:${traceId}] login ok=${login.ok === true} qr=${Boolean(login.ok && "qrDataUrl" in login && login.qrDataUrl)}`,
     );
@@ -149,49 +138,18 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     };
   }
 
-  async connect(accountId: string, config: Record<string, unknown> = {}) {
-    return this.adapterConnect(accountId, config);
-  }
-
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
    */
-  async adapterDisconnect(accountId: string): Promise<
-    | { ok: true; message?: string }
-    | { ok: false; error: string }
-  > {
-    const logout = await this.logout(accountId);
+  async adapterDisconnect(accountId: string): Promise<AdapterDisconnectResult> {
+    const logout = await this.requestLogout(accountId);
     if (!logout.ok) {
       return { ok: false, error: logout.error };
     }
     return { ok: true, message: "Disconnected" };
   }
 
-  async disconnect(accountId: string) {
-    return this.adapterDisconnect(accountId);
-  }
-
-  async start(accountId: string, _config: Record<string, unknown>): Promise<StartResult> {
-    try {
-      const res = await this.doFetch(accountId, "/wake", { method: "POST" });
-      const data = await res.json() as { success?: boolean; error?: string };
-      return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to start" };
-    } catch (e) {
-      return { ok: false, error: String(e) };
-    }
-  }
-
-  async stop(accountId: string): Promise<StopResult> {
-    try {
-      const res = await this.doFetch(accountId, "/stop", { method: "POST" });
-      const data = await res.json() as { success?: boolean; error?: string };
-      return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to stop" };
-    } catch (e) {
-      return { ok: false, error: String(e) };
-    }
-  }
-
-  async adapterStatus(accountId?: string): Promise<ChannelAccountStatus[]> {
+  async adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]> {
     if (!accountId) {
       // TODO: List all accounts
       return [];
@@ -217,173 +175,50 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     }
   }
 
-  async status(accountId?: string) {
-    return this.adapterStatus(accountId);
-  }
-
   async adapterSend(
     accountId: string,
-    message: {
-      surface: ChannelPeer;
-      text: string;
-      media?: ChannelOutboundMessage["media"];
-      replyToId?: string;
-    },
-  ): Promise<SendResult> {
+    message: AdapterOutboundMessage,
+    body?: BinaryBody,
+  ): Promise<AdapterSendResult> {
     try {
       console.log(`[WhatsAppEntrypoint] send() called for ${accountId} to ${message.surface.id}`);
-      const outbound: ChannelOutboundMessage = {
-        peer: message.surface,
-        text: message.text,
-        media: message.media,
-        replyToId: message.replyToId,
-      };
-      const res = await this.doFetch(accountId, "/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(outbound),
-      });
-      const data = await res.json() as { success?: boolean; messageId?: string; error?: string };
-      if (data.success) {
-        return { ok: true, messageId: data.messageId };
-      }
-      return { ok: false, error: data.error || "Failed to send" };
+      return await this.getDO(accountId).sendMessage(accountId, message, body);
     } catch (e) {
+      await cancelBinaryBody(body, e);
       console.error(`[WhatsAppEntrypoint] send() error:`, e);
-      return { ok: false, error: String(e) };
+      return { ok: false, error: String(e), retryable: true };
     }
-  }
-
-  async send(accountId: string, message: ChannelOutboundMessage) {
-    return this.adapterSend(accountId, {
-      surface: message.peer,
-      text: message.text,
-      media: message.media,
-      replyToId: message.replyToId,
-    });
   }
 
   async adapterSetActivity(
     accountId: string,
-    surface: ChannelPeer,
-    activity: { kind: "typing" | "recording" | "uploading"; active: boolean },
+    surface: AdapterSurface,
+    activity: AdapterActivity,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     if (activity.kind !== "typing") {
       return { ok: true };
     }
 
     try {
-      await this.setTyping(accountId, surface, activity.active);
+      const response = await this.doFetch(accountId, "/typing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ peer: surface, typing: activity.active }),
+      });
+      const data = await response.json() as { success?: boolean; error?: string };
+      if (!response.ok || !data.success) {
+        return { ok: false, error: data.error || "Failed to set WhatsApp activity" };
+      }
       return { ok: true };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
 
-  async setTyping(accountId: string, peer: ChannelPeer, typing: boolean): Promise<void> {
-    try {
-      await this.doFetch(accountId, "/typing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ peer, typing }),
-      });
-    } catch (e) {
-      console.error(`[WhatsAppEntrypoint] setTyping() error:`, e);
-    }
-  }
-
-  async adapterReact(
+  private async requestLogin(
     accountId: string,
-    args: {
-      surface: ChannelPeer;
-      messageId: string;
-      emoji: string;
-      participant?: string;
-    },
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
-    try {
-      const res = await this.doFetch(accountId, "/react", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          peer: args.surface,
-          messageId: args.messageId,
-          emoji: args.emoji,
-          participant: args.participant,
-        }),
-      });
-      const data = await res.json() as { success?: boolean; error?: string };
-      return data.success ? { ok: true } : { ok: false, error: data.error || "Failed to react" };
-    } catch (e) {
-      return { ok: false, error: String(e) };
-    }
-  }
-
-  async adapterShellExec(accountId: string, args: ShellExecArgs): Promise<ShellExecResult> {
-    const tokens = parseShellWords(args.input);
-    const command = tokens[0] ?? "help";
-
-    if (isHelpCommand(command)) {
-      return shellOk([
-        "whatsapp adapter commands:",
-        "  help | -h | --help",
-        "  send <jid-or-phone> <text>",
-        "  react <jid-or-phone> <message-id> <emoji> [participant-jid]",
-        "  attach <jid-or-phone> <url> [--filename <name>] [caption]",
-        "",
-        "Normal back-and-forth replies should use the adapter conversation route.",
-      ].join("\n"));
-    }
-
-    if (command === "send") {
-      const [surfaceId, ...textParts] = tokens.slice(1);
-      const text = textParts.join(" ").trim();
-      if (!surfaceId || !text) {
-        return shellFail("usage: send <jid-or-phone> <text>");
-      }
-      const result = await this.adapterSend(accountId, {
-        surface: whatsappSurface(surfaceId),
-        text,
-      });
-      return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
-    }
-
-    if (command === "react") {
-      const [surfaceId, messageId, emoji, participant] = tokens.slice(1);
-      if (!surfaceId || !messageId || emoji === undefined) {
-        return shellFail("usage: react <jid-or-phone> <message-id> <emoji> [participant-jid]");
-      }
-      const result = await this.adapterReact(accountId, {
-        surface: whatsappSurface(surfaceId),
-        messageId,
-        emoji,
-        participant,
-      });
-      return result.ok ? shellOk("reacted") : shellFail(result.error);
-    }
-
-    if (command === "attach") {
-      const { targetId: surfaceId, url, filename, caption } = parseAttachArgs(tokens.slice(1));
-      if (!surfaceId || !url) {
-        return shellFail("usage: attach <jid-or-phone> <url> [--filename <name>] [caption]");
-      }
-      const media = await mediaFromUrl(url, filename);
-      const result = await this.adapterSend(accountId, {
-        surface: whatsappSurface(surfaceId),
-        text: caption,
-        media: [media],
-      });
-      return result.ok ? shellOk(`sent ${result.messageId ?? ""}`.trim()) : shellFail(result.error);
-    }
-
-    if (command === "reply") {
-      return shellFail("reply is handled by normal adapter conversation routing for WhatsApp");
-    }
-
-    return shellFail(`unknown command: ${command}`);
-  }
-
-  async login(accountId: string, options?: { force?: boolean; traceId?: string }): Promise<LoginResult> {
+    options?: { force?: boolean; traceId?: string },
+  ): Promise<LoginAttemptResult> {
     try {
       const traceId = options?.traceId?.trim() || "no-trace";
       const path = options?.force ? "/login?force=true" : "/login";
@@ -405,7 +240,9 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     }
   }
 
-  async logout(accountId: string): Promise<LogoutResult> {
+  private async requestLogout(
+    accountId: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
       const res = await this.doFetch(accountId, "/logout", { method: "POST" });
       const data = await res.json() as { success?: boolean; error?: string };
@@ -415,9 +252,9 @@ export class WhatsAppChannelEntrypoint extends WorkerEntrypoint<Env> implements 
     }
   }
 
-  private getDO(accountId: string) {
+  private getDO(accountId: string): WhatsAppAccountStub {
     const id = this.env.WHATSAPP_ACCOUNT.idFromName(accountId);
-    return this.env.WHATSAPP_ACCOUNT.get(id);
+    return this.env.WHATSAPP_ACCOUNT.get(id) as WhatsAppAccountStub;
   }
 
   private doFetch(
@@ -461,63 +298,3 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 };
-
-function whatsappSurface(id: string): ChannelPeer {
-  const trimmed = id.trim();
-  return {
-    kind: trimmed.endsWith("@g.us") ? "group" : "dm",
-    id: trimmed,
-  };
-}
-
-async function mediaFromUrl(
-  url: string,
-  filename?: string,
-): Promise<NonNullable<ChannelOutboundMessage["media"]>[number]> {
-  let mimeType = "application/octet-stream";
-  try {
-    const response = await fetch(url, { method: "HEAD" });
-    mimeType = response.headers.get("Content-Type")?.split(";")[0].trim() || mimeType;
-  } catch {
-    // The send path can still fetch the URL later; content type falls back.
-  }
-
-  return {
-    type: mediaTypeFromMime(mimeType),
-    mimeType,
-    url,
-    ...(filename ? { filename } : {}),
-  };
-}
-
-function mediaTypeFromMime(mimeType: string): NonNullable<ChannelOutboundMessage["media"]>[number]["type"] {
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType.startsWith("video/")) return "video";
-  return "document";
-}
-
-function shellOk(output: string): ShellExecResult {
-  return {
-    status: "completed",
-    output,
-    exitCode: 0,
-    ok: true,
-    pid: 0,
-    stdout: output,
-    stderr: "",
-  };
-}
-
-function shellFail(error: string): ShellExecResult {
-  return {
-    status: "failed",
-    output: error,
-    error,
-    exitCode: 1,
-    ok: false,
-    pid: 0,
-    stdout: "",
-    stderr: error,
-  };
-}

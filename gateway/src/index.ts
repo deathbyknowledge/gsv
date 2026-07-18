@@ -785,10 +785,14 @@ export class GatewayEntrypoint
   implements GatewayAdapterInterface
 {
   async serviceFrame(frame: Frame): Promise<Frame | null> {
+    const body = "body" in frame ? frame.body : undefined;
     try {
       const kernel = await getAgentByName(this.env.KERNEL, "singleton");
       return await kernel.serviceFrame(frame);
     } catch (e) {
+      if (body && !body.stream.locked) {
+        await body.stream.cancel("Gateway service request failed").catch(() => {});
+      }
       console.error("[GatewayEntrypoint] serviceFrame failed:", e);
       return null;
     }

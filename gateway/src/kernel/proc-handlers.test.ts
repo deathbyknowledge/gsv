@@ -417,7 +417,12 @@ describe("proc handlers", () => {
       args: { pid: "proc-1", message: "hello" },
     } as RequestFrame, ctx);
 
-    expect(setConnectionRoute).toHaveBeenCalledWith("run-1", 1000, "conn-root");
+    expect(setConnectionRoute).toHaveBeenCalledWith({
+      runId: "run-1",
+      processId: "proc-1",
+      uid: 1000,
+      connectionId: "conn-root",
+    });
   });
 
   it("routes untargeted proc calls through the caller owner's default conversation", async () => {
@@ -681,6 +686,7 @@ describe("proc handlers", () => {
       uid: IDENTITY.uid,
       sourcePid: "proc-1",
     });
+    expect(ctx.runRoutes.clearForProcess).toHaveBeenCalledWith("proc-1");
     expect(ctx.failIpcCallsByTarget).toHaveBeenCalledWith(
       IDENTITY.uid,
       "proc-1",
@@ -747,7 +753,7 @@ describe("proc handlers", () => {
       "/home/sam-agent/conversations/default%3A1000%3A2000/kill.default.gen-1.jsonl.gz",
     );
     expect(clearActivePid).toHaveBeenCalledWith("proc-1");
-    expect(ctx.runRoutes.delete).toHaveBeenCalledWith("run-active");
+    expect(ctx.runRoutes.clearForProcess).toHaveBeenCalledWith("proc-1");
     expect(ctx.failIpcCallsByTarget).toHaveBeenCalledWith(
       IDENTITY.uid,
       "proc-1",
@@ -780,6 +786,7 @@ describe("proc handlers", () => {
 
     expect(setLatestArchive).not.toHaveBeenCalled();
     expect(clearActivePid).toHaveBeenCalledWith("proc-1");
+    expect(ctx.runRoutes.clearForProcess).toHaveBeenCalledWith("proc-1");
   });
 
   it("cleans up pending IPC call when delivery reports failure", async () => {
@@ -1180,6 +1187,7 @@ function makeForwardContext(overrides?: {
     },
     runRoutes: {
       delete: vi.fn(),
+      clearForProcess: vi.fn(),
     },
     conversations: {
       getByActivePid: vi.fn(() => ({

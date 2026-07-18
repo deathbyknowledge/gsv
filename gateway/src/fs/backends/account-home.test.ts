@@ -5,6 +5,15 @@ import { packageAgentAccessGroup } from "../../kernel/package-agents";
 import { GsvFs } from "../gsv-fs";
 import { createAccountHomeBackend } from "./account-home";
 
+const ROOT: ProcessIdentity = {
+  uid: 0,
+  gid: 0,
+  gids: [0],
+  username: "root",
+  home: "/root",
+  cwd: "/root",
+};
+
 const ALICE: ProcessIdentity = {
   uid: 1000,
   gid: 1000,
@@ -91,6 +100,10 @@ function getPasswdByUid(uid: number) {
 }
 
 const auth = {
+  getPasswdEntries() {
+    return [ALICE, PERSONAL_AGENT, PACKAGE_AGENT, BOB]
+      .map((identity) => getPasswdByUid(identity.uid)!);
+  },
   getPasswdByUid,
   getPasswdByUsername(username: string) {
     if (username === ALICE.username) return getPasswdByUid(ALICE.uid);
@@ -208,6 +221,107 @@ describe("AccountHomeMountBackend delegated routing", () => {
     expect(backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
   });
 
+  it("resolves authorized ripgit homes through a virtual /home on empty R2", async () => {
+    const reads: string[] = [];
+    const ripgit = {
+      async fetch(input: RequestInfo | URL) {
+        const url = new URL(String(input));
+        const path = url.searchParams.get("path") ?? "";
+        reads.push(`${url.pathname}:${path}`);
+        if (path === "skills.d") {
+          return Response.json([{
+            name: "workflow.md",
+            mode: "100644",
+            hash: "skill-hash",
+            type: "blob",
+          }]);
+        }
+        return new Response("not found", { status: 404 });
+      },
+    } satisfies Fetcher;
+    const backend = createAccountHomeBackend(env.STORAGE, ripgit, ALICE, {
+      auth: auth as never,
+      ownerUid: ALICE.uid,
+      isRoot: false,
+    });
+    const fs = new GsvFs(
+      env.STORAGE,
+      ALICE,
+      undefined,
+      undefined,
+      null,
+      backend,
+    );
+
+    await expect(env.STORAGE.list({ prefix: "home/" }))
+      .resolves
+      .toMatchObject({ objects: [] });
+    await expect(fs.statExtended("/home")).resolves.toMatchObject({
+      isDirectory: true,
+      mode: 0o755,
+      uid: 0,
+      gid: 0,
+    });
+    await expect(fs.readdir("/home")).resolves.toEqual([
+      "alice",
+      "alice-agent",
+      "wiki-builder",
+    ]);
+    await expect(fs.readdir("/home/alice/skills.d")).resolves.toEqual(["workflow.md"]);
+    await expect(fs.readdir("/home/wiki-builder/skills.d")).resolves.toEqual(["workflow.md"]);
+    expect(reads).toEqual(expect.arrayContaining([
+      "/hyperspace/repos/alice/home/read:skills.d",
+      "/hyperspace/repos/wiki-builder/home/read:skills.d",
+    ]));
+  });
+
+  it("does not reveal unauthorized R2 home roots through the virtual namespace", async () => {
+    await env.STORAGE.put("home/bob/private.txt", "secret", {
+      customMetadata: {
+        uid: String(BOB.uid),
+        gid: String(BOB.gid),
+        mode: "644",
+      },
+    });
+    const backend = createDelegatingBackend();
+    const fs = new GsvFs(
+      env.STORAGE,
+      ALICE,
+      undefined,
+      undefined,
+      null,
+      backend,
+    );
+
+    await expect(fs.readdir("/home")).resolves.toEqual([
+      "alice",
+      "alice-agent",
+      "wiki-builder",
+    ]);
+    await expect(fs.stat("/home/bob")).rejects.toThrow("EACCES");
+    await expect(fs.readdir("/home/bob")).rejects.toThrow("EACCES");
+
+    const rootBackend = createAccountHomeBackend(env.STORAGE, fakeRipgit, ROOT, {
+      auth: auth as never,
+      ownerUid: ROOT.uid,
+      isRoot: true,
+    });
+    const rootFs = new GsvFs(
+      env.STORAGE,
+      ROOT,
+      undefined,
+      undefined,
+      null,
+      rootBackend,
+    );
+    await expect(rootFs.readdir("/home")).resolves.toEqual([
+      "alice",
+      "alice-agent",
+      "bob",
+      "wiki-builder",
+    ]);
+  });
+
   it("appends overlay files without UTF-8 conversion", async () => {
     const initial = new Uint8Array([0xff, 0x00, 0x80]);
     let applied: number[] = [];
@@ -265,6 +379,94 @@ describe("AccountHomeMountBackend delegated routing", () => {
     });
     expect(new Uint8Array(await new Response(opened.body).arrayBuffer()))
       .toEqual(bytes.subarray(2, 6));
+  });
+
+  it("exposes archived media as read-only account-home files", async () => {
+    const archiveKey = `home/alice/.gsv/media/archived-media:${"a".repeat(64)}`;
+    const archivePath = `/${archiveKey}`;
+    const archivedBytes = new Uint8Array([1, 3, 5, 7]);
+    await env.STORAGE.put(archiveKey, archivedBytes, {
+      httpMetadata: { contentType: "image/png" },
+      customMetadata: {
+        uid: String(ALICE.uid),
+        gid: String(ALICE.gid),
+        mode: "400",
+        purpose: "conversation-media",
+        sourceEtag: "source-etag-1",
+        sourceContentType: "image/png",
+      },
+    });
+    const fs = new GsvFs(
+      env.STORAGE,
+      ALICE,
+      undefined,
+      undefined,
+      null,
+      createDelegatingBackend(),
+    );
+
+    await expect(fs.readFileBuffer(archivePath)).resolves.toEqual(archivedBytes);
+    await expect(fs.writeFile(archivePath, "overwrite"))
+      .rejects
+      .toThrow("EACCES");
+    await expect(fs.appendFile(archivePath, "append"))
+      .rejects
+      .toThrow("EACCES");
+    await expect(fs.mkdir(`${archivePath}/nested`, { recursive: true }))
+      .rejects
+      .toThrow("EACCES");
+    await expect(fs.rm(archivePath, { force: true }))
+      .rejects
+      .toThrow("EACCES");
+    await expect(fs.symlink("/home/alice/archive.bin", `${archivePath}.link`))
+      .rejects
+      .toThrow("EACCES");
+
+    let cancelled: unknown;
+    const stream = new ReadableStream<Uint8Array>({
+      cancel(reason) {
+        cancelled = reason;
+      },
+    }, { highWaterMark: 0 });
+    await expect(fs.writeFileStream(archivePath, stream, { expectedSize: 1 }))
+      .rejects
+      .toThrow("EACCES");
+    expect(cancelled).toBeInstanceOf(Error);
+    expect((cancelled as Error).message).toContain("EACCES");
+    await expect(env.STORAGE.get(archiveKey).then((object) => object?.arrayBuffer()))
+      .resolves
+      .toEqual(archivedBytes.buffer);
+  });
+
+  it("hides malformed archived media from filesystem reads and search", async () => {
+    const archiveRoot = "/home/alice/.gsv/media";
+    const basename = `archived-media:${"b".repeat(64)}`;
+    const archivePath = `${archiveRoot}/${basename}`;
+    await env.STORAGE.put(archivePath.slice(1), "provider secret", {
+      httpMetadata: { contentType: "text/plain" },
+      customMetadata: {
+        uid: String(ALICE.uid),
+        gid: String(ALICE.gid),
+        mode: "400",
+        purpose: "conversation-media",
+      },
+    });
+    const fs = new GsvFs(
+      env.STORAGE,
+      ALICE,
+      undefined,
+      undefined,
+      null,
+      createDelegatingBackend(),
+    );
+
+    await expect(fs.readFileBuffer(archivePath)).rejects.toThrow("EACCES");
+    await expect(fs.openFile(archivePath)).rejects.toThrow("EACCES");
+    await expect(fs.exists(archivePath)).resolves.toBe(false);
+    await expect(fs.readdir(archiveRoot)).resolves.not.toContain(basename);
+    await expect(fs.search(archiveRoot, "provider secret"))
+      .resolves
+      .toMatchObject({ matches: [] });
   });
 
   it("lists virtual overlay roots from an authorized agent home", async () => {

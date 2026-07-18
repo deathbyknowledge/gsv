@@ -28,6 +28,7 @@ import type {
   AiTextGenerateConfig,
   AiTextGenerateOptions,
   AiToolsDevice,
+  AdapterMessageDestination,
   InteractionOrigin,
   NetFetchArgs,
   ProcessIdentity,
@@ -48,6 +49,7 @@ import type {
   ProcHistoryResult,
   ProcHistoryMessage,
   ProcHistoryToolResultContent,
+  ProcMediaInput,
   ProcMediaDeleteArgs,
   ProcMediaDeleteResult,
   ProcMediaReadArgs,
@@ -101,9 +103,13 @@ import type {
 import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { AdapterSurface } from "../adapter-interface";
 import type {
+  ProcessAdapterDeliverResponseFrame,
   ProcessInboundFrame,
   ProcessRequestFrame,
+  ProcessRunAttachArgs,
+  ProcessRunAttachResult,
   ProcessScheduleDeliverArgs,
+  ProcessScheduleDeliverResponseFrame,
 } from "../protocol/process-frames";
 import type {
   AssistantMessage,
@@ -151,14 +157,15 @@ import {
   type ToolApprovalPolicy,
 } from "./approval";
 import {
-  buildFallbackMediaBlocks,
   buildImageBlock,
   deleteProcessMedia,
   describeStoredProcessMedia,
   parseStoredProcessMedia,
+  processMediaPath,
   processMediaPrefix,
   storeIncomingProcessMedia,
   stringifyStoredProcessMedia,
+  type StoredProcessMedia,
   type StoreIncomingProcessMediaOptions,
 } from "./media";
 import {
@@ -170,6 +177,17 @@ import {
   isWorkersAiProvider,
 } from "../inference/workers-ai";
 import { isVectorImageMimeType } from "../inference/image-mime";
+import { stableOpaqueId } from "../shared/stable-id";
+import {
+  agentArchiveMediaPath,
+  agentArchiveMediaPrefix,
+  isValidAgentArchiveMediaObject,
+} from "../shared/process-media-path";
+import {
+  MAX_MESSAGE_MEDIA_ITEMS,
+  MAX_MESSAGE_MEDIA_PART_BYTES,
+  MAX_MESSAGE_MEDIA_TOTAL_BYTES,
+} from "../shared/message-media-limits";
 import { assembleSystemPrompt } from "./context";
 import {
   cancelProcessRequests,
@@ -225,6 +243,15 @@ type RunState = {
   mcpServers?: string[];
   systemPrompt?: string;
   approvalPolicy?: ToolApprovalPolicy;
+  outputMedia?: RunOutputMedia[];
+  stagedOutputMediaKeys?: string[];
+  outputMediaPersisted?: boolean;
+};
+
+type RunOutputMedia = ProcMediaInput & {
+  key: string;
+  path: string;
+  size: number;
 };
 
 type RunFinishStatus = "ok" | "error" | "aborted";
@@ -287,16 +314,23 @@ type ArchivedMessageRecord = {
   createdAt?: number;
 };
 
+type ArchivedMediaRewrite =
+  | { key: string; path: string }
+  | { missing: true };
+
 type RuntimeEventAdmission =
-  | { ok: true }
+  | { ok: true; runId: string; queued: boolean }
   | { ok: false; error: string };
 
 const TOOL_APPROVAL_OVERRIDES_KEY = "toolApprovalOverrides";
+const MAX_RUN_FINISH_DELIVERY_ATTEMPTS = 10;
 const HANDLED_IPC_CALLS_KEY = "handledIpcCalls";
 const ABORTED_RUN_IDS_KEY = "abortedRunIds";
+const DELIVERY_NOTICE_IDS_KEY = "deliveryNoticeIds";
 const PROCESS_RESET_AT_KEY = "processResetAt";
 const PENDING_RUN_FINISHES_KEY = "pendingRunFinishes";
 const IPC_TOMBSTONE_LIMIT = 256;
+const DELIVERY_NOTICE_TOMBSTONE_LIMIT = 256;
 const SHELL_SESSION_TARGET_KEY_PREFIX = "shellSessionTarget:";
 const UNKNOWN_SHELL_SESSION_TARGET_MESSAGE =
   "Shell session continuation requires an explicit target because this process does not know which device owns the session";
@@ -840,6 +874,8 @@ export class Process extends Host<Env> {
   private readonly runAbortControllers = new Map<string, AbortController>();
   private readonly activeTickRunIds = new Set<string>();
   private readonly deferredTickRunIds = new Set<string>();
+  private readonly mediaWriteAdmissions = new Map<string, Promise<void>>();
+  private readonly mediaUploadAbortControllers = new Map<string, AbortController>();
   private lifecycleTransition: Promise<void> = Promise.resolve();
   private lifecycleEpoch = 0;
   private queuedSendAdmission: Promise<void> = Promise.resolve();
@@ -1024,11 +1060,18 @@ export class Process extends Host<Env> {
    * Handle a request frame from the kernel.
    * proc.send, proc.history, proc.reset, proc.kill are delivered here.
    */
-  private async handleReq(frame: ProcessRequestFrame): Promise<ResponseFrame | null> {
+  private async handleReq(
+    frame: ProcessRequestFrame,
+  ): Promise<ResponseFrame | ProcessScheduleDeliverResponseFrame | ProcessAdapterDeliverResponseFrame | null> {
     try {
+      if (frame.call === "proc.adapter.deliver") {
+        const { runId, ...args } = frame.args;
+        const result = await this.handleProcSend(args, runId);
+        return { type: "res", id: frame.id, ok: true, data: result };
+      }
       if (frame.call === "proc.schedule.deliver") {
-        await this.handleProcScheduleDeliver(frame.args);
-        return { type: "res", id: frame.id, ok: true };
+        const result = await this.handleProcScheduleDeliver(frame.args);
+        return { type: "res", id: frame.id, ok: true, data: result };
       }
 
       let data: ResultOf<SyscallName>;
@@ -1123,6 +1166,11 @@ export class Process extends Host<Env> {
           data = await this.handleProcMediaDelete(
             frame.args as ProcMediaDeleteArgs,
             frame.body,
+          );
+          break;
+        case "proc.run.attach":
+          data = await this.handleProcRunAttach(
+            frame.args as ProcessRunAttachArgs,
           );
           break;
         case "proc.conversation.open":
@@ -1230,20 +1278,38 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async handleProcSend(args: ProcSendArgs): Promise<ProcSendResult> {
+  private async handleProcSend(
+    args: ProcSendArgs,
+    admittedRunId?: string,
+  ): Promise<ProcSendResult> {
     if (!this.isInitialized()) {
       return { ok: false, error: "Process no longer exists" };
+    }
+    if (args.media !== undefined && !Array.isArray(args.media)) {
+      return { ok: false, error: "proc.send media must be an array" };
+    }
+    if (args.media?.some((item) => !item || typeof item !== "object")) {
+      return { ok: false, error: "proc.send media entries must be objects" };
     }
     if (args.media?.some((item) => "data" in item)) {
       return { ok: false, error: "proc.send media.data was removed; use proc.media.write" };
     }
     const mediaPrefix = processMediaPrefix(this.identity.uid, this.pid);
     if (args.media?.some((item) =>
-      typeof item.key === "string" && item.key.length > 0 && !item.key.startsWith(mediaPrefix)
+      typeof item.key === "string"
+      && item.key.length > 0
+      && (!item.key.startsWith(mediaPrefix) || !processMediaPath(item.key))
     )) {
       return { ok: false, error: "media key is outside this process" };
     }
-    const runId = crypto.randomUUID();
+    const mediaKeys = [...new Set((args.media ?? []).flatMap((item) =>
+      typeof item.key === "string" && item.key.length > 0 ? [item.key] : []
+    ))].sort();
+    const runId = admittedRunId ?? crypto.randomUUID();
+    if (admittedRunId) {
+      const existing = this.existingRunAdmission(runId);
+      if (existing) return existing;
+    }
     const conversationId = normalizeConversationId(args.conversationId);
     const conversation = this.store.ensureConversation(conversationId);
     if (conversation.status === "closed") {
@@ -1254,8 +1320,13 @@ export class Process extends Host<Env> {
       args.origin?.kind !== "process" && args.origin?.kind !== "scheduler";
 
     if (!userCanInterrupt) {
+      const releaseMedia = await this.acquireMediaKeyAdmissions(mediaKeys);
       const releaseAdmission = await this.acquireQueuedSendAdmission();
       try {
+        if (admittedRunId) {
+          const existing = this.existingRunAdmission(runId);
+          if (existing) return existing;
+        }
         const media = await storeIncomingProcessMedia(
           this.env.STORAGE,
           this.identity.uid,
@@ -1267,6 +1338,14 @@ export class Process extends Host<Env> {
         try {
           if (!this.isInitialized()) {
             return { ok: false, error: "Process no longer exists" };
+          }
+          const missingMediaKey = await this.firstMissingMediaKey(mediaKeys);
+          if (missingMediaKey) {
+            return { ok: false, error: `media not found: ${missingMediaKey}` };
+          }
+          if (admittedRunId) {
+            const existing = this.existingRunAdmission(runId);
+            if (existing) return existing;
           }
           if (this.currentRun) {
             this.store.enqueue(runId, args.message, media ?? undefined, conversationId, origin ?? undefined);
@@ -1299,14 +1378,24 @@ export class Process extends Host<Env> {
         }
       } finally {
         releaseAdmission();
+        releaseMedia();
       }
     }
 
     const hasMedia = (args.media?.length ?? 0) > 0;
+    const releaseMedia = await this.acquireMediaKeyAdmissions(mediaKeys);
     const releaseLifecycle = await this.acquireLifecycleTransition();
     try {
       if (!this.isInitialized()) {
         return { ok: false, error: "Process no longer exists" };
+      }
+      const missingMediaKey = await this.firstMissingMediaKey(mediaKeys);
+      if (missingMediaKey) {
+        return { ok: false, error: `media not found: ${missingMediaKey}` };
+      }
+      if (admittedRunId) {
+        const existing = this.existingRunAdmission(runId);
+        if (existing) return existing;
       }
       const activeRun = this.currentRun;
       let interrupted: { interrupted: number; appended: number } | null = null;
@@ -1388,7 +1477,26 @@ export class Process extends Host<Env> {
       return { ok: true, status: "started", runId };
     } finally {
       releaseLifecycle();
+      releaseMedia();
     }
+  }
+
+  private existingRunAdmission(
+    runId: string,
+  ): Extract<ProcSendResult, { ok: true }> | null {
+    if (this.currentRun?.runId === runId) {
+      return { ok: true, status: "started", runId, replayed: "active" };
+    }
+    const located = this.store.locateRunAdmission(runId);
+    if (!located) return null;
+    return {
+      ok: true,
+      status: "started",
+      runId,
+      ...(located === "queued"
+        ? { queued: true, replayed: "queued" as const }
+        : { replayed: "recorded" as const }),
+    };
   }
 
   private async prepareRunMedia(
@@ -1673,7 +1781,10 @@ export class Process extends Host<Env> {
           runId,
           origin: origin ?? undefined,
         });
-        this.currentRun = { runId, conversationId };
+        this.currentRun = {
+          runId,
+          conversationId,
+        };
         this.ctx.waitUntil(this.scheduleTick(runId)
           .then(() => this.announceRun(runId, conversationId, "proc.ipc.deliver"))
           .catch((error) => this.finishRun(runId, {
@@ -1998,6 +2109,7 @@ export class Process extends Host<Env> {
 
       if (r.role === "assistant" && r.toolCalls) {
         const meta = parseAssistantMessageMeta(r.toolCalls);
+        const media = r.media ? this.parseOwnedProcessMedia(r.media) : [];
         return {
           id: r.id,
           role: r.role,
@@ -2005,6 +2117,7 @@ export class Process extends Host<Env> {
             text: r.content,
             thinking: meta.thinking ?? [],
             toolCalls: meta.toolCalls ?? [],
+            ...(media.length > 0 ? { media } : {}),
           },
           timestamp: r.createdAt,
           ...run,
@@ -2013,8 +2126,8 @@ export class Process extends Host<Env> {
         };
       }
 
-      if (r.role === "user" && r.media) {
-        const media = parseStoredProcessMedia(r.media);
+      if (r.media) {
+        const media = this.parseOwnedProcessMedia(r.media);
         return {
           id: r.id,
           role: r.role,
@@ -2064,8 +2177,8 @@ export class Process extends Host<Env> {
       return { data: { ok: false, error: "proc.media.read requires key" } };
     }
 
-    const prefix = processMediaPrefix(this.identity.uid, this.pid);
-    if (!key.startsWith(prefix)) {
+    const path = this.ownedMediaPath(key);
+    if (!path) {
       return { data: { ok: false, error: "media key is outside this process" } };
     }
 
@@ -2073,12 +2186,17 @@ export class Process extends Host<Env> {
     if (!object) {
       return { data: { ok: false, error: "media not found" } };
     }
+    if (!this.isValidOwnedArchiveObject(key, object)) {
+      await object.body.cancel("Invalid archived media ownership").catch(() => {});
+      return { data: { ok: false, error: "media key is outside this process" } };
+    }
 
     const mimeType = object.httpMetadata?.contentType || "application/octet-stream";
     return {
       data: {
         ok: true,
         key,
+        path,
         mimeType,
         size: object.size,
       },
@@ -2087,6 +2205,149 @@ export class Process extends Host<Env> {
         length: object.size,
       },
     };
+  }
+
+  private async handleProcRunAttach(
+    args: ProcessRunAttachArgs,
+  ): Promise<ProcessRunAttachResult> {
+    if (!this.isInitialized()) {
+      return { ok: false, error: "Process no longer exists" };
+    }
+    const runId = typeof args.runId === "string" ? args.runId.trim() : "";
+    if (!runId) {
+      return { ok: false, error: "proc.run.attach requires runId" };
+    }
+    if (!Array.isArray(args.media) || args.media.length === 0) {
+      return { ok: false, error: "proc.run.attach requires media" };
+    }
+    if (args.media.length > MAX_MESSAGE_MEDIA_ITEMS) {
+      return {
+        ok: false,
+        error: `proc.run.attach accepts at most ${MAX_MESSAGE_MEDIA_ITEMS} media items`,
+      };
+    }
+    if (args.stagedKeys !== undefined && !Array.isArray(args.stagedKeys)) {
+      return { ok: false, error: "proc.run.attach stagedKeys must be an array" };
+    }
+
+    const prefix = processMediaPrefix(this.identity.uid, this.pid);
+    const normalized: RunOutputMedia[] = [];
+    const seen = new Set<string>();
+    let totalBytes = 0;
+    for (const item of args.media) {
+      if (!item || typeof item !== "object") {
+        return { ok: false, error: "proc.run.attach media entries must be objects" };
+      }
+      const key = typeof item.key === "string" ? item.key.trim() : "";
+      const path = key ? processMediaPath(key) : null;
+      if (!key || !key.startsWith(prefix) || !path || item.path !== path) {
+        return { ok: false, error: "media key is outside this process" };
+      }
+      if (seen.has(key)) {
+        continue;
+      }
+      if (!(["image", "audio", "video", "document"] as unknown[]).includes(item.type)) {
+        return { ok: false, error: "proc.run.attach media has an invalid type" };
+      }
+      const mimeType = typeof item.mimeType === "string" ? item.mimeType.trim() : "";
+      if (!mimeType) {
+        return { ok: false, error: "proc.run.attach media requires mimeType" };
+      }
+      if (!Number.isSafeInteger(item.size) || item.size < 0) {
+        return { ok: false, error: "proc.run.attach media requires an exact size" };
+      }
+      if (item.size > MAX_MESSAGE_MEDIA_PART_BYTES) {
+        return {
+          ok: false,
+          error: `proc.run.attach media exceeds per-item limit (${MAX_MESSAGE_MEDIA_PART_BYTES} bytes)`,
+        };
+      }
+      totalBytes += item.size;
+      if (totalBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
+        return {
+          ok: false,
+          error: `proc.run.attach media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+        };
+      }
+      seen.add(key);
+      normalized.push({
+        type: item.type,
+        mimeType,
+        key,
+        path,
+        size: item.size,
+        ...(typeof item.filename === "string" && item.filename.trim()
+          ? { filename: item.filename }
+          : {}),
+        ...(typeof item.duration === "number" && Number.isFinite(item.duration) && item.duration >= 0
+          ? { duration: item.duration }
+          : {}),
+        ...(typeof item.transcription === "string" && item.transcription.trim()
+          ? { transcription: item.transcription }
+          : {}),
+      });
+    }
+
+    const stagedKeys = [...new Set((args.stagedKeys ?? []).map((key) =>
+      typeof key === "string" ? key.trim() : ""
+    ))];
+    if (stagedKeys.some((key) => !key || !seen.has(key))) {
+      return { ok: false, error: "proc.run.attach stagedKeys must reference attached media" };
+    }
+
+    const keys = normalized.map((item) => item.key).sort();
+    const releaseMedia = await this.acquireMediaKeyAdmissions(keys);
+    try {
+      const releaseLifecycle = await this.acquireLifecycleTransition();
+      try {
+        const run = this.currentRun;
+        if (!run || run.runId !== runId) {
+          return { ok: false, error: "the process run is no longer active" };
+        }
+        for (const item of normalized) {
+          const object = await this.env.STORAGE.head(item.key);
+          if (!object) {
+            return { ok: false, error: `media not found: ${item.key}` };
+          }
+          const storedMimeType = object.httpMetadata?.contentType || "application/octet-stream";
+          if (object.size !== item.size || storedMimeType !== item.mimeType) {
+            return { ok: false, error: `media descriptor does not match stored data: ${item.key}` };
+          }
+        }
+
+        const merged = new Map((run.outputMedia ?? []).map((item) => [item.key, item]));
+        for (const item of normalized) {
+          merged.set(item.key, item);
+        }
+        const media = [...merged.values()];
+        const combinedBytes = media.reduce((sum, item) => sum + item.size, 0);
+        if (media.length > MAX_MESSAGE_MEDIA_ITEMS) {
+          return {
+            ok: false,
+            error: `proc.run.attach accepts at most ${MAX_MESSAGE_MEDIA_ITEMS} media items`,
+          };
+        }
+        if (combinedBytes > MAX_MESSAGE_MEDIA_TOTAL_BYTES) {
+          return {
+            ok: false,
+            error: `proc.run.attach media exceeds total limit (${MAX_MESSAGE_MEDIA_TOTAL_BYTES} bytes)`,
+          };
+        }
+
+        run.outputMedia = media;
+        run.stagedOutputMediaKeys = [...new Set([
+          ...(run.stagedOutputMediaKeys ?? []),
+          ...stagedKeys,
+        ])];
+        delete run.outputMediaPersisted;
+        this.currentRun = run;
+        return { ok: true, runId, media };
+      } finally {
+        releaseLifecycle();
+      }
+    } finally {
+      releaseMedia();
+    }
   }
 
   private async handleProcMediaWrite(
@@ -2117,61 +2378,182 @@ export class Process extends Host<Env> {
     const pid = this.pid;
     const uid = this.identity.uid;
     const lifecycleEpoch = this.lifecycleEpoch;
-    const key = `${processMediaPrefix(uid, pid)}${crypto.randomUUID()}`;
-    const fixed = new FixedLengthStream(length);
-    const [stored, piped] = await Promise.allSettled([
-      this.env.STORAGE.put(key, fixed.readable, {
-        httpMetadata: { contentType: mimeType },
-      }),
-      body.stream.pipeTo(fixed.writable),
+    const requestedMediaId = args.mediaId?.trim();
+    if (
+      requestedMediaId !== undefined
+      && (
+        requestedMediaId.length === 0
+        || requestedMediaId.length > 160
+        || requestedMediaId === ".dir"
+        || !/^[a-zA-Z0-9._:-]+$/.test(requestedMediaId)
+      )
+    ) {
+      await body.stream.cancel("Invalid media id").catch(() => {});
+      return { ok: false, error: "proc.media.write mediaId is invalid" };
+    }
+    const key = `${processMediaPrefix(uid, pid)}${requestedMediaId ?? crypto.randomUUID()}`;
+    const path = processMediaPath(key);
+    if (!path) {
+      await body.stream.cancel("Invalid process media path").catch(() => {});
+      return { ok: false, error: "Process identity cannot own filesystem media" };
+    }
+    const descriptorId = await stableOpaqueId("process-media-descriptor", [
+      args.type,
+      mimeType,
+      args.filename || null,
+      args.duration ?? null,
+      args.transcription || null,
     ]);
-    if (stored.status === "rejected") {
-      await this.env.STORAGE.delete(key);
-      return {
-        ok: false,
-        error: `proc.media.write failed: ${stored.reason instanceof Error ? stored.reason.message : String(stored.reason)}`,
-      };
-    }
-    if (piped.status === "rejected") {
-      await this.env.STORAGE.delete(key);
-      return {
-        ok: false,
-        error: `proc.media.write failed: ${piped.reason instanceof Error ? piped.reason.message : String(piped.reason)}`,
-      };
-    }
-    const object = stored.value;
-    if (object.size !== length) {
-      await this.env.STORAGE.delete(key);
-      return { ok: false, error: `proc.media.write received ${object.size} bytes, expected ${length}` };
-    }
-
-    const releaseLifecycle = await this.acquireLifecycleTransition();
+    const releaseMediaWrite = requestedMediaId
+      ? await this.acquireMediaKeyAdmission(key)
+      : null;
+    let uploadController: AbortController | null = null;
     try {
-      if (
-        !this.isInitialized()
-        || this.pid !== pid
-        || this.identity.uid !== uid
-        || this.lifecycleEpoch !== lifecycleEpoch
-      ) {
-        await this.env.STORAGE.delete(key);
-        return { ok: false, error: "Process reset during media upload" };
+      const releaseFinalLifecycle = await this.acquireLifecycleTransition();
+      try {
+        if (
+          !this.isInitialized()
+          || this.pid !== pid
+          || this.identity.uid !== uid
+          || this.lifecycleEpoch !== lifecycleEpoch
+        ) {
+          await body.stream.cancel("Process reset during media upload").catch(() => {});
+          return { ok: false, error: "Process reset during media upload" };
+        }
+        uploadController = new AbortController();
+        this.mediaUploadAbortControllers.set(key, uploadController);
+      } finally {
+        releaseFinalLifecycle();
       }
-    } finally {
-      releaseLifecycle();
-    }
 
-    return {
-      ok: true,
-      media: {
-        type: args.type,
-        mimeType,
-        key,
-        size: object.size,
-        ...(args.filename ? { filename: args.filename } : {}),
-        ...(args.duration !== undefined ? { duration: args.duration } : {}),
-        ...(args.transcription ? { transcription: args.transcription } : {}),
-      },
-    };
+      if (requestedMediaId) {
+        const existing = await this.env.STORAGE.head(key);
+        if (existing) {
+          const existingMimeType = existing.httpMetadata?.contentType || "application/octet-stream";
+          if (
+            existing.size !== length
+            || existingMimeType !== mimeType
+            || existing.customMetadata?.descriptorId !== descriptorId
+          ) {
+            await body.stream.cancel("Process media id conflicts with existing media").catch(() => {});
+            return { ok: false, error: "proc.media.write mediaId conflicts with existing media" };
+          }
+          try {
+            await body.stream.pipeTo(new WritableStream<Uint8Array>(), {
+              signal: uploadController.signal,
+            });
+          } catch (error) {
+            if (uploadController.signal.aborted) {
+              return { ok: false, error: "Process reset during media upload" };
+            }
+            throw new Error(
+              `proc.media.write failed to consume repeated media: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+          const releaseLifecycle = await this.acquireLifecycleTransition();
+          try {
+            if (
+              !this.isInitialized()
+              || this.pid !== pid
+              || this.identity.uid !== uid
+              || this.lifecycleEpoch !== lifecycleEpoch
+            ) {
+              return { ok: false, error: "Process reset during media upload" };
+            }
+          } finally {
+            releaseLifecycle();
+          }
+          return {
+            ok: true,
+            media: {
+              type: args.type,
+              mimeType,
+              key,
+              path,
+              size: existing.size,
+              ...(args.filename ? { filename: args.filename } : {}),
+              ...(args.duration !== undefined ? { duration: args.duration } : {}),
+              ...(args.transcription ? { transcription: args.transcription } : {}),
+            },
+          };
+        }
+      }
+      const fixed = new FixedLengthStream(length);
+      const [stored, piped] = await Promise.allSettled([
+        this.env.STORAGE.put(key, fixed.readable, {
+          httpMetadata: { contentType: mimeType },
+          customMetadata: {
+            uid: String(uid),
+            gid: String(this.identity.gid),
+            mode: "400",
+            processId: pid,
+            descriptorId,
+          },
+        }),
+        body.stream.pipeTo(fixed.writable, { signal: uploadController.signal }),
+      ]);
+      if (stored.status === "rejected") {
+        await this.env.STORAGE.delete(key);
+        if (uploadController.signal.aborted) {
+          return { ok: false, error: "Process reset during media upload" };
+        }
+        return {
+          ok: false,
+          error: `proc.media.write failed: ${stored.reason instanceof Error ? stored.reason.message : String(stored.reason)}`,
+        };
+      }
+      if (piped.status === "rejected") {
+        await this.env.STORAGE.delete(key);
+        if (uploadController.signal.aborted) {
+          return { ok: false, error: "Process reset during media upload" };
+        }
+        return {
+          ok: false,
+          error: `proc.media.write failed: ${piped.reason instanceof Error ? piped.reason.message : String(piped.reason)}`,
+        };
+      }
+      const object = stored.value;
+      if (object.size !== length) {
+        await this.env.STORAGE.delete(key);
+        return { ok: false, error: `proc.media.write received ${object.size} bytes, expected ${length}` };
+      }
+
+      const releaseLifecycle = await this.acquireLifecycleTransition();
+      try {
+        if (
+          !this.isInitialized()
+          || this.pid !== pid
+          || this.identity.uid !== uid
+          || this.lifecycleEpoch !== lifecycleEpoch
+        ) {
+          await this.env.STORAGE.delete(key);
+          return { ok: false, error: "Process reset during media upload" };
+        }
+      } finally {
+        releaseLifecycle();
+      }
+
+      return {
+        ok: true,
+        media: {
+          type: args.type,
+          mimeType,
+          key,
+          path,
+          size: object.size,
+          ...(args.filename ? { filename: args.filename } : {}),
+          ...(args.duration !== undefined ? { duration: args.duration } : {}),
+          ...(args.transcription ? { transcription: args.transcription } : {}),
+        },
+      };
+    } finally {
+      if (uploadController && this.mediaUploadAbortControllers.get(key) === uploadController) {
+        this.mediaUploadAbortControllers.delete(key);
+      }
+      releaseMediaWrite?.();
+    }
   }
 
   private async handleProcMediaDelete(
@@ -2189,14 +2571,39 @@ export class Process extends Host<Env> {
     if (!key) {
       return { ok: false, error: "proc.media.delete requires key" };
     }
-    if (!key.startsWith(processMediaPrefix(this.identity.uid, this.pid))) {
+    if (
+      !key.startsWith(processMediaPrefix(this.identity.uid, this.pid))
+      || !processMediaPath(key)
+    ) {
       return { ok: false, error: "media key is outside this process" };
     }
-    if (this.store.referencesMediaKey(key)) {
-      return { ok: false, error: "media is referenced by process history" };
+    const releaseMedia = await this.acquireMediaKeyAdmission(key);
+    try {
+      const releaseLifecycle = await this.acquireLifecycleTransition();
+      try {
+        if (!this.isInitialized()) {
+          return { ok: false, error: "Process no longer exists" };
+        }
+        if (
+          !key.startsWith(processMediaPrefix(this.identity.uid, this.pid))
+          || !processMediaPath(key)
+        ) {
+          return { ok: false, error: "media key is outside this process" };
+        }
+        if (
+          this.store.referencesMediaKey(key)
+          || this.currentRun?.outputMedia?.some((item) => item.key === key)
+        ) {
+          return { ok: false, error: "media is referenced by process history" };
+        }
+        await this.env.STORAGE.delete(key);
+        return { ok: true, key };
+      } finally {
+        releaseLifecycle();
+      }
+    } finally {
+      releaseMedia();
     }
-    await this.env.STORAGE.delete(key);
-    return { ok: true, key };
   }
 
   private getContextStateForHistory(conversationId: string): ProcContextState | null {
@@ -2262,12 +2669,16 @@ export class Process extends Host<Env> {
   private async handleConversationReset(
     args: ProcConversationResetArgs,
   ): Promise<ProcConversationResetResult> {
+    let result!: ProcConversationResetResult;
+    let releasedMediaKeys: string[] = [];
     const releaseLifecycle = await this.acquireLifecycleTransition();
     try {
       const pid = this.pid;
       const conversationId = normalizeConversationId(args.conversationId);
       const existingConversation = this.store.ensureConversation(conversationId);
       await this.resetConversationExecutionState(conversationId);
+      const messages = this.store.getMessages({ conversationId, limit: null });
+      releasedMediaKeys = this.activeProcessMediaKeys(messages);
       const archivedMessages = this.store.messageCount(conversationId);
       let archivedTo: string | undefined;
 
@@ -2292,7 +2703,7 @@ export class Process extends Host<Env> {
 
       const conversation = this.store.resetConversation(conversationId);
 
-      return {
+      result = {
         ok: true,
         pid,
         conversationId,
@@ -2303,6 +2714,15 @@ export class Process extends Host<Env> {
     } finally {
       releaseLifecycle();
     }
+
+    await this.deleteUnreferencedActiveMedia(releasedMediaKeys).catch((error) => {
+      console.warn(
+        `[Process] Failed to clean conversation media for ${result.conversationId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+    return result;
   }
 
   private handleConversationPolicyGet(
@@ -2431,6 +2851,7 @@ export class Process extends Host<Env> {
 
     let conversation!: ProcessConversationRecord;
     let selected!: MessageRecord[];
+    let selectedMediaKeys: string[] = [];
     let lifecycleEpoch = 0;
     const releaseSnapshot = await this.acquireLifecycleTransition();
     try {
@@ -2450,6 +2871,7 @@ export class Process extends Host<Env> {
       if (selected.length === 0) {
         return { ok: false, error: "No conversation messages selected for compaction" };
       }
+      selectedMediaKeys = this.activeProcessMediaKeys(selected);
     } finally {
       releaseSnapshot();
     }
@@ -2571,6 +2993,14 @@ export class Process extends Host<Env> {
         await this.deleteFailedCompactionArchive(archiveKey);
       }
     }
+
+    await this.deleteUnreferencedActiveMedia(selectedMediaKeys).catch((error) => {
+      console.warn(
+        `[Process] Failed to clean compacted conversation media for ${conversationId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
 
     await this.emitProcessLifecycle({
       event: "conversation.compacted",
@@ -2782,12 +3212,15 @@ export class Process extends Host<Env> {
         : message.toolCalls
           ? JSON.stringify(message.toolCalls)
           : undefined;
+    const restoredMedia = message.media === undefined
+      ? null
+      : stringifyStoredProcessMedia(this.parseOwnedProcessMedia(JSON.stringify(message.media)));
     return this.store.appendMessage(message.role, message.content, {
       conversationId,
       generation,
       toolCalls,
       toolCallId: message.toolCallId,
-      media: message.media === undefined ? undefined : JSON.stringify(message.media),
+      media: restoredMedia ?? undefined,
       origin: serializeInteractionOrigin(message.origin) ?? undefined,
       metadata: message.metadata,
       runId: message.runId,
@@ -2880,6 +3313,9 @@ export class Process extends Host<Env> {
     }
 
     if (message.role === "assistant") {
+      const media = message.media === undefined
+        ? []
+        : this.parseOwnedProcessMedia(JSON.stringify(message.media));
       return {
         id: message.id,
         role: message.role,
@@ -2887,6 +3323,7 @@ export class Process extends Host<Env> {
           text: message.content,
           thinking: message.thinking ?? [],
           toolCalls: message.toolCalls ?? [],
+          ...(media.length > 0 ? { media } : {}),
         },
         timestamp: message.createdAt,
         ...run,
@@ -2896,12 +3333,13 @@ export class Process extends Host<Env> {
     }
 
     if (message.role === "user" && message.media !== undefined) {
+      const media = this.parseOwnedProcessMedia(JSON.stringify(message.media));
       return {
         id: message.id,
         role: message.role,
         content: {
           text: message.content,
-          media: message.media,
+          media,
         },
         timestamp: message.createdAt,
         ...run,
@@ -3192,6 +3630,7 @@ export class Process extends Host<Env> {
 
   private async resetExecutionState(reason: string, emitFinish = true): Promise<void> {
     this.lifecycleEpoch += 1;
+    this.abortMediaUploads(new Error(`Process execution was reset: ${reason}`));
     this.store.setValue(PROCESS_RESET_AT_KEY, String(Date.now()));
     const activeRun = this.currentRun;
     this.cancelPendingRequests(null, `Process execution was reset: ${reason}`);
@@ -3237,6 +3676,50 @@ export class Process extends Host<Env> {
       case "ipc.timeout":
         await this.handleIpcSignal(frame.signal, frame.payload);
         break;
+      case "proc.delivery.notice": {
+        const payload = frame.payload && typeof frame.payload === "object"
+          ? frame.payload as Record<string, unknown>
+          : {};
+        const message = typeof payload.message === "string" ? payload.message.trim() : "";
+        const noticeId = typeof payload.noticeId === "string" ? payload.noticeId.trim() : "";
+        if (message && noticeId && /^[a-zA-Z0-9._:-]{1,200}$/.test(noticeId)) {
+          const noticeKey = `deliveryNotice:${noticeId}`;
+          let messageId: number | null = null;
+          this.ctx.storage.transactionSync(() => {
+            if (this.store.getValue(noticeKey)) return;
+            const conversationId = normalizeConversationId(
+              typeof payload.conversationId === "string" ? payload.conversationId : undefined,
+            );
+            messageId = this.store.appendMessage("system", message, {
+              conversationId,
+              runId: typeof payload.runId === "string" ? payload.runId : undefined,
+            });
+            this.store.setValue(noticeKey, String(messageId));
+            const noticeIds = JSON.parse(
+              this.store.getValue(DELIVERY_NOTICE_IDS_KEY) ?? "[]",
+            ) as string[];
+            noticeIds.push(noticeId);
+            const expired = noticeIds.splice(
+              0,
+              Math.max(0, noticeIds.length - DELIVERY_NOTICE_TOMBSTONE_LIMIT),
+            );
+            for (const expiredId of expired) {
+              this.store.deleteValue(`deliveryNotice:${expiredId}`);
+            }
+            this.store.setValue(DELIVERY_NOTICE_IDS_KEY, JSON.stringify(noticeIds));
+          });
+          if (messageId !== null) {
+            await this.emitProcChanged(["messages"], {
+              conversationId: normalizeConversationId(
+                typeof payload.conversationId === "string" ? payload.conversationId : undefined,
+              ),
+              runId: typeof payload.runId === "string" ? payload.runId : undefined,
+              messageId,
+            });
+          }
+        }
+        break;
+      }
       default:
         console.log(`[Process] Unknown signal: ${frame.signal}`);
         break;
@@ -3429,47 +3912,101 @@ export class Process extends Host<Env> {
 
   private async handleProcScheduleDeliver(
     args: ProcessScheduleDeliverArgs,
-  ): Promise<void> {
+  ): Promise<{ runId: string; queued: boolean }> {
     const conversationId = normalizeConversationId(args.conversationId);
+    const origin: InteractionOrigin = {
+      kind: "scheduler",
+      scheduleId: args.scheduleId,
+      ...(args.replyTo ? { replyTo: args.replyTo } : {}),
+    };
     const admission = await this.handleRuntimeEvent(
       formatScheduleEventMessage(args),
       conversationId,
       "schedule.event",
+      {
+        origin,
+        distinctRun: args.replyTo !== undefined,
+        runId: args.runId,
+      },
     );
     if (!admission.ok) {
       throw new Error(admission.error);
     }
+    return { runId: admission.runId, queued: admission.queued };
   }
 
   private async handleRuntimeEvent(
     content: string,
     conversationId: string,
     reason: string,
+    options: {
+      origin?: InteractionOrigin;
+      distinctRun?: boolean;
+      runId?: string;
+    } = {},
   ): Promise<RuntimeEventAdmission> {
+    if (options.runId) {
+      const existing = this.existingRunAdmission(options.runId);
+      if (existing) {
+        return {
+          ok: true,
+          runId: options.runId,
+          queued: existing.queued === true,
+        };
+      }
+    }
     let messageId = -1;
     let nextRunId: string | null = null;
     let wakeRunId: string | null = null;
     let admissionError: string | null = null;
+    let replayedAdmission: Extract<RuntimeEventAdmission, { ok: true }> | null = null;
     const releaseLifecycle = await this.acquireLifecycleTransition();
     const timestamp = Date.now();
     try {
       if (!this.isInitialized()) {
         admissionError = "Process no longer exists";
-      } else {
+      } else if (options.runId) {
+        const existing = this.existingRunAdmission(options.runId);
+        if (existing) {
+          replayedAdmission = {
+            ok: true,
+            runId: options.runId,
+            queued: existing.queued === true,
+          };
+        }
+      }
+      if (!admissionError && !replayedAdmission) {
         const conversation = this.store.ensureConversation(conversationId);
         if (conversation.status === "closed") {
           admissionError = `Conversation is closed: ${conversationId}`;
         } else {
           const currentRun = this.currentRun;
-          nextRunId = currentRun ? null : crypto.randomUUID();
+          nextRunId = currentRun ? null : options.runId ?? crypto.randomUUID();
           this.ctx.storage.transactionSync(() => {
+            if (currentRun && options.distinctRun) {
+              wakeRunId = options.runId ?? crypto.randomUUID();
+              this.store.enqueue(
+                wakeRunId,
+                content,
+                undefined,
+                conversationId,
+                serializeInteractionOrigin(options.origin) ?? undefined,
+              );
+              return;
+            }
             messageId = this.store.appendMessage("system", content, {
               conversationId,
               createdAt: timestamp,
               ...(nextRunId ? { runId: nextRunId } : {}),
+              ...(options.origin
+                ? { origin: serializeInteractionOrigin(options.origin) ?? undefined }
+                : {}),
             });
             if (!currentRun) {
-              this.currentRun = { runId: nextRunId!, conversationId };
+              this.currentRun = {
+                runId: nextRunId!,
+                conversationId,
+              };
             } else if (currentRun.conversationId === conversationId) {
               currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
               this.currentRun = currentRun;
@@ -3489,17 +4026,22 @@ export class Process extends Host<Env> {
       releaseLifecycle();
     }
 
+    if (replayedAdmission) {
+      return replayedAdmission;
+    }
     if (admissionError) {
       return { ok: false, error: admissionError };
     }
 
-    this.ctx.waitUntil(this.emitProcChanged(["messages"], {
-      conversationId,
-      messageId,
-      role: "system",
-      content,
-      timestamp,
-    }));
+    if (messageId >= 0) {
+      this.ctx.waitUntil(this.emitProcChanged(["messages"], {
+        conversationId,
+        messageId,
+        role: "system",
+        content,
+        timestamp,
+      }));
+    }
     if (wakeRunId) {
       this.ctx.waitUntil(this.emitProcChanged(["queue"], {
         conversationId,
@@ -3522,7 +4064,15 @@ export class Process extends Host<Env> {
       }));
       this.ctx.waitUntil(this.announceRun(runId, conversationId, reason));
     }
-    return { ok: true };
+    const admittedRunId = nextRunId ?? wakeRunId ?? this.currentRun?.runId;
+    if (!admittedRunId) {
+      return { ok: false, error: "runtime event was not assigned to a run" };
+    }
+    return {
+      ok: true,
+      runId: admittedRunId,
+      queued: wakeRunId !== null,
+    };
   }
 
   async tick(input: { runId: string; generation: number }): Promise<void> {
@@ -3658,7 +4208,6 @@ export class Process extends Host<Env> {
       description: t.description,
       parameters: t.inputSchema as Tool["parameters"],
     }));
-
     const buildGenerationContext = async (): Promise<Context> => {
       const pendingRuntimeEventsInContext = this.currentRun?.runId === runId
         ? this.currentRun.pendingRuntimeEvents ?? 0
@@ -4002,10 +4551,22 @@ export class Process extends Host<Env> {
       (b): b is ToolCall => b.type === "toolCall",
     );
 
-    if (text.trim() || thinkingBlocks.length > 0) {
+    let outputMedia = toolCalls.length === 0 && this.currentRun?.runId === runId
+      ? this.currentRun.outputMedia ?? []
+      : [];
+
+    if (outputMedia.length > 0) {
+      outputMedia = await this.promoteRunOutputMedia(runId);
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
+    }
+
+    if (text.trim() || thinkingBlocks.length > 0 || outputMedia.length > 0) {
       await this.sendSignal("proc.run.output", {
         text,
         thinking: thinkingBlocks,
+        ...(outputMedia.length > 0 ? { media: outputMedia } : {}),
         ...(activeFallbackMetadata ? { fallback: activeFallbackMetadata } : {}),
         pid: this.pid,
         runId,
@@ -4026,7 +4587,17 @@ export class Process extends Host<Env> {
           toolCalls,
         }),
         metadata: assistantMetadata,
+        ...(outputMedia.length > 0
+          ? { media: stringifyStoredProcessMedia(outputMedia) ?? undefined }
+          : {}),
       });
+      if (outputMedia.length > 0) {
+        const activeRun = this.currentRun;
+        if (activeRun?.runId === runId) {
+          activeRun.outputMediaPersisted = true;
+          this.currentRun = activeRun;
+        }
+      }
       for (const toolCall of toolCalls) {
         const syscall = TOOL_TO_SYSCALL[toolCall.name] as SyscallName | undefined;
         const prepared = syscall
@@ -4046,6 +4617,18 @@ export class Process extends Host<Env> {
         }
       }
     });
+    if (outputMedia.length > 0) {
+      const stagedKeys = this.currentRun?.runId === runId
+        ? [...(this.currentRun.stagedOutputMediaKeys ?? [])]
+        : [];
+      if (stagedKeys.length > 0) {
+        this.ctx.waitUntil(this.deleteUnreferencedActiveMedia(stagedKeys).catch((error) => {
+          console.warn(
+            `[Process] Failed to clean promoted reply media for ${runId}: ${errorMessageFromUnknown(error)}`,
+          );
+        }));
+      }
+    }
 
     context = await buildGenerationContext();
     await this.updateContextState(runId, conversationId, run.config!, context, response.usage, assistantMetadata?.usage);
@@ -4791,6 +5374,14 @@ export class Process extends Host<Env> {
   }
 
   private emitRunFinished(run: RunState, options: RunFinishOptions): void {
+    if (!run.outputMediaPersisted && run.stagedOutputMediaKeys?.length) {
+      const keys = [...run.stagedOutputMediaKeys];
+      this.ctx.waitUntil(this.deleteUnreferencedActiveMedia(keys).catch((error) => {
+        console.warn(
+          `[Process] Failed to clean unfinished reply media for ${run.runId}: ${errorMessageFromUnknown(error)}`,
+        );
+      }));
+    }
     const payload = this.runFinishedPayload(run, options);
     const pending = JSON.parse(
       this.store.getValue(PENDING_RUN_FINISHES_KEY) ?? "[]",
@@ -4816,6 +5407,9 @@ export class Process extends Host<Env> {
       text: options.text ?? null,
       ...(options.error ? { error: options.error } : {}),
       ...(options.usage !== undefined ? { usage: options.usage } : {}),
+      ...(run.outputMediaPersisted && run.outputMedia?.length
+        ? { media: run.outputMedia }
+        : {}),
       ...(options.status === "aborted" ? { aborted: true } : {}),
       queuedCount,
       timestamp: Date.now(),
@@ -4831,9 +5425,34 @@ export class Process extends Host<Env> {
       return;
     }
     try {
-      await this.sendSignal("proc.run.finished", payload);
+      const { deliveryAttempts: _deliveryAttempts, ...signalPayload } = payload;
+      await this.sendSignal("proc.run.finished", signalPayload);
     } catch (error) {
       console.warn(`[Process] Failed to emit finish for ${runId}:`, error);
+      const attempts = typeof payload.deliveryAttempts === "number"
+        && Number.isSafeInteger(payload.deliveryAttempts)
+        && payload.deliveryAttempts >= 0
+        ? payload.deliveryAttempts + 1
+        : 1;
+      if (attempts >= MAX_RUN_FINISH_DELIVERY_ATTEMPTS) {
+        this.removePendingRunFinish(runId);
+        const conversationId = normalizeConversationId(
+          typeof payload.conversationId === "string" ? payload.conversationId : undefined,
+        );
+        const messageId = this.store.appendMessage(
+          "system",
+          "Automatic reply delivery stopped after repeated transport failures. The completed answer remains in this conversation history.",
+          { conversationId, runId },
+        );
+        this.ctx.waitUntil(this.emitProcChanged(["messages"], {
+          conversationId,
+          runId,
+          messageId,
+        }));
+        return;
+      }
+      payload.deliveryAttempts = attempts;
+      this.store.setValue(PENDING_RUN_FINISHES_KEY, JSON.stringify(pending));
       await this.schedule(5, "onRunFinishDelivery", runId, {
         idempotent: false,
         retry: { maxAttempts: 10, baseDelayMs: 1_000, maxDelayMs: 30_000 },
@@ -4841,6 +5460,10 @@ export class Process extends Host<Env> {
       return;
     }
 
+    this.removePendingRunFinish(runId);
+  }
+
+  private removePendingRunFinish(runId: string): void {
     const remaining = (JSON.parse(
       this.store.getValue(PENDING_RUN_FINISHES_KEY) ?? "[]",
     ) as Array<{ runId: string }>).filter((finish) => finish.runId !== runId);
@@ -5001,8 +5624,9 @@ export class Process extends Host<Env> {
     messages: MessageRecord[],
     signal?: AbortSignal,
   ): Promise<void> {
+    const mediaRewrites = await this.persistArchivedMedia(messages, signal);
     const compressed = await raceWithAbort(
-      new Response(gzipMessageRecords(messages, signal)).arrayBuffer(),
+      new Response(gzipMessageRecords(messages, signal, mediaRewrites)).arrayBuffer(),
       signal,
     );
     const upload = this.env.STORAGE.put(key, compressed, {
@@ -5112,24 +5736,48 @@ export class Process extends Host<Env> {
     }
 
     let previousSource: string | null | undefined;
+    let previousReplyDestinationKey: string | undefined;
+    const seenRunIds = new Set<string>();
     for (let index = 0; index < records.length; index += 1) {
-      if (records[index].role !== "user") {
+      const record = records[index];
+      const ownsDistinctRun = record.runId !== null
+        && record.runId !== undefined
+        && !seenRunIds.has(record.runId);
+      if (record.runId !== null && record.runId !== undefined) {
+        seenRunIds.add(record.runId);
+      }
+      if (record.role !== "user" && record.role !== "system") {
         continue;
       }
 
-      const source = formatInteractionOriginForContext(parseInteractionOrigin(records[index].origin));
+      const origin = parseInteractionOrigin(record.origin);
+      const source = formatInteractionOriginForContext(origin);
       const shouldRenderSource = source !== null && source !== previousSource;
-      previousSource = source;
-      if (!shouldRenderSource) {
-        continue;
+      if (record.role === "user" || source !== null) {
+        previousSource = source;
+      }
+
+      const replyDestination = ownsDistinctRun
+        ? formatReplyDestinationForContext(origin)
+        : null;
+      const shouldRenderReplyDestination = replyDestination !== null
+        && replyDestination.key !== previousReplyDestinationKey;
+      if (replyDestination) {
+        previousReplyDestinationKey = replyDestination.key;
       }
 
       const message = messages[index];
-      if (message?.role !== "user") {
+      if (message?.role !== "user" || (!shouldRenderSource && !shouldRenderReplyDestination)) {
         continue;
       }
 
-      messages[index] = prefixUserMessageContent(message, `[From: ${source}]`);
+      const contextLines = [
+        ...(shouldRenderSource ? [`[From: ${source}]`] : []),
+        ...(shouldRenderReplyDestination
+          ? [`[Reply destination: ${replyDestination.description}.]`]
+          : []),
+      ];
+      messages[index] = prefixUserMessageContent(message, contextLines.join("\n"));
     }
 
     return orderMessagesForProvider(messages);
@@ -5140,7 +5788,7 @@ export class Process extends Host<Env> {
     rawMedia: string,
     budget: { remainingBytes: number },
   ): Promise<Array<TextContent | ImageContent>> {
-    const media = parseStoredProcessMedia(rawMedia);
+    const media = this.parseOwnedProcessMedia(rawMedia);
     const content: Array<TextContent | ImageContent> = [];
 
     if (text.trim().length > 0) {
@@ -5148,36 +5796,17 @@ export class Process extends Host<Env> {
     }
 
     for (const item of media) {
+      content.push({
+        type: "text",
+        text: describeStoredProcessMedia(item),
+      });
+
       if (item.type === "image" && item.key && !isVectorImageMimeType(item.mimeType)) {
-        const described = item.description && item.description.trim().length > 0;
-        if (item.description && item.description.trim().length > 0) {
-          content.push({
-            type: "text",
-            text: describeStoredProcessMedia(item),
-          });
-        }
-        const data = await this.loadProcessMedia(item.key, budget);
+        const data = await this.loadProcessMedia(item.key, item.mimeType, budget);
         if (data) {
           content.push(buildImageBlock(data, item.mimeType));
-          continue;
-        }
-        if (described) {
-          continue;
         }
       }
-
-      if (
-        (item.type === "audio" || item.type === "video" || item.type === "document")
-        && item.transcription
-      ) {
-        content.push({
-          type: "text",
-          text: describeStoredProcessMedia(item),
-        });
-        continue;
-      }
-
-      content.push(...buildFallbackMediaBlocks([item]));
     }
 
     if (content.length === 0) {
@@ -5189,22 +5818,265 @@ export class Process extends Host<Env> {
 
   private async loadProcessMedia(
     key: string,
+    expectedContentType: string,
     budget: { remainingBytes: number },
   ): Promise<string | null> {
-    if (!key.startsWith(processMediaPrefix(this.identity.uid, this.pid))) {
+    if (!this.ownedMediaPath(key)) {
       return null;
     }
     const object = await this.env.STORAGE.get(key);
+    if (!object) {
+      return null;
+    }
     if (
-      !object
+      !this.isValidOwnedArchiveObject(key, object, { expectedContentType })
       || object.size > MAX_PROCESS_MEDIA_READ_BYTES
       || object.size > budget.remainingBytes
     ) {
+      await object.body.cancel("Process media cannot be hydrated").catch(() => {});
       return null;
     }
 
     budget.remainingBytes -= object.size;
     return encodeBase64Bytes(await object.arrayBuffer());
+  }
+
+  private archiveMediaPrefix(): string {
+    return agentArchiveMediaPrefix(this.identity.home);
+  }
+
+  private ownedMediaPath(key: string): string | null {
+    const activePath = processMediaPath(key);
+    if (activePath && key.startsWith(processMediaPrefix(this.identity.uid, this.pid))) {
+      return activePath;
+    }
+    return agentArchiveMediaPath(this.identity.home, key);
+  }
+
+  private isValidOwnedArchiveObject(
+    key: string,
+    object: {
+      customMetadata?: Record<string, string>;
+      httpMetadata?: { contentType?: string };
+    },
+    expected: { sourceEtag?: string; expectedContentType?: string } = {},
+  ): boolean {
+    if (!key.startsWith(this.archiveMediaPrefix())) return true;
+    return isValidAgentArchiveMediaObject({
+      home: this.identity.home,
+      key,
+      uid: this.identity.uid,
+      gid: this.identity.gid,
+      object,
+      expectedSourceEtag: expected.sourceEtag,
+      expectedContentType: expected.expectedContentType,
+    });
+  }
+
+  private parseOwnedProcessMedia(raw: string | null): StoredProcessMedia[] {
+    return parseStoredProcessMedia(raw).map((item) => {
+      const { path: _persistedPath, ...metadata } = item;
+      const path = item.key ? this.ownedMediaPath(item.key) : null;
+      return path ? { ...metadata, path } : metadata;
+    });
+  }
+
+  private activeProcessMediaKeys(messages: MessageRecord[]): string[] {
+    const sourcePrefix = processMediaPrefix(this.identity.uid, this.pid);
+    return [...new Set(messages.flatMap((message) =>
+      parseStoredProcessMedia(message.media).flatMap((media) =>
+        media.key?.startsWith(sourcePrefix) && processMediaPath(media.key) ? [media.key] : []
+      )
+    ))].sort();
+  }
+
+  private async deleteUnreferencedActiveMedia(keys: string[]): Promise<void> {
+    const candidates = [...new Set(keys)].sort();
+    if (candidates.length === 0) return;
+
+    const releaseMedia = await this.acquireMediaKeyAdmissions(candidates);
+    try {
+      const releaseLifecycle = await this.acquireLifecycleTransition();
+      try {
+        const prefix = processMediaPrefix(this.identity.uid, this.pid);
+        const unreferenced = candidates.filter((key) =>
+          key.startsWith(prefix)
+          && processMediaPath(key) !== null
+          && !this.store.referencesMediaKey(key)
+          && !this.currentRun?.outputMedia?.some((item) => item.key === key)
+        );
+        if (unreferenced.length > 0) {
+          await this.env.STORAGE.delete(unreferenced);
+        }
+      } finally {
+        releaseLifecycle();
+      }
+    } finally {
+      releaseMedia();
+    }
+  }
+
+  /**
+   * Move final reply attachments out of the executor-scoped live-media area
+   * before they enter assistant history or a durable finish notification.
+   * The resulting content-addressed files live in the run-as agent's reserved,
+   * read-only archive namespace, so retries and later compaction cannot race
+   * executor media cleanup.
+   */
+  private async promoteRunOutputMedia(runId: string): Promise<RunOutputMedia[]> {
+    for (;;) {
+      const run = this.currentRun;
+      if (!run || run.runId !== runId) return [];
+      const snapshot = [...(run.outputMedia ?? [])];
+      const sourcePrefix = processMediaPrefix(this.identity.uid, this.pid);
+      const sourceKeys = snapshot.flatMap((item) =>
+        item.key.startsWith(sourcePrefix) && processMediaPath(item.key) ? [item.key] : []
+      );
+      if (sourceKeys.length === 0) return snapshot;
+
+      const releaseMedia = await this.acquireMediaKeyAdmissions(sourceKeys);
+      let retry = false;
+      try {
+        const rewrites = await this.persistArchivedMediaKeys(sourceKeys);
+        const promoted = snapshot.map((item): RunOutputMedia => {
+          const rewrite = rewrites.get(item.key);
+          if (!rewrite) return item;
+          if ("missing" in rewrite) {
+            throw new Error(`reply media not found while finalizing: ${item.key}`);
+          }
+          return { ...item, ...rewrite };
+        });
+
+        const releaseLifecycle = await this.acquireLifecycleTransition();
+        try {
+          const activeRun = this.currentRun;
+          if (!activeRun || activeRun.runId !== runId) return [];
+          if (JSON.stringify(activeRun.outputMedia ?? []) !== JSON.stringify(snapshot)) {
+            retry = true;
+          } else {
+            activeRun.outputMedia = promoted;
+            this.currentRun = activeRun;
+            return promoted;
+          }
+        } finally {
+          releaseLifecycle();
+        }
+      } finally {
+        releaseMedia();
+      }
+      if (!retry) return [];
+    }
+  }
+
+  private async persistArchivedMedia(
+    messages: MessageRecord[],
+    signal?: AbortSignal,
+  ): Promise<Map<string, ArchivedMediaRewrite>> {
+    const sourceKeys = this.activeProcessMediaKeys(messages);
+    return this.persistArchivedMediaKeys(sourceKeys, signal);
+  }
+
+  private async persistArchivedMediaKeys(
+    sourceKeys: string[],
+    signal?: AbortSignal,
+  ): Promise<Map<string, ArchivedMediaRewrite>> {
+    const rewrites = new Map<string, ArchivedMediaRewrite>();
+
+    for (const sourceKey of [...new Set(sourceKeys)].sort()) {
+      signal?.throwIfAborted();
+      const sourceHead = await this.env.STORAGE.head(sourceKey);
+      if (!sourceHead) {
+        rewrites.set(sourceKey, { missing: true });
+        continue;
+      }
+      const archiveId = await stableOpaqueId("archived-media", [sourceKey, sourceHead.etag]);
+      const archivedKey = `${this.archiveMediaPrefix()}${archiveId}`;
+      const sourceContentType = sourceHead.httpMetadata?.contentType?.trim()
+        || "application/octet-stream";
+      const existing = await this.env.STORAGE.head(archivedKey);
+      const reusable = existing
+        && existing.size === sourceHead.size
+        && this.isValidOwnedArchiveObject(archivedKey, existing, {
+          sourceEtag: sourceHead.etag,
+          expectedContentType: sourceContentType,
+        });
+      if (existing && !reusable) {
+        throw new Error(`archived media content-address collision: ${archivedKey}`);
+      }
+      if (!existing) {
+        signal?.throwIfAborted();
+        const source = await this.env.STORAGE.get(sourceKey);
+        if (!source) {
+          rewrites.set(sourceKey, { missing: true });
+          continue;
+        }
+        if (
+          source.etag !== sourceHead.etag
+          || source.size !== sourceHead.size
+          || (source.httpMetadata?.contentType?.trim() || "application/octet-stream")
+            !== sourceContentType
+        ) {
+          await source.body.cancel("Process media changed while archiving").catch(() => {});
+          throw new Error(`media changed while archiving: ${sourceKey}`);
+        }
+        if (signal?.aborted) {
+          await source.body.cancel(signal.reason).catch(() => {});
+          signal.throwIfAborted();
+        }
+        let fixed: FixedLengthStream;
+        try {
+          fixed = new FixedLengthStream(sourceHead.size);
+        } catch (error) {
+          await source.body.cancel(error).catch(() => {});
+          throw error;
+        }
+        let stored: Promise<R2Object>;
+        let piped: Promise<void>;
+        try {
+          stored = this.env.STORAGE.put(archivedKey, fixed.readable, {
+            httpMetadata: {
+              ...sourceHead.httpMetadata,
+              contentType: sourceContentType,
+            },
+            customMetadata: {
+              uid: String(this.identity.uid),
+              gid: String(this.identity.gid),
+              mode: "400",
+              purpose: "conversation-media",
+              sourceEtag: sourceHead.etag,
+              sourceContentType,
+            },
+          });
+          piped = source.body.pipeTo(fixed.writable, { signal });
+        } catch (error) {
+          await source.body.cancel(error).catch(() => {});
+          throw error;
+        }
+        const [storedResult, pipedResult] = await Promise.allSettled([stored, piped]);
+        if (storedResult.status === "rejected" || pipedResult.status === "rejected") {
+          const reason = storedResult.status === "rejected"
+            ? storedResult.reason
+            : pipedResult.status === "rejected"
+              ? pipedResult.reason
+              : "unknown archive media error";
+          throw reason instanceof Error ? reason : new Error(String(reason));
+        }
+        const copied = await this.env.STORAGE.head(archivedKey);
+        if (
+          !copied
+          || copied.size !== sourceHead.size
+          || !this.isValidOwnedArchiveObject(archivedKey, copied, {
+            sourceEtag: sourceHead.etag,
+            expectedContentType: sourceContentType,
+          })
+        ) {
+          throw new Error(`failed to verify archived media: ${archivedKey}`);
+        }
+      }
+      rewrites.set(sourceKey, { key: archivedKey, path: `/${archivedKey}` });
+    }
+
+    return rewrites;
   }
 
   private ingestToolResults(
@@ -5994,6 +6866,51 @@ export class Process extends Host<Env> {
     return release;
   }
 
+  private async acquireMediaKeyAdmission(key: string): Promise<() => void> {
+    const previous = this.mediaWriteAdmissions.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.mediaWriteAdmissions.set(key, current);
+    await previous;
+    return () => {
+      if (this.mediaWriteAdmissions.get(key) === current) {
+        this.mediaWriteAdmissions.delete(key);
+      }
+      release();
+    };
+  }
+
+  private async acquireMediaKeyAdmissions(keys: string[]): Promise<() => void> {
+    const releases: Array<() => void> = [];
+    try {
+      for (const key of [...new Set(keys)].sort()) {
+        releases.push(await this.acquireMediaKeyAdmission(key));
+      }
+    } catch (error) {
+      for (const release of releases.reverse()) release();
+      throw error;
+    }
+    return () => {
+      for (const release of releases.reverse()) release();
+    };
+  }
+
+  private async firstMissingMediaKey(keys: string[]): Promise<string | null> {
+    for (const key of keys) {
+      if (!await this.env.STORAGE.head(key)) return key;
+    }
+    return null;
+  }
+
+  private abortMediaUploads(reason: Error): void {
+    for (const controller of this.mediaUploadAbortControllers.values()) {
+      controller.abort(reason);
+    }
+    this.mediaUploadAbortControllers.clear();
+  }
+
   private handleRunStopped(runId: string): boolean {
     return this.currentRun?.runId !== runId;
   }
@@ -6114,9 +7031,22 @@ function orderMessagesForProvider(messages: Message[]): Message[] {
   return ordered;
 }
 
-function serializeArchivedMessage(message: MessageRecord): Record<string, unknown> {
+function serializeArchivedMessage(
+  message: MessageRecord,
+  mediaRewrites: ReadonlyMap<string, ArchivedMediaRewrite> = new Map(),
+): Record<string, unknown> {
   const origin = parseInteractionOrigin(message.origin);
   const metadata = parseMessageMetadata(message.metadata) ?? undefined;
+  const media = message.media
+    ? parseStoredProcessMedia(message.media).map((item) => {
+        const rewrite = item.key ? mediaRewrites.get(item.key) : undefined;
+        if (rewrite && "missing" in rewrite) {
+          const { key: _key, path: _path, ...metadataOnly } = item;
+          return metadataOnly;
+        }
+        return rewrite ? { ...item, ...rewrite } : item;
+      })
+    : undefined;
   if (message.role === "assistant") {
     const meta = parseAssistantMessageMeta(message.toolCalls);
     return {
@@ -6129,6 +7059,7 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
       tool_calls: meta.toolCalls,
       thinking: meta.thinking,
       tool_call_id: message.toolCallId ?? undefined,
+      media,
       origin,
       metadata,
       ts: message.createdAt,
@@ -6142,7 +7073,7 @@ function serializeArchivedMessage(message: MessageRecord): Record<string, unknow
     run_id: message.runId ?? undefined,
     role: message.role,
     content: message.content,
-    media: message.media ? parseStoredProcessMedia(message.media) : undefined,
+    media,
     tool_calls: message.toolCalls ? JSON.parse(message.toolCalls) : undefined,
     tool_call_id: message.toolCallId ?? undefined,
     origin,
@@ -6296,10 +7227,102 @@ function parseInteractionOriginRecord(value: unknown): InteractionOrigin | undef
   if (kind === "scheduler") {
     const scheduleId = normalizeOptionalString(record.scheduleId);
     if (!scheduleId) return undefined;
-    return { kind, scheduleId };
+    const replyTo = parseAdapterMessageDestination(record.replyTo);
+    return {
+      kind,
+      scheduleId,
+      ...(replyTo ? { replyTo } : {}),
+    };
   }
 
   return undefined;
+}
+
+function parseAdapterMessageDestination(value: unknown): AdapterMessageDestination | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.kind !== "adapter") return undefined;
+  const adapter = normalizeOptionalString(record.adapter);
+  const accountId = normalizeOptionalString(record.accountId);
+  const actorId = normalizeOptionalString(record.actorId);
+  const surfaceRecord = record.surface && typeof record.surface === "object"
+    ? record.surface as Record<string, unknown>
+    : null;
+  const surface = parseAdapterSurface(surfaceRecord);
+  if (!adapter || !accountId || !actorId || !surface || !surfaceRecord) return undefined;
+  return {
+    kind: "adapter",
+    adapter,
+    accountId,
+    actorId,
+    surface: {
+      kind: surface.kind,
+      id: surface.id,
+      ...(surface.threadId ? { threadId: surface.threadId } : {}),
+    },
+  };
+}
+
+const PROCESS_CONVERSATION_REPLY_DESTINATION = {
+  key: "process-conversation",
+  description: "this GSV process conversation",
+} as const;
+
+function formatReplyDestinationForContext(
+  origin: InteractionOrigin | undefined,
+): {
+  key: string;
+  description: string;
+} {
+  if (!origin) return PROCESS_CONVERSATION_REPLY_DESTINATION;
+
+  const adapterDestination = origin.kind === "adapter"
+    ? origin
+    : origin.kind === "scheduler"
+      ? origin.replyTo
+      : undefined;
+  if (adapterDestination) {
+    const surface = adapterDestination.surface;
+    const surfaceLabel = surface.kind === "dm" ? "direct message" : surface.kind;
+    return {
+      key: JSON.stringify([
+        "adapter",
+        adapterDestination.adapter,
+        adapterDestination.accountId,
+        adapterDestination.actorId,
+        surface.kind,
+        surface.id,
+        surface.threadId ?? "",
+      ]),
+      description: `automatic to this ${titleCase(adapterDestination.adapter)} ${surfaceLabel}`,
+    };
+  }
+  if (origin.kind === "scheduler") return PROCESS_CONVERSATION_REPLY_DESTINATION;
+  if (origin.kind === "client") {
+    return {
+      key: `client:${origin.connectionId}`,
+      description: "automatic to this GSV client",
+    };
+  }
+  if (origin.kind === "app") {
+    return {
+      key: JSON.stringify(["app", origin.packageId, origin.entrypointName, origin.routeBase]),
+      description: "automatic to this GSV app",
+    };
+  }
+  if (origin.kind === "process") {
+    return {
+      key: `process:${origin.sourcePid}`,
+      description: "automatic to the calling GSV process",
+    };
+  }
+  if (origin.kind === "device") {
+    return {
+      key: `device:${origin.deviceId}`,
+      description: "automatic to this GSV device client",
+    };
+  }
+  throw new Error("Interaction origin has no reply destination");
 }
 
 function prefixUserMessageContent(message: UserMessage, prefix: string): UserMessage {
@@ -6525,6 +7548,7 @@ function approvalRuleKey(rule: ToolApprovalRule): string {
 function gzipMessageRecords(
   messages: MessageRecord[],
   signal?: AbortSignal,
+  mediaRewrites: ReadonlyMap<string, ArchivedMediaRewrite> = new Map(),
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let index = 0;
@@ -6540,7 +7564,7 @@ function gzipMessageRecords(
         return;
       }
       controller.enqueue(encoder.encode(
-        `${index > 0 ? "\n" : ""}${JSON.stringify(serializeArchivedMessage(message))}`,
+        `${index > 0 ? "\n" : ""}${JSON.stringify(serializeArchivedMessage(message, mediaRewrites))}`,
       ));
       index += 1;
     },

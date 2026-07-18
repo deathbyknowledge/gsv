@@ -1,4 +1,4 @@
-# GSV Discord Channel
+# GSV Discord Adapter
 
 Discord bot integration for GSV Gateway.
 
@@ -58,24 +58,19 @@ wrangler secret put DISCORD_BOT_TOKEN
 
 ## Usage
 
-### Start the bot
+### Connect the bot
 ```bash
-# Local
-npm run dev
-curl -X POST http://localhost:8787/start
-
-# Or via Gateway RPC
-gsv channel start discord
+gsv adapter connect --adapter discord --account-id default
 ```
 
 ### Check status
 ```bash
-curl http://localhost:8787/status
+gsv adapter status --adapter discord --account-id default
 ```
 
-### Stop the bot
+### Disconnect the bot
 ```bash
-curl -X POST http://localhost:8787/stop
+gsv adapter disconnect --adapter discord --account-id default
 ```
 
 ## Architecture
@@ -88,33 +83,38 @@ Discord Gateway API (wss://gateway.discord.gg)
 │  - Maintains persistent WS connection   │
 │  - Handles IDENTIFY, HEARTBEAT, RESUME  │
 │  - Dispatches MESSAGE_CREATE events     │
+│  - Persists pending inbound events       │
+│  - Retries them with its existing alarm  │
 └─────────────────────────────────────────┘
         ↓ Service Binding RPC
 ┌─────────────────────────────────────────┐
-│  GatewayEntrypoint.channelInbound()     │
+│  Gateway serviceFrame(adapter.inbound) │
 └─────────────────────────────────────────┘
         ↓ Gateway DO RPC
 ┌─────────────────────────────────────────┐
 │  GSV Gateway                            │
-│  - Routes to Session                    │
-│  - Calls LLM                            │
+│  - Routes to a durable Process           │
+│  - Coordinates inference                 │
 └─────────────────────────────────────────┘
         ↓ Service Binding RPC
 ┌─────────────────────────────────────────┐
 │  DiscordChannel (WorkerEntrypoint)      │
-│  - send() → Discord REST API            │
-│  - setTyping() → Discord REST API       │
+│  - adapterSend() → Discord REST API     │
+│  - adapterSetActivity() → Discord API   │
 └─────────────────────────────────────────┘
 ```
 
+The account Durable Object stores each compact `MESSAGE_CREATE` JSON payload
+before its first Gateway RPC. It removes the record only after a terminal
+Kernel disposition; transport failures and `replayed: "in_progress"` use the
+existing alarm for retry, rebuilding attachment bodies on each attempt.
+
 ## DM vs Server Messages
 
-| Context | peer.kind | Behavior |
+| Context | surface.kind | Behavior |
 |---------|-----------|----------|
 | Direct Message | `"dm"` | Bot responds to all messages |
-| Server Channel | `"group"` | Bot responds when mentioned (`wasMentioned: true`) |
-
-You can configure Gateway's `dmPolicy` to control this behavior.
+| Server Channel | `"group"` | Bot responds when mentioned directly or when a user replies to one of the bot's messages (`wasMentioned: true`) |
 
 ## Troubleshooting
 
@@ -128,4 +128,4 @@ You can configure Gateway's `dmPolicy` to control this behavior.
 
 ### Messages not being processed
 - Check Discord worker logs for RPC delivery failures
-- Check Gateway logs for `channelInbound` / `channelStatusChanged` errors
+- Check Gateway logs for `adapter.inbound` / `adapter.state.update` errors

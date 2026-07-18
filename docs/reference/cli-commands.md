@@ -41,8 +41,9 @@ Commands run inside the gateway OS context, not directly on your local machine.
 Use `:quit`, `:exit`, or `:q` to leave.
 
 Inside the gateway shell, `proc` is the process IPC userland command.
-`sched add --here` admits scheduled events to the current process conversation;
-the event and any resulting reply are visible in its matching Web chat.
+`message` inspects and uses external chat reply routes. `sched add --here`
+admits scheduled events to the current process conversation and preserves the
+current authorized adapter reply destination when one exists.
 `crontab` schedules background shell commands, while the remaining `sched`
 commands inspect and control the Kernel schedule records:
 
@@ -55,11 +56,16 @@ proc reset [--pid PID]
 proc kill PID [--no-archive]
 proc send <pid> [--conversation id] [--metadata-json json] <message>
 proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>
+message current [--json]
+message destinations [--all] [--json]
+message attach PATH... [--mime TYPE]
+message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]
 crontab -l
 crontab FILE
 crontab -r
 sched list [--all]
 sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]
+sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 sched add --json JSON
 sched enable <id>
 sched disable <id>
@@ -80,20 +86,63 @@ shell, `proc self` prints the current process id and the shell exports it as
 `GSV_PID`; a top-level user shell has no current process, so `proc self` exits
 with an error there.
 
+`message current` reports where the current run's final answer is delivered
+automatically. `message attach` adds one or more GSV filesystem files to that
+same final answer for native clients and adapter origins; it does not create an
+extra message. Existing files in the current process's `/var/media` directory
+are reused, while other readable files are staged there. Return the answer
+normally. `message send` creates an
+additional outbound message or sends to another authorized destination.
+`message destinations` lists observed destinations that are online; `--all`
+also includes known authorized destinations whose adapter account is offline.
+Group, channel, and thread entries appear only after the linked actor addresses
+GSV on that exact surface. Entries use opaque GSV ids and generic labels;
+provider account, actor, surface, and message ids are not printed.
+
+`--to here` selects the current adapter reply surface. An explicit send to that
+same destination requires `--also`, acknowledging that it is intentionally in
+addition to the automatic final reply. `--attach` streams one GSV filesystem
+file; `--mime` overrides the inferred MIME type. Copy a file from a connected
+target to GSV before attaching it:
+
+```bash
+cp laptop:/home/alice/report.pdf /tmp/report.pdf
+message attach /tmp/report.pdf
+message send --to here --message "Here is the report." --attach /tmp/report.pdf --also
+```
+
+`message send` allocates a stable delivery id before contacting an adapter and
+retries one transport failure with that same id. If delivery still cannot be
+confirmed, its error includes the id; pass it back with `--delivery-id` to
+reconcile without creating a second logical message. Attachment-open failures
+also report that id, including a failure while reopening the file for the
+automatic retry. An outcome that may have reached the provider is reported as
+`sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
+
 Use `sched add --here` from a process-backed shell when each firing should admit
-an event into the current process conversation. The event and any resulting
-reply are visible in its matching Web chat. It creates a typed `process.event`
-schedule for the current process and active conversation; pass `--conversation`
-to override that conversation. The target is bound to the current process id
-and must be recreated after that process is killed. It does not preserve an
-external adapter route; recurring adapter delivery must explicitly send through
-the adapter target. A successful firing records event admission, not completion
-of a model turn or reply. Choose exactly one time expression. `--at` requires a
+an event into the current process conversation. It creates a typed
+`process.event` schedule for the current process and active conversation; pass
+`--conversation` to override that conversation. When invoked during an adapter
+run, `--here` captures the authorized adapter destination so the future final
+answer returns there. Without such a route, the answer remains in the GSV
+process conversation. The target is bound to the current process id and must be
+recreated after that process is killed.
+
+Use `sched add --to DESTINATION` for direct scheduled text delivery. It creates
+an `adapter.send` scheduled action and does not run the agent. Destination
+resolution includes known authorized offline destinations because the account
+may be online when the schedule fires. Run `message destinations --all` and
+copy its opaque GSV destination id; provider account, actor, and surface ids are
+not part of the agent-facing command contract. `--conversation` is valid only
+with `--here`.
+A successful `process.event` firing records event admission, not completion of
+a model turn or reply. Choose exactly one time expression. `--at` requires a
 future ISO timestamp with `Z` or an explicit numeric UTC offset.
 
 ```bash
 sched add --here --name animal-facts --every 2m --message "Send one obscure animal fact."
 sched add --here --name daily-brief --cron "0 9 * * *" --timezone Europe/Amsterdam --message "Prepare the daily brief."
+sched add --to MESSAGE_DESTINATION_ID --name standup --cron "0 9 * * 1-5" --message "Standup starts now."
 ```
 
 Use `crontab FILE` or write `/var/spool/cron/<user>` for recurring background

@@ -20,6 +20,7 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 |---|---|---|
 | `/sys/*`, `/proc/*`, `/dev/*` | Kernel SQLite and live registries | Virtual control-plane files. |
 | `/etc/passwd`, `/etc/shadow`, `/etc/group` | Kernel auth tables | Overlaid on top of regular `/etc` storage. |
+| `/home` | Account-home namespace | Virtual ancestor that exists without an R2 marker and lists only account homes the caller may manage. |
 | `~/context.d/*` | ripgit home repo, with R2 fallback | User-global prompt context, including seeded constitution and user files. |
 | `~/skills.d/*` | ripgit home repo, with R2 fallback | User-global reusable process skills. |
 | `~/knowledge/*` | ripgit home repo | Durable knowledge databases. |
@@ -27,6 +28,7 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 | `/src/repos/{owner}/{repo}` | ripgit repo plus R2 overlay | Visible source repositories. Writable repos stage process-local edits in R2 until explicit `rgit commit`. |
 | `/workspaces/{workspaceId}` | ripgit workspace repo | Mutable, versioned task workspace. |
 | `/usr/local/bin/*` | package mount | Read-only package command shims. |
+| `/var/media/{uid}/{pid}/{id}` | Process media mount over R2 | Read-only attachment bytes. Visibility follows process ownership (root, self, or another process owned by the same user). |
 | Everything else | R2 | Default object-backed filesystem. |
 
 Directory entries in R2 use `.dir` marker objects. File objects store POSIX-like metadata in custom metadata: `uid`, `gid`, `mode`, and optional `dirmarker`.
@@ -73,13 +75,14 @@ R2 remains the byte store. The current runtime uses these key families:
 | Key Pattern | Written By | Purpose |
 |---|---|---|
 | Any normal filesystem key, for example `home/alice/file.txt` | `R2MountBackend` | Default virtual filesystem storage. |
-| `var/media/{uid}/{pid}/{uuid}.{ext}` | Process media handling | Uploaded or adapter-provided media attached to process messages. |
+| `var/media/{uid}/{pid}/{uuid}` | Process media handling | Uploaded or adapter-provided media attached to process messages and exposed at the matching absolute `/var/media/...` path. |
+| `home/{agent}/.gsv/media/archived-media:{hash}` | Process conversation archiving | Immutable media retained by archived transcripts, scoped to the run-as agent home and independent of executor pid. |
 | `home/{agent}/conversations/{conversationId}/*.jsonl.gz` | Process reset, kill, and compaction | Gzipped JSONL transcript archives addressed independently of executor pid. |
 | `runtime/package-artifacts/{hash}.json` | Package install/sync | Package worker artifact loaded by AppRunner. |
 | `process-source-overlays/{pid}/{sourceKey}/manifest.json` | `/src/repos`, `rgit` | Manifest of staged source edits for one process/repo. |
 | `process-source-overlays/{pid}/{sourceKey}/files/{path}` | `/src/repos`, `rgit` | Staged file content for source puts. |
 
-Process media is deleted by prefix when the process is reset or killed. Package artifacts are content-addressed by hash and referenced from the Kernel `packages` table.
+Live process media is deleted by prefix when the process is reset or killed. Final-reply attachments are promoted before assistant history and `proc.run.finished` are persisted, so automatic delivery retries never depend on executor-scoped bytes. Other referenced bytes are promoted before an archive drops their last live reference. Promotion copies them into the run-as agent's immutable `.gsv/media` namespace using the live object key and ETag as content identity, then rewrites the durable record. Every Process, Kernel, and filesystem read validates the archive path plus its `purpose`, owning `uid` and `gid`, read-only mode `0400`, required source ETag metadata, stored source content type, and current object HTTP content type. A missing live object is archived as metadata-only rather than preventing reset or teardown. The `/var/media` view is read-only so creation and deletion remain owned by the process-media lifecycle; files can still be read, streamed, or copied to another filesystem target. Package artifacts are content-addressed by hash and referenced from the Kernel `packages` table.
 
 ## ripgit Repositories
 

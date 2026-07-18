@@ -1,0 +1,360 @@
+import type {
+  AdapterInboundResult,
+  AdapterSurfaceKind,
+} from "@humansandmachines/gsv/protocol";
+import { isAdapterInboundResult } from "@humansandmachines/gsv/protocol";
+
+type AdapterIngressReceiptInput = {
+  adapter: string;
+  accountId: string;
+  actorId: string;
+  surfaceKind: AdapterSurfaceKind;
+  surfaceId: string;
+  threadId?: string;
+  providerMessageId: string;
+  providerDeliveryId: string;
+};
+
+export type AdapterIngressReceiptClaim =
+  | {
+      state: "claimed";
+      receiptId: string;
+      claimToken: string;
+      recovery?: unknown;
+    }
+  | { state: "in_progress"; receiptId: string }
+  | {
+      state: "prepared";
+      receiptId: string;
+      claimToken: string;
+      result: AdapterInboundResult;
+    }
+  | {
+      state: "completed";
+      receiptId: string;
+      result: AdapterInboundResult;
+    }
+  | {
+      state: "ambiguous";
+      receiptId: string;
+      error: string;
+    };
+
+type AdapterIngressReceiptRow = {
+  receipt_id: string;
+  adapter: string;
+  account_id: string;
+  actor_id: string;
+  surface_kind: string;
+  surface_id: string;
+  thread_id: string;
+  provider_message_id: string;
+  provider_delivery_id: string | null;
+  state: string;
+  result_json: string | null;
+  progress_json: string | null;
+  claim_token: string;
+  claimed_at: number;
+};
+
+const CLAIM_LEASE_MS = 5 * 60 * 1000;
+const RECEIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_COMPLETED_RECEIPTS = 4_096;
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * Kernel-owned idempotency boundary for normalized provider ingress.
+ *
+ * The claim is committed before any command, link, HIL, route, media, or
+ * Process side effect. Claim ownership is fenced with a token and mirrored in
+ * memory. A fresh Kernel instance can therefore reclaim work left by a crash
+ * immediately, while a concurrent replay on the live instance observes the
+ * active owner. `in_progress` is not a terminal acknowledgement: the provider
+ * adapter retains its durable payload and retries until this receipt is
+ * prepared/completed. The time lease is only a final escape hatch for a
+ * request that never reaches its cleanup path.
+ *
+ * Provider identity is the adapter's stable account-scoped delivery id. Actor
+ * and surface are recorded for audit and authorization, but are not part of
+ * idempotency because provider aliases can normalize after delivery. Legacy
+ * rows without a delivery id are reclaimed only when their raw identity is
+ * unambiguous.
+ *
+ * A result is prepared before completion so a replacement Kernel can return
+ * the exact disposition without replaying its side effects. The adapter then
+ * persists any immediate response before its account-local outbound ledger
+ * contacts the provider.
+ */
+export class AdapterIngressReceiptStore {
+  private readonly activeClaims = new Set<string>();
+  private nextPruneAt = 0;
+
+  constructor(private readonly sql: SqlStorage) {}
+
+  claim(
+    input: AdapterIngressReceiptInput & { receiptId: string },
+  ): AdapterIngressReceiptClaim {
+    this.prune();
+    let existing = this.getByReceiptId(input.receiptId);
+    if (!existing) {
+      const legacy = this.getLegacyReceipt(input);
+      if (legacy.state === "ambiguous") {
+        return {
+          state: "ambiguous",
+          receiptId: input.receiptId,
+          error: "Legacy adapter ingress identity is ambiguous",
+        };
+      }
+      existing = legacy.receipt;
+    }
+    if (existing) {
+      if (existing.state === "completed") {
+        return completedClaimFromRow(existing);
+      }
+      if (existing.state !== "in_progress") {
+        throw new Error(`Invalid adapter ingress receipt state: ${existing.receipt_id}`);
+      }
+      if (
+        this.activeClaims.has(existing.claim_token)
+        && existing.claimed_at > Date.now() - CLAIM_LEASE_MS
+      ) {
+        return { state: "in_progress", receiptId: existing.receipt_id };
+      }
+      return this.reclaim(existing);
+    }
+
+    const now = Date.now();
+    const claimToken = crypto.randomUUID();
+    this.sql.exec(
+      `INSERT INTO adapter_ingress_receipts (
+        receipt_id, adapter, account_id, actor_id, surface_kind, surface_id,
+        thread_id, provider_message_id, provider_delivery_id, state, result_json,
+        progress_json, claim_token, claimed_at, created_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_progress', NULL, NULL, ?, ?, ?, NULL)`,
+      input.receiptId,
+      input.adapter,
+      input.accountId,
+      input.actorId,
+      input.surfaceKind,
+      input.surfaceId,
+      input.threadId ?? "",
+      input.providerMessageId,
+      input.providerDeliveryId,
+      claimToken,
+      now,
+      now,
+    );
+    this.activeClaims.add(claimToken);
+    return { state: "claimed", receiptId: input.receiptId, claimToken };
+  }
+
+  prepare(
+    receiptId: string,
+    claimToken: string,
+    result: AdapterInboundResult,
+  ): void {
+    const cursor = this.sql.exec(
+      `UPDATE adapter_ingress_receipts
+          SET result_json = ?
+        WHERE receipt_id = ? AND state = 'in_progress' AND claim_token = ?`,
+      JSON.stringify(withoutReplayMarker(result)),
+      receiptId,
+      claimToken,
+    );
+    if (cursor.rowsWritten !== 1) {
+      throw new Error(`Adapter ingress receipt is not owned: ${receiptId}`);
+    }
+  }
+
+  checkpoint(receiptId: string, claimToken: string, recovery: unknown): void {
+    const cursor = this.sql.exec(
+      `UPDATE adapter_ingress_receipts
+          SET progress_json = ?
+        WHERE receipt_id = ? AND state = 'in_progress' AND claim_token = ?`,
+      JSON.stringify(recovery),
+      receiptId,
+      claimToken,
+    );
+    if (cursor.rowsWritten !== 1) {
+      throw new Error(`Adapter ingress receipt is not owned: ${receiptId}`);
+    }
+  }
+
+  complete(receiptId: string, claimToken: string): void {
+    const cursor = this.sql.exec(
+      `UPDATE adapter_ingress_receipts
+          SET state = 'completed', completed_at = ?
+        WHERE receipt_id = ?
+          AND state = 'in_progress'
+          AND claim_token = ?
+          AND result_json IS NOT NULL`,
+      Date.now(),
+      receiptId,
+      claimToken,
+    );
+    this.activeClaims.delete(claimToken);
+    if (cursor.rowsWritten === 1) {
+      return;
+    }
+
+    // A prepared replay can reclaim work after a Kernel restart. Treat an
+    // already completed receipt as success; the adapter uses the same stable
+    // response delivery ids on either path.
+    const row = this.getByReceiptId(receiptId);
+    if (row?.state === "completed" && row.result_json !== null) {
+      return;
+    }
+    throw new Error(`Adapter ingress receipt is not owned: ${receiptId}`);
+  }
+
+  abandon(receiptId: string, claimToken: string): void {
+    this.activeClaims.delete(claimToken);
+    this.sql.exec(
+      `UPDATE adapter_ingress_receipts
+          SET claimed_at = 0
+        WHERE receipt_id = ? AND state = 'in_progress' AND claim_token = ?`,
+      receiptId,
+      claimToken,
+    );
+  }
+
+  private prune(now = Date.now()): void {
+    if (now < this.nextPruneAt) return;
+    this.nextPruneAt = now + PRUNE_INTERVAL_MS;
+    const cutoff = now - RECEIPT_RETENTION_MS;
+    this.sql.exec(
+      `DELETE FROM adapter_ingress_receipts
+        WHERE (state = 'completed' AND completed_at < ?)
+           OR (state = 'in_progress' AND claimed_at < ?)`,
+      cutoff,
+      cutoff,
+    );
+    this.sql.exec(
+      `DELETE FROM adapter_ingress_receipts
+        WHERE receipt_id IN (
+          SELECT receipt_id
+            FROM adapter_ingress_receipts
+           WHERE state = 'completed'
+           ORDER BY completed_at DESC
+           LIMIT -1 OFFSET ?
+        )`,
+      MAX_COMPLETED_RECEIPTS,
+    );
+  }
+
+  private reclaim(row: AdapterIngressReceiptRow): AdapterIngressReceiptClaim {
+    const claimToken = crypto.randomUUID();
+    const cursor = this.sql.exec(
+      `UPDATE adapter_ingress_receipts
+          SET claim_token = ?, claimed_at = ?
+        WHERE receipt_id = ? AND state = 'in_progress' AND claim_token = ?`,
+      claimToken,
+      Date.now(),
+      row.receipt_id,
+      row.claim_token,
+    );
+    if (cursor.rowsWritten !== 1) {
+      throw new Error(`Adapter ingress receipt could not be reclaimed: ${row.receipt_id}`);
+    }
+    this.activeClaims.delete(row.claim_token);
+    this.activeClaims.add(claimToken);
+    if (row.result_json !== null) {
+      return {
+        state: "prepared",
+        receiptId: row.receipt_id,
+        claimToken,
+        result: parseAdapterInboundResult(row),
+      };
+    }
+    return {
+      state: "claimed",
+      receiptId: row.receipt_id,
+      claimToken,
+      ...(row.progress_json !== null
+        ? { recovery: parseReceiptProgress(row) }
+        : {}),
+    };
+  }
+
+  private getByReceiptId(receiptId: string): AdapterIngressReceiptRow | null {
+    return this.sql.exec<AdapterIngressReceiptRow>(
+      `SELECT receipt_id, adapter, account_id, actor_id, surface_kind,
+              surface_id, thread_id, provider_message_id, provider_delivery_id,
+              state, result_json, progress_json, claim_token, claimed_at
+         FROM adapter_ingress_receipts
+        WHERE receipt_id = ?
+        LIMIT 1`,
+      receiptId,
+    ).toArray()[0] ?? null;
+  }
+
+  private getLegacyReceipt(
+    input: AdapterIngressReceiptInput,
+  ):
+    | { state: "resolved"; receipt: AdapterIngressReceiptRow | null }
+    | { state: "ambiguous" } {
+    const candidates = this.sql.exec<AdapterIngressReceiptRow>(
+      `SELECT receipt_id, adapter, account_id, actor_id, surface_kind,
+              surface_id, thread_id, provider_message_id, provider_delivery_id,
+              state, result_json, progress_json, claim_token, claimed_at
+         FROM adapter_ingress_receipts
+        WHERE provider_delivery_id IS NULL
+          AND adapter = ?
+          AND account_id = ?
+          AND surface_kind = ?
+          AND surface_id = ?
+          AND thread_id = ?
+          AND provider_message_id = ?
+        ORDER BY CASE WHEN actor_id = ? THEN 0 ELSE 1 END, created_at ASC
+        LIMIT 2`,
+      input.adapter,
+      input.accountId,
+      input.surfaceKind,
+      input.surfaceId,
+      input.threadId ?? "",
+      input.providerMessageId,
+      input.actorId,
+    ).toArray();
+    const exact = candidates.find((row) => row.actor_id === input.actorId);
+    if (exact) return { state: "resolved", receipt: exact };
+    if (candidates.length > 1) return { state: "ambiguous" };
+    return { state: "resolved", receipt: candidates[0] ?? null };
+  }
+}
+
+function completedClaimFromRow(row: AdapterIngressReceiptRow): AdapterIngressReceiptClaim {
+  if (row.state !== "completed" || row.result_json === null) {
+    throw new Error(`Invalid adapter ingress receipt state: ${row.receipt_id}`);
+  }
+  return {
+    state: "completed",
+    receiptId: row.receipt_id,
+    result: parseAdapterInboundResult(row),
+  };
+}
+
+function parseAdapterInboundResult(row: AdapterIngressReceiptRow): AdapterInboundResult {
+  let result: unknown;
+  try {
+    result = JSON.parse(row.result_json ?? "");
+  } catch {
+    throw new Error(`Invalid adapter ingress receipt result: ${row.receipt_id}`);
+  }
+  if (!isAdapterInboundResult(result) || result.replayed !== undefined) {
+    throw new Error(`Invalid adapter ingress receipt result: ${row.receipt_id}`);
+  }
+  return result;
+}
+
+function parseReceiptProgress(row: AdapterIngressReceiptRow): unknown {
+  try {
+    return JSON.parse(row.progress_json ?? "");
+  } catch {
+    throw new Error(`Invalid adapter ingress receipt progress: ${row.receipt_id}`);
+  }
+}
+
+function withoutReplayMarker(result: AdapterInboundResult): AdapterInboundResult {
+  const { replayed: _replayed, ...persisted } = result;
+  return persisted;
+}

@@ -10,6 +10,7 @@ import {
 } from "../../../kernel/scheduler";
 import type { SchedulerAddArgs, ScheduleTarget } from "@humansandmachines/gsv/protocol";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
+import { resolveVisibleAdapterMessageDestination } from "../../../kernel/adapter-destinations";
 
 const ISO_TIMESTAMP_WITH_ZONE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
@@ -56,7 +57,7 @@ async function runSchedCommand(args: string[], ctx: KernelContext): Promise<Exec
     }
     case "add": {
       requireCommandCapability(ctx, "sched.add");
-      const parsed = parseSchedAddCommand(rest, ctx);
+      const parsed = await parseSchedAddCommand(rest, ctx);
       const result = await handleSchedulerAdd(parsed, ctx);
       return {
         stdout: `schedule_id=${result.schedule.id} next=${result.schedule.state.nextRunAtMs === null ? "-" : new Date(result.schedule.state.nextRunAtMs).toISOString()}\n`,
@@ -100,7 +101,7 @@ async function runSchedCommand(args: string[], ctx: KernelContext): Promise<Exec
   }
 }
 
-function parseSchedAddCommand(args: string[], ctx: KernelContext): SchedulerAddArgs {
+async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise<SchedulerAddArgs> {
   if (args[0] === "--json") {
     if (args.length !== 2) {
       throw new Error("--json must be the only sched add option");
@@ -109,6 +110,7 @@ function parseSchedAddCommand(args: string[], ctx: KernelContext): SchedulerAddA
   }
 
   let here = false;
+  let to: string | undefined;
   let name: string | undefined;
   let message: string | undefined;
   let conversationId: string | undefined;
@@ -122,6 +124,14 @@ function parseSchedAddCommand(args: string[], ctx: KernelContext): SchedulerAddA
         throw new Error("--here may only be specified once");
       }
       here = true;
+      continue;
+    }
+    if (current === "--to") {
+      if (to !== undefined) {
+        throw new Error("--to may only be specified once");
+      }
+      index += 1;
+      to = requireShellOptionValue(args[index], current);
       continue;
     }
     if (current === "--name") {
@@ -197,14 +207,14 @@ function parseSchedAddCommand(args: string[], ctx: KernelContext): SchedulerAddA
     throw new Error(`unexpected argument: ${current}`);
   }
 
-  if (!here) {
-    throw new Error("sched add requires --here or --json JSON");
+  if (here === (to !== undefined)) {
+    throw new Error("sched add requires exactly one of --here or --to DESTINATION");
   }
-  if (!ctx.processId) {
+  if (here && !ctx.processId) {
     throw new Error("sched add --here requires a process caller");
   }
   if (expressions.length !== 1) {
-    throw new Error("sched add --here requires exactly one of --every, --cron, --after, or --at");
+    throw new Error("sched add requires exactly one of --every, --cron, --after, or --at");
   }
   const expression = expressions[0];
   if (timezone !== undefined && expression.kind !== "cron") {
@@ -214,25 +224,50 @@ function parseSchedAddCommand(args: string[], ctx: KernelContext): SchedulerAddA
     expression.timezone = timezone;
   }
   if (name === undefined) {
-    throw new Error("sched add --here requires --name");
+    throw new Error("sched add requires --name");
   }
   if (message === undefined) {
-    throw new Error("sched add --here requires --message");
+    throw new Error("sched add requires --message");
   }
 
-  const caller = ctx.procs.get(ctx.processId);
-  if (!caller) {
-    throw new Error(`current process not found: ${ctx.processId}`);
+  if (to !== undefined) {
+    if (conversationId !== undefined) {
+      throw new Error("--conversation is only valid with --here");
+    }
+    requireCommandCapability(ctx, "adapter.send");
+    const destination = (await resolveVisibleAdapterMessageDestination(to, ctx, {
+      includeOffline: true,
+    })).destination;
+    return {
+      name,
+      expression,
+      target: {
+        kind: "adapter.send",
+        destination,
+        text: message,
+      },
+    };
   }
+
+  const processId = ctx.processId!;
+  const caller = ctx.procs.get(processId);
+  if (!caller) {
+    throw new Error(`current process not found: ${processId}`);
+  }
+  const route = ctx.processRunId ? ctx.runRoutes.get(ctx.processRunId) : null;
+  const replyTo = route?.kind === "adapter" && route.processId === processId
+    ? route.destination
+    : undefined;
   const targetConversationId = conversationId ?? caller.activeConversationId ?? "default";
   return {
     name,
     expression,
     target: {
       kind: "process.event",
-      pid: ctx.processId,
+      pid: processId,
       conversationId: targetConversationId,
       message,
+      ...(replyTo ? { replyTo } : {}),
     },
   };
 }
@@ -250,6 +285,9 @@ function formatScheduleTarget(target: ScheduleTarget): string {
   }
   if (target.kind === "process.spawn") {
     return `spawn:${target.runAs ?? "personal-agent"}`;
+  }
+  if (target.kind === "adapter.send") {
+    return `message:${target.destination.adapter}`;
   }
   return `event:${target.pid}`;
 }
@@ -274,13 +312,15 @@ function schedUsage(): string {
     "Usage:",
     "  sched list [--all]",
     "  sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]",
+    "  sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "  sched add --json JSON",
     "  sched enable <id>",
     "  sched disable <id>",
     "  sched remove <id>",
     "  sched run <id> [--force]",
     "",
-    "Use sched add --here for messages that should return to this process conversation.",
+    "Use --here to wake this process and automatically reply on the current surface.",
+    "Use --to for a direct scheduled message to an authorized adapter destination.",
     "--at requires a future ISO timestamp with Z or an explicit numeric UTC offset.",
     "Use crontab -l, crontab FILE, crontab -r, or /var/spool/cron/<user>",
     "for scheduled shell commands. --json exposes the low-level schedule contract.",

@@ -5,6 +5,11 @@
  * This shim wraps fetch to provide Axios-compatible interface.
  */
 
+import {
+  readResponseBodyBytes,
+  SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+} from "../../shared/src/media-body";
+
 export interface AxiosRequestConfig {
   url?: string;
   method?: string;
@@ -14,6 +19,8 @@ export interface AxiosRequestConfig {
   data?: unknown;
   timeout?: number;
   responseType?: 'arraybuffer' | 'json' | 'text' | 'stream';
+  maxContentLength?: number;
+  maxBodyLength?: number;
   maxRedirects?: number;
   signal?: AbortSignal;
 }
@@ -63,37 +70,55 @@ async function request<T = unknown>(config: AxiosRequestConfig): Promise<AxiosRe
   if (config.timeout) {
     timeoutId = setTimeout(() => controller.abort(), config.timeout);
   }
+  const requestSignal = config.signal
+    ? AbortSignal.any([config.signal, controller.signal])
+    : controller.signal;
 
   try {
     const response = await fetch(url.toString(), {
       method: config.method || "GET",
       headers: config.headers,
       body: config.data ? JSON.stringify(config.data) : undefined,
-      signal: config.signal || controller.signal,
+      signal: requestSignal,
       redirect: config.maxRedirects === 0 ? "manual" : "follow",
     });
-
-    if (timeoutId) clearTimeout(timeoutId);
 
     // Convert response based on responseType
     let data: unknown;
     const responseType = config.responseType || "json";
+    const binaryLimit = resolveBinaryResponseLimit(config);
     
     // Workers don't support 'stream' - convert to arraybuffer instead
     if (responseType === "stream") {
       // Return arraybuffer and let Baileys handle it
       // We wrap it in an object that mimics a readable stream
-      const buffer = await response.arrayBuffer();
+      const bytes = await readResponseBodyBytes(response, {
+        maxBytes: binaryLimit,
+        label: "WhatsApp HTTP response",
+        signal: requestSignal,
+      });
+      const buffer = Buffer.from(
+        bytes.buffer as ArrayBuffer,
+        bytes.byteOffset,
+        bytes.byteLength,
+      );
       data = {
         // Mimic Node.js readable stream interface minimally
         [Symbol.asyncIterator]: async function* () {
-          yield Buffer.from(buffer);
+          yield buffer;
         },
         pipe: () => { throw new Error("pipe not supported"); },
-        read: () => Buffer.from(buffer),
+        read: () => buffer,
       };
     } else if (responseType === "arraybuffer") {
-      data = await response.arrayBuffer();
+      const bytes = await readResponseBodyBytes(response, {
+        maxBytes: binaryLimit,
+        label: "WhatsApp HTTP response",
+        signal: requestSignal,
+      });
+      data = bytes.byteOffset === 0 && bytes.buffer.byteLength === bytes.byteLength
+        ? bytes.buffer
+        : bytes.slice().buffer;
     } else if (responseType === "text") {
       data = await response.text();
     } else {
@@ -126,8 +151,6 @@ async function request<T = unknown>(config: AxiosRequestConfig): Promise<AxiosRe
       config,
     };
   } catch (error) {
-    if (timeoutId) clearTimeout(timeoutId);
-    
     if (error instanceof AxiosError) throw error;
     
     throw AxiosError.from(
@@ -135,7 +158,17 @@ async function request<T = unknown>(config: AxiosRequestConfig): Promise<AxiosRe
       "ERR_NETWORK",
       config
     );
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+function resolveBinaryResponseLimit(config: AxiosRequestConfig): number {
+  const configured = [config.maxContentLength, config.maxBodyLength]
+    .filter((value): value is number =>
+      typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    );
+  return Math.min(SAFE_MATERIALIZED_MEDIA_PART_BYTES, ...configured);
 }
 
 // Axios instance with methods

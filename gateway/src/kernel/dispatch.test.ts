@@ -536,16 +536,7 @@ describe("dispatch", () => {
     expect(deps.registerRoute).not.toHaveBeenCalled();
   });
 
-  it("routes adapter shell targets through adapter workers", async () => {
-    const adapterShellExec = vi.fn(async () => ({
-      status: "completed" as const,
-      output: "ok",
-      exitCode: 0,
-      ok: true as const,
-      pid: 0,
-      stdout: "ok",
-      stderr: "",
-    }));
+  it("rejects obsolete adapter target ids", async () => {
     const deps = {
       connections: new Map(),
       registerRoute: vi.fn(),
@@ -553,60 +544,19 @@ describe("dispatch", () => {
         get: vi.fn(),
       },
     } as unknown as DispatchDeps;
-    const ctx = {
-      identity: {
-        role: "user",
-        process: {
-          uid: 1000,
-          gid: 1000,
-          gids: [1000],
-          username: "sam",
-          home: "/home/sam",
-          cwd: "/home/sam",
-        },
-        capabilities: ["*"],
-      },
-      env: {
-        CHANNEL_WHATSAPP: { adapterShellExec },
-      },
-      auth: {
-        getPasswdByUid: vi.fn(() => null),
-      },
-      devices: {
-        canAccess: vi.fn(),
-        get: vi.fn(),
-        canHandle: vi.fn(),
-      },
-      adapters: {
-        identityLinks: {
-          list: vi.fn(() => [{
-            adapter: "whatsapp",
-            accountId: "primary",
-            actorId: "wa:jid:123@s.whatsapp.net",
-            uid: 1000,
-            createdAt: 1,
-            linkedByUid: 1000,
-            metadata: null,
-          }]),
-        },
-        status: {
-          list: vi.fn(() => [{
-            adapter: "whatsapp",
-            accountId: "primary",
-            connected: true,
-            authenticated: true,
-            mode: "websocket",
-            updatedAt: 2,
-          }]),
-        },
-      },
-    } as unknown as KernelContext;
     const frame = {
       type: "req",
       id: "req_adapter",
       call: "shell.exec",
       args: { target: "adapter:whatsapp:primary", input: "send +15551234567 hello" },
     } as RequestFrame<"shell.exec">;
+    const ctx = {
+      ...makeContext(),
+      devices: {
+        canAccess: vi.fn(() => false),
+        get: vi.fn(() => null),
+      },
+    } as unknown as KernelContext;
 
     const result = await dispatch(
       frame,
@@ -620,19 +570,13 @@ describe("dispatch", () => {
       response: {
         type: "res",
         id: "req_adapter",
-        ok: true,
-        data: {
-          status: "completed",
-          output: "ok",
-          exitCode: 0,
-          ok: true,
-          pid: 0,
-          stdout: "ok",
-          stderr: "",
+        ok: false,
+        error: {
+          code: 403,
+          message: "Access denied to device: adapter:whatsapp:primary",
         },
       },
     });
-    expect(adapterShellExec).toHaveBeenCalledWith("primary", { input: "send +15551234567 hello" });
     expect(deps.registerRoute).not.toHaveBeenCalled();
   });
 });
