@@ -10089,8 +10089,8 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
       k.caps.seed();
       k.config.set("config/ai/api_key", OPENAI_KEY);
       k.config.set("config/ai/provider", "openai");
-      k.config.set("config/ai/model", "gpt-4o-mini");
-      k.config.set("config/ai/max_tokens", "1024");
+      k.config.set("config/ai/model", "gpt-5.6-luna");
+      k.config.set("config/ai/max_tokens", "2048");
     });
   });
 
