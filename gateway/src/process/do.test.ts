@@ -748,7 +748,8 @@ describe("Process DO — mechanical", () => {
         expect(response).toMatchObject({ type: "res", id: request.id, ok: true });
 
         const messages = process.store.getMessages();
-        return { emitted, messages };
+        const contextMessages = await process.buildContextMessages("default");
+        return { emitted, messages, contextMessages };
       });
 
       expect(result.messages).toHaveLength(1);
@@ -756,6 +757,14 @@ describe("Process DO — mechanical", () => {
         role: "system",
       });
       expect(result.messages[0].content).toContain("Scheduled event `nightly` fired.");
+      expect(result.contextMessages[0]).toMatchObject({
+        role: "user",
+        content: expect.stringContaining("[From: schedule sched-1]"),
+      });
+      expect(result.contextMessages[0].content).toContain(
+        "[Reply destination: this GSV process conversation.]",
+      );
+      expect(result.contextMessages[0].content).toContain("[Process Event]:");
       expect(result.emitted).toHaveLength(2);
       expect(result.emitted[0]).toMatchObject({
         signal: "proc.changed",
@@ -963,6 +972,10 @@ describe("Process DO — mechanical", () => {
           runId: "run-busy",
           pendingRuntimeEvents: 1,
         });
+        const contextMessages = await process.buildContextMessages("default");
+        expect(contextMessages).toHaveLength(1);
+        expect(contextMessages[0].content).toContain("[From: schedule sched-busy]");
+        expect(contextMessages[0].content).not.toContain("[Reply destination:");
 
         await process.finishRun("run-busy", { status: "ok", text: "done" });
         expect(process.currentRun).toMatchObject({ conversationId: "default" });
@@ -970,7 +983,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("keeps a scheduled adapter reply as a distinct queued run and explains automatic delivery", async () => {
+    it("keeps a scheduled adapter reply as a distinct queued run with chronological delivery context", async () => {
       const stub = await initProcess("mech-schedule-adapter-reply", ROOT_IDENTITY);
 
       await runInDurableObject(stub, async (instance: Process) => {
@@ -980,14 +993,16 @@ describe("Process DO — mechanical", () => {
         process.currentRun = { runId: "run-busy", conversationId: "default" };
         process.generation = {
           async generate(request: any) {
-            const prompt = request.context.systemPrompt as string;
-            expect(prompt).toContain("[run.reply]");
-            expect(prompt).toContain("scheduled run's final response is delivered automatically");
-            expect(prompt).toContain("Telegram direct message");
-            expect(prompt).toContain("`message send` creates an additional outbound message");
-            expect(prompt).toContain("requires `--also`");
-            expect(prompt).not.toContain("telegram-user-1");
-            expect(prompt).not.toContain("telegram-chat-1");
+            expect(request.context.systemPrompt).toBe("Test system prompt.");
+            const input = JSON.stringify(request.context.messages);
+            expect(input).toContain("[From: schedule sched-adapter-reply]");
+            expect(input).toContain(
+              "[Reply destination: automatic to this Telegram direct message.]",
+            );
+            expect(input).not.toContain("message send");
+            expect(input).not.toContain("--also");
+            expect(input).not.toContain("telegram-user-1");
+            expect(input).not.toContain("telegram-chat-1");
             return {
               role: "assistant",
               content: [{ type: "text", text: "scheduled reply" }],
@@ -1027,20 +1042,7 @@ describe("Process DO — mechanical", () => {
 
         process.currentRun = null;
         expect(process.claimNextQueuedRun()).toMatchObject({ runId: "run-scheduled-reply" });
-        expect(process.currentRun).toMatchObject({
-          runId: "run-scheduled-reply",
-          origin: {
-            kind: "scheduler",
-            scheduleId: "sched-adapter-reply",
-            replyTo: {
-              kind: "adapter",
-              adapter: "telegram",
-              accountId: "primary",
-              actorId: "telegram-user-1",
-              surface: { kind: "dm", id: "telegram-chat-1" },
-            },
-          },
-        });
+        expect(process.currentRun).toMatchObject({ runId: "run-scheduled-reply" });
         process.currentRun = {
           ...process.currentRun,
           config: {
@@ -1188,21 +1190,31 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = async () => {};
         process.generation = {
           async generate(request: any) {
+            expect(request.context.systemPrompt).toBe("Test system prompt.");
             const first = request.context.messages[0];
             const second = request.context.messages[1];
             const third = request.context.messages[2];
             const fourth = request.context.messages[3];
             expect(first.role).toBe("user");
             expect(first.content).toContain("[From: Telegram direct message]");
+            expect(first.content).toContain(
+              "[Reply destination: automatic to this Telegram direct message.]",
+            );
             expect(first.content).not.toContain("Steve James");
             expect(first.content).toContain("hello from telegram");
             expect(second.role).toBe("user");
             expect(second.content).toContain("[From: WhatsApp group GSV Dev from @sam]");
+            expect(second.content).toContain(
+              "[Reply destination: automatic to this WhatsApp group.]",
+            );
             expect(second.content).toContain("check this from the group");
             expect(third.role).toBe("user");
             expect(third.content).toBe("same source follow-up");
             expect(fourth.role).toBe("user");
             expect(fourth.content).toContain("[From: GSV Web Desktop]");
+            expect(fourth.content).toContain(
+              "[Reply destination: automatic to this GSV client.]",
+            );
             expect(fourth.content).toContain("now from chat");
             return {
               role: "assistant",
@@ -1220,6 +1232,7 @@ describe("Process DO — mechanical", () => {
         };
 
         process.store.appendMessage("user", "hello from telegram", {
+          runId: "run-telegram",
           origin: JSON.stringify({
             kind: "adapter",
             adapter: "telegram",
@@ -1231,6 +1244,7 @@ describe("Process DO — mechanical", () => {
           }),
         });
         process.store.appendMessage("user", "check this from the group", {
+          runId: "run-whatsapp-1",
           origin: JSON.stringify({
             kind: "adapter",
             adapter: "whatsapp",
@@ -1242,6 +1256,7 @@ describe("Process DO — mechanical", () => {
           }),
         });
         process.store.appendMessage("user", "same source follow-up", {
+          runId: "run-whatsapp-2",
           origin: JSON.stringify({
             kind: "adapter",
             adapter: "whatsapp",
@@ -1253,6 +1268,7 @@ describe("Process DO — mechanical", () => {
           }),
         });
         process.store.appendMessage("user", "now from chat", {
+          runId: "run-web",
           origin: JSON.stringify({
             kind: "client",
             connectionId: "conn-1",
@@ -1290,6 +1306,86 @@ describe("Process DO — mechanical", () => {
           "now from chat",
           "noted",
         ]);
+      });
+    });
+
+    it("keeps prior model input stable when later runs change reply destination", async () => {
+      const stub = await initProcess("mech-reply-context-prefix", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("user", "start in the app", {
+          runId: "run-app",
+          origin: JSON.stringify({
+            kind: "app",
+            packageId: "chat",
+            packageName: "Chat",
+            entrypointName: "main",
+            routeBase: "/apps/chat",
+          }),
+        });
+        const appContext = await process.buildContextMessages("default");
+        expect(appContext[0].content).toContain(
+          "[Reply destination: automatic to this GSV app.]",
+        );
+
+        process.store.appendMessage("assistant", "app response", { runId: "run-app" });
+        process.store.appendMessage("user", "continue from my phone", {
+          runId: "run-device",
+          origin: JSON.stringify({ kind: "device", deviceId: "phone" }),
+        });
+        const deviceContext = await process.buildContextMessages("default");
+        expect(deviceContext.slice(0, appContext.length)).toEqual(appContext);
+        expect(deviceContext[2].content).toContain(
+          "[Reply destination: automatic to this GSV device client.]",
+        );
+
+        process.store.appendMessage("assistant", "device response", { runId: "run-device" });
+        process.store.appendMessage("user", "delegated request", {
+          runId: "run-process",
+          origin: JSON.stringify({ kind: "process", sourcePid: "child" }),
+        });
+        const processContext = await process.buildContextMessages("default");
+        expect(processContext.slice(0, deviceContext.length)).toEqual(deviceContext);
+        expect(processContext[4].content).toContain(
+          "[Reply destination: automatic to the calling GSV process.]",
+        );
+
+        process.store.appendMessage("assistant", "process response", { runId: "run-process" });
+        process.store.appendMessage("user", "route-less work", { runId: "run-local" });
+        const localContext = await process.buildContextMessages("default");
+        expect(localContext.slice(0, processContext.length)).toEqual(processContext);
+        expect(localContext[6].content).toContain(
+          "[Reply destination: this GSV process conversation.]",
+        );
+      });
+    });
+
+    it("does not let a same-run system record change the reply destination", async () => {
+      const stub = await initProcess("mech-reply-context-same-run", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("user", "hello from telegram", {
+          runId: "run-adapter",
+          origin: JSON.stringify({
+            kind: "adapter",
+            adapter: "telegram",
+            accountId: "primary",
+            surface: { kind: "dm", id: "telegram-chat-1" },
+            actorId: "telegram-user-1",
+          }),
+        });
+        process.store.appendMessage("system", "Temporary provider error.", {
+          runId: "run-adapter",
+        });
+
+        const context = await process.buildContextMessages("default");
+        expect(context[0].content).toContain(
+          "[Reply destination: automatic to this Telegram direct message.]",
+        );
+        expect(context[1].content).toContain("[Process Event]:");
+        expect(context[1].content).not.toContain("[Reply destination:");
       });
     });
 
@@ -4092,7 +4188,13 @@ describe("Process DO — mechanical", () => {
         const messages = await (instance as any).buildContextMessages();
         const user = messages[0] as any;
         expect(Array.isArray(user.content)).toBe(true);
-        expect(user.content[0]).toEqual({ type: "text", text: "Describe this image." });
+        expect(user.content[0]).toEqual({
+          type: "text",
+          text: [
+            "[Reply destination: this GSV process conversation.]",
+            "Describe this image.",
+          ].join("\n"),
+        });
         expect(user.content[1]).toEqual({
           type: "text",
           text: `Attached image "proof.png" [image/png] 3 B\nPath: /${media[0].key}`,

@@ -233,7 +233,6 @@ import {
 type RunState = {
   runId: string;
   conversationId: string;
-  origin?: InteractionOrigin;
   tickGeneration?: number;
   pendingMediaMessageId?: number;
   pendingRuntimeEvents?: number;
@@ -1360,7 +1359,7 @@ export class Process extends Host<Env> {
             media: media ?? undefined,
             origin: origin ?? undefined,
           });
-          this.currentRun = { runId, conversationId, ...(args.origin ? { origin: args.origin } : {}) };
+          this.currentRun = { runId, conversationId };
           this.ctx.waitUntil(this.scheduleTick(runId).catch(async (error) => {
             if (this.currentRun?.runId !== runId) {
               return;
@@ -1424,7 +1423,6 @@ export class Process extends Host<Env> {
       this.currentRun = {
         runId,
         conversationId,
-        ...(args.origin ? { origin: args.origin } : {}),
         ...(hasMedia ? { pendingMediaMessageId: messageId } : {}),
       };
       if (activeRun) {
@@ -1786,7 +1784,6 @@ export class Process extends Host<Env> {
         this.currentRun = {
           runId,
           conversationId,
-          ...(deliveredArgs.origin ? { origin: deliveredArgs.origin } : {}),
         };
         this.ctx.waitUntil(this.scheduleTick(runId)
           .then(() => this.announceRun(runId, conversationId, "proc.ipc.deliver"))
@@ -4009,7 +4006,6 @@ export class Process extends Host<Env> {
               this.currentRun = {
                 runId: nextRunId!,
                 conversationId,
-                ...(options.origin ? { origin: options.origin } : {}),
               };
             } else if (currentRun.conversationId === conversationId) {
               currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
@@ -4212,8 +4208,6 @@ export class Process extends Host<Env> {
       description: t.description,
       parameters: t.inputSchema as Tool["parameters"],
     }));
-    const generationSystemPrompt = appendRunReplyContext(run.systemPrompt, run.origin);
-
     const buildGenerationContext = async (): Promise<Context> => {
       const pendingRuntimeEventsInContext = this.currentRun?.runId === runId
         ? this.currentRun.pendingRuntimeEvents ?? 0
@@ -4221,14 +4215,14 @@ export class Process extends Host<Env> {
       const messages = await this.buildContextMessages(conversationId);
       this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
       return {
-        systemPrompt: generationSystemPrompt,
+        systemPrompt: run.systemPrompt,
         messages,
         tools: tools.length > 0 ? tools : undefined,
       };
     };
 
     let context: Context = {
-      systemPrompt: generationSystemPrompt,
+      systemPrompt: run.systemPrompt,
       messages: [],
       tools: tools.length > 0 ? tools : undefined,
     };
@@ -5742,24 +5736,48 @@ export class Process extends Host<Env> {
     }
 
     let previousSource: string | null | undefined;
+    let previousReplyDestinationKey: string | undefined;
+    const seenRunIds = new Set<string>();
     for (let index = 0; index < records.length; index += 1) {
-      if (records[index].role !== "user") {
+      const record = records[index];
+      const ownsDistinctRun = record.runId !== null
+        && record.runId !== undefined
+        && !seenRunIds.has(record.runId);
+      if (record.runId !== null && record.runId !== undefined) {
+        seenRunIds.add(record.runId);
+      }
+      if (record.role !== "user" && record.role !== "system") {
         continue;
       }
 
-      const source = formatInteractionOriginForContext(parseInteractionOrigin(records[index].origin));
+      const origin = parseInteractionOrigin(record.origin);
+      const source = formatInteractionOriginForContext(origin);
       const shouldRenderSource = source !== null && source !== previousSource;
-      previousSource = source;
-      if (!shouldRenderSource) {
-        continue;
+      if (record.role === "user" || source !== null) {
+        previousSource = source;
+      }
+
+      const replyDestination = ownsDistinctRun
+        ? formatReplyDestinationForContext(origin)
+        : null;
+      const shouldRenderReplyDestination = replyDestination !== null
+        && replyDestination.key !== previousReplyDestinationKey;
+      if (replyDestination) {
+        previousReplyDestinationKey = replyDestination.key;
       }
 
       const message = messages[index];
-      if (message?.role !== "user") {
+      if (message?.role !== "user" || (!shouldRenderSource && !shouldRenderReplyDestination)) {
         continue;
       }
 
-      messages[index] = prefixUserMessageContent(message, `[From: ${source}]`);
+      const contextLines = [
+        ...(shouldRenderSource ? [`[From: ${source}]`] : []),
+        ...(shouldRenderReplyDestination
+          ? [`[Reply destination: ${replyDestination.description}.]`]
+          : []),
+      ];
+      messages[index] = prefixUserMessageContent(message, contextLines.join("\n"));
     }
 
     return orderMessagesForProvider(messages);
@@ -6928,11 +6946,9 @@ export class Process extends Host<Env> {
       media: next.media ?? undefined,
       origin: next.origin ?? undefined,
     });
-    const origin = parseInteractionOrigin(next.origin);
     this.currentRun = {
       runId: next.runId,
       conversationId: next.conversationId,
-      ...(origin ? { origin } : {}),
     };
     return next;
   }
@@ -7247,59 +7263,66 @@ function parseAdapterMessageDestination(value: unknown): AdapterMessageDestinati
   };
 }
 
-function appendRunReplyContext(
-  systemPrompt: string | undefined,
+const PROCESS_CONVERSATION_REPLY_DESTINATION = {
+  key: "process-conversation",
+  description: "this GSV process conversation",
+} as const;
+
+function formatReplyDestinationForContext(
   origin: InteractionOrigin | undefined,
-): string | undefined {
-  const replyContext = formatRunReplyContext(origin);
-  if (!replyContext) return systemPrompt;
-  return [systemPrompt?.trimEnd(), "[run.reply]", replyContext]
-    .filter((part): part is string => Boolean(part))
-    .join("\n\n");
-}
+): {
+  key: string;
+  description: string;
+} {
+  if (!origin) return PROCESS_CONVERSATION_REPLY_DESTINATION;
 
-function formatRunReplyContext(origin: InteractionOrigin | undefined): string | null {
-  if (!origin) return null;
-
-  if (origin.kind === "adapter") {
-    return automaticAdapterReplyInstructions(origin.adapter, origin.surface.kind, false);
+  const adapterDestination = origin.kind === "adapter"
+    ? origin
+    : origin.kind === "scheduler"
+      ? origin.replyTo
+      : undefined;
+  if (adapterDestination) {
+    const surface = adapterDestination.surface;
+    const surfaceLabel = surface.kind === "dm" ? "direct message" : surface.kind;
+    return {
+      key: JSON.stringify([
+        "adapter",
+        adapterDestination.adapter,
+        adapterDestination.accountId,
+        adapterDestination.actorId,
+        surface.kind,
+        surface.id,
+        surface.threadId ?? "",
+      ]),
+      description: `automatic to this ${titleCase(adapterDestination.adapter)} ${surfaceLabel}`,
+    };
   }
-  if (origin.kind === "scheduler") {
-    if (origin.replyTo) {
-      return automaticAdapterReplyInstructions(
-        origin.replyTo.adapter,
-        origin.replyTo.surface.kind,
-        true,
-      );
-    }
-    return "This scheduled run records its final response in the GSV process conversation; it has no external chat delivery destination.";
-  }
+  if (origin.kind === "scheduler") return PROCESS_CONVERSATION_REPLY_DESTINATION;
   if (origin.kind === "client") {
-    return "This run's final response is returned automatically to the GSV client that started it. Return the answer normally.";
+    return {
+      key: `client:${origin.connectionId}`,
+      description: "automatic to this GSV client",
+    };
   }
   if (origin.kind === "app") {
-    return "This run's final response is returned automatically to the GSV app that started it. Return the answer normally.";
+    return {
+      key: JSON.stringify(["app", origin.packageId, origin.entrypointName, origin.routeBase]),
+      description: "automatic to this GSV app",
+    };
   }
   if (origin.kind === "process") {
-    return "This run's final response is returned automatically to the calling GSV process. Return the answer normally.";
+    return {
+      key: `process:${origin.sourcePid}`,
+      description: "automatic to the calling GSV process",
+    };
   }
   if (origin.kind === "device") {
-    return "This run's final response is returned automatically to the initiating GSV device client. Return the answer normally.";
+    return {
+      key: `device:${origin.deviceId}`,
+      description: "automatic to this GSV device client",
+    };
   }
-  return null;
-}
-
-function automaticAdapterReplyInstructions(
-  adapter: string,
-  surface: AdapterSurface["kind"],
-  scheduled: boolean,
-): string {
-  const destination = `${titleCase(adapter)} ${surface === "dm" ? "direct message" : surface}`;
-  return [
-    `This ${scheduled ? "scheduled " : ""}run's final response is delivered automatically to the current ${destination}.`,
-    "Return the answer normally for that reply.",
-    "`message send` creates an additional outbound message; use it only when an extra or cross-channel message was requested. An intentional extra message to this same destination requires `--also`.",
-  ].join(" ");
+  throw new Error("Interaction origin has no reply destination");
 }
 
 function prefixUserMessageContent(message: UserMessage, prefix: string): UserMessage {

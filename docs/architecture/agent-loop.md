@@ -91,6 +91,17 @@ seeded into user home `skills.d` during bootstrap when missing.
 The assembled prompt, config, tool list, device list, and approval policy are
 cached in `currentRun` for the duration of that run.
 
+Reply routing does not alter that standing system prompt. The first
+model-visible message that owns a run, and the next such message whenever its
+reply semantics change, receives a concise chronological annotation such as
+`[Reply destination: automatic to this Telegram direct message.]`. It appears
+beside the existing `[From: ...]` annotation without changing the stored
+message. A route-less run names the GSV process conversation instead. A
+non-distinct runtime event that joins an active run is
+only annotated with its source; it does not change that run's reply destination.
+This keeps prior provider input byte-stable when a later message arrives from
+another client or adapter, preserving prefix-cache reuse.
+
 ## Model and Tool Cycle
 
 Each tick builds a `pi-ai` context from the system prompt, stored messages, and
