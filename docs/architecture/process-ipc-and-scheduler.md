@@ -458,8 +458,8 @@ event runs the agent, and its terminal answer follows that destination. Without
 an adapter route, the result remains in the process conversation.
 
 `--to` resolves a known authorized adapter destination, including one whose
-account is currently offline, and creates an `adapter.send` target. It sends
-the stored text directly without running an agent.
+account is currently offline, and creates an `adapter.send` scheduled action.
+It sends the stored text directly without running an agent.
 
 An adapter destination contains adapter, account, linked actor, surface, and
 optional thread. It omits the triggering platform message id and display labels.
@@ -569,7 +569,7 @@ Implemented:
 - `process.event` targets that enter process context as visible process events.
 - optional `process.event.replyTo` destinations captured by `sched add --here`
   during an adapter run.
-- direct `adapter.send` targets created by `sched add --to`.
+- direct `adapter.send` scheduled actions created by `sched add --to`.
 - Cloudflare Agent schedules as one-shot wake-ups only; GSV stores the schedule
   definition and computes the next fire time.
 

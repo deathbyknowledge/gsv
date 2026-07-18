@@ -1438,8 +1438,8 @@ sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezo
 ```
 
 The shell resolves `--to` against known authorized destinations, including an
-offline adapter account, and creates an `adapter.send` target. It does not
-accept `--conversation`.
+offline adapter account, and creates an `adapter.send` scheduled action. It
+does not accept `--conversation`.
 
 `--at` requires a future ISO timestamp with `Z` or an explicit numeric UTC
 offset. Use `crontab` or `/var/spool/cron/<user>` for recurring background

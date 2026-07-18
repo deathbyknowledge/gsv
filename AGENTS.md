@@ -1,6 +1,6 @@
 # GSV Engineering Contract
 
-GSV is an open-source, user-owned personal intelligence operating environment. Its gateway is a lightweight, globally reachable control plane; agents are durable processes; capabilities gate syscalls; and machines, browsers, and adapters implement common primitives behind target routing.
+GSV is an open-source, user-owned personal intelligence operating environment. Its gateway is a lightweight, globally reachable control plane; agents are durable processes; capabilities gate syscalls; machines and browsers implement common primitives behind target routing; and adapters own messaging transport.
 
 This document is the root engineering contract for the repository. It explains how to change GSV without eroding that model. Use the code as the source of truth, and update this file when the architecture deliberately changes.
 

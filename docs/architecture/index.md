@@ -68,7 +68,7 @@ the process metadata needed for routing and permissions.
 The agent loop belongs to the Process DO. It assembles context, calls the model,
 receives tool calls, issues syscalls, waits for results, and emits `proc.run.*`
 and `proc.changed` signals through the Kernel. `gsv chat` is therefore just one
-client for a process; browser apps and adapters can target the same process
+client for a process; browser apps and adapters can reach the same process
 model.
 
 ### Filesystem and Storage
@@ -113,6 +113,12 @@ checks.
 
 This is the hardware abstraction layer. Devices can be laptops, servers, or any
 CLI-run machine, but agents do not need a different API for each one.
+
+Messaging adapters are deliberately outside this target inventory. They do not
+execute targetable syscalls and therefore do not appear as devices or available
+targets. Agents discover authorized messaging surfaces with
+`message destinations`; users inspect and administer adapter accounts in the
+Messengers console and adapter APIs.
 
 ### Packages and Apps
 

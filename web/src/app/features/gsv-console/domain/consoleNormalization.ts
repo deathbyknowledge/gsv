@@ -465,9 +465,6 @@ function normalizeTargetKind(deviceId: string, platform: string): ConsoleTargetK
   ) {
     return "browser";
   }
-  if (normalizedDeviceId.startsWith("adapter:") || normalizedPlatform === "adapter") {
-    return "adapter";
-  }
   if (normalizedPlatform) return "native-device";
   return "unknown";
 }

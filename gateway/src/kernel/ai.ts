@@ -170,15 +170,9 @@ export async function handleAiTools(
     && hasCapability(capabilities, "sys.mcp.call");
   const mcpUid = resolveCallerOwnerUid(ctx);
 
-  const onlineDevices: AiToolsDevice[] = [];
-  const deviceIds: string[] = [];
-
-  for (const target of listVisibleTargets(ctx)) {
-    onlineDevices.push(targetToAiDevice(target));
-    if (target.providerId === "device" && target.route.kind === "connection") {
-      deviceIds.push(target.targetId);
-    }
-  }
+  const visibleTargets = listVisibleTargets(ctx);
+  const onlineDevices: AiToolsDevice[] = visibleTargets.map(targetToAiDevice);
+  const deviceIds = visibleTargets.map((target) => target.targetId);
 
   const tools: ToolDefinition[] = [];
 

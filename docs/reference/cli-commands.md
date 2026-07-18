@@ -129,11 +129,12 @@ process conversation. The target is bound to the current process id and must be
 recreated after that process is killed.
 
 Use `sched add --to DESTINATION` for direct scheduled text delivery. It creates
-an `adapter.send` target and does not run the agent. Destination resolution
-includes known authorized offline destinations because the account may be
-online when the schedule fires. Run `message destinations --all` and copy its
-opaque GSV destination id; provider account, actor, and surface ids are not part
-of the agent-facing command contract. `--conversation` is valid only with `--here`.
+an `adapter.send` scheduled action and does not run the agent. Destination
+resolution includes known authorized offline destinations because the account
+may be online when the schedule fires. Run `message destinations --all` and
+copy its opaque GSV destination id; provider account, actor, and surface ids are
+not part of the agent-facing command contract. `--conversation` is valid only
+with `--here`.
 A successful `process.event` firing records event admission, not completion of
 a model turn or reply. Choose exactly one time expression. `--at` requires a
 future ISO timestamp with `Z` or an explicit numeric UTC offset.

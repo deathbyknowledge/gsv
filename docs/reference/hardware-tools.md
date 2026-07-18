@@ -13,6 +13,11 @@ This is the important rule for agents: choose `target: "gsv"` for Gateway-native
 
 The Gateway includes accessible online devices in `ai.tools` context and in `sys.device.list`. Device notes are included there too, so processes can choose targets using the user's own description of what each machine is for. Devices also appear in the native filesystem under `/sys/devices`.
 
+Messaging adapters are not hardware targets and never appear in these
+inventories. Use `message destinations` to discover authorized external chat
+surfaces; use adapter APIs or the Messengers console to inspect and administer
+the underlying accounts.
+
 ## Agent-Visible Tools
 
 | Tool | Syscall | Description |

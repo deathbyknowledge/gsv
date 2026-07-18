@@ -39,7 +39,7 @@ export function MachineDetailPage({
             <Button
               variant="dangerGhost"
               label={deleting ? "FORGETTING" : forgetLabel}
-              disabled={deleting || !onDelete || (target.kind !== "native-device" && target.kind !== "browser")}
+              disabled={deleting || !onDelete || target.kind === "unknown"}
               onClick={() => setConfirmDelete(true)}
             />
             {deleteError ? <span class="gsv-console-detail-action-error">{deleteError}</span> : null}

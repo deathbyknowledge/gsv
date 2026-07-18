@@ -26,9 +26,7 @@ function makeContext(
   uid: number,
   records: FakeDeviceRecord[],
   accessibleDeviceIds: string[] = [],
-  options: { ownerUid?: number; processId?: string } = {},
 ): KernelContext {
-  const ownerUid = options.ownerUid ?? uid;
   const byId = new Map(records.map((record) => [record.device_id, record]));
 
   const devices = {
@@ -63,7 +61,7 @@ function makeContext(
   const tokens = [
     {
       tokenId: "tok-active-alpha",
-      uid: ownerUid,
+      uid,
       kind: "node",
       label: null,
       tokenPrefix: "alpha",
@@ -77,7 +75,7 @@ function makeContext(
     },
     {
       tokenId: "tok-revoked-alpha",
-      uid: ownerUid,
+      uid,
       kind: "node",
       label: null,
       tokenPrefix: "alpha-old",
@@ -91,7 +89,7 @@ function makeContext(
     },
     {
       tokenId: "tok-beta",
-      uid: ownerUid,
+      uid,
       kind: "node",
       label: null,
       tokenPrefix: "beta",
@@ -108,7 +106,6 @@ function makeContext(
   const revokeToken = vi.fn(() => true);
 
   return {
-    processId: options.processId,
     identity: {
       role: "user",
       process: {
@@ -132,13 +129,6 @@ function makeContext(
       }),
       listTokens,
       revokeToken,
-    },
-    procs: {
-      getOwnerUid: () => ownerUid,
-    },
-    adapters: {
-      identityLinks: { list: () => [] },
-      status: { listByOwner: () => [], list: () => [], listAll: () => [] },
     },
     devices: devices as unknown as KernelContext["devices"],
   } as KernelContext;
@@ -197,104 +187,6 @@ describe("sys.device handlers", () => {
     expect(result.devices.map((device) => device.deviceId)).toEqual(["node-alpha", "node-beta"]);
   });
 
-  it("includes visible adapter messaging targets", () => {
-    const ctx = {
-      ...makeContext(1000, []),
-      env: {
-        CHANNEL_WHATSAPP: { adapterSend: () => undefined },
-      },
-      adapters: {
-        identityLinks: {
-          list: () => [{
-            adapter: "whatsapp",
-            accountId: "primary",
-            actorId: "wa:jid:123@s.whatsapp.net",
-            uid: 1000,
-            createdAt: 1,
-            linkedByUid: 1000,
-            metadata: null,
-          }],
-        },
-        status: {
-          listByOwner: () => [],
-          list: () => [{
-            adapter: "whatsapp",
-            accountId: "primary",
-            connected: true,
-            authenticated: true,
-            mode: "websocket",
-            updatedAt: 2,
-          }],
-        },
-      },
-    } as unknown as KernelContext;
-
-    const result = handleSysDeviceList({}, ctx);
-
-    expect(result.devices).toEqual([
-      expect.objectContaining({
-        deviceId: "adapter:whatsapp:primary",
-        implements: ["adapter.send"],
-        label: "WhatsApp",
-        platform: "adapter",
-        online: true,
-      }),
-    ]);
-  });
-
-  it("includes owner-linked adapter messaging targets for agent process callers", () => {
-    const listLinks = vi.fn((filterUid?: number) =>
-      filterUid === 1000
-        ? [{
-            adapter: "telegram",
-            accountId: "bot",
-            actorId: "telegram:user:1",
-            uid: 1000,
-            createdAt: 1,
-            linkedByUid: 1000,
-            metadata: null,
-          }]
-        : []
-    );
-    const ctx = {
-      ...makeContext(2000, [], [], { ownerUid: 1000, processId: "proc-agent" }),
-      env: {
-        CHANNEL_TELEGRAM: { adapterSend: () => undefined },
-      },
-      adapters: {
-        identityLinks: {
-          list: listLinks,
-        },
-        status: {
-          listByOwner: () => [],
-          list: () => [{
-            adapter: "telegram",
-            accountId: "bot",
-            connected: true,
-            authenticated: true,
-            mode: "polling",
-            updatedAt: 2,
-          }],
-        },
-      },
-    } as unknown as KernelContext;
-
-    const result = handleSysDeviceList({}, ctx);
-
-    expect(listLinks).toHaveBeenCalledWith(1000);
-    expect(result.devices).toEqual([
-      expect.objectContaining({
-        deviceId: "adapter:telegram:bot",
-        implements: ["adapter.send"],
-        ownerUid: 1000,
-        ownerUsername: "user1000",
-        label: "Telegram",
-        platform: "adapter",
-        online: true,
-      }),
-    ]);
-  });
-
   it("returns null for inaccessible device details", () => {
     const ctx = makeContext(1001, records);
     const result = handleSysDeviceGet({ deviceId: "node-alpha" }, ctx);
@@ -318,49 +210,6 @@ describe("sys.device handlers", () => {
     expect(result.device?.ownerUid).toBe(1000);
     expect(result.device?.label).toBe("Alpha");
     expect(result.device?.description).toBe("Linux home server");
-  });
-
-  it("returns details for visible adapter messaging targets", () => {
-    const ctx = {
-      ...makeContext(1000, []),
-      env: {
-        CHANNEL_DISCORD: { adapterSend: () => undefined },
-      },
-      adapters: {
-        identityLinks: {
-          list: () => [{
-            adapter: "discord",
-            accountId: "ops",
-            actorId: "discord:user:1",
-            uid: 1000,
-            createdAt: 1,
-            linkedByUid: 1000,
-            metadata: null,
-          }],
-        },
-        status: {
-          listByOwner: () => [],
-          list: () => [{
-            adapter: "discord",
-            accountId: "ops",
-            connected: true,
-            authenticated: true,
-            mode: "gateway",
-            updatedAt: 2,
-          }],
-        },
-      },
-    } as unknown as KernelContext;
-
-    const result = handleSysDeviceGet({ deviceId: "adapter:discord:ops" }, ctx);
-
-    expect(result.device).toMatchObject({
-      deviceId: "adapter:discord:ops",
-      label: "Discord",
-      platform: "adapter",
-      implements: ["adapter.send"],
-      online: true,
-    });
   });
 
   it("lets owners update device descriptions", () => {

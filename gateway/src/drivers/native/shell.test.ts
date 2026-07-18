@@ -688,6 +688,24 @@ describe("native shell capability discovery", () => {
     expect(result.stdout).toContain("--attach PATH");
   });
 
+  it("keeps messaging destinations separate from execution targets", async () => {
+    const targets = await handleShellExec(
+      { input: "man targets" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+    const sched = await handleShellExec(
+      { input: "man sched" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(targets.ok).toBe(true);
+    expect(targets.stdout).toContain("device   User-owned connected devices");
+    expect(targets.stdout).not.toContain("adapter  External messaging surfaces");
+    expect(targets.stdout).not.toContain("targets search whatsapp");
+    expect(sched.stdout).toContain("creates a direct scheduled delivery");
+    expect(sched.stdout).not.toContain("adapter.send target");
+  });
+
   it("prints exact next actions and structured JSON results", async () => {
     const result = await handleShellExec(
       { input: "man --search --json -- 'find a connected browser'" },

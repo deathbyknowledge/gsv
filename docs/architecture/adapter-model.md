@@ -31,6 +31,21 @@ An adapter is responsible for:
 The Kernel does not need to know how WhatsApp or Discord work internally. It only
 needs a normalized control surface.
 
+Adapters are not execution targets. They do not appear in `sys.device.list`,
+the `targets`/`devices` shell inventory, the model's available-target list, or
+the Machines console. Those surfaces contain only places where targetable
+syscalls can run: GSV, connected devices, and browser-backed targets.
+
+Messaging has its own two deliberate views:
+
+- `message destinations` is the agent-facing inventory of authorized observed
+  conversations where a message can be delivered.
+- Adapter APIs and the Messengers console expose account connection, health,
+  identity-link, and administration state.
+
+This keeps a Telegram account from masquerading as a machine while preserving
+the adapter as the platform-specific owner of delivery.
+
 ## Why deployment names still say `channel-*`
 
 User-facing docs prefer **adapter** because that is the better product term.
@@ -98,7 +113,7 @@ The automatic outbound path is the reverse:
 3. It rechecks the linked actor's destination authority.
 4. If the route is an adapter route, the Kernel sends the reply through the
    adapter worker.
-5. The adapter worker formats it for the target platform and delivers it.
+5. The adapter worker formats it for the chat platform and delivers it.
 
 Again, the adapter is a transport surface, not the place where durable agent
 state lives. The agent normally returns its final answer without calling an

@@ -18,7 +18,7 @@ export type ConsoleProcess = {
   lastActiveAt: number | null;
 };
 
-export type ConsoleTargetKind = "native-device" | "browser" | "adapter" | "unknown";
+export type ConsoleTargetKind = "native-device" | "browser" | "unknown";
 
 export type ConsoleTarget = {
   deviceId: string;

@@ -640,9 +640,6 @@ export class Kernel extends Host<Env> {
       if (!device) {
         throw new Error(`Access denied to device: ${target}`);
       }
-      if (device.providerId !== "device" || device.route.kind !== "connection") {
-        throw new Error(`Target does not support device requests: ${target}`);
-      }
       if (options.requestId) {
         controller = this.registerActiveRequest(origin, options.requestId);
       }

@@ -97,6 +97,12 @@ If a run route is missing, the Kernel falls back to broadcasting the signal to c
 
 Messaging adapters call `adapter.inbound` through a service identity. The Kernel normalizes the adapter id and account id, then resolves the external actor id through `identity_links`.
 
+An adapter is a transport service, not a device target. It is absent from
+`sys.device.*`, target-aware tool schemas, and the generic target inventory.
+Explicit outbound delivery resolves an opaque authorized surface from
+`message destinations`; adapter account status and administration remain on
+the `adapter.*` control-plane API.
+
 Inbound behavior:
 
 - Linked actor: resolve the local uid and deliver to a process.
