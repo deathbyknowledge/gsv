@@ -34,7 +34,7 @@ export function renderManualPage(topic: string): string | null {
         "  llm 'Summarize this in one sentence.'",
         "  printf 'Release notes...' | llm --system 'Return three bullets.'",
         "  llm --preset fast --max-tokens 128 'Suggest a concise task label.'",
-        "  llm --provider anthropic --model claude-sonnet-4-20250514 --json 'ping'",
+        "  llm --provider anthropic --model claude-sonnet-4-6 --json 'ping'",
         "",
       ].join("\n");
 

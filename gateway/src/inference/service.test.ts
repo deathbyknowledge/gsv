@@ -48,7 +48,7 @@ function assistantMessage(content: AssistantMessage["content"]): AssistantMessag
 const CONFIG: AiConfigResult = {
   executor: { kind: "kernel" },
   provider: "anthropic",
-  model: "claude-sonnet-4-20250514",
+  model: "claude-sonnet-4-6",
   apiKey: "test-key",
   reasoning: "high",
   maxTokens: 4096,

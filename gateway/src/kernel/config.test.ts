@@ -87,7 +87,7 @@ describe("ConfigStore", () => {
     const sql = createMockSql();
     store = new ConfigStore(sql);
     store.set("config/ai/provider", "anthropic");
-    store.set("config/ai/model", "claude-sonnet-4-20250514");
+    store.set("config/ai/model", "claude-sonnet-4-6");
     store.set("users/0/ai/model", "gpt-4.1");
   });
 
@@ -121,7 +121,7 @@ describe("ConfigStore", () => {
     const values = new Map(ai.map((entry) => [entry.key, entry.value]));
     expect(values.get("config/ai/api_key")).toBe("");
     expect(values.get("config/ai/provider")).toBe("anthropic");
-    expect(values.get("config/ai/model")).toBe("claude-sonnet-4-20250514");
+    expect(values.get("config/ai/model")).toBe("claude-sonnet-4-6");
     expect(values.get("config/ai/generation/streaming")).toBe("auto");
     expect(values.get("config/ai/context.d/00-gsv.md")).toContain("[Process Event]:");
   });

@@ -1,11 +1,14 @@
 import {
   clampThinkingLevel,
-  type KnownProvider,
   type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
-import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
+import {
+  type BuiltinProvider,
+  getBuiltinModels,
+  getBuiltinProviders,
+} from "@earendil-works/pi-ai/providers/all";
 
-const WORKERS_AI_REGISTRY_PROVIDER: KnownProvider = "cloudflare-workers-ai";
+const WORKERS_AI_REGISTRY_PROVIDER: BuiltinProvider = "cloudflare-workers-ai";
 const MODEL_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const satisfies readonly ModelThinkingLevel[];
 const MODEL_THINKING_LEVEL_SET = new Set<string>(MODEL_THINKING_LEVELS);
 
@@ -20,8 +23,8 @@ export function resolvePiAiModel(provider: string, modelName: string) {
   return model;
 }
 
-export function isKnownPiAiProvider(provider: string): provider is KnownProvider {
-  return getBuiltinProviders().includes(provider as KnownProvider);
+export function isKnownPiAiProvider(provider: string): provider is BuiltinProvider {
+  return getBuiltinProviders().includes(provider as BuiltinProvider);
 }
 
 export function normalizeModelThinkingLevel(value: unknown): ModelThinkingLevel | null {

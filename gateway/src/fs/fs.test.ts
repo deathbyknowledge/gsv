@@ -1327,7 +1327,7 @@ describe("GsvFs virtual /sys config tree", () => {
   it("lists nested /sys/config directories based on config key prefixes", async () => {
     const fs = makeConfigBackedFs(ROOT, {
       "config/ai/provider": "anthropic",
-      "config/ai/model": "claude-sonnet-4-20250514",
+      "config/ai/model": "claude-sonnet-4-6",
       "config/ai/api_key": "sk-test",
       "config/server/name": "gsv",
     });
@@ -1372,7 +1372,7 @@ describe("GsvFs virtual /sys config tree", () => {
   it("hides sensitive system config keys for non-root users", async () => {
     const fs = makeConfigBackedFs(SAM, {
       "config/ai/provider": "anthropic",
-      "config/ai/model": "claude-sonnet-4-20250514",
+      "config/ai/model": "claude-sonnet-4-6",
       "config/ai/api_key": "sk-test",
     });
 
