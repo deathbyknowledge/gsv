@@ -525,7 +525,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
+| `proc.list` | `handleProcList` | Reads the Kernel process registry. Root may select any owner; a non-root caller is always restricted to its owning human, regardless of an explicit `uid` argument. |
 | `proc.profile.list` | `handleProcProfileList` | Returns system AI profiles plus enabled package-backed profiles visible to the caller. Package entries are sorted by package name and display name. |
 | `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. A default interactive top-level spawn reuses the caller's default conversation executor; custom spawns get UUID pids. |
 | `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media entries contain process-scoped keys returned by `proc.media.write` or external URLs; inline `media.data` is not accepted. Media-bearing user messages are admitted immediately and generation starts after background media preparation. Touches workspace activity before forwarding. |
@@ -533,7 +533,7 @@ Runtime behavior:
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
-| `proc.kill` | Process DO | Optionally archives every non-empty conversation under the run-as agent's home, clears process media, and wipes Process DO state. After success the Kernel removes the process registry entry and detaches its conversation executor. |
+| `proc.kill` | Process DO | Optionally archives every non-empty conversation in private owner-scoped internal storage, clears process media, and wipes Process DO state. After success the Kernel removes the process registry entry and detaches its conversation executor. |
 | `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, cursor flags, truncation status, timestamps, pending HIL, and the latest context-pressure state when available. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content; tool results classify completed, failed, user-cancelled, and user-denied outcomes. |
 | `proc.media.read` | Process DO | Reads one process-scoped media object. A successful result returns key, MIME type, and size in `data` and always attaches the media bytes as a response body. |
 | `proc.media.write` | Process DO | Streams one request body directly into process-scoped R2 storage. The body descriptor must declare its exact length so R2 receives a fixed-length stream. Returns a stable media reference for `proc.send`. |
@@ -549,9 +549,9 @@ Runtime behavior:
 | `proc.conversation.fork` | Process DO | Branches a live conversation through `throughMessageId`, or restores a compacted `segmentId` into a new process-local conversation. Segment restore includes the live suffix that existed at the compaction boundary unless `includeLiveSuffix: false`. |
 | `proc.conversation.segment.read` | Process DO | Reads paged messages from a compacted segment archive without restoring those messages into the live conversation. |
 | `proc.conversation.segments` | Process DO | Lists recorded lifecycle segments for `conversationId` or `default`, including archive paths and summary marker ids. |
-| `proc.reset` | Process DO | Archives every non-empty conversation under the run-as agent's home, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
+| `proc.reset` | Process DO | Archives every non-empty conversation in private owner-scoped internal storage, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
 | `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers the validated IPC envelope from the kernel into the target conversation. |
-| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, assignment context, and conversation hydration pointers; `assignment.autoStart` can create a run immediately. |
+| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, ship-Kernel route, distinct owner and run-as identities, interaction mode, assignment context, and owner-scoped conversation hydration pointers; `assignment.autoStart` can create a run immediately. Existing process state without a stored Kernel name retains the same ship-Kernel route named `singleton`. |
 
 ```ts
 type ProcContextFile = { name: string; text: string };
@@ -818,9 +818,9 @@ Runtime behavior:
 | `pkg.remote.add` | `handlePkgRemoteAdd` | Stores a current-user remote config key. Remote names must be alphanumeric with dashes; URLs must be HTTP or HTTPS and are normalized. |
 | `pkg.remote.remove` | `handlePkgRemoteRemove` | Deletes a current-user remote config key. Returns whether anything was removed. |
 | `pkg.public.list` | `handlePkgPublicList` | Lists local public packages, or fetches `<baseUrl>/public/packages` from a named/URL remote. Invalid remote catalog entries are dropped. |
-| `pkg.public.set` | `handlePkgPublicSet` | Marks a source repo public or private in config. Requires repo owner, root, or wildcard capability. |
+| `pkg.public.set` | `handlePkgPublicSet` | Marks a source repo public or private in config. Requires the repo owner or root. |
 
-Mutating package calls require root, wildcard capability, or ownership of the package user scope. `pkg.add`, `pkg.create`, `pkg.sync`, `pkg.install`, `pkg.remove`, and `pkg.checkout` broadcast `pkg.changed` to that scope after success.
+Mutating package calls require root or ownership of the package user scope. `pkg.add`, `pkg.create`, `pkg.sync`, `pkg.install`, `pkg.remove`, and `pkg.checkout` broadcast `pkg.changed` to that scope after success.
 
 ```ts
 type PackageSyscalls = {
@@ -895,7 +895,7 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `repo.list` | `handleRepoList` | Lists repositories visible to the caller. Results include home, workspace, visible package source, and registered user repos. Optional `owner` filters by repo owner. |
-| `repo.create` | `handleRepoCreate` | Creates a repository by writing an empty initial commit to `ref`, default `main`. Existing refs return `created: false`. Only root, wildcard, or the username owner can write. |
+| `repo.create` | `handleRepoCreate` | Creates a repository by writing an empty initial commit to `ref`, default `main`. Existing refs return `created: false`. Only root or the username owner can write. |
 | `repo.refs` | `handleRepoRefs` | Reads heads and tags. Allows owned repos, public repos, and visible package source repos. |
 | `repo.read` | `handleRepoRead` | Reads a tree or file at `repo`, `ref`, and `path`. Defaults `ref` to `main` and `path` to root. Binary files return `content: null`. |
 | `repo.search` | `handleRepoSearch` | Searches text in a repo, optionally under `prefix`. Requires a non-empty query. |
@@ -993,7 +993,7 @@ Runtime behavior:
 |---|---|---|
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and starts/reconciles the user init process. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, and optional system bootstrap. Username, password, and timezone are validated. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Durably claims one commissioning attempt before mutation, rejecting concurrent calls and blocking unsafe replay after a partial failure. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, and optional system bootstrap. Username, password, and timezone are validated. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv` and `root/gsv-manual`, registers both as public system repositories, and seeds repository skills into the caller's home. By default, stable gateway builds pin `root/gsv` to their matching `vX.Y.Z` release tag; dev and other non-release builds use `main`. Explicit args win, followed by `GSV_BOOTSTRAP_REF` and a ref embedded in `GSV_BOOTSTRAP_UPSTREAM`; the upstream accepts `owner/repo`, a git URL, or either form with `#ref`. The manual remains on its independently configured ref, defaulting to `main`. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
@@ -1016,7 +1016,7 @@ Runtime behavior:
 | `sys.link` | `handleSysLink` | User-role only. Links an adapter/account/actor to a uid. Adapter is lowercased; root may link to any uid, non-root only self. |
 | `sys.unlink` | `handleSysUnlink` | User-role only. Removes an adapter identity link. Missing links return `removed: false`; non-root can unlink only self-owned links. |
 | `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
-| `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase link challenge code for the caller uid, marks the challenge used, and creates/replaces the identity link. Invalid, expired, or used codes throw. |
+| `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase, cryptographically random, single-use link challenge for the caller uid, marks it used, and creates/replaces the identity link. Invalid, expired, used, or rate-limited attempts share the same error; failed guesses have durable per-user and Kernel-wide budgets. |
 
 `sys.connect`, `sys.setup`, and `sys.setup.assist` are special-cased before normal auth/capability dispatch. Other `sys.*` calls require a connected identity and are denied in setup mode.
 

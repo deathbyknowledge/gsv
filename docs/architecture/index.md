@@ -27,6 +27,7 @@ A good order is:
 4. [The Adapter Model](./adapter-model.md)
 5. [Context and Knowledge](./context-and-knowledge.md)
 6. [Security Model](./security-model.md)
+7. [Multiuser Security Architecture](./multiuser-security.md)
 
 ## The Current Pillars
 
@@ -35,6 +36,12 @@ A good order is:
 The Gateway Worker and Kernel Durable Object are the GSV kernel. The Worker owns
 HTTP/WebSocket entrypoints; the Kernel DO is the serialized control plane behind
 them.
+
+Today, one deployed Gateway and its bound storage stack is exactly one ship.
+Its durable Kernel keeps the existing object name `singleton`. Independent
+ships use independent deployments; serving several ships from one deployment
+is not supported until every DO name, R2 key, AppRunner, and service route is
+explicitly ship-scoped.
 
 The Kernel is responsible for:
 
@@ -223,8 +230,20 @@ GSV favors stable OS-like interfaces over implementation leakage.
 These rules are what make GSV feel like a cloud computer instead of a collection
 of chat integrations.
 
+## Multiuser direction
+
+The pillars above describe the current deployment, where one Kernel Durable
+Object is the control plane for the whole ship. That singleton is the shared OS
+Kernel, not a singleton human: accounts inhabit one ship-wide identity and Unix
+permission namespace, with uid `0` intentionally administering all of it.
+Heavy execution remains sharded into Process and AppRunner objects and target
+services. The [Multiuser Security Architecture](./multiuser-security.md)
+defines the threat model, migration contract, and release gates for safely
+enabling public registration on that shared Kernel.
+
 ## See also
 
 - [Get Started](../get-started/)
 - [How-to Guides](../how-to/)
 - [Reference](../reference/)
+- [Multiuser Security Architecture](./multiuser-security.md)

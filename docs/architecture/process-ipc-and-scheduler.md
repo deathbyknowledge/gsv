@@ -294,21 +294,21 @@ Reset options should define whether to:
 - reset only one conversation
 - reset the whole process
 
-The default should preserve the exact transcript in archive storage. Carrying a
+The default should preserve the exact transcript in private archive storage. Carrying a
 summary forward should be explicit, because a reset often means "forget the
 working conversation."
 
-Process-wide reset archives each non-empty conversation under the run-as
-agent's home:
+Process-wide reset archives each non-empty conversation under the human owner
+and run-as agent identities in internal storage:
 
 ```text
-/home/<agent>/conversations/<conversation-id>/<archive-id>.<conversation-id>.gen-<generation>.jsonl.gz
+/process-conversation-archives/<owner-uid>/<agent-uid>/<conversation-id>/<archive-id>.<conversation-id>.gen-<generation>.jsonl.gz
 ```
 
 ### Checkpoint
 
 Checkpointing should remain distinct from compaction and reset. The current
-runtime persists reset, kill, and compaction transcripts as exact home
+runtime persists reset, kill, and compaction transcripts as exact private
 conversation archives; richer checkpoint artifacts remain future work.
 
 ### History access
@@ -501,8 +501,9 @@ can branch a live conversation through a message id, or restore a compacted
 segment into a new conversation, including the live suffix that existed at the
 compaction boundary by default. Compaction and fork emit `proc.changed` with
 lifecycle changes so UI clients can refresh without polling. Process-wide
-`proc.reset` and `proc.kill` archive every non-empty conversation under the
-run-as agent's home before clearing all conversation messages and runtime state.
+`proc.reset` and `proc.kill` archive every non-empty conversation in private,
+owner-scoped internal storage before clearing all conversation messages and
+runtime state.
 
 Still pending: checkpoint and richer segmented history read APIs. Preserve raw
 transcript archives, visible summary markers, and forkable segments.

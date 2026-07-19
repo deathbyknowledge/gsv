@@ -27,9 +27,15 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 | `/src/repos/{owner}/{repo}` | ripgit repo plus R2 overlay | Visible source repositories. Writable repos stage process-local edits in R2 until explicit `rgit commit`. |
 | `/workspaces/{workspaceId}` | ripgit workspace repo | Mutable, versioned task workspace. |
 | `/usr/local/bin/*` | package mount | Read-only package command shims. |
-| Everything else | R2 | Default object-backed filesystem. |
+| Everything else | R2 | Default object-backed filesystem, excluding the internal namespaces below. |
 
-Directory entries in R2 use `.dir` marker objects. File objects store POSIX-like metadata in custom metadata: `uid`, `gid`, `mode`, and optional `dirmarker`.
+Directory entries in R2 use `.dir` marker objects. File objects store POSIX-like metadata in custom metadata: `uid`, `gid`, `mode`, and optional `dirmarker`. Explicit directory markers govern traversal and child creation. Conditional R2 writes bind replacements to the ETag that was authorized and bind new objects to non-existence.
+
+Legacy markerless prefixes remain implicit directories, and legacy objects
+without ACL metadata retain the compatibility default. They must be inventoried,
+classified, and migrated before the fail-closed multiuser storage gate in the
+[Multiuser Security Architecture](../architecture/multiuser-security.md) can be
+enabled.
 
 ## Kernel SQLite
 
@@ -64,7 +70,7 @@ Each Process DO owns its own SQLite database. This keeps active agent-loop state
 | `process_kv` | Process metadata such as identity, profile, current run, and archive id. |
 
 `proc.reset`, `proc.kill`, and conversation compaction archive exact process
-messages to R2 under the run-as agent's home.
+messages to owner-scoped internal R2 storage.
 
 ## R2 Object Layout
 
@@ -73,13 +79,29 @@ R2 remains the byte store. The current runtime uses these key families:
 | Key Pattern | Written By | Purpose |
 |---|---|---|
 | Any normal filesystem key, for example `home/alice/file.txt` | `R2MountBackend` | Default virtual filesystem storage. |
-| `var/media/{uid}/{pid}/{uuid}.{ext}` | Process media handling | Uploaded or adapter-provided media attached to process messages. |
-| `home/{agent}/conversations/{conversationId}/*.jsonl.gz` | Process reset, kill, and compaction | Gzipped JSONL transcript archives addressed independently of executor pid. |
-| `runtime/package-artifacts/{hash}.json` | Package install/sync | Package worker artifact loaded by AppRunner. |
+| `var/media/{ownerUid}/{pid}/{uuid}.{ext}` | Process media handling | Uploaded or adapter-provided media attached to process messages. Internal; scoped to the human process owner and accessed through `proc.media.*`, not generic `fs.*`. |
+| `process-conversation-archives/{ownerUid}/{agentUid}/{conversationId}/*.jsonl.gz` | Process reset, kill, and compaction | Private gzipped JSONL transcripts, addressed independently of executor pid and authorized to the human owner. |
+| `runtime/package-artifacts/{hash}.json` | Package install/sync | Versioned package worker artifact loaded by AppRunner. Unversioned records without `publicFiles` are read-only legacy compatibility records pending verified conditional migration. |
+| `public/gsv/packages/{hash}/...` | Package install/sync | Create-only, root-owned browser assets confined to a cryptographically verified artifact namespace. |
 | `process-source-overlays/{pid}/{sourceKey}/manifest.json` | `/src/repos`, `rgit` | Manifest of staged source edits for one process/repo. |
 | `process-source-overlays/{pid}/{sourceKey}/files/{path}` | `/src/repos`, `rgit` | Staged file content for source puts. |
 
-Process media is deleted by prefix when the process is reset or killed. Package artifacts are content-addressed by hash and referenced from the Kernel `packages` table.
+Process media is stamped with the owner's uid/gid, mode `000`, and an internal
+storage-class marker. Reads and deletes validate both its exact owner/pid prefix
+and that metadata. It is deleted by owner/pid prefix when the process is reset
+or killed. Package artifacts are content-addressed by hash and referenced from
+the Kernel `packages` table.
+
+The generic non-root filesystem does not mount `var/media`,
+`process-conversation-archives`, `runtime/package-artifacts`, or
+`process-source-overlays`. Legacy `home/{agent}/conversations` paths are also
+reserved so old shared-agent archives cannot be read through `fs.*`. `/public` is readable
+but only root may mutate it. Recursive R2 deletion first
+authorizes every object in the prefix so a writable or markerless parent cannot
+erase another identity's objects. Each deletion then claims the exact authorized
+ETag with a non-writable tombstone before issuing R2's unconditional delete, so
+a concurrent replacement is not erased. R2 `.dir` marker objects are never
+addressable through the public filesystem API.
 
 ## ripgit Repositories
 
@@ -96,7 +118,7 @@ The `root/gsv` repository may contain a top-level `skills/` directory. Bootstrap
 copies those files into user home repos under `skills.d/` when they are missing.
 
 Workspace repos contain normal versioned task files. Process transcript
-archives live under the run-as agent's home rather than in workspace metadata.
+archives live in owner-scoped internal storage rather than workspace metadata.
 
 Generic visible repos are available under `/src/repos/{owner}/{repo}`. Repos writable by the process identity accept `fs.write`, `fs.edit`, and `fs.delete`, but those writes stage into a process-local R2 overlay. Use `rgit status`, `rgit diff`, `rgit commit`, and `rgit discard` to inspect, commit, or discard staged repo edits. Read-only visible repos still support read and search. `pkg source <package>` reports the package's source repo path; package lifecycle stays under `pkg`, while repository history and source edits stay under `rgit`. Wiki-specific behavior uses the higher-level Wiki app and CLI on top of the same repo storage.
 

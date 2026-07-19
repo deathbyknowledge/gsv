@@ -86,7 +86,15 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 
 ### Data and security
 
+- One deployment is one ship security domain: one Kernel owns its global
+  identity, uid/gid, authorization, and resource-ownership namespace. The
+  Kernel singleton is a ship-wide authority, not a singleton human account.
+- Numeric uids and gids are never reused. Usernames are aliases and must not be
+  treated as durable ownership keys.
 - Enforce authorization in the Kernel, not only in UI or callers.
+- R2 does not enforce GSV's custom uid/gid/mode metadata. User-reachable R2
+  operations go through GsvFs, or a narrow typed store with equivalent
+  ownership checks; never expose a raw R2 binding to caller-controlled code.
 - Never hardcode or log secrets, raw authentication material, QR payloads, prompts, tool arguments, or private file contents.
 - Store process media once in R2, persist references in history, scope keys to the owning process, and hydrate only while building model context.
 - Packages remain source-inspectable and capability-gated.
