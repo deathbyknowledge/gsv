@@ -45,6 +45,14 @@ import { normalizePath } from "./utils";
 import { bindStreamToAbort } from "../shared/streams";
 
 const MAX_SYMLINK_DEPTH = 16;
+const PROCESS_MEDIA_ROOT = "/var/media";
+const INTERNAL_STORAGE_ROOTS = [
+  PROCESS_MEDIA_ROOT,
+  "/process-conversation-archives",
+  "/process-source-overlays",
+  "/runtime",
+] as const;
+const SYSTEM_MUTATION_ROOTS = ["/public"] as const;
 
 export type ExtendedStat = ExtendedMountStat;
 
@@ -131,6 +139,7 @@ export class GsvFs implements IFileSystem {
 
   async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
+    this.assertMutationAllowed(p);
     await this.backendForPath(p).writeFile(p, content, options);
   }
 
@@ -143,6 +152,7 @@ export class GsvFs implements IFileSystem {
     options.signal?.throwIfAborted();
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
     options.signal?.throwIfAborted();
+    this.assertMutationAllowed(p);
     const backend = this.backendForPath(p);
     if (backend.writeFileStream) {
       const result = await backend.writeFileStream(p, content, options);
@@ -163,6 +173,7 @@ export class GsvFs implements IFileSystem {
 
   async appendFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void> {
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
+    this.assertMutationAllowed(p);
     await this.backendForPath(p).appendFile(p, content, options);
   }
 
@@ -235,6 +246,7 @@ export class GsvFs implements IFileSystem {
 
   async mkdir(path: string, options?: MkdirOptions): Promise<void> {
     const p = normalizePath(path);
+    this.assertMutationAllowed(p);
     await this.backendForPath(p).mkdir(p, options);
   }
 
@@ -249,8 +261,12 @@ export class GsvFs implements IFileSystem {
       return this.readdirEtc();
     }
 
-    if (normalized === "/var" && this.kernel) {
+    if (normalized === "/var") {
       return this.readdirVar();
+    }
+
+    if (normalized === "/home" && this.identity.uid !== 0) {
+      throw new Error("EACCES: permission denied, '/home'");
     }
 
     const p = await this.resolveFinalPath(normalized);
@@ -278,6 +294,7 @@ export class GsvFs implements IFileSystem {
 
   async rm(path: string, options?: RmOptions): Promise<void> {
     const p = normalizePath(path);
+    this.assertMutationAllowed(p);
     await this.backendForPath(p).rm(p, options);
   }
 
@@ -299,6 +316,7 @@ export class GsvFs implements IFileSystem {
 
   async chmod(path: string, mode: number): Promise<void> {
     const p = await this.resolveFinalPath(path);
+    this.assertMutationAllowed(p);
     const backend = this.backendForPath(p);
     if (!backend.chmod) {
       throw new Error(`ENOSYS: chmod not supported for '${p}'`);
@@ -308,6 +326,7 @@ export class GsvFs implements IFileSystem {
 
   async chown(path: string, newUid?: number, newGid?: number): Promise<void> {
     const p = await this.resolveFinalPath(path);
+    this.assertMutationAllowed(p);
     const backend = this.backendForPath(p);
     if (!backend.chown) {
       throw new Error(`ENOSYS: chown not supported for '${p}'`);
@@ -317,6 +336,7 @@ export class GsvFs implements IFileSystem {
 
   async symlink(target: string, linkPath: string): Promise<void> {
     const p = normalizePath(linkPath);
+    this.assertMutationAllowed(p);
     const backend = this.backendForPath(p);
     if (!backend.symlink) {
       throw new Error(`ENOSYS: symlinks not supported for '${p}'`);
@@ -343,6 +363,7 @@ export class GsvFs implements IFileSystem {
 
   async utimes(path: string, atime: Date, mtime: Date): Promise<void> {
     const p = await this.resolveFinalPath(path);
+    this.assertMutationAllowed(p);
     const backend = this.backendForPath(p);
     if (!backend.utimes) {
       const exists = await backend.exists(p);
@@ -369,6 +390,13 @@ export class GsvFs implements IFileSystem {
     signal?: AbortSignal,
   ): Promise<FsSearchBackendResult> {
     signal?.throwIfAborted();
+    const requestedPath = normalizePath(path);
+    if (
+      this.identity.uid !== 0
+      && (requestedPath === "/" || requestedPath === "/home")
+    ) {
+      throw new Error(`EACCES: permission denied, '${requestedPath}'`);
+    }
     const p = await this.resolveFinalPath(path);
     signal?.throwIfAborted();
     const backend = this.backendForPath(p);
@@ -424,6 +452,10 @@ export class GsvFs implements IFileSystem {
           depth + 1,
         );
       }
+
+      if (index < parts.length - 1 && !stat.isDirectory) {
+        throw new Error(`ENOTDIR: not a directory, '${current}'`);
+      }
     }
     return current;
   }
@@ -442,6 +474,14 @@ export class GsvFs implements IFileSystem {
   }
 
   private backendForPath(path: string): MountBackend {
+    if (hasInternalDirectoryMarkerSegment(path)) {
+      throw new Error(`EACCES: permission denied, '${normalizePath(path)}'`);
+    }
+
+    if (this.identity.uid !== 0 && isInternalStoragePath(path)) {
+      throw new Error(`EACCES: permission denied, '${normalizePath(path)}'`);
+    }
+
     if (isProcessSourcePath(path)) {
       if (!this.sourceBackend) {
         throw new Error(`ENOSYS: source backend is unavailable for '${path}'`);
@@ -471,10 +511,29 @@ export class GsvFs implements IFileSystem {
     return this.r2Backend;
   }
 
+  private assertMutationAllowed(path: string): void {
+    if (this.identity.uid === 0) {
+      return;
+    }
+
+    const normalized = normalizePath(path);
+    if (
+      normalized === "/"
+      || normalized === "/home"
+      || isInternalStoragePath(normalized)
+      || SYSTEM_MUTATION_ROOTS.some((root) => isPathWithin(normalized, root))
+    ) {
+      throw new Error(`EACCES: permission denied, '${normalized}'`);
+    }
+  }
+
   private async readdirRoot(): Promise<string[]> {
     const entries = new Set<string>();
 
     for (const name of await this.r2Backend.readdir("/").catch(() => [] as string[])) {
+      if (this.identity.uid !== 0 && isInternalStoragePath(`/${name}`)) {
+        continue;
+      }
       entries.add(name);
     }
 
@@ -519,13 +578,38 @@ export class GsvFs implements IFileSystem {
   private async readdirVar(): Promise<string[]> {
     const entries = new Set<string>();
     for (const name of await this.r2Backend.readdir("/var").catch(() => [] as string[])) {
+      if (this.identity.uid !== 0 && name === "media") {
+        continue;
+      }
       entries.add(name);
     }
-    for (const name of await this.kernelBackend.readdir("/var").catch(() => [] as string[])) {
-      entries.add(name);
+    if (this.kernel) {
+      for (const name of await this.kernelBackend.readdir("/var").catch(() => [] as string[])) {
+        entries.add(name);
+      }
     }
     return [...entries].sort();
   }
+}
+
+function isInternalStoragePath(path: string): boolean {
+  const normalized = normalizePath(path);
+  return INTERNAL_STORAGE_ROOTS.some((root) => isPathWithin(normalized, root))
+    || isLegacyConversationArchivePath(normalized);
+}
+
+/** Legacy transcripts were stored in a shared run-as account's home. */
+function isLegacyConversationArchivePath(path: string): boolean {
+  return /^\/(?:root|home\/[^/]+)\/conversations(?:\/|$)/.test(path);
+}
+
+function isPathWithin(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
+}
+
+/** R2 directory markers are backend metadata, never user-addressable files. */
+function hasInternalDirectoryMarkerSegment(path: string): boolean {
+  return normalizePath(path).split("/").some((segment) => segment === ".dir");
 }
 
 function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {

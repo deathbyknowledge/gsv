@@ -6,7 +6,7 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import type { RipgitClient } from "../../fs/ripgit/client";
 
-export type PromptStorage = Pick<R2Bucket, "get" | "list">;
+export type PromptStorage = R2Bucket;
 export type PromptRipgitClient = Pick<RipgitClient, "readPath">;
 
 export type PromptAssemblyInput = {

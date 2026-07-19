@@ -10,6 +10,7 @@ import {
   resolvePackageAgentRunAs,
   revokePackageAgentAccess,
 } from "./package-agents";
+import { createProvisioningR2BucketMock } from "../test-support/mock-r2";
 
 type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
 type GroupRow = { name: string; gid: number; members: string[] };
@@ -35,8 +36,8 @@ function createCtx() {
   const auth = {
     getPasswdByUsername: vi.fn((username: string) => passwd.find((u) => u.username === username) ?? null),
     getPasswdByUid: vi.fn((uid: number) => passwd.find((u) => u.uid === uid) ?? null),
-    nextUid: vi.fn(() => Math.max(999, maxId()) + 1),
-    nextGid: vi.fn(() => Math.max(99, maxId()) + 1),
+    allocateUid: vi.fn(() => Math.max(999, maxId()) + 1),
+    allocateGid: vi.fn(() => Math.max(99, maxId()) + 1),
     addUser: vi.fn((entry: PasswdRow) => {
       passwd.push({ ...entry, gecos: entry.gecos ?? entry.username, shell: entry.shell ?? "/bin/init" });
     }),
@@ -97,7 +98,7 @@ function createCtx() {
       list: vi.fn(() => packageRecords),
     } as unknown as KernelContext["packages"],
     // STORAGE stub satisfies home layout; no RIPGIT so context seeding no-ops.
-    env: { STORAGE: { head: vi.fn(async () => null), put: vi.fn(async () => {}) } } as unknown as KernelContext["env"],
+    env: { STORAGE: createProvisioningR2BucketMock() } as unknown as KernelContext["env"],
     identity: { role: "user", process: { uid: 1000, gid: 1000, gids: [1000, 100], username: "alice", home: "/home/alice", cwd: "/home/alice" }, capabilities: ["*"] },
   } as unknown as KernelContext;
 
@@ -144,6 +145,17 @@ describe("ensurePackageAgent", () => {
     expect(caps.grant).toHaveBeenCalledWith(identity.gid, "fs.read");
     // Approval policy stored per-account.
     expect(config.get(`users/${identity.uid}/ai/tools/approval`)).toBe('{"rules":[]}');
+  });
+
+  it("rejects a package profile that requests root wildcard authority", async () => {
+    const { ctx, passwd, caps } = createCtx();
+    const privileged = { ...BUILDER, capabilities: ["*"] };
+
+    await expect(ensurePackageAgent(ctx, record([privileged]), privileged, 1000))
+      .rejects.toThrow("Wildcard capability is reserved for root");
+    expect(passwd.some((entry) => entry.username === packageAgentUsername("wiki", "builder")))
+      .toBe(false);
+    expect(caps.grant).not.toHaveBeenCalledWith(expect.any(Number), "*");
   });
 
   it("grants run-as via the access group without leaking caps to the human", async () => {

@@ -71,8 +71,3 @@ export function resolveGids(
   }
   return Array.from(gids).sort((a, b) => a - b);
 }
-
-export function nextGid(entries: GroupEntry[]): number {
-  const max = entries.reduce((m, e) => Math.max(m, e.gid), 0);
-  return max < 100 ? 100 : max + 1;
-}

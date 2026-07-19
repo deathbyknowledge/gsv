@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:workers";
 import { handleConnect } from "./connect";
 import type { KernelContext } from "./context";
-import { AuthStore } from "./auth-store";
+import { AUTHENTICATION_FAILED_MESSAGE, AuthStore } from "./auth-store";
 import { CapabilityStore } from "./capabilities";
 import { ConfigStore } from "./config";
 import { DeviceRegistry } from "./devices";
@@ -444,7 +444,10 @@ describe("handleConnect", () => {
       ctx,
     );
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe(401);
+    if (!result.ok) {
+      expect(result.code).toBe(401);
+      expect(result.message).toBe(AUTHENTICATION_FAILED_MESSAGE);
+    }
   });
 
   it("rejects unknown user", async () => {
@@ -462,7 +465,10 @@ describe("handleConnect", () => {
       ctx,
     );
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe(401);
+    if (!result.ok) {
+      expect(result.code).toBe(401);
+      expect(result.message).toBe(AUTHENTICATION_FAILED_MESSAGE);
+    }
   });
 
   it("driver role requires implements list", async () => {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 import type { InstalledPackageRecord } from "../packages";
+import { createProvisioningR2BucketMock } from "../../test-support/mock-r2";
 
 const { handleSysBootstrapMock, seedRepoSkillsToHomeMock } = vi.hoisted(() => ({
   handleSysBootstrapMock: vi.fn(),
@@ -17,7 +18,12 @@ vi.mock("./skills-seed", () => ({
 
 import { handleSysSetup } from "./setup";
 
-function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackageRecord[]; ripgit?: Fetcher }) {
+function createCtx(overrides?: {
+  setupMode?: boolean;
+  packages?: InstalledPackageRecord[];
+  ripgit?: Fetcher;
+  configValues?: Map<string, string>;
+}) {
   type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
   type GroupRow = { name: string; gid: number; members: string[] };
 
@@ -28,7 +34,7 @@ function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackag
   const groups: GroupRow[] = [usersGroup];
   const shadowRoot = { username: "root", hash: "!" };
   const personalAgents = new Map<number, number>();
-  const configValues = new Map<string, string>();
+  const configValues = overrides?.configValues ?? new Map<string, string>();
   const capsTable: { gid: number; capability: string }[] = [];
 
   const maxId = () => Math.max(0, ...passwd.map((u) => u.uid), ...groups.map((g) => g.gid));
@@ -44,8 +50,8 @@ function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackag
       const found = passwd.find((u) => u.uid === uid);
       return found ? { ...found } : null;
     }),
-    nextUid: vi.fn(() => Math.max(999, ...passwd.map((u) => u.uid)) + 1),
-    nextGid: vi.fn(() => Math.max(99, maxId()) + 1),
+    allocateUid: vi.fn(() => Math.max(999, ...passwd.map((u) => u.uid)) + 1),
+    allocateGid: vi.fn(() => Math.max(99, maxId()) + 1),
     addUser: vi.fn((entry: PasswdRow) => {
       passwd.push({
         username: entry.username,
@@ -124,10 +130,8 @@ function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackag
     ),
   };
 
-  const storage = {
-    head: vi.fn(async () => null),
-    put: vi.fn(async () => {}),
-  };
+  const storage = createProvisioningR2BucketMock();
+  vi.spyOn(storage, "put");
 
   const ctx = {
     auth: auth as unknown as KernelContext["auth"],
@@ -143,7 +147,7 @@ function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackag
     serverVersion: "0.0.1-test",
   } as KernelContext;
 
-  return { ctx, auth, config, storage, usersGroup, passwd, groups };
+  return { ctx, auth, config, configValues, storage, usersGroup, passwd, groups };
 }
 
 describe("handleSysSetup", () => {
@@ -313,6 +317,103 @@ describe("handleSysSetup", () => {
       },
       ctx,
     )).rejects.toThrow("System already initialized");
+  });
+
+  it("durably excludes a concurrent setup before bootstrap starts twice", async () => {
+    let releaseBootstrap!: () => void;
+    const bootstrapPending = new Promise<void>((resolve) => {
+      releaseBootstrap = resolve;
+    });
+    handleSysBootstrapMock.mockImplementationOnce(async () => {
+      await bootstrapPending;
+      return undefined;
+    });
+
+    const ripgit = {
+      fetch: vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/apply")) {
+          return new Response(JSON.stringify({ ok: true, head: "home123" }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("missing", { status: 404 });
+      }),
+    } as Fetcher;
+    const configValues = new Map<string, string>();
+    const first = createCtx({ configValues, ripgit });
+    const restarted = createCtx({ configValues, ripgit });
+
+    const firstSetup = handleSysSetup(
+      { username: "alice", password: "password-123" },
+      first.ctx,
+    );
+
+    await expect(handleSysSetup(
+      { username: "bob", password: "password-456" },
+      restarted.ctx,
+    )).rejects.toThrow("System setup is already in progress");
+    expect(handleSysBootstrapMock).toHaveBeenCalledTimes(1);
+    expect(restarted.auth.addUser).not.toHaveBeenCalled();
+
+    releaseBootstrap();
+    await firstSetup;
+
+    expect(JSON.parse(configValues.get("internal/setup/commissioning") ?? "null")).toMatchObject({
+      version: 1,
+      status: "completed",
+      mutationStarted: true,
+    });
+  });
+
+  it("blocks replay after a setup failure may have mutated external state", async () => {
+    handleSysBootstrapMock.mockRejectedValueOnce(new Error("bootstrap failed"));
+    const ripgit = { fetch: vi.fn() } as unknown as Fetcher;
+    const configValues = new Map<string, string>();
+    const first = createCtx({ configValues, ripgit });
+    const restarted = createCtx({ configValues, ripgit });
+
+    await expect(handleSysSetup(
+      { username: "alice", password: "password-123" },
+      first.ctx,
+    )).rejects.toThrow("bootstrap failed");
+
+    expect(JSON.parse(configValues.get("internal/setup/commissioning") ?? "null")).toMatchObject({
+      status: "blocked",
+      mutationStarted: true,
+    });
+    await expect(handleSysSetup(
+      { username: "bob", password: "password-456" },
+      restarted.ctx,
+    )).rejects.toThrow("System setup is blocked after an interrupted attempt");
+    expect(handleSysBootstrapMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("permits retry only when failure happened before mutations started", async () => {
+    const { ctx, config, configValues } = createCtx();
+    const persist = (key: string, value: string) => {
+      configValues.set(key, value);
+    };
+    config.set
+      .mockImplementationOnce(persist)
+      .mockImplementationOnce(() => {
+        throw new Error("commissioning state write failed");
+      });
+
+    await expect(handleSysSetup(
+      { username: "alice", password: "password-123" },
+      ctx,
+    )).rejects.toThrow("commissioning state write failed");
+    expect(ctx.auth.addUser).not.toHaveBeenCalled();
+    expect(JSON.parse(configValues.get("internal/setup/commissioning") ?? "null")).toMatchObject({
+      status: "retryable",
+      mutationStarted: false,
+    });
+
+    await expect(handleSysSetup(
+      { username: "alice", password: "password-123" },
+      ctx,
+    )).resolves.toMatchObject({ user: { username: "alice" } });
   });
 
   it("requires a valid username and password", async () => {

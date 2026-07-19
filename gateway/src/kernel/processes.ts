@@ -6,8 +6,8 @@
  * processes per user.
  *
  * Process ids are opaque, fungible handles (`proc:<uuid>`): an executor is
- * allocated per running process and discarded on kill. Durable state lives in
- * the run-as agent's home (conversation transcripts), not in the executor.
+ * allocated per running process and discarded on kill. Durable transcripts
+ * live in owner-scoped internal archive storage, not in the executor.
  */
 
 import type { ProcessIdentity, ProcContextFile } from "@humansandmachines/gsv/protocol";

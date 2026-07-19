@@ -36,6 +36,7 @@ import { isVisibleAdapterTarget } from "./adapter-targets";
 import { ensureDefaultConversationExecutor } from "./agents";
 import { canOwnerRunAsAccount } from "./account-access";
 import { isLocked } from "../auth/shadow";
+import { accountIdentity } from "./accounts";
 import type { AdapterStatusRecord } from "./adapter-status";
 import type { IdentityLinkRecord } from "./identity-links";
 
@@ -1262,6 +1263,11 @@ async function spawnAdapterAgentProcess(
   surface: AdapterSurface,
   ctx: KernelContext,
 ): Promise<string> {
+  const ownerEntry = ctx.auth.getPasswdByUid(ownerUid);
+  if (!ownerEntry) {
+    throw new Error(`Cannot resolve adapter process owner uid ${ownerUid}`);
+  }
+  const ownerIdentity = accountIdentity(ctx.auth, ownerEntry);
   const pid = `proc:${crypto.randomUUID()}`;
   const label = `adapter ${describeAdapterSurface(surface)} (${agent.username})`;
   ctx.procs.spawn(pid, agent.identity, {
@@ -1274,7 +1280,6 @@ async function spawnAdapterAgentProcess(
   const conversation = ctx.conversations.create({
     ownerUid,
     agentUid: agent.identity.uid,
-    agentHome: agent.identity.home,
     title: label,
   });
   ctx.conversations.setActivePid(conversation.conversationId, pid);
@@ -1285,6 +1290,8 @@ async function spawnAdapterAgentProcess(
     call: "proc.setidentity",
     args: {
       pid,
+      kernelName: ctx.kernelName,
+      ownerIdentity,
       identity: agent.identity,
       interactive: true,
       conversationId: conversation.conversationId,

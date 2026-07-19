@@ -17,12 +17,17 @@ import type {
   ProcessScheduleDeliverArgs,
   ProcessScheduleDeliverRequestFrame,
 } from "../protocol/process-frames";
-import { getProcessByPid, getKernelPtr } from "../shared/utils";
+import {
+  getProcessByPid,
+  getKernelPtr,
+  SHIP_KERNEL_NAME,
+} from "../shared/utils";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
 import { PROCESS_V001_INITIAL_SCHEMA } from "./schema/v001_initial";
 import { PROCESS_V004_PENDING_TOOL_DISPATCH_ID } from "./schema/v004_pending_tool_dispatch_id";
 import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./schema/v005_tool_result_outcome";
 import { PROCESS_V006_PENDING_HIL_OWNER } from "./schema/v006_pending_hil_owner";
+import { processMediaMetadata } from "./media";
 
 const ROOT_IDENTITY: ProcessIdentity = {
   uid: 0,
@@ -32,10 +37,42 @@ const ROOT_IDENTITY: ProcessIdentity = {
   home: "/root",
   cwd: "/root",
 };
+const ARCHIVE_OWNER_ALICE: ProcessIdentity = {
+  uid: 4100,
+  gid: 4100,
+  gids: [4100],
+  username: "archive-alice",
+  home: "/home/archive-alice",
+  cwd: "/home/archive-alice",
+};
+const ARCHIVE_OWNER_BOB: ProcessIdentity = {
+  uid: 4200,
+  gid: 4200,
+  gids: [4200],
+  username: "archive-bob",
+  home: "/home/archive-bob",
+  cwd: "/home/archive-bob",
+};
+const SHARED_ARCHIVE_AGENT: ProcessIdentity = {
+  uid: 4300,
+  gid: 4300,
+  gids: [4300],
+  username: "shared-archive-agent",
+  home: "/home/shared-archive-agent",
+  cwd: "/home/shared-archive-agent",
+};
 const DEFAULT_PROFILE = "task" as const;
+const ROOT_ARCHIVE_PREFIX = "process-conversation-archives/0/0";
 
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
+}
+
+async function gzipJsonLines(records: unknown[]): Promise<ArrayBuffer> {
+  const text = records.map((record) => JSON.stringify(record)).join("\n");
+  return new Response(
+    new Blob([text]).stream().pipeThrough(new CompressionStream("gzip")),
+  ).arrayBuffer();
 }
 
 function makeScheduleDeliverReq(
@@ -145,12 +182,50 @@ async function stubGeneration(
  * Register a process in the Kernel's ProcessRegistry and seed capabilities.
  * Must be called before the Process DO can communicate with the kernel.
  */
-async function registerInKernel(pid: string, identity: ProcessIdentity) {
-  const kernel = await getKernelPtr();
+async function registerInKernel(
+  pid: string,
+  identity: ProcessIdentity,
+  kernelName?: string,
+  ownerIdentity: ProcessIdentity = identity,
+) {
+  const kernel = await getKernelPtr(kernelName);
   await runInDurableObject(kernel, (instance: Kernel) => {
     const k = instance as any;
     k.caps.seed();
-    k.procs.spawn(pid, identity, { profile: DEFAULT_PROFILE });
+    for (const account of [identity, ownerIdentity]) {
+      const existing = k.auth.getPasswdByUid(account.uid);
+      if (!existing) {
+        k.auth.addUser({
+          username: account.username,
+          uid: account.uid,
+          gid: account.gid,
+          gecos: account.username,
+          home: account.home,
+          shell: "/bin/sh",
+        });
+      }
+      if (!k.auth.getGroupByGid(account.gid)) {
+        k.auth.addGroup({
+          name: account.username,
+          gid: account.gid,
+          members: [account.username],
+        });
+      }
+      for (const gid of account.gids) {
+        if (gid === account.gid) continue;
+        const group = k.auth.getGroupByGid(gid);
+        if (!group) {
+          k.auth.addGroup({
+            name: gid === 100 ? "users" : `test-group-${gid}`,
+            gid,
+            members: [account.username],
+          });
+        } else if (!group.members.includes(account.username)) {
+          k.auth.updateGroupMembers(group.name, [...group.members, account.username]);
+        }
+      }
+    }
+    k.procs.spawn(pid, identity, { profile: DEFAULT_PROFILE, ownerUid: ownerIdentity.uid });
   });
 }
 
@@ -212,12 +287,23 @@ async function driveProcessUntilIdle(
  * Initialize a Process DO with identity (via proc.setidentity RPC).
  * Optionally registers it in the kernel first.
  */
-async function initProcess(pid: string, identity: ProcessIdentity, opts?: { register?: boolean }) {
+async function initProcess(
+  pid: string,
+  identity: ProcessIdentity,
+  opts?: { register?: boolean; kernelName?: string; ownerIdentity?: ProcessIdentity },
+) {
+  const ownerIdentity = opts?.ownerIdentity ?? identity;
   if (opts?.register !== false) {
-    await registerInKernel(pid, identity);
+    await registerInKernel(pid, identity, opts?.kernelName, ownerIdentity);
   }
   const stub = await getProcessByPid(pid);
-  const res = await stub.recvFrame(makeReq("proc.setidentity", { pid, identity, profile: DEFAULT_PROFILE }));
+  const res = await stub.recvFrame(makeReq("proc.setidentity", {
+    pid,
+    identity,
+    ownerIdentity,
+    profile: DEFAULT_PROFILE,
+    ...(opts?.kernelName ? { kernelName: opts.kernelName } : {}),
+  }));
   expect((res as ResponseFrame).ok).toBe(true);
   return stub;
 }
@@ -438,11 +524,46 @@ describe("Process DO — mechanical", () => {
         home: "/home/alice",
         cwd: "/home/alice",
       };
-      await stub.recvFrame(makeReq("proc.setidentity", { pid, identity: newIdentity, profile: "mcp" }));
+      await stub.recvFrame(makeReq("proc.setidentity", {
+        pid,
+        identity: newIdentity,
+        ownerIdentity: newIdentity,
+        profile: "mcp",
+      }));
 
       await runInDurableObject(stub, (instance: Process) => {
         expect(instance.identity.uid).toBe(1000);
         expect(instance.identity.username).toBe("alice");
+      });
+    });
+
+    it("persists its owning Kernel name and routes callbacks to that Kernel", async () => {
+      const pid = `mech-setid-kernel-${crypto.randomUUID()}`;
+      const kernelName = `kernel-${crypto.randomUUID()}`;
+      const stub = await initProcess(pid, ROOT_IDENTITY, { kernelName });
+
+      const config = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        expect(process.store.getValue("kernelName")).toBe(kernelName);
+        expect(process.kernelName).toBe(kernelName);
+        return await process.kernelRpc("ai.config", {});
+      });
+
+      expect(config).toBeDefined();
+      const legacyKernel = await getKernelPtr();
+      await runInDurableObject(legacyKernel, (instance: Kernel) => {
+        expect((instance as any).procs.get(pid)).toBeNull();
+      });
+    });
+
+    it("falls back to the legacy Kernel when no owning name was stored", async () => {
+      const pid = `mech-setid-legacy-${crypto.randomUUID()}`;
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        expect(process.store.getValue("kernelName")).toBeNull();
+        expect(process.kernelName).toBe(SHIP_KERNEL_NAME);
       });
     });
   });
@@ -3312,6 +3433,7 @@ describe("Process DO — mechanical", () => {
           const mediaKey = `var/media/0/${pid}/race.png`;
           await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
             httpMetadata: { contentType: "image/png" },
+            customMetadata: processMediaMetadata(ROOT_IDENTITY),
           });
 
           const first = await process.handleProcSend({
@@ -3364,6 +3486,7 @@ describe("Process DO — mechanical", () => {
         const mediaKey = `var/media/0/${pid}/schedule.png`;
         await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
           httpMetadata: { contentType: "image/png" },
+          customMetadata: processMediaMetadata(ROOT_IDENTITY),
         });
 
         const result = await process.handleProcSend({
@@ -3418,6 +3541,7 @@ describe("Process DO — mechanical", () => {
         const mediaKey = `var/media/0/${pid}/fifo.png`;
         await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
           httpMetadata: { contentType: "image/png" },
+          customMetadata: processMediaMetadata(ROOT_IDENTITY),
         });
 
         const first = process.handleProcSend({
@@ -3491,6 +3615,12 @@ describe("Process DO — mechanical", () => {
 
         const stored = await env.STORAGE.get(media[0].key);
         expect(stored).not.toBeNull();
+        expect(stored?.customMetadata).toEqual({
+          uid: "0",
+          gid: "0",
+          mode: "000",
+          storageClass: "process-media-v1",
+        });
 
         const messages = await (instance as any).buildContextMessages();
         const user = messages[0] as any;
@@ -3551,6 +3681,216 @@ describe("Process DO — mechanical", () => {
       expect(withBody.data).toEqual({ ok: false, error: "proc.media.delete does not accept a body" });
     });
 
+    it("isolates shared-agent media by the human process owner", async () => {
+      const alicePid = `mech-owner-media-alice-${crypto.randomUUID()}`;
+      const bobPid = `mech-owner-media-bob-${crypto.randomUUID()}`;
+      const alice = await initProcess(alicePid, SHARED_ARCHIVE_AGENT, {
+        ownerIdentity: ARCHIVE_OWNER_ALICE,
+      });
+      const bob = await initProcess(bobPid, SHARED_ARCHIVE_AGENT, {
+        ownerIdentity: ARCHIVE_OWNER_BOB,
+      });
+
+      const aliceUpload = await alice.recvFrame({
+        ...makeReq("proc.media.write", {
+          type: "document",
+          mimeType: "application/octet-stream",
+          filename: "alice-private.bin",
+        }),
+        body: bodyFromBytes(new Uint8Array([1, 2, 3])),
+      }) as ResponseOkFrame<"proc.media.write">;
+      const bobUpload = await bob.recvFrame({
+        ...makeReq("proc.media.write", {
+          type: "document",
+          mimeType: "application/octet-stream",
+          filename: "bob-private.bin",
+        }),
+        body: bodyFromBytes(new Uint8Array([4, 5, 6])),
+      }) as ResponseOkFrame<"proc.media.write">;
+      const aliceKey = aliceUpload.data?.ok ? aliceUpload.data.media.key : "";
+      const bobKey = bobUpload.data?.ok ? bobUpload.data.media.key : "";
+
+      expect(aliceKey).toContain(`/4100/${alicePid}/`);
+      expect(bobKey).toContain(`/4200/${bobPid}/`);
+      await expect(env.STORAGE.head(aliceKey)).resolves.toMatchObject({
+        customMetadata: processMediaMetadata(ARCHIVE_OWNER_ALICE),
+      });
+      await expect(env.STORAGE.head(bobKey)).resolves.toMatchObject({
+        customMetadata: processMediaMetadata(ARCHIVE_OWNER_BOB),
+      });
+
+      const bobReadsAlice = await bob.recvFrame(
+        makeReq("proc.media.read", { key: aliceKey }),
+      ) as ResponseOkFrame<"proc.media.read">;
+      expect(bobReadsAlice.data).toEqual({
+        ok: false,
+        error: "media key is outside this process",
+      });
+
+      await env.STORAGE.delete([aliceKey, bobKey]);
+    });
+
+    it("adopts only referenced legacy shared-agent media and hydrates it into context", async () => {
+      const pid = `mech-legacy-media-${crypto.randomUUID()}`;
+      const stub = await initProcess(pid, SHARED_ARCHIVE_AGENT, {
+        ownerIdentity: ARCHIVE_OWNER_ALICE,
+      });
+      const key = `var/media/${SHARED_ARCHIVE_AGENT.uid}/${pid}/${crypto.randomUUID()}`;
+      await env.STORAGE.put(key, new Uint8Array([7, 8, 9]), {
+        httpMetadata: { contentType: "image/png" },
+      });
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("user", "legacy image", {
+          media: JSON.stringify([{
+            type: "image",
+            mimeType: "image/png",
+            key,
+            size: 3,
+          }]),
+        });
+        process.store.deleteValue("ownerIdentity");
+      });
+
+      try {
+        const read = await stub.recvFrame(
+          makeReq("proc.media.read", { key }),
+        ) as ResponseOkFrame<"proc.media.read">;
+        expect(read.data).toMatchObject({ ok: true, key, mimeType: "image/png", size: 3 });
+        expect(read.body && [...await bodyToBytes(read.body)]).toEqual([7, 8, 9]);
+        await expect(env.STORAGE.head(key)).resolves.toMatchObject({
+          customMetadata: processMediaMetadata(ARCHIVE_OWNER_ALICE),
+          httpMetadata: { contentType: "image/png" },
+        });
+
+        const context = await runInDurableObject(stub, async (instance: Process) => (
+          (instance as any).buildContextMessages("default")
+        ));
+        expect(context[0].content).toEqual(expect.arrayContaining([
+          expect.objectContaining({ type: "image", data: "BwgJ", mimeType: "image/png" }),
+        ]));
+      } finally {
+        await env.STORAGE.delete(key);
+      }
+    });
+
+    it("denies unreferenced, malformed, and wrong-prefix metadata-less legacy media", async () => {
+      const pid = `mech-legacy-media-deny-${crypto.randomUUID()}`;
+      const stub = await initProcess(pid, SHARED_ARCHIVE_AGENT, {
+        ownerIdentity: ARCHIVE_OWNER_ALICE,
+      });
+      const legacyPrefix = `var/media/${SHARED_ARCHIVE_AGENT.uid}/${pid}/`;
+      const unreferenced = `${legacyPrefix}unreferenced`;
+      const malformed = `${legacyPrefix}malformed`;
+      const wrongPrefix = `var/media/${SHARED_ARCHIVE_AGENT.uid}/another-process/wrong`;
+      await env.STORAGE.put(unreferenced, new Uint8Array([1]), {
+        httpMetadata: { contentType: "image/png" },
+      });
+      await env.STORAGE.put(malformed, new Uint8Array([2]), {
+        httpMetadata: { contentType: "image/png" },
+        customMetadata: { uid: String(ARCHIVE_OWNER_ALICE.uid) },
+      });
+      await env.STORAGE.put(wrongPrefix, new Uint8Array([3]), {
+        httpMetadata: { contentType: "image/png" },
+      });
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("user", "bad legacy refs", {
+          media: JSON.stringify([
+            { type: "image", mimeType: "image/png", key: malformed, size: 1 },
+            { type: "image", mimeType: "image/png", key: wrongPrefix, size: 1 },
+          ]),
+        });
+      });
+
+      try {
+        const unreferencedRead = await stub.recvFrame(
+          makeReq("proc.media.read", { key: unreferenced }),
+        ) as ResponseOkFrame<"proc.media.read">;
+        expect(unreferencedRead.data).toEqual({
+          ok: false,
+          error: "legacy media key is not referenced by this process",
+        });
+
+        const malformedRead = await stub.recvFrame(
+          makeReq("proc.media.read", { key: malformed }),
+        ) as ResponseOkFrame<"proc.media.read">;
+        expect(malformedRead.data).toEqual({
+          ok: false,
+          error: "Process media ownership metadata is invalid",
+        });
+
+        const wrongRead = await stub.recvFrame(
+          makeReq("proc.media.read", { key: wrongPrefix }),
+        ) as ResponseOkFrame<"proc.media.read">;
+        expect(wrongRead.data).toEqual({
+          ok: false,
+          error: "media key is outside this process",
+        });
+        expect((await env.STORAGE.head(unreferenced))?.customMetadata ?? {}).toEqual({});
+        expect((await env.STORAGE.head(malformed))?.customMetadata).toEqual({
+          uid: String(ARCHIVE_OWNER_ALICE.uid),
+        });
+        expect((await env.STORAGE.head(wrongPrefix))?.customMetadata ?? {}).toEqual({});
+      } finally {
+        await env.STORAGE.delete([unreferenced, malformed, wrongPrefix]);
+      }
+    });
+
+    it("fails closed when a legacy media adoption loses its ETag race", async () => {
+      const pid = `mech-legacy-media-race-${crypto.randomUUID()}`;
+      const stub = await initProcess(pid, SHARED_ARCHIVE_AGENT, {
+        ownerIdentity: ARCHIVE_OWNER_ALICE,
+      });
+      const key = `var/media/${SHARED_ARCHIVE_AGENT.uid}/${pid}/raced`;
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const originalEnv = process.env;
+        process.store.appendMessage("user", "raced legacy image", {
+          media: JSON.stringify([{
+            type: "image",
+            mimeType: "image/png",
+            key,
+            size: 3,
+          }]),
+        });
+        const get = vi.fn(async () => ({
+          key,
+          version: "1",
+          size: 3,
+          etag: "before",
+          httpEtag: '"before"',
+          uploaded: new Date(0),
+          checksums: { toJSON: () => ({}) },
+          httpMetadata: { contentType: "image/png" },
+          customMetadata: undefined,
+          storageClass: "Standard",
+          body: new Blob([new Uint8Array([1, 2, 3])]).stream(),
+          bodyUsed: false,
+          writeHttpMetadata() {},
+        }));
+        process.env = {
+          ...originalEnv,
+          STORAGE: {
+            get,
+            put: vi.fn(async () => null),
+          },
+        };
+
+        try {
+          const read = await process.handleProcMediaRead({ key });
+          expect(read.data).toEqual({
+            ok: false,
+            error: "EAGAIN: legacy process media changed during adoption",
+          });
+          expect(get).toHaveBeenCalledTimes(1);
+        } finally {
+          process.env = originalEnv;
+        }
+      });
+    });
+
     it("keeps SVG attachments out of raster model image blocks", async () => {
       const stub = await initProcess("mech-svg-context", ROOT_IDENTITY);
 
@@ -3586,7 +3926,9 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const ownKey = `var/media/0/${pid}/${crypto.randomUUID()}`;
       const foreignKey = `var/media/0/another-process/${crypto.randomUUID()}`;
-      await env.STORAGE.put(ownKey, new Uint8Array([1]));
+      await env.STORAGE.put(ownKey, new Uint8Array([1]), {
+        customMetadata: processMediaMetadata(ROOT_IDENTITY),
+      });
       await env.STORAGE.put(foreignKey, new Uint8Array([2]));
 
       try {
@@ -3726,6 +4068,7 @@ describe("Process DO — mechanical", () => {
           STORAGE: {
             get: vi.fn(async (key: string) => ({
               size: key.endsWith("oversized") ? 25 * 1024 * 1024 + 1 : 15 * 1024 * 1024,
+              customMetadata: processMediaMetadata(ROOT_IDENTITY),
               arrayBuffer,
             })),
           },
@@ -4834,11 +5177,17 @@ describe("Process DO — mechanical", () => {
         generation: 2,
         archivedMessages: 1,
       });
-      expect(resetData.archivedTo).toContain(`/root/conversations/side/`);
+      expect(resetData.archivedTo).toContain(`/${ROOT_ARCHIVE_PREFIX}/side/`);
 
       const archiveKey = resetData.archivedTo.replace(/^\//, "");
       const obj = await env.STORAGE.get(archiveKey);
       expect(obj).not.toBeNull();
+      expect(obj?.customMetadata).toEqual({
+        uid: "0",
+        gid: "0",
+        mode: "000",
+        storageClass: "process-conversation-archive-v1",
+      });
 
       const generationsRes = (await stub.recvFrame(
         makeReq("proc.conversation.generations", { conversationId: "side" }),
@@ -4995,7 +5344,7 @@ describe("Process DO — mechanical", () => {
         },
       });
       expect(data.archivedTo).toMatch(
-        new RegExp(`/root/conversations/thread/.+\\.jsonl\\.gz$`),
+        new RegExp(`/${ROOT_ARCHIVE_PREFIX}/thread/.+\\.jsonl\\.gz$`),
       );
 
       const archiveKey = data.archivedTo.replace(/^\//, "");
@@ -5223,7 +5572,7 @@ describe("Process DO — mechanical", () => {
         };
       });
 
-      const archivesBefore = (await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+      const archivesBefore = (await env.STORAGE.list({ prefix: `${ROOT_ARCHIVE_PREFIX}/thread/` }))
         .objects.map((object) => object.key);
       const response = await stub.recvFrame(makeReq("proc.conversation.compact", {
         conversationId: "thread",
@@ -5231,7 +5580,7 @@ describe("Process DO — mechanical", () => {
         generateSummary: true,
       })) as ResponseOkFrame;
       expect(response.data).toEqual({ ok: false, error: "Conversation changed during compaction" });
-      expect((await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+      expect((await env.STORAGE.list({ prefix: `${ROOT_ARCHIVE_PREFIX}/thread/` }))
         .objects.map((object) => object.key)).toEqual(archivesBefore);
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
@@ -5243,7 +5592,7 @@ describe("Process DO — mechanical", () => {
     it("rejects a concurrent compaction after another summary replaces its prefix", async () => {
       const pid = "mech-conversation-compact-concurrent";
       const stub = await initProcess(pid, ROOT_IDENTITY);
-      const archivesBefore = (await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+      const archivesBefore = (await env.STORAGE.list({ prefix: `${ROOT_ARCHIVE_PREFIX}/thread/` }))
         .objects.map((object) => object.key);
       const result = await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
@@ -5304,7 +5653,7 @@ describe("Process DO — mechanical", () => {
       expect(result.stale.data).toEqual({ ok: false, error: "Conversation changed during compaction" });
       expect(result.messages[0].content).toContain("Second summary.");
       expect(result.segments).toHaveLength(1);
-      expect((await env.STORAGE.list({ prefix: "root/conversations/thread/" })).objects
+      expect((await env.STORAGE.list({ prefix: `${ROOT_ARCHIVE_PREFIX}/thread/` })).objects
         .filter((object) => !archivesBefore.includes(object.key)))
         .toHaveLength(1);
     });
@@ -5322,7 +5671,7 @@ describe("Process DO — mechanical", () => {
         };
       });
 
-      const archivesBefore = (await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+      const archivesBefore = (await env.STORAGE.list({ prefix: `${ROOT_ARCHIVE_PREFIX}/thread/` }))
         .objects.map((object) => object.key);
       const response = await stub.recvFrame(makeReq("proc.conversation.compact", {
         conversationId: "thread",
@@ -5333,7 +5682,7 @@ describe("Process DO — mechanical", () => {
         ok: false,
         error: { message: "segment insert failed" },
       });
-      expect((await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+      expect((await env.STORAGE.list({ prefix: `${ROOT_ARCHIVE_PREFIX}/thread/` }))
         .objects.map((object) => object.key)).toEqual(archivesBefore);
       await runInDurableObject(stub, (instance: Process) => {
         expect((instance as any).store.getMessages({ conversationId: "thread" }))
@@ -7652,7 +8001,228 @@ describe("Process DO — mechanical", () => {
     });
   });
 
+  describe("legacy process authority migration", () => {
+    it("relocates an exact durable legacy segment and keeps it readable", async () => {
+      const pid = `mech-legacy-archive-${crypto.randomUUID()}`;
+      const stub = await initProcess(pid, SHARED_ARCHIVE_AGENT, {
+        ownerIdentity: ARCHIVE_OWNER_ALICE,
+      });
+      const segmentId = crypto.randomUUID();
+      const sourceKey = `${SHARED_ARCHIVE_AGENT.home.replace(/^\/+/, "")}/conversations/default/${segmentId}.jsonl.gz`;
+      await env.STORAGE.put(sourceKey, await gzipJsonLines([{
+        id: 1,
+        conversation_id: "default",
+        generation: 1,
+        role: "user",
+        content: "legacy private history",
+        ts: 100,
+      }]), { httpMetadata: { contentType: "application/gzip" } });
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.store.recordConversationSegment({
+          id: segmentId,
+          conversationId: "default",
+          generation: 1,
+          kind: "compaction",
+          fromMessageId: 1,
+          toMessageId: 1,
+          archivePath: `/${sourceKey}`,
+          summaryMessageId: null,
+        });
+        process.store.deleteValue("ownerIdentity");
+      });
+
+      let targetKey = "";
+      try {
+        const response = await stub.recvFrame(makeReq("proc.conversation.segment.read", {
+          conversationId: "default",
+          segmentId,
+        })) as ResponseOkFrame;
+        expect(response.data).toMatchObject({
+          ok: true,
+          messages: [expect.objectContaining({ content: "legacy private history" })],
+        });
+
+        const pointer = await runInDurableObject(stub, (instance: Process) => (
+          (instance as any).store.getConversationSegment("default", segmentId)
+        ));
+        expect(pointer.archivePath).toContain(
+          `/process-conversation-archives/${ARCHIVE_OWNER_ALICE.uid}/${SHARED_ARCHIVE_AGENT.uid}/`,
+        );
+        targetKey = pointer.archivePath.replace(/^\/+/, "");
+        await expect(env.STORAGE.head(sourceKey)).resolves.toBeNull();
+        await expect(env.STORAGE.head(targetKey)).resolves.toMatchObject({
+          size: expect.any(Number),
+          customMetadata: expect.objectContaining({
+            uid: String(ARCHIVE_OWNER_ALICE.uid),
+            gid: String(ARCHIVE_OWNER_ALICE.gid),
+            mode: "000",
+            storageClass: "process-conversation-archive-v1",
+            legacySourceKey: sourceKey,
+          }),
+        });
+      } finally {
+        await env.STORAGE.delete([sourceKey, ...(targetKey ? [targetKey] : [])]);
+      }
+    });
+
+    it("rejects out-of-scope and metadata-bearing legacy archive pointers", async () => {
+      const cases = [
+        { name: "outside", outside: true, metadata: undefined },
+        { name: "metadata", outside: false, metadata: { uid: "9999" } },
+      ];
+      const cleanup: string[] = [];
+      try {
+        for (const testCase of cases) {
+          const pid = `mech-legacy-archive-${testCase.name}-${crypto.randomUUID()}`;
+          const stub = await initProcess(pid, SHARED_ARCHIVE_AGENT, {
+            ownerIdentity: ARCHIVE_OWNER_ALICE,
+          });
+          const segmentId = crypto.randomUUID();
+          const directory = testCase.outside
+            ? `${SHARED_ARCHIVE_AGENT.home.replace(/^\/+/, "")}/conversations/foreign`
+            : `${SHARED_ARCHIVE_AGENT.home.replace(/^\/+/, "")}/conversations/default`;
+          const sourceKey = `${directory}/${segmentId}.jsonl.gz`;
+          cleanup.push(sourceKey);
+          await env.STORAGE.put(sourceKey, await gzipJsonLines([{
+            id: 1,
+            conversation_id: "default",
+            generation: 1,
+            role: "user",
+            content: "must not migrate",
+            ts: 100,
+          }]), {
+            httpMetadata: { contentType: "application/gzip" },
+            ...(testCase.metadata ? { customMetadata: testCase.metadata } : {}),
+          });
+          await runInDurableObject(stub, (instance: Process) => {
+            const process = instance as any;
+            process.store.recordConversationSegment({
+              id: segmentId,
+              conversationId: "default",
+              generation: 1,
+              kind: "compaction",
+              fromMessageId: 1,
+              toMessageId: 1,
+              archivePath: `/${sourceKey}`,
+              summaryMessageId: null,
+            });
+            process.store.deleteValue("ownerIdentity");
+          });
+
+          const response = await stub.recvFrame(makeReq("proc.history", {})) as ResponseFrame;
+          expect(response).toMatchObject({
+            ok: false,
+            error: {
+              message: expect.stringContaining(
+                testCase.outside ? "outside legacy scope" : "legacy archive metadata is invalid",
+              ),
+            },
+          });
+          const pointer = await runInDurableObject(stub, (instance: Process) => (
+            (instance as any).store.getConversationSegment("default", segmentId)
+          ));
+          expect(pointer.archivePath).toBe(`/${sourceKey}`);
+          await expect(env.STORAGE.head(sourceKey)).resolves.not.toBeNull();
+        }
+      } finally {
+        if (cleanup.length > 0) await env.STORAGE.delete(cleanup);
+      }
+    });
+
+    it("leaves the source and durable pointer intact when archive pointer CAS loses", async () => {
+      const pid = `mech-legacy-archive-pointer-race-${crypto.randomUUID()}`;
+      const stub = await initProcess(pid, SHARED_ARCHIVE_AGENT, {
+        ownerIdentity: ARCHIVE_OWNER_ALICE,
+      });
+      const segmentId = crypto.randomUUID();
+      const sourceKey = `${SHARED_ARCHIVE_AGENT.home.replace(/^\/+/, "")}/conversations/default/${segmentId}.jsonl.gz`;
+      const targetKey = `process-conversation-archives/${ARCHIVE_OWNER_ALICE.uid}/${SHARED_ARCHIVE_AGENT.uid}/default/${segmentId}.jsonl.gz`;
+      await env.STORAGE.put(sourceKey, await gzipJsonLines([{
+        id: 1,
+        conversation_id: "default",
+        generation: 1,
+        role: "user",
+        content: "pointer race",
+        ts: 100,
+      }]), { httpMetadata: { contentType: "application/gzip" } });
+
+      try {
+        await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          process.store.recordConversationSegment({
+            id: segmentId,
+            conversationId: "default",
+            generation: 1,
+            kind: "compaction",
+            fromMessageId: 1,
+            toMessageId: 1,
+            archivePath: `/${sourceKey}`,
+            summaryMessageId: null,
+          });
+          const replace = vi.spyOn(process.store, "replaceConversationArchivePointer")
+            .mockReturnValue(false);
+          try {
+            await expect(process.ensureProcessAuthority()).rejects.toThrow(
+              "archive pointer changed during migration",
+            );
+          } finally {
+            replace.mockRestore();
+          }
+          expect(process.store.getConversationSegment("default", segmentId).archivePath)
+            .toBe(`/${sourceKey}`);
+        });
+        await expect(env.STORAGE.head(sourceKey)).resolves.not.toBeNull();
+        await expect(env.STORAGE.head(targetKey)).resolves.not.toBeNull();
+      } finally {
+        await env.STORAGE.delete([sourceKey, targetKey]);
+      }
+    });
+  });
+
   describe("proc.reset", () => {
+    it("isolates shared-agent archives by the human process owner", async () => {
+      const alice = await initProcess(
+        "mech-owner-archive-alice",
+        SHARED_ARCHIVE_AGENT,
+        { ownerIdentity: ARCHIVE_OWNER_ALICE },
+      );
+      const bob = await initProcess(
+        "mech-owner-archive-bob",
+        SHARED_ARCHIVE_AGENT,
+        { ownerIdentity: ARCHIVE_OWNER_BOB },
+      );
+
+      await runInDurableObject(alice, (instance: Process) => {
+        (instance as any).store.appendMessage("user", "alice private history");
+      });
+      await runInDurableObject(bob, (instance: Process) => {
+        (instance as any).store.appendMessage("user", "bob private history");
+      });
+
+      const aliceReset = await alice.recvFrame(makeReq("proc.reset", {})) as ResponseOkFrame;
+      const bobReset = await bob.recvFrame(makeReq("proc.reset", {})) as ResponseOkFrame;
+      const alicePath = (aliceReset.data as any).archives[0].path as string;
+      const bobPath = (bobReset.data as any).archives[0].path as string;
+
+      expect(alicePath).toContain("/process-conversation-archives/4100/4300/");
+      expect(bobPath).toContain("/process-conversation-archives/4200/4300/");
+      await expect(env.STORAGE.head(alicePath.slice(1))).resolves.toMatchObject({
+        customMetadata: expect.objectContaining({
+          uid: "4100",
+          gid: "4100",
+          mode: "000",
+          storageClass: "process-conversation-archive-v1",
+        }),
+      });
+
+      await expect(runInDurableObject(bob, (instance: Process) => (
+        (instance as any).readArchivedMessageRecords(alicePath)
+      ))).rejects.toThrow("outside this process owner scope");
+
+      await env.STORAGE.delete([alicePath.slice(1), bobPath.slice(1)]);
+    });
+
     it("archives all conversations and clears process history", async () => {
       const pid = "mech-reset-1";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -7672,7 +8242,7 @@ describe("Process DO — mechanical", () => {
       const data = res.data as any;
       expect(data.ok).toBe(true);
       expect(data.archivedMessages).toBe(3);
-      expect(data.archivedTo).toContain("/root/conversations/");
+      expect(data.archivedTo).toContain(`/${ROOT_ARCHIVE_PREFIX}/`);
       expect(data.archivedTo).toMatch(/\/$/);
       expect(data.archives).toEqual([
         expect.objectContaining({
@@ -7868,20 +8438,152 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.kill", () => {
-    it("can dispose an executor whose identity initialization never completed", async () => {
+    it("does not erase an executor whose authority initialization never completed", async () => {
       const pid = "mech-kill-uninitialized";
       const stub = await getProcessByPid(pid);
 
       const killed = await stub.recvFrame(makeReq("proc.kill", { pid, archive: false }));
       expect(killed).toMatchObject({
-        ok: true,
-        data: { ok: true, pid, archivedMessages: 0, archives: [] },
-      });
-      await expect(stub.recvFrame(
-        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY }),
-      )).resolves.toMatchObject({
         ok: false,
-        error: { code: 410 },
+        error: { message: expect.stringContaining("process is not initialized") },
+      });
+      await registerInKernel(pid, ROOT_IDENTITY);
+      await expect(stub.recvFrame(
+        makeReq("proc.setidentity", {
+          pid,
+          identity: ROOT_IDENTITY,
+          ownerIdentity: ROOT_IDENTITY,
+        }),
+      )).resolves.toMatchObject({
+        ok: true,
+        data: { ok: true },
+      });
+    });
+
+    it("archives a pre-owner shared-agent process under its human owner and hydrates it", async () => {
+      const pid = `mech-kill-legacy-owner-${crypto.randomUUID()}`;
+      const stub = await initProcess(pid, SHARED_ARCHIVE_AGENT, {
+        ownerIdentity: ARCHIVE_OWNER_ALICE,
+      });
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("user", "legacy owner transcript");
+        process.store.deleteValue("ownerIdentity");
+      });
+
+      const killed = await stub.recvFrame(makeReq("proc.kill", {})) as ResponseOkFrame;
+      expect(killed.data).toMatchObject({ ok: true, archivedMessages: 1 });
+      const archivePath = (killed.data as any).archives[0].path as string;
+      expect(archivePath).toContain(
+        `/process-conversation-archives/${ARCHIVE_OWNER_ALICE.uid}/${SHARED_ARCHIVE_AGENT.uid}/`,
+      );
+      await expect(env.STORAGE.head(archivePath.replace(/^\/+/, ""))).resolves.toMatchObject({
+        customMetadata: expect.objectContaining({
+          uid: String(ARCHIVE_OWNER_ALICE.uid),
+          gid: String(ARCHIVE_OWNER_ALICE.gid),
+          mode: "000",
+        }),
+      });
+
+      const resumedPid = `mech-kill-legacy-owner-resumed-${crypto.randomUUID()}`;
+      await registerInKernel(
+        resumedPid,
+        SHARED_ARCHIVE_AGENT,
+        undefined,
+        ARCHIVE_OWNER_ALICE,
+      );
+      const resumed = await getProcessByPid(resumedPid);
+      const initialized = await resumed.recvFrame(makeReq("proc.setidentity", {
+        pid: resumedPid,
+        identity: SHARED_ARCHIVE_AGENT,
+        ownerIdentity: ARCHIVE_OWNER_ALICE,
+        hydrateFrom: archivePath,
+      }));
+      expect(initialized).toMatchObject({ ok: true, data: { ok: true } });
+      const history = await resumed.recvFrame(makeReq("proc.history", {})) as ResponseOkFrame;
+      expect((history.data as any).messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ content: "legacy owner transcript" }),
+      ]));
+
+      await env.STORAGE.delete(archivePath.replace(/^\/+/, ""));
+    });
+
+    it("fails an orphaned legacy kill without erasing Process SQL", async () => {
+      const pid = `mech-kill-orphaned-owner-${crypto.randomUUID()}`;
+      const stub = await initProcess(pid, SHARED_ARCHIVE_AGENT, {
+        ownerIdentity: ARCHIVE_OWNER_ALICE,
+      });
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("user", "must survive failed kill");
+        process.store.deleteValue("ownerIdentity");
+      });
+      const kernel = await getKernelPtr();
+      await runInDurableObject(kernel, (instance: Kernel) => {
+        (instance as any).procs.kill(pid);
+      });
+
+      const killed = await stub.recvFrame(makeReq("proc.kill", {})) as ResponseFrame;
+      expect(killed).toMatchObject({
+        ok: false,
+        error: { message: expect.stringContaining("process registry record not found") },
+      });
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        expect(process.killed).toBe(false);
+        expect(process.store.getMessages()).toEqual([
+          expect.objectContaining({ content: "must survive failed kill" }),
+        ]);
+        expect(process.store.getValue("pid")).toBe(pid);
+      });
+    });
+
+    it("fails closed when persisted owner identity disagrees with the registry", async () => {
+      const pid = `mech-owner-mismatch-${crypto.randomUUID()}`;
+      const stub = await initProcess(pid, SHARED_ARCHIVE_AGENT, {
+        ownerIdentity: ARCHIVE_OWNER_ALICE,
+      });
+      await runInDurableObject(stub, (instance: Process) => {
+        (instance as any).store.appendMessage("user", "alice-owned history");
+      });
+      await registerInKernel(pid, SHARED_ARCHIVE_AGENT, undefined, ARCHIVE_OWNER_BOB);
+
+      const history = await stub.recvFrame(makeReq("proc.history", {})) as ResponseFrame;
+      expect(history).toMatchObject({
+        ok: false,
+        error: { message: expect.stringContaining("owner identity does not match Kernel") },
+      });
+      await runInDurableObject(stub, (instance: Process) => {
+        expect((instance as any).store.getMessages()).toEqual([
+          expect.objectContaining({ content: "alice-owned history" }),
+        ]);
+      });
+    });
+
+    it("does not resume a recovered run when legacy authority is orphaned", async () => {
+      const pid = `mech-run-orphaned-owner-${crypto.randomUUID()}`;
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.store.appendMessage("user", "recovered input", { runId: "run-orphaned" });
+        process.currentRun = { runId: "run-orphaned", conversationId: "default" };
+        process.store.deleteValue("ownerIdentity");
+      });
+      const kernel = await getKernelPtr();
+      await runInDurableObject(kernel, (instance: Kernel) => {
+        (instance as any).procs.kill(pid);
+      });
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        await expect(process.runTick("run-orphaned")).rejects.toThrow(
+          "process registry record not found",
+        );
+        expect(process.currentRun).toMatchObject({ runId: "run-orphaned" });
+        expect(process.store.getMessages()).toEqual([
+          expect.objectContaining({ content: "recovered input" }),
+        ]);
+        process.currentRun = null;
       });
     });
 
@@ -7973,7 +8675,11 @@ describe("Process DO — mechanical", () => {
       ]));
 
       const reuse = await stub.recvFrame(
-        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY }),
+        makeReq("proc.setidentity", {
+          pid,
+          identity: ROOT_IDENTITY,
+          ownerIdentity: ROOT_IDENTITY,
+        }),
       );
       expect(reuse).toMatchObject({
         ok: false,
@@ -8002,7 +8708,7 @@ describe("Process DO — mechanical", () => {
         pid,
         archivedMessages: 2,
       });
-      expect(data.archivedTo).toMatch(/\/root\/conversations\/$/);
+      expect(data.archivedTo).toBe(`/${ROOT_ARCHIVE_PREFIX}/`);
       expect(data.archives.map((archive: any) => archive.conversationId)).toEqual([
         "build",
         "default",

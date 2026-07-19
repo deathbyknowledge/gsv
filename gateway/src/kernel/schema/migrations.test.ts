@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(8);
+    expect(KERNEL_MIGRATIONS).toHaveLength(15);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -63,6 +63,34 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[7]).toMatchObject({
       id: 8,
       name: "bind_routes_to_driver_connections",
+    });
+    expect(KERNEL_MIGRATIONS[8]).toMatchObject({
+      id: 9,
+      name: "restrict_system_bootstrap",
+    });
+    expect(KERNEL_MIGRATIONS[9]).toMatchObject({
+      id: 10,
+      name: "restrict_wildcard_capability",
+    });
+    expect(KERNEL_MIGRATIONS[10]).toMatchObject({
+      id: 11,
+      name: "privatize_device_owner_access",
+    });
+    expect(KERNEL_MIGRATIONS[11]).toMatchObject({
+      id: 12,
+      name: "rate_limit_link_challenges",
+    });
+    expect(KERNEL_MIGRATIONS[12]).toMatchObject({
+      id: 13,
+      name: "add_unix_id_allocator",
+    });
+    expect(KERNEL_MIGRATIONS[13]).toMatchObject({
+      id: 14,
+      name: "internalize_conversation_archives",
+    });
+    expect(KERNEL_MIGRATIONS[14]).toMatchObject({
+      id: 15,
+      name: "rate_limit_logins",
     });
   });
 
@@ -100,6 +128,9 @@ describe("kernel schema migrations", () => {
       "oauth_flows",
       "oauth_accounts",
       "user_mcp_servers",
+      "link_challenge_attempts",
+      "unix_id_allocator",
+      "auth_login_attempts",
     ]);
   });
 
@@ -170,6 +201,56 @@ describe("kernel schema migrations", () => {
     expect(createTableStatement("routing_table")).not.toContain("driver_connection_id");
   });
 
+  it("removes system bootstrap from the shared users group", () => {
+    expect(normalizedStatements()).toContain(
+      "DELETE FROM group_capabilities WHERE gid = 100 AND capability = 'sys.bootstrap'",
+    );
+  });
+
+  it("removes wildcard authority from every non-root group", () => {
+    expect(normalizedStatements()).toContain(
+      "DELETE FROM group_capabilities WHERE gid <> 0 AND capability = '*'",
+    );
+  });
+
+  it("moves legacy device owner access off the shared users group", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "INSERT OR IGNORE INTO device_access (device_id, gid) SELECT device_id, owner_uid FROM devices WHERE owner_uid >= 1000",
+    );
+    expect(statements).toContain(
+      "DELETE FROM device_access WHERE gid = 100 AND device_id IN ( SELECT device_id FROM devices WHERE owner_uid >= 1000 )",
+    );
+  });
+
+  it("adds a durable high-water allocator for the shared UID/GID space", () => {
+    const allocator = createTableStatement("unix_id_allocator");
+    const statements = normalizedStatements();
+
+    expect(allocator).toContain("singleton INTEGER PRIMARY KEY CHECK (singleton = 1)");
+    expect(allocator).toContain("high_water INTEGER NOT NULL CHECK (high_water >= 0)");
+    expect(statements.some((statement) => (
+      statement.startsWith("INSERT OR IGNORE INTO unix_id_allocator")
+      && statement.includes("SELECT MAX(uid) FROM passwd")
+      && statement.includes("SELECT MAX(gid) FROM passwd")
+      && statement.includes("SELECT MAX(gid) FROM groups")
+    ))).toBe(true);
+  });
+
+  it("invalidates legacy shared-home archives and removes their stored locator", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain("UPDATE conversations SET latest_archive = NULL");
+    expect(statements).toContain("ALTER TABLE conversations DROP COLUMN archive_base");
+  });
+
+  it("adds durable login attempt budgets without storing credential material", () => {
+    const attempts = createTableStatement("auth_login_attempts");
+
+    expect(attempts).toContain("scope TEXT PRIMARY KEY");
+    expect(attempts).toContain("attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0)");
+    expect(attempts).not.toMatch(/username|password|token|credential|address/);
+  });
+
   it("includes current indexes owned by the kernel stores", () => {
     expect(createdIndexes()).toEqual(expect.arrayContaining([
       "idx_auth_tokens_uid",
@@ -181,6 +262,7 @@ describe("kernel schema migrations", () => {
       "idx_user_mcp_servers_uid",
       "idx_adapter_status_owner",
       "idx_ipc_calls_source_run",
+      "idx_auth_login_attempts_expiry",
     ]));
   });
 });

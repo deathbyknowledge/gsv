@@ -30,6 +30,7 @@ import {
   DEFAULT_IMAGE_READING_MODEL,
   deleteProcessMedia,
   parseStoredProcessMedia,
+  processMediaMetadata,
   storeIncomingProcessMedia,
   type AudioTranscriptionBinding,
   type ImageReadingBinding,
@@ -51,6 +52,7 @@ async function storedMedia(
   const bytes = new Uint8Array([1, 2, 3]);
   await env.STORAGE.put(key, bytes, {
     httpMetadata: { contentType: input.mimeType },
+    customMetadata: processMediaMetadata(0),
   });
   return { ...input, key, size: bytes.byteLength };
 }

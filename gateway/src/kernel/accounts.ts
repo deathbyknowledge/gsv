@@ -20,10 +20,13 @@ import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { KernelContext } from "./context";
 import type { AuthStore } from "./auth-store";
 import type { PasswdEntry } from "../auth/passwd";
+import { isValidCapability } from "./capabilities";
+import { ACCOUNT_USERNAME_RE } from "../auth/login";
+
+export { ACCOUNT_USERNAME_RE } from "../auth/login";
 
 const TEXT_ENCODER = new TextEncoder();
 
-export const ACCOUNT_USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 export const MIN_PASSWORD_LENGTH = 8;
 
 /** A username is available when it collides with no existing user or group. */
@@ -118,6 +121,14 @@ export async function createAccount(
   if (input.accessGroupName && auth.getGroupByName(input.accessGroupName)) {
     throw new Error(`Access group already exists: ${input.accessGroupName}`);
   }
+  for (const capability of input.capabilities ?? []) {
+    if (!isValidCapability(capability)) {
+      throw new Error(`Invalid account capability: ${capability}`);
+    }
+    if (capability === "*") {
+      throw new Error("Wildcard capability is reserved for root");
+    }
+  }
 
   const ownerUsername = input.ownerUid != null
     ? auth.getPasswdByUid(input.ownerUid)?.username ?? null
@@ -138,7 +149,7 @@ export async function createAccount(
     shadowHash = "!";
   }
 
-  const uid = auth.nextUid();
+  const uid = auth.allocateUid();
   const gid = uid; // User Private Group
   const home = `/home/${username}`;
 
@@ -182,12 +193,15 @@ export async function createAccount(
   // so run-as authorization (granted via the access group below) never confers
   // these capabilities on the authorized human.
   for (const capability of input.capabilities ?? []) {
-    ctx.caps.grant(gid, capability);
+    const granted = ctx.caps.grant(gid, capability);
+    if (!granted.ok) {
+      throw new Error(granted.error ?? `Failed to grant capability: ${capability}`);
+    }
   }
 
   let accessGroupGid: number | undefined;
   if (input.accessGroupName) {
-    accessGroupGid = auth.nextGid();
+    accessGroupGid = auth.allocateGid();
     auth.addGroup({ name: input.accessGroupName, gid: accessGroupGid, members: [] });
   }
 

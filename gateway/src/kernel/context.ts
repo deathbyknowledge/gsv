@@ -31,9 +31,11 @@ import type { ScheduleStore } from "./scheduler";
 import type { AppSessionStore } from "./app-sessions";
 import type { AppFrameContext } from "../protocol/app-frame";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
+import type { LoginSourceScope } from "./login-source";
 
 export type KernelContext = {
   env: Env;
+  kernelName: string;
   auth: AuthStore;
   caps: CapabilityStore;
   config: ConfigStore;
@@ -53,6 +55,7 @@ export type KernelContext = {
   notifications: NotificationStore;
   schedules: ScheduleStore;
   connection: Connection | null;
+  loginSourceScope: LoginSourceScope;
   identity?: ConnectionIdentity;
   processId?: string;
   processRunId?: string;

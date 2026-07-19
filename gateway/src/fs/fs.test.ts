@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
 import type { KernelRefs } from "./index";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import { R2MountBackend } from "./backends/r2";
+import { provisionR2Directory, R2MountBackend } from "./backends/r2";
 
 const ROOT: ProcessIdentity = {
   uid: 0,
@@ -931,6 +931,140 @@ describe("GsvFs permissions", () => {
     const fs = makeFs(ALICE);
     await expect(fs.rm(`/${TEST_PREFIX}no-del.txt`)).rejects.toThrow("EACCES");
   });
+
+  it("does not delete an object that changed after delete authorization", async () => {
+    const key = `${TEST_PREFIX}delete-race.txt`;
+    await putFile(key, "sam original", {
+      uid: String(SAM.uid), gid: String(SAM.gid), mode: "600",
+    });
+    let deleteCalled = false;
+    const bucket = new Proxy(env.STORAGE, {
+      get(target, property, receiver) {
+        if (property === "put") {
+          return async (
+            candidate: string,
+            value: Parameters<R2Bucket["put"]>[1],
+            options?: R2PutOptions,
+          ) => {
+            if (candidate === key && options?.customMetadata?.deletionMarker === "1") {
+              await target.put(candidate, "alice replacement", {
+                customMetadata: {
+                  uid: String(ALICE.uid),
+                  gid: String(ALICE.gid),
+                  mode: "600",
+                },
+              });
+              return null;
+            }
+            return await target.put(candidate, value, options);
+          };
+        }
+        if (property === "delete") {
+          return async (candidate: string | string[]) => {
+            if (candidate === key || (Array.isArray(candidate) && candidate.includes(key))) {
+              deleteCalled = true;
+            }
+            return await target.delete(candidate);
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+
+    await expect(new R2MountBackend(bucket, SAM).rm(`/${key}`)).rejects.toThrow("EAGAIN");
+    expect(deleteCalled).toBe(false);
+    const replacement = await env.STORAGE.get(key);
+    expect(await replacement?.text()).toBe("alice replacement");
+    expect(replacement?.customMetadata?.uid).toBe(String(ALICE.uid));
+  });
+
+  it("enforces private directory ownership for every descendant operation", async () => {
+    const privatePath = `/${TEST_PREFIX}sam-private`;
+    const filePath = `${privatePath}/otherwise-readable.txt`;
+    const samFs = makeFs(SAM);
+    const aliceFs = makeFs(ALICE);
+
+    await samFs.mkdir(privatePath, { recursive: true });
+    await samFs.chmod(privatePath, 0o700);
+    await samFs.writeFile(filePath, "personal data");
+
+    await expect(samFs.statExtended(privatePath)).resolves.toMatchObject({
+      isDirectory: true,
+      mode: 0o700,
+      uid: SAM.uid,
+      gid: SAM.gid,
+    });
+    await expect(samFs.readFile(filePath)).resolves.toBe("personal data");
+
+    await expect(aliceFs.exists(filePath)).rejects.toThrow("EACCES");
+    await expect(aliceFs.stat(filePath)).rejects.toThrow("EACCES");
+    await expect(aliceFs.readFile(filePath)).rejects.toThrow("EACCES");
+    await expect(aliceFs.readdir(privatePath)).rejects.toThrow("EACCES");
+    await expect(aliceFs.search(privatePath, "personal")).rejects.toThrow("EACCES");
+    await expect(aliceFs.writeFile(`${privatePath}/intrusion.txt`, "nope")).rejects.toThrow("EACCES");
+    await expect(aliceFs.mkdir(`${privatePath}/intrusion`)).rejects.toThrow("EACCES");
+    await expect(aliceFs.symlink(filePath, `${privatePath}/intrusion-link`)).rejects.toThrow("EACCES");
+  });
+
+  it("never exposes R2 directory markers as user-addressable files", async () => {
+    const privatePath = `/${TEST_PREFIX}marker-private`;
+    const markerPath = `${privatePath}/.dir`;
+    const markerKey = `${TEST_PREFIX}marker-private/.dir`;
+    const privateFile = `${privatePath}/private.txt`;
+    const samFs = makeFs(SAM);
+    const aliceFs = makeFs(ALICE);
+
+    await samFs.mkdir(privatePath, { recursive: true });
+    await samFs.chmod(privatePath, 0o700);
+    await samFs.writeFile(privateFile, "still private");
+
+    await expect(samFs.readFile(markerPath)).rejects.toThrow("EACCES");
+    await expect(samFs.writeFile(markerPath, "not metadata")).rejects.toThrow("EACCES");
+    await expect(samFs.rm(markerPath)).rejects.toThrow("EACCES");
+    await expect(makeFs(ROOT).rm(markerPath)).rejects.toThrow("EACCES");
+
+    await expect(env.STORAGE.head(markerKey)).resolves.toMatchObject({
+      customMetadata: expect.objectContaining({
+        uid: String(SAM.uid),
+        gid: String(SAM.gid),
+        mode: "700",
+        dirmarker: "1",
+      }),
+    });
+    await expect(aliceFs.readFile(privateFile)).rejects.toThrow("EACCES");
+  });
+
+  it("rejects traversal through a regular file", async () => {
+    await putFile(`${TEST_PREFIX}regular-file`, "not a directory", {
+      uid: "1000", gid: "1000", mode: "644",
+    });
+
+    const fs = makeFs(SAM);
+    await expect(fs.readFile(`/${TEST_PREFIX}regular-file/child`)).rejects.toThrow("ENOTDIR");
+    await expect(fs.writeFile(`/${TEST_PREFIX}regular-file/child`, "nope")).rejects.toThrow("ENOTDIR");
+  });
+
+  it("keeps process media outside the non-root filesystem namespace", async () => {
+    const key = "var/media/1000/private-process/secret.txt";
+    await env.STORAGE.put(key, "private media", {
+      httpMetadata: { contentType: "text/plain" },
+    });
+
+    try {
+      const fs = makeFs(SAM);
+      await expect(fs.exists(`/${key}`)).rejects.toThrow("EACCES");
+      await expect(fs.readFile(`/${key}`)).rejects.toThrow("EACCES");
+      await expect(fs.readdir("/var/media/1000")).rejects.toThrow("EACCES");
+      await expect(fs.readdir("/var")).resolves.not.toContain("media");
+      await expect(fs.search("/", "private media")).rejects.toThrow("EACCES");
+
+      const rootFs = makeFs(ROOT);
+      await expect(rootFs.readFile(`/${key}`)).resolves.toBe("private media");
+    } finally {
+      await env.STORAGE.delete(key);
+    }
+  });
 });
 
 describe("GsvFs write metadata", () => {
@@ -951,6 +1085,72 @@ describe("GsvFs write metadata", () => {
     expect(head?.customMetadata?.uid).toBe("1000");
     expect(head?.customMetadata?.gid).toBe("1000");
     expect(head?.customMetadata?.mode).toBe("644");
+  });
+
+  it("preserves ownership when a group-authorized writer replaces a file", async () => {
+    const key = `${TEST_PREFIX}group-owned.txt`;
+    await env.STORAGE.put(key, "before", {
+      customMetadata: {
+        uid: "1000",
+        gid: "100",
+        mode: "660",
+        classification: "private",
+      },
+    });
+
+    await makeFs(ALICE).writeFile(`/${key}`, "after");
+
+    const object = await env.STORAGE.get(key);
+    expect(await object?.text()).toBe("after");
+    expect(object?.customMetadata).toEqual({
+      uid: "1000",
+      gid: "100",
+      mode: "660",
+      classification: "private",
+    });
+  });
+
+  it("allows only one owner to create a missing key under a race", async () => {
+    const key = `${TEST_PREFIX}concurrent-owner.txt`;
+    let targetHeadCount = 0;
+    let releaseTargetHeads!: () => void;
+    const targetHeadsReady = new Promise<void>((resolve) => {
+      releaseTargetHeads = resolve;
+    });
+    const bucket = new Proxy(env.STORAGE, {
+      get(target, property, receiver) {
+        if (property === "head") {
+          return async (candidate: string) => {
+            const result = await target.head(candidate);
+            if (candidate === key) {
+              targetHeadCount += 1;
+              if (targetHeadCount === 2) releaseTargetHeads();
+              await targetHeadsReady;
+            }
+            return result;
+          };
+        }
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const samBackend = new R2MountBackend(bucket, SAM);
+    const aliceBackend = new R2MountBackend(bucket, ALICE);
+
+    const results = await Promise.allSettled([
+      samBackend.writeFile(`/${key}`, "sam"),
+      aliceBackend.writeFile(`/${key}`, "alice"),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({ message: expect.stringContaining("EAGAIN") }),
+    });
+    const object = await env.STORAGE.get(key);
+    expect(["sam", "alice"]).toContain(await object?.text());
+    expect([String(SAM.uid), String(ALICE.uid)]).toContain(object?.customMetadata?.uid);
   });
 
   it("appends binary files without UTF-8 conversion", async () => {
@@ -983,6 +1183,29 @@ describe("GsvFs write metadata", () => {
     expect(head?.httpMetadata?.contentType).toBe("text/plain; charset=utf-8");
     expect(head?.httpMetadata?.cacheControl).toBe("public, max-age=60");
     expect(await fs.readFile(`/${TEST_PREFIX}stream.txt`)).toBe("streamed data");
+  });
+
+  it("cancels the upload producer when a conditional stream write loses a race", async () => {
+    let cancelled: unknown;
+    const source = new ReadableStream<Uint8Array>({
+      pull() {
+        // Stay pending until the failed R2 precondition cancels this producer.
+      },
+      cancel(reason) {
+        cancelled = reason;
+      },
+    }, { highWaterMark: 0 });
+    const backend = new R2MountBackend({
+      head: async () => null,
+      put: async () => null,
+    } as unknown as R2Bucket, SAM);
+
+    await expect(backend.writeFileStream("/conditional-stream.txt", source, {
+      expectedSize: 1,
+    })).rejects.toThrow("EAGAIN");
+    expect(cancelled).toEqual(expect.objectContaining({
+      message: expect.stringContaining("EAGAIN"),
+    }));
   });
 
   it("cancels streamed R2 writes", async () => {
@@ -1091,6 +1314,7 @@ describe("GsvFs write metadata", () => {
 
   it("cancels buffered stream writes", async () => {
     const fs = Object.create(GsvFs.prototype) as any;
+    fs.identity = SAM;
     let written = false;
     fs.resolveFinalPath = async (path: string) => path;
     fs.backendForPath = () => ({
@@ -1241,6 +1465,155 @@ describe("GsvFs directory removal", () => {
     await fs.writeFile(`/${TEST_PREFIX}beta/file.txt`, "hello");
 
     await expect(fs.rm(`/${TEST_PREFIX}beta`)).rejects.toThrow("ENOTEMPTY");
+  });
+
+  it("does not partially delete a markerless prefix containing foreign files", async () => {
+    await putFile(`${TEST_PREFIX}mixed/own.txt`, "own", {
+      uid: "1000", gid: "1000", mode: "644",
+    });
+    await putFile(`${TEST_PREFIX}mixed/foreign.txt`, "foreign", {
+      uid: "1001", gid: "100", mode: "600",
+    });
+
+    const fs = makeFs(SAM);
+    await expect(fs.rm(`/${TEST_PREFIX}mixed`, { recursive: true })).rejects.toThrow("EACCES");
+    await expect(env.STORAGE.head(`${TEST_PREFIX}mixed/own.txt`)).resolves.not.toBeNull();
+    await expect(env.STORAGE.head(`${TEST_PREFIX}mixed/foreign.txt`)).resolves.not.toBeNull();
+  });
+
+  it("recursively deletes a markerless prefix only when every object is writable", async () => {
+    await putFile(`${TEST_PREFIX}owned/one.txt`, "one", {
+      uid: "1000", gid: "1000", mode: "644",
+    });
+    await putFile(`${TEST_PREFIX}owned/two.txt`, "two", {
+      uid: "1000", gid: "1000", mode: "600",
+    });
+
+    const fs = makeFs(SAM);
+    await fs.rm(`/${TEST_PREFIX}owned`, { recursive: true });
+    await expect(env.STORAGE.head(`${TEST_PREFIX}owned/one.txt`)).resolves.toBeNull();
+    await expect(env.STORAGE.head(`${TEST_PREFIX}owned/two.txt`)).resolves.toBeNull();
+  });
+
+  it("does not let recursive mkdir replace another owner's directory marker", async () => {
+    const marker = `${TEST_PREFIX}claimed/.dir`;
+    await env.STORAGE.put(marker, "", {
+      customMetadata: {
+        uid: "1001",
+        gid: "100",
+        mode: "700",
+        dirmarker: "1",
+      },
+    });
+
+    await makeFs(SAM).mkdir(`/${TEST_PREFIX}claimed`, { recursive: true });
+
+    await expect(env.STORAGE.head(marker)).resolves.toMatchObject({
+      customMetadata: expect.objectContaining({ uid: "1001", gid: "100", mode: "700" }),
+    });
+  });
+});
+
+describe("trusted R2 directory provisioning", () => {
+  const DIRECTORY = "/test/provision/home-alice";
+  const MARKER = "test/provision/home-alice/.dir";
+
+  beforeEach(async () => {
+    await env.STORAGE.delete([MARKER, "test/provision/home-alice"]);
+  });
+
+  it("creates one exact owner marker under concurrent idempotent calls", async () => {
+    await Promise.all([
+      provisionR2Directory(env.STORAGE, DIRECTORY, { uid: 1001, gid: 1001 }, "750"),
+      provisionR2Directory(env.STORAGE, DIRECTORY, { uid: 1001, gid: 1001 }, "750"),
+    ]);
+
+    await expect(env.STORAGE.head(MARKER)).resolves.toMatchObject({
+      customMetadata: {
+        uid: "1001",
+        gid: "1001",
+        mode: "750",
+        dirmarker: "1",
+      },
+    });
+  });
+
+  it("rejects an existing marker owned by a different principal", async () => {
+    await env.STORAGE.put(MARKER, "", {
+      customMetadata: { uid: "1002", gid: "1002", mode: "777", dirmarker: "1" },
+    });
+
+    await expect(provisionR2Directory(
+      env.STORAGE,
+      DIRECTORY,
+      { uid: 1001, gid: 1001 },
+      "750",
+    )).rejects.toThrow("directory ownership conflict");
+    await expect(env.STORAGE.head(MARKER)).resolves.toMatchObject({
+      customMetadata: expect.objectContaining({ uid: "1002", mode: "777" }),
+    });
+  });
+});
+
+describe("GsvFs system storage boundaries", () => {
+  const PUBLIC_KEY = "public/security-test/asset.js";
+  const RUNTIME_KEY = "runtime/package-artifacts/security-test.json";
+  const ARCHIVE_KEY = "process-conversation-archives/1000/2000/conversation/archive.jsonl.gz";
+  const LEGACY_ARCHIVE_KEY = "home/shared-agent/conversations/conversation/archive.jsonl.gz";
+
+  beforeEach(async () => {
+    await env.STORAGE.delete([PUBLIC_KEY, RUNTIME_KEY, ARCHIVE_KEY, LEGACY_ARCHIVE_KEY]);
+  });
+
+  it("keeps public assets readable but root-managed", async () => {
+    await putFile(PUBLIC_KEY, "export const safe = true;", {
+      uid: "0", gid: "0", mode: "644",
+    });
+    const fs = makeFs(SAM);
+
+    await expect(fs.readFile(`/${PUBLIC_KEY}`)).resolves.toContain("safe");
+    await expect(fs.writeFile("/public/security-test/injected.js", "attack"))
+      .rejects.toThrow("EACCES");
+    await expect(fs.rm("/public/security-test", { recursive: true }))
+      .rejects.toThrow("EACCES");
+  });
+
+  it("keeps package runtime and source-overlay storage off the user filesystem", async () => {
+    await env.STORAGE.put(RUNTIME_KEY, "{}");
+    const fs = makeFs(SAM);
+
+    await expect(fs.readFile(`/${RUNTIME_KEY}`)).rejects.toThrow("EACCES");
+    await expect(fs.writeFile(`/${RUNTIME_KEY}`, "attack")).rejects.toThrow("EACCES");
+    await expect(fs.rm("/runtime/package-artifacts", { recursive: true }))
+      .rejects.toThrow("EACCES");
+    await expect(fs.readdir("/process-source-overlays")).rejects.toThrow("EACCES");
+  });
+
+  it("keeps current and legacy conversation archives off the non-root filesystem", async () => {
+    await env.STORAGE.put(ARCHIVE_KEY, "private transcript", {
+      customMetadata: { uid: "1000", gid: "1000", mode: "600" },
+    });
+    await env.STORAGE.put(LEGACY_ARCHIVE_KEY, "legacy transcript", {
+      customMetadata: { uid: "2000", gid: "2000", mode: "600" },
+    });
+    const fs = makeFs(SAM);
+
+    await expect(fs.readFile(`/${ARCHIVE_KEY}`)).rejects.toThrow("EACCES");
+    await expect(fs.readFile(`/${LEGACY_ARCHIVE_KEY}`)).rejects.toThrow("EACCES");
+    await expect(fs.readdir("/process-conversation-archives")).rejects.toThrow("EACCES");
+
+    const rootFs = makeFs(ROOT);
+    await expect(rootFs.readFile(`/${ARCHIVE_KEY}`)).resolves.toBe("private transcript");
+    await expect(rootFs.readFile(`/${LEGACY_ARCHIVE_KEY}`)).resolves.toBe("legacy transcript");
+  });
+
+  it("does not expose or mutate the shared home root through raw R2", async () => {
+    const fs = makeFs(SAM);
+
+    await expect(fs.search("/home", "secret")).rejects.toThrow("EACCES");
+    await expect(fs.readdir("/home")).rejects.toThrow("EACCES");
+    await expect(fs.rm("/home", { recursive: true })).rejects.toThrow("EACCES");
+    await expect(fs.writeFile("/home", "attack")).rejects.toThrow("EACCES");
   });
 });
 
@@ -1820,6 +2193,7 @@ describe("GsvFs search", () => {
     };
     const backend = new R2MountBackend({
       get: async () => object,
+      head: async () => null,
     } as unknown as R2Bucket, SAM);
     const controller = new AbortController();
     const reason = new Error("search cancelled");

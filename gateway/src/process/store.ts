@@ -34,6 +34,7 @@ import {
   buildFallbackMediaBlocks,
   describeStoredProcessMedia,
   parseStoredProcessMedia,
+  type StoredProcessMedia,
 } from "./media";
 import {
   DEFAULT_CONVERSATION_GENERATION,
@@ -87,6 +88,14 @@ export type MessageRecord = {
   origin?: string | null;
   metadata: string | null;
   createdAt: number;
+};
+
+export type ConversationArchivePointer = {
+  source: "segment" | "archive";
+  id: string;
+  conversationId: string;
+  generation: number;
+  archivePath: string;
 };
 
 type MessageRow = {
@@ -609,6 +618,50 @@ export class ProcessStore {
     }));
   }
 
+  listConversationArchivePointers(): ConversationArchivePointer[] {
+    return [...this.sql.exec<{
+      source: "segment" | "archive";
+      id: string;
+      conversation_id: string;
+      generation: number;
+      archive_path: string;
+    }>(
+      `SELECT 'segment' AS source, id, conversation_id, generation, archive_path
+         FROM conversation_segments
+       UNION ALL
+       SELECT 'archive' AS source, id, conversation_id, generation, archive_path
+         FROM conversation_archives
+       ORDER BY source ASC, id ASC`,
+    )].map((row) => ({
+      source: row.source,
+      id: row.id,
+      conversationId: row.conversation_id,
+      generation: row.generation,
+      archivePath: row.archive_path,
+    }));
+  }
+
+  replaceConversationArchivePointer(
+    pointer: ConversationArchivePointer,
+    nextPath: string,
+  ): boolean {
+    const table = pointer.source === "segment"
+      ? "conversation_segments"
+      : "conversation_archives";
+    this.sql.exec(
+      `UPDATE ${table}
+          SET archive_path = ?
+        WHERE id = ? AND conversation_id = ? AND archive_path = ?`,
+      nextPath,
+      pointer.id,
+      pointer.conversationId,
+      pointer.archivePath,
+    );
+    return this.sql.exec<{ changed: number }>(
+      "SELECT changes() AS changed",
+    ).toArray()[0]?.changed === 1;
+  }
+
   listConversationGenerations(conversationId: string = DEFAULT_CONVERSATION_ID): number[] {
     const normalizedConversationId = normalizeConversationId(conversationId);
     const generations = new Set<number>();
@@ -915,17 +968,20 @@ export class ProcessStore {
   }
 
   referencesMediaKey(key: string): boolean {
+    return this.mediaReferences(key).length > 0;
+  }
+
+  mediaReferences(key: string): StoredProcessMedia[] {
     const rows = this.sql.exec<{ media_json: string }>(
       `SELECT media_json FROM messages WHERE media_json IS NOT NULL
        UNION ALL
        SELECT media_json FROM message_queue WHERE media_json IS NOT NULL`,
     );
+    const references: StoredProcessMedia[] = [];
     for (const row of rows) {
-      if (parseStoredProcessMedia(row.media_json).some((item) => item.key === key)) {
-        return true;
-      }
+      references.push(...parseStoredProcessMedia(row.media_json).filter((item) => item.key === key));
     }
-    return false;
+    return references;
   }
 
   getMessages(opts?: {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   commitRepoSourceChanges,
   createProcessSourceBackend,
+  discardRepoSourceChanges,
   getRepoSourceStatus,
 } from "./index";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
@@ -42,10 +43,52 @@ function makeConfig() {
   };
 }
 
-function makeBucket() {
-  const objects = new Map<string, { bytes: Uint8Array; httpMetadata?: R2HTTPMetadata }>();
+type BucketPutOptions = {
+  onlyIf?: R2Conditional;
+  httpMetadata?: R2HTTPMetadata;
+  customMetadata?: Record<string, string>;
+};
+
+type BucketHooks = {
+  beforePut?: (
+    key: string,
+    value: string | Uint8Array,
+    options?: BucketPutOptions,
+  ) => void | Promise<void>;
+  afterPut?: (
+    key: string,
+    value: string | Uint8Array,
+    options?: BucketPutOptions,
+  ) => void | Promise<void>;
+  beforeDelete?: (key: string) => void | Promise<void>;
+};
+
+function makeDeferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function bucketValueText(value: string | Uint8Array): string {
+  return typeof value === "string" ? value : new TextDecoder().decode(value);
+}
+
+function makeBucket(hooks: BucketHooks = {}) {
+  const objects = new Map<string, {
+    bytes: Uint8Array;
+    httpMetadata?: R2HTTPMetadata;
+    customMetadata?: Record<string, string>;
+    etag: string;
+  }>();
+  let nextEtag = 1;
+  let conditionalFailures = 0;
   const bucket = {
     objects,
+    get conditionalFailures() {
+      return conditionalFailures;
+    },
     async get(key: string) {
       const stored = objects.get(key);
       if (!stored) {
@@ -55,8 +98,10 @@ function makeBucket() {
         key,
         size: stored.bytes.byteLength,
         uploaded: new Date(),
+        etag: stored.etag,
+        httpEtag: `"${stored.etag}"`,
         httpMetadata: stored.httpMetadata,
-        customMetadata: {},
+        customMetadata: stored.customMetadata ?? {},
         async text() {
           return new TextDecoder().decode(stored.bytes);
         },
@@ -68,18 +113,61 @@ function makeBucket() {
         },
       };
     },
-    async put(key: string, value: string | Uint8Array, options?: { httpMetadata?: R2HTTPMetadata }) {
+    async put(
+      key: string,
+      value: string | Uint8Array,
+      options?: BucketPutOptions,
+    ) {
+      await hooks.beforePut?.(key, value, options);
+      const existing = objects.get(key);
+      if (
+        options?.onlyIf?.etagMatches !== undefined &&
+        existing?.etag !== options.onlyIf.etagMatches
+      ) {
+        conditionalFailures += 1;
+        return null;
+      }
+      if (
+        options?.onlyIf?.etagDoesNotMatch !== undefined &&
+        (options.onlyIf.etagDoesNotMatch === "*"
+          ? existing !== undefined
+          : existing?.etag === options.onlyIf.etagDoesNotMatch)
+      ) {
+        conditionalFailures += 1;
+        return null;
+      }
       const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
-      objects.set(key, { bytes, httpMetadata: options?.httpMetadata });
-      return null;
+      const etag = `etag-${nextEtag++}`;
+      const stored = {
+        bytes,
+        httpMetadata: options?.httpMetadata,
+        customMetadata: options?.customMetadata,
+        etag,
+      };
+      objects.set(key, stored);
+      const result = {
+        key,
+        size: bytes.byteLength,
+        uploaded: new Date(),
+        etag,
+        httpEtag: `"${etag}"`,
+        httpMetadata: stored.httpMetadata,
+        customMetadata: stored.customMetadata ?? {},
+      };
+      await hooks.afterPut?.(key, value, options);
+      return result;
     },
     async delete(key: string | string[]) {
       for (const entry of Array.isArray(key) ? key : [key]) {
+        await hooks.beforeDelete?.(entry);
         objects.delete(entry);
       }
     },
   };
-  return bucket as unknown as R2Bucket & { objects: typeof objects };
+  return bucket as unknown as R2Bucket & {
+    objects: typeof objects;
+    readonly conditionalFailures: number;
+  };
 }
 
 describe("createProcessSourceBackend", () => {
@@ -229,9 +317,32 @@ describe("createProcessSourceBackend", () => {
     const manifest = await storage.get(
       "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json",
     );
-    expect(JSON.parse(await manifest!.text())).toMatchObject({
+    const storedManifest = JSON.parse(await manifest!.text()) as {
+      changes: Record<string, { contentKey?: string; revision?: string }>;
+    };
+    expect(storedManifest).toMatchObject({
       packageId: "repo:sam/docs",
       packageKey: "global:repo:sam/docs",
+    });
+    const newChange = storedManifest.changes["new.md"];
+    expect(newChange.revision).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    expect(newChange.contentKey).toBe(
+      `process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/files/new.md/${newChange.revision}`,
+    );
+    expect(manifest!.customMetadata).toEqual({
+      uid: "1000",
+      gid: "1000",
+      mode: "600",
+    });
+    const stagedContent = await storage.get(
+      newChange.contentKey!,
+    );
+    expect(stagedContent!.customMetadata).toEqual({
+      uid: "1000",
+      gid: "1000",
+      mode: "600",
     });
 
     expect(applyCalls).toHaveLength(0);
@@ -312,6 +423,404 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[0][0]).toEqual({ owner: "sam", repo: "docs", branch: "main" });
     expect(applyCalls[0][3]).toBe("update docs");
     expect(applyCalls[0][5]).toEqual({ baseRef: "mainhead123", expectedHead: "mainhead123" });
+  });
+
+  it("never follows a corrupted overlay manifest content key", async () => {
+    const storage = makeBucket();
+    const manifestKey =
+      "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json";
+    const victimKey = "private/bob/closest-device/secrets.txt";
+    await storage.put(victimKey, "bob's private data\n", {
+      customMetadata: { uid: "2000", gid: "2000", mode: "600" },
+    });
+    await storage.put(manifestKey, JSON.stringify({
+      version: 1,
+      packageId: "repo:sam/docs",
+      packageKey: "global:repo:sam/docs",
+      baseRef: "main",
+      createdAt: 1,
+      updatedAt: 1,
+      changes: {
+        "leak.md": {
+          type: "put",
+          path: "leak.md",
+          contentKey: victimKey,
+          size: 19,
+          updatedAt: 1,
+        },
+      },
+    }));
+
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async () => ({ kind: "missing" }),
+      } as any,
+    });
+
+    await expect(backend!.readFile("/src/repos/sam/docs/leak.md"))
+      .rejects.toThrow("ENOENT");
+    await discardRepoSourceChanges({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: null,
+    }, "sam/docs");
+
+    await expect(storage.get(manifestKey).then(async (object) =>
+      object ? JSON.parse(await object.text()).changes : null
+    )).resolves.toEqual({});
+    await expect(storage.get(victimKey).then((object) => object?.text()))
+      .resolves.toBe("bob's private data\n");
+  });
+
+  it("reads and upgrades legacy deterministic overlay payload keys", async () => {
+    const storage = makeBucket();
+    const manifestKey =
+      "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json";
+    const legacyContentKey =
+      "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/files/legacy.md";
+    await storage.put(legacyContentKey, "legacy\n");
+    await storage.put(manifestKey, JSON.stringify({
+      version: 1,
+      packageId: "repo:sam/docs",
+      packageKey: "global:repo:sam/docs",
+      baseRef: "main",
+      createdAt: 1,
+      updatedAt: 1,
+      changes: {
+        "legacy.md": {
+          type: "put",
+          path: "legacy.md",
+          contentKey: legacyContentKey,
+          size: 7,
+          updatedAt: 1,
+        },
+      },
+    }));
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async () => ({ kind: "missing" }),
+      } as any,
+    });
+
+    await expect(backend!.readFile("/src/repos/sam/docs/legacy.md")).resolves.toBe("legacy\n");
+    await backend!.writeFile("/src/repos/sam/docs/legacy.md", "revisioned\n");
+
+    await expect(storage.get(legacyContentKey)).resolves.toBeNull();
+    await expect(backend!.readFile("/src/repos/sam/docs/legacy.md")).resolves.toBe("revisioned\n");
+    const manifest = JSON.parse(await (await storage.get(manifestKey))!.text());
+    expect(manifest.changes["legacy.md"]).toMatchObject({
+      revision: expect.any(String),
+    });
+    expect(manifest.changes["legacy.md"].contentKey).not.toBe(legacyContentKey);
+  });
+
+  it("retries concurrent manifest updates without losing staged paths", async () => {
+    const storage = makeBucket();
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async () => ({ kind: "missing" }),
+      } as any,
+    });
+
+    await Promise.all([
+      backend!.writeFile("/src/repos/sam/docs/one.md", "one\n"),
+      backend!.writeFile("/src/repos/sam/docs/two.md", "two\n"),
+    ]);
+
+    const status = await getRepoSourceStatus({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: null,
+    }, "sam/docs");
+    expect(status.changes.map((change) => change.path)).toEqual(["one.md", "two.md"]);
+    expect(storage.conditionalFailures).toBeGreaterThan(0);
+    await expect(backend!.readFile("/src/repos/sam/docs/one.md")).resolves.toBe("one\n");
+    await expect(backend!.readFile("/src/repos/sam/docs/two.md")).resolves.toBe("two\n");
+  });
+
+  it("removes an immutable payload when manifest publication exhausts CAS retries", async () => {
+    const manifestKey =
+      "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json";
+    let invalidatingManifest = false;
+    let storage!: ReturnType<typeof makeBucket>;
+    storage = makeBucket({
+      beforePut: async (key) => {
+        if (key !== manifestKey || invalidatingManifest) {
+          return;
+        }
+        invalidatingManifest = true;
+        await storage.put(manifestKey, "{}\n");
+        invalidatingManifest = false;
+      },
+    });
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async () => ({ kind: "missing" }),
+      } as any,
+    });
+
+    await expect(backend!.writeFile("/src/repos/sam/docs/failed.md", "never published\n"))
+      .rejects.toThrow("EAGAIN");
+    expect([...storage.objects.keys()].filter((key) => key.includes("/files/failed.md/")))
+      .toEqual([]);
+  });
+
+  it("keeps the winning same-path manifest paired with its immutable payload", async () => {
+    const firstManifestWaiting = makeDeferred();
+    const secondManifestStored = makeDeferred();
+    let delayedFirstManifest = false;
+    const manifestKey =
+      "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json";
+    const storage = makeBucket({
+      beforePut: async (key, value) => {
+        if (key !== manifestKey) {
+          return;
+        }
+        const manifest = JSON.parse(bucketValueText(value));
+        if (manifest.changes["same.md"]?.size === 2 && !delayedFirstManifest) {
+          delayedFirstManifest = true;
+          firstManifestWaiting.resolve();
+          await secondManifestStored.promise;
+        } else if (manifest.changes["same.md"]?.size === 5) {
+          await firstManifestWaiting.promise;
+        }
+      },
+      afterPut: (key, value) => {
+        if (key !== manifestKey) {
+          return;
+        }
+        const manifest = JSON.parse(bucketValueText(value));
+        if (manifest.changes["same.md"]?.size === 5) {
+          secondManifestStored.resolve();
+        }
+      },
+    });
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async () => ({ kind: "missing" }),
+      } as any,
+    });
+
+    await Promise.all([
+      backend!.writeFile("/src/repos/sam/docs/same.md", "a\n"),
+      backend!.writeFile("/src/repos/sam/docs/same.md", "bbbb\n"),
+    ]);
+
+    const manifestObject = await storage.get(manifestKey);
+    const manifest = JSON.parse(await manifestObject!.text()) as {
+      changes: Record<string, { contentKey: string; size: number }>;
+    };
+    expect(manifest.changes["same.md"].size).toBe(2);
+    await expect(storage.get(manifest.changes["same.md"].contentKey).then((object) => object?.text()))
+      .resolves.toBe("a\n");
+    await expect(backend!.readFile("/src/repos/sam/docs/same.md")).resolves.toBe("a\n");
+    expect(storage.conditionalFailures).toBeGreaterThan(0);
+  });
+
+  it("does not delete a payload reintroduced while staged delete cleanup is pending", async () => {
+    const cleanupStarted = makeDeferred();
+    const releaseCleanup = makeDeferred();
+    let blockCleanup = false;
+    const storage = makeBucket({
+      beforeDelete: async (key) => {
+        if (!blockCleanup || !key.includes("/files/race.md")) {
+          return;
+        }
+        blockCleanup = false;
+        cleanupStarted.resolve();
+        await releaseCleanup.promise;
+      },
+    });
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: {
+        readPath: async () => ({ kind: "missing" }),
+      } as any,
+    });
+    await backend!.writeFile("/src/repos/sam/docs/race.md", "old\n");
+
+    blockCleanup = true;
+    const deleting = backend!.rm("/src/repos/sam/docs/race.md");
+    await cleanupStarted.promise;
+    await backend!.writeFile("/src/repos/sam/docs/race.md", "new\n");
+    releaseCleanup.resolve();
+    await deleting;
+
+    await expect(backend!.readFile("/src/repos/sam/docs/race.md")).resolves.toBe("new\n");
+    const status = await getRepoSourceStatus({
+      identity: IDENTITY,
+      storage,
+      repos: [makeRepo("sam/docs")],
+      processId: "task:source",
+      config: makeConfig(),
+      ripgit: null,
+    }, "sam/docs");
+    expect(status.changes).toMatchObject([{ type: "put", path: "race.md", size: 4 }]);
+  });
+
+  it("preserves staging created while a repo commit is applying", async () => {
+    const applyStarted = makeDeferred();
+    const releaseApply = makeDeferred();
+    const storage = makeBucket();
+    const config = makeConfig();
+    const repo = makeRepo("sam/docs");
+    const readPath = async () => ({ kind: "missing" as const });
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [repo],
+      processId: "task:source",
+      config,
+      ripgit: { readPath } as any,
+    });
+    await backend!.writeFile("/src/repos/sam/docs/first.md", "first\n");
+
+    const committing = commitRepoSourceChanges({
+      identity: IDENTITY,
+      storage,
+      repos: [repo],
+      processId: "task:source",
+      config,
+      ripgit: {
+        readPath,
+        refs: async () => ({ heads: { main: "mainhead" }, tags: {} }),
+        apply: async () => {
+          applyStarted.resolve();
+          await releaseApply.promise;
+          return { head: "committed-head" };
+        },
+      } as any,
+    }, "sam/docs", { message: "commit first" });
+    await applyStarted.promise;
+    await backend!.writeFile("/src/repos/sam/docs/second.md", "second\n");
+    releaseApply.resolve();
+
+    const result = await committing;
+    expect(result.changes.map((change) => change.path)).toEqual(["second.md"]);
+    const remainingManifest = await storage.get(
+      "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json",
+    );
+    await expect(remainingManifest!.text().then((body) => JSON.parse(body).baseRef))
+      .resolves.toBe("committed-head");
+    await expect(backend!.readFile("/src/repos/sam/docs/first.md")).rejects.toThrow("ENOENT");
+    await expect(backend!.readFile("/src/repos/sam/docs/second.md")).resolves.toBe("second\n");
+    const status = await getRepoSourceStatus({
+      identity: IDENTITY,
+      storage,
+      repos: [repo],
+      processId: "task:source",
+      config,
+      ripgit: null,
+    }, "sam/docs");
+    expect(status.changes.map((change) => change.path)).toEqual(["second.md"]);
+  });
+
+  it("does not let a stale standalone discard regress a concurrent commit base", async () => {
+    const staleDiscardWaiting = makeDeferred();
+    const releaseStaleDiscard = makeDeferred();
+    const manifestKey =
+      "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json";
+    let blockStaleDiscard = true;
+    const storage = makeBucket({
+      beforePut: async (key, value) => {
+        if (key !== manifestKey || !blockStaleDiscard) {
+          return;
+        }
+        const manifest = JSON.parse(bucketValueText(value));
+        if (manifest.baseRef === "head-one" && Object.keys(manifest.changes).length === 0) {
+          blockStaleDiscard = false;
+          staleDiscardWaiting.resolve();
+          await releaseStaleDiscard.promise;
+        }
+      },
+    });
+    const config = makeConfig();
+    config.set(
+      "process-source-branches/task%3Asource/global%3Arepo%3Asam%2Fdocs",
+      JSON.stringify({
+        branch: "main",
+        baseRef: "main",
+        head: "head-one",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    const repo = makeRepo("sam/docs");
+    const readPath = async () => ({ kind: "missing" as const });
+    const backend = createProcessSourceBackend({
+      identity: IDENTITY,
+      storage,
+      repos: [repo],
+      processId: "task:source",
+      config,
+      ripgit: { readPath } as any,
+    });
+    await backend!.writeFile("/src/repos/sam/docs/first.md", "first\n");
+
+    const discarding = discardRepoSourceChanges({
+      identity: IDENTITY,
+      storage,
+      repos: [repo],
+      processId: "task:source",
+      config,
+      ripgit: null,
+    }, "sam/docs");
+    await staleDiscardWaiting.promise;
+    try {
+      await commitRepoSourceChanges({
+        identity: IDENTITY,
+        storage,
+        repos: [repo],
+        processId: "task:source",
+        config,
+        ripgit: {
+          readPath,
+          apply: async () => ({ head: "head-two" }),
+        } as any,
+      }, "sam/docs", { message: "advance branch" });
+    } finally {
+      releaseStaleDiscard.resolve();
+    }
+    await discarding;
+
+    const manifest = await storage.get(manifestKey);
+    await expect(manifest!.text().then((body) => JSON.parse(body).baseRef))
+      .resolves.toBe("head-two");
   });
 
   it("keeps public non-owned repos read-only through /src/repos", async () => {

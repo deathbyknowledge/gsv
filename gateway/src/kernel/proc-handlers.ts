@@ -53,7 +53,7 @@ export function handleProcList(
   // human owner, otherwise it filters on the agent's uid and sees nothing.
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const isRoot = callerOwnerUid === 0;
-  const uid = args.uid ?? (isRoot ? undefined : callerOwnerUid);
+  const uid = isRoot ? args.uid : callerOwnerUid;
 
   const records = ctx.procs.list(uid);
 
@@ -162,6 +162,15 @@ export async function handleProcSpawn(
   // of an agent also run as that agent), or — for a parentless spawn — the
   // caller's personal agent (processes run as an agent, not the human).
   const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
+  const ownerEntry = ownerUid === identity.process.uid
+    ? null
+    : ctx.auth.getPasswdByUid(ownerUid);
+  if (ownerUid !== identity.process.uid && !ownerEntry) {
+    return { ok: false, error: `Cannot resolve process owner uid ${ownerUid}` };
+  }
+  const ownerIdentity = ownerEntry
+    ? accountIdentity(ctx.auth, ownerEntry)
+    : identity.process;
   const inheritParentIdentity = parent && (
     parentIsCurrentCaller ||
     parentRunsAsCaller ||
@@ -208,13 +217,12 @@ export async function handleProcSpawn(
       contextFiles: args.assignment?.contextFiles ?? [],
     });
 
-    // Each spawned process gets its own durable conversation so its transcript
-    // persists in the run-as agent's home, addressable independent of this
-    // (fungible) executor.
+    // Each spawned process gets its own durable conversation. Its transcript
+    // persists in owner-scoped internal storage independent of this fungible
+    // executor.
     const conversation = ctx.conversations.create({
       ownerUid,
       agentUid: spawnIdentity.uid,
-      agentHome: spawnIdentity.home,
       title: args.label ?? null,
     });
     conversationId = conversation.conversationId;
@@ -229,6 +237,8 @@ export async function handleProcSpawn(
       call: "proc.setidentity",
       args: {
         pid,
+        kernelName: ctx.kernelName,
+        ownerIdentity,
         identity: spawnIdentity,
         interactive,
         assignment: args.assignment as ProcSpawnAssignment | undefined,

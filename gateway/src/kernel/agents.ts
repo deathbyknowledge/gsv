@@ -229,7 +229,7 @@ export async function handleAccountCreate(
 
   if (kind === "human") {
     // Creating human accounts is an administrative action.
-    if (!caller.capabilities.includes("*")) {
+    if (caller.process.uid !== 0) {
       throw new Error("Creating human accounts requires root");
     }
     const { identity } = await createAccount(ctx, {
@@ -361,6 +361,15 @@ export async function resolveConversationExecutor(
   }
 
   const interactive = opts?.interactive ?? true;
+  const ownerEntry = conversation.ownerUid === agentIdentity.uid
+    ? null
+    : ctx.auth.getPasswdByUid(conversation.ownerUid);
+  if (conversation.ownerUid !== agentIdentity.uid && !ownerEntry) {
+    throw new Error(`Cannot resolve conversation owner uid ${conversation.ownerUid}`);
+  }
+  const ownerIdentity = ownerEntry
+    ? accountIdentity(ctx.auth, ownerEntry)
+    : agentIdentity;
   const pid = `proc:${crypto.randomUUID()}`;
   ctx.procs.spawn(pid, agentIdentity, {
     ownerUid: conversation.ownerUid,
@@ -375,6 +384,8 @@ export async function resolveConversationExecutor(
     call: "proc.setidentity",
     args: {
       pid,
+      kernelName: ctx.kernelName,
+      ownerIdentity,
       identity: agentIdentity,
       interactive,
       conversationId: conversation.conversationId,
@@ -399,7 +410,6 @@ export async function ensureDefaultConversationExecutor(
   const { record } = ctx.conversations.ensureDefault(
     human.uid,
     agent.identity.uid,
-    agent.identity.home,
   );
   return resolveConversationExecutor(ctx, record, agent.identity, {
     interactive: true,

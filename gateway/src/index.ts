@@ -1,5 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { isWebSocketRequest } from "./shared/utils";
+import { isWebSocketRequest, SHIP_KERNEL_NAME } from "./shared/utils";
 import type {
   GatewayAdapterInterface,
 } from "./adapter-interface";
@@ -14,6 +14,10 @@ import {
   matchPublicAssetPath,
   servePublicAssetRequest,
 } from "./public-assets";
+import {
+  ACCOUNT_USERNAME_MAX_CHARACTERS,
+  LOGIN_CREDENTIAL_MAX_BYTES,
+} from "./auth/login";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -47,17 +51,17 @@ export default {
     }
 
     if (url.pathname === "/oauth/callback" && request.method === "GET") {
-      const kernel = await getAgentByName(env.KERNEL, "singleton");
+      const kernel = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
       return kernel.fetch(request);
     }
 
     if (url.pathname === "/ws" && isWebSocketRequest(request)) {
-      const kernel = await getAgentByName(env.KERNEL, "singleton");
+      const kernel = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
       return kernel.fetch(request);
     }
 
     if (url.pathname === "/public/packages" && request.method === "GET") {
-      const kernel = await getAgentByName(env.KERNEL, "singleton");
+      const kernel = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
       const payload = await kernel.listPublicPackages();
       return Response.json(payload, {
         headers: {
@@ -82,11 +86,12 @@ export default {
     const gitMatch = matchGitPath(url);
     if (gitMatch) {
       const basicAuth = getBasicAuth(request);
-      const kernel = await getAgentByName(env.KERNEL, "singleton");
+      const kernel = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
       const authorized = await kernel.authorizeGitHttp({
         owner: gitMatch.owner,
         repo: gitMatch.repo,
         write: gitMatch.write,
+        trustedSourceAddress: trustedLoginSourceAddress(request),
         username: basicAuth?.username,
         credential: basicAuth?.credential,
       });
@@ -119,6 +124,11 @@ const RETIRED_CLI_DOWNLOAD_PATH = "/public/gsv/downloads/cli";
 export function isRetiredCliDownloadPath(pathname: string): boolean {
   return pathname === RETIRED_CLI_DOWNLOAD_PATH
     || pathname.startsWith(`${RETIRED_CLI_DOWNLOAD_PATH}/`);
+}
+
+/** Only the public gateway may forward Cloudflare's edge-authored source header. */
+export function trustedLoginSourceAddress(request: Request): string | undefined {
+  return request.headers.get("CF-Connecting-IP") ?? undefined;
 }
 
 const RUNTIME_THEME_CSS = [
@@ -184,6 +194,13 @@ const PACKAGE_APP_RUNTIME_SCRIPT = [
 ].join("");
 
 const PACKAGE_APP_SESSION_COOKIE_PREFIX = "gsv_app_session_";
+const GIT_REPO_SEGMENT_MAX_CHARACTERS = 128;
+const BASIC_AUTH_PREFIX = "Basic ";
+const MAX_GIT_BASIC_AUTH_HEADER_LENGTH = BASIC_AUTH_PREFIX.length
+  + 4 * Math.ceil(
+    (ACCOUNT_USERNAME_MAX_CHARACTERS + 1 + LOGIN_CREDENTIAL_MAX_BYTES) / 3,
+  )
+  + 8;
 
 type BasicAuth = {
   username: string;
@@ -283,13 +300,22 @@ function matchGitPath(url: URL): GitPathMatch | null {
     return null;
   }
 
-  const owner = parts[1]?.trim();
-  const repoPart = parts[2]?.trim();
+  const owner = parts[1] ?? "";
+  const repoPart = parts[2] ?? "";
   if (!owner || !repoPart) {
+    return null;
+  }
+  if (
+    owner.length > GIT_REPO_SEGMENT_MAX_CHARACTERS
+    || repoPart.length > GIT_REPO_SEGMENT_MAX_CHARACTERS + ".git".length
+  ) {
     return null;
   }
 
   const repo = repoPart.endsWith(".git") ? repoPart.slice(0, -4) : repoPart;
+  if (repo.length > GIT_REPO_SEGMENT_MAX_CHARACTERS) {
+    return null;
+  }
   if (!/^[A-Za-z0-9._-]+$/.test(owner) || !/^[A-Za-z0-9._-]+$/.test(repo)) {
     return null;
   }
@@ -306,17 +332,20 @@ function matchGitPath(url: URL): GitPathMatch | null {
 
 function getBasicAuth(request: Request): BasicAuth | null {
   const header = request.headers.get("authorization");
-  if (!header?.startsWith("Basic ")) {
+  if (
+    !header?.startsWith(BASIC_AUTH_PREFIX)
+    || header.length > MAX_GIT_BASIC_AUTH_HEADER_LENGTH
+  ) {
     return null;
   }
 
   try {
-    const decoded = atob(header.slice("Basic ".length).trim());
+    const decoded = atob(header.slice(BASIC_AUTH_PREFIX.length).trim());
     const separator = decoded.indexOf(":");
     if (separator === -1) {
       return null;
     }
-    const username = decoded.slice(0, separator).trim();
+    const username = decoded.slice(0, separator);
     const credential = decoded.slice(separator + 1);
     if (!username || !credential) {
       return null;
@@ -517,7 +546,7 @@ async function handlePackageAppSessionLaunchRequest(
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const kernel = await getAgentByName(env.KERNEL, "singleton");
+  const kernel = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
   const resolved = await kernel.resolvePackageAppRpcSession({
     sessionId: match.sessionId,
     secret,
@@ -548,7 +577,7 @@ async function handlePackageAppSessionRefreshRequest(
 
   const secret = getPackageAppSessionSecret(request, match.sessionId, match.clientId);
 
-  const kernel = await getAgentByName(env.KERNEL, "singleton");
+  const kernel = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
   const resolved = await kernel.refreshPackageAppRpcSession({
     sessionId: match.sessionId,
     secret,
@@ -628,7 +657,7 @@ async function resolvePackageAppSessionFromCookie(
     return { ok: false, status: 401, message: "Unauthorized" };
   }
 
-  const kernel = await getAgentByName(env.KERNEL, "singleton");
+  const kernel = await getAgentByName(env.KERNEL, SHIP_KERNEL_NAME);
   const resolved = await kernel.resolvePackageAppRpcSession({
     sessionId,
     secret,
@@ -786,7 +815,7 @@ export class GatewayEntrypoint
 {
   async serviceFrame(frame: Frame): Promise<Frame | null> {
     try {
-      const kernel = await getAgentByName(this.env.KERNEL, "singleton");
+      const kernel = await getAgentByName(this.env.KERNEL, SHIP_KERNEL_NAME);
       return await kernel.serviceFrame(frame);
     } catch (e) {
       console.error("[GatewayEntrypoint] serviceFrame failed:", e);

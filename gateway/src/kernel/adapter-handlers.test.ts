@@ -11,6 +11,7 @@ import {
 } from "./adapter-handlers";
 import { sendFrameToProcess } from "../shared/utils";
 import { bodyToBytes } from "@humansandmachines/gsv/protocol";
+import { createProvisioningR2BucketMock } from "../test-support/mock-r2";
 
 vi.mock("../shared/utils", () => ({
   sendFrameToProcess: vi.fn(),
@@ -31,10 +32,7 @@ type MakeContextOptions = {
 };
 
 function makeStorageBucket() {
-  return {
-    head: vi.fn(async () => null),
-    put: vi.fn(async () => undefined),
-  };
+  return createProvisioningR2BucketMock();
 }
 
 function userIdentity(uid = 1000): KernelContext["identity"] {
@@ -103,6 +101,7 @@ function makeContext(
   };
 
   return {
+    kernelName: "kernel-adapter",
     env: {
       STORAGE: makeStorageBucket(),
       ...env,
@@ -153,7 +152,7 @@ function makeContext(
           title: null,
           isDefault: true,
           activePid: "pid-1",
-          archiveBase: "/home/agent/conversations/conv-1",
+          archiveBase: "/process-conversation-archives/1000/2000/conv-1",
           latestArchive: null,
           createdAt: 0,
           lastActiveAt: null,
@@ -167,7 +166,7 @@ function makeContext(
         title: "helper",
         isDefault: false,
         activePid: null,
-        archiveBase: "/home/helper/conversations/conv-agent",
+        archiveBase: "/process-conversation-archives/1000/2000/conv-agent",
         latestArchive: null,
         createdAt: 0,
         lastActiveAt: null,
@@ -1617,6 +1616,7 @@ describe("adapter lifecycle handlers", () => {
       expect.objectContaining({
         call: "proc.setidentity",
         args: expect.objectContaining({
+          kernelName: "kernel-adapter",
           identity: expect.objectContaining({ username: "helper" }),
           conversationId: "conv-agent",
         }),

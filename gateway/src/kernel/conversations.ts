@@ -3,17 +3,19 @@
  *
  * A conversation is the unit of persistence in the agent-accounts model: it is
  * owned by a human (`owner_uid`), runs as an agent account (`agent_uid`), and
- * its transcript lives under the agent's home at `archive_base`
- * (`/home/<agent>/conversations/<id>`). It outlives any individual executor.
+ * its transcript lives in owner-scoped internal archive storage. It outlives
+ * any individual executor.
  *
  * The executor (Process DO / `pid`) is fungible. `active_pid` points at the
  * executor currently servicing the conversation, or NULL when none is live.
  * The transcript itself is the durable source of truth, not the DO.
  *
  * This registry is the kernel's source of truth for *who owns a conversation*
- * and *where its transcript lives*; the durable bytes are R2 blobs under the
- * agent home written by the Process DO.
+ * and *where its transcript lives*; the durable bytes are private R2 blobs
+ * written by the Process DO's owner-authorized archive store.
  */
+
+import { conversationArchiveBase } from "../process/archive-storage";
 
 export type ConversationRecord = {
   conversationId: string;
@@ -37,28 +39,16 @@ export function defaultConversationId(ownerUid: number, agentUid: number): strin
   return `default:${ownerUid}:${agentUid}`;
 }
 
-/**
- * R2-key / FS path under the agent home where a conversation's transcript
- * archives are stored. Home is `/home/<agent>`; transcripts land under
- * `/home/<agent>/conversations/<id>`.
- */
-export function conversationArchiveBase(agentHome: string, conversationId: string): string {
-  const home = agentHome.replace(/\/+$/, "");
-  return `${home}/conversations/${encodeURIComponent(conversationId)}`;
-}
-
 export class ConversationRegistry {
   constructor(private readonly sql: SqlStorage) {}
 
   /**
    * Ensure the well-known default conversation between `ownerUid` and the agent
-   * (whose home is `agentHome`) exists. Returns the record and whether it was
-   * created. Idempotent.
+   * exists. Returns the record and whether it was created. Idempotent.
    */
   ensureDefault(
     ownerUid: number,
     agentUid: number,
-    agentHome: string,
   ): { record: ConversationRecord; created: boolean } {
     const conversationId = defaultConversationId(ownerUid, agentUid);
     const existing = this.get(conversationId);
@@ -68,7 +58,6 @@ export class ConversationRegistry {
       conversationId,
       ownerUid,
       agentUid,
-      agentHome,
       isDefault: true,
     });
     return { record, created: true };
@@ -78,23 +67,21 @@ export class ConversationRegistry {
     conversationId?: string;
     ownerUid: number;
     agentUid: number;
-    agentHome: string;
     title?: string | null;
     isDefault?: boolean;
   }): ConversationRecord {
     const conversationId = opts.conversationId ?? crypto.randomUUID();
-    const archiveBase = conversationArchiveBase(opts.agentHome, conversationId);
+    const archiveBase = conversationArchiveBase(opts.ownerUid, opts.agentUid, conversationId);
     const createdAt = Date.now();
     this.sql.exec(
       `INSERT OR REPLACE INTO conversations
-        (conversation_id, owner_uid, agent_uid, title, is_default, active_pid, archive_base, latest_archive, created_at, last_active_at)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, ?, NULL)`,
+        (conversation_id, owner_uid, agent_uid, title, is_default, active_pid, latest_archive, created_at, last_active_at)
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, NULL)`,
       conversationId,
       opts.ownerUid,
       opts.agentUid,
       opts.title ?? null,
       opts.isDefault ? 1 : 0,
-      archiveBase,
       createdAt,
     );
     return {
@@ -204,7 +191,6 @@ type RowShape = {
   title: string | null;
   is_default: number;
   active_pid: string | null;
-  archive_base: string;
   latest_archive: string | null;
   created_at: number;
   last_active_at: number | null;
@@ -218,7 +204,7 @@ function toRecord(row: RowShape): ConversationRecord {
     title: row.title,
     isDefault: row.is_default !== 0,
     activePid: row.active_pid,
-    archiveBase: row.archive_base,
+    archiveBase: conversationArchiveBase(row.owner_uid, row.agent_uid, row.conversation_id),
     latestArchive: row.latest_archive,
     createdAt: row.created_at,
     lastActiveAt: row.last_active_at,

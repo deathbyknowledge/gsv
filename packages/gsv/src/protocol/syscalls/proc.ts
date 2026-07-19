@@ -783,14 +783,23 @@ export type ProcListResult = {
 // at spawn time and never routed from user/device connections.
 export type ProcSetIdentityArgs = {
   pid: string;
+  /**
+   * Durable Object name of the Kernel that owns this process. Optional so
+   * processes created before Kernel sharding continue to use the legacy route.
+   */
+  kernelName?: string;
+  /**
+   * Human account that owns this process. This is Kernel-issued and remains
+   * distinct from `identity`, which is the account the process runs as.
+   */
+  ownerIdentity: ProcessIdentity;
   identity: ProcessIdentity;
   interactive?: boolean;
   assignment?: ProcSpawnAssignment;
   /**
    * Kernel conversation id this executor's primary thread belongs to. The
-   * executor archives/reads its primary thread under
-   * `/home/<agent>/conversations/<conversationId>/...`, so transcripts are
-   * addressed by the durable conversation rather than the fungible pid.
+   * The executor archives/reads its primary thread in owner-scoped internal
+   * storage, addressed by durable conversation rather than fungible pid.
    */
   conversationId?: string;
   /**

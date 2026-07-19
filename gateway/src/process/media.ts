@@ -1,6 +1,6 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 
-import type { ProcMediaInput } from "@humansandmachines/gsv/protocol";
+import type { ProcessIdentity, ProcMediaInput } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES,
   type AudioTranscriptionBinding,
@@ -63,8 +63,12 @@ export type StoreIncomingProcessMediaOptions = {
   imageReadingMaxBytes?: number;
   imageReadingMaxTokens?: number;
   imageReadingTimeoutMs?: number;
+  /** Exact legacy keys already authorized and metadata-stamped by Process DO. */
+  authorizedLegacyKeys?: ReadonlySet<string>;
 };
 
+export const PROCESS_MEDIA_STORAGE_CLASS = "process-media-v1";
+type ProcessMediaOwner = number | Pick<ProcessIdentity, "uid" | "gid">;
 
 export function processMediaPrefix(uid: number, pid: string): string {
   return `var/media/${uid}/${pid}/`;
@@ -72,7 +76,7 @@ export function processMediaPrefix(uid: number, pid: string): string {
 
 export async function storeIncomingProcessMedia(
   bucket: R2Bucket,
-  uid: number,
+  ownerInput: ProcessMediaOwner,
   pid: string,
   media: ProcMediaInput[] | undefined,
   options: StoreIncomingProcessMediaOptions = {},
@@ -81,7 +85,8 @@ export async function storeIncomingProcessMedia(
     return null;
   }
 
-  const prefix = processMediaPrefix(uid, pid);
+  const owner = normalizeMediaOwner(ownerInput);
+  const prefix = processMediaPrefix(owner.uid, pid);
   const stored: StoredProcessMedia[] = [];
 
   for (const item of media) {
@@ -99,13 +104,17 @@ export async function storeIncomingProcessMedia(
     let base64: string | null = null;
 
     if (typeof item.key === "string" && item.key.length > 0) {
-      if (!item.key.startsWith(prefix)) {
+      if (
+        !item.key.startsWith(prefix)
+        && !options.authorizedLegacyKeys?.has(item.key)
+      ) {
         throw new Error("media key is outside this process");
       }
       const object = await bucket.head(item.key);
       if (!object) {
         throw new Error(`media not found: ${item.key}`);
       }
+      assertProcessMediaOwnership(object, owner);
       next.key = item.key;
       next.size = object.size;
 
@@ -117,6 +126,7 @@ export async function storeIncomingProcessMedia(
       if (processingLimit > 0 && object.size <= processingLimit) {
         const stored = await bucket.get(item.key);
         if (stored) {
+          assertProcessMediaOwnership(stored, owner);
           bytes = new Uint8Array(await stored.arrayBuffer());
           options.signal?.throwIfAborted();
           base64 = encodeBase64Bytes(bytes);
@@ -163,6 +173,107 @@ export async function storeIncomingProcessMedia(
   }
 
   return stringifyStoredProcessMedia(stored);
+}
+
+export function processMediaMetadata(
+  ownerInput: ProcessMediaOwner,
+): Record<string, string> {
+  const owner = normalizeMediaOwner(ownerInput);
+  return {
+    uid: String(owner.uid),
+    gid: String(owner.gid),
+    mode: "000",
+    storageClass: PROCESS_MEDIA_STORAGE_CLASS,
+  };
+}
+
+export function assertProcessMediaOwnership(
+  object: Pick<R2Object, "customMetadata">,
+  ownerInput: ProcessMediaOwner,
+): void {
+  const expected = processMediaMetadata(ownerInput);
+  const metadata = object.customMetadata;
+  if (
+    metadata?.uid !== expected.uid
+    || metadata.gid !== expected.gid
+    || metadata.mode !== expected.mode
+    || metadata.storageClass !== expected.storageClass
+  ) {
+    throw new Error("Process media ownership metadata is invalid");
+  }
+}
+
+export function hasNoProcessMediaMetadata(
+  object: Pick<R2Object, "customMetadata">,
+): boolean {
+  return !object.customMetadata || Object.keys(object.customMetadata).length === 0;
+}
+
+/**
+ * Stamp an exact legacy object in place without materializing its body. The
+ * ETag condition makes any concurrent replacement lose the adoption attempt;
+ * callers must not retry against the replacement in the same operation.
+ */
+export async function adoptLegacyProcessMedia(
+  bucket: R2Bucket,
+  object: R2ObjectBody,
+  ownerInput: ProcessMediaOwner,
+): Promise<R2ObjectBody> {
+  if (!hasNoProcessMediaMetadata(object)) {
+    throw new Error("Legacy process media already has ownership metadata");
+  }
+
+  const fixed = new FixedLengthStream(object.size);
+  const pipeController = new AbortController();
+  const changed = new Error("EAGAIN: legacy process media changed during adoption");
+  const piped = object.body.pipeTo(fixed.writable, { signal: pipeController.signal });
+  const stored = bucket.put(object.key, fixed.readable, {
+    onlyIf: { etagMatches: object.etag },
+    httpMetadata: object.httpMetadata,
+    customMetadata: processMediaMetadata(ownerInput),
+    storageClass: object.storageClass,
+  }).then(
+    (result) => {
+      if (!result) {
+        pipeController.abort(changed);
+        throw changed;
+      }
+      return result;
+    },
+    (error) => {
+      pipeController.abort(error);
+      throw error;
+    },
+  );
+
+  let stamped: R2Object;
+  try {
+    [stamped] = await Promise.all([stored, piped]);
+  } catch (error) {
+    if (!pipeController.signal.aborted) {
+      pipeController.abort(error);
+    }
+    await Promise.allSettled([stored, piped]);
+    throw error;
+  }
+
+  const adopted = await bucket.get(object.key);
+  if (!adopted || adopted.etag !== stamped.etag) {
+    throw changed;
+  }
+  assertProcessMediaOwnership(adopted, ownerInput);
+  return adopted;
+}
+
+function normalizeMediaOwner(owner: ProcessMediaOwner): { uid: number; gid: number } {
+  const normalized = typeof owner === "number" ? { uid: owner, gid: owner } : owner;
+  if (!Number.isSafeInteger(normalized.uid) || normalized.uid < 0) {
+    throw new Error(`Invalid process media owner uid: ${normalized.uid}`);
+  }
+  if (!Number.isSafeInteger(normalized.gid) || normalized.gid < 0) {
+    throw new Error(`Invalid process media owner gid: ${normalized.gid}`);
+  }
+  return normalized;
 }
 
 export async function deleteProcessMedia(

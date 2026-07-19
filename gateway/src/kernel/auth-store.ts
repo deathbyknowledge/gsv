@@ -15,9 +15,31 @@
 import type { PasswdEntry } from "../auth/passwd";
 import { parsePasswd, serializePasswd } from "../auth/passwd";
 import type { ShadowEntry } from "../auth/shadow";
-import { parseShadow, serializeShadow, isLocked, makeShadowEntry, hashToken, verify } from "../auth/shadow";
+import {
+  parseShadow,
+  serializeShadow,
+  isLocked,
+  makeShadowEntry,
+  hashToken,
+  isValidPasswordHash,
+  verify,
+} from "../auth/shadow";
 import type { GroupEntry } from "../auth/group";
 import { parseGroup, serializeGroup, resolveGids } from "../auth/group";
+import {
+  LoginAttemptStore,
+  type LoginCredentialKind,
+} from "./login-attempts";
+import { loginCredentialWork } from "../auth/login";
+import type { LoginSourceScope } from "./login-source";
+
+export const AUTHENTICATION_FAILED_MESSAGE = "Authentication failed";
+
+// A real PBKDF2-SHA-512 record used only to equalize password-verification
+// work for missing, locked, and non-password accounts. Its plaintext is not a
+// credential and a successful comparison never authenticates an absent user.
+export const AUTH_DUMMY_PASSWORD_HASH =
+  "$pbkdf2-sha512$100000$1S8PKrGDbhC/gvi5AK3lqg==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
 
 export type AuthIdentity = {
   uid: number;
@@ -29,7 +51,7 @@ export type AuthIdentity = {
 
 export type AuthResult =
   | { ok: true; identity: AuthIdentity }
-  | { ok: false; error: string };
+  | { ok: false; error: string; retryAfterMs?: number };
 
 export type AuthTokenKind = "node" | "service" | "user";
 export type AuthTokenRole = "driver" | "service" | "user";
@@ -77,7 +99,11 @@ type TokenAuthOptions = {
 };
 
 export class AuthStore {
-  constructor(private readonly sql: SqlStorage) {}
+  private readonly loginAttempts: LoginAttemptStore;
+
+  constructor(private readonly sql: SqlStorage) {
+    this.loginAttempts = new LoginAttemptStore(sql);
+  }
 
   getPersonalAgentUid(ownerUid: number): number | null {
     const rows = this.sql.exec<{ agent_uid: number }>(
@@ -113,7 +139,7 @@ export class AuthStore {
     return rows[0].c > 0;
   }
 
-  async bootstrap(rootToken?: string): Promise<boolean> {
+  async bootstrap(): Promise<boolean> {
     if (this.isBootstrapped()) return false;
 
     this.addUser({
@@ -121,8 +147,7 @@ export class AuthStore {
       gecos: "root", home: "/root", shell: "/bin/init",
     });
 
-    const hash = rootToken ? await hashToken(rootToken) : "!";
-    this.setShadow(makeShadowEntry("root", hash));
+    this.setShadow(makeShadowEntry("root", "!"));
 
     this.addGroup({ name: "root", gid: 0, members: ["root"] });
     this.addGroup({ name: "users", gid: 100, members: [] });
@@ -159,6 +184,7 @@ export class AuthStore {
   }
 
   addUser(entry: PasswdEntry): void {
+    this.observeUnixId(Math.max(entry.uid, entry.gid));
     this.sql.exec(
       "INSERT INTO passwd (username, uid, gid, gecos, home, shell) VALUES (?, ?, ?, ?, ?, ?)",
       entry.username, entry.uid, entry.gid, entry.gecos, entry.home, entry.shell,
@@ -168,6 +194,8 @@ export class AuthStore {
   updateUser(username: string, fields: Partial<Omit<PasswdEntry, "username">>): boolean {
     const existing = this.getPasswdByUsername(username);
     if (!existing) return false;
+
+    this.observeUnixId(Math.max(fields.uid ?? existing.uid, fields.gid ?? existing.gid));
 
     this.sql.exec(
       "UPDATE passwd SET uid = ?, gid = ?, gecos = ?, home = ?, shell = ? WHERE username = ?",
@@ -189,12 +217,9 @@ export class AuthStore {
     return true;
   }
 
-  nextUid(): number {
-    // Allocate above both uids and group gids: User Private Groups use gid = uid,
-    // and standalone groups (e.g. package-agent access groups) take ids from the
-    // same space, so a fresh id must clear both tables to avoid later reuse.
-    const max = this.maxAllocatedId();
-    return max < 1000 ? 1000 : max + 1;
+  /** Reserve a never-reused id for a user and its User Private Group. */
+  allocateUid(): number {
+    return this.reserveUnixId(1000);
   }
 
   // ---------------------------------------------------------------------------
@@ -283,6 +308,7 @@ export class AuthStore {
   }
 
   addGroup(entry: GroupEntry): void {
+    this.observeUnixId(entry.gid);
     this.sql.exec(
       "INSERT INTO groups (name, gid, members) VALUES (?, ?, ?)",
       entry.name, entry.gid, entry.members.join(","),
@@ -306,17 +332,42 @@ export class AuthStore {
     return true;
   }
 
-  nextGid(): number {
-    const max = this.maxAllocatedId();
-    return max < 100 ? 100 : max + 1;
+  /** Reserve a never-reused id for a standalone group. */
+  allocateGid(): number {
+    return this.reserveUnixId(100);
   }
 
-  /** Highest id in use across passwd uids and group gids. */
-  private maxAllocatedId(): number {
-    const rows = this.sql.exec<{ m: number | null }>(
-      "SELECT MAX(m) as m FROM (SELECT MAX(uid) as m FROM passwd UNION ALL SELECT MAX(gid) as m FROM groups)",
+  /**
+   * Atomically reserve from the shared UID/GID number space. Reservations are
+   * intentionally permanent: R2 file metadata can outlive passwd/group rows,
+   * so reusing an id could transfer ownership of orphaned files.
+   */
+  private reserveUnixId(minimum: number): number {
+    const rows = this.sql.exec<{ high_water: number }>(
+      `UPDATE unix_id_allocator
+       SET high_water = MAX(high_water + 1, ?)
+       WHERE singleton = 1
+       RETURNING high_water`,
+      minimum,
     ).toArray();
-    return rows[0]?.m ?? 0;
+    const allocated = rows[0]?.high_water;
+    if (!Number.isSafeInteger(allocated) || allocated < minimum) {
+      throw new Error("Unix id allocator is unavailable");
+    }
+    return allocated;
+  }
+
+  /** Keep root-authored passwd/group imports from moving past the allocator. */
+  private observeUnixId(id: number): void {
+    if (!Number.isSafeInteger(id) || id < 0) {
+      throw new Error(`Invalid Unix id: ${id}`);
+    }
+    this.sql.exec(
+      `UPDATE unix_id_allocator
+       SET high_water = MAX(high_water, ?)
+       WHERE singleton = 1`,
+      id,
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -332,25 +383,20 @@ export class AuthStore {
   // Authentication
   // ---------------------------------------------------------------------------
 
-  async authenticate(username: string, credential: string): Promise<AuthResult> {
-    const user = this.getPasswdByUsername(username);
-    if (!user) return { ok: false, error: "Unknown user" };
-
-    const shadow = this.getShadowByUsername(username);
-    if (!shadow) return { ok: false, error: "No credentials found" };
-
-    const valid = await verify(credential, shadow.hash);
-    if (!valid) return { ok: false, error: "Authentication failed" };
-
-    const gids = this.resolveGids(username, user.gid);
-
-    return {
-      ok: true,
-      identity: {
-        uid: user.uid, gid: user.gid, gids,
-        username: user.username, home: user.home,
-      },
-    };
+  async authenticate(
+    username: string,
+    credential: string,
+    sourceScope: LoginSourceScope,
+  ): Promise<AuthResult> {
+    return this.authenticateWithLoginLimit(
+      username,
+      credential,
+      "password",
+      sourceScope,
+      (canonicalUsername, boundedCredential) => (
+        this.verifyPasswordIdentity(canonicalUsername, boundedCredential)
+      ),
+    );
   }
 
   /**
@@ -360,10 +406,111 @@ export class AuthStore {
   async authenticateToken(
     username: string,
     token: string,
+    sourceScope: LoginSourceScope,
     options: TokenAuthOptions = {},
   ): Promise<AuthResult> {
+    return this.authenticateWithLoginLimit(
+      username,
+      token,
+      "token",
+      sourceScope,
+      (canonicalUsername, boundedToken) => (
+        this.verifyTokenIdentity(canonicalUsername, boundedToken, options)
+      ),
+    );
+  }
+
+  /**
+   * Authenticate Git Basic auth, whose single credential may be a password or
+   * a user token, under one limiter reservation. Password verification runs
+   * first so missing and locked accounts receive the same PBKDF2 work.
+   */
+  async authenticatePasswordOrToken(
+    username: string,
+    credential: string,
+    sourceScope: LoginSourceScope,
+    options: TokenAuthOptions = { role: "user" },
+  ): Promise<AuthResult> {
+    return this.authenticateWithLoginLimit(username, credential, "password", sourceScope, async (
+      canonicalUsername,
+      boundedCredential,
+    ) => {
+      const passwordIdentity = await this.verifyPasswordIdentity(
+        canonicalUsername,
+        boundedCredential,
+      );
+      return passwordIdentity
+        ?? this.verifyTokenIdentity(canonicalUsername, boundedCredential, options);
+    });
+  }
+
+  private async authenticateWithLoginLimit(
+    username: string,
+    credential: string,
+    credentialKind: LoginCredentialKind,
+    sourceScope: LoginSourceScope,
+    verifier: (
+      canonicalUsername: string,
+      boundedCredential: string,
+    ) => Promise<AuthIdentity | null>,
+  ): Promise<AuthResult> {
+    const reservation = await this.loginAttempts.reserve(
+      username,
+      credentialKind,
+      sourceScope,
+    );
+    if (!reservation.allowed) {
+      return authenticationFailure(reservation.retryAfterMs);
+    }
+    const credentialWork = loginCredentialWork(credential);
+    const canonicalUsername = reservation.canonicalUsername ?? "";
+
+    let identity: AuthIdentity | null;
+    try {
+      identity = await verifier(canonicalUsername, credentialWork.value);
+    } catch (error) {
+      this.loginAttempts.complete(reservation, false);
+      throw error;
+    }
+
+    const success = reservation.canonicalUsername !== null
+      && credentialWork.valid
+      && identity !== null;
+    this.loginAttempts.complete(reservation, success);
+    return success ? { ok: true, identity: identity! } : authenticationFailure();
+  }
+
+  private async verifyPasswordIdentity(
+    username: string,
+    credential: string,
+  ): Promise<AuthIdentity | null> {
     const user = this.getPasswdByUsername(username);
-    if (!user) return { ok: false, error: "Unknown user" };
+    const shadow = this.getShadowByUsername(username);
+    const hasPasswordHash = Boolean(
+      user && shadow && isValidPasswordHash(shadow.hash),
+    );
+    const verificationHash = hasPasswordHash
+      ? shadow!.hash
+      : AUTH_DUMMY_PASSWORD_HASH;
+
+    let valid = false;
+    try {
+      valid = await verify(credential, verificationHash);
+    } catch {
+      // Corrupt credential state fails closed with the same external result.
+      valid = false;
+    }
+
+    if (!user || !hasPasswordHash || !valid) return null;
+    return this.authIdentity(user);
+  }
+
+  private async verifyTokenIdentity(
+    username: string,
+    token: string,
+    options: TokenAuthOptions,
+  ): Promise<AuthIdentity | null> {
+    const user = this.getPasswdByUsername(username);
 
     const tokenHash = await hashToken(token);
     const rows = this.sql.exec<{
@@ -377,38 +524,26 @@ export class AuthStore {
        FROM auth_tokens
        WHERE uid = ? AND token_hash = ?
        LIMIT 1`,
-      user.uid,
+      user?.uid ?? -1,
       tokenHash,
     ).toArray();
 
-    if (rows.length === 0) {
-      return { ok: false, error: "Authentication failed" };
-    }
+    if (!user || rows.length === 0) return null;
 
     const tokenRow = rows[0];
     const now = Date.now();
-    if (tokenRow.revoked_at !== null) {
-      return { ok: false, error: "Authentication failed" };
-    }
-    if (tokenRow.expires_at !== null && tokenRow.expires_at <= now) {
-      return { ok: false, error: "Authentication failed" };
-    }
-    if (options.role && tokenRow.allowed_role && tokenRow.allowed_role !== options.role) {
-      return { ok: false, error: "Authentication failed" };
-    }
+    if (tokenRow.revoked_at !== null) return null;
+    if (tokenRow.expires_at !== null && tokenRow.expires_at <= now) return null;
+    if (options.role && tokenRow.allowed_role && tokenRow.allowed_role !== options.role) return null;
     if (options.role === "driver") {
-      if (!options.deviceId || !tokenRow.allowed_device_id) {
-        return { ok: false, error: "Authentication failed" };
-      }
-      if (tokenRow.allowed_device_id !== options.deviceId) {
-        return { ok: false, error: "Authentication failed" };
-      }
+      if (!options.deviceId || !tokenRow.allowed_device_id) return null;
+      if (tokenRow.allowed_device_id !== options.deviceId) return null;
     } else if (
       options.deviceId &&
       tokenRow.allowed_device_id &&
       tokenRow.allowed_device_id !== options.deviceId
     ) {
-      return { ok: false, error: "Authentication failed" };
+      return null;
     }
 
     this.sql.exec(
@@ -417,16 +552,16 @@ export class AuthStore {
       tokenRow.token_id,
     );
 
-    const gids = this.resolveGids(username, user.gid);
+    return this.authIdentity(user);
+  }
+
+  private authIdentity(user: PasswdEntry): AuthIdentity {
     return {
-      ok: true,
-      identity: {
-        uid: user.uid,
-        gid: user.gid,
-        gids,
-        username: user.username,
-        home: user.home,
-      },
+      uid: user.uid,
+      gid: user.gid,
+      gids: this.resolveGids(user.username, user.gid),
+      username: user.username,
+      home: user.home,
     };
   }
 
@@ -627,6 +762,14 @@ function defaultRoleForKind(kind: AuthTokenKind): AuthTokenRole {
     case "user":
       return "user";
   }
+}
+
+function authenticationFailure(retryAfterMs?: number): AuthResult {
+  return {
+    ok: false,
+    error: AUTHENTICATION_FAILED_MESSAGE,
+    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+  };
 }
 
 function mapTokenRow(row: {

@@ -456,6 +456,9 @@ describe("repo syscalls", () => {
       repo: "root/gsv",
       path: "README.md",
     }, ctx)).rejects.toThrow("Forbidden: cannot read repo root/gsv");
+
+    ctx.identity!.capabilities = ["*"];
+    expect(canWriteRepo("root/gsv", ctx)).toBe(false);
   });
 
   it("allows reads from visible package source repos", async () => {

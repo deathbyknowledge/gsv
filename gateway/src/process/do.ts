@@ -48,6 +48,7 @@ import type {
   ProcHistoryResult,
   ProcHistoryMessage,
   ProcHistoryToolResultContent,
+  ProcMediaInput,
   ProcMediaDeleteArgs,
   ProcMediaDeleteResult,
   ProcMediaReadArgs,
@@ -96,7 +97,7 @@ import type {
   ProcToolResultOutcome,
   ProcResetResult,
   ProcKillResult,
-  ProcSpawnAssignment,
+  ProcSetIdentityArgs,
 } from "@humansandmachines/gsv/protocol";
 import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { AdapterSurface } from "../adapter-interface";
@@ -142,6 +143,7 @@ import {
   type MessageRecord,
   type PendingHilRecord,
   type QueuedMessage,
+  type ConversationArchivePointer,
 } from "./store";
 import {
   parseToolApprovalPolicy,
@@ -153,12 +155,17 @@ import {
 import {
   buildFallbackMediaBlocks,
   buildImageBlock,
+  adoptLegacyProcessMedia,
+  assertProcessMediaOwnership,
   deleteProcessMedia,
   describeStoredProcessMedia,
+  hasNoProcessMediaMetadata,
   parseStoredProcessMedia,
   processMediaPrefix,
+  processMediaMetadata,
   storeIncomingProcessMedia,
   stringifyStoredProcessMedia,
+  type StoredProcessMedia,
   type StoreIncomingProcessMediaOptions,
 } from "./media";
 import {
@@ -173,9 +180,16 @@ import { isVectorImageMimeType } from "../inference/image-mime";
 import { assembleSystemPrompt } from "./context";
 import {
   cancelProcessRequests,
+  resolveProcessAuthority as requestProcessAuthority,
+  SHIP_KERNEL_NAME,
   requestProcessNetFetch,
   sendFrameToKernel,
 } from "../shared/utils";
+import {
+  isProcessIdentity,
+  processIdentityEquals,
+  type ProcessAuthority,
+} from "../shared/process-authority";
 import { raceWithAbort } from "../shared/abort";
 import { encodeBase64Bytes } from "../shared/base64";
 import {
@@ -203,6 +217,11 @@ import {
   redactProcessAiConfigSnapshot,
 } from "./ai-config";
 import { runProcessSqlMigrations } from "./schema/migrations";
+import {
+  assertProcessConversationArchiveOwnership,
+  processConversationArchiveMetadata,
+  ProcessArchiveStore,
+} from "./archive-storage";
 import { hasCapability } from "../kernel/capabilities";
 import {
   normalizeNetFetchTimeoutMs,
@@ -296,6 +315,7 @@ const HANDLED_IPC_CALLS_KEY = "handledIpcCalls";
 const ABORTED_RUN_IDS_KEY = "abortedRunIds";
 const PROCESS_RESET_AT_KEY = "processResetAt";
 const PENDING_RUN_FINISHES_KEY = "pendingRunFinishes";
+const MAX_LEGACY_ARCHIVE_RECORD_CHARS = 16 * 1024 * 1024;
 const IPC_TOMBSTONE_LIMIT = 256;
 const SHELL_SESSION_TARGET_KEY_PREFIX = "shellSessionTarget:";
 const UNKNOWN_SHELL_SESSION_TARGET_MESSAGE =
@@ -479,17 +499,32 @@ function normalizeNonNegativeNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function isProcessIdentity(value: unknown): value is ProcessIdentity {
-  if (!value || typeof value !== "object") {
-    return false;
+function parseProcessIdentity(raw: string | null): ProcessIdentity | null {
+  if (!raw) {
+    return null;
   }
-  const identity = value as Partial<ProcessIdentity>;
-  return typeof identity.uid === "number"
-    && typeof identity.gid === "number"
-    && Array.isArray(identity.gids)
-    && typeof identity.username === "string"
-    && typeof identity.home === "string"
-    && typeof identity.cwd === "string";
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return isProcessIdentity(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function processMediaReferenceFingerprint(references: StoredProcessMedia[]): string {
+  return JSON.stringify(references
+    .map((reference) => ({
+      type: reference.type,
+      mimeType: reference.mimeType,
+      key: reference.key,
+      url: reference.url,
+      filename: reference.filename,
+      size: reference.size,
+      duration: reference.duration,
+      transcription: reference.transcription,
+      description: reference.description,
+    }))
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
 }
 
 function isIpcCallEnvelope(value: unknown): value is NonNullable<ProcIpcDeliverArgs["call"]> {
@@ -843,6 +878,7 @@ export class Process extends Host<Env> {
   private lifecycleTransition: Promise<void> = Promise.resolve();
   private lifecycleEpoch = 0;
   private queuedSendAdmission: Promise<void> = Promise.resolve();
+  private authorityResolution: Promise<ProcessAuthority> | null = null;
   private killed = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -909,10 +945,321 @@ export class Process extends Host<Env> {
     return pid;
   }
 
+  private get kernelName(): string {
+    return this.store.getValue("kernelName") ?? SHIP_KERNEL_NAME;
+  }
+
   get identity(): ProcessIdentity {
     const raw = this.store.getValue("identity");
     if (!raw) throw new Error("Process not initialized — identity missing");
-    return JSON.parse(raw);
+    const identity = parseProcessIdentity(raw);
+    if (!identity) {
+      throw new Error("Process authority unavailable — persisted identity is invalid");
+    }
+    return identity;
+  }
+
+  /** Human owner identity is distinct from the account this process runs as. */
+  private get ownerIdentity(): ProcessIdentity {
+    const raw = this.store.getValue("ownerIdentity");
+    if (!raw) {
+      throw new Error("Process authority unavailable — owner identity missing");
+    }
+    const owner = parseProcessIdentity(raw);
+    if (!owner) {
+      throw new Error("Process authority unavailable — persisted owner identity is invalid");
+    }
+    return owner;
+  }
+
+  private async ensureProcessAuthority(): Promise<ProcessAuthority> {
+    if (this.authorityResolution) {
+      return this.authorityResolution;
+    }
+
+    const pending = this.resolveProcessAuthority();
+    this.authorityResolution = pending;
+    try {
+      return await pending;
+    } finally {
+      if (this.authorityResolution === pending) {
+        this.authorityResolution = null;
+      }
+    }
+  }
+
+  private async resolveProcessAuthority(): Promise<ProcessAuthority> {
+    const pid = this.store.getValue("pid");
+    const identityRaw = this.store.getValue("identity");
+    const ownerRaw = this.store.getValue("ownerIdentity");
+    const identity = parseProcessIdentity(identityRaw);
+    if (!pid || !identity) {
+      throw new Error("Process authority unavailable — process is not initialized");
+    }
+
+    const result = await requestProcessAuthority(this.kernelName, pid, identity);
+    if (!result.ok) {
+      throw new Error(`Process authority unavailable — ${result.error}`);
+    }
+    const authority = result.authority;
+    if (
+      authority.processId !== pid
+      || !isProcessIdentity(authority.identity)
+      || !isProcessIdentity(authority.ownerIdentity)
+      || !processIdentityEquals(authority.identity, identity, { includeCwd: true })
+    ) {
+      throw new Error("Process authority unavailable — invalid Kernel authority response");
+    }
+
+    // A signal or reinitialization may have changed local authority while the
+    // cross-DO lookup was in flight. Never apply a stale result.
+    if (!this.isInitialized()) {
+      throw new Error("Process no longer exists");
+    }
+    if (
+      this.store.getValue("pid") !== pid
+      || this.store.getValue("identity") !== identityRaw
+      || this.store.getValue("ownerIdentity") !== ownerRaw
+    ) {
+      throw new Error("Process authority unavailable — process changed during validation");
+    }
+
+    const persistedOwner = parseProcessIdentity(ownerRaw);
+    if (persistedOwner && !processIdentityEquals(persistedOwner, authority.ownerIdentity)) {
+      throw new Error("Process authority unavailable — owner identity does not match Kernel");
+    }
+
+    // Missing and structurally corrupt legacy values are refreshed only after
+    // the authoritative registry/AuthStore handshake succeeds.
+    this.store.setValue("ownerIdentity", JSON.stringify(authority.ownerIdentity));
+    await this.migrateLegacyConversationArchivePointers(authority);
+    if (
+      this.store.getValue("pid") !== pid
+      || this.store.getValue("identity") !== identityRaw
+      || !processIdentityEquals(this.ownerIdentity, authority.ownerIdentity)
+    ) {
+      throw new Error("Process authority unavailable — process changed during archive migration");
+    }
+    return authority;
+  }
+
+  private async migrateLegacyConversationArchivePointers(
+    authority: ProcessAuthority,
+  ): Promise<void> {
+    const archiveStore = new ProcessArchiveStore(
+      this.env.STORAGE,
+      authority.ownerIdentity,
+      authority.identity,
+    );
+    const ownedPrefix = archiveStore.rootPath().replace(/^\/+/, "");
+
+    for (const pointer of this.store.listConversationArchivePointers()) {
+      const sourceKey = pointer.archivePath.replace(/^\/+/, "");
+      if (sourceKey.startsWith(ownedPrefix)) {
+        continue;
+      }
+
+      const pathId = normalizeConversationId(pointer.conversationId) === DEFAULT_CONVERSATION_ID
+          && this.primaryConversationId
+        ? this.primaryConversationId
+        : normalizeConversationId(pointer.conversationId);
+      const legacyHome = authority.identity.home.replace(/^\/+/, "").replace(/\/+$/, "");
+      const legacyDirectory = `${legacyHome}/conversations/${encodeURIComponent(pathId)}/`;
+      if (!sourceKey.startsWith(legacyDirectory)) {
+        throw new Error("Process authority unavailable — archive pointer is outside legacy scope");
+      }
+      const filename = sourceKey.slice(legacyDirectory.length);
+      if (!filename || filename === "." || filename === ".." || filename.includes("/")) {
+        throw new Error("Process authority unavailable — legacy archive filename is invalid");
+      }
+
+      const targetKey = `${archiveStore.directory(pathId)}/${filename}`;
+      await this.migrateLegacyConversationArchive(
+        pointer,
+        sourceKey,
+        targetKey,
+        authority,
+      );
+    }
+  }
+
+  private async migrateLegacyConversationArchive(
+    pointer: ConversationArchivePointer,
+    sourceKey: string,
+    targetKey: string,
+    authority: ProcessAuthority,
+  ): Promise<void> {
+    const source = await this.env.STORAGE.get(sourceKey);
+    if (!source) {
+      throw new Error("Process authority unavailable — referenced legacy archive is missing");
+    }
+    if (source.customMetadata && Object.keys(source.customMetadata).length > 0) {
+      await source.body.cancel("Legacy archive metadata is not adoptable").catch(() => {});
+      throw new Error("Process authority unavailable — legacy archive metadata is invalid");
+    }
+    await this.validateLegacyConversationArchive(source.body, pointer);
+
+    const provenance = {
+      legacySourceKey: sourceKey,
+      legacySourceEtag: source.etag,
+    };
+    const existingTarget = await this.env.STORAGE.head(targetKey);
+    if (existingTarget) {
+      try {
+        assertProcessConversationArchiveOwnership(existingTarget, authority.ownerIdentity);
+      } catch (error) {
+        throw error;
+      }
+      if (
+        existingTarget.size !== source.size
+        || existingTarget.customMetadata?.legacySourceKey !== provenance.legacySourceKey
+        || existingTarget.customMetadata?.legacySourceEtag !== provenance.legacySourceEtag
+      ) {
+        throw new Error("Process authority unavailable — legacy archive target conflicts");
+      }
+    } else {
+      const copySource = await this.env.STORAGE.get(sourceKey);
+      if (!copySource || copySource.etag !== source.etag) {
+        await copySource?.body.cancel("Legacy archive changed before copy").catch(() => {});
+        throw new Error("EAGAIN: legacy conversation archive changed during migration");
+      }
+      await this.copyLegacyConversationArchive(
+        copySource,
+        targetKey,
+        authority.ownerIdentity,
+        provenance,
+      );
+    }
+
+    const currentSource = await this.env.STORAGE.head(sourceKey);
+    if (!currentSource || currentSource.etag !== source.etag) {
+      throw new Error("EAGAIN: legacy conversation archive changed during migration");
+    }
+    if (!this.store.replaceConversationArchivePointer(pointer, `/${targetKey}`)) {
+      throw new Error("Process authority unavailable — archive pointer changed during migration");
+    }
+
+    // Claim the exact source generation before cleanup. If another writer won
+    // the ETag race, the durable pointer is already safe and the old object is
+    // deliberately retained rather than deleting the replacement.
+    const claimed = await this.env.STORAGE.put(sourceKey, new ArrayBuffer(0), {
+      onlyIf: { etagMatches: source.etag },
+      customMetadata: {
+        ...processConversationArchiveMetadata(authority.ownerIdentity),
+        migrationTombstone: "1",
+      },
+    });
+    if (claimed) {
+      await this.env.STORAGE.delete(sourceKey);
+    }
+  }
+
+  private async validateLegacyConversationArchive(
+    body: ReadableStream,
+    pointer: ConversationArchivePointer,
+  ): Promise<void> {
+    const reader = body
+      .pipeThrough(new DecompressionStream("gzip"))
+      .getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    let records = 0;
+
+    const validateLine = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        return;
+      }
+      const value = JSON.parse(trimmed) as unknown;
+      if (!value || typeof value !== "object") {
+        throw new Error("invalid archived message record");
+      }
+      const raw = value as Record<string, unknown>;
+      if (
+        typeof raw.conversation_id !== "string"
+        || normalizeConversationId(raw.conversation_id) !== pointer.conversationId
+        || raw.generation !== pointer.generation
+      ) {
+        throw new Error("legacy archive records do not match their durable pointer");
+      }
+      parseArchivedMessageRecord(value);
+      records += 1;
+    };
+
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        pending += decoder.decode(value, { stream: !done });
+        let newline = pending.indexOf("\n");
+        while (newline >= 0) {
+          validateLine(pending.slice(0, newline));
+          pending = pending.slice(newline + 1);
+          newline = pending.indexOf("\n");
+        }
+        if (pending.length > MAX_LEGACY_ARCHIVE_RECORD_CHARS) {
+          throw new Error("legacy archive record exceeds migration limit");
+        }
+        if (done) {
+          break;
+        }
+      }
+      validateLine(pending);
+      if (records === 0) {
+        throw new Error("legacy archive contains no message records");
+      }
+    } catch (error) {
+      await reader.cancel(error).catch(() => {});
+      throw error;
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  private async copyLegacyConversationArchive(
+    source: R2ObjectBody,
+    targetKey: string,
+    owner: ProcessIdentity,
+    provenance: { legacySourceKey: string; legacySourceEtag: string },
+  ): Promise<void> {
+    const fixed = new FixedLengthStream(source.size);
+    const pipeController = new AbortController();
+    const changed = new Error("EAGAIN: legacy conversation archive target changed during migration");
+    const piped = source.body.pipeTo(fixed.writable, { signal: pipeController.signal });
+    const stored = this.env.STORAGE.put(targetKey, fixed.readable, {
+      onlyIf: { etagDoesNotMatch: "*" },
+      httpMetadata: source.httpMetadata,
+      customMetadata: {
+        ...processConversationArchiveMetadata(owner),
+        ...provenance,
+      },
+      storageClass: source.storageClass,
+    }).then(
+      (result) => {
+        if (!result) {
+          pipeController.abort(changed);
+          throw changed;
+        }
+        return result;
+      },
+      (error) => {
+        pipeController.abort(error);
+        throw error;
+      },
+    );
+
+    try {
+      await Promise.all([stored, piped]);
+    } catch (error) {
+      if (!pipeController.signal.aborted) {
+        pipeController.abort(error);
+      }
+      await Promise.allSettled([stored, piped]);
+      throw error;
+    }
+  }
+
+  private archiveStore(): ProcessArchiveStore {
+    return new ProcessArchiveStore(this.env.STORAGE, this.ownerIdentity, this.identity);
   }
 
   private isInitialized(): boolean {
@@ -932,8 +1279,8 @@ export class Process extends Host<Env> {
 
   /**
    * The kernel conversation id this executor's primary ("default") thread maps
-   * to, when assigned at spawn. Drives where the primary thread's transcripts
-   * are archived/hydrated under the agent home, decoupling them from the pid.
+   * to, when assigned at spawn. Drives the stable owner-scoped archive path,
+   * decoupling transcripts from the fungible pid.
    */
   private get primaryConversationId(): string | null {
     return this.store.getValue("primaryConversationId");
@@ -1026,6 +1373,9 @@ export class Process extends Host<Env> {
    */
   private async handleReq(frame: ProcessRequestFrame): Promise<ResponseFrame | null> {
     try {
+      if (frame.call !== "proc.setidentity") {
+        await this.ensureProcessAuthority();
+      }
       if (frame.call === "proc.schedule.deliver") {
         await this.handleProcScheduleDeliver(frame.args);
         return { type: "res", id: frame.id, ok: true };
@@ -1035,16 +1385,25 @@ export class Process extends Host<Env> {
 
       switch (frame.call) {
         case "proc.setidentity": {
-          const idArgs = frame.args as unknown as {
-            pid: string;
-            identity: ProcessIdentity;
-            interactive?: boolean;
-            assignment?: ProcSpawnAssignment;
-            conversationId?: string;
-            hydrateFrom?: string;
-          };
+          const idArgs = frame.args as ProcSetIdentityArgs;
+          if (typeof idArgs.pid !== "string" || idArgs.pid.length === 0) {
+            throw new Error("proc.setidentity requires pid");
+          }
+          if (!isProcessIdentity(idArgs.identity)) {
+            throw new Error("proc.setidentity requires a valid process identity");
+          }
+          if (!isProcessIdentity(idArgs.ownerIdentity)) {
+            throw new Error("proc.setidentity requires a valid owner identity");
+          }
           this.store.setValue("pid", idArgs.pid);
+          if (idArgs.kernelName !== undefined) {
+            this.store.setValue("kernelName", idArgs.kernelName);
+          }
           this.store.setValue("identity", JSON.stringify(idArgs.identity));
+          this.store.setValue(
+            "ownerIdentity",
+            JSON.stringify(idArgs.ownerIdentity),
+          );
           if (idArgs.interactive !== undefined) {
             this.store.setValue("interactive", idArgs.interactive ? "1" : "0");
           }
@@ -1221,12 +1580,167 @@ export class Process extends Host<Env> {
       return { type: "res", id: frame.id, ok: true, data };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      await frame.body?.stream.cancel(message).catch(() => {});
       return {
         type: "res",
         id: frame.id,
         ok: false,
         error: { code: 500, message },
       };
+    }
+  }
+
+  private async authorizeIncomingProcessMedia(
+    media: ProcMediaInput[] | undefined,
+  ): Promise<ReadonlySet<string>> {
+    const authorizedLegacyKeys = new Set<string>();
+    if (!media || media.length === 0) {
+      return authorizedLegacyKeys;
+    }
+
+    const authority = await this.ensureProcessAuthority();
+    for (const item of media) {
+      if (typeof item.key !== "string" || item.key.length === 0) {
+        continue;
+      }
+      const resolved = await this.getAuthorizedProcessMedia(
+        item.key,
+        item,
+        authority,
+      );
+      await resolved.object.body.cancel("Process media authorization complete").catch(() => {});
+      if (resolved.legacyKey) {
+        authorizedLegacyKeys.add(item.key);
+      }
+    }
+    return authorizedLegacyKeys;
+  }
+
+  private async getAuthorizedProcessMedia(
+    key: string,
+    expected?: Pick<ProcMediaInput, "type" | "mimeType" | "size">,
+    authorityInput?: ProcessAuthority,
+  ): Promise<{ object: R2ObjectBody; legacyKey: boolean }> {
+    const authority = authorityInput ?? await this.ensureProcessAuthority();
+    const pid = authority.processId;
+    const ownerPrefix = processMediaPrefix(authority.ownerIdentity.uid, pid);
+    const legacyPrefix = processMediaPrefix(authority.identity.uid, pid);
+    const inOwnerPrefix = key.startsWith(ownerPrefix);
+    const inLegacyPrefix = key.startsWith(legacyPrefix);
+    if (!inOwnerPrefix && !inLegacyPrefix) {
+      throw new Error("media key is outside this process");
+    }
+
+    const lifecycleEpoch = this.lifecycleEpoch;
+    const references = this.store.mediaReferences(key);
+    if (!inOwnerPrefix && references.length === 0) {
+      throw new Error("legacy media key is not referenced by this process");
+    }
+    const referenceFingerprint = processMediaReferenceFingerprint(references);
+    const object = await this.env.STORAGE.get(key);
+    if (!object) {
+      throw new Error("media not found");
+    }
+
+    try {
+      let ownershipValid = true;
+      try {
+        assertProcessMediaOwnership(object, authority.ownerIdentity);
+      } catch {
+        ownershipValid = false;
+      }
+
+      if (ownershipValid) {
+        if (!inOwnerPrefix) {
+          this.assertLegacyProcessMediaFacts(object, references, expected);
+          await this.revalidateLegacyProcessMediaReference(
+            key,
+            referenceFingerprint,
+            lifecycleEpoch,
+            authority,
+          );
+        }
+        return { object, legacyKey: !inOwnerPrefix };
+      }
+
+      if (
+        !hasNoProcessMediaMetadata(object)
+        || !inLegacyPrefix
+        || references.length === 0
+      ) {
+        assertProcessMediaOwnership(object, authority.ownerIdentity);
+      }
+
+      this.assertLegacyProcessMediaFacts(object, references, expected);
+      const adopted = await adoptLegacyProcessMedia(
+        this.env.STORAGE,
+        object,
+        authority.ownerIdentity,
+      );
+      this.assertLegacyProcessMediaFacts(adopted, references, expected);
+      await this.revalidateLegacyProcessMediaReference(
+        key,
+        referenceFingerprint,
+        lifecycleEpoch,
+        authority,
+      );
+      return { object: adopted, legacyKey: !inOwnerPrefix };
+    } catch (error) {
+      await object.body.cancel("Process media authorization failed").catch(() => {});
+      throw error;
+    }
+  }
+
+  private assertLegacyProcessMediaFacts(
+    object: R2Object,
+    references: StoredProcessMedia[],
+    expected?: Pick<ProcMediaInput, "type" | "mimeType" | "size">,
+  ): void {
+    if (references.length === 0) {
+      throw new Error("legacy media key is not referenced by this process");
+    }
+
+    const referenceType = references[0]!.type;
+    const referenceMimeType = references[0]!.mimeType;
+    for (const reference of references) {
+      if (reference.type !== referenceType || reference.mimeType !== referenceMimeType) {
+        throw new Error("legacy media references disagree on media type");
+      }
+      if (reference.size !== undefined && reference.size !== object.size) {
+        throw new Error("legacy media size does not match its durable reference");
+      }
+    }
+    if (
+      expected
+      && (expected.type !== referenceType || expected.mimeType !== referenceMimeType)
+    ) {
+      throw new Error("legacy media input does not match its durable reference");
+    }
+    if (expected?.size !== undefined && expected.size !== object.size) {
+      throw new Error("legacy media input size does not match stored object");
+    }
+    const contentType = object.httpMetadata?.contentType;
+    if (contentType !== undefined && contentType !== referenceMimeType) {
+      throw new Error("legacy media MIME type does not match its durable reference");
+    }
+  }
+
+  private async revalidateLegacyProcessMediaReference(
+    key: string,
+    referenceFingerprint: string,
+    lifecycleEpoch: number,
+    authority: ProcessAuthority,
+  ): Promise<void> {
+    await this.lifecycleTransition;
+    if (
+      !this.isInitialized()
+      || this.lifecycleEpoch !== lifecycleEpoch
+      || this.pid !== authority.processId
+      || !processIdentityEquals(this.identity, authority.identity, { includeCwd: true })
+      || !processIdentityEquals(this.ownerIdentity, authority.ownerIdentity)
+      || processMediaReferenceFingerprint(this.store.mediaReferences(key)) !== referenceFingerprint
+    ) {
+      throw new Error("Process changed during legacy media adoption");
     }
   }
 
@@ -1237,11 +1751,11 @@ export class Process extends Host<Env> {
     if (args.media?.some((item) => "data" in item)) {
       return { ok: false, error: "proc.send media.data was removed; use proc.media.write" };
     }
-    const mediaPrefix = processMediaPrefix(this.identity.uid, this.pid);
-    if (args.media?.some((item) =>
-      typeof item.key === "string" && item.key.length > 0 && !item.key.startsWith(mediaPrefix)
-    )) {
-      return { ok: false, error: "media key is outside this process" };
+    let authorizedLegacyKeys: ReadonlySet<string>;
+    try {
+      authorizedLegacyKeys = await this.authorizeIncomingProcessMedia(args.media);
+    } catch (error) {
+      return { ok: false, error: errorMessageFromUnknown(error) };
     }
     const runId = crypto.randomUUID();
     const conversationId = normalizeConversationId(args.conversationId);
@@ -1258,10 +1772,13 @@ export class Process extends Host<Env> {
       try {
         const media = await storeIncomingProcessMedia(
           this.env.STORAGE,
-          this.identity.uid,
+          this.ownerIdentity,
           this.pid,
           args.media,
-          await this.resolveMediaProcessingOptions(args.media),
+          {
+            ...await this.resolveMediaProcessingOptions(args.media),
+            authorizedLegacyKeys,
+          },
         );
         const releaseLifecycle = await this.acquireLifecycleTransition();
         try {
@@ -1383,6 +1900,7 @@ export class Process extends Host<Env> {
           conversationId,
           messageId,
           args.media!,
+          authorizedLegacyKeys,
         ));
       }
       return { ok: true, status: "started", runId };
@@ -1396,9 +1914,11 @@ export class Process extends Host<Env> {
     conversationId: string,
     messageId: number,
     input: NonNullable<ProcSendArgs["media"]>,
+    authorizedLegacyKeys: ReadonlySet<string> = new Set<string>(),
   ): Promise<void> {
     const signal = this.runAbortSignal(runId);
     try {
+      await this.ensureProcessAuthority();
       const options = await raceWithAbort(
         this.resolveMediaProcessingOptions(input),
         signal,
@@ -1406,10 +1926,10 @@ export class Process extends Host<Env> {
       const media = await raceWithAbort(
         storeIncomingProcessMedia(
           this.env.STORAGE,
-          this.identity.uid,
+          this.ownerIdentity,
           this.pid,
           input,
-          { ...options, signal },
+          { ...options, signal, authorizedLegacyKeys },
         ),
         signal,
       );
@@ -1461,7 +1981,7 @@ export class Process extends Host<Env> {
       if (signal.aborted) {
         return;
       }
-      const prefix = processMediaPrefix(this.identity.uid, this.pid);
+      const prefix = processMediaPrefix(this.ownerIdentity.uid, this.pid);
       const keys = input.flatMap((item) =>
         typeof item.key === "string" && item.key.startsWith(prefix) ? [item.key] : []
       );
@@ -2064,14 +2584,11 @@ export class Process extends Host<Env> {
       return { data: { ok: false, error: "proc.media.read requires key" } };
     }
 
-    const prefix = processMediaPrefix(this.identity.uid, this.pid);
-    if (!key.startsWith(prefix)) {
-      return { data: { ok: false, error: "media key is outside this process" } };
-    }
-
-    const object = await this.env.STORAGE.get(key);
-    if (!object) {
-      return { data: { ok: false, error: "media not found" } };
+    let object: R2ObjectBody;
+    try {
+      object = (await this.getAuthorizedProcessMedia(key)).object;
+    } catch (error) {
+      return { data: { ok: false, error: errorMessageFromUnknown(error) } };
     }
 
     const mimeType = object.httpMetadata?.contentType || "application/octet-stream";
@@ -2115,22 +2632,27 @@ export class Process extends Host<Env> {
       return { ok: false, error: "proc.media.write requires mimeType" };
     }
     const pid = this.pid;
-    const uid = this.identity.uid;
+    const owner = this.ownerIdentity;
+    const uid = owner.uid;
     const lifecycleEpoch = this.lifecycleEpoch;
     const key = `${processMediaPrefix(uid, pid)}${crypto.randomUUID()}`;
     const fixed = new FixedLengthStream(length);
     const [stored, piped] = await Promise.allSettled([
       this.env.STORAGE.put(key, fixed.readable, {
+        onlyIf: { etagDoesNotMatch: "*" },
         httpMetadata: { contentType: mimeType },
+        customMetadata: processMediaMetadata(owner),
       }),
       body.stream.pipeTo(fixed.writable),
     ]);
     if (stored.status === "rejected") {
-      await this.env.STORAGE.delete(key);
       return {
         ok: false,
         error: `proc.media.write failed: ${stored.reason instanceof Error ? stored.reason.message : String(stored.reason)}`,
       };
+    }
+    if (!stored.value) {
+      return { ok: false, error: "proc.media.write key collision" };
     }
     if (piped.status === "rejected") {
       await this.env.STORAGE.delete(key);
@@ -2150,7 +2672,7 @@ export class Process extends Host<Env> {
       if (
         !this.isInitialized()
         || this.pid !== pid
-        || this.identity.uid !== uid
+        || this.ownerIdentity.uid !== uid
         || this.lifecycleEpoch !== lifecycleEpoch
       ) {
         await this.env.STORAGE.delete(key);
@@ -2189,13 +2711,18 @@ export class Process extends Host<Env> {
     if (!key) {
       return { ok: false, error: "proc.media.delete requires key" };
     }
-    if (!key.startsWith(processMediaPrefix(this.identity.uid, this.pid))) {
+    const owner = this.ownerIdentity;
+    if (!key.startsWith(processMediaPrefix(owner.uid, this.pid))) {
       return { ok: false, error: "media key is outside this process" };
     }
     if (this.store.referencesMediaKey(key)) {
       return { ok: false, error: "media is referenced by process history" };
     }
-    await this.env.STORAGE.delete(key);
+    const object = await this.env.STORAGE.head(key);
+    if (object) {
+      assertProcessMediaOwnership(object, owner);
+      await this.env.STORAGE.delete(key);
+    }
     return { ok: true, key };
   }
 
@@ -3120,7 +3647,12 @@ export class Process extends Host<Env> {
 
       this.store.resetAllConversations();
 
-      await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
+      const ownerUid = this.ownerIdentity.uid;
+      const runAsUid = this.identity.uid;
+      await deleteProcessMedia(this.env.STORAGE, ownerUid, pid);
+      if (runAsUid !== ownerUid) {
+        await deleteProcessMedia(this.env.STORAGE, runAsUid, pid);
+      }
 
       return {
         ok: true,
@@ -3167,7 +3699,12 @@ export class Process extends Host<Env> {
         : emptyProcessArchive();
 
       if (initialized) {
-        await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
+        const ownerUid = this.ownerIdentity.uid;
+        const runAsUid = this.identity.uid;
+        await deleteProcessMedia(this.env.STORAGE, ownerUid, pid);
+        if (runAsUid !== ownerUid) {
+          await deleteProcessMedia(this.env.STORAGE, runAsUid, pid);
+        }
       }
 
       // The executor is fungible: a killed process is gone. The durable
@@ -3279,7 +3816,12 @@ export class Process extends Host<Env> {
     const tool = this.store.getResults(runId).find((result) => result.dispatchId === dispatchId);
     if (tool?.status === "pending") {
       this.ctx.waitUntil(
-        cancelProcessRequests(this.pid, [dispatchId], "Tool execution timed out").catch(() => 0),
+        cancelProcessRequests(
+          this.kernelName,
+          this.pid,
+          [dispatchId],
+          "Tool execution timed out",
+        ).catch(() => 0),
       );
       this.store.fail(dispatchId, `Tool execution timed out after ${TOOL_DISPATCH_TIMEOUT_MS}ms`);
       await this.resumeResolvedToolRun(runId);
@@ -3574,6 +4116,7 @@ export class Process extends Host<Env> {
 
   private async runTick(runId: string): Promise<void> {
     await this.lifecycleTransition;
+    await this.ensureProcessAuthority();
     let run = this.currentRun;
     if (!run || run.runId !== runId) {
       return;
@@ -4517,7 +5060,7 @@ export class Process extends Host<Env> {
     signal?.throwIfAborted();
     const id = crypto.randomUUID();
     const frame = { type: "req", id, call, args } as RequestFrame;
-    const pending = sendFrameToKernel(this.pid, frame);
+    const pending = sendFrameToKernel(this.kernelName, this.pid, frame);
     let rejectAbort: ((reason: unknown) => void) | undefined;
     const aborted = signal && new Promise<never>((_resolve, reject) => {
       rejectAbort = reject;
@@ -4528,6 +5071,7 @@ export class Process extends Host<Env> {
         : "Request cancelled";
       this.ctx.waitUntil(
         cancelProcessRequests(
+          this.kernelName,
           this.pid,
           [id],
           reason,
@@ -4601,6 +5145,7 @@ export class Process extends Host<Env> {
         outbound.body,
         (reason) => {
           this.ctx.waitUntil(cancelProcessRequests(
+            this.kernelName,
             this.pid,
             [requestId],
             reason instanceof Error ? reason.message : undefined,
@@ -4628,6 +5173,7 @@ export class Process extends Host<Env> {
     requestId?: string,
   ): Promise<ResponseOkFrame<"net.fetch">> {
     return await requestProcessNetFetch(
+      this.kernelName,
       this.pid,
       target,
       args,
@@ -4654,7 +5200,7 @@ export class Process extends Host<Env> {
    * Send a signal frame to the kernel for relay to client connections.
    */
   private async sendSignal(signal: string, payload?: unknown): Promise<void> {
-    await sendFrameToKernel(this.pid, {
+    await sendFrameToKernel(this.kernelName, this.pid, {
       type: "sig",
       signal,
       payload,
@@ -4882,13 +5428,12 @@ export class Process extends Host<Env> {
   }
 
   /**
-   * R2-key prefix where a conversation's transcript archives live, under the
-   * run-as agent's home: `home/<agent>/conversations/<id>`. Keyed by the agent
-   * identity + conversation, NOT the (fungible) executor pid, so transcripts
-   * survive across executors and can be hydrated on resume.
+   * R2-key prefix where a conversation's transcript archives live. It is
+   * derived from human owner + run-as agent + conversation, not the fungible
+   * executor pid, so shared agent accounts cannot expose one owner's history
+   * to another owner.
    */
   private conversationArchiveDir(conversationId: string): string {
-    const homeKey = this.identity.home.replace(/^\/+/, "").replace(/\/+$/, "");
     const normalized = normalizeConversationId(conversationId);
     // The primary ("default") thread is addressed by the durable kernel
     // conversation id (e.g. default:<owner>:<agent>) when one is assigned, so
@@ -4897,7 +5442,12 @@ export class Process extends Host<Env> {
     const pathId = normalized === DEFAULT_CONVERSATION_ID && this.primaryConversationId
       ? this.primaryConversationId
       : normalized;
-    return `${homeKey}/conversations/${encodeURIComponent(pathId)}`;
+    return this.archiveStore().directory(pathId);
+  }
+
+  private conversationArchiveKey(conversationId: string, filename: string): string {
+    const directory = this.conversationArchiveDir(conversationId);
+    return `${directory}/${filename}`;
   }
 
   /**
@@ -4938,7 +5488,7 @@ export class Process extends Host<Env> {
     });
     if (messages.length === 0) return null;
 
-    const key = `${this.conversationArchiveDir(normalizedConversationId)}/${archiveId}.jsonl.gz`;
+    const key = this.conversationArchiveKey(normalizedConversationId, `${archiveId}.jsonl.gz`);
 
     await this.archiveMessageRecords(key, messages);
     return key;
@@ -4964,10 +5514,10 @@ export class Process extends Host<Env> {
         continue;
       }
 
-      const key = `${this.conversationArchiveDir(conversation.id)}/${archiveId}.${conversationArchiveFilename(
+      const key = this.conversationArchiveKey(
         conversation.id,
-        conversation.generation,
-      )}`;
+        `${archiveId}.${conversationArchiveFilename(conversation.id, conversation.generation)}`,
+      );
 
       await this.archiveMessageRecords(key, messages);
       const archivePath = `/${key}`;
@@ -4988,10 +5538,9 @@ export class Process extends Host<Env> {
       });
     }
 
-    const homeKey = this.identity.home.replace(/^\/+/, "").replace(/\/+$/, "");
     return {
       archivedMessages,
-      archivedTo: archivedMessages > 0 ? `/${homeKey}/conversations/` : undefined,
+      archivedTo: archivedMessages > 0 ? this.archiveStore().rootPath() : undefined,
       archives,
     };
   }
@@ -5001,13 +5550,12 @@ export class Process extends Host<Env> {
     messages: MessageRecord[],
     signal?: AbortSignal,
   ): Promise<void> {
+    await this.ensureProcessAuthority();
     const compressed = await raceWithAbort(
       new Response(gzipMessageRecords(messages, signal)).arrayBuffer(),
       signal,
     );
-    const upload = this.env.STORAGE.put(key, compressed, {
-      httpMetadata: { contentType: "application/gzip" },
-    });
+    const upload = this.archiveStore().put(key, compressed);
     await raceWithAbort(upload, signal, {
       onAbort: () => {
         this.ctx.waitUntil(upload.then(
@@ -5020,15 +5568,15 @@ export class Process extends Host<Env> {
 
   private async deleteFailedCompactionArchive(key: string): Promise<void> {
     try {
-      await this.env.STORAGE.delete(key);
+      await this.ensureProcessAuthority();
+      await this.archiveStore().delete(key);
     } catch (error) {
       console.warn(`[Process] Failed to delete unreferenced archive ${key}:`, error);
     }
   }
 
   private async readArchivedMessageRecords(archivePath: string): Promise<ArchivedMessageRecord[]> {
-    const key = archivePath.replace(/^\/+/, "");
-    const object = await this.env.STORAGE.get(key);
+    const object = await this.archiveStore().get(archivePath);
     if (!object) {
       throw new Error(`archive not found: ${archivePath}`);
     }
@@ -5059,7 +5607,7 @@ export class Process extends Host<Env> {
       runId,
     } as RequestFrame;
 
-    const response = await sendFrameToKernel(this.pid, reqFrame);
+    const response = await sendFrameToKernel(this.kernelName, this.pid, reqFrame);
 
     if (response && response.type === "res") {
       if (!this.store.getPending(dispatchId)) {
@@ -5191,15 +5739,27 @@ export class Process extends Host<Env> {
     key: string,
     budget: { remainingBytes: number },
   ): Promise<string | null> {
-    if (!key.startsWith(processMediaPrefix(this.identity.uid, this.pid))) {
-      return null;
+    let object: R2ObjectBody;
+    try {
+      object = (await this.getAuthorizedProcessMedia(key)).object;
+    } catch (error) {
+      const message = errorMessageFromUnknown(error);
+      if (
+        message === "media key is outside this process"
+        || message === "media not found"
+        || message === "legacy media key is not referenced by this process"
+      ) {
+        return null;
+      }
+      throw error;
     }
-    const object = await this.env.STORAGE.get(key);
     if (
-      !object
-      || object.size > MAX_PROCESS_MEDIA_READ_BYTES
+      object.size > MAX_PROCESS_MEDIA_READ_BYTES
       || object.size > budget.remainingBytes
     ) {
+      await (object as R2ObjectBody & { body?: ReadableStream }).body
+        ?.cancel("Process media exceeds context budget")
+        .catch(() => {});
       return null;
     }
 
@@ -5701,7 +6261,12 @@ export class Process extends Host<Env> {
       const timeoutId = setTimeout(() => {
         this.codeModeResponses.delete(id);
         this.ctx.waitUntil(
-          cancelProcessRequests(this.pid, [id], `${call} timed out`).catch(() => 0),
+          cancelProcessRequests(
+            this.kernelName,
+            this.pid,
+            [id],
+            `${call} timed out`,
+          ).catch(() => 0),
         );
         reject(new Error(`Timed out waiting for ${call}`));
       }, CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS);
@@ -5710,7 +6275,7 @@ export class Process extends Host<Env> {
     void pending.catch(() => {});
 
     const operation = (async () => {
-      const response = await sendFrameToKernel(this.pid, reqFrame);
+      const response = await sendFrameToKernel(this.kernelName, this.pid, reqFrame);
       if (response && response.type === "res") {
         const waiter = this.codeModeResponses.get(id);
         if (!waiter || (runId !== null && this.handleRunStopped(runId))) {
@@ -5744,7 +6309,7 @@ export class Process extends Host<Env> {
             waiter.reject(new Error(reason));
           }
           this.ctx.waitUntil(
-            cancelProcessRequests(this.pid, [id], reason).catch(() => 0),
+            cancelProcessRequests(this.kernelName, this.pid, [id], reason).catch(() => 0),
           );
         },
         onLateResolve: (response) => {
@@ -5803,7 +6368,12 @@ export class Process extends Host<Env> {
 
     if (requestIds.size > 0) {
       this.ctx.waitUntil(
-        cancelProcessRequests(this.pid, [...requestIds], reason).catch(() => 0),
+        cancelProcessRequests(
+          this.kernelName,
+          this.pid,
+          [...requestIds],
+          reason,
+        ).catch(() => 0),
       );
     }
   }

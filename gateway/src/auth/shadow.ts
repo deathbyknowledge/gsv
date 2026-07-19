@@ -101,8 +101,13 @@ export function makeShadowEntry(
 }
 
 const PBKDF2_ITERATIONS = 100_000;
+export const PBKDF2_MIN_ITERATIONS = 1_000;
+export const PBKDF2_MAX_ITERATIONS = 1_000_000;
 const PBKDF2_SALT_BYTES = 16;
 const PBKDF2_HASH_BITS = 512;
+const PBKDF2_HASH_BYTES = PBKDF2_HASH_BITS / 8;
+const PBKDF2_MAX_RECORD_CHARACTERS = 256;
+const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
 
 function toHex(buf: ArrayBuffer): string {
   return Array.from(new Uint8Array(buf))
@@ -118,6 +123,13 @@ export async function hashPassword(
   password: string,
   iterations = PBKDF2_ITERATIONS,
 ): Promise<string> {
+  if (
+    !Number.isSafeInteger(iterations)
+    || iterations < PBKDF2_MIN_ITERATIONS
+    || iterations > PBKDF2_MAX_ITERATIONS
+  ) {
+    throw new Error(`PBKDF2 iterations must be between ${PBKDF2_MIN_ITERATIONS} and ${PBKDF2_MAX_ITERATIONS}`);
+  }
   const salt = crypto.getRandomValues(new Uint8Array(PBKDF2_SALT_BYTES));
   const key = await crypto.subtle.importKey(
     "raw",
@@ -138,13 +150,10 @@ async function verifyPassword(
   password: string,
   storedHash: string,
 ): Promise<boolean> {
-  const parts = storedHash.split("$");
-  // $pbkdf2-sha512$iterations$salt$hash → ["", "pbkdf2-sha512", iters, salt, hash]
-  if (parts.length !== 5 || parts[1] !== "pbkdf2-sha512") return false;
+  const parsed = parsePasswordHash(storedHash);
+  if (!parsed) return false;
 
-  const iterations = parseInt(parts[2], 10);
-  const salt = decodeBase64Bytes(parts[3]);
-
+  const { iterations, salt, stored } = parsed;
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(password),
@@ -159,9 +168,50 @@ async function verifyPassword(
   );
 
   const candidate = new Uint8Array(derived);
-  const stored = decodeBase64Bytes(parts[4]);
-  if (candidate.length !== stored.length) return false;
   return crypto.subtle.timingSafeEqual(candidate, stored);
+}
+
+export function isValidPasswordHash(storedHash: string): boolean {
+  return parsePasswordHash(storedHash) !== null;
+}
+
+function parsePasswordHash(storedHash: string): {
+  iterations: number;
+  salt: Uint8Array;
+  stored: Uint8Array;
+} | null {
+  if (storedHash.length > PBKDF2_MAX_RECORD_CHARACTERS) return null;
+  const parts = storedHash.split("$");
+  // $pbkdf2-sha512$iterations$salt$hash → ["", "pbkdf2-sha512", iters, salt, hash]
+  if (parts.length !== 5 || parts[1] !== "pbkdf2-sha512") return null;
+  if (!/^[1-9][0-9]{0,6}$/.test(parts[2])) return null;
+
+  const iterations = Number(parts[2]);
+  if (
+    !Number.isSafeInteger(iterations)
+    || iterations < PBKDF2_MIN_ITERATIONS
+    || iterations > PBKDF2_MAX_ITERATIONS
+  ) {
+    return null;
+  }
+
+  const salt = decodeBoundedBase64(parts[3], PBKDF2_SALT_BYTES);
+  const stored = decodeBoundedBase64(parts[4], PBKDF2_HASH_BYTES);
+  return salt && stored ? { iterations, salt, stored } : null;
+}
+
+function decodeBoundedBase64(value: string, expectedBytes: number): Uint8Array | null {
+  const expectedCharacters = Math.ceil(expectedBytes / 3) * 4;
+  if (value.length !== expectedCharacters || !BASE64_PATTERN.test(value)) {
+    return null;
+  }
+  try {
+    const decoded = decodeBase64Bytes(value);
+    if (decoded.byteLength !== expectedBytes) return null;
+    return encodeBase64Bytes(decoded) === value ? decoded : null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

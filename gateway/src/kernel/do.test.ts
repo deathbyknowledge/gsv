@@ -17,13 +17,51 @@ import {
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
 describe("Kernel frame bodies", () => {
+  it("persists only a pseudonymous login source in hibernation state", async () => {
+    const values = new Map<string, string>();
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.config = {
+      getExplicit: (key: string) => values.get(key) ?? null,
+      set: (key: string, value: string) => values.set(key, value),
+    };
+    const connection: any = {
+      id: "source-connection",
+      state: undefined,
+      setState: vi.fn((state) => {
+        connection.state = state;
+      }),
+    };
+
+    await kernel.onConnect(connection, {
+      request: new Request("https://gsv.test/ws", {
+        headers: { "CF-Connecting-IP": "203.0.113.44" },
+      }),
+    });
+
+    expect(connection.state).toMatchObject({
+      step: "pending",
+      loginSourceScope: expect.stringMatching(/^source:\d+:[a-f0-9]{64}$/),
+    });
+    expect(JSON.stringify(connection.state)).not.toContain("203.0.113.44");
+
+    const persistedState = structuredClone(connection.state);
+    kernel.buildKernelContext = vi.fn((options) => options);
+    const context = kernel.buildContext({
+      ...connection,
+      state: persistedState,
+    });
+    expect(context.loginSourceScope).toBe(persistedState.loginSourceScope);
+  });
+
   it("passes request cancellation to Agents SDK MCP calls", async () => {
     const callTool = vi.fn(async () => ({ content: [] }));
     const kernel = Object.create(Kernel.prototype) as any;
+    Object.defineProperty(kernel, "name", { value: "kernel-test" });
     kernel.mcp = { callTool };
     const controller = new AbortController();
     const ctx = kernel.buildKernelContext({ requestSignal: controller.signal });
 
+    expect(ctx.kernelName).toBe("kernel-test");
     await ctx.callMcpTool("server-1", "lookup", { query: "gsv" }, ctx.requestSignal);
 
     expect(callTool).toHaveBeenCalledWith(
@@ -1279,6 +1317,7 @@ describe("Kernel process device requests", () => {
         },
       ): Promise<unknown>;
     };
+    Object.defineProperty(kernel, "name", { value: "kernel-device-test" });
     kernel.env = {};
     kernel.procs = { getIdentity: vi.fn(() => ({
       uid: 0,

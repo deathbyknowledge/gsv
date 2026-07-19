@@ -61,8 +61,3 @@ export function findByUid(
 ): PasswdEntry | undefined {
   return entries.find((e) => e.uid === uid);
 }
-
-export function nextUid(entries: PasswdEntry[]): number {
-  const max = entries.reduce((m, e) => Math.max(m, e.uid), 0);
-  return max < 1000 ? 1000 : max + 1;
-}

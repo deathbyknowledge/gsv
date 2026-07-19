@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { env } from "cloudflare:workers";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { assembleSystemPrompt } from "./assembly";
 import { createHomeContextProvider } from "./providers/home";
+import { createOwnerContextProvider } from "./providers/owner";
 import { createSystemContextProvider } from "./providers/system";
 import { resolvePromptProviders } from "./selection";
 import type { PromptAssemblyInput, PromptContextProvider } from "./types";
@@ -61,6 +63,43 @@ const OWNER_IDENTITY: ProcessIdentity = {
   home: "/home/hank",
   cwd: "/home/hank",
 };
+
+const FALLBACK_PROGRAM_IDENTITY: ProcessIdentity = {
+  uid: 2000,
+  gid: 2000,
+  gids: [2000],
+  username: "context-program-test",
+  home: "/home/context-program-test",
+  cwd: "/home/context-program-test",
+};
+
+const FALLBACK_OWNER_IDENTITY: ProcessIdentity = {
+  uid: 2001,
+  gid: 2001,
+  gids: [2001, 100],
+  username: "context-owner-test",
+  home: "/home/context-owner-test",
+  cwd: "/home/context-owner-test",
+};
+
+const FALLBACK_FOREIGN_IDENTITY: ProcessIdentity = {
+  uid: 2002,
+  gid: 2002,
+  gids: [2002],
+  username: "context-foreign-test",
+  home: "/home/context-foreign-test",
+  cwd: "/home/context-foreign-test",
+};
+
+const FALLBACK_TEST_PREFIX = "home/context-";
+
+async function clearFallbackTestObjects(): Promise<void> {
+  const listed = await env.STORAGE.list({ prefix: FALLBACK_TEST_PREFIX });
+  await Promise.all(listed.objects.map((object) => env.STORAGE.delete(object.key)));
+}
+
+beforeEach(clearFallbackTestObjects);
+afterEach(clearFallbackTestObjects);
 
 describe("assembleSystemPrompt", () => {
   it("preserves provider order and skips empty sections", async () => {
@@ -329,6 +368,72 @@ describe("createHomeContextProvider", () => {
       "alpha",
     ]);
   });
+
+  it("enforces run-as directory traversal permissions for the R2 fallback", async () => {
+    await putContextDirectory(FALLBACK_PROGRAM_IDENTITY, "700", FALLBACK_FOREIGN_IDENTITY);
+    await putContextFile(
+      FALLBACK_PROGRAM_IDENTITY,
+      "private.md",
+      "foreign context",
+      "644",
+      FALLBACK_FOREIGN_IDENTITY,
+    );
+
+    const provider = createHomeContextProvider();
+    await expect(provider.collect(makeInput({
+      identity: FALLBACK_PROGRAM_IDENTITY,
+      ripgit: null,
+    }))).rejects.toThrow("EACCES");
+  });
+});
+
+describe("createOwnerContextProvider", () => {
+  it("uses the owner identity for the R2 fallback", async () => {
+    await putContextDirectory(FALLBACK_OWNER_IDENTITY, "700", FALLBACK_OWNER_IDENTITY);
+    await putContextFile(
+      FALLBACK_OWNER_IDENTITY,
+      "owner.md",
+      "owner-only context",
+      "600",
+      FALLBACK_OWNER_IDENTITY,
+    );
+
+    const provider = createOwnerContextProvider();
+    const sections = await provider.collect(makeInput({
+      identity: FALLBACK_PROGRAM_IDENTITY,
+      ownerIdentity: FALLBACK_OWNER_IDENTITY,
+      ripgit: null,
+    }));
+
+    expect(sections).toEqual([
+      expect.objectContaining({
+        name: "owner.md",
+        text: "owner-only context",
+        contextRoot: expect.objectContaining({
+          key: "user",
+          location: "/home/context-owner-test/context.d",
+        }),
+      }),
+    ]);
+  });
+
+  it("enforces file read permissions using the supplied owner identity", async () => {
+    await putContextDirectory(FALLBACK_OWNER_IDENTITY, "755", FALLBACK_OWNER_IDENTITY);
+    await putContextFile(
+      FALLBACK_OWNER_IDENTITY,
+      "foreign.md",
+      "foreign context",
+      "600",
+      FALLBACK_FOREIGN_IDENTITY,
+    );
+
+    const provider = createOwnerContextProvider();
+    await expect(provider.collect(makeInput({
+      identity: FALLBACK_PROGRAM_IDENTITY,
+      ownerIdentity: FALLBACK_OWNER_IDENTITY,
+      ripgit: null,
+    }))).rejects.toThrow("EACCES");
+  });
 });
 
 function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssemblyInput {
@@ -337,17 +442,42 @@ function makeInput(overrides: Partial<PromptAssemblyInput> = {}): PromptAssembly
     identity: IDENTITY,
     devices: [],
     mcpServers: [],
-    storage: {
-      async get() {
-        return null;
-      },
-      async list() {
-        return { objects: [] };
-      },
-    },
+    storage: env.STORAGE,
     ripgit: null,
     ...overrides,
   };
+}
+
+async function putContextDirectory(
+  account: ProcessIdentity,
+  mode: string,
+  owner: ProcessIdentity,
+): Promise<void> {
+  await env.STORAGE.put(`${account.home.slice(1)}/context.d/.dir`, "", {
+    customMetadata: {
+      uid: String(owner.uid),
+      gid: String(owner.gid),
+      mode,
+      dirmarker: "1",
+    },
+  });
+}
+
+async function putContextFile(
+  account: ProcessIdentity,
+  name: string,
+  text: string,
+  mode: string,
+  owner: ProcessIdentity,
+): Promise<void> {
+  await env.STORAGE.put(`${account.home.slice(1)}/context.d/${name}`, text, {
+    httpMetadata: { contentType: "text/markdown" },
+    customMetadata: {
+      uid: String(owner.uid),
+      gid: String(owner.gid),
+      mode,
+    },
+  });
 }
 
 function currentDateInTimezone(timezone: string): string {

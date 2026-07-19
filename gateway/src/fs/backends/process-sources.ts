@@ -53,17 +53,20 @@ type SourceBranchState = {
   updatedAt: number;
 };
 
+// Null revisions are read-only compatibility for payloads staged before
+// immutable revision keys were introduced. Every new mutation gets a UUID.
 type SourceOverlayChange =
   | {
       type: "put";
       path: string;
-      contentKey: string;
+      revision: string | null;
       size: number;
       updatedAt: number;
     }
   | {
       type: "delete";
       path: string;
+      revision: string | null;
       recursive: boolean;
       updatedAt: number;
     };
@@ -77,6 +80,16 @@ type SourceOverlayManifest = {
   updatedAt: number;
   changes: Record<string, SourceOverlayChange>;
 };
+
+type SourceOverlaySnapshot = {
+  manifest: SourceOverlayManifest;
+  etag: string | null;
+};
+
+const MAX_OVERLAY_MANIFEST_WRITE_ATTEMPTS = 8;
+const MAX_R2_DELETE_KEYS = 1_000;
+const OVERLAY_REVISION_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type SourceChangeSummary = {
   path: string;
@@ -197,7 +210,7 @@ class ProcessSourceBackend implements MountBackend {
     }
 
     const overlay = await this.readOverlay(resolved.repo);
-    const put = await this.readOverlayPut(overlay, resolved.relativePath);
+    const put = await this.readOverlayPut(resolved.repo, overlay, resolved.relativePath);
     if (put) {
       return put;
     }
@@ -435,7 +448,7 @@ class ProcessSourceBackend implements MountBackend {
             line: match.line,
             content: match.content,
           })),
-        ...await this.searchOverlay(repo.rootPath, overlay, relativePath, query),
+        ...await this.searchOverlay(repo, overlay, relativePath, query),
       ],
     };
   }
@@ -603,6 +616,7 @@ class ProcessSourceBackend implements MountBackend {
   }
 
   private async readOverlayPut(
+    repo: SourceRepo,
     overlay: SourceOverlayManifest,
     relativePath: string,
   ): Promise<Uint8Array | null> {
@@ -610,7 +624,7 @@ class ProcessSourceBackend implements MountBackend {
     if (change?.type !== "put") {
       return null;
     }
-    return readOverlayContent(this.storage, change);
+    return readOverlayContent(this.storage, this.processId, repo, change);
   }
 
   private async stageOverlayPut(
@@ -619,19 +633,53 @@ class ProcessSourceBackend implements MountBackend {
     content: Uint8Array,
   ): Promise<void> {
     const storage = this.storage!;
-    const overlay = await this.readOverlay(repo);
-    const contentKey = overlayContentKey(this.processId!, repo, relativePath);
-    await storage.put(contentKey, content);
+    const revision = createOverlayRevision();
+    const contentKey = overlayContentKey(this.processId!, repo, relativePath, revision);
+    const stored = await storage.put(contentKey, content, {
+      onlyIf: { etagDoesNotMatch: "*" },
+      customMetadata: overlayObjectMetadata(this.identity),
+    });
+    if (!stored) {
+      throw new Error(`EAGAIN: source overlay payload revision collided for ${repo.repo}`);
+    }
     const now = Date.now();
-    overlay.changes[relativePath] = {
-      type: "put",
-      path: relativePath,
-      contentKey,
-      size: content.byteLength,
-      updatedAt: now,
-    };
-    overlay.updatedAt = now;
-    await writeOverlayManifest(storage, this.processId!, repo, overlay);
+    const supersededContentKeys = new Set<string>();
+    try {
+      await updateOverlayManifest(
+        storage,
+        this.processId!,
+        repo,
+        this.overlayBaseRef(repo),
+        this.identity,
+        (overlay) => {
+          supersededContentKeys.clear();
+          const superseded = overlay.changes[relativePath];
+          if (superseded?.type === "put") {
+            supersededContentKeys.add(overlayContentKeyForChange(this.processId!, repo, superseded));
+          }
+          overlay.changes[relativePath] = {
+            type: "put",
+            path: relativePath,
+            revision,
+            size: content.byteLength,
+            updatedAt: now,
+          };
+          overlay.updatedAt = now;
+        },
+      );
+    } catch (error) {
+      await deleteUnpublishedOverlayPayload(
+        storage,
+        this.processId!,
+        repo,
+        relativePath,
+        revision,
+        contentKey,
+        this.overlayBaseRef(repo),
+      );
+      throw error;
+    }
+    await deleteR2Keys(storage, [...supersededContentKeys]);
   }
 
   private async stageOverlayDelete(
@@ -640,28 +688,40 @@ class ProcessSourceBackend implements MountBackend {
     recursive: boolean,
   ): Promise<void> {
     const storage = this.storage!;
-    const overlay = await this.readOverlay(repo);
-    for (const change of sortedOverlayChanges(overlay)) {
-      if (change.path === relativePath || (recursive && pathIsDescendant(change.path, relativePath))) {
-        if (change.type === "put") {
-          await storage.delete(change.contentKey);
-        }
-        delete overlay.changes[change.path];
-      }
-    }
     const now = Date.now();
-    overlay.changes[relativePath] = {
-      type: "delete",
-      path: relativePath,
-      recursive,
-      updatedAt: now,
-    };
-    overlay.updatedAt = now;
-    await writeOverlayManifest(storage, this.processId!, repo, overlay);
+    const revision = createOverlayRevision();
+    const removedContentKeys = new Set<string>();
+    await updateOverlayManifest(
+      storage,
+      this.processId!,
+      repo,
+      this.overlayBaseRef(repo),
+      this.identity,
+      (overlay) => {
+        removedContentKeys.clear();
+        for (const change of sortedOverlayChanges(overlay)) {
+          if (change.path === relativePath || (recursive && pathIsDescendant(change.path, relativePath))) {
+            if (change.type === "put") {
+              removedContentKeys.add(overlayContentKeyForChange(this.processId!, repo, change));
+            }
+            delete overlay.changes[change.path];
+          }
+        }
+        overlay.changes[relativePath] = {
+          type: "delete",
+          path: relativePath,
+          revision,
+          recursive,
+          updatedAt: now,
+        };
+        overlay.updatedAt = now;
+      },
+    );
+    await deleteR2Keys(storage, [...removedContentKeys]);
   }
 
   private async searchOverlay(
-    packageRoot: string,
+    repo: SourceRepo,
     overlay: SourceOverlayManifest,
     relativePath: string,
     query: string,
@@ -671,7 +731,7 @@ class ProcessSourceBackend implements MountBackend {
       if (change.type !== "put" || !pathIsWithin(change.path, relativePath)) {
         continue;
       }
-      const bytes = await this.readOverlayPut(overlay, change.path);
+      const bytes = await this.readOverlayPut(repo, overlay, change.path);
       if (!bytes) {
         continue;
       }
@@ -680,7 +740,7 @@ class ProcessSourceBackend implements MountBackend {
       for (let index = 0; index < lines.length; index += 1) {
         if (lines[index].includes(query)) {
           matches.push({
-            path: `${packageRoot}/${change.path}`.replace(/\/+$/g, ""),
+            path: `${repo.rootPath}/${change.path}`.replace(/\/+$/g, ""),
             line: index + 1,
             content: lines[index],
           });
@@ -744,7 +804,12 @@ export async function diffRepoSourceChanges(
       continue;
     }
 
-    const bytes = await readOverlayContent(options.storage ?? null, change);
+    const bytes = await readOverlayContent(
+      options.storage ?? null,
+      options.processId ?? null,
+      repo,
+      change,
+    );
     if (!bytes) {
       continue;
     }
@@ -791,12 +856,13 @@ export async function commitRepoSourceChanges(
     throw new Error(`Repo is read-only: ${repo.repo}`);
   }
   const state = readSourceBranchState(options.config, options.processId, repo);
-  const overlay = await readOverlayManifest(
+  const overlaySnapshot = await readOverlaySnapshot(
     options.storage,
     options.processId,
     repo,
     sourceBaseRefForRepo(repo, state),
   );
+  const overlay = overlaySnapshot.manifest;
   const explicitBranch = args.branch?.trim();
   const branch = explicitBranch
     ? normalizeSourceBranch(explicitBranch)
@@ -817,13 +883,27 @@ export async function commitRepoSourceChanges(
     requestedBranch,
     expectedBranchBaseRef,
   );
-  const ops = await overlayApplyOps(options.storage, options.ripgit, repo, overlay, targetRef.opsBaseRef);
+  const ops = await overlayApplyOps(
+    options.storage,
+    options.processId,
+    options.ripgit,
+    repo,
+    overlay,
+    targetRef.opsBaseRef,
+  );
   if (ops.length === 0) {
     const nextState = sourceBranchStateForTarget(state, branch, targetRef, null);
     writeSourceBranchState(options.config, options.processId, repo, nextState);
-    await discardOverlay(options.storage, options.processId, repo, overlay);
+    const remaining = await discardOverlay(
+      options.storage,
+      options.processId,
+      repo,
+      overlaySnapshot,
+      options.identity,
+      sourceBaseRefForRepo(repo, nextState),
+    );
     return {
-      ...sourceStatusForRepo(repo, emptyOverlayManifest(repo, sourceBaseRefForRepo(repo, nextState)), nextState),
+      ...sourceStatusForRepo(repo, remaining, nextState),
       committed: false,
       commitHead: nextState.head,
       ops: 0,
@@ -843,10 +923,17 @@ export async function commitRepoSourceChanges(
   );
   const nextState = sourceBranchStateForTarget(state, branch, targetRef, result.head ?? null);
   writeSourceBranchState(options.config, options.processId, repo, nextState);
-  await discardOverlay(options.storage, options.processId, repo, overlay);
+  const remaining = await discardOverlay(
+    options.storage,
+    options.processId,
+    repo,
+    overlaySnapshot,
+    options.identity,
+    sourceBaseRefForRepo(repo, nextState),
+  );
 
   return {
-    ...sourceStatusForRepo(repo, emptyOverlayManifest(repo, sourceBaseRefForRepo(repo, nextState)), nextState),
+    ...sourceStatusForRepo(repo, remaining, nextState),
     committed: true,
     commitHead: nextState.head,
     ops: ops.length,
@@ -866,14 +953,21 @@ export async function discardRepoSourceChanges(
   }
   const repo = sourceRepoForOptions(options, repoSlug, sourcePath);
   const state = readSourceBranchState(options.config ?? null, options.processId, repo);
-  const overlay = await readOverlayManifest(
+  const overlaySnapshot = await readOverlaySnapshot(
     options.storage,
     options.processId,
     repo,
     sourceBaseRefForRepo(repo, state),
   );
-  await discardOverlay(options.storage, options.processId, repo, overlay);
-  return sourceStatusForRepo(repo, emptyOverlayManifest(repo, sourceBaseRefForRepo(repo, state)), state);
+  const remaining = await discardOverlay(
+    options.storage,
+    options.processId,
+    repo,
+    overlaySnapshot,
+    options.identity,
+    null,
+  );
+  return sourceStatusForRepo(repo, remaining, state);
 }
 
 function visibleSourceRepos(
@@ -1313,61 +1407,95 @@ async function readOverlayManifest(
   repo: SourceRepo,
   baseRef = sourceBaseRefForRepo(repo, null),
 ): Promise<SourceOverlayManifest> {
+  return (await readOverlaySnapshot(storage, processId, repo, baseRef)).manifest;
+}
+
+async function readOverlaySnapshot(
+  storage: R2Bucket | null,
+  processId: string | null,
+  repo: SourceRepo,
+  baseRef = sourceBaseRefForRepo(repo, null),
+): Promise<SourceOverlaySnapshot> {
   const empty = emptyOverlayManifest(repo, baseRef);
   if (!storage || !processId) {
-    return empty;
+    return { manifest: empty, etag: null };
   }
   const obj = await storage.get(overlayManifestKey(processId, repo));
   if (!obj) {
-    return empty;
+    return { manifest: empty, etag: null };
   }
   try {
-    const parsed = JSON.parse(await obj.text()) as Partial<SourceOverlayManifest>;
+    const parsed = JSON.parse(await obj.text()) as Partial<SourceOverlayManifest> & {
+      changes?: Record<string, unknown>;
+    };
     if (
       parsed.version !== 1 ||
       parsed.packageId !== repo.sourceKey ||
       parsed.packageKey !== sourceRepoStorageKey(repo) ||
       !parsed.changes
     ) {
-      return empty;
+      return { manifest: empty, etag: obj.etag };
     }
-    const changes: Record<string, SourceOverlayChange> = {};
+    const changes = Object.create(null) as Record<string, SourceOverlayChange>;
     for (const [path, value] of Object.entries(parsed.changes)) {
       const normalizedPath = normalizeRepoPath(path);
-      if (!normalizedPath || !value || typeof value !== "object") {
+      if (
+        !normalizedPath ||
+        normalizedPath !== path ||
+        normalizedPath.split("/").includes("..") ||
+        !value ||
+        typeof value !== "object"
+      ) {
         continue;
       }
-      const change = value as Partial<SourceOverlayChange>;
-      if (change.type === "put" && typeof change.contentKey === "string") {
+      const change = value as Record<string, unknown>;
+      const revision = parseOverlayRevision(change.revision);
+      if (revision === undefined) {
+        continue;
+      }
+      if (change.type === "put") {
+        const expectedContentKey = overlayContentKey(processId, repo, normalizedPath, revision);
+        // The persisted key is compatibility data, not authority. Validate it,
+        // discard it, and derive every R2 access from the owning process/repo/path/revision.
+        if (
+          change.path !== normalizedPath ||
+          change.contentKey !== expectedContentKey
+        ) {
+          continue;
+        }
         changes[normalizedPath] = {
           type: "put",
           path: normalizedPath,
-          contentKey: change.contentKey,
+          revision,
           size: typeof change.size === "number" ? change.size : 0,
-          updatedAt: typeof change.updatedAt === "number" ? change.updatedAt : Date.now(),
+          updatedAt: typeof change.updatedAt === "number" ? change.updatedAt : 0,
         };
-      } else if (change.type === "delete") {
+      } else if (change.type === "delete" && change.path === normalizedPath) {
         changes[normalizedPath] = {
           type: "delete",
           path: normalizedPath,
+          revision,
           recursive: change.recursive === true,
-          updatedAt: typeof change.updatedAt === "number" ? change.updatedAt : Date.now(),
+          updatedAt: typeof change.updatedAt === "number" ? change.updatedAt : 0,
         };
       }
     }
     return {
-      version: 1,
-      packageId: repo.sourceKey,
-      packageKey: sourceRepoStorageKey(repo),
-      baseRef: typeof parsed.baseRef === "string" && parsed.baseRef
-        ? parsed.baseRef
-        : empty.baseRef,
-      createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
-      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
-      changes,
+      manifest: {
+        version: 1,
+        packageId: repo.sourceKey,
+        packageKey: sourceRepoStorageKey(repo),
+        baseRef: typeof parsed.baseRef === "string" && parsed.baseRef
+          ? parsed.baseRef
+          : empty.baseRef,
+        createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
+        updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
+        changes,
+      },
+      etag: obj.etag,
     };
   } catch {
-    return empty;
+    return { manifest: empty, etag: obj.etag };
   }
 }
 
@@ -1380,7 +1508,7 @@ function emptyOverlayManifest(repo: SourceRepo, baseRef = sourceBaseRefForRepo(r
     baseRef,
     createdAt: now,
     updatedAt: now,
-    changes: {},
+    changes: Object.create(null) as Record<string, SourceOverlayChange>,
   };
 }
 
@@ -1389,29 +1517,114 @@ async function writeOverlayManifest(
   processId: string,
   repo: SourceRepo,
   overlay: SourceOverlayManifest,
-): Promise<void> {
+  identity: Pick<ProcessIdentity, "uid" | "gid">,
+  previousEtag: string | null,
+): Promise<boolean> {
   const key = overlayManifestKey(processId, repo);
-  if (Object.keys(overlay.changes).length === 0) {
-    await storage.delete(key);
-    return;
-  }
-  await storage.put(key, `${JSON.stringify(overlay, null, 2)}\n`, {
+  const body = `${JSON.stringify(storedOverlayManifest(processId, repo, overlay), null, 2)}\n`;
+  const stored = await storage.put(key, body, {
+    onlyIf: previousEtag
+      ? { etagMatches: previousEtag }
+      : { etagDoesNotMatch: "*" },
     httpMetadata: { contentType: "application/json" },
+    customMetadata: overlayObjectMetadata(identity),
   });
+  return stored !== null;
+}
+
+async function updateOverlayManifest(
+  storage: R2Bucket,
+  processId: string,
+  repo: SourceRepo,
+  baseRef: string,
+  identity: Pick<ProcessIdentity, "uid" | "gid">,
+  update: (overlay: SourceOverlayManifest) => void,
+): Promise<SourceOverlayManifest> {
+  for (let attempt = 0; attempt < MAX_OVERLAY_MANIFEST_WRITE_ATTEMPTS; attempt += 1) {
+    const snapshot = await readOverlaySnapshot(storage, processId, repo, baseRef);
+    const next = cloneOverlayManifest(snapshot.manifest);
+    update(next);
+    if (await writeOverlayManifest(storage, processId, repo, next, identity, snapshot.etag)) {
+      return next;
+    }
+  }
+  throw new Error(`EAGAIN: source overlay changed during update for ${repo.repo}`);
 }
 
 async function discardOverlay(
   storage: R2Bucket,
   processId: string,
   repo: SourceRepo,
-  overlay: SourceOverlayManifest,
-): Promise<void> {
-  const keys = sortedOverlayChanges(overlay)
-    .flatMap((change) => change.type === "put" ? [change.contentKey] : []);
-  if (keys.length > 0) {
-    await storage.delete(keys);
+  snapshot: SourceOverlaySnapshot,
+  identity: Pick<ProcessIdentity, "uid" | "gid">,
+  rebaseTo: string | null,
+): Promise<SourceOverlayManifest> {
+  const discarded = snapshot.manifest;
+  if (snapshot.etag === null && Object.keys(discarded.changes).length === 0) {
+    return rebaseTo ? { ...discarded, baseRef: rebaseTo } : discarded;
   }
-  await storage.delete(overlayManifestKey(processId, repo));
+  const remaining = await updateOverlayManifest(
+    storage,
+    processId,
+    repo,
+    discarded.baseRef,
+    identity,
+    (current) => {
+      // A commit/discard owns only the exact revisions it observed. Newer
+      // same-path mutations and unrelated staging survive the CAS update.
+      for (const change of sortedOverlayChanges(discarded)) {
+        const currentChange = current.changes[change.path];
+        if (currentChange && overlayChangesMatch(currentChange, change)) {
+          delete current.changes[change.path];
+        }
+      }
+      if (rebaseTo && current.baseRef === discarded.baseRef) {
+        current.baseRef = rebaseTo;
+      }
+      current.updatedAt = Date.now();
+    },
+  );
+  const remainingContentKeys = new Set(
+    sortedOverlayChanges(remaining)
+      .flatMap((change) => change.type === "put"
+        ? [overlayContentKeyForChange(processId, repo, change)]
+        : []),
+  );
+  const keys = sortedOverlayChanges(discarded)
+    .flatMap((change) => change.type === "put"
+      ? [overlayContentKeyForChange(processId, repo, change)]
+      : [])
+    .filter((key) => !remainingContentKeys.has(key));
+  if (keys.length > 0) {
+    await deleteR2Keys(storage, keys);
+  }
+  return remaining;
+}
+
+async function deleteUnpublishedOverlayPayload(
+  storage: R2Bucket,
+  processId: string,
+  repo: SourceRepo,
+  relativePath: string,
+  revision: string,
+  contentKey: string,
+  baseRef: string,
+): Promise<void> {
+  try {
+    const latest = await readOverlayManifest(storage, processId, repo, baseRef);
+    const published = latest.changes[relativePath];
+    if (published?.type !== "put" || published.revision !== revision) {
+      await storage.delete(contentKey);
+    }
+  } catch {
+    // Preserve a possibly published payload when storage state cannot be confirmed.
+  }
+}
+
+async function deleteR2Keys(storage: R2Bucket, keys: string[]): Promise<void> {
+  for (let offset = 0; offset < keys.length; offset += MAX_R2_DELETE_KEYS) {
+    await storage.delete(keys.slice(offset, offset + MAX_R2_DELETE_KEYS));
+  }
 }
 
 function overlayManifestKey(
@@ -1425,8 +1638,85 @@ function overlayContentKey(
   processId: string,
   repo: SourceRepo,
   relativePath: string,
+  revision: string | null,
 ): string {
-  return `process-source-overlays/${encodeURIComponent(processId)}/${encodeURIComponent(sourceRepoStorageKey(repo))}/files/${encodeURIComponent(relativePath)}`;
+  const pathKey = `process-source-overlays/${encodeURIComponent(processId)}/${encodeURIComponent(sourceRepoStorageKey(repo))}/files/${encodeURIComponent(relativePath)}`;
+  return revision ? `${pathKey}/${encodeURIComponent(revision)}` : pathKey;
+}
+
+function overlayContentKeyForChange(
+  processId: string,
+  repo: SourceRepo,
+  change: Extract<SourceOverlayChange, { type: "put" }>,
+): string {
+  return overlayContentKey(processId, repo, change.path, change.revision);
+}
+
+function storedOverlayManifest(
+  processId: string,
+  repo: SourceRepo,
+  overlay: SourceOverlayManifest,
+): SourceOverlayManifest & { changes: Record<string, SourceOverlayChange & { contentKey?: string }> } {
+  return {
+    ...overlay,
+    changes: Object.fromEntries(
+      Object.entries(overlay.changes).map(([path, change]) => [
+        path,
+        change.type === "put"
+          ? {
+              ...change,
+              contentKey: overlayContentKeyForChange(processId, repo, change),
+            }
+          : change,
+      ]),
+    ),
+  };
+}
+
+function cloneOverlayManifest(overlay: SourceOverlayManifest): SourceOverlayManifest {
+  return {
+    ...overlay,
+    changes: Object.fromEntries(
+      Object.entries(overlay.changes).map(([path, change]) => [path, { ...change }]),
+    ),
+  };
+}
+
+function overlayChangesMatch(left: SourceOverlayChange, right: SourceOverlayChange): boolean {
+  if (left.type !== right.type || left.path !== right.path) {
+    return false;
+  }
+  if (left.revision !== null || right.revision !== null) {
+    return left.revision === right.revision;
+  }
+  if (left.type === "put" && right.type === "put") {
+    return left.size === right.size && left.updatedAt === right.updatedAt;
+  }
+  return left.type === "delete" && right.type === "delete" &&
+    left.recursive === right.recursive && left.updatedAt === right.updatedAt;
+}
+
+function overlayObjectMetadata(
+  identity: Pick<ProcessIdentity, "uid" | "gid">,
+): Record<string, string> {
+  return {
+    uid: String(identity.uid),
+    gid: String(identity.gid),
+    mode: "600",
+  };
+}
+
+function createOverlayRevision(): string {
+  return crypto.randomUUID();
+}
+
+function parseOverlayRevision(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return typeof value === "string" && OVERLAY_REVISION_PATTERN.test(value)
+    ? value
+    : undefined;
 }
 
 function sortedOverlayChanges(overlay: SourceOverlayManifest): SourceOverlayChange[] {
@@ -1516,12 +1806,14 @@ function pathIsDescendant(path: string, maybeParent: string): boolean {
 
 async function readOverlayContent(
   storage: R2Bucket | null,
+  processId: string | null,
+  repo: SourceRepo,
   change: Extract<SourceOverlayChange, { type: "put" }>,
 ): Promise<Uint8Array | null> {
-  if (!storage) {
+  if (!storage || !processId) {
     return null;
   }
-  const obj = await storage.get(change.contentKey);
+  const obj = await storage.get(overlayContentKeyForChange(processId, repo, change));
   if (!obj) {
     return null;
   }
@@ -1530,6 +1822,7 @@ async function readOverlayContent(
 
 async function overlayApplyOps(
   storage: R2Bucket,
+  processId: string,
   ripgit: RipgitClient,
   repo: SourceRepo,
   overlay: SourceOverlayManifest,
@@ -1546,7 +1839,7 @@ async function overlayApplyOps(
       }
       continue;
     }
-    const bytes = await readOverlayContent(storage, change);
+    const bytes = await readOverlayContent(storage, processId, repo, change);
     if (!bytes) {
       continue;
     }

@@ -12,7 +12,9 @@ vi.mock("../shared/utils", () => ({
 
 import { sendFrameToProcess } from "../shared/utils";
 import { forwardToProcess, handleProcIpcCall, handleProcIpcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
+import { resolveConversationExecutor } from "./agents";
 import { resolveCallerOwnerUid } from "./context";
+import { createProvisioningR2BucketMock } from "../test-support/mock-r2";
 
 const IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -24,6 +26,7 @@ const IDENTITY: ProcessIdentity = {
 };
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+const DEFAULT_ARCHIVE_BASE = "/process-conversation-archives/1000/2000/default%3A1000%3A2000";
 
 // A parent process record (owned by the caller) used by parented-spawn tests,
 // so the run-as identity is inherited from the parent.
@@ -50,10 +53,7 @@ function spawnConversationsMock() {
 }
 
 function makeStorageBucket() {
-  return {
-    head: vi.fn(async () => null),
-    put: vi.fn(async () => undefined),
-  };
+  return createProvisioningR2BucketMock();
 }
 
 describe("proc handlers", () => {
@@ -65,6 +65,40 @@ describe("proc handlers", () => {
       ok: true,
       data: { ok: true },
     } as ResponseFrame));
+  });
+
+  it("passes the owning Kernel name to a new conversation executor", async () => {
+    const ctx = {
+      kernelName: "kernel-human-1",
+      procs: {
+        get: vi.fn(() => null),
+        spawn: vi.fn(),
+      },
+      conversations: {
+        setActivePid: vi.fn(),
+      },
+    } as unknown as KernelContext;
+
+    await resolveConversationExecutor(ctx, {
+      conversationId: "conversation-1",
+      ownerUid: IDENTITY.uid,
+      agentUid: IDENTITY.uid,
+      title: null,
+      isDefault: false,
+      activePid: null,
+      archiveBase: "/process-conversation-archives/1000/1000/conversation-1",
+      latestArchive: null,
+      createdAt: 1,
+      lastActiveAt: null,
+    }, IDENTITY);
+
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^proc:/),
+      expect.objectContaining({
+        call: "proc.setidentity",
+        args: expect.objectContaining({ kernelName: "kernel-human-1" }),
+      }),
+    );
   });
 
   it("cleans up pending IPC call when delivery returns an error response", async () => {
@@ -446,7 +480,7 @@ describe("proc handlers", () => {
         title: null,
         isDefault: true,
         activePid: "proc-home",
-        archiveBase: "/home/friday/conversations/default%3A1000%3A2000",
+        archiveBase: DEFAULT_ARCHIVE_BASE,
         latestArchive: null,
         createdAt: 1,
         lastActiveAt: 2,
@@ -480,10 +514,7 @@ describe("proc handlers", () => {
         ),
       },
       env: {
-        STORAGE: {
-          head: vi.fn(async () => null),
-          put: vi.fn(async () => undefined),
-        },
+        STORAGE: makeStorageBucket(),
       },
       procs: {
         get: vi.fn((pid: string) =>
@@ -505,7 +536,7 @@ describe("proc handlers", () => {
       args: {},
     } as RequestFrame, ctx);
 
-    expect(ensureDefault).toHaveBeenCalledWith(human.uid, agent.uid, agent.home);
+    expect(ensureDefault).toHaveBeenCalledWith(human.uid, agent.uid);
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
       "proc-home",
       expect.objectContaining({ call: "proc.history" }),
@@ -657,12 +688,12 @@ describe("proc handlers", () => {
         ok: true,
         pid: "proc-1",
         archivedMessages: 1,
-        archivedTo: "/home/sam-agent/conversations/",
+        archivedTo: "/process-conversation-archives/1000/2000/",
         archives: [{
           conversationId: "default",
           generation: 1,
           messages: 1,
-          path: "/home/sam-agent/conversations/default%3A1000%3A2000/reset.default.gen-1.jsonl.gz",
+          path: `${DEFAULT_ARCHIVE_BASE}/reset.default.gen-1.jsonl.gz`,
         }],
       },
     } satisfies ResponseFrame);
@@ -730,7 +761,7 @@ describe("proc handlers", () => {
           conversationId: "default",
           generation: 1,
           messages: 1,
-          path: "/home/sam-agent/conversations/default%3A1000%3A2000/kill.default.gen-1.jsonl.gz",
+          path: `${DEFAULT_ARCHIVE_BASE}/kill.default.gen-1.jsonl.gz`,
         }],
       },
     } satisfies ResponseFrame);
@@ -744,7 +775,7 @@ describe("proc handlers", () => {
 
     expect(setLatestArchive).toHaveBeenLastCalledWith(
       "default:1000:2000",
-      "/home/sam-agent/conversations/default%3A1000%3A2000/kill.default.gen-1.jsonl.gz",
+      `${DEFAULT_ARCHIVE_BASE}/kill.default.gen-1.jsonl.gz`,
     );
     expect(clearActivePid).toHaveBeenCalledWith("proc-1");
     expect(ctx.runRoutes.delete).toHaveBeenCalledWith("run-active");
@@ -822,6 +853,7 @@ describe("proc handlers", () => {
       shell: "/bin/init",
     };
     const ctx = {
+      kernelName: "kernel-human-2",
       env: {
         STORAGE: makeStorageBucket(),
       },
@@ -866,6 +898,7 @@ describe("proc handlers", () => {
     );
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       call: "proc.setidentity",
+      args: expect.objectContaining({ kernelName: "kernel-human-2" }),
     }));
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       call: "proc.send",
@@ -1189,8 +1222,8 @@ function makeForwardContext(overrides?: {
         title: null,
         isDefault: true,
         activePid: "proc-1",
-        archiveBase: "/home/sam-agent/conversations/default%3A1000%3A2000",
-        latestArchive: "/home/sam-agent/conversations/default%3A1000%3A2000/old.default.gen-1.jsonl.gz",
+        archiveBase: DEFAULT_ARCHIVE_BASE,
+        latestArchive: `${DEFAULT_ARCHIVE_BASE}/old.default.gen-1.jsonl.gz`,
         createdAt: 1,
         lastActiveAt: 2,
       })),
@@ -1329,6 +1362,10 @@ describe("handleProcList", () => {
     } as unknown as KernelContext;
 
     handleProcList({}, ctx);
+    expect(list).toHaveBeenCalledWith(1000);
+
+    list.mockClear();
+    handleProcList({ uid: 2000 }, ctx);
     expect(list).toHaveBeenCalledWith(1000);
   });
 

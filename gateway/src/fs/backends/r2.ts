@@ -21,8 +21,67 @@ import { bindStreamToAbort } from "../../shared/streams";
 
 const READ_BIT = 4;
 const WRITE_BIT = 2;
+const EXEC_BIT = 1;
 const MAX_SEARCH_MATCHES = 500;
 const TEXT_ENCODER = new TextEncoder();
+
+/**
+ * Root-only provisioning primitive for directories created on behalf of an
+ * account. It is create-only and treats an existing marker as success only
+ * when its authoritative ownership and mode already match exactly.
+ */
+export async function provisionR2Directory(
+  bucket: R2Bucket,
+  path: string,
+  owner: Pick<ProcessIdentity, "uid" | "gid">,
+  mode: string,
+): Promise<void> {
+  if (!Number.isSafeInteger(owner.uid) || owner.uid < 0) {
+    throw new Error(`Invalid directory owner uid: ${owner.uid}`);
+  }
+  if (!Number.isSafeInteger(owner.gid) || owner.gid < 0) {
+    throw new Error(`Invalid directory owner gid: ${owner.gid}`);
+  }
+  if (!/^[0-7]{3}$/.test(mode)) {
+    throw new Error(`Invalid directory mode: ${mode}`);
+  }
+
+  const key = toKey(path).replace(/\/+$/, "");
+  if (!key) {
+    throw new Error("Cannot provision the storage root");
+  }
+  if (await bucket.head(key)) {
+    throw new Error(`ENOTDIR: path is already a file, '${normalizePath(path)}'`);
+  }
+
+  const markerKey = directoryMarkerKey(key);
+  const existing = await bucket.head(markerKey);
+  if (existing) {
+    assertProvisionedDirectory(existing, path, owner, mode);
+    return;
+  }
+
+  const created = await bucket.put(markerKey, new ArrayBuffer(0), {
+    onlyIf: { etagDoesNotMatch: "*" },
+    customMetadata: {
+      uid: String(owner.uid),
+      gid: String(owner.gid),
+      mode,
+      dirmarker: "1",
+    },
+  });
+  if (created) {
+    return;
+  }
+
+  // A concurrent provisioner won the create-only write. Accept only the exact
+  // same directory; any other marker is an ownership collision.
+  const raced = await bucket.head(markerKey);
+  if (!raced) {
+    throw new Error(`EAGAIN: directory provisioning raced, '${normalizePath(path)}'`);
+  }
+  assertProvisionedDirectory(raced, path, owner, mode);
+}
 
 export class R2MountBackend implements MountBackend {
   constructor(
@@ -36,6 +95,7 @@ export class R2MountBackend implements MountBackend {
 
   async readFile(path: string): Promise<string> {
     const p = normalizePath(path);
+    await this.assertAncestorAccess(p);
     const key = toKey(p);
     const obj = await this.bucket.get(key);
     if (!obj) throw new Error(`ENOENT: no such file or directory, open '${p}'`);
@@ -47,6 +107,7 @@ export class R2MountBackend implements MountBackend {
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
     const p = normalizePath(path);
+    await this.assertAncestorAccess(p);
     const key = toKey(p);
     const obj = await this.bucket.get(key);
     if (!obj) throw new Error(`ENOENT: no such file or directory, open '${p}'`);
@@ -58,6 +119,7 @@ export class R2MountBackend implements MountBackend {
 
   async openFile(path: string, options?: OpenFileOptions): Promise<OpenFileResult> {
     const p = normalizePath(path);
+    await this.assertAncestorAccess(p);
     const key = toKey(p);
     const getOptions = toR2GetOptions(options);
     const obj: R2ObjectBody | R2Object | null = getOptions?.onlyIf
@@ -99,22 +161,29 @@ export class R2MountBackend implements MountBackend {
 
   async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
     const p = normalizePath(path);
+    await this.assertAncestorAccess(p);
     const key = toKey(p);
     const existing = await this.bucket.head(key);
-    if (existing) this.assertMode(existing, WRITE_BIT, p);
+    if (existing) {
+      this.assertMode(existing, WRITE_BIT, p);
+    } else {
+      await this.assertParentWrite(p);
+    }
 
-    await this.bucket.put(key, content, {
+    const stored = await this.bucket.put(key, content, {
+      onlyIf: writeCondition(existing),
       httpMetadata: {
         contentType: typeof options === "object" && options.contentType
           ? options.contentType
           : inferContentType(p),
       },
-      customMetadata: {
+      customMetadata: existing?.customMetadata ?? {
         uid: String(this.identity.uid),
         gid: String(this.identity.gid),
-        mode: existing?.customMetadata?.mode ?? "644",
+        mode: "644",
       },
     });
+    assertConditionalWrite(stored, p);
   }
 
   async writeFileStream(
@@ -125,26 +194,35 @@ export class R2MountBackend implements MountBackend {
     assertExpectedSize(options?.expectedSize);
     options.signal?.throwIfAborted();
     const p = normalizePath(path);
+    await this.assertAncestorAccess(p);
+    options.signal?.throwIfAborted();
     const key = toKey(p);
     const existing = await this.bucket.head(key);
     options.signal?.throwIfAborted();
-    if (existing) this.assertMode(existing, WRITE_BIT, p);
+    if (existing) {
+      this.assertMode(existing, WRITE_BIT, p);
+    } else {
+      await this.assertParentWrite(p);
+    }
 
     const source = options.signal
       ? bindStreamToAbort(content, options.signal)
       : content;
-    const fixed = new FixedLengthStream(options.expectedSize);
-    const [result] = await Promise.all([
-      this.bucket.put(key, fixed.readable, {
+    const result = await this.putFixedLengthStream(
+      key,
+      source,
+      options.expectedSize,
+      {
+        onlyIf: writeCondition(existing),
         httpMetadata: toR2HttpMetadata(p, options),
-        customMetadata: {
+        customMetadata: existing?.customMetadata ?? {
           uid: String(this.identity.uid),
           gid: String(this.identity.gid),
-          mode: existing?.customMetadata?.mode ?? "644",
+          mode: "644",
         },
-      }),
-      source.pipeTo(fixed.writable),
-    ]);
+      },
+      p,
+    );
 
     return {
       size: result.size,
@@ -154,6 +232,7 @@ export class R2MountBackend implements MountBackend {
 
   async appendFile(path: string, content: FileContent): Promise<void> {
     const p = normalizePath(path);
+    await this.assertAncestorAccess(p);
     const key = toKey(p);
     const existing = await this.bucket.get(key);
 
@@ -161,10 +240,12 @@ export class R2MountBackend implements MountBackend {
       this.assertMode(existing, WRITE_BIT, p);
       const old = new Uint8Array(await existing.arrayBuffer());
       const appended = concatBytes(old, typeof content === "string" ? TEXT_ENCODER.encode(content) : content);
-      await this.bucket.put(key, appended, {
+      const stored = await this.bucket.put(key, appended, {
+        onlyIf: { etagMatches: existing.etag },
         httpMetadata: existing.httpMetadata,
         customMetadata: existing.customMetadata,
       });
+      assertConditionalWrite(stored, p);
       return;
     }
 
@@ -173,6 +254,7 @@ export class R2MountBackend implements MountBackend {
 
   async exists(path: string): Promise<boolean> {
     const p = normalizePath(path);
+    await this.assertAncestorAccess(p);
     const key = toKey(p);
     const head = await this.bucket.head(key);
     if (head) return true;
@@ -188,6 +270,7 @@ export class R2MountBackend implements MountBackend {
 
   async lstat(path: string): Promise<ExtendedMountStat> {
     const p = normalizePath(path);
+    await this.assertAncestorAccess(p);
     const key = toKey(p);
     const head = await this.bucket.head(key);
     if (head) {
@@ -230,6 +313,11 @@ export class R2MountBackend implements MountBackend {
       };
     }
 
+    const marker = await this.bucket.head(directoryMarkerKey(key));
+    if (marker) {
+      return directoryStat(marker);
+    }
+
     const dirPrefix = key.endsWith("/") ? key : key + "/";
     const listed = await this.bucket.list({ prefix: dirPrefix, limit: 1 });
     if (listed.objects.length > 0 || listed.delimitedPrefixes.length > 0) {
@@ -250,6 +338,8 @@ export class R2MountBackend implements MountBackend {
 
   async mkdir(path: string, options?: MkdirOptions): Promise<void> {
     const p = normalizePath(path);
+    await this.assertAncestorAccess(p);
+    await this.assertParentWrite(p);
     const key = toKey(p);
     if (!options?.recursive) {
       const parentKey = key.split("/").slice(0, -1).join("/");
@@ -262,9 +352,15 @@ export class R2MountBackend implements MountBackend {
     const dirKey = key.endsWith("/") ? key : key + "/";
     const markerKey = dirKey + ".dir";
     const existing = await this.bucket.head(markerKey);
-    if (existing && !options?.recursive) throw new Error(`EEXIST: file already exists, mkdir '${p}'`);
+    if (existing) {
+      if (options?.recursive) {
+        return;
+      }
+      throw new Error(`EEXIST: file already exists, mkdir '${p}'`);
+    }
 
-    await this.bucket.put(markerKey, "", {
+    const stored = await this.bucket.put(markerKey, "", {
+      onlyIf: { etagDoesNotMatch: "*" },
       customMetadata: {
         uid: String(this.identity.uid),
         gid: String(this.identity.gid),
@@ -272,11 +368,21 @@ export class R2MountBackend implements MountBackend {
         dirmarker: "1",
       },
     });
+    if (!stored) {
+      if (options?.recursive) return;
+      throw new Error(`EEXIST: file already exists, mkdir '${p}'`);
+    }
   }
 
   async readdir(path: string): Promise<string[]> {
     const p = normalizePath(path);
+    await this.assertAncestorAccess(p);
     const key = toKey(p);
+    const marker = await this.bucket.head(directoryMarkerKey(key));
+    if (marker) {
+      this.assertMode(marker, READ_BIT, p);
+      this.assertMode(marker, EXEC_BIT, p);
+    }
     const prefix = key ? key + "/" : "";
     const listed = await this.bucket.list({ prefix, delimiter: "/" });
 
@@ -300,11 +406,12 @@ export class R2MountBackend implements MountBackend {
 
   async rm(path: string, options?: RmOptions): Promise<void> {
     const p = normalizePath(path);
+    await this.assertAncestorAccess(p);
+    await this.assertParentWrite(p);
     const key = toKey(p);
     const head = await this.bucket.head(key);
     if (head) {
-      this.assertMode(head, WRITE_BIT, p);
-      await this.bucket.delete(key);
+      await this.deleteAuthorizedObject(head, p);
       return;
     }
 
@@ -324,29 +431,15 @@ export class R2MountBackend implements MountBackend {
       }
 
       if (options?.recursive) {
-        let cursor: string | undefined;
-        do {
-          const page = await this.bucket.list({ prefix: dirPrefix, cursor, limit: 100 });
-          if (page.objects.length > 0) {
-            await this.bucket.delete(page.objects.map((o) => o.key));
-          }
-          cursor = page.truncated ? page.cursor : undefined;
-        } while (cursor);
+        await this.deleteAuthorizedPrefix(dirPrefix);
       } else {
-        await this.bucket.delete(markerKey);
+        await this.deleteAuthorizedObject(marker, p);
       }
       return;
     }
 
     if (options?.recursive) {
-      let cursor: string | undefined;
-      do {
-        const listed = await this.bucket.list({ prefix: dirPrefix, cursor, limit: 100 });
-        if (listed.objects.length > 0) {
-          await this.bucket.delete(listed.objects.map((o) => o.key));
-        }
-        cursor = listed.truncated ? listed.cursor : undefined;
-      } while (cursor);
+      await this.deleteAuthorizedPrefix(dirPrefix);
       return;
     }
 
@@ -355,13 +448,16 @@ export class R2MountBackend implements MountBackend {
 
   async symlink(target: string, linkPath: string): Promise<void> {
     const p = normalizePath(linkPath);
+    await this.assertAncestorAccess(p);
+    await this.assertParentWrite(p);
     const key = toKey(p);
     const existing = await this.bucket.head(key);
     if (existing) {
       throw new Error(`EEXIST: file already exists, symlink '${p}'`);
     }
 
-    await this.bucket.put(key, target, {
+    const stored = await this.bucket.put(key, target, {
+      onlyIf: { etagDoesNotMatch: "*" },
       httpMetadata: { contentType: "text/plain" },
       customMetadata: {
         uid: String(this.identity.uid),
@@ -370,13 +466,18 @@ export class R2MountBackend implements MountBackend {
         symlink: "1",
       },
     });
+    if (!stored) {
+      throw new Error(`EEXIST: file already exists, symlink '${p}'`);
+    }
   }
 
   async readlink(path: string): Promise<string> {
     const p = normalizePath(path);
+    await this.assertAncestorAccess(p);
     const obj = await this.bucket.get(toKey(p));
     if (!obj) throw new Error(`ENOENT: no such file or directory, readlink '${p}'`);
     if (!isSymlink(obj)) throw new Error(`EINVAL: invalid argument, readlink '${p}'`);
+    this.assertMode(obj, READ_BIT, p);
     return obj.text();
   }
 
@@ -388,6 +489,7 @@ export class R2MountBackend implements MountBackend {
   ): Promise<FsSearchBackendResult> {
     signal?.throwIfAborted();
     const prefix = normalizePath(path);
+    await this.assertAncestorAccess(prefix);
     const key = toKey(prefix);
     const searchPrefix = prefix.endsWith("/") ? prefix : prefix + "/";
     const needle = query;
@@ -410,6 +512,12 @@ export class R2MountBackend implements MountBackend {
           throwOnDenied: true,
         });
         return { matches, truncated };
+      }
+
+      const marker = await this.bucket.head(directoryMarkerKey(key));
+      if (marker) {
+        this.assertMode(marker, READ_BIT, prefix);
+        this.assertMode(marker, EXEC_BIT, prefix);
       }
     }
 
@@ -484,6 +592,7 @@ export class R2MountBackend implements MountBackend {
     }
 
     try {
+      await this.assertAncestorAccess(displayPath);
       this.assertMode(object, READ_BIT, displayPath);
     } catch (err) {
       if (throwOnDenied) {
@@ -518,7 +627,8 @@ export class R2MountBackend implements MountBackend {
 
   async chmod(path: string, mode: number): Promise<void> {
     const p = normalizePath(path);
-    const key = toKey(p);
+    await this.assertAncestorAccess(p);
+    const key = await this.mutableObjectKey(p);
     const obj = await this.bucket.get(key);
     if (!obj) throw new Error(`ENOENT: no such file or directory, chmod '${p}'`);
 
@@ -528,18 +638,23 @@ export class R2MountBackend implements MountBackend {
     }
 
     const octal = mode.toString(8).padStart(3, "0");
-    const stream = new FixedLengthStream(obj.size);
-    obj.body.pipeTo(stream.writable);
-
-    await this.bucket.put(key, stream.readable, {
-      httpMetadata: obj.httpMetadata,
-      customMetadata: { ...obj.customMetadata, mode: octal },
-    });
+    await this.putFixedLengthStream(
+      key,
+      obj.body as ReadableStream<Uint8Array>,
+      obj.size,
+      {
+        onlyIf: { etagMatches: obj.etag },
+        httpMetadata: obj.httpMetadata,
+        customMetadata: { ...obj.customMetadata, mode: octal },
+      },
+      p,
+    );
   }
 
   async chown(path: string, newUid?: number, newGid?: number): Promise<void> {
     const p = normalizePath(path);
-    const key = toKey(p);
+    await this.assertAncestorAccess(p);
+    const key = await this.mutableObjectKey(p);
     const obj = await this.bucket.get(key);
     if (!obj) throw new Error(`ENOENT: no such file or directory, chown '${p}'`);
 
@@ -551,20 +666,159 @@ export class R2MountBackend implements MountBackend {
     if (newUid !== undefined) meta.uid = String(newUid);
     if (newGid !== undefined) meta.gid = String(newGid);
 
-    const stream = new FixedLengthStream(obj.size);
-    obj.body.pipeTo(stream.writable);
-
-    await this.bucket.put(key, stream.readable, {
-      httpMetadata: obj.httpMetadata,
-      customMetadata: meta,
-    });
+    await this.putFixedLengthStream(
+      key,
+      obj.body as ReadableStream<Uint8Array>,
+      obj.size,
+      {
+        onlyIf: { etagMatches: obj.etag },
+        httpMetadata: obj.httpMetadata,
+        customMetadata: meta,
+      },
+      p,
+    );
   }
 
   async utimes(path: string): Promise<void> {
     const p = normalizePath(path);
-    const key = toKey(p);
+    await this.assertAncestorAccess(p);
+    const key = await this.mutableObjectKey(p);
     const exists = await this.bucket.head(key);
     if (!exists) throw new Error(`ENOENT: no such file or directory, utimes '${p}'`);
+  }
+
+  private async assertAncestorAccess(path: string): Promise<void> {
+    if (this.identity.uid === 0) return;
+
+    const parts = normalizePath(path).split("/").filter(Boolean);
+    for (let end = 1; end < parts.length; end += 1) {
+      const ancestorKey = parts.slice(0, end).join("/");
+      const marker = await this.bucket.head(directoryMarkerKey(ancestorKey));
+      if (marker) {
+        this.assertMode(marker, EXEC_BIT, `/${ancestorKey}`);
+      }
+    }
+  }
+
+  private async assertParentWrite(path: string): Promise<void> {
+    if (this.identity.uid === 0) return;
+
+    const parts = normalizePath(path).split("/").filter(Boolean);
+    if (parts.length <= 1) return;
+
+    const parentKey = parts.slice(0, -1).join("/");
+    const marker = await this.bucket.head(directoryMarkerKey(parentKey));
+    if (!marker) return;
+
+    this.assertMode(marker, EXEC_BIT, `/${parentKey}`);
+    this.assertMode(marker, WRITE_BIT, `/${parentKey}`);
+  }
+
+  private async mutableObjectKey(path: string): Promise<string> {
+    const key = toKey(path);
+    if (await this.bucket.head(key)) {
+      return key;
+    }
+
+    const markerKey = directoryMarkerKey(key);
+    if (await this.bucket.head(markerKey)) {
+      return markerKey;
+    }
+
+    return key;
+  }
+
+  private async putFixedLengthStream(
+    key: string,
+    source: ReadableStream<Uint8Array>,
+    expectedSize: number,
+    options: R2PutOptions & { onlyIf: R2Conditional },
+    path: string,
+  ): Promise<R2Object> {
+    const fixed = new FixedLengthStream(expectedSize);
+    const pipeController = new AbortController();
+    const conditionalError = new Error(`EAGAIN: file changed during write, '${path}'`);
+    const piped = source.pipeTo(fixed.writable, { signal: pipeController.signal });
+    const stored = this.bucket.put(key, fixed.readable, options).then(
+      (result) => {
+        if (!result) {
+          pipeController.abort(conditionalError);
+          throw conditionalError;
+        }
+        return result;
+      },
+      (error) => {
+        pipeController.abort(error);
+        throw error;
+      },
+    );
+
+    try {
+      const [result] = await Promise.all([stored, piped]);
+      return result;
+    } catch (error) {
+      if (!pipeController.signal.aborted) {
+        pipeController.abort(error);
+      }
+      await Promise.allSettled([stored, piped]);
+      throw error;
+    }
+  }
+
+  private async deleteAuthorizedPrefix(prefix: string): Promise<void> {
+    const objects: R2Object[] = [];
+    let cursor: string | undefined;
+
+    do {
+      const page = await this.bucket.list({
+        prefix,
+        cursor,
+        limit: 100,
+        include: ["customMetadata"],
+      });
+      for (const object of page.objects) {
+        this.assertMode(object, WRITE_BIT, `/${object.key}`);
+        if (isDeletionMarker(object)) {
+          throw new Error(`EAGAIN: deletion already in progress, '/${object.key}'`);
+        }
+        objects.push(object);
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+
+    for (const object of objects) {
+      await this.deleteAuthorizedObject(object, `/${object.key}`);
+    }
+  }
+
+  /**
+   * Claim a deletion with an ETag-bound, non-writable tombstone before issuing
+   * R2's unconditional delete. A writer that replaced the authorized object
+   * wins the ETag race and is never deleted by this operation. Once the claim
+   * wins, non-root filesystem writers cannot replace it during the delete
+   * window.
+   */
+  private async deleteAuthorizedObject(object: R2Object, path: string): Promise<void> {
+    if (isDeletionMarker(object)) {
+      throw new Error(`EAGAIN: deletion already in progress, '${path}'`);
+    }
+    this.assertMode(object, WRITE_BIT, path);
+
+    const claimed = await this.bucket.put(object.key, new ArrayBuffer(0), {
+      onlyIf: { etagMatches: object.etag },
+      customMetadata: {
+        ...object.customMetadata,
+        uid: object.customMetadata?.uid ?? "-1",
+        gid: object.customMetadata?.gid ?? "-1",
+        mode: "000",
+        deletionMarker: "1",
+        deleterUid: String(this.identity.uid),
+      },
+    });
+    if (!claimed) {
+      throw new Error(`EAGAIN: file changed during delete, '${path}'`);
+    }
+    await this.bucket.delete(object.key);
   }
 
   private assertMode(obj: R2Object | R2ObjectBody, bit: number, path: string): void {
@@ -596,12 +850,66 @@ function toKey(path: string): string {
   return normalizePath(path).replace(/^\//, "");
 }
 
+function directoryMarkerKey(key: string): string {
+  const normalized = key.replace(/\/+$/, "");
+  return normalized ? `${normalized}/.dir` : ".dir";
+}
+
+function assertProvisionedDirectory(
+  marker: Pick<R2Object, "customMetadata">,
+  path: string,
+  owner: Pick<ProcessIdentity, "uid" | "gid">,
+  mode: string,
+): void {
+  const metadata = marker.customMetadata;
+  if (
+    metadata?.dirmarker !== "1"
+    || metadata.uid !== String(owner.uid)
+    || metadata.gid !== String(owner.gid)
+    || metadata.mode !== mode
+  ) {
+    throw new Error(`EEXIST: directory ownership conflict, '${normalizePath(path)}'`);
+  }
+}
+
+function directoryStat(marker: R2Object | R2ObjectBody): ExtendedMountStat {
+  return {
+    isFile: false,
+    isDirectory: true,
+    isSymbolicLink: false,
+    mode: parseOctalMode(marker.customMetadata?.mode ?? "755"),
+    size: 0,
+    mtime: marker.uploaded,
+    uid: parseInt(marker.customMetadata?.uid ?? "0", 10),
+    gid: parseInt(marker.customMetadata?.gid ?? "0", 10),
+  };
+}
+
+function writeCondition(existing: R2Object | null): R2Conditional {
+  return existing
+    ? { etagMatches: existing.etag }
+    : { etagDoesNotMatch: "*" };
+}
+
+function assertConditionalWrite(
+  stored: R2Object | null,
+  path: string,
+): asserts stored is R2Object {
+  if (!stored) {
+    throw new Error(`EAGAIN: file changed during write, '${path}'`);
+  }
+}
+
 function isDirectoryMarker(obj: R2Object | R2ObjectBody): boolean {
   return obj.customMetadata?.dirmarker === "1" || obj.key.endsWith("/.dir");
 }
 
 function isSymlink(obj: R2Object | R2ObjectBody): boolean {
   return obj.customMetadata?.symlink === "1";
+}
+
+function isDeletionMarker(obj: R2Object | R2ObjectBody): boolean {
+  return obj.customMetadata?.deletionMarker === "1";
 }
 
 function isR2ObjectBody(obj: R2Object | R2ObjectBody): obj is R2ObjectBody {

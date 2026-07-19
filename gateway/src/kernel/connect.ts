@@ -24,6 +24,7 @@ import { SERVER_RELEASE } from "../version";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
 import { USER_CONNECTION_SIGNALS } from "./user-signals";
+import { UNAVAILABLE_LOGIN_SOURCE_SCOPE } from "./login-source";
 
 export type ConnectOutcome =
   | { ok: true; identity: ConnectionIdentity; result: ConnectResult }
@@ -240,6 +241,7 @@ async function resolveIdentity(
 ): Promise<IdentityOutcome> {
   const { auth } = ctx;
   const role = args.client.role;
+  const sourceScope = ctx.loginSourceScope ?? UNAVAILABLE_LOGIN_SOURCE_SCOPE;
 
   if (!args.auth) {
     return { ok: false, error: "Authentication required" };
@@ -257,7 +259,7 @@ async function resolveIdentity(
     }
     const machineRole = role as AuthTokenRole;
 
-    const result = await auth.authenticateToken(username, args.auth.token!, {
+    const result = await auth.authenticateToken(username, args.auth.token!, sourceScope, {
       role: machineRole,
       deviceId: role === "driver" ? args.client.id : undefined,
     });
@@ -266,7 +268,7 @@ async function resolveIdentity(
   }
 
   if (hasToken) {
-    const result = await auth.authenticateToken(username, args.auth.token!, {
+    const result = await auth.authenticateToken(username, args.auth.token!, sourceScope, {
       role: "user",
     });
     if (!result.ok) return { ok: false, error: result.error };
@@ -274,7 +276,7 @@ async function resolveIdentity(
   }
 
   if (!hasPassword) return { ok: false, error: "Password or token required" };
-  const result = await auth.authenticate(username, args.auth.password!);
+  const result = await auth.authenticate(username, args.auth.password!, sourceScope);
   if (!result.ok) return { ok: false, error: result.error };
 
   return { ok: true, identity: withDefaultProcessContext(result.identity) };

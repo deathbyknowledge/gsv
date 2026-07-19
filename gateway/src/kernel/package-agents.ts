@@ -285,7 +285,7 @@ function ensurePackageAgentAccessGroup(ctx: KernelContext, agentUid: number, gro
     return;
   }
 
-  ctx.auth.addGroup({ name: groupName, gid: ctx.auth.nextGid(), members: [] });
+  ctx.auth.addGroup({ name: groupName, gid: ctx.auth.allocateGid(), members: [] });
   ctx.config.set(key, groupName);
 }
 

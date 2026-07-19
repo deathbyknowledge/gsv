@@ -1,5 +1,6 @@
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { GsvFs } from "./fs/gsv-fs";
+import { provisionR2Directory } from "./fs/backends/r2";
 import { inferContentType, normalizePath } from "./fs/utils";
 import type { OpenFileOptions, OpenFileRangeRequest, OpenFileResult } from "./fs/mount";
 
@@ -72,19 +73,12 @@ export function createPublicAssetFileSystem(env: Pick<Env, "STORAGE">): PublicAs
 }
 
 export async function ensurePublicAssetStorageLayout(env: Pick<Env, "STORAGE">): Promise<void> {
-  const marker = "public/.dir";
-  if (await env.STORAGE.head(marker)) {
-    return;
-  }
-
-  await env.STORAGE.put(marker, new ArrayBuffer(0), {
-    customMetadata: {
-      uid: String(PUBLIC_ASSET_IDENTITY.uid),
-      gid: String(PUBLIC_ASSET_IDENTITY.gid),
-      mode: "755",
-      dirmarker: "1",
-    },
-  });
+  await provisionR2Directory(
+    env.STORAGE,
+    PUBLIC_ASSET_FS_ROOT,
+    PUBLIC_ASSET_IDENTITY,
+    "755",
+  );
 }
 
 export async function servePublicAssetRequest(

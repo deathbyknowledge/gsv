@@ -1,3 +1,4 @@
+import { R2MountBackend } from "../../../fs/backends/r2";
 import { accountHomeRepoRef } from "../../../fs/ripgit/repos";
 import type { PromptAssemblyInput, PromptSection } from "../types";
 
@@ -56,24 +57,30 @@ export async function collectAccountContext(
     }
   }
 
-  const homeKey = account.home.replace(/^\//, "");
-  const contextPrefix = `${homeKey}/context.d/`;
-  const listed = await input.storage.list({ prefix: contextPrefix });
-  const contextFiles = listed.objects
-    .filter((object) => object.key.endsWith(".md"))
-    .map((object) => ({
-      key: object.key,
-      name: object.key.slice(contextPrefix.length),
-    }))
-    .sort((left, right) => left.name.localeCompare(right.name));
+  const fallback = new R2MountBackend(input.storage, account);
+  let contextFiles: string[];
+  try {
+    contextFiles = (await fallback.readdir(contextRoot.location))
+      .filter((name) => name.endsWith(".md"))
+      .sort((left, right) => left.localeCompare(right));
+  } catch (error) {
+    if (isMissingPath(error)) {
+      return sections;
+    }
+    throw error;
+  }
 
   let usedBytes = 0;
-  for (const file of contextFiles) {
-    const object = await input.storage.get(file.key);
-    if (!object) {
-      continue;
+  for (const name of contextFiles) {
+    let text: string;
+    try {
+      text = (await fallback.readFile(`${contextRoot.location}/${name}`)).trim();
+    } catch (error) {
+      if (isMissingPath(error)) {
+        continue;
+      }
+      throw error;
     }
-    const text = (await object.text()).trim();
     if (!text) {
       continue;
     }
@@ -81,13 +88,17 @@ export async function collectAccountContext(
     const bytes = TEXT_ENCODER.encode(text).length;
     if (usedBytes + bytes > input.config.maxContextBytes) {
       console.warn(
-        `[Prompt] ${warningLabel} budget exceeded at ${file.name}, skipping remaining`,
+        `[Prompt] ${warningLabel} budget exceeded at ${name}, skipping remaining`,
       );
       break;
     }
     usedBytes += bytes;
-    sections.push({ name: file.name, text, contextRoot });
+    sections.push({ name, text, contextRoot });
   }
 
   return sections;
+}
+
+function isMissingPath(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("ENOENT:");
 }

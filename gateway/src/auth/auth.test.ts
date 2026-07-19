@@ -1,10 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   parsePasswd,
   serializePasswd,
   findByUsername as findPasswdUser,
   findByUid,
-  nextUid,
 } from "./passwd";
 import {
   parseShadow,
@@ -21,7 +20,6 @@ import {
   findByName,
   findByGid,
   resolveGids,
-  nextGid,
 } from "./group";
 
 // ---------------------------------------------------------------------------
@@ -88,15 +86,6 @@ describe("passwd", () => {
     expect(findByUid(entries, 9999)).toBeUndefined();
   });
 
-  it("nextUid returns 1000 when max uid < 1000", () => {
-    const entries = parsePasswd("root:x:0:0:root:/root:/bin/sh\n");
-    expect(nextUid(entries)).toBe(1000);
-  });
-
-  it("nextUid increments past existing uids >= 1000", () => {
-    const entries = parsePasswd(SAMPLE);
-    expect(nextUid(entries)).toBe(1002);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -219,6 +208,26 @@ describe("shadow", () => {
     expect(await verify("pw", hash)).toBe(true);
   });
 
+  it("hashPassword rejects iteration counts outside the verification policy", async () => {
+    await expect(hashPassword("pw", 999)).rejects.toThrow(/iterations/i);
+    await expect(hashPassword("pw", 1_000_001)).rejects.toThrow(/iterations/i);
+  });
+
+  it("rejects out-of-policy PBKDF2 records before deriving work", async () => {
+    const deriveBits = vi.spyOn(crypto.subtle, "deriveBits");
+    const salt = "AAAAAAAAAAAAAAAAAAAAAA==";
+    const hash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
+
+    await expect(
+      verify("password", `$pbkdf2-sha512$1000001$${salt}$${hash}`),
+    ).resolves.toBe(false);
+    await expect(
+      verify("password", `$pbkdf2-sha512$100000$${"A".repeat(1024)}$${hash}`),
+    ).resolves.toBe(false);
+    expect(deriveBits).not.toHaveBeenCalled();
+    deriveBits.mockRestore();
+  });
+
   // -- Unified verify edge cases --
 
   it("verify returns false for locked accounts", async () => {
@@ -312,13 +321,4 @@ describe("group", () => {
     expect(gids).toEqual([500]);
   });
 
-  it("nextGid returns 100 when max gid < 100", () => {
-    const entries = parseGroup("root:x:0:root\n");
-    expect(nextGid(entries)).toBe(100);
-  });
-
-  it("nextGid increments past existing gids >= 100", () => {
-    const entries = parseGroup(SAMPLE);
-    expect(nextGid(entries)).toBe(103);
-  });
 });

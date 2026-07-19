@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import type { ConnectionIdentity, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { ensurePersonalAgent, handleAccountCreate, handleAccountList } from "./agents";
+import { createProvisioningR2BucketMock } from "../test-support/mock-r2";
 
 type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
 type GroupRow = { name: string; gid: number; members: string[] };
@@ -35,7 +36,7 @@ function createCtx() {
       const found = passwd.find((u) => u.uid === uid);
       return found ? { ...found } : null;
     }),
-    nextUid: vi.fn(() => Math.max(999, ...passwd.map((u) => u.uid)) + 1),
+    allocateUid: vi.fn(() => Math.max(999, ...passwd.map((u) => u.uid)) + 1),
     addUser: vi.fn((entry: PasswdRow) => {
       passwd.push({ ...entry, gecos: entry.gecos ?? entry.username, shell: entry.shell ?? "/bin/init" });
     }),
@@ -81,10 +82,7 @@ function createCtx() {
     }),
   };
 
-  const storage = {
-    head: vi.fn(async () => null),
-    put: vi.fn(async () => {}),
-  };
+  const storage = createProvisioningR2BucketMock();
   const ripgit = {
     fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
@@ -281,6 +279,11 @@ describe("handleAccountCreate", () => {
     const { ctxFor } = createCtx();
     const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
 
+    await expect(
+      handleAccountCreate({ kind: "human", username: "bob", password: "password-123" }, ctx),
+    ).rejects.toThrow(/root/i);
+
+    ctx.identity!.capabilities = ["*"];
     await expect(
       handleAccountCreate({ kind: "human", username: "bob", password: "password-123" }, ctx),
     ).rejects.toThrow(/root/i);

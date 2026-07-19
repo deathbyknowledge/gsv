@@ -220,7 +220,6 @@ describe("CapabilityStore", () => {
       "sched.*",
       "shell.*",
       "signal.*",
-      "sys.bootstrap",
       "sys.config.get",
       "sys.config.set",
       "sys.device.delete",
@@ -297,6 +296,15 @@ describe("CapabilityStore", () => {
     const result = store.grant(100, "not valid!");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain("Invalid capability format");
+  });
+
+  it("reserves wildcard capability for the root group", () => {
+    expect(store.grant(1000, "*")).toEqual({
+      ok: false,
+      error: "Wildcard capability is reserved for root",
+    });
+    expect(store.list(1000)).toEqual([]);
+    expect(store.grant(0, "*")).toEqual({ ok: true });
   });
 
   it("revoke removes a capability", () => {

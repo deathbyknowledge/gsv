@@ -8,6 +8,7 @@ import {
   type PackageRuntimeAccess,
 } from "./kernel/packages";
 import { encodeBase64Bytes } from "./shared/base64";
+import { SHIP_KERNEL_NAME } from "./shared/utils";
 import type { AppFrameContext, PackageAppSignalWatchInfo } from "./protocol/app-frame";
 import { buildAppRunnerName } from "./protocol/app-session";
 import type { RequestFrame, ResponseFrame } from "./protocol/frames";
@@ -308,7 +309,7 @@ export class GsvApiBinding extends WorkerEntrypoint<Env, GsvApiBindingProps> {
     args?: unknown,
     options: { body?: BinaryBody } = {},
   ): Promise<{ data: unknown; body?: BinaryBody }> {
-    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
+    const kernel = await getAgentByName(this.env.KERNEL, SHIP_KERNEL_NAME) as KernelAppStub;
     return await requestAppKernelFrame(kernel, appFrame, call, args, options);
   }
 
@@ -656,7 +657,7 @@ export class AppRunner extends DurableObject<Env> {
     if (!call) {
       throw new AppSocketError(400, "kernel.request requires call");
     }
-    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
+    const kernel = await getAgentByName(this.env.KERNEL, SHIP_KERNEL_NAME) as KernelAppStub;
     return await requestAppKernelFrame(kernel, client.appFrame, call, record?.args, { body });
   }
 

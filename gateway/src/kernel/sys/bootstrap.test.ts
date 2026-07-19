@@ -161,6 +161,33 @@ describe("handleSysBootstrap", () => {
     });
   });
 
+  it("rejects a normal user even when the syscall reaches the handler", async () => {
+    const ctx = makeContext();
+    ctx.identity = {
+      role: "user",
+      process: {
+        uid: 1000,
+        gid: 1000,
+        gids: [1000, 100],
+        username: "alice",
+        home: "/home/alice",
+        cwd: "/home/alice",
+      },
+      capabilities: ["sys.bootstrap"],
+    };
+
+    await expect(handleSysBootstrap(undefined, ctx)).rejects.toThrow(
+      "system bootstrap requires root",
+    );
+    expect(importFromUpstreamMock).not.toHaveBeenCalled();
+
+    ctx.identity.capabilities = ["*"];
+    await expect(handleSysBootstrap(undefined, ctx)).rejects.toThrow(
+      "system bootstrap requires root",
+    );
+    expect(importFromUpstreamMock).not.toHaveBeenCalled();
+  });
+
   it("pins the default root/gsv source to a stable gateway release", async () => {
     vi.resetModules();
     vi.doMock("../../version", () => ({ SERVER_RELEASE: "v0.4.0" }));

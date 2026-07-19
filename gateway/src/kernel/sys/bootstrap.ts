@@ -66,6 +66,12 @@ export async function handleSysBootstrap(
   if (!ctx.identity) {
     throw new Error("Authenticated identity required");
   }
+  const commissioningBootstrap =
+    ctx.identity.capabilities.includes("*")
+    && ctx.auth?.isSetupMode?.() === true;
+  if (ctx.identity.process.uid !== 0 && !commissioningBootstrap) {
+    throw new Error("Permission denied: system bootstrap requires root");
+  }
   const actorName = ctx.identity.process.username;
   const startedAt = Date.now();
   const timings: BootstrapTiming[] = [];

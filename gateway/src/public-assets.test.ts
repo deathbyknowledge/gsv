@@ -125,13 +125,21 @@ function resolveRange(request: OpenFileRangeRequest | undefined, total: number):
 
 describe("public asset serving", () => {
   it("creates the public directory marker during storage setup", async () => {
-    const writes: Array<{ key: string; metadata: Record<string, string> | undefined }> = [];
+    const writes: Array<{
+      key: string;
+      metadata: Record<string, string> | undefined;
+      onlyIf: R2Conditional | Headers | undefined;
+    }> = [];
     const env = {
       STORAGE: {
         head: async () => null,
-        put: async (key: string, _value: unknown, options?: { customMetadata?: Record<string, string> }) => {
-          writes.push({ key, metadata: options?.customMetadata });
-          return null;
+        put: async (key: string, _value: unknown, options?: R2PutOptions) => {
+          writes.push({
+            key,
+            metadata: options?.customMetadata,
+            onlyIf: options?.onlyIf,
+          });
+          return {} as R2Object;
         },
       },
     } as unknown as Pick<Env, "STORAGE">;
@@ -146,6 +154,7 @@ describe("public asset serving", () => {
         mode: "755",
         dirmarker: "1",
       },
+      onlyIf: { etagDoesNotMatch: "*" },
     }]);
   });
 

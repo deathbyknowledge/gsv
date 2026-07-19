@@ -1,6 +1,7 @@
 import { RipgitClient, type RipgitApplyOp } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { provisionR2Directory } from "../fs/backends/r2";
 import {
   DEFAULT_BOOT_CONTEXT_TEMPLATE,
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
@@ -254,23 +255,5 @@ async function ensureHomeDir(
   uid: number,
   gid: number,
 ): Promise<void> {
-  const normalized = home.replace(/^\/+/, "").replace(/\/+$/, "");
-  if (!normalized) {
-    return;
-  }
-
-  const marker = `${normalized}/.dir`;
-  const existing = await bucket.head(marker);
-  if (existing) {
-    return;
-  }
-
-  await bucket.put(marker, new ArrayBuffer(0), {
-    customMetadata: {
-      uid: String(uid),
-      gid: String(gid),
-      mode: "750",
-      dirmarker: "1",
-    },
-  });
+  await provisionR2Directory(bucket, home, { uid, gid }, "750");
 }

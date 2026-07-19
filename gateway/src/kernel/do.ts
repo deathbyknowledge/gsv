@@ -112,13 +112,25 @@ import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import { SERVER_VERSION } from "../version";
+import {
+  deriveLoginSourceScope,
+  UNAVAILABLE_LOGIN_SOURCE_SCOPE,
+  type LoginSourceScope,
+} from "./login-source";
+import {
+  isProcessIdentity,
+  processIdentityEquals,
+  type ProcessAuthorityResult,
+} from "../shared/process-authority";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
+const GIT_REPO_SEGMENT_MAX_CHARACTERS = 128;
 
 type ConnectionState = {
   step: "pending" | "connected" | "superseded";
+  loginSourceScope?: LoginSourceScope;
   identity?: ConnectionIdentity;
   clientId?: string;
   clientPlatform?: string;
@@ -163,6 +175,7 @@ type AuthorizeGitHttpInput = {
   owner: string;
   repo: string;
   write: boolean;
+  trustedSourceAddress?: string;
   username?: string;
   credential?: string;
 };
@@ -406,8 +419,15 @@ export class Kernel extends Host<Env> {
     return false;
   }
 
-  onConnect(connection: Connection): void {
-    const state: ConnectionState = { step: "pending" };
+  async onConnect(
+    connection: Connection<ConnectionState>,
+    ctx: ConnectionContext,
+  ): Promise<void> {
+    const loginSourceScope = await deriveLoginSourceScope(
+      this.config,
+      ctx.request.headers.get("CF-Connecting-IP"),
+    );
+    const state: ConnectionState = { step: "pending", loginSourceScope };
     connection.setState(state);
   }
 
@@ -540,6 +560,77 @@ export class Kernel extends Host<Env> {
     }
 
     return null;
+  }
+
+  /**
+   * Internal Process-DO handshake for upgrading executors that predate the
+   * persisted human owner identity. The registry binds the pid to its run-as
+   * identity and owner uid; AuthStore is authoritative for both accounts.
+   */
+  resolveProcessAuthority(
+    processId: string,
+    claimedIdentity: unknown,
+  ): ProcessAuthorityResult {
+    if (typeof processId !== "string" || processId.length === 0) {
+      return { ok: false, error: "invalid process id" };
+    }
+    if (!isProcessIdentity(claimedIdentity)) {
+      return { ok: false, error: "invalid process identity claim" };
+    }
+
+    const record = this.procs.get(processId);
+    if (!record) {
+      return { ok: false, error: "process registry record not found" };
+    }
+    const registryIdentity: ProcessIdentity = {
+      uid: record.uid,
+      gid: record.gid,
+      gids: record.gids,
+      username: record.username,
+      home: record.home,
+      cwd: record.cwd,
+    };
+    if (!processIdentityEquals(registryIdentity, claimedIdentity, { includeCwd: true })) {
+      return { ok: false, error: "process identity does not match registry" };
+    }
+
+    const runAsEntry = this.auth.getPasswdByUid(record.uid);
+    if (!runAsEntry) {
+      return { ok: false, error: "process run-as account not found" };
+    }
+    const runAsIdentity: ProcessIdentity = {
+      uid: runAsEntry.uid,
+      gid: runAsEntry.gid,
+      gids: this.auth.resolveGids(runAsEntry.username, runAsEntry.gid),
+      username: runAsEntry.username,
+      home: runAsEntry.home,
+      cwd: record.cwd,
+    };
+    if (!processIdentityEquals(registryIdentity, runAsIdentity, { includeCwd: true })) {
+      return { ok: false, error: "process registry identity does not match auth store" };
+    }
+
+    const ownerEntry = this.auth.getPasswdByUid(record.ownerUid);
+    if (!ownerEntry) {
+      return { ok: false, error: "process owner account not found" };
+    }
+    const ownerIdentity: ProcessIdentity = {
+      uid: ownerEntry.uid,
+      gid: ownerEntry.gid,
+      gids: this.auth.resolveGids(ownerEntry.username, ownerEntry.gid),
+      username: ownerEntry.username,
+      home: ownerEntry.home,
+      cwd: ownerEntry.home,
+    };
+
+    return {
+      ok: true,
+      authority: {
+        processId,
+        identity: registryIdentity,
+        ownerIdentity,
+      },
+    };
   }
 
   async requestProcessNetFetch(
@@ -756,25 +847,32 @@ export class Kernel extends Host<Env> {
   }
 
   async authorizeGitHttp(input: AuthorizeGitHttpInput): Promise<AuthorizeGitHttpResult> {
-    const owner = input.owner.trim();
-    const repo = input.repo.trim();
-    const username = input.username?.trim() ?? "";
-    const credential = input.credential?.trim() ?? "";
-    const isPublicRead = !input.write && isRepoPublic({ owner, repo }, this.config);
+    const owner = normalizeGitRepoSegment(input.owner);
+    const repo = normalizeGitRepoSegment(input.repo);
+    const username = typeof input.username === "string" ? input.username : "";
+    const credential = typeof input.credential === "string" ? input.credential : "";
 
     if (!owner || !repo) {
       return { ok: false, status: 401, message: "Authentication required" };
     }
+
+    const isPublicRead = !input.write && isRepoPublic({ owner, repo }, this.config);
+    const loginSourceScope = await deriveLoginSourceScope(
+      this.config,
+      input.trustedSourceAddress,
+    );
 
     if (!username || !credential) {
       if (!isPublicRead) {
         return { ok: false, status: 401, message: "Authentication required" };
       }
     } else {
-      const passwordAuth = await this.auth.authenticate(username, credential);
-      const auth = passwordAuth.ok
-        ? passwordAuth
-        : await this.auth.authenticateToken(username, credential, { role: "user" });
+      const auth = await this.auth.authenticatePasswordOrToken(
+        username,
+        credential,
+        loginSourceScope,
+        { role: "user" },
+      );
 
       if (auth.ok) {
         const capabilities = this.caps.resolve(auth.identity.gids);
@@ -1278,12 +1376,14 @@ export class Kernel extends Host<Env> {
     if (!state) throw new Error("Connection state is missing");
     return this.buildKernelContext({
       connection,
+      loginSourceScope: state.loginSourceScope ?? UNAVAILABLE_LOGIN_SOURCE_SCOPE,
       identity: state.identity as ConnectionIdentity | undefined,
     });
   }
 
   private buildKernelContext(options: {
     connection?: Connection | null;
+    loginSourceScope?: LoginSourceScope;
     identity?: ConnectionIdentity;
     processId?: string;
     processRunId?: string;
@@ -1293,6 +1393,7 @@ export class Kernel extends Host<Env> {
   }): KernelContext {
     return {
       env: this.env,
+      kernelName: this.name,
       auth: this.auth,
       caps: this.caps,
       config: this.config,
@@ -1312,6 +1413,7 @@ export class Kernel extends Host<Env> {
       notifications: this.notifications,
       schedules: this.schedules,
       connection: options.connection ?? null,
+      loginSourceScope: options.loginSourceScope ?? UNAVAILABLE_LOGIN_SOURCE_SCOPE,
       identity: options.identity,
       processId: options.processId,
       processRunId: options.processRunId,
@@ -3054,6 +3156,15 @@ function normalizeRequestCancelReason(reason: string | undefined): string {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function normalizeGitRepoSegment(value: unknown): string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= GIT_REPO_SEGMENT_MAX_CHARACTERS
+    && /^[A-Za-z0-9._-]+$/.test(value)
+    ? value
+    : "";
 }
 
 function scheduleResultSummary(record: ScheduleRecord, result: unknown): string {

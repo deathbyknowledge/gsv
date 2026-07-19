@@ -9,8 +9,120 @@ import { RipgitClient } from "../../fs";
 import { seedRepoSkillsToHome } from "./skills-seed";
 import { ensurePersonalAgent } from "../agents";
 import { provisionEnabledPackagesForCaller } from "../package-agents";
+import { ACCOUNT_USERNAME_RE } from "../../auth/login";
 
-const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
+const SETUP_COMMISSIONING_STATE_KEY = "internal/setup/commissioning";
+
+type SetupCommissioningStatus = "in-progress" | "retryable" | "blocked" | "completed";
+
+type SetupCommissioningState = {
+  version: 1;
+  attemptId: string;
+  status: SetupCommissioningStatus;
+  startedAt: number;
+  updatedAt: number;
+  mutationStarted: boolean;
+};
+
+function parseSetupCommissioningState(raw: string | null): SetupCommissioningState | null {
+  if (raw === null) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("System setup state is invalid; recovery required");
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("System setup state is invalid; recovery required");
+  }
+
+  const state = parsed as Partial<SetupCommissioningState>;
+  if (
+    state.version !== 1 ||
+    typeof state.attemptId !== "string" ||
+    state.attemptId.length === 0 ||
+    !["in-progress", "retryable", "blocked", "completed"].includes(state.status ?? "") ||
+    typeof state.startedAt !== "number" ||
+    !Number.isFinite(state.startedAt) ||
+    typeof state.updatedAt !== "number" ||
+    !Number.isFinite(state.updatedAt) ||
+    typeof state.mutationStarted !== "boolean"
+  ) {
+    throw new Error("System setup state is invalid; recovery required");
+  }
+
+  return state as SetupCommissioningState;
+}
+
+function readSetupCommissioningState(config: KernelContext["config"]): SetupCommissioningState | null {
+  return parseSetupCommissioningState(config.get(SETUP_COMMISSIONING_STATE_KEY));
+}
+
+function setupStateConflict(state: SetupCommissioningState): Error {
+  switch (state.status) {
+    case "in-progress":
+      return new Error("System setup is already in progress");
+    case "blocked":
+      return new Error("System setup is blocked after an interrupted attempt; recovery required");
+    case "completed":
+      return new Error("System already initialized");
+    case "retryable":
+      throw new Error("retryable setup state does not conflict");
+  }
+}
+
+/**
+ * Claim commissioning synchronously before the first external await.
+ *
+ * ConfigStore writes to the Kernel DO's SQLite database synchronously. Durable
+ * Objects do not interleave another event until this handler awaits, so this
+ * read/write pair is the setup ownership boundary without holding a lock over
+ * any external I/O.
+ */
+function claimSetupCommissioning(config: KernelContext["config"]): SetupCommissioningState {
+  const existing = readSetupCommissioningState(config);
+  if (existing && existing.status !== "retryable") {
+    throw setupStateConflict(existing);
+  }
+
+  const now = Date.now();
+  const claimed: SetupCommissioningState = {
+    version: 1,
+    attemptId: crypto.randomUUID(),
+    status: "in-progress",
+    startedAt: now,
+    updatedAt: now,
+    mutationStarted: false,
+  };
+  config.set(SETUP_COMMISSIONING_STATE_KEY, JSON.stringify(claimed));
+  return claimed;
+}
+
+function transitionSetupCommissioning(
+  config: KernelContext["config"],
+  claimed: SetupCommissioningState,
+  status: SetupCommissioningStatus,
+  mutationStarted: boolean,
+): SetupCommissioningState {
+  const current = readSetupCommissioningState(config);
+  if (
+    !current ||
+    current.status !== "in-progress" ||
+    current.attemptId !== claimed.attemptId
+  ) {
+    throw new Error("System setup ownership was lost; recovery required");
+  }
+
+  const next: SetupCommissioningState = {
+    ...current,
+    status,
+    mutationStarted,
+    updatedAt: Date.now(),
+  };
+  config.set(SETUP_COMMISSIONING_STATE_KEY, JSON.stringify(next));
+  return next;
+}
 
 type SetupTiming = {
   label: string;
@@ -75,7 +187,7 @@ function ensureSingleUserBootstrap(passwd: PasswdEntry[]): void {
 function parseSetupIdentity(args: SysSetupArgs): { username: string; password: string } {
   const raw = args as Record<string, unknown>;
   const username = readRequiredString(raw.username, "username");
-  if (!USERNAME_RE.test(username)) {
+  if (!ACCOUNT_USERNAME_RE.test(username)) {
     throw new Error(
       "username must match ^[a-z_][a-z0-9_-]{0,31}$",
     );
@@ -96,7 +208,7 @@ function parseSetupAgentName(
 ): string | undefined {
   const agentName = readOptionalString(value);
   if (!agentName) return undefined;
-  if (!USERNAME_RE.test(agentName)) {
+  if (!ACCOUNT_USERNAME_RE.test(agentName)) {
     throw new Error("agentName must match ^[a-z_][a-z0-9_-]{0,31}$");
   }
   if (agentName === username) {
@@ -185,36 +297,42 @@ export async function handleSysSetup(
   }
   const agentName = parseSetupAgentName(auth, (args as Record<string, unknown>).agentName, username);
 
-  const uid = auth.nextUid();
-  // User Private Group (UPG): each user gets a unique primary group with gid = uid.
-  // Shared capabilities still flow through supplementary membership in `users` (gid 100).
-  const gid = uid;
-  const home = `/home/${username}`;
-  const bootstrapProcessIdentity: ProcessIdentity = {
-    uid,
-    gid,
-    gids: [gid],
-    username,
-    home,
-    cwd: home,
-  };
-  const rootProcessIdentity: ProcessIdentity = {
-    uid: 0,
-    gid: 0,
-    gids: [0],
-    username: "root",
-    home: "/root",
-    cwd: "/root",
-  };
-  const bootstrapIdentity: UserIdentity = {
-    role: "user",
-    process: bootstrapProcessIdentity,
-    capabilities: ["*"],
-  };
   let bootstrap: SysSetupResult["bootstrap"];
   let nodeToken: SysSetupResult["nodeToken"];
+  const commissioning = claimSetupCommissioning(config);
+  let mutationStarted = false;
 
   try {
+    transitionSetupCommissioning(config, commissioning, "in-progress", true);
+    mutationStarted = true;
+
+    const uid = auth.allocateUid();
+    // User Private Group (UPG): each user gets a unique primary group with gid = uid.
+    // Shared capabilities still flow through supplementary membership in `users` (gid 100).
+    const gid = uid;
+    const home = `/home/${username}`;
+    const bootstrapProcessIdentity: ProcessIdentity = {
+      uid,
+      gid,
+      gids: [gid],
+      username,
+      home,
+      cwd: home,
+    };
+    const rootProcessIdentity: ProcessIdentity = {
+      uid: 0,
+      gid: 0,
+      gids: [0],
+      username: "root",
+      home: "/root",
+      cwd: "/root",
+    };
+    const bootstrapIdentity: UserIdentity = {
+      role: "user",
+      process: bootstrapProcessIdentity,
+      capabilities: ["*"],
+    };
+
     if (ctx.env.RIPGIT) {
       bootstrap = await timeSetupStep(
         timings,
@@ -353,6 +471,8 @@ export async function handleSysSetup(
     const rootShadow = auth.getShadowByUsername("root");
     const rootLocked = rootShadow ? isLocked(rootShadow) : true;
 
+    transitionSetupCommissioning(config, commissioning, "completed", true);
+
     console.info(
       `[sys.setup] user=${username} completed in ${Date.now() - startedAt}ms (${formatSetupTimings(timings)})`,
     );
@@ -369,6 +489,18 @@ export async function handleSysSetup(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    try {
+      transitionSetupCommissioning(
+        config,
+        commissioning,
+        mutationStarted ? "blocked" : "retryable",
+        mutationStarted,
+      );
+    } catch (stateError) {
+      console.error(
+        `[sys.setup] failed to persist commissioning outcome: ${stateError instanceof Error ? stateError.message : String(stateError)}`,
+      );
+    }
     console.error(
       `[sys.setup] user=${requestedUsername} failed after ${Date.now() - startedAt}ms (${formatSetupTimings(timings)}): ${message}`,
     );

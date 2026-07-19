@@ -18,6 +18,7 @@ import type {
 } from "../protocol/app-frame";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { decodeBase64Bytes } from "../shared/base64";
+import { SHIP_KERNEL_NAME } from "../shared/utils";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 
 /**
@@ -187,7 +188,7 @@ export class KernelBinding extends WorkerEntrypoint<Env, KernelBindingProps> {
     args: ArgsOf<S>,
     options: { body?: BinaryBody } = {},
   ): Promise<{ data: ResultOf<S>; body?: BinaryBody }> {
-    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
+    const kernel = await getAgentByName(this.env.KERNEL, SHIP_KERNEL_NAME) as KernelAppStub;
     const frame: RequestFrame<S> = {
       type: "req",
       id: crypto.randomUUID(),
@@ -310,6 +311,7 @@ export interface PackageInstallRecordInput extends Omit<InstalledPackageRecord, 
 export const DEFAULT_PACKAGE_COMPATIBILITY_DATE = "2026-01-28";
 
 const TEXT_DECODER = new TextDecoder();
+const TEXT_ENCODER = new TextEncoder();
 
 export function packageRouteBase(packageName: string): string {
   return `/apps/${packageName}`;
@@ -354,9 +356,31 @@ export function packageScopeEquals(
 }
 
 const PACKAGE_ARTIFACT_PREFIX = "runtime/package-artifacts";
+const PACKAGE_ARTIFACT_LOADER_VERSION = 1;
 const PACKAGE_PUBLIC_HASH_PLACEHOLDER = "__GSV_ARTIFACT_HASH__";
 const PACKAGE_PUBLIC_BASE_PLACEHOLDER = "/public/gsv/packages/__GSV_ARTIFACT_HASH__";
+const PACKAGE_NPM_PUBLIC_BASE = "/public/lib/npm/";
 const PUBLIC_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable";
+const CANONICAL_PACKAGE_ARTIFACT_HASH = /^sha256:[0-9a-f]{64}$/;
+const PACKAGE_MODULE_KINDS = new Set<PackageModuleKind>([
+  "esm",
+  "commonjs",
+  "text",
+  "json",
+  "data",
+]);
+
+type PackagePublicFileWrite = {
+  key: string;
+  relativePath: string;
+  content: string | Uint8Array;
+  options: R2PutOptions;
+};
+
+type PackageArtifactLoaderRecord = PackageArtifact & {
+  loaderVersion: typeof PACKAGE_ARTIFACT_LOADER_VERSION;
+  publicFiles: PackagePublicFileDef[];
+};
 
 export function artifactMetadataFromArtifact(artifact: PackageArtifact): PackageArtifactMetadata {
   return {
@@ -366,12 +390,13 @@ export function artifactMetadataFromArtifact(artifact: PackageArtifact): Package
     compatibilityFlags: artifact.compatibilityFlags,
     modulePaths: artifact.modules.map((module) => module.path),
     publicFilePaths: artifact.publicFiles?.map((file) =>
-      resolvePackagePublicFilePath(artifact.hash, file.path)
+      resolvePackagePublicFileDestination(artifact.hash, file.path).relativePath
     ) ?? [],
   };
 }
 
 export function packageArtifactStorageKey(hash: string): string {
+  assertCanonicalPackageArtifactHash(hash);
   return `${PACKAGE_ARTIFACT_PREFIX}/${encodeURIComponent(hash)}.json`;
 }
 
@@ -383,9 +408,47 @@ export function packageArtifactPublicBase(hash: string): string {
   return `/public/gsv/packages/${packageArtifactPublicSegment(hash)}`;
 }
 
-export async function storePackageArtifact(bucket: R2Bucket, artifact: PackageArtifact): Promise<void> {
-  await storePackagePublicFiles(bucket, artifact);
-  await bucket.put(
+export async function computePackageArtifactHash(artifact: PackageArtifact): Promise<string> {
+  const normalized = normalizePackageArtifact(artifact);
+  return computeNormalizedPackageArtifactHash(normalized);
+}
+
+export async function validatePackageArtifact(
+  value: unknown,
+  expectedHash?: string,
+): Promise<PackageArtifact> {
+  if (expectedHash !== undefined) {
+    assertCanonicalPackageArtifactHash(expectedHash);
+  }
+  const artifact = normalizePackageArtifact(value);
+  const computedHash = await computeNormalizedPackageArtifactHash(artifact);
+  if (artifact.hash !== computedHash) {
+    throw new Error(
+      `Package artifact hash mismatch: claimed ${artifact.hash}, computed ${computedHash}`,
+    );
+  }
+  if (expectedHash !== undefined && artifact.hash !== expectedHash) {
+    throw new Error(
+      `Package artifact identity mismatch: requested ${expectedHash}, stored ${artifact.hash}`,
+    );
+  }
+  return artifact;
+}
+
+export async function storePackageArtifact(bucket: R2Bucket, value: PackageArtifact): Promise<void> {
+  const artifact = await validatePackageArtifact(value);
+  await persistPackageArtifact(bucket, artifact);
+}
+
+async function persistPackageArtifact(bucket: R2Bucket, artifact: PackageArtifact): Promise<void> {
+  const publicFiles = packagePublicFileWrites(artifact);
+
+  await mapWithConcurrency(publicFiles, PACKAGE_PUBLIC_FILE_WRITE_CONCURRENCY, async (file) => {
+    await putPackageObjectCreateOnly(bucket, file.key, file.content, file.options);
+  });
+
+  await putPackageObjectCreateOnly(
+    bucket,
     packageArtifactStorageKey(artifact.hash),
     JSON.stringify(packageArtifactLoaderRecord(artifact)),
     {
@@ -396,53 +459,85 @@ export async function storePackageArtifact(bucket: R2Bucket, artifact: PackageAr
   );
 }
 
-function packageArtifactLoaderRecord(artifact: PackageArtifact): PackageArtifact {
-  const { publicFiles: _publicFiles, ...loaderArtifact } = artifact;
-  return loaderArtifact;
+function packageArtifactLoaderRecord(artifact: PackageArtifact): PackageArtifactLoaderRecord {
+  return {
+    loaderVersion: PACKAGE_ARTIFACT_LOADER_VERSION,
+    ...artifact,
+    publicFiles: artifact.publicFiles ?? [],
+  };
 }
 
-async function storePackagePublicFiles(bucket: R2Bucket, artifact: PackageArtifact): Promise<void> {
-  const publicFiles = artifact.publicFiles ?? [];
-  if (publicFiles.length === 0) {
-    return;
-  }
-
-  await mapWithConcurrency(publicFiles, PACKAGE_PUBLIC_FILE_WRITE_CONCURRENCY, async (file) => {
-    const resolvedPath = resolvePackagePublicFilePath(artifact.hash, file.path);
-    const key = `public/${resolvedPath}`;
-    const content = resolvePackagePublicFileContent(artifact.hash, file);
-    await bucket.put(key, content, {
-      httpMetadata: {
-        contentType: file.contentType,
-        cacheControl: PUBLIC_ASSET_CACHE_CONTROL,
+function packagePublicFileWrites(artifact: PackageArtifact): PackagePublicFileWrite[] {
+  const seen = new Set<string>();
+  return (artifact.publicFiles ?? []).map((file) => {
+    const destination = resolvePackagePublicFileDestination(artifact.hash, file.path);
+    if (seen.has(destination.key)) {
+      throw new Error(`Duplicate package public file destination: ${destination.relativePath}`);
+    }
+    seen.add(destination.key);
+    return {
+      ...destination,
+      content: resolvePackagePublicFileContent(artifact.hash, file),
+      options: {
+        httpMetadata: {
+          contentType: file.contentType,
+          cacheControl: PUBLIC_ASSET_CACHE_CONTROL,
+        },
+        customMetadata: {
+          uid: "0",
+          gid: "0",
+          mode: "644",
+        },
       },
-      customMetadata: {
-        uid: "0",
-        gid: "0",
-        mode: "644",
-      },
-    });
+    };
   });
 }
 
-function resolvePackagePublicFilePath(hash: string, path: string): string {
-  return trimLeadingSlash(path)
-    .replaceAll(PACKAGE_PUBLIC_HASH_PLACEHOLDER, packageArtifactPublicSegment(hash));
+function resolvePackagePublicFileDestination(
+  hash: string,
+  path: string,
+): Pick<PackagePublicFileWrite, "key" | "relativePath"> {
+  assertCanonicalPackageArtifactHash(hash);
+  const expectedPrefix = `gsv/packages/${PACKAGE_PUBLIC_HASH_PLACEHOLDER}/`;
+  let relativePath: string;
+  if (path.startsWith(expectedPrefix)) {
+    relativePath = path.slice(expectedPrefix.length);
+  } else if (path.startsWith("lib/npm/")) {
+    // The assembler gives shared browser dependencies a root-relative lib/npm
+    // path. Keep their relative layout, but contain the bytes inside this
+    // verified artifact's immutable namespace.
+    relativePath = path;
+  } else {
+    throw new Error(
+      `Package public file must live under ${expectedPrefix} or lib/npm/: ${path}`,
+    );
+  }
+  assertSafePackagePublicRelativePath(relativePath);
+  if (relativePath.includes(PACKAGE_PUBLIC_HASH_PLACEHOLDER)) {
+    throw new Error(`Package public file contains an ambiguous hash placeholder: ${path}`);
+  }
+  const publicSegment = canonicalPackageArtifactPublicSegment(hash);
+  return {
+    key: `public/gsv/packages/${publicSegment}/${relativePath}`,
+    relativePath,
+  };
 }
 
 function resolvePackagePublicFileContent(
   hash: string,
   file: PackagePublicFileDef,
 ): string | Uint8Array {
-  const content = file.content.replaceAll(
-    PACKAGE_PUBLIC_BASE_PLACEHOLDER,
-    packageArtifactPublicBase(hash),
-  );
   switch (file.encoding) {
     case "utf-8":
-      return content;
+      return file.content.replaceAll(
+        PACKAGE_PUBLIC_BASE_PLACEHOLDER,
+        packageArtifactPublicBase(hash),
+      ).replaceAll(
+        PACKAGE_NPM_PUBLIC_BASE,
+        `${packageArtifactPublicBase(hash)}/lib/npm/`,
+      );
     case "base64":
-      return decodeBase64Bytes(content);
+      return decodeBase64Bytes(file.content);
     default:
       throw new Error(
         `Unsupported package public file encoding: ${(file as { encoding: string }).encoding}`,
@@ -455,7 +550,316 @@ export async function loadPackageArtifact(bucket: R2Bucket, hash: string): Promi
   if (!record) {
     throw new Error(`Package artifact not found for hash: ${hash}`);
   }
-  return JSON.parse(await record.text()) as PackageArtifact;
+  let value: unknown;
+  try {
+    value = JSON.parse(await record.text()) as unknown;
+  } catch {
+    throw new Error(`Stored package artifact is not valid JSON: ${hash}`);
+  }
+
+  const loaderRecord = packageArtifactRecord(value, "artifact");
+  const hasPublicFiles = Object.prototype.hasOwnProperty.call(loaderRecord, "publicFiles");
+  const loaderVersion = loaderRecord.loaderVersion;
+  if (loaderVersion !== undefined) {
+    if (loaderVersion !== PACKAGE_ARTIFACT_LOADER_VERSION) {
+      throw new Error(`Unsupported package artifact loader version: ${String(loaderVersion)}`);
+    }
+    if (!hasPublicFiles) {
+      throw new Error("Versioned package artifact must include artifact.publicFiles");
+    }
+  }
+
+  if (hasPublicFiles) {
+    return await validatePackageArtifact(value, hash);
+  }
+
+  // Before loader records carried publicFiles, package installation deliberately
+  // omitted that field after hashing the full assembler artifact. Those persisted
+  // records cannot reproduce their original digest. Keep this read-only upgrade
+  // path narrowly keyed to the exact old shape: new writes are versioned and
+  // always include publicFiles, while legacy modules still pass current shape,
+  // kind, ordering, and main-module validation before loading.
+  return validateLegacyPackageArtifact(value, hash);
+}
+
+function validateLegacyPackageArtifact(value: unknown, expectedHash: string): PackageArtifact {
+  const artifact = normalizePackageArtifact(value);
+  if (artifact.hash !== expectedHash) {
+    throw new Error(
+      `Package artifact identity mismatch: requested ${expectedHash}, stored ${artifact.hash}`,
+    );
+  }
+  return artifact;
+}
+
+function normalizePackageArtifact(value: unknown): PackageArtifact {
+  const record = packageArtifactRecord(value, "artifact");
+  const hash = packageArtifactString(record.hash, "artifact.hash");
+  assertCanonicalPackageArtifactHash(hash);
+  const mainModule = packageArtifactString(record.mainModule, "artifact.mainModule");
+  const compatibilityDate = record.compatibilityDate === undefined
+    ? DEFAULT_PACKAGE_COMPATIBILITY_DATE
+    : packageArtifactString(record.compatibilityDate, "artifact.compatibilityDate");
+  if (compatibilityDate !== DEFAULT_PACKAGE_COMPATIBILITY_DATE) {
+    throw new Error(`Unsupported package compatibility date: ${compatibilityDate}`);
+  }
+  if (record.compatibilityFlags !== undefined) {
+    if (!Array.isArray(record.compatibilityFlags)) {
+      throw new Error("artifact.compatibilityFlags must be an array");
+    }
+    if (record.compatibilityFlags.length > 0) {
+      throw new Error("Package assembler artifacts must not set compatibility flags");
+    }
+  }
+  if (!Array.isArray(record.modules) || record.modules.length === 0) {
+    throw new Error("artifact.modules must contain at least one module");
+  }
+  const modules = record.modules.map((module, index) =>
+    normalizePackageArtifactModule(module, index)
+  );
+  for (let index = 1; index < modules.length; index += 1) {
+    const order = compareUtf8(modules[index - 1].path, modules[index].path);
+    if (order === 0) {
+      throw new Error(`Duplicate package module path: ${modules[index].path}`);
+    }
+    if (order > 0) {
+      throw new Error("Package artifact modules are not in canonical path order");
+    }
+  }
+  if (!modules.some((module) => module.path === mainModule)) {
+    throw new Error(`artifact.mainModule not found in modules: ${mainModule}`);
+  }
+
+  const rawPublicFiles = record.publicFiles ?? [];
+  if (!Array.isArray(rawPublicFiles)) {
+    throw new Error("artifact.publicFiles must be an array");
+  }
+  const publicFiles = rawPublicFiles.map((file, index) =>
+    normalizePackagePublicFile(file, index)
+  );
+  const publicDestinations = new Set<string>();
+  for (const file of publicFiles) {
+    const destination = resolvePackagePublicFileDestination(hash, file.path);
+    if (publicDestinations.has(destination.key)) {
+      throw new Error(`Duplicate package public file destination: ${destination.relativePath}`);
+    }
+    publicDestinations.add(destination.key);
+  }
+
+  return {
+    hash,
+    mainModule,
+    compatibilityDate: DEFAULT_PACKAGE_COMPATIBILITY_DATE,
+    modules,
+    publicFiles,
+  };
+}
+
+function normalizePackageArtifactModule(value: unknown, index: number): PackageModuleDef {
+  const record = packageArtifactRecord(value, `artifact.modules[${index}]`);
+  const path = packageArtifactString(record.path, `artifact.modules[${index}].path`);
+  const kind = packageArtifactString(record.kind, `artifact.modules[${index}].kind`);
+  if (!PACKAGE_MODULE_KINDS.has(kind as PackageModuleKind)) {
+    throw new Error(`Unsupported package module kind: ${kind}`);
+  }
+  const content = packageArtifactString(
+    record.content,
+    `artifact.modules[${index}].content`,
+    true,
+  );
+  return {
+    path,
+    kind: kind as PackageModuleKind,
+    content,
+  };
+}
+
+function normalizePackagePublicFile(value: unknown, index: number): PackagePublicFileDef {
+  const record = packageArtifactRecord(value, `artifact.publicFiles[${index}]`);
+  const path = packageArtifactString(record.path, `artifact.publicFiles[${index}].path`);
+  const contentType = packageArtifactString(
+    record.contentType,
+    `artifact.publicFiles[${index}].contentType`,
+  );
+  if (/[\u0000-\u001f\u007f]/.test(contentType)) {
+    throw new Error(`Invalid package public file content type: ${contentType}`);
+  }
+  const encoding = packageArtifactString(
+    record.encoding,
+    `artifact.publicFiles[${index}].encoding`,
+  );
+  if (encoding !== "utf-8" && encoding !== "base64") {
+    throw new Error(`Unsupported package public file encoding: ${encoding}`);
+  }
+  const content = packageArtifactString(
+    record.content,
+    `artifact.publicFiles[${index}].content`,
+    true,
+  );
+  return { path, contentType, encoding, content };
+}
+
+function packageArtifactRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function packageArtifactString(value: unknown, label: string, allowEmpty = false): string {
+  if (typeof value !== "string" || (!allowEmpty && value.length === 0)) {
+    throw new Error(`${label} must be ${allowEmpty ? "a string" : "a non-empty string"}`);
+  }
+  assertValidUnicodeString(value, label);
+  return value;
+}
+
+function assertValidUnicodeString(value: string, label: string): void {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) {
+        throw new Error(`${label} contains an unpaired Unicode surrogate`);
+      }
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      throw new Error(`${label} contains an unpaired Unicode surrogate`);
+    }
+  }
+}
+
+async function computeNormalizedPackageArtifactHash(artifact: PackageArtifact): Promise<string> {
+  // Key order is part of the assembler hash protocol. Its serde_json build uses
+  // preserve_order, including the declared field order of module/public structs.
+  const hashInput = {
+    mainModule: artifact.mainModule,
+    modules: artifact.modules.map((module) => ({
+      path: module.path,
+      kind: module.kind === "esm" ? "source-module" : module.kind,
+      content: module.content,
+    })),
+    publicFiles: (artifact.publicFiles ?? []).map((file) => ({
+      path: file.path,
+      content_type: file.contentType,
+      encoding: file.encoding,
+      content: file.content,
+    })),
+  };
+  const bytes = TEXT_ENCODER.encode(JSON.stringify(hashInput));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return `sha256:${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function assertCanonicalPackageArtifactHash(hash: string): void {
+  if (!CANONICAL_PACKAGE_ARTIFACT_HASH.test(hash)) {
+    throw new Error("Package artifact hash must be canonical sha256:<64 lowercase hex>");
+  }
+}
+
+function canonicalPackageArtifactPublicSegment(hash: string): string {
+  assertCanonicalPackageArtifactHash(hash);
+  return `sha256-${hash.slice("sha256:".length)}`;
+}
+
+function assertSafePackagePublicRelativePath(path: string): void {
+  if (!path || path.startsWith("/") || path.endsWith("/") || path.includes("\\")) {
+    throw new Error(`Invalid package public file path: ${path}`);
+  }
+  for (const segment of path.split("/")) {
+    if (!segment || segment === "." || segment === ".." || /[\u0000-\u001f\u007f]/.test(segment)) {
+      throw new Error(`Invalid package public file path: ${path}`);
+    }
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      throw new Error(`Invalid package public file path encoding: ${path}`);
+    }
+    if (
+      decoded === "."
+      || decoded === ".."
+      || decoded.includes("/")
+      || decoded.includes("\\")
+      || /[\u0000-\u001f\u007f]/.test(decoded)
+    ) {
+      throw new Error(`Invalid package public file path: ${path}`);
+    }
+  }
+}
+
+function compareUtf8(left: string, right: string): number {
+  const leftBytes = TEXT_ENCODER.encode(left);
+  const rightBytes = TEXT_ENCODER.encode(right);
+  const length = Math.min(leftBytes.length, rightBytes.length);
+  for (let index = 0; index < length; index += 1) {
+    if (leftBytes[index] !== rightBytes[index]) {
+      return leftBytes[index] - rightBytes[index];
+    }
+  }
+  return leftBytes.length - rightBytes.length;
+}
+
+async function putPackageObjectCreateOnly(
+  bucket: R2Bucket,
+  key: string,
+  content: string | Uint8Array,
+  options: R2PutOptions,
+): Promise<void> {
+  const stored = await bucket.put(key, content, {
+    ...options,
+    onlyIf: { etagDoesNotMatch: "*" },
+  });
+  if (stored) {
+    return;
+  }
+
+  const existing = await bucket.get(key);
+  if (
+    !existing
+    || !(await packageObjectBodyEquals(existing, content))
+    || !packageObjectMetadataEquals(existing, options)
+  ) {
+    throw new Error(`Package artifact storage collision: ${key}`);
+  }
+}
+
+async function packageObjectBodyEquals(
+  existing: R2ObjectBody,
+  expected: string | Uint8Array,
+): Promise<boolean> {
+  const actualBytes = new Uint8Array(await existing.arrayBuffer());
+  const expectedBytes = typeof expected === "string" ? TEXT_ENCODER.encode(expected) : expected;
+  if (actualBytes.length !== expectedBytes.length) {
+    return false;
+  }
+  for (let index = 0; index < actualBytes.length; index += 1) {
+    if (actualBytes[index] !== expectedBytes[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function packageObjectMetadataEquals(existing: R2Object, expected: R2PutOptions): boolean {
+  return metadataEquals(existing.httpMetadata, expected.httpMetadata)
+    && metadataEquals(existing.customMetadata, expected.customMetadata);
+}
+
+function metadataEquals(
+  actual: R2HTTPMetadata | Record<string, string> | undefined,
+  expected: R2HTTPMetadata | Headers | Record<string, string> | undefined,
+): boolean {
+  if (expected instanceof Headers) {
+    return false;
+  }
+  const actualEntries = Object.entries(actual ?? {}).filter(([, value]) => value !== undefined);
+  const expectedEntries = Object.entries(expected ?? {}).filter(([, value]) => value !== undefined);
+  if (actualEntries.length !== expectedEntries.length) {
+    return false;
+  }
+  const actualRecord = Object.fromEntries(actualEntries) as Record<string, unknown>;
+  return expectedEntries.every(([key, value]) => actualRecord[key] === value);
 }
 
 export function resolvePackageProfileReference(
@@ -677,9 +1081,10 @@ export class PackageStore {
 
   async install(input: PackageInstallRecordInput): Promise<InstalledPackageRecord> {
     const now = Date.now();
-    const manifest = normalizeStoredManifest(input.manifest, input.artifact);
+    const artifact = await validatePackageArtifact(input.artifact);
+    const manifest = normalizeStoredManifest(input.manifest, artifact);
     const artifactMetadata = {
-      ...artifactMetadataFromArtifact(input.artifact),
+      ...artifactMetadataFromArtifact(artifact),
       runtimeAccess: runtimeAccessForReview(input),
     };
     const record: InstalledPackageRecord = {
@@ -691,7 +1096,7 @@ export class PackageStore {
     };
 
     assertValidPackageRecord(record);
-    await storePackageArtifact(this.bucket, input.artifact);
+    await persistPackageArtifact(this.bucket, artifact);
 
     this.sql.exec(
       `INSERT OR REPLACE INTO packages
