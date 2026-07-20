@@ -4,7 +4,7 @@ import type {
   MkdirOptions,
   RmOptions,
 } from "just-bash";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type { AccountDetail, ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { AuthStore } from "../../kernel/auth-store";
 import { accountIdentity } from "../../kernel/accounts";
 import {
@@ -42,9 +42,12 @@ type HomePathKind =
   | "other";
 
 export type AccountHomeBackendOptions = {
-  auth?: AuthStore;
-  /** Owning human uid for delegated agent-home routing. Defaults to viewer uid. */
-  ownerUid?: number;
+  /**
+   * Master-authoritative directory lookup (local on the Master, by RPC from
+   * user Kernels). The returned account carries capabilities only when the
+   * viewer may run as it — the delegation gate.
+   */
+  getAccount?: (username: string) => Promise<AccountDetail | null>;
   isRoot?: boolean;
 };
 
@@ -65,7 +68,7 @@ export function createAccountHomeBackend(
     identity,
   );
 
-  if (!options?.auth) {
+  if (!options?.getAccount) {
     return primary;
   }
 
@@ -74,8 +77,7 @@ export function createAccountHomeBackend(
     client,
     bucket,
     identity,
-    options.auth,
-    options.ownerUid ?? identity.uid,
+    options.getAccount,
     options.isRoot ?? identity.uid === 0,
   );
 }
@@ -684,102 +686,101 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
     private readonly client: RipgitClient,
     private readonly bucket: R2Bucket,
     private readonly viewerIdentity: ProcessIdentity,
-    private readonly auth: AuthStore,
-    private readonly ownerUid: number,
+    private readonly getAccount: (username: string) => Promise<AccountDetail | null>,
     private readonly isRoot: boolean,
   ) {}
 
-  handles(path: string): boolean {
-    return this.resolve(path) != null;
+  async handles(path: string): Promise<boolean> {
+    return (await this.resolve(path)) != null;
   }
 
-  readFile(path: string): Promise<string> {
-    return this.require(path).readFile(path);
+  async readFile(path: string): Promise<string> {
+    return (await this.require(path)).readFile(path);
   }
 
-  readFileBuffer(path: string): Promise<Uint8Array> {
-    return this.require(path).readFileBuffer(path);
+  async readFileBuffer(path: string): Promise<Uint8Array> {
+    return (await this.require(path)).readFileBuffer(path);
   }
 
-  openFile(path: string, options?: OpenFileOptions): Promise<OpenFileResult | undefined> {
-    return this.require(path).openFile(path, options);
+  async openFile(path: string, options?: OpenFileOptions): Promise<OpenFileResult | undefined> {
+    return (await this.require(path)).openFile(path, options);
   }
 
-  writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
-    return this.require(path).writeFile(path, content, options);
+  async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
+    return (await this.require(path)).writeFile(path, content, options);
   }
 
-  writeFileStream(
+  async writeFileStream(
     path: string,
     content: ReadableStream<Uint8Array>,
     options: WriteFileStreamOptions,
   ): Promise<WriteFileStreamResult | undefined> {
-    return this.require(path).writeFileStream(path, content, options);
+    return (await this.require(path)).writeFileStream(path, content, options);
   }
 
-  appendFile(path: string, content: FileContent): Promise<void> {
-    return this.require(path).appendFile(path, content);
+  async appendFile(path: string, content: FileContent): Promise<void> {
+    return (await this.require(path)).appendFile(path, content);
   }
 
-  exists(path: string): Promise<boolean> {
-    return this.require(path).exists(path);
+  async exists(path: string): Promise<boolean> {
+    return (await this.require(path)).exists(path);
   }
 
-  stat(path: string): Promise<ExtendedMountStat> {
-    return this.require(path).stat(path);
+  async stat(path: string): Promise<ExtendedMountStat> {
+    return (await this.require(path)).stat(path);
   }
 
-  lstat(path: string): Promise<ExtendedMountStat> {
-    const backend = this.require(path);
+  async lstat(path: string): Promise<ExtendedMountStat> {
+    const backend = await this.require(path);
     return backend.lstat ? backend.lstat(path) : backend.stat(path);
   }
 
-  mkdir(path: string, options?: MkdirOptions): Promise<void> {
-    return this.require(path).mkdir(path, options);
+  async mkdir(path: string, options?: MkdirOptions): Promise<void> {
+    return (await this.require(path)).mkdir(path, options);
   }
 
-  readdir(path: string): Promise<string[]> {
-    return this.require(path).readdir(path);
+  async readdir(path: string): Promise<string[]> {
+    return (await this.require(path)).readdir(path);
   }
 
-  rm(path: string, options?: RmOptions): Promise<void> {
-    return this.require(path).rm(path, options);
+  async rm(path: string, options?: RmOptions): Promise<void> {
+    return (await this.require(path)).rm(path, options);
   }
 
-  symlink(target: string, linkPath: string): Promise<void> {
-    const backend = this.require(linkPath);
+  async symlink(target: string, linkPath: string): Promise<void> {
+    const backend = await this.require(linkPath);
     if (!backend.symlink) {
       throw new Error(`ENOSYS: symlink is unavailable for '${linkPath}'`);
     }
     return backend.symlink(target, linkPath);
   }
 
-  readlink(path: string): Promise<string> {
-    const backend = this.require(path);
+  async readlink(path: string): Promise<string> {
+    const backend = await this.require(path);
     if (!backend.readlink) {
       throw new Error(`ENOSYS: readlink is unavailable for '${path}'`);
     }
     return backend.readlink(path);
   }
 
-  search(
+  async search(
     path: string,
     query: string,
     include?: string,
     signal?: AbortSignal,
   ): Promise<FsSearchBackendResult> {
-    return this.require(path).search(path, query, include, signal);
+    return (await this.require(path)).search(path, query, include, signal);
   }
 
-  private require(path: string): AccountHomeMountBackend {
-    const backend = this.resolve(path);
+  private async require(path: string): Promise<AccountHomeMountBackend> {
+    const backend = await this.resolve(path);
     if (!backend) {
       throw new Error(`ENOENT: no such file or directory, open '${normalizePath(path)}'`);
     }
     return backend;
   }
 
-  private resolve(path: string): AccountHomeMountBackend | null {
+  private async resolve(path: string): Promise<AccountHomeMountBackend | null> {
     const normalized = normalizePath(path);
     if (this.primary.handles(normalized)) {
       return this.primary;
@@ -790,26 +791,24 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
       return null;
     }
 
-    if (!canOwnerAccessAccountHome(
-      this.auth,
-      this.ownerUid,
-      this.viewerIdentity.username,
-      username,
-      this.isRoot,
-    )) {
-      return null;
-    }
-
-    const entry = this.auth.getPasswdByUsername(username);
-    if (!entry) return null;
+    // account.get includes capabilities only when the viewer may run as the
+    // target — the Master-side delegation gate for agent-home overlays.
+    const account = await this.getAccount(username);
+    if (!account || account.capabilities === undefined) return null;
 
     let delegate = this.delegates.get(username);
     if (!delegate) {
-      const targetIdentity = accountIdentity(this.auth, entry);
       delegate = new AccountHomeMountBackend(
         this.client,
         new R2MountBackend(this.bucket, this.viewerIdentity),
-        targetIdentity,
+        {
+          uid: account.uid,
+          gid: account.gid,
+          gids: account.gids,
+          username: account.username,
+          home: account.home,
+          cwd: account.home,
+        },
         this.isRoot,
       );
       this.delegates.set(username, delegate);

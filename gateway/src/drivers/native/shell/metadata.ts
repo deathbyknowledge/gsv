@@ -1,6 +1,8 @@
 import type { ExtendedStat } from "../../../fs/gsv-fs";
 import type { KernelContext } from "../../../kernel/context";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import { parsePasswd } from "../../../auth/passwd";
+import { parseGroup } from "../../../auth/group";
 
 // Remove this once https://github.com/vercel-labs/just-bash/pull/150 is merged
 export function formatMode(mode: number, isDirectory: boolean): string {
@@ -50,17 +52,21 @@ export function classifyIndicator(st: ExtendedStat): string {
 
 export type NameCache = { uid: Map<number, string>; gid: Map<number, string> };
 
-export function loadNameCache(ctx: KernelContext, identity: ProcessIdentity): NameCache {
+export async function loadNameCache(ctx: KernelContext, identity: ProcessIdentity): Promise<NameCache> {
   const uid = new Map<number, string>();
   const gid = new Map<number, string>();
   uid.set(identity.uid, identity.username);
   uid.set(0, "root");
   gid.set(0, "root");
 
-  for (const e of ctx.auth.getPasswdEntries()) {
+  const [passwd, group] = await Promise.all([
+    ctx.readAuthFile("passwd"),
+    ctx.readAuthFile("group"),
+  ]);
+  for (const e of parsePasswd(passwd)) {
     uid.set(e.uid, e.username);
   }
-  for (const e of ctx.auth.getGroupEntries()) {
+  for (const e of parseGroup(group)) {
     gid.set(e.gid, e.name);
   }
 

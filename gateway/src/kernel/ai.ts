@@ -116,6 +116,7 @@ import {
 } from "../process/ai-config";
 import { raceWithAbort } from "../shared/abort";
 import { sendFrameToProcess } from "../shared/utils";
+import { SYSTEM_CONFIG_DEFAULTS } from "./config";
 
 const SYSCALL_TOOLS: Record<string, ToolDefinition> = {
   "fs.read": FS_READ_DEFINITION,
@@ -161,6 +162,68 @@ const ACCOUNT_MODEL_PROFILE_INFERENCE_BLOCKERS = [
   "api_key",
 ] as const;
 
+function matchesAiConfigPrefix(key: string, prefix: string): boolean {
+  const normalized = prefix.trim();
+  if (normalized.length === 0) return true;
+  const pattern = normalized.endsWith("/") ? normalized : normalized + "/";
+  return key.startsWith(pattern);
+}
+
+/**
+ * Synchronous ConfigStore view over Master config fetched by RPC, so the AI
+ * resolution helpers stay synchronous while user Kernels hold no config state.
+ */
+function createAiConfigSnapshot(
+  explicitEntries: ReadonlyMap<string, string>,
+): KernelContext["config"] {
+  return {
+    get: (key: string) => explicitEntries.get(key) ?? SYSTEM_CONFIG_DEFAULTS[key] ?? null,
+    getExplicit: (key: string) => explicitEntries.get(key) ?? null,
+    list: (prefix: string) => {
+      const merged = new Map<string, string>();
+      for (const [key, value] of Object.entries(SYSTEM_CONFIG_DEFAULTS)) {
+        if (matchesAiConfigPrefix(key, prefix)) merged.set(key, value);
+      }
+      for (const [key, value] of explicitEntries) {
+        if (matchesAiConfigPrefix(key, prefix)) merged.set(key, value);
+      }
+      return [...merged.entries()]
+        .map(([key, value]) => ({ key, value }))
+        .sort((left, right) => left.key.localeCompare(right.key));
+    },
+    listExplicit: (prefix: string) => (
+      [...explicitEntries.entries()]
+        .filter(([key]) => matchesAiConfigPrefix(key, prefix))
+        .map(([key, value]) => ({ key, value }))
+        .sort((left, right) => left.key.localeCompare(right.key))
+    ),
+    set: () => {
+      throw new Error("AI config snapshot is read-only");
+    },
+    delete: () => {
+      throw new Error("AI config snapshot is read-only");
+    },
+  } as unknown as KernelContext["config"];
+}
+
+async function withAiConfigSnapshot(ctx: KernelContext): Promise<KernelContext> {
+  const uid = ctx.identity?.process.uid ?? 0;
+  const owner = resolveOwnerIdentity(ctx);
+  const accountUids = withRootAiProfileScope(resolveAiConfigAccountUids(uid, owner));
+  const entries = new Map<string, string>();
+  const lists = await Promise.all([
+    ctx.configListExplicit("config/ai"),
+    ctx.configListExplicit("config/server"),
+    ...accountUids.map((accountUid) => ctx.configListExplicit(`users/${accountUid}/ai`)),
+  ]);
+  for (const list of lists) {
+    for (const entry of list) {
+      entries.set(entry.key, entry.value);
+    }
+  }
+  return { ...ctx, config: createAiConfigSnapshot(entries) };
+}
+
 export async function handleAiTools(
   ctx: KernelContext,
 ): Promise<AiToolsResult> {
@@ -201,6 +264,7 @@ export async function handleAiConfig(
   args: AiConfigArgs,
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
+  ctx = await withAiConfigSnapshot(ctx);
   const config = ctx.config;
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
@@ -674,6 +738,7 @@ async function resolveAiTextGenerationConfig(
   input: AiTextGenerateConfig | undefined,
   ctx: KernelContext,
 ): Promise<AiConfigResult> {
+  ctx = await withAiConfigSnapshot(ctx);
   const requested = input && typeof input === "object" ? input : undefined;
   const overrides = {
     ...normalizeAiProcessOverrideValues(requested?.processOverrides ?? {}),
@@ -1211,6 +1276,7 @@ async function resolveAiMediaContext(ctx: KernelContext): Promise<{
   processOverrides: Record<string, string>;
   defaultApiKey: string;
 }> {
+  ctx = await withAiConfigSnapshot(ctx);
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);

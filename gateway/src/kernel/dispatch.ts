@@ -49,9 +49,10 @@ import {
   handleProcSpawn,
   forwardToProcess,
 } from "./proc-handlers";
-import { handleAccountCreate, handleAccountList } from "./agents";
+import { handleAccountCreate, handleAccountGet, handleAccountList } from "./agents";
 import { reconcilePackageAgentEntitlements } from "./package-agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
+import { handleSysCapList } from "./sys/cap";
 import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleNetFetch, normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
@@ -534,6 +535,9 @@ async function dispatchNative(
       case "sys.config.set":
         data = handleSysConfigSet(frame.args, ctx);
         break;
+      case "sys.cap.list":
+        data = handleSysCapList(frame.args, ctx);
+        break;
       case "sys.device.list":
         data = handleSysDeviceList(frame.args, ctx);
         break;
@@ -609,6 +613,9 @@ async function dispatchNative(
       }
       case "account.list":
         data = handleAccountList(frame.args, ctx);
+        break;
+      case "account.get":
+        data = handleAccountGet(frame.args, ctx);
         break;
 
       // --- sched.* ---

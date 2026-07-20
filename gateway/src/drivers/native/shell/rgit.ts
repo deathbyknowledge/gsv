@@ -73,12 +73,12 @@ async function runRgitCommand(
       return { stdout: rgitUsage(commandName), stderr: "", exitCode: 0 };
     case "list": {
       requireCommandCapability(ctx, "repo.list");
-      return { stdout: formatRepoList(handleRepoList(parseListArgs(rest), ctx)), stderr: "", exitCode: 0 };
+      return { stdout: formatRepoList(await ctx.listRepos(parseListArgs(rest))), stderr: "", exitCode: 0 };
     }
     case "info": {
       requireCommandCapability(ctx, "repo.list");
       const target = parseRepoTarget(rest, cwd);
-      const found = handleRepoList(undefined, ctx).repos.find((repo) => repo.repo === target.repo);
+      const found = (await ctx.listRepos()).repos.find((repo) => repo.repo === target.repo);
       if (!found) {
         throw new Error(`Repo is not visible: ${target.repo}`);
       }
@@ -91,13 +91,13 @@ async function runRgitCommand(
     case "read": {
       requireCommandCapability(ctx, "repo.read");
       const parsed = parseReadArgs(rest, cwd);
-      const result = await handleRepoRead(withDefaultRepoRef(parsed, ctx), ctx);
+      const result = await handleRepoRead(await withDefaultRepoRef(parsed, ctx), ctx);
       return { stdout: formatRepoRead(result), stderr: "", exitCode: 0 };
     }
     case "search": {
       requireCommandCapability(ctx, "repo.search");
       const parsed = parseSearchArgs(rest, cwd);
-      const result = await handleRepoSearch(withDefaultRepoRef(parsed, ctx), ctx);
+      const result = await handleRepoSearch(await withDefaultRepoRef(parsed, ctx), ctx);
       return { stdout: formatRepoSearch(result), stderr: "", exitCode: 0 };
     }
     case "refs": {
@@ -109,7 +109,7 @@ async function runRgitCommand(
     case "log": {
       requireCommandCapability(ctx, "repo.log");
       const parsed = parseLogArgs(rest, cwd);
-      const result = await handleRepoLog(withDefaultRepoRef(parsed, ctx), ctx);
+      const result = await handleRepoLog(await withDefaultRepoRef(parsed, ctx), ctx);
       return { stdout: formatRepoLog(result), stderr: "", exitCode: 0 };
     }
     case "status": {
@@ -207,22 +207,22 @@ function processSourceOptions(ctx: KernelContext) {
     identity,
     storage: ctx.env.STORAGE,
     ripgit: ctx.env.RIPGIT ? new RipgitClient(ctx.env.RIPGIT) : null,
-    repos: handleRepoList(undefined, ctx).repos,
+    listRepos: async () => (await ctx.listRepos()).repos,
     processId: ctx.processId ?? null,
     config: ctx.config,
   };
 }
 
-function withDefaultRepoRef<T extends { repo: string; ref?: string; sourcePath?: string }>(parsed: T, ctx: KernelContext): T {
+async function withDefaultRepoRef<T extends { repo: string; ref?: string; sourcePath?: string }>(parsed: T, ctx: KernelContext): Promise<T> {
   if (parsed.ref) {
     return parsed;
   }
-  const ref = defaultRepoRef(ctx, parsed.repo, parsed.sourcePath);
+  const ref = await defaultRepoRef(ctx, parsed.repo, parsed.sourcePath);
   return ref ? { ...parsed, ref } : parsed;
 }
 
-function defaultRepoRef(ctx: KernelContext, repo: string, sourcePath?: string): string | null {
-  const found = handleRepoList(undefined, ctx).repos.find((summary) => summary.repo === repo);
+async function defaultRepoRef(ctx: KernelContext, repo: string, sourcePath?: string): Promise<string | null> {
+  const found = (await ctx.listRepos()).repos.find((summary) => summary.repo === repo);
   if (!found) {
     return null;
   }

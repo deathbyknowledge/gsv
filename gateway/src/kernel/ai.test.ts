@@ -109,6 +109,9 @@ function makeContext(
         processId === options.processId ? ownerUid : null
       ),
     },
+    configGet: vi.fn(async () => null),
+    configList: vi.fn(async () => []),
+    configListExplicit: vi.fn(async () => []),
     devices: {
       listForUser: vi.fn(() => []),
     },
@@ -418,6 +421,13 @@ describe("handleAiConfig", () => {
           .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
           .map(([key, value]) => ({ key, value }))),
       },
+      configGet: vi.fn(async (key: string) => config[key] ?? null),
+      configList: vi.fn(async (prefix: string) => Object.entries(config)
+        .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
+        .map(([key, value]) => ({ key, value }))),
+      configListExplicit: vi.fn(async (prefix: string) => Object.entries(config)
+        .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
+        .map(([key, value]) => ({ key, value }))),
       auth: {
         getPasswdByUid: vi.fn((lookupUid: number) => lookupUid === ownerUid
           ? {
@@ -1720,6 +1730,13 @@ describe("handleAiTranscriptionCreate", () => {
         get: vi.fn((key: string) => config[key] ?? null),
         getExplicit: vi.fn((key: string) => config[key] ?? null),
       },
+      configGet: vi.fn(async (key: string) => config[key] ?? null),
+      configList: vi.fn(async (prefix: string) => Object.entries(config)
+        .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
+        .map(([key, value]) => ({ key, value }))),
+      configListExplicit: vi.fn(async (prefix: string) => Object.entries(config)
+        .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
+        .map(([key, value]) => ({ key, value }))),
       env: {
         AI: {
           run: vi.fn(async () => options.response ?? ({
@@ -2098,6 +2115,13 @@ describe("handleAiImageRead", () => {
         get: vi.fn((key: string) => config[key] ?? null),
         getExplicit: vi.fn((key: string) => config[key] ?? null),
       },
+      configGet: vi.fn(async (key: string) => config[key] ?? null),
+      configList: vi.fn(async (prefix: string) => Object.entries(config)
+        .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
+        .map(([key, value]) => ({ key, value }))),
+      configListExplicit: vi.fn(async (prefix: string) => Object.entries(config)
+        .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
+        .map(([key, value]) => ({ key, value }))),
       env: {
         AI: {
           run: vi.fn(async () => options.response ?? ({
@@ -2229,6 +2253,13 @@ describe("handleAiImageGenerate", () => {
         get: vi.fn((key: string) => config[key] ?? null),
         getExplicit: vi.fn((key: string) => config[key] ?? null),
       },
+      configGet: vi.fn(async (key: string) => config[key] ?? null),
+      configList: vi.fn(async (prefix: string) => Object.entries(config)
+        .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
+        .map(([key, value]) => ({ key, value }))),
+      configListExplicit: vi.fn(async (prefix: string) => Object.entries(config)
+        .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
+        .map(([key, value]) => ({ key, value }))),
       env: {
         AI: {
           run: vi.fn(async () => options.response ?? ({ image: "AQID" })),
@@ -2359,6 +2390,13 @@ describe("handleAiSpeechCreate", () => {
         get: vi.fn((key: string) => config[key] ?? null),
         getExplicit: vi.fn((key: string) => config[key] ?? null),
       },
+      configGet: vi.fn(async (key: string) => config[key] ?? null),
+      configList: vi.fn(async (prefix: string) => Object.entries(config)
+        .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
+        .map(([key, value]) => ({ key, value }))),
+      configListExplicit: vi.fn(async (prefix: string) => Object.entries(config)
+        .filter(([key]) => key.startsWith(`${prefix.replace(/\/$/, "")}/`))
+        .map(([key, value]) => ({ key, value }))),
       env: {
         AI: {
           run: vi.fn(async () => options.response ?? new ReadableStream({

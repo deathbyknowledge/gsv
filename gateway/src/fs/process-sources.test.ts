@@ -175,7 +175,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [
+      listRepos: async () => [
         makeRepo("sam/docs"),
         makeRepo("sam/tools"),
         makeRepo("root/gsv-manual", { public: true, writable: false }),
@@ -210,7 +210,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -279,7 +279,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config,
       ripgit: {
@@ -353,7 +353,7 @@ describe("createProcessSourceBackend", () => {
     await expect(getRepoSourceStatus({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "other-process",
       config,
       ripgit: null,
@@ -364,7 +364,7 @@ describe("createProcessSourceBackend", () => {
     const status = await getRepoSourceStatus({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config,
       ripgit: null,
@@ -378,7 +378,7 @@ describe("createProcessSourceBackend", () => {
     const result = await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config,
       ripgit: {
@@ -454,7 +454,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -467,7 +467,7 @@ describe("createProcessSourceBackend", () => {
     await discardRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: null,
@@ -507,7 +507,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -532,7 +532,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -548,7 +548,7 @@ describe("createProcessSourceBackend", () => {
     const status = await getRepoSourceStatus({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: null,
@@ -577,7 +577,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -624,7 +624,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -665,7 +665,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -685,7 +685,7 @@ describe("createProcessSourceBackend", () => {
     const status = await getRepoSourceStatus({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/docs")],
+      listRepos: async () => [makeRepo("sam/docs")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: null,
@@ -703,7 +703,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [repo],
+      listRepos: async () => [repo],
       processId: "task:source",
       config,
       ripgit: { readPath } as any,
@@ -713,7 +713,7 @@ describe("createProcessSourceBackend", () => {
     const committing = commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos: [repo],
+      listRepos: async () => [repo],
       processId: "task:source",
       config,
       ripgit: {
@@ -742,7 +742,7 @@ describe("createProcessSourceBackend", () => {
     const status = await getRepoSourceStatus({
       identity: IDENTITY,
       storage,
-      repos: [repo],
+      listRepos: async () => [repo],
       processId: "task:source",
       config,
       ripgit: null,
@@ -785,7 +785,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [repo],
+      listRepos: async () => [repo],
       processId: "task:source",
       config,
       ripgit: { readPath } as any,
@@ -795,7 +795,7 @@ describe("createProcessSourceBackend", () => {
     const discarding = discardRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos: [repo],
+      listRepos: async () => [repo],
       processId: "task:source",
       config,
       ripgit: null,
@@ -805,7 +805,7 @@ describe("createProcessSourceBackend", () => {
       await commitRepoSourceChanges({
         identity: IDENTITY,
         storage,
-        repos: [repo],
+        listRepos: async () => [repo],
         processId: "task:source",
         config,
         ripgit: {
@@ -828,7 +828,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [makeRepo("root/gsv-manual", { public: true, writable: false })],
+      listRepos: async () => [makeRepo("root/gsv-manual", { public: true, writable: false })],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -853,7 +853,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [
+      listRepos: async () => [
         makeRepo("root/gsv-manual", { kind: "user", public: true, writable: false }),
         makeRepo("bob/public", { public: true, writable: false }),
       ],
@@ -883,7 +883,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [
+      listRepos: async () => [
         makeRepo("root/gsv", { kind: "package", public: false, writable: false }),
         makeRepo("root/gsv-manual", { kind: "user", public: true, writable: false }),
       ],
@@ -920,7 +920,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [makeRepo("root/gsv", { kind: "package", writable: false, ref: "feature/review", baseRef: "commit123" })],
+      listRepos: async () => [makeRepo("root/gsv", { kind: "package", writable: false, ref: "feature/review", baseRef: "commit123" })],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -950,7 +950,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [makeRepo("root/gsv", {
+      listRepos: async () => [makeRepo("root/gsv", {
         kind: "package",
         writable: false,
         ref: "feature/a",
@@ -1023,7 +1023,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos,
+      listRepos: async () => repos,
       processId: "task:source",
       config,
       ripgit,
@@ -1033,7 +1033,7 @@ describe("createProcessSourceBackend", () => {
     const result = await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos,
+      listRepos: async () => repos,
       processId: "task:source",
       config,
       ripgit,
@@ -1083,7 +1083,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos,
+      listRepos: async () => repos,
       processId: "task:source",
       config,
       ripgit,
@@ -1093,7 +1093,7 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos,
+      listRepos: async () => repos,
       processId: "task:source",
       config,
       ripgit,
@@ -1155,7 +1155,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos,
+      listRepos: async () => repos,
       processId: "task:source",
       config,
       ripgit,
@@ -1165,7 +1165,7 @@ describe("createProcessSourceBackend", () => {
     const result = await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos,
+      listRepos: async () => repos,
       processId: "task:source",
       config,
       ripgit,
@@ -1198,7 +1198,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [makeRepo("sam/mono")],
+      listRepos: async () => [makeRepo("sam/mono")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -1255,7 +1255,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1265,7 +1265,7 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1275,7 +1275,7 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1293,7 +1293,7 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1338,7 +1338,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1348,7 +1348,7 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1404,7 +1404,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1414,7 +1414,7 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1429,7 +1429,7 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1469,7 +1469,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1479,7 +1479,7 @@ describe("createProcessSourceBackend", () => {
     await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1489,7 +1489,7 @@ describe("createProcessSourceBackend", () => {
     const result = await commitRepoSourceChanges({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1508,7 +1508,7 @@ describe("createProcessSourceBackend", () => {
     await expect(getRepoSourceStatus({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config,
       ripgit,
@@ -1523,7 +1523,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -1557,7 +1557,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -1600,7 +1600,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -1622,7 +1622,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage,
-      repos: [makeRepo("sam/pkg-test")],
+      listRepos: async () => [makeRepo("sam/pkg-test")],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -1647,7 +1647,7 @@ describe("createProcessSourceBackend", () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [makeRepo("root/gsv", { kind: "package", writable: false })],
+      listRepos: async () => [makeRepo("root/gsv", { kind: "package", writable: false })],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {

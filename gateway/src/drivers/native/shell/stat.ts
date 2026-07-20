@@ -26,7 +26,7 @@ export function buildStatCommand(fs: GsvFs, identity: ProcessIdentity, kernelCtx
 
     let nameCache: NameCache | null = null;
     if (!format || format.includes("%U") || format.includes("%G")) {
-      nameCache = loadNameCache(kernelCtx, identity);
+      nameCache = await loadNameCache(kernelCtx, identity);
     }
 
     let stdout = "";

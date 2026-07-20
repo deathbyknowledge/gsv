@@ -28,7 +28,7 @@ import {
   USER_KERNEL_INSTANCE_STORAGE_KEY,
   type UserKernelInstanceMarker,
 } from "./user-kernels";
-import { userKernelName } from "../shared/kernel-names";
+import { SHIP_KERNEL_NAME, userKernelName } from "../shared/kernel-names";
 
 const USER_IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -83,6 +83,36 @@ function addTestUser(auth: ScheduleTestAuth): void {
 
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
+}
+
+async function newMasterScheduleKernel(): Promise<{
+  kernel: DurableObjectStub<Kernel>;
+  kernelName: string;
+}> {
+  const kernelName = SHIP_KERNEL_NAME;
+  const kernel = await getAgentByName<Env, Kernel>(env.KERNEL, kernelName);
+  await runInDurableObject(kernel, (instance: Kernel) => {
+    const k = instance as unknown as { ctx: DurableObjectState };
+    k.ctx.storage.sql.exec(
+      `INSERT OR IGNORE INTO account_identities (
+         username, uid, kind, state, created_at, updated_at, retired_at
+       ) VALUES (?, ?, 'human', 'active', ?, ?, NULL)`,
+      USER_IDENTITY.username,
+      USER_IDENTITY.uid,
+      Date.now(),
+      Date.now(),
+    );
+    k.ctx.storage.sql.exec(
+      `INSERT OR IGNORE INTO user_kernels (
+         username, uid, lifecycle, generation, created_at, updated_at, retired_at
+       ) VALUES (?, ?, 'legacy', 1, ?, ?, NULL)`,
+      USER_IDENTITY.username,
+      USER_IDENTITY.uid,
+      Date.now(),
+      Date.now(),
+    );
+  });
+  return { kernel, kernelName };
 }
 
 async function newScheduleKernel(): Promise<{
@@ -876,7 +906,7 @@ describe("scheduler", () => {
   });
 
   it("runs a due command schedule through the Kernel shell", async () => {
-    const { kernel } = await newScheduleKernel();
+    const { kernel } = await newMasterScheduleKernel();
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
         auth: ScheduleTestAuth;
@@ -934,7 +964,7 @@ describe("scheduler", () => {
   });
 
   it("runs command schedules as the stored run-as account", async () => {
-    const { kernel } = await newScheduleKernel();
+    const { kernel } = await newMasterScheduleKernel();
     const runAs: SchedulePrincipal = {
       kind: "process",
       uid: CUSTOM_AGENT_IDENTITY.uid,

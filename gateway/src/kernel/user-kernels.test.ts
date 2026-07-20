@@ -245,22 +245,14 @@ describe("user Kernel auth projection", () => {
       registry.markActive("alice", 1);
       registry.reserve("root", 0);
       registry.markActive("root", 1);
-      const aliceKernelCapability = await (instance as any)
-        .rotateUserKernelCapability(registry.get("alice")!);
-      const rootKernelCapability = await (instance as any)
-        .rotateUserKernelCapability(registry.get("root")!);
-
       const projection = await instance.getUserKernelProjection(
         userKernelName("alice"),
         "alice",
         1,
-        aliceKernelCapability,
       );
       const accountLocks = new Map(
         projection.accounts.map((account) => [account.entry.username, account.locked]),
       );
-      expect(projection).not.toHaveProperty("kernelCapability");
-
       expect([...accountLocks.keys()]).toEqual([
         "root",
         "daemon",
@@ -328,7 +320,6 @@ describe("user Kernel auth projection", () => {
         userKernelName("root"),
         "root",
         1,
-        rootKernelCapability,
       );
       expect(rootProjection.capabilities).toContainEqual({ gid: 0, capability: "*" });
       expect(rootProjection.accounts.find((account) => account.entry.username === "bob"))
@@ -344,7 +335,6 @@ describe("user Kernel auth projection", () => {
         userKernelName("alice"),
         "alice",
         1,
-        aliceKernelCapability,
       )).rejects.toThrow("Account identity projection is incomplete: alice-agent");
     });
   });

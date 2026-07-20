@@ -60,6 +60,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "adapter.status",
     "sys.config.get",
     "sys.config.set",
+    "sys.cap.list",
     "sys.device.get",
     "sys.device.list",
     "sys.device.update",
@@ -83,6 +84,7 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "sys.link.consume",
     "account.create",
     "account.list",
+    "account.get",
   ]],  // users
   [101, ["fs.*", "shell.*"]],                             // drivers
   [102, ["adapter.*"]],                                   // services

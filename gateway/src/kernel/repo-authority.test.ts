@@ -4,7 +4,6 @@ import { dispatch, type DispatchDeps } from "./dispatch";
 import { Kernel } from "./do";
 import type { KernelContext } from "./context";
 
-const KERNEL_CAPABILITY = "a".repeat(64);
 const ALICE_IDENTITY: ConnectionIdentity = {
   role: "user",
   process: {
@@ -87,9 +86,9 @@ function makeMaster(
   };
   const kernel = Object.create(Kernel.prototype) as any;
   Object.defineProperty(kernel, "name", { value: "singleton" });
-  kernel.authorizeUserKernelCapability = vi.fn(async (proof) => (
+  kernel.authorizeUserKernelSource = vi.fn((proof) => (
     (options.authorize?.(proof)
-      ?? (proof.generation === 4 && proof.kernelCapability === KERNEL_CAPABILITY))
+      ?? (proof.generation === 4))
       ? placement
       : null
   ));
@@ -112,7 +111,6 @@ function repoAuthorizationInput(overrides: Record<string, unknown> = {}) {
     sourceKernelName: "user:alice",
     callerOwnerUid: 1000,
     generation: 4,
-    kernelCapability: KERNEL_CAPABILITY,
     identity: ALICE_IDENTITY,
     call: "repo.read",
     repo: "bob/notes",
@@ -259,13 +257,12 @@ describe("authoritative user-Kernel repository operations", () => {
         ripgit: masterRipgit,
       }),
       {
-        authorize: (proof) => proof.generation === activeGeneration
-          && proof.kernelCapability === KERNEL_CAPABILITY,
+        authorize: (proof) => proof.generation === activeGeneration,
       },
     );
 
     await expect(kernel.authorizeUserRepoOperation(repoAuthorizationInput({
-      kernelCapability: "f".repeat(64),
+      generation: 3,
     }))).resolves.toMatchObject({ ok: false, error: { code: 401 } });
     activeGeneration = 5;
     await expect(kernel.authorizeUserRepoOperation(repoAuthorizationInput()))

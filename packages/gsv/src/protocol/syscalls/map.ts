@@ -158,6 +158,8 @@ import type {
 import type {
   AccountCreateArgs,
   AccountCreateResult,
+  AccountGetArgs,
+  AccountGetResult,
   AccountListArgs,
   AccountListResult,
   ConnectArgs,
@@ -165,6 +167,8 @@ import type {
   SysBootstrapArgs,
   SysBootstrapResult,
   SysConfigGetArgs,
+  SysCapListArgs,
+  SysCapListResult,
   SysConfigGetResult,
   SysConfigSetArgs,
   SysConfigSetResult,
@@ -368,6 +372,7 @@ export type SyscallDomains = {
   "sys.bootstrap": { args: SysBootstrapArgs; result: SysBootstrapResult };
   "sys.config.get": { args: SysConfigGetArgs; result: SysConfigGetResult };
   "sys.config.set": { args: SysConfigSetArgs; result: SysConfigSetResult };
+  "sys.cap.list": { args: SysCapListArgs; result: SysCapListResult };
   "sys.device.list": { args: SysDeviceListArgs; result: SysDeviceListResult };
   "sys.device.get": { args: SysDeviceGetArgs; result: SysDeviceGetResult };
   "sys.device.update": { args: SysDeviceUpdateArgs; result: SysDeviceUpdateResult };
@@ -392,6 +397,7 @@ export type SyscallDomains = {
 
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };
+  "account.get": { args: AccountGetArgs; result: AccountGetResult };
 
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
   "sched.add": { args: SchedulerAddArgs; result: SchedulerAddResult };

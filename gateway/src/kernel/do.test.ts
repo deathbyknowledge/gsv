@@ -35,7 +35,6 @@ import {
 import type { InstalledPackageRecord, PackageProfileManifest } from "./packages";
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
-const TEST_KERNEL_CAPABILITY = "a".repeat(64);
 const TEST_APP_PLACEMENT_CERTIFICATE = "A".repeat(86);
 
 function createKernel(): any {
@@ -1040,7 +1039,6 @@ describe("Kernel user lifecycle fencing", () => {
       sourceKernelName: "user:alice",
       callerOwnerUid: 1000,
       generation: 4,
-      kernelCapability: TEST_KERNEL_CAPABILITY,
       identity: {
         role: "user",
         process: {
@@ -1075,7 +1073,6 @@ describe("Kernel user lifecycle fencing", () => {
 });
 
 describe("Kernel user provisioning admission", () => {
-  const kernelCapability = "a".repeat(64);
   const snapshot = {
     version: 1 as const,
     username: "alice",
@@ -1127,7 +1124,6 @@ describe("Kernel user provisioning admission", () => {
   function authorize(kernel: any): void {
     kernel.userKernelProvisioningAuthorizations.set("provision-1", {
       expiresAt: Date.now() + 10_000,
-      kernelCapability,
       provisioning: {
         targetKernelName: "user:alice",
         username: "alice",
@@ -1142,7 +1138,7 @@ describe("Kernel user provisioning admission", () => {
     authorize(kernel);
 
     await expect(kernel.consumeUserKernelProvisioningAuthorization(authorization))
-      .resolves.toEqual({ ...snapshot, kernelCapability });
+      .resolves.toEqual(snapshot);
     await expect(kernel.consumeUserKernelProvisioningAuthorization(authorization))
       .resolves.toBeNull();
     expect(kernel.buildUserKernelProjection).toHaveBeenCalledWith("alice");
@@ -1170,7 +1166,6 @@ describe("Kernel user provisioning admission", () => {
       lifecycle: "active",
       generation: 4,
     }));
-    kernel.verifyUserKernelCapabilityRecord = vi.fn(async () => true);
     kernel.buildUserKernelProjection = vi.fn(() => snapshot);
     kernel.userKernelActivationAuthorizations.set("activate-1", {
       expiresAt: Date.now() + 10_000,
@@ -1187,15 +1182,12 @@ describe("Kernel user provisioning admission", () => {
       username: "alice",
       uid: 1000,
       generation: 4,
-      kernelCapability,
     };
 
     await expect(kernel.consumeUserKernelActivationAuthorization(activation))
       .resolves.toEqual(snapshot);
     await expect(kernel.consumeUserKernelActivationAuthorization(activation))
       .resolves.toBeNull();
-    expect(kernel.verifyUserKernelCapabilityRecord)
-      .toHaveBeenCalledWith(expect.objectContaining({ lifecycle: "active" }), kernelCapability);
   });
 
   it("rejects direct provisioning without a live Master authorization", async () => {
@@ -1235,10 +1227,7 @@ describe("Kernel user provisioning admission", () => {
         }),
       },
     };
-    kernel.pullAuthorizedUserKernelProvisioningSnapshot = vi.fn(async () => ({
-      ...snapshot,
-      kernelCapability,
-    }));
+    kernel.pullAuthorizedUserKernelProvisioningSnapshot = vi.fn(async () => snapshot);
     kernel.initializeUserKernelProvisioning = vi.fn(async () => {
       const suspended = {
         version: 1,
@@ -1269,7 +1258,7 @@ describe("Kernel user provisioning admission", () => {
       generation: 4,
     })).rejects.toThrow("lifecycle changed during provisioning");
     expect(persisted).toMatchObject({ lifecycle: "suspended", generation: 5 });
-    expect(kernel.ctx.storage.put).toHaveBeenCalledTimes(2);
+    expect(kernel.ctx.storage.put).toHaveBeenCalledTimes(1);
     expect(kernel.rollbackProvisionedUserKernelExecutor)
       .toHaveBeenCalledWith("proc:provisioning");
   });
@@ -1423,43 +1412,6 @@ describe("Kernel user provisioning admission", () => {
     })).resolves.toBe(false);
   });
 
-  it("rejects activation before Master contact when the local capability is corrupt", async () => {
-    const marker = {
-      version: 1,
-      kind: "user",
-      username: "alice",
-      uid: 1000,
-      generation: 4,
-      lifecycle: "provisioning",
-      updatedAt: 1,
-    };
-    const kernel = createKernel() as any;
-    Object.defineProperty(kernel, "name", { value: "user:alice" });
-    kernel.userKernelMarker = marker;
-    kernel.ctx = {
-      storage: {
-        get: vi.fn(async () => ({
-          version: 1,
-          username: "alice",
-          uid: 1000,
-          generation: 4,
-          secret: "corrupt",
-        })),
-      },
-    };
-    kernel.queueAppRuntimeLifecycleFenceRecovery = vi.fn();
-    kernel.pullAuthorizedUserKernelActivationProjection = vi.fn();
-
-    await expect(kernel.activateProvisionedUserKernel({
-      sourceKernelName: "singleton",
-      authorization: "activate-1",
-      username: "alice",
-      uid: 1000,
-      generation: 4,
-    })).rejects.toThrow("capability is unavailable");
-    expect(kernel.pullAuthorizedUserKernelActivationProjection).not.toHaveBeenCalled();
-  });
-
   it("rejects a stale Master projection before executor initialization", async () => {
     const marker = {
       version: 1,
@@ -1475,13 +1427,7 @@ describe("Kernel user provisioning admission", () => {
     kernel.userKernelMarker = marker;
     kernel.ctx = {
       storage: {
-        get: vi.fn(async () => ({
-          version: 1,
-          username: "alice",
-          uid: 1000,
-          generation: 4,
-          secret: kernelCapability,
-        })),
+        get: vi.fn(async () => undefined),
       },
     };
     kernel.queueAppRuntimeLifecycleFenceRecovery = vi.fn();
@@ -1540,7 +1486,6 @@ describe("Kernel user provisioning admission", () => {
       },
     };
     kernel.userKernelMarker = active;
-    kernel.requireLocalUserKernelCapability = vi.fn(async () => kernelCapability);
     kernel.pullAuthorizedUserKernelActivationProjection = vi.fn(async () => snapshot);
     kernel.installUserKernelProjection = vi.fn(async () => {
       throw new Error("projection install failed");
@@ -1598,7 +1543,6 @@ describe("Kernel user provisioning admission", () => {
       },
     };
     kernel.userKernelMarker = provisioning;
-    kernel.requireLocalUserKernelCapability = vi.fn(async () => kernelCapability);
     kernel.pullAuthorizedUserKernelActivationProjection = vi.fn(async () => snapshot);
     kernel.installUserKernelProjection = vi.fn(async () => undefined);
     kernel.discardPreparedUserKernelExecutors = vi.fn(async () => undefined);
@@ -1644,10 +1588,7 @@ describe("Kernel user provisioning admission", () => {
         }),
       },
     };
-    kernel.pullAuthorizedUserKernelProvisioningSnapshot = vi.fn(async () => ({
-      ...snapshot,
-      kernelCapability,
-    }));
+    kernel.pullAuthorizedUserKernelProvisioningSnapshot = vi.fn(async () => snapshot);
     kernel.initializeUserKernelProvisioning = vi.fn(async () => "proc:provisioning");
     kernel.rearmPendingSchedules = vi.fn(async () => undefined);
 
@@ -1660,19 +1601,8 @@ describe("Kernel user provisioning admission", () => {
     });
 
     expect(prepared).toMatchObject({ lifecycle: "provisioning", generation: 4 });
-    expect(kernel.ctx.storage.put).toHaveBeenCalledWith(
-      "gsv/kernel/capability/v1",
-      {
-        version: 1,
-        username: "alice",
-        uid: 1000,
-        generation: 4,
-        secret: kernelCapability,
-      },
-    );
     expect(kernel.rearmPendingSchedules).not.toHaveBeenCalled();
 
-    kernel.requireLocalUserKernelCapability = vi.fn(async () => kernelCapability);
     kernel.pullAuthorizedUserKernelActivationProjection = vi.fn(async () => snapshot);
     kernel.installUserKernelProjection = vi.fn(async () => undefined);
     kernel.discardPreparedUserKernelExecutors = vi.fn(async () => undefined);
@@ -1704,66 +1634,7 @@ describe("Kernel user provisioning admission", () => {
 });
 
 describe("Kernel inter-object capability", () => {
-  it("stores only a digest and rejects tampered, rotated, or stale-generation proofs", async () => {
-    const values = new Map<string, unknown>();
-    let placement = {
-      username: "alice",
-      uid: 1000,
-      lifecycle: "active",
-      generation: 4,
-    };
-    const kernel = createKernel() as any;
-    Object.defineProperty(kernel, "name", { value: "singleton" });
-    kernel.ctx = {
-      storage: {
-        get: vi.fn(async (key: string) => values.get(key)),
-        put: vi.fn(async (key: string, value: unknown) => values.set(key, value)),
-      },
-    };
-    kernel.userKernels = { get: vi.fn(() => placement) };
-
-    const first = await kernel.rotateUserKernelCapability(placement);
-    const stored = values.get("gsv/kernel/user-capability/v1/alice");
-    expect(first).toMatch(/^[a-f0-9]{64}$/);
-    expect(JSON.stringify(stored)).not.toContain(first);
-    await expect(kernel.authorizeUserKernelCapability({
-      sourceKernelName: "user:alice",
-      uid: 1000,
-      generation: 4,
-      kernelCapability: first,
-    })).resolves.toEqual(placement);
-    await expect(kernel.authorizeUserKernelCapability({
-      sourceKernelName: "user:alice",
-      uid: 1000,
-      generation: 4,
-      kernelCapability: "f".repeat(64),
-    })).resolves.toBeNull();
-
-    const second = await kernel.rotateUserKernelCapability(placement);
-    expect(second).not.toBe(first);
-    await expect(kernel.authorizeUserKernelCapability({
-      sourceKernelName: "user:alice",
-      uid: 1000,
-      generation: 4,
-      kernelCapability: first,
-    })).resolves.toBeNull();
-    await expect(kernel.authorizeUserKernelCapability({
-      sourceKernelName: "user:alice",
-      uid: 1000,
-      generation: 4,
-      kernelCapability: second,
-    })).resolves.toEqual(placement);
-
-    placement = { ...placement, lifecycle: "suspended", generation: 5 };
-    await expect(kernel.authorizeUserKernelCapability({
-      sourceKernelName: "user:alice",
-      uid: 1000,
-      generation: 4,
-      kernelCapability: second,
-    })).resolves.toBeNull();
-  });
-
-  it("single-flights provisioning, clears failed flights, and proves the digest before activation", async () => {
+  it("single-flights provisioning, clears failed flights, and activates after Master commit", async () => {
     const preparedMarker = {
       version: 1,
       kind: "user",
@@ -1811,10 +1682,6 @@ describe("Kernel inter-object capability", () => {
         return placement;
       }),
     };
-    kernel.rotateUserKernelCapability = vi.fn()
-      .mockResolvedValueOnce("a".repeat(64))
-      .mockResolvedValueOnce("b".repeat(64));
-    kernel.verifyUserKernelCapabilityRecord = vi.fn(async () => true);
 
     const first = kernel.ensureUserKernelProvisioned("alice");
     const joined = kernel.ensureUserKernelProvisioned("alice");
@@ -1822,7 +1689,6 @@ describe("Kernel inter-object capability", () => {
     rejectFirst(new Error("target unavailable"));
     const failed = await Promise.allSettled([first, joined]);
     expect(failed.map((result) => result.status)).toEqual(["rejected", "rejected"]);
-    expect(kernel.rotateUserKernelCapability).toHaveBeenCalledTimes(1);
     expect(kernel.userKernelProvisioningFlights.size).toBe(0);
 
     await expect(kernel.ensureUserKernelProvisioned("alice")).resolves.toMatchObject({
@@ -1830,57 +1696,10 @@ describe("Kernel inter-object capability", () => {
       generation: 4,
     });
     expect(provisionUserKernel).toHaveBeenCalledTimes(2);
-    expect(kernel.rotateUserKernelCapability).toHaveBeenCalledTimes(2);
-    expect(kernel.verifyUserKernelCapabilityRecord).toHaveBeenCalledWith(
-      expect.objectContaining({ lifecycle: "provisioning", generation: 4 }),
-      "b".repeat(64),
-    );
     expect(kernel.userKernels.markActive).toHaveBeenCalledOnce();
     expect(target.activateProvisionedUserKernel).toHaveBeenCalledOnce();
     expect(kernel.userKernels.markActive.mock.invocationCallOrder[0])
       .toBeLessThan(target.activateProvisionedUserKernel.mock.invocationCallOrder[0]);
-  });
-
-  it("does not activate a target when the final persisted capability proof fails", async () => {
-    const placement = {
-      username: "alice",
-      uid: 1000,
-      lifecycle: "provisioning",
-      generation: 4,
-    };
-    const target = {
-      setName: vi.fn(async () => undefined),
-      provisionUserKernel: vi.fn(async () => ({
-        version: 1,
-        kind: "user",
-        ...placement,
-        lifecycle: "provisioning",
-        updatedAt: 1,
-      })),
-      activateProvisionedUserKernel: vi.fn(),
-    };
-    const kernel = createKernel() as any;
-    Object.defineProperty(kernel, "name", { value: "singleton" });
-    kernel.env = {
-      KERNEL: {
-        idFromName: vi.fn(() => ({ name: "user:alice" })),
-        get: vi.fn(() => target),
-      },
-    };
-    kernel.userKernelProvisioningFlights = new Map();
-    kernel.userKernelProvisioningAuthorizations = new Map();
-    kernel.userKernelActivationAuthorizations = new Map();
-    kernel.transitioningUserKernels = new Set();
-    kernel.userKernels = {
-      get: vi.fn(() => placement),
-      markActive: vi.fn(),
-    };
-    kernel.rotateUserKernelCapability = vi.fn(async () => TEST_KERNEL_CAPABILITY);
-    kernel.verifyUserKernelCapabilityRecord = vi.fn(async () => false);
-
-    await expect(kernel.ensureUserKernelProvisioned("alice"))
-      .rejects.toThrow("capability activation failed");
-    expect(kernel.userKernels.markActive).not.toHaveBeenCalled();
   });
 
   it("retries target activation without reprovisioning after Master commit", async () => {
@@ -2469,10 +2288,7 @@ describe("Kernel live credential fencing", () => {
     kernel.auth = {
       getToken: vi.fn(() => ({ tokenId: "token-a", uid: 1000, revokedAt: null })),
     };
-    kernel.authorizeUserKernelCapability = vi.fn(async (proof: {
-      generation: number;
-      kernelCapability: string;
-    }) => proof.generation === 4 && proof.kernelCapability === TEST_KERNEL_CAPABILITY
+    kernel.authorizeUserKernelSource = vi.fn((proof: { generation: number }) => proof.generation === 4 
       ? kernel.userKernels.get("alice")
       : null);
     const input = {
@@ -2480,7 +2296,6 @@ describe("Kernel live credential fencing", () => {
       username: "alice",
       uid: 1000,
       generation: 4,
-      kernelCapability: TEST_KERNEL_CAPABILITY,
       notice: { tokenId: "token-a", uid: 1000, revokedAt: 10 },
     };
 
@@ -2513,7 +2328,6 @@ describe("Kernel live credential fencing", () => {
       generation: 4,
       lifecycle: "active",
     }));
-    kernel.requireLocalUserKernelCapability = vi.fn(async () => TEST_KERNEL_CAPABILITY);
     kernel.ctx = { storage: { transactionSync: (closure: () => unknown) => closure() } };
     kernel.tokenRevocations = { remember: vi.fn() };
     kernel.connections = new Map();
@@ -2531,7 +2345,6 @@ describe("Kernel live credential fencing", () => {
       username: "alice",
       uid: 1000,
       generation: 4,
-      kernelCapability: TEST_KERNEL_CAPABILITY,
       notice: delivery.notice,
     });
     expect(kernel.tokenRevocations.remember).not.toHaveBeenCalled();
@@ -2641,22 +2454,16 @@ describe("Kernel repository metadata authority", () => {
     };
     kernel.resolveMasterSyscallIdentity = vi.fn(() => aliceIdentity);
     kernel.applyAuthorizedRepoMetadataMutation = vi.fn(() => ({ changed: true }));
-    kernel.authorizeUserKernelCapability = vi.fn(async (proof: {
-      sourceKernelName: string;
-      uid: number;
-      generation: number;
-      kernelCapability: string;
-    }) => proof.sourceKernelName === "user:alice"
+    kernel.authorizeUserKernelSource = vi.fn((proof: { generation: number }) => proof.sourceKernelName === "user:alice"
         && proof.uid === 1000
         && proof.generation === 7
-        && proof.kernelCapability === TEST_KERNEL_CAPABILITY
+        
       ? kernel.userKernels.get("alice")
       : null);
     const input = {
       sourceKernelName: "user:alice",
       callerOwnerUid: 1000,
       generation: 7,
-      kernelCapability: TEST_KERNEL_CAPABILITY,
       identity: aliceIdentity,
       mutation: {
         kind: "register",
@@ -3991,17 +3798,13 @@ describe("Kernel adapter run route revocation", () => {
         ) => generation === activeLink.generation),
       },
     };
-    kernel.authorizeUserKernelCapability = vi.fn(async (proof: {
-      generation: number;
-      kernelCapability: string;
-    }) => proof.generation === 7 && proof.kernelCapability === TEST_KERNEL_CAPABILITY
+    kernel.authorizeUserKernelSource = vi.fn((proof: { generation: number }) => proof.generation === 7 
       ? kernel.userKernels.get("alice")
       : null);
     const input = {
       sourceKernelName: "user:alice",
       ownerUid: 1000,
       kernelGeneration: 7,
-      kernelCapability: TEST_KERNEL_CAPABILITY,
       adapter: "discord",
       accountId: "primary",
       actorId: "actor-1",
@@ -4528,7 +4331,6 @@ describe("Kernel package projection transition", () => {
         get: vi.fn(() => master),
       },
     };
-    kernel.requireLocalUserKernelCapability = vi.fn(async () => TEST_KERNEL_CAPABILITY);
     kernel.closeUserKernelTargetAdmission = vi.fn();
     kernel.abortPackageProjectionKernelWork = vi.fn();
     kernel.abortPackageProjectionProcesses = vi.fn(async () => undefined);
@@ -4542,7 +4344,6 @@ describe("Kernel package projection transition", () => {
       "user:alice",
       "alice",
       4,
-      TEST_KERNEL_CAPABILITY,
     );
     expect(kernel.installUserKernelProjection).not.toHaveBeenCalled();
     expect(clearPackageFence).not.toHaveBeenCalled();
@@ -4617,7 +4418,7 @@ describe("Kernel package projection transition", () => {
     const authorization = new Promise<void>((resolve) => {
       finishAuthorization = resolve;
     });
-    kernel.authorizeUserKernelCapability = vi.fn(async () => {
+    kernel.authorizeUserKernelSource = vi.fn(async () => {
       await authorization;
       return placement;
     });
@@ -4628,7 +4429,6 @@ describe("Kernel package projection transition", () => {
       "user:alice",
       "alice",
       4,
-      TEST_KERNEL_CAPABILITY,
     );
     let finishCommit!: () => void;
     kernel.pendingMasterProjectionCommit = new Promise<void>((resolve) => {
@@ -4930,7 +4730,6 @@ describe("Kernel AppRunner runtime fence orchestration", () => {
       events.push("schedule-drain");
       return 0;
     });
-    kernel.requireLocalUserKernelCapability = vi.fn(async () => TEST_KERNEL_CAPABILITY);
     kernel.installUserKernelProjection = vi.fn(async (snapshot: any) => {
       events.push("install");
       installed = {
@@ -5298,7 +5097,6 @@ describe("Kernel AppRunner runtime fence orchestration", () => {
       put: vi.fn(async () => undefined),
       transactionSync: vi.fn((closure: () => unknown) => closure()),
     };
-    kernel.requireLocalUserKernelCapability = vi.fn(async () => TEST_KERNEL_CAPABILITY);
     kernel.pullAuthorizedUserKernelActivationProjection = vi.fn(async () => ({
       version: 1,
       username: "alice",
@@ -5456,7 +5254,6 @@ describe("Kernel AppRunner runtime fence orchestration", () => {
     kernel.fenceUserKernelRuntime = vi.fn();
     kernel.abortFencedUserKernelProcesses = vi.fn(async () => undefined);
     kernel.prepareRegisteredAppRunners = vi.fn(async () => undefined);
-    kernel.requireLocalUserKernelCapability = vi.fn(async () => TEST_KERNEL_CAPABILITY);
     const projection = { version: 1, username: "alice", uid: 1000, generation: 4 };
     const master = {
       setName: vi.fn(async () => undefined),
@@ -5480,7 +5277,6 @@ describe("Kernel AppRunner runtime fence orchestration", () => {
       "user:alice",
       "alice",
       4,
-      TEST_KERNEL_CAPABILITY,
     );
     expect(kernel.activateUserKernelFromProjection)
       .toHaveBeenCalledWith(marker, projection, "alice");
@@ -5555,13 +5351,7 @@ describe("Kernel package app authorization", () => {
     Object.defineProperty(kernel, "name", { value: "user:alice" });
     kernel.ctx = {
       storage: {
-        get: vi.fn(async () => ({
-          version: 1,
-          username: "alice",
-          uid: 1000,
-          generation: 4,
-          secret: TEST_KERNEL_CAPABILITY,
-        })),
+        get: vi.fn(async () => undefined),
         kv: {
           get: (key: string) => values.get(key),
           put: (key: string, value: unknown) => values.set(key, value),
@@ -5639,7 +5429,7 @@ describe("Kernel package app authorization", () => {
     const master = createKernel() as any;
     Object.defineProperty(master, "name", { value: "singleton" });
     master.userKernels = { get: vi.fn(() => placement) };
-    master.authorizeUserKernelCapability = vi.fn(async () => placement);
+    master.authorizeUserKernelSource = vi.fn(() => placement);
     master.beginMasterUserOperation = vi.fn(() => releaseOperation);
     master.ctx = {
       storage: {
@@ -5668,7 +5458,6 @@ describe("Kernel package app authorization", () => {
       sourceKernelName: "user:alice",
       uid: 1000,
       generation: 4,
-      kernelCapability: TEST_KERNEL_CAPABILITY,
     };
     const grant = await master.issueAppPlacementCertificate(proof);
 
@@ -5678,7 +5467,7 @@ describe("Kernel package app authorization", () => {
       uid: 1000,
       generation: 4,
     });
-    expect(master.authorizeUserKernelCapability).toHaveBeenCalledWith(proof);
+    expect(master.authorizeUserKernelSource).toHaveBeenCalledWith(proof);
     expect(master.beginMasterUserOperation).toHaveBeenCalledWith("alice");
     expect(releaseOperation).toHaveBeenCalledOnce();
     expect(publishedVerificationOptions?.customMetadata).toMatchObject({
@@ -5699,7 +5488,7 @@ describe("Kernel package app authorization", () => {
 
     const denied = createKernel() as any;
     Object.defineProperty(denied, "name", { value: "singleton" });
-    denied.authorizeUserKernelCapability = vi.fn(async () => null);
+    denied.authorizeUserKernelSource = vi.fn(() => null);
     await expect(denied.issueAppPlacementCertificate(proof)).resolves.toBeNull();
   });
 
@@ -5713,7 +5502,7 @@ describe("Kernel package app authorization", () => {
     const publish = vi.fn();
     const master = createKernel() as any;
     master.userKernels = { get: vi.fn(() => placement) };
-    master.authorizeUserKernelCapability = vi.fn(async () => placement);
+    master.authorizeUserKernelSource = vi.fn(() => placement);
     master.beginMasterUserOperation = vi.fn(() => vi.fn());
     master.ctx = {
       storage: {
@@ -5732,7 +5521,6 @@ describe("Kernel package app authorization", () => {
       sourceKernelName: "user:alice",
       uid: 1000,
       generation: 4,
-      kernelCapability: TEST_KERNEL_CAPABILITY,
     })).rejects.toThrow("signing key recovery is required");
     expect(master.ctx.storage.put).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();

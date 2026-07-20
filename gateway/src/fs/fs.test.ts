@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { env } from "cloudflare:workers";
 import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
 import type { KernelRefs } from "./index";
+import { visiblePackageScopesForActor } from "../kernel/packages";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { provisionR2Directory, R2MountBackend } from "./backends/r2";
 import { APP_PLACEMENT_VERIFICATION_KEY_OBJECT } from "../shared/app-placement-certificate";
@@ -456,16 +457,19 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
 
   const kernel: KernelRefs = {
     auth: {
-      getPasswdByUsername(username: string) {
-        return passwdEntries.find((entry) => entry.username === username) ?? null;
+      async getAccountByUsername(username: string) {
+        const entry = passwdEntries.find((candidate) => candidate.username === username);
+        return entry
+          ? { uid: entry.uid, gid: entry.gid, username: entry.username, home: entry.home }
+          : null;
       },
-      getPasswdByUid(uid: number) {
-        return passwdEntries.find((entry) => entry.uid === uid) ?? null;
-      },
-      getPersonalAgentUid(ownerUid: number) {
+      async getPersonalAgentUid(ownerUid: number) {
         return ownerUid === SAM.uid ? SAM_AGENT.uid : null;
       },
-    } as never,
+      async readAuthFile() {
+        return "";
+      },
+    },
     procs: {
       get(pid: string) {
         if (pid === "task-alpha") return processRecord;
@@ -491,32 +495,28 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     devices: null as never,
     caps: null as never,
     config: {
-      get(key: string) {
+      async get(key: string) {
         return configEntries.get(key) ?? null;
       },
-      set(key: string, value: string) {
-        configEntries.set(key, value);
-      },
-      list(prefix: string) {
+      async list(prefix: string) {
         const normalized = prefix.trim();
         const withSlash = normalized.endsWith("/") ? normalized : `${normalized}/`;
         return [...configEntries.entries()]
           .filter(([key]) => key.startsWith(withSlash))
           .map(([key, value]) => ({ key, value }));
       },
-    } as never,
+    },
     packages: {
-      list(args?: { scopes?: any[]; enabled?: boolean; name?: string; runtime?: string }) {
-        const visibleScopes = args?.scopes?.map(packageScopeKey);
+      async listVisible(options?: { enabled?: boolean }) {
+        // Mirrors the Master-side visibility filter.
+        const scopes = new Set(visiblePackageScopesForActor(identity).map(packageScopeKey));
         return packages.filter((record) => {
-          if (visibleScopes && !visibleScopes.includes(packageScopeKey(record.scope))) return false;
-          if (typeof args?.enabled === "boolean" && record.enabled !== args.enabled) return false;
-          if (args?.name && record.manifest.name !== args.name) return false;
-          if (args?.runtime && record.manifest.runtime !== args.runtime) return false;
+          if (!scopes.has(packageScopeKey(record.scope))) return false;
+          if (typeof options?.enabled === "boolean" && record.enabled !== options.enabled) return false;
           return true;
-        }) as never;
+        });
       },
-    } as never,
+    },
     cron: {
       listUserCrontabs() {
         return canAccessCrontab("sam") ? ["sam"] : [];

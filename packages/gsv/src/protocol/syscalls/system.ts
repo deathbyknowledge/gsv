@@ -124,6 +124,46 @@ export type AccountListResult = {
   accounts: AccountSummary[];
 };
 
+export type AccountGetArgs = {
+  /** Canonical username to look up. Exactly one of `username` or `uid` must be set. */
+  username?: string;
+  /** Uid to look up. Exactly one of `username` or `uid` must be set. */
+  uid?: number;
+};
+
+export type AccountDetail = {
+  uid: number;
+  username: string;
+  gid: number;
+  gids: number[];
+  home: string;
+  shell: string;
+  kind: "human" | "agent" | "system";
+  state: "active" | "retired";
+  displayName: string;
+  gecos?: string;
+  /**
+   * Resolved runtime capabilities for this account. Present only when the
+   * caller may run as the account (self, owned agent, or root).
+   */
+  capabilities?: string[];
+  /**
+   * The account's 1:1 personal agent uid, when one is registered. Present
+   * only under the same run-as gate as `capabilities`.
+   */
+  personalAgentUid?: number;
+  /**
+   * Whether the caller's owning human may delegate run-as to this account
+   * (personal agent, primary-group agent, or package-agent access group).
+   * Unlike `capabilities`, this is never true for the caller's own account.
+   */
+  delegable?: boolean;
+};
+
+export type AccountGetResult = {
+  account: AccountDetail | null;
+};
+
 export type SysSetupArgs = {
   username: string;
   password: string;
@@ -271,6 +311,8 @@ export type SysBootstrapResult = {
 
 export type SysConfigGetArgs = {
   key?: string;
+  /** When true, return only explicitly set values (no seeded defaults). */
+  explicit?: boolean;
 };
 
 export type SysConfigEntry = {
@@ -280,6 +322,20 @@ export type SysConfigEntry = {
 
 export type SysConfigGetResult = {
   entries: SysConfigEntry[];
+};
+
+export type SysCapListArgs = {
+  /** Restrict the listing to a single group id. */
+  gid?: number;
+};
+
+export type SysCapRecord = {
+  gid: number;
+  capability: string;
+};
+
+export type SysCapListResult = {
+  records: SysCapRecord[];
 };
 
 export type SysConfigSetArgs = {

@@ -61,6 +61,11 @@ function canRead(ctx: KernelContext, key: string): boolean {
   return canManageUserConfig(ctx, parsed.uid);
 }
 
+/** sys.config.get read permission, exported for Kernel-local Master reads. */
+export function canReadSysConfig(ctx: KernelContext, key: string): boolean {
+  return canRead(ctx, key);
+}
+
 function canWrite(ctx: KernelContext, key: string): boolean {
   const uid = ctx.identity!.process.uid;
   if (uid === 0 && key.startsWith("config/")) return true;
@@ -85,17 +90,20 @@ export function handleSysConfigGet(
   const config = ctx.config;
   const key = args.key;
 
+  const explicit = args.explicit === true;
+  const list = (prefix: string) => explicit ? config.listExplicit(prefix) : config.list(prefix);
+
   if (key === undefined || key === "") {
     const visible = (uid === 0
-      ? config.list("")
+      ? list("")
       : [
-          ...config.list("config/"),
-          ...config.list("users/"),
+          ...list("config/"),
+          ...list("users/"),
         ]).filter((entry) => canRead(ctx, entry.key));
     return { entries: visible };
   }
 
-  const exact = config.get(key);
+  const exact = explicit ? config.getExplicit(key) : config.get(key);
   if (exact !== null) {
     if (!canRead(ctx, key)) {
       throw new Error(`Permission denied: cannot read ${key}`);
@@ -104,7 +112,7 @@ export function handleSysConfigGet(
   }
 
   const prefix = key.endsWith("/") ? key : key + "/";
-  const listed = config.list(prefix);
+  const listed = list(prefix);
 
   const entries: SysConfigEntry[] = [];
   for (const entry of listed) {
@@ -114,7 +122,7 @@ export function handleSysConfigGet(
   }
 
   if (entries.length === 0 && !key.includes("/")) {
-    const scoped = config.list(key);
+    const scoped = list(key);
     for (const entry of scoped) {
       if (canRead(ctx, entry.key)) {
         entries.push(entry);

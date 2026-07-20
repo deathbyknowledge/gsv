@@ -362,6 +362,69 @@ async function initProcess(
   return stub;
 }
 
+/**
+ * Commission a user Kernel and its Master-side account for tests: the Master
+ * gets the account, an active placement, and config-read capability; the
+ * target gets its active marker. Returns the account identity to run as.
+ */
+async function commissionUserKernel(kernelName: string): Promise<ProcessIdentity> {
+  const username = userKernelUsername(kernelName)!;
+  const uid = 100_000 + Math.floor(Math.random() * 100_000);
+  const identity: ProcessIdentity = {
+    uid,
+    gid: uid,
+    gids: [uid],
+    username,
+    home: `/home/${username}`,
+    cwd: `/home/${username}`,
+  };
+
+  const master = await getKernelPtr(SHIP_KERNEL_NAME);
+  await runInDurableObject(master, (instance) => {
+    const k = instance as unknown as {
+      auth: {
+        addUser: (entry: unknown, kind: string) => void;
+        addGroup: (group: { name: string; gid: number; members: string[] }) => void;
+      };
+      caps: { grant: (gid: number, capability: string) => unknown };
+      userKernels: {
+        reserve: (name: string, uid: number) => void;
+        markActive: (name: string, generation: number) => void;
+      };
+    };
+    k.auth.addUser({
+      username,
+      uid,
+      gid: uid,
+      gecos: username,
+      home: identity.home,
+      shell: "/bin/init",
+    }, "human");
+    k.auth.addGroup({ name: username, gid: uid, members: [] });
+    k.caps.grant(uid, "sys.config.get");
+    k.caps.grant(uid, "account.get");
+    k.userKernels.reserve(username, uid);
+    k.userKernels.markActive(username, 1);
+  });
+
+  const kernel = await getKernelPtr(kernelName);
+  await runInDurableObject(kernel, async (instance, state) => {
+    const marker: UserKernelInstanceMarker = {
+      version: 1,
+      kind: "user",
+      username,
+      uid,
+      generation: 1,
+      lifecycle: "active",
+      updatedAt: Date.now(),
+    };
+    await state.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, marker);
+    (instance as unknown as { userKernelMarker: UserKernelInstanceMarker }).userKernelMarker = marker;
+  });
+
+  return identity;
+}
+
 // ---------------------------------------------------------------------------
 // Tier 1: Mechanical tests (no LLM)
 // ---------------------------------------------------------------------------
@@ -596,7 +659,8 @@ describe("Process DO — mechanical", () => {
       const kernelName = userKernelName(
         `proc-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
       );
-      const stub = await initProcess(pid, ROOT_IDENTITY, { kernelName });
+      const identity = await commissionUserKernel(kernelName);
+      const stub = await initProcess(pid, identity, { kernelName });
 
       const config = await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;

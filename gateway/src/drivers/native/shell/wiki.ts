@@ -136,7 +136,7 @@ async function runWikiSourceCommand(args: string[], ctx: KernelContext): Promise
 async function listWikiCollections(ctx: KernelContext): Promise<WikiCollection[]> {
   requireCommandCapability(ctx, "repo.list");
   requireCommandCapability(ctx, "repo.read");
-  const repos = handleRepoList({}, ctx).repos;
+  const repos = (await ctx.listRepos()).repos;
   const collections: WikiCollection[] = [];
 
   for (const repo of repos) {

@@ -9,6 +9,11 @@ import type { FsSearchMatch } from "../syscalls/search";
 
 export type ExtendedMountStat = FsStat & { uid: number; gid: number; contentType?: string };
 
+/**
+ * Backends may answer `handles` asynchronously when path resolution requires
+ * Master state (account-home delegation consults the directory by RPC).
+ */
+
 export type FsSearchBackendResult = {
   matches: FsSearchMatch[];
   truncated?: boolean;
@@ -70,7 +75,7 @@ export type WriteFileStreamResult = {
 };
 
 export interface MountBackend {
-  handles(path: string): boolean;
+  handles(path: string): boolean | Promise<boolean>;
   readFile(path: string, options?: { encoding?: BufferEncoding | null } | BufferEncoding): Promise<string>;
   readFileBuffer(path: string): Promise<Uint8Array>;
   /** Return undefined to use GsvFs's buffered fallback. */

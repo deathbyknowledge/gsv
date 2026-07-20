@@ -177,6 +177,7 @@ describe("CapabilityStore", () => {
     const userCaps = store.list(100);
     expect(userCaps.map((r) => r.capability)).toEqual([
       "account.create",
+      "account.get",
       "account.list",
       "adapter.connect",
       "adapter.disconnect",
@@ -220,6 +221,7 @@ describe("CapabilityStore", () => {
       "sched.*",
       "shell.*",
       "signal.*",
+      "sys.cap.list",
       "sys.config.get",
       "sys.config.set",
       "sys.device.delete",

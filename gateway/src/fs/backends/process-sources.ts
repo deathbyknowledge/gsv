@@ -27,7 +27,7 @@ export type ProcessSourceBackendOptions = {
   identity: ProcessIdentity;
   storage?: R2Bucket | null;
   ripgit: RipgitClient | null;
-  repos?: RepoSummary[] | null;
+  listRepos?: () => Promise<RepoSummary[]>;
   processId?: string | null;
   config?: SourceConfig | null;
 };
@@ -170,7 +170,7 @@ class ProcessSourceBackend implements MountBackend {
   private readonly identity: ProcessIdentity;
   private readonly storage: R2Bucket | null;
   private readonly ripgit: RipgitClient;
-  private readonly repos: SourceRepo[];
+  private sourceReposCache: SourceRepo[] | null = null;
   private readonly processId: string | null;
   private readonly config: SourceConfig | null;
 
@@ -180,7 +180,18 @@ class ProcessSourceBackend implements MountBackend {
     this.ripgit = options.ripgit!;
     this.processId = options.processId ?? null;
     this.config = options.config ?? null;
-    this.repos = visibleSourceRepos(options.repos);
+    this.listRepos = options.listRepos;
+  }
+
+  private readonly listRepos?: () => Promise<RepoSummary[]>;
+
+  private async listSourceRepos(): Promise<SourceRepo[]> {
+    if (!this.sourceReposCache) {
+      this.sourceReposCache = visibleSourceRepos(
+        this.listRepos ? await this.listRepos() : null,
+      );
+    }
+    return this.sourceReposCache;
   }
 
   handles(path: string): boolean {
@@ -193,7 +204,7 @@ class ProcessSourceBackend implements MountBackend {
   }
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
-    const repoResolved = this.resolveRepoPathOrNull(path);
+    const repoResolved = await this.resolveRepoPathOrNull(path);
     if (repoResolved) {
       return this.readRepoFileBuffer(repoResolved);
     }
@@ -232,12 +243,12 @@ class ProcessSourceBackend implements MountBackend {
   }
 
   async writeFile(path: string, content: FileContent): Promise<void> {
-    const repoResolved = this.resolveWritableRepoPath(path, "write");
+    const repoResolved = await this.resolveWritableRepoPath(path, "write");
     await this.stageOverlayPut(repoResolved.repo, repoResolved.relativePath, asBytes(content));
   }
 
   async appendFile(path: string, content: FileContent): Promise<void> {
-    const repoResolved = this.resolveWritableRepoPath(path, "append");
+    const repoResolved = await this.resolveWritableRepoPath(path, "append");
     let current: Uint8Array<ArrayBufferLike> = new Uint8Array();
     if (await this.exists(path)) {
       current = await this.readFileBuffer(path);
@@ -257,11 +268,11 @@ class ProcessSourceBackend implements MountBackend {
 
   async stat(path: string): Promise<ExtendedMountStat> {
     const normalizedPath = normalizePath(path);
-    if (this.virtualDirectoryEntries(normalizedPath)) {
+    if (await this.virtualDirectoryEntries(normalizedPath)) {
       return makeDirectoryStat(this.identity.uid, this.identity.gid, true);
     }
 
-    const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
+    const repoResolved = await this.resolveRepoPathOrNull(normalizedPath);
     if (repoResolved) {
       return this.statRepoPath(repoResolved);
     }
@@ -303,7 +314,7 @@ class ProcessSourceBackend implements MountBackend {
   }
 
   async mkdir(path: string, _options?: MkdirOptions): Promise<void> {
-    const repoResolved = this.resolveRepoPath(path);
+    const repoResolved = await this.resolveRepoPath(path);
     if (!repoResolved.relativePath) {
       return;
     }
@@ -314,12 +325,12 @@ class ProcessSourceBackend implements MountBackend {
 
   async readdir(path: string): Promise<string[]> {
     const normalizedPath = normalizePath(path);
-    const virtualEntries = this.virtualDirectoryEntries(normalizedPath);
+    const virtualEntries = await this.virtualDirectoryEntries(normalizedPath);
     if (virtualEntries) {
       return virtualEntries;
     }
 
-    const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
+    const repoResolved = await this.resolveRepoPathOrNull(normalizedPath);
     if (repoResolved) {
       return this.readdirRepoPath(repoResolved);
     }
@@ -368,7 +379,7 @@ class ProcessSourceBackend implements MountBackend {
   }
 
   async rm(path: string, options?: RmOptions): Promise<void> {
-    const repoResolved = this.resolveWritableRepoPath(path, "rm");
+    const repoResolved = await this.resolveWritableRepoPath(path, "rm");
     const removable = await this.assertRemovableRepoPath(repoResolved, options);
     if (!removable) {
       return;
@@ -400,7 +411,7 @@ class ProcessSourceBackend implements MountBackend {
   ): Promise<FsSearchBackendResult> {
     signal?.throwIfAborted();
     const normalizedPath = normalizePath(path);
-    const virtualRepos = this.virtualDirectoryRepos(normalizedPath);
+    const virtualRepos = await this.virtualDirectoryRepos(normalizedPath);
     if (virtualRepos) {
       const matches = [];
       let truncated = false;
@@ -413,7 +424,7 @@ class ProcessSourceBackend implements MountBackend {
       return { matches, truncated };
     }
 
-    const repoResolved = this.resolveRepoPathOrNull(normalizedPath);
+    const repoResolved = await this.resolveRepoPathOrNull(normalizedPath);
     if (repoResolved) {
       return this.searchRepo(repoResolved.repo, repoResolved.relativePath, query, signal);
     }
@@ -453,48 +464,49 @@ class ProcessSourceBackend implements MountBackend {
     };
   }
 
-  private resolveRepoPath(path: string): {
+  private async resolveRepoPath(path: string): Promise<{
     repo: SourceRepo;
     relativePath: string;
     normalizedPath: string;
-  } {
-    const resolved = this.resolveRepoPathOrNull(path);
+  }> {
+    const resolved = await this.resolveRepoPathOrNull(path);
     if (!resolved) {
       throw new Error(`ENOENT: no such source repo '${normalizePath(path)}'`);
     }
     return resolved;
   }
 
-  private resolveRepoPathOrNull(path: string): {
+  private async resolveRepoPathOrNull(path: string): Promise<{
     repo: SourceRepo;
     relativePath: string;
     normalizedPath: string;
-  } | null {
-    return resolveSourceRepoPath(this.repos, path);
+  } | null> {
+    return resolveSourceRepoPath(await this.listSourceRepos(), path);
   }
 
-  private virtualDirectoryEntries(path: string): string[] | null {
+  private async virtualDirectoryEntries(path: string): Promise<string[] | null> {
     const normalizedPath = normalizePath(path);
     if (normalizedPath !== "/src" && !normalizedPath.startsWith("/src/")) {
       return null;
     }
-    if (this.repos.some((repo) => repo.rootPath === normalizedPath)) {
+    const repos = await this.listSourceRepos();
+    if (repos.some((repo) => repo.rootPath === normalizedPath)) {
       return null;
     }
     const entries = new Set<string>();
     if (normalizedPath === "/src") {
-      if (this.repos.length > 0) {
+      if (repos.length > 0) {
         entries.add("repos");
       }
     }
     if (normalizedPath === "/src/repos") {
-      for (const repo of this.repos) {
+      for (const repo of repos) {
         entries.add(repo.owner);
       }
     } else {
       const ownerMatch = normalizedPath.match(/^\/src\/repos\/([^/]+)$/);
       if (ownerMatch) {
-        for (const repo of this.repos) {
+        for (const repo of repos) {
           if (repo.owner === ownerMatch[1]) {
             entries.add(repo.name);
           }
@@ -511,31 +523,32 @@ class ProcessSourceBackend implements MountBackend {
     return null;
   }
 
-  private virtualDirectoryRepos(path: string): SourceRepo[] | null {
+  private async virtualDirectoryRepos(path: string): Promise<SourceRepo[] | null> {
     const normalizedPath = normalizePath(path);
-    const entries = this.virtualDirectoryEntries(normalizedPath);
+    const entries = await this.virtualDirectoryEntries(normalizedPath);
     if (!entries) {
       return null;
     }
+    const repos = await this.listSourceRepos();
     if (normalizedPath === "/src") {
-      return this.repos;
+      return repos;
     }
     if (normalizedPath === "/src/repos") {
-      return this.repos;
+      return repos;
     }
     const ownerMatch = normalizedPath.match(/^\/src\/repos\/([^/]+)$/);
     if (ownerMatch) {
-      return this.repos.filter((repo) => repo.owner === ownerMatch[1]);
+      return repos.filter((repo) => repo.owner === ownerMatch[1]);
     }
     return [];
   }
 
-  private resolveWritableRepoPath(path: string, operation: string): {
+  private async resolveWritableRepoPath(path: string, operation: string): Promise<{
     repo: SourceRepo;
     relativePath: string;
     normalizedPath: string;
-  } {
-    return this.assertWritableRepoPath(this.resolveRepoPath(path), operation);
+  }> {
+    return this.assertWritableRepoPath(await this.resolveRepoPath(path), operation);
   }
 
   private assertWritableRepoPath(
@@ -760,7 +773,7 @@ export async function getRepoSourceStatus(
   repoSlug: string,
   sourcePath?: string,
 ): Promise<RepoSourceStatus> {
-  const repo = sourceRepoForOptions(options, repoSlug, sourcePath);
+  const repo = await sourceRepoForOptions(options, repoSlug, sourcePath);
   const state = readSourceBranchState(options.config ?? null, options.processId ?? null, repo);
   const overlay = await readOverlayManifest(
     options.storage ?? null,
@@ -779,7 +792,7 @@ export async function diffRepoSourceChanges(
   if (!options.ripgit) {
     throw new Error("RIPGIT binding is required");
   }
-  const repo = sourceRepoForOptions(options, repoSlug, sourcePath);
+  const repo = await sourceRepoForOptions(options, repoSlug, sourcePath);
   const state = readSourceBranchState(options.config ?? null, options.processId ?? null, repo);
   const overlay = await readOverlayManifest(
     options.storage ?? null,
@@ -851,7 +864,7 @@ export async function commitRepoSourceChanges(
     throw new Error("message is required");
   }
 
-  const repo = sourceRepoForOptions(options, repoSlug, args.sourcePath);
+  const repo = await sourceRepoForOptions(options, repoSlug, args.sourcePath);
   if (!repo.writable) {
     throw new Error(`Repo is read-only: ${repo.repo}`);
   }
@@ -951,7 +964,7 @@ export async function discardRepoSourceChanges(
   if (!options.processId) {
     throw new Error("Repo changes require a process context");
   }
-  const repo = sourceRepoForOptions(options, repoSlug, sourcePath);
+  const repo = await sourceRepoForOptions(options, repoSlug, sourcePath);
   const state = readSourceBranchState(options.config ?? null, options.processId, repo);
   const overlaySnapshot = await readOverlaySnapshot(
     options.storage,
@@ -1095,13 +1108,13 @@ function throwMissingSourcePath(path: string): never {
   throw new Error(`ENOENT: no such source repo '${normalizedPath}'. Create repos with rgit create owner/repo and edit them under /src/repos/{owner}/{repo}.`);
 }
 
-function sourceRepoForOptions(
+async function sourceRepoForOptions(
   options: ProcessSourceBackendOptions,
   repoSlug: string,
   sourcePath?: string,
-): SourceRepo {
+): Promise<SourceRepo> {
   const normalizedRepo = normalizeRepoSlug(repoSlug);
-  const repos = visibleSourceRepos(options.repos);
+  const repos = visibleSourceRepos(options.listRepos ? await options.listRepos() : null);
   const resolved = sourcePath ? resolveSourceRepoPath(repos, sourcePath) : null;
   if (resolved?.repo.repo === normalizedRepo) {
     return resolved.repo;

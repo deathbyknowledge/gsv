@@ -22,6 +22,9 @@ import type {
   SignalFrame,
 } from "../protocol/frames";
 import type {
+  AccountGetArgs,
+  AccountDetail,
+  AccountGetResult,
   ConnectArgs,
   ConnectionIdentity,
   NetFetchArgs,
@@ -32,6 +35,8 @@ import type {
   ScheduleRunResult,
   SchedulerRunArgs,
   SchedulerRunResult,
+  SysCapListResult,
+  SysConfigGetResult,
 } from "@humansandmachines/gsv/protocol";
 import {
   BinaryBodyChannel,
@@ -45,7 +50,7 @@ import type {
 } from "../adapter-interface";
 import { AuthStore, type AuthenticatedCredential } from "./auth-store";
 import { CapabilityStore, hasCapability } from "./capabilities";
-import { ConfigStore } from "./config";
+import { ConfigStore, SYSTEM_CONFIG_DEFAULTS } from "./config";
 import { DeviceRegistry } from "./devices";
 import {
   RoutingTable,
@@ -115,6 +120,7 @@ import {
 import {
   PackageStore,
   packageScopeKey,
+  type InstalledPackageRecord,
   type PackageEntrypoint,
   type PackageArtifactMetadata,
   type PackageInstallScope,
@@ -143,7 +149,10 @@ import {
   type RepoMetadataMutationResult,
 } from "./repo-metadata";
 import { handleProcSpawn } from "./proc-handlers";
-import { ensureDefaultConversationExecutor } from "./agents";
+import { ensureDefaultConversationExecutor, handleAccountGet } from "./agents";
+import { canReadSysConfig, handleSysConfigGet } from "./sys/config";
+import { handleSysCapList } from "./sys/cap";
+import { handleRepoList } from "./repo";
 import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
@@ -160,6 +169,7 @@ import {
   type ProcessAuthorityResult,
 } from "../shared/process-authority";
 import { isLocked } from "../auth/shadow";
+import { serializeGroup } from "../auth/group";
 import { canOwnerRunAsAccount } from "./account-access";
 import {
   findPackageAgentAccount,
@@ -261,9 +271,6 @@ const MAX_PENDING_APP_RUNNER_RUNTIME_FENCE_AUTHORIZATIONS = 4_096;
 const PACKAGE_PROJECTION_TARGET_CONCURRENCY = 8;
 const APP_RUNNER_RUNTIME_FENCE_CONCURRENCY = 8;
 const PACKAGE_PROJECTION_RECOVERY_MAX_DELAY_SECONDS = 60;
-const USER_KERNEL_CAPABILITY_BYTES = 32;
-const USER_KERNEL_CAPABILITY_STORAGE_KEY = "gsv/kernel/capability/v1";
-const MASTER_USER_KERNEL_CAPABILITY_STORAGE_PREFIX = "gsv/kernel/user-capability/v1/";
 const TEXT_ENCODER = new TextEncoder();
 
 type ConnectionState = {
@@ -292,7 +299,6 @@ type UserKernelAuthenticationInput = {
   sourceKernelName: string;
   username: string;
   generation: number;
-  kernelCapability: string;
   args: ConnectArgs;
   loginSourceScope: LoginSourceScope;
 };
@@ -320,7 +326,6 @@ type MasterSyscallInput = {
   sourceKernelName: string;
   callerOwnerUid: number;
   generation: number;
-  kernelCapability: string;
   identity: ConnectionIdentity;
   frame: {
     type: "req";
@@ -335,7 +340,6 @@ type MasterRepoMetadataMutationInput = {
   sourceKernelName: string;
   callerOwnerUid: number;
   generation: number;
-  kernelCapability: string;
   identity: ConnectionIdentity;
   mutation: RepoMetadataMutation;
 };
@@ -344,7 +348,6 @@ type UserRepoOperationAuthorizationInput = {
   sourceKernelName: string;
   callerOwnerUid: number;
   generation: number;
-  kernelCapability: string;
   identity: ConnectionIdentity;
   call: AuthoritativeRepoOperationCall;
   repo?: string;
@@ -394,7 +397,6 @@ type UserKernelProvisioningAuthorizationInput = Omit<
 
 type UserKernelActivationTargetInput = UserKernelProvisioningTargetInput;
 type UserKernelActivationAuthorizationInput = UserKernelProvisioningAuthorizationInput & {
-  kernelCapability: string;
 };
 
 type ProcessRollbackAuthorizationInput = {
@@ -414,7 +416,6 @@ type UserKernelDeviceRevocationInput = {
   sourceKernelName: string;
   ownerUid: number;
   generation: number;
-  kernelCapability: string;
   deviceId: string;
 };
 
@@ -431,7 +432,6 @@ type TokenRevocationConfirmationInput = {
   username: string;
   uid: number;
   generation: number;
-  kernelCapability: string;
   notice: TokenRevocationNotice;
 };
 
@@ -458,18 +458,16 @@ type AdapterRunRouteAuthorizationInput = {
   sourceKernelName: string;
   ownerUid: number;
   kernelGeneration: number;
-  kernelCapability: string;
   adapter: string;
   accountId: string;
   actorId: string;
   linkGeneration: number;
 };
 
-type UserKernelCapabilityProof = {
+type UserKernelPlacementProof = {
   sourceKernelName: string;
   uid: number;
   generation: number;
-  kernelCapability: string;
 };
 
 type AppPlacementCertificateGrant = {
@@ -483,22 +481,6 @@ type AppPlacementCertificateGrant = {
 type MasterAppPlacementSigningKey = {
   record: AppPlacementSigningKeyRecord;
   key: CryptoKey;
-};
-
-type MasterUserKernelCapabilityRecord = {
-  version: 1;
-  username: string;
-  uid: number;
-  generation: number;
-  digest: string;
-};
-
-type LocalUserKernelCapabilityRecord = {
-  version: 1;
-  username: string;
-  uid: number;
-  generation: number;
-  secret: string;
 };
 
 type PackageProjectionFenceAuthorizationInput = {
@@ -551,7 +533,6 @@ type UserKernelTargetOperationLease = {
 };
 
 type AuthorizedUserKernelProvisioningSnapshot = UserKernelProvisioningSnapshot & {
-  kernelCapability: string;
 };
 
 type MasterUserSignalAuthorizationInput = {
@@ -575,6 +556,16 @@ type MasterKernelControlStub = {
   authenticateUserKernelConnection: (
     input: UserKernelAuthenticationInput,
   ) => Promise<import("./context").KernelAuthenticationResult>;
+  masterReadAuthFile: (input: {
+    sourceKernelName: string;
+    requesterUid: number;
+    kind: "passwd" | "group" | "shadow";
+  }) => Promise<{ content: string }>;
+  masterPackagesList: (input: {
+    sourceKernelName: string;
+    requesterUid: number;
+    enabled?: boolean;
+  }) => Promise<{ packages: InstalledPackageRecord[] }>;
   dispatchMasterSyscall: (input: MasterSyscallInput) => Promise<MasterSyscallResult>;
   revokeUserKernelDeviceCredentials: (
     input: UserKernelDeviceRevocationInput,
@@ -592,7 +583,6 @@ type MasterKernelControlStub = {
     sourceKernelName: string,
     username: string,
     generation: number,
-    kernelCapability: string,
   ) => Promise<UserKernelProvisioningSnapshot>;
   resolveAppFrameKernel: (
     appFrame: AppFrameContext,
@@ -617,7 +607,7 @@ type MasterKernelControlStub = {
     input: AdapterRunRouteAuthorizationInput,
   ) => Promise<boolean>;
   issueAppPlacementCertificate: (
-    input: UserKernelCapabilityProof,
+    input: UserKernelPlacementProof,
   ) => Promise<AppPlacementCertificateGrant | null>;
   consumeMasterUserSignalAuthorization: (
     input: MasterUserSignalAuthorizationInput,
@@ -835,6 +825,8 @@ const KERNEL_RPC_METHOD_ALLOWLIST = new Set([
   "authorizeAdapterRunRoute",
   "issueAppPlacementCertificate",
   "authenticateUserKernelConnection",
+  "masterReadAuthFile",
+  "masterPackagesList",
   "revokeUserKernelDeviceCredentials",
   "confirmTokenRevocationDelivery",
   "dispatchMasterSyscall",
@@ -958,7 +950,6 @@ export class Kernel extends Host<Env> {
     {
       expiresAt: number;
       provisioning: Omit<UserKernelProvisioningAuthorizationInput, "authorization">;
-      kernelCapability: string;
     }
   >();
   private readonly userKernelActivationAuthorizations = new Map<
@@ -1473,124 +1464,36 @@ export class Kernel extends Host<Env> {
     return marker;
   }
 
-  private async rotateUserKernelCapability(
-    placement: UserKernelRecord,
-  ): Promise<string> {
-    this.assertMasterKernel();
-    const secret = bytesToHex(crypto.getRandomValues(
-      new Uint8Array(USER_KERNEL_CAPABILITY_BYTES),
-    ));
-    const record: MasterUserKernelCapabilityRecord = {
-      version: 1,
-      username: placement.username,
-      uid: placement.uid,
-      generation: placement.generation,
-      digest: await hashUserKernelCapability(secret),
-    };
-    const current = this.userKernels.get(placement.username);
-    if (!sameUserKernelPlacement(current, placement)) {
-      throw new Error(`User Kernel placement changed for ${placement.username}`);
-    }
-    await this.ctx.storage.put(
-      masterUserKernelCapabilityStorageKey(placement.username),
-      record,
-    );
-    const persistedPlacement = this.userKernels.get(placement.username);
-    if (!sameUserKernelPlacement(persistedPlacement, placement)) {
-      throw new Error(`User Kernel placement changed for ${placement.username}`);
-    }
-    return secret;
-  }
 
-  private async authorizeUserKernelCapability(
-    proof: UserKernelCapabilityProof,
-  ): Promise<UserKernelRecord | null> {
+  private authorizeUserKernelSource(proof: {
+    sourceKernelName: string;
+    uid: number;
+    generation: number;
+  }): UserKernelRecord | null {
     this.assertMasterKernel();
     const username = userKernelUsername(proof.sourceKernelName);
     const placement = username ? this.userKernels.get(username) : null;
+    // Active placements are the steady state; provisioning placements are
+    // mid-flight Master-initiated provisioning and equally bound to this
+    // fleet (only gateway code can reach these stubs).
     if (
       !username
       || !placement
-      || !this.isActiveUserKernelPlacement(placement)
+      || (placement.lifecycle !== "active" && placement.lifecycle !== "provisioning")
       || placement.uid !== proof.uid
       || placement.generation !== proof.generation
-      || !isUserKernelCapabilitySecret(proof.kernelCapability)
     ) {
       return null;
     }
-
-    if (!await this.verifyUserKernelCapabilityRecord(
-      placement,
-      proof.kernelCapability,
-    )) {
-      return null;
-    }
-
     const current = this.userKernels.get(username);
     return current
-      && this.isActiveUserKernelPlacement(current)
+      && (current.lifecycle === "active" || current.lifecycle === "provisioning")
       && sameUserKernelPlacement(current, placement)
       ? current
       : null;
   }
 
-  private async verifyUserKernelCapabilityRecord(
-    placement: UserKernelRecord,
-    secret: string,
-  ): Promise<boolean> {
-    if (!isUserKernelCapabilitySecret(secret)) return false;
-    const record = parseMasterUserKernelCapabilityRecord(
-      await this.ctx.storage.get<unknown>(
-        masterUserKernelCapabilityStorageKey(placement.username),
-      ),
-    );
-    if (
-      !record
-      || record.username !== placement.username
-      || record.uid !== placement.uid
-      || record.generation !== placement.generation
-      || !constantTimeEqualHex(
-        record.digest,
-        await hashUserKernelCapability(secret),
-      )
-    ) {
-      return false;
-    }
-    return sameUserKernelPlacement(
-      this.userKernels.get(placement.username),
-      placement,
-    );
-  }
 
-  private async requireLocalUserKernelCapability(
-    marker: UserKernelInstanceMarker,
-    options: {
-      allowProvisioning?: boolean;
-      allowLifecycleFence?: boolean;
-    } = {},
-  ): Promise<string> {
-    const record = parseLocalUserKernelCapabilityRecord(
-      await this.ctx.storage.get<unknown>(USER_KERNEL_CAPABILITY_STORAGE_KEY),
-    );
-    if (
-      !record
-      || record.username !== marker.username
-      || record.uid !== marker.uid
-      || record.generation !== marker.generation
-      || (
-        this.appRuntimes.getLifecycleFence(marker.uid) !== null
-        && options.allowLifecycleFence !== true
-      )
-      || !(options.allowProvisioning && marker.lifecycle === "provisioning"
-        ? this.userKernelMarker === marker
-        : this.isCurrentUserKernelMarker(marker, {
-            allowLifecycleFence: options.allowLifecycleFence,
-          }))
-    ) {
-      throw new Error("User Kernel capability is unavailable");
-    }
-    return record.secret;
-  }
 
   private async masterAppPlacementSigningKey(): Promise<MasterAppPlacementSigningKey> {
     this.assertMasterKernel();
@@ -1889,7 +1792,6 @@ export class Kernel extends Host<Env> {
       }
     }
 
-    const kernelCapability = await this.requireLocalUserKernelCapability(marker);
     const master = await getAgentByName(
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
@@ -1899,7 +1801,6 @@ export class Kernel extends Host<Env> {
         sourceKernelName: this.name,
         uid: marker.uid,
         generation: marker.generation,
-        kernelCapability,
       }),
     );
     if (
@@ -2355,10 +2256,6 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    const kernelCapability = await this.requireLocalUserKernelCapability(marker, {
-      allowProvisioning: true,
-      allowLifecycleFence: true,
-    });
     const master = await getAgentByName(
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
@@ -2367,7 +2264,6 @@ export class Kernel extends Host<Env> {
       this.name,
       marker.username,
       marker.generation,
-      kernelCapability,
     );
     const current = await this.loadUserKernelMarker();
     if (!sameUserKernelInstanceMarker(current, marker)) {
@@ -2714,7 +2610,7 @@ export class Kernel extends Host<Env> {
     ) {
       return null;
     }
-    return { ...snapshot, kernelCapability: pending.kernelCapability };
+    return snapshot;
   }
 
   /** Consume the exact, one-shot activation confirmation after Master commit. */
@@ -2749,10 +2645,6 @@ export class Kernel extends Host<Env> {
       || placement.uid !== input.uid
       || placement.lifecycle !== "active"
       || placement.generation !== input.generation
-      || !await this.verifyUserKernelCapabilityRecord(
-        placement,
-        input.kernelCapability,
-      )
     ) {
       return null;
     }
@@ -2798,13 +2690,12 @@ export class Kernel extends Host<Env> {
     if (!authorizedSnapshot) {
       throw new Error("User Kernel provisioning denied");
     }
-    const { kernelCapability, ...snapshot } = authorizedSnapshot;
+    const snapshot = authorizedSnapshot;
     validateUserKernelProvisioningSnapshot(snapshot, instanceUsername);
     if (
       snapshot.username !== input.username
       || snapshot.uid !== input.uid
       || snapshot.generation !== input.generation
-      || !isUserKernelCapabilitySecret(kernelCapability)
     ) {
       throw new Error("User Kernel provisioning identity mismatch");
     }
@@ -2838,15 +2729,6 @@ export class Kernel extends Host<Env> {
       this.fenceUserKernelRuntime("User Kernel is not active");
       await this.cancelPendingScheduleWakes();
     }
-    const capabilityRecord: LocalUserKernelCapabilityRecord = {
-      version: 1,
-      username: provisioning.username,
-      uid: provisioning.uid,
-      generation: provisioning.generation,
-      secret: kernelCapability,
-    };
-    await this.ctx.storage.put(USER_KERNEL_CAPABILITY_STORAGE_KEY, capabilityRecord);
-
     const provisioningFence = this.ensureProvisioningAppRuntimeLifecycleFence(provisioning);
     await this.prepareRegisteredAppRunners({
       fenceKind: "user-lifecycle",
@@ -2928,17 +2810,12 @@ export class Kernel extends Host<Env> {
       throw new Error("User Kernel activation identity mismatch");
     }
 
-    const kernelCapability = await this.requireLocalUserKernelCapability(existing, {
-      allowProvisioning: true,
-      allowLifecycleFence: true,
-    });
     const projection = await this.pullAuthorizedUserKernelActivationProjection({
       targetKernelName: this.name,
       authorization: input.authorization,
       username: input.username,
       uid: input.uid,
       generation: input.generation,
-      kernelCapability,
     });
     if (!projection) {
       throw new Error("User Kernel activation denied");
@@ -3258,6 +3135,14 @@ export class Kernel extends Host<Env> {
       process: ownerIdentity,
       capabilities: this.caps.resolve(ownerIdentity.gids),
     };
+    // During provisioning the Master is mid-transition for this owner, so
+    // Master syscalls are unavailable; projected local caps cover the window.
+    if (this.instanceKind === "user" && marker.lifecycle === "active") {
+      const account = await this.accountGetForIdentity(connectionIdentity, { uid: ownerIdentity.uid });
+      if (account?.capabilities) {
+        connectionIdentity.capabilities = account.capabilities;
+      }
+    }
     const context = this.buildKernelContext({
       identity: connectionIdentity,
       ...(marker.lifecycle === "provisioning"
@@ -3705,12 +3590,10 @@ export class Kernel extends Host<Env> {
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
     ) as unknown as MasterKernelControlStub;
-    const kernelCapability = await this.requireLocalUserKernelCapability(marker);
     await master.getUserKernelProjection(
       this.name,
       marker.username,
       marker.generation,
-      kernelCapability,
     );
   }
 
@@ -3741,12 +3624,10 @@ export class Kernel extends Host<Env> {
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
     ) as unknown as MasterKernelControlStub;
-    const kernelCapability = await this.requireLocalUserKernelCapability(marker);
     const snapshot = await master.getUserKernelProjection(
       this.name,
       marker.username,
       marker.generation,
-      kernelCapability,
     );
     if (
       input.expectedProjectionRevision !== undefined
@@ -3904,12 +3785,10 @@ export class Kernel extends Host<Env> {
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
     ) as unknown as MasterKernelControlStub;
-    const kernelCapability = await this.requireLocalUserKernelCapability(before);
     const snapshot = await master.getUserKernelProjection(
       this.name,
       before.username,
       before.generation,
-      kernelCapability,
     );
     const current = await this.loadUserKernelMarker();
     if (
@@ -3978,12 +3857,12 @@ export class Kernel extends Host<Env> {
   }
 
   /**
-   * Certify one exact active placement for edge routing. The per-generation
-   * user-Kernel capability authenticates the requester, and the transition
+   * Certify one exact active placement for edge routing. The active
+   * placement authenticates the requesting Kernel, and the transition
    * barrier prevents a certificate from escaping after that placement closes.
    */
   async issueAppPlacementCertificate(
-    input: UserKernelCapabilityProof,
+    input: UserKernelPlacementProof,
   ): Promise<AppPlacementCertificateGrant | null> {
     this.assertMasterKernel();
     if (
@@ -3993,13 +3872,12 @@ export class Kernel extends Host<Env> {
       || input.uid < 0
       || !Number.isSafeInteger(input.generation)
       || input.generation <= 0
-      || typeof input.kernelCapability !== "string"
     ) {
       return null;
     }
 
     const username = userKernelUsername(input.sourceKernelName);
-    const placement = await this.authorizeUserKernelCapability(input);
+    const placement = this.authorizeUserKernelSource(input);
     if (!username || !placement || placement.username !== username) {
       return null;
     }
@@ -4067,11 +3945,10 @@ export class Kernel extends Host<Env> {
   ): Promise<boolean> {
     this.assertMasterKernel();
     const username = userKernelUsername(input.sourceKernelName);
-    const placement = await this.authorizeUserKernelCapability({
+    const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: input.ownerUid,
       generation: input.kernelGeneration,
-      kernelCapability: input.kernelCapability,
     });
     const adapter = typeof input.adapter === "string"
       ? input.adapter.trim().toLowerCase()
@@ -4426,11 +4303,10 @@ export class Kernel extends Host<Env> {
     ) {
       return { ok: false, error: "Authentication failed" };
     }
-    const placement = await this.authorizeUserKernelCapability({
+    const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: this.userKernels.get(username)?.uid ?? -1,
       generation: input.generation,
-      kernelCapability: input.kernelCapability,
     });
     if (
       !placement
@@ -4469,17 +4345,120 @@ export class Kernel extends Host<Env> {
     };
   }
 
+  /**
+   * The claimed user-Kernel RPC source must parse as `user:<canonical>` and
+   * hold an active placement. Placement is never authority by itself — it
+   * only proves the named Kernel is the current home of that username.
+   */
+  private assertActiveUserKernelSourcePlacement(sourceKernelName: string) {
+    this.assertMasterKernel();
+    const username = userKernelUsername(sourceKernelName);
+    const placement = username ? this.userKernels.get(username) : undefined;
+    if (!placement || placement.lifecycle !== "active") {
+      throw new Error("User Kernel is not active");
+    }
+    return placement;
+  }
+
+  /**
+   * Bind a requester uid to its source Kernel: the requester is the Kernel
+   * owner or an account the owner may run as. uid 0 is only ever accepted
+   * from the root user's own Kernel.
+   */
+  private assertUserKernelRequester(
+    placement: { uid: number; username: string },
+    requesterUid: number,
+  ): void {
+    if (!Number.isSafeInteger(requesterUid) || requesterUid < 0) {
+      throw new Error("Invalid requester");
+    }
+    if (requesterUid === 0) {
+      if (placement.uid === 0 && placement.username === "root") return;
+      throw new Error("Permission denied");
+    }
+    if (requesterUid === placement.uid) return;
+    const entry = this.auth.getPasswdByUid(requesterUid);
+    if (
+      !entry
+      || !canOwnerRunAsAccount(this.auth, placement.uid, entry, placement.uid === 0)
+    ) {
+      throw new Error("Permission denied");
+    }
+  }
+
+  /**
+   * Serialized /etc auth files for user Kernels, which hold no auth state.
+   * passwd is the public account directory; group membership is filtered to
+   * the requester's runnable accounts (root's group emptied for non-root);
+   * shadow never leaves the Master except to the root user's own Kernel.
+   */
+  async masterReadAuthFile(input: {
+    sourceKernelName: string;
+    requesterUid: number;
+    kind: "passwd" | "group" | "shadow";
+  }): Promise<{ content: string }> {
+    const placement = this.assertActiveUserKernelSourcePlacement(input.sourceKernelName);
+    this.assertUserKernelRequester(placement, input.requesterUid);
+
+    if (input.kind === "shadow") {
+      if (input.requesterUid !== 0) {
+        throw new Error("EACCES: permission denied, open '/etc/shadow'");
+      }
+      return { content: this.auth.serializeShadow() };
+    }
+    if (input.kind === "passwd") {
+      return { content: this.auth.serializePasswd() };
+    }
+    if (input.kind === "group") {
+      if (input.requesterUid === 0) {
+        return { content: this.auth.serializeGroup() };
+      }
+      const runnable = new Set(
+        this.auth.getPasswdEntries()
+          .filter((entry) => canOwnerRunAsAccount(this.auth, placement.uid, entry, false))
+          .map((entry) => entry.username),
+      );
+      const groups = this.auth.getGroupEntries().map((group) => ({
+        ...group,
+        members: group.gid === 0
+          ? []
+          : group.members.filter((member) => runnable.has(member)),
+      }));
+      return { content: serializeGroup(groups) };
+    }
+    throw new Error("Invalid auth file kind");
+  }
+
+  /**
+   * Full installed-package records visible to the requester, for user Kernels
+   * rendering package-backed filesystem views. Same visibility rule as
+   * pkg.list, but with the complete records the filesystem needs.
+   */
+  async masterPackagesList(input: {
+    sourceKernelName: string;
+    requesterUid: number;
+    enabled?: boolean;
+  }): Promise<{ packages: InstalledPackageRecord[] }> {
+    const placement = this.assertActiveUserKernelSourcePlacement(input.sourceKernelName);
+    this.assertUserKernelRequester(placement, input.requesterUid);
+    return {
+      packages: this.packages.list({
+        enabled: input.enabled,
+        scopes: visiblePackageScopesForActor({ uid: input.requesterUid }),
+      }),
+    };
+  }
+
   /** Authoritative half of user-Kernel device forgetting. */
   async revokeUserKernelDeviceCredentials(
     input: UserKernelDeviceRevocationInput,
   ): Promise<TokenRevocationNotice[]> {
     this.assertMasterKernel();
     const username = userKernelUsername(input.sourceKernelName);
-    const placement = await this.authorizeUserKernelCapability({
+    const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: input.ownerUid,
       generation: input.generation,
-      kernelCapability: input.kernelCapability,
     });
     if (
       !username
@@ -4508,11 +4487,10 @@ export class Kernel extends Host<Env> {
   ): Promise<boolean> {
     this.assertMasterKernel();
     const username = userKernelUsername(input.sourceKernelName);
-    const placement = await this.authorizeUserKernelCapability({
+    const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: input.uid,
       generation: input.generation,
-      kernelCapability: input.kernelCapability,
     });
     if (
       !username
@@ -4563,18 +4541,11 @@ export class Kernel extends Host<Env> {
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
     ) as unknown as MasterKernelControlStub;
-    let kernelCapability: string;
-    try {
-      kernelCapability = await this.requireLocalUserKernelCapability(marker);
-    } catch {
-      return false;
-    }
     const confirmed = await master.confirmTokenRevocationDelivery({
       sourceKernelName: this.name,
       username: marker.username,
       uid: marker.uid,
       generation: marker.generation,
-      kernelCapability,
       notice: input.notice,
     });
     if (!confirmed) {
@@ -4598,11 +4569,10 @@ export class Kernel extends Host<Env> {
     }
 
     const sourceUsername = userKernelUsername(input.sourceKernelName);
-    const placement = await this.authorizeUserKernelCapability({
+    const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: input.callerOwnerUid,
       generation: input.generation,
-      kernelCapability: input.kernelCapability,
     });
     if (
       !sourceUsername
@@ -5308,11 +5278,10 @@ export class Kernel extends Host<Env> {
     }
 
     const sourceUsername = userKernelUsername(input.sourceKernelName);
-    const placement = await this.authorizeUserKernelCapability({
+    const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: input.callerOwnerUid,
       generation: input.generation,
-      kernelCapability: input.kernelCapability,
     });
     if (
       !sourceUsername
@@ -5359,11 +5328,10 @@ export class Kernel extends Host<Env> {
   ): Promise<RepoMetadataMutationResult> {
     this.assertMasterKernel();
     const sourceUsername = userKernelUsername(input.sourceKernelName);
-    const placement = await this.authorizeUserKernelCapability({
+    const placement = await this.authorizeUserKernelSource({
       sourceKernelName: input.sourceKernelName,
       uid: input.callerOwnerUid,
       generation: input.generation,
-      kernelCapability: input.kernelCapability,
     });
     if (
       !sourceUsername
@@ -5387,7 +5355,6 @@ export class Kernel extends Host<Env> {
         sourceKernelName: input.sourceKernelName,
         callerOwnerUid: input.callerOwnerUid,
         generation: input.generation,
-        kernelCapability: input.kernelCapability,
         identity: input.identity,
         frame: {
           type: "req",
@@ -5449,16 +5416,14 @@ export class Kernel extends Host<Env> {
     sourceKernelName: string,
     usernameInput: string,
     generation: number,
-    kernelCapability: string,
   ): Promise<UserKernelProvisioningSnapshot> {
     this.assertMasterKernel();
     const username = canonicalizeLoginUsername(usernameInput);
     const placement = username
-      ? await this.authorizeUserKernelCapability({
+      ? await this.authorizeUserKernelSource({
           sourceKernelName,
           uid: this.userKernels.get(username)?.uid ?? -1,
           generation,
-          kernelCapability,
         })
       : null;
     if (
@@ -5554,7 +5519,6 @@ export class Kernel extends Host<Env> {
 
     pruneExpiredAuthorizations(this.userKernelProvisioningAuthorizations);
     const authorization = crypto.randomUUID();
-    const kernelCapability = await this.rotateUserKernelCapability(placement);
     const authorizedProvisioning: Omit<
       UserKernelProvisioningAuthorizationInput,
       "authorization"
@@ -5567,7 +5531,6 @@ export class Kernel extends Host<Env> {
     this.userKernelProvisioningAuthorizations.set(authorization, {
       expiresAt: Date.now() + USER_KERNEL_PROVISIONING_AUTHORIZATION_TTL_MS,
       provisioning: authorizedProvisioning,
-      kernelCapability,
     });
     let marker: UserKernelInstanceMarker;
     try {
@@ -5596,9 +5559,6 @@ export class Kernel extends Host<Env> {
       || marker.generation !== placement.generation
     ) {
       throw new Error(`User Kernel failed to prepare: ${username}`);
-    }
-    if (!await this.verifyUserKernelCapabilityRecord(placement, kernelCapability)) {
-      throw new Error(`User Kernel capability activation failed for ${username}`);
     }
     const active = this.userKernels.markActive(username, placement.generation);
     return this.completeUserKernelActivation(active);
@@ -6011,17 +5971,10 @@ export class Kernel extends Host<Env> {
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
     ) as unknown as MasterKernelControlStub;
-    let kernelCapability: string;
-    try {
-      kernelCapability = await this.requireLocalUserKernelCapability(marker);
-    } catch {
-      return { ok: false, error: "Authentication failed" };
-    }
     const authenticated = await master.authenticateUserKernelConnection({
       sourceKernelName: this.name,
       username,
       generation: marker.generation,
-      kernelCapability,
       args,
       loginSourceScope,
     });
@@ -6032,7 +5985,6 @@ export class Kernel extends Host<Env> {
           this.name,
           username,
           marker.generation,
-          kernelCapability,
         );
       } catch {
         return { ok: false, error: "Authentication failed" };
@@ -6067,12 +6019,10 @@ export class Kernel extends Host<Env> {
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
     ) as unknown as MasterKernelControlStub;
-    const kernelCapability = await this.requireLocalUserKernelCapability(marker);
     const result = await master.dispatchMasterSyscall({
       sourceKernelName: this.name,
       callerOwnerUid: resolveCallerOwnerUid(ctx),
       generation: marker.generation,
-      kernelCapability,
       identity: ctx.identity,
       frame: {
         type: "req",
@@ -6088,7 +6038,6 @@ export class Kernel extends Host<Env> {
         this.name,
         this.instanceUsername,
         marker.generation,
-        kernelCapability,
       );
       await this.installUserKernelProjection(projection);
       ctx.assertCurrentKernel();
@@ -6161,12 +6110,10 @@ export class Kernel extends Host<Env> {
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
     ) as unknown as MasterKernelControlStub;
-    const kernelCapability = await this.requireLocalUserKernelCapability(marker);
     const notices = await master.revokeUserKernelDeviceCredentials({
       sourceKernelName: this.name,
       ownerUid,
       generation: marker.generation,
-      kernelCapability,
       deviceId,
     });
     this.persistAndFenceTokenRevocations(notices, context.connection?.id);
@@ -6369,12 +6316,10 @@ export class Kernel extends Host<Env> {
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
     ) as unknown as MasterKernelControlStub;
-    const kernelCapability = await this.requireLocalUserKernelCapability(marker);
     const result = await master.mutateUserRepoMetadata({
       sourceKernelName: this.name,
       callerOwnerUid,
       generation: marker.generation,
-      kernelCapability,
       identity: context.identity,
       mutation,
     });
@@ -6411,7 +6356,6 @@ export class Kernel extends Host<Env> {
     if (!marker || marker.username !== this.instanceUsername) {
       throw new Error("Repository operation authentication failed");
     }
-    const kernelCapability = await this.requireLocalUserKernelCapability(marker);
     const master = await getAgentByName(
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
@@ -6420,7 +6364,6 @@ export class Kernel extends Host<Env> {
       sourceKernelName: this.name,
       callerOwnerUid: resolveCallerOwnerUid(context),
       generation: marker.generation,
-      kernelCapability,
       identity: context.identity,
       call,
       ...(normalizedRepo !== undefined ? { repo: normalizedRepo } : {}),
@@ -7383,7 +7326,7 @@ export class Kernel extends Host<Env> {
       if (!await this.authorizeRegisteredProcessRuntime(processId, requiredCall)) {
         throw new Error("Process package-agent authority was revoked");
       }
-      const ctx = this.buildProcessContext(processId);
+      const ctx = await this.buildProcessContext(processId);
       if (!ctx) {
         throw new Error("Unknown process");
       }
@@ -8824,12 +8767,10 @@ export class Kernel extends Host<Env> {
       this.env.KERNEL,
       SHIP_KERNEL_NAME,
     ) as unknown as MasterKernelControlStub;
-    const kernelCapability = await this.requireLocalUserKernelCapability(marker);
     return master.authorizeAdapterRunRoute({
       sourceKernelName: this.name,
       ownerUid: marker.uid,
       kernelGeneration: marker.generation,
-      kernelCapability,
       adapter: route.adapter,
       accountId: route.accountId,
       actorId: route.actorId,
@@ -8864,7 +8805,7 @@ export class Kernel extends Host<Env> {
     expectedGeneration?: number,
     operation?: UserKernelTargetOperationLease,
   ): Promise<ResponseFrame | null> {
-    const ctx = this.buildProcessContext(processId, frame.runId, operation);
+    const ctx = await this.buildProcessContext(processId, frame.runId, operation);
     if (!ctx) {
       return errFrame(frame.id, 404, "Unknown process");
     }
@@ -8927,11 +8868,50 @@ export class Kernel extends Host<Env> {
     return null;
   }
 
-  private buildProcessContext(
+  /**
+   * Resolve an account record for an identity the Kernel itself is building
+   * (process frames, executors). Forwards with the claimed identity; the
+   * Master re-verifies it against the directory before answering.
+   */
+  private async accountGetForIdentity(
+    identity: ConnectionIdentity,
+    query: AccountGetArgs,
+  ): Promise<AccountDetail | null> {
+    if (this.instanceKind === "master") {
+      return handleAccountGet(query, this.buildKernelContext({ identity })).account;
+    }
+    const marker = await this.loadUserKernelMarker();
+    if (
+      !marker
+      || (marker.lifecycle !== "active" && marker.lifecycle !== "provisioning")
+    ) {
+      throw new Error("User Kernel is not active");
+    }
+    const master = await getAgentByName(
+      this.env.KERNEL,
+      SHIP_KERNEL_NAME,
+    ) as unknown as MasterKernelControlStub;
+    const result = await master.dispatchMasterSyscall({
+      sourceKernelName: this.name,
+      callerOwnerUid: marker.uid,
+      generation: marker.generation,
+      identity,
+      frame: {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "account.get",
+        args: query as unknown as MasterRpcValue,
+      },
+    });
+    if (!result.response.ok) throw new Error(result.response.error.message);
+    return (result.response.data as AccountGetResult).account;
+  }
+
+  private async buildProcessContext(
     processId: string,
     processRunId?: string,
     targetOperation?: UserKernelTargetOperationLease,
-  ): KernelContext | null {
+  ): Promise<KernelContext | null> {
     const identity = this.procs.getIdentity(processId);
     if (!identity) {
       return null;
@@ -8942,6 +8922,15 @@ export class Kernel extends Host<Env> {
       process: identity,
       capabilities: this.caps.resolve(identity.gids),
     };
+    if (this.instanceKind === "user") {
+      const marker = await this.loadUserKernelMarker();
+      if (marker?.lifecycle === "active") {
+        const account = await this.accountGetForIdentity(connIdentity, { uid: identity.uid });
+        if (account?.capabilities) {
+          connIdentity.capabilities = account.capabilities;
+        }
+      }
+    }
 
     return this.buildKernelContext({
       identity: connIdentity,
@@ -9076,6 +9065,19 @@ export class Kernel extends Host<Env> {
       : boundKernelMarker;
     let packageProjectionOperation = options.packageProjectionOperation === true;
     let kernelContext: KernelContext;
+    const dispatchMasterRead = async <T>(call: SyscallName, args: unknown): Promise<T> => {
+      const response = await this.requestDispatchedFrame({
+        type: "req",
+        id: crypto.randomUUID(),
+        call,
+        args,
+      } as RequestFrame, kernelContext, options.requestSignal);
+      if (!response.ok) {
+        throw new Error(response.error.message);
+      }
+      await cancelUnlockedBody(response.body, "Master read completed");
+      return response.data as T;
+    };
     kernelContext = {
       env: this.env,
       kernelName: this.name,
@@ -9164,6 +9166,117 @@ export class Kernel extends Host<Env> {
             ),
           }
         : {}),
+      accountGet: async (query) => {
+        if (this.instanceKind === "master") {
+          return handleAccountGet(query, kernelContext).account;
+        }
+        const result = await dispatchMasterRead<AccountGetResult>("account.get", query);
+        return result.account;
+      },
+      readAuthFile: async (kind) => {
+        const requesterUid = kernelContext.identity?.process.uid;
+        if (typeof requesterUid !== "number") {
+          throw new Error("Authentication required");
+        }
+        if (this.instanceKind === "master") {
+          if (kind === "shadow") {
+            if (requesterUid !== 0) {
+              throw new Error("EACCES: permission denied, open '/etc/shadow'");
+            }
+            return this.auth.serializeShadow();
+          }
+          return kind === "passwd" ? this.auth.serializePasswd() : this.auth.serializeGroup();
+        }
+        const master = await getAgentByName(
+          this.env.KERNEL,
+          SHIP_KERNEL_NAME,
+        ) as unknown as MasterKernelControlStub;
+        const result = await master.masterReadAuthFile({
+          sourceKernelName: this.name,
+          requesterUid,
+          kind,
+        });
+        return result.content;
+      },
+      configGet: async (key) => {
+        // Seeded defaults are public semantics: an unreadable explicit value
+        // behaves as unset and falls back to the shipped default.
+        if (this.instanceKind === "master") {
+          if (!canReadSysConfig(kernelContext, key)) {
+            return SYSTEM_CONFIG_DEFAULTS[key] ?? null;
+          }
+          return this.config.get(key);
+        }
+        try {
+          const result = await dispatchMasterRead<SysConfigGetResult>(
+            "sys.config.get",
+            { key, explicit: true },
+          );
+          return result.entries.find((entry) => entry.key === key)?.value
+            ?? SYSTEM_CONFIG_DEFAULTS[key]
+            ?? null;
+        } catch (error) {
+          if (error instanceof Error && error.message.startsWith("Permission denied")) {
+            return SYSTEM_CONFIG_DEFAULTS[key] ?? null;
+          }
+          throw error;
+        }
+      },
+      configList: async (prefix) => {
+        if (this.instanceKind === "master") {
+          return this.config.list(prefix).filter((entry) => canReadSysConfig(kernelContext, entry.key));
+        }
+        const result = await dispatchMasterRead<SysConfigGetResult>(
+          "sys.config.get",
+          prefix.length > 0 ? { key: prefix } : {},
+        );
+        return result.entries;
+      },
+      configListExplicit: async (prefix) => {
+        if (this.instanceKind === "master") {
+          return this.config.listExplicit(prefix).filter((entry) => canReadSysConfig(kernelContext, entry.key));
+        }
+        const result = await dispatchMasterRead<SysConfigGetResult>("sys.config.get", {
+          key: prefix,
+          explicit: true,
+        });
+        return result.entries;
+      },
+      capsList: async (gid) => {
+        if (this.instanceKind === "master") {
+          return handleSysCapList({ gid }, kernelContext).records;
+        }
+        const result = await dispatchMasterRead<SysCapListResult>("sys.cap.list", { gid });
+        return result.records;
+      },
+      packagesList: async (listOptions) => {
+        if (!kernelContext.identity) throw new Error("Authentication required");
+        // Package visibility follows the owning human's scopes, even for
+        // agent-backed filesystems.
+        const ownerUid = resolveCallerOwnerUid(kernelContext);
+        if (this.instanceKind === "master") {
+          return this.packages.list({
+            enabled: listOptions?.enabled,
+            scopes: visiblePackageScopesForActor({ uid: ownerUid }),
+          });
+        }
+        const master = await getAgentByName(
+          this.env.KERNEL,
+          SHIP_KERNEL_NAME,
+        ) as unknown as MasterKernelControlStub;
+        const result = await master.masterPackagesList({
+          sourceKernelName: this.name,
+          requesterUid: ownerUid,
+          enabled: listOptions?.enabled,
+        });
+        return result.packages;
+      },
+      listRepos: async (listArgs) => {
+        if (this.instanceKind === "master") {
+          return handleRepoList(listArgs, kernelContext);
+        }
+        return dispatchMasterRead<RepoListResult>("repo.list", listArgs ?? {});
+      },
       writeConfig: async (key, value) => {
         const response = await this.requestDispatchedFrame({
           type: "req",
@@ -11897,75 +12010,6 @@ function sameUserKernelPlacement(
     && left.lifecycle === right.lifecycle
     && left.generation === right.generation,
   );
-}
-
-function masterUserKernelCapabilityStorageKey(username: string): string {
-  return `${MASTER_USER_KERNEL_CAPABILITY_STORAGE_PREFIX}${username}`;
-}
-
-function isUserKernelCapabilitySecret(value: unknown): value is string {
-  return typeof value === "string"
-    && value.length === USER_KERNEL_CAPABILITY_BYTES * 2
-    && /^[a-f0-9]+$/.test(value);
-}
-
-function parseMasterUserKernelCapabilityRecord(
-  value: unknown,
-): MasterUserKernelCapabilityRecord | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Partial<MasterUserKernelCapabilityRecord>;
-  if (
-    record.version !== 1
-    || typeof record.username !== "string"
-    || canonicalizeLoginUsername(record.username) !== record.username
-    || !Number.isSafeInteger(record.uid)
-    || (record.uid ?? -1) < 0
-    || !Number.isSafeInteger(record.generation)
-    || (record.generation ?? 0) <= 0
-    || typeof record.digest !== "string"
-    || record.digest.length !== 64
-    || !/^[a-f0-9]+$/.test(record.digest)
-  ) {
-    return null;
-  }
-  return record as MasterUserKernelCapabilityRecord;
-}
-
-function parseLocalUserKernelCapabilityRecord(
-  value: unknown,
-): LocalUserKernelCapabilityRecord | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Partial<LocalUserKernelCapabilityRecord>;
-  if (
-    record.version !== 1
-    || typeof record.username !== "string"
-    || canonicalizeLoginUsername(record.username) !== record.username
-    || !Number.isSafeInteger(record.uid)
-    || (record.uid ?? -1) < 0
-    || !Number.isSafeInteger(record.generation)
-    || (record.generation ?? 0) <= 0
-    || !isUserKernelCapabilitySecret(record.secret)
-  ) {
-    return null;
-  }
-  return record as LocalUserKernelCapabilityRecord;
-}
-
-async function hashUserKernelCapability(secret: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    TEXT_ENCODER.encode(secret),
-  );
-  return bytesToHex(new Uint8Array(digest));
-}
-
-function constantTimeEqualHex(left: string, right: string): boolean {
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
-  }
-  return difference === 0;
 }
 
 function pruneExpiredAuthorizations<T extends { expiresAt: number }>(

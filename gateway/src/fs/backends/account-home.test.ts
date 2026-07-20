@@ -156,18 +156,39 @@ async function clearHomeStorage(): Promise<void> {
   }
 }
 
+const RUNNABLE_BY_ALICE = new Set([
+  ALICE.username,
+  PERSONAL_AGENT.username,
+  PACKAGE_AGENT.username,
+]);
+
+async function getAccount(username: string) {
+  const entry = auth.getPasswdByUsername(username);
+  if (!entry) return null;
+  return {
+    uid: entry.uid,
+    username: entry.username,
+    gid: entry.gid,
+    gids: auth.resolveGids(entry.username, entry.gid),
+    home: entry.home,
+    shell: entry.shell,
+    kind: "human" as const,
+    state: "active" as const,
+    displayName: entry.username,
+    ...(RUNNABLE_BY_ALICE.has(username) ? { capabilities: [] as string[] } : {}),
+  };
+}
+
 function createDelegatingBackend() {
   return createAccountHomeBackend(env.STORAGE, fakeRipgit, ALICE, {
-    auth: auth as never,
-    ownerUid: ALICE.uid,
+    getAccount,
     isRoot: false,
   });
 }
 
 function createPersonalAgentBackend() {
   return createAccountHomeBackend(env.STORAGE, fakeRipgit, PERSONAL_AGENT, {
-    auth: auth as never,
-    ownerUid: ALICE.uid,
+    getAccount,
     isRoot: false,
   });
 }
@@ -187,27 +208,27 @@ describe("AccountHomeMountBackend delegated routing", () => {
     await provisionR2Directory(env.STORAGE, ALICE.home, ALICE, "750");
   });
 
-  it("reserves target home paths for delegated routing", () => {
+  it("reserves target home paths for delegated routing", async () => {
     const backend = createDelegatingBackend();
 
-    expect(backend?.handles("/home/wiki-builder")).toBe(true);
-    expect(backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
-    expect(backend?.handles("/home/wiki-builder/skills.d/workflow.md")).toBe(true);
-    expect(backend?.handles("/home/wiki-builder/profiles.d/default/notes.md")).toBe(true);
-    expect(backend?.handles("/home/wiki-builder/knowledge/inbox/item.md")).toBe(true);
-    expect(backend?.handles("/home/wiki-builder/conversations/default/history")).toBe(true);
-    expect(backend?.handles("/home/wiki-builder/notes.txt")).toBe(true);
+    expect(await backend?.handles("/home/wiki-builder")).toBe(true);
+    expect(await backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
+    expect(await backend?.handles("/home/wiki-builder/skills.d/workflow.md")).toBe(true);
+    expect(await backend?.handles("/home/wiki-builder/profiles.d/default/notes.md")).toBe(true);
+    expect(await backend?.handles("/home/wiki-builder/knowledge/inbox/item.md")).toBe(true);
+    expect(await backend?.handles("/home/wiki-builder/conversations/default/history")).toBe(true);
+    expect(await backend?.handles("/home/wiki-builder/notes.txt")).toBe(true);
   });
 
-  it("reserves owner home paths for a personal agent", () => {
+  it("reserves owner home paths for a personal agent", async () => {
     const backend = createPersonalAgentBackend();
 
-    expect(backend?.handles("/home/alice")).toBe(true);
-    expect(backend?.handles("/home/alice/context.d/persona.md")).toBe(true);
-    expect(backend?.handles("/home/alice/skills.d/workflow.md")).toBe(true);
-    expect(backend?.handles("/home/alice/knowledge/inbox/item.md")).toBe(true);
-    expect(backend?.handles("/home/alice/conversations/default/history")).toBe(true);
-    expect(backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
+    expect(await backend?.handles("/home/alice")).toBe(true);
+    expect(await backend?.handles("/home/alice/context.d/persona.md")).toBe(true);
+    expect(await backend?.handles("/home/alice/skills.d/workflow.md")).toBe(true);
+    expect(await backend?.handles("/home/alice/knowledge/inbox/item.md")).toBe(true);
+    expect(await backend?.handles("/home/alice/conversations/default/history")).toBe(true);
+    expect(await backend?.handles("/home/wiki-builder/context.d/persona.md")).toBe(true);
   });
 
   it("appends overlay files without UTF-8 conversion", async () => {

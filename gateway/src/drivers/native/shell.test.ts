@@ -11,6 +11,7 @@ import {
   handleFsWrite,
 } from "./fs";
 import { sendFrameToProcess } from "../../shared/utils";
+import { handleRepoList } from "../../kernel/repo";
 import type { KernelContext } from "../../kernel/context";
 import type { DeviceRecord } from "../../kernel/devices";
 import {
@@ -20,6 +21,7 @@ import {
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
+import { visiblePackageScopesForActor } from "../../kernel/packages";
 import { applyRepoMetadataMutation } from "../../kernel/repo-metadata";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
 import { provisionR2Directory } from "../../fs/backends/r2";
@@ -183,7 +185,18 @@ function makeContext(options?: {
     );
     return index >= 0 ? { index, record: records[index] } : null;
   };
-  return {
+  const resolveOwnerUid = (): number => {
+    const getter = (options?.procs as { getOwnerUid?: (pid: string) => number | null } | undefined)?.getOwnerUid;
+    if (getter) {
+      const uid = getter("task:pkg");
+      if (typeof uid === "number") return uid;
+    }
+    return identity.uid;
+  };
+  const visiblePackageScopeKeys = (): Set<string> => (
+    new Set(visiblePackageScopesForActor({ uid: resolveOwnerUid() }).map(packageScopeKey))
+  );
+  const context = {
     env: {
       STORAGE: env.STORAGE,
       RIPGIT: options?.ripgit ?? {} as Fetcher,
@@ -301,6 +314,54 @@ function makeContext(options?: {
     serverVersion: "0.4.0",
     authorizePackageRuntime: vi.fn(async () => true),
     writeConfig: vi.fn(async () => {}),
+    accountGet: async (query) => {
+      const entry = typeof query.username === "string"
+        ? defaultAuth.getPasswdByUsername(query.username)
+        : defaultAuth.getPasswdByUid(query.uid as number);
+      if (!entry) return null;
+      const runnable = entry.uid === identity.uid;
+      return {
+        uid: entry.uid,
+        username: entry.username,
+        gid: entry.gid,
+        gids: [...identity.gids],
+        home: entry.home,
+        shell: entry.shell,
+        kind: "human" as const,
+        state: "active" as const,
+        displayName: entry.username,
+        ...(runnable ? { capabilities: [] } : {}),
+      };
+    },
+    readAuthFile: async () => "",
+    configGet: async (key: string) => {
+      if (key === "config/server/name") return "gsv";
+      if (key === "config/server/version") return "0.4.0";
+      return configValues.get(key) ?? null;
+    },
+    configList: async (prefix: string) => {
+      const normalized = prefix.endsWith("/") ? prefix : `${prefix}/`;
+      return [...configValues.entries()]
+        .filter(([key]) => key.startsWith(normalized))
+        .map(([key, value]) => ({ key, value }))
+        .sort((left, right) => left.key.localeCompare(right.key));
+    },
+    configListExplicit: async (prefix: string) => {
+      const normalized = prefix.endsWith("/") ? prefix : `${prefix}/`;
+      return [...configValues.entries()]
+        .filter(([key]) => key.startsWith(normalized))
+        .map(([key, value]) => ({ key, value }))
+        .sort((left, right) => left.key.localeCompare(right.key));
+    },
+    capsList: async () => [],
+    packagesList: async (options?: { enabled?: boolean }) => {
+      const scopes = visiblePackageScopeKeys();
+      return records.filter((record) =>
+        scopes.has(packageScopeKey(record.scope))
+        && (typeof options?.enabled !== "boolean" || record.enabled === options.enabled)
+      );
+    },
+    listRepos: async () => handleRepoList(undefined, context),
     mutateRepoMetadata: options?.mutateRepoMetadata ?? (async (mutation) => (
       applyRepoMetadataMutation({
         get: (key) => configValues.get(key) ?? null,
@@ -312,6 +373,7 @@ function makeContext(options?: {
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
   } as KernelContext;
+  return context;
 }
 
 function packageScopeKey(scope: InstalledPackageRecord["scope"]): string {

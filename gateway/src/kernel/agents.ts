@@ -18,6 +18,8 @@
 import type {
   AccountCreateArgs,
   AccountCreateResult,
+  AccountGetArgs,
+  AccountGetResult,
   AccountKind,
   AccountListArgs,
   AccountListResult,
@@ -39,7 +41,7 @@ import {
   normalizeAccountName,
   seedPersona,
 } from "./accounts";
-import { canOwnerRunAsAccount } from "./account-access";
+import { canOwnerDelegateRunAs, canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
 import { DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../prompts/persona";
 import { canonicalizeLoginUsername } from "../auth/login";
@@ -377,6 +379,69 @@ export function handleAccountList(
 
 function resolveAccountCapabilities(ctx: KernelContext, username: string, primaryGid: number): string[] {
   return ctx.caps.resolve(ctx.auth.resolveGids(username, primaryGid)).sort();
+}
+
+/**
+ * account.get — directory lookup by canonical username or uid.
+ *
+ * Directory fields mirror world-readable /etc/passwd semantics; resolved
+ * capabilities are included only when the caller may run as the account
+ * (root, self, or an owned agent).
+ */
+export function handleAccountGet(
+  args: AccountGetArgs,
+  ctx: KernelContext,
+): AccountGetResult {
+  const { auth } = ctx;
+  const caller = ctx.identity!;
+  const username = typeof args.username === "string"
+    ? canonicalizeLoginUsername(args.username)
+    : null;
+  const hasUid = Number.isSafeInteger(args.uid) && (args.uid as number) >= 0;
+  if ((username === null) === !hasUid) {
+    throw new Error("Provide exactly one of username or uid");
+  }
+
+  const entry = username !== null
+    ? auth.getPasswdByUsername(username)
+    : auth.getPasswdByUid(args.uid as number);
+  if (!entry) return { account: null };
+
+  const account = auth.getAccountIdentity(entry.username);
+  if (!account || account.uid !== entry.uid) {
+    throw new Error(`Account identity is incomplete: ${entry.username}`);
+  }
+
+  const ownerUid = resolveCallerOwnerUid(ctx);
+  const runnable = caller.process.uid === 0
+    || entry.uid === caller.process.uid
+    || canOwnerRunAsAccount(auth, ownerUid, entry, caller.process.uid === 0);
+  const delegable = caller.process.uid === 0
+    || (entry.uid !== ownerUid && canOwnerDelegateRunAs(auth, ownerUid, entry));
+
+  return {
+    account: {
+      uid: entry.uid,
+      username: entry.username,
+      gid: entry.gid,
+      gids: auth.resolveGids(entry.username, entry.gid),
+      home: entry.home,
+      shell: entry.shell,
+      kind: account.kind,
+      state: account.state,
+      displayName: entry.gecos?.trim() || entry.username,
+      ...(entry.gecos ? { gecos: entry.gecos } : {}),
+      ...(runnable
+        ? {
+            capabilities: resolveAccountCapabilities(ctx, entry.username, entry.gid),
+            ...(auth.getPersonalAgentUid(entry.uid) != null
+              ? { personalAgentUid: auth.getPersonalAgentUid(entry.uid)! }
+              : {}),
+          }
+        : {}),
+      delegable,
+    },
+  };
 }
 
 function defaultPersonaContext(agentName: string, ownerUsername: string): string {

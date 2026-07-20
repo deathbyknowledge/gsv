@@ -23,16 +23,17 @@ const USER: ProcessIdentity = {
 
 function makeBackend(identity: ProcessIdentity, authDirectoryWritable: boolean) {
   const auth = {
-    serializePasswd: vi.fn(() => "root:x:0:0:root:/root:/bin/init\n"),
-    serializeShadow: vi.fn(() => "root:!:0:0:99999:7:::\n"),
-    serializeGroup: vi.fn(() => "root:x:0:root\n"),
-    importPasswd: vi.fn(),
-    importShadow: vi.fn(),
-    importGroup: vi.fn(),
+    readAuthFile: vi.fn(async (kind: "passwd" | "group" | "shadow") =>
+      kind === "shadow"
+        ? "root:!:0:0:99999:7:::\n"
+        : kind === "group"
+          ? "root:x:0:root\n"
+          : "root:x:0:0:root:/root:/bin/init\n"),
+    authDirectoryWritable,
+    ...(authDirectoryWritable ? { importAuthFile: vi.fn() } : {}),
   };
   const refs = {
     auth,
-    authDirectoryWritable,
   } as unknown as KernelRefs;
   return { auth, backend: new KernelMountBackend(identity, refs, null) };
 }
@@ -51,9 +52,7 @@ describe("KernelMountBackend auth directory", () => {
       await expect(backend.appendFile(path, "addition\n")).rejects.toThrow("EROFS");
     }
 
-    expect(auth.importPasswd).not.toHaveBeenCalled();
-    expect(auth.importShadow).not.toHaveBeenCalled();
-    expect(auth.importGroup).not.toHaveBeenCalled();
+    expect(auth.importAuthFile).toBeUndefined();
   });
 
   it("retains root writes and modes for the authoritative Master directory", async () => {
@@ -63,9 +62,9 @@ describe("KernelMountBackend auth directory", () => {
     await backend.writeFile("/etc/shadow", "shadow\n");
     await backend.writeFile("/etc/group", "group\n");
 
-    expect(auth.importPasswd).toHaveBeenCalledWith("passwd\n");
-    expect(auth.importShadow).toHaveBeenCalledWith("shadow\n");
-    expect(auth.importGroup).toHaveBeenCalledWith("group\n");
+    expect(auth.importAuthFile).toHaveBeenCalledWith("passwd", "passwd\n");
+    expect(auth.importAuthFile).toHaveBeenCalledWith("shadow", "shadow\n");
+    expect(auth.importAuthFile).toHaveBeenCalledWith("group", "group\n");
     await expect(backend.stat("/etc/passwd")).resolves.toMatchObject({ mode: 0o644 });
     await expect(backend.stat("/etc/shadow")).resolves.toMatchObject({ mode: 0o640 });
   });
@@ -75,7 +74,7 @@ describe("KernelMountBackend auth directory", () => {
 
     await expect(backend.writeFile("/etc/passwd", "replacement\n"))
       .rejects.toThrow("EACCES");
-    expect(auth.importPasswd).not.toHaveBeenCalled();
+    expect(auth.importAuthFile).not.toHaveBeenCalled();
   });
 });
 

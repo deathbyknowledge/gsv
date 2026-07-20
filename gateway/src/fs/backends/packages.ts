@@ -4,17 +4,12 @@ import type {
   RmOptions,
 } from "just-bash";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import {
-  type PackageEntrypoint,
-  type PackageStore,
-  visiblePackageScopesForActor,
-} from "../../kernel/packages";
+import type { PackageEntrypoint } from "../../kernel/packages";
+import type { KernelPackagesRefs } from "../refs";
 import type { ExtendedMountStat, MountBackend } from "../mount";
 import { normalizePath } from "../utils";
 
 const TEXT_ENCODER = new TextEncoder();
-type PackageScopeOwner = { uid: number } | null | undefined;
-
 type PackageCommandEntry = {
   command: string;
   packageName: string;
@@ -24,14 +19,13 @@ type PackageCommandEntry = {
 
 export function createPackageBackend(
   identity: ProcessIdentity,
-  packages: PackageStore | undefined,
-  scopeOwner: PackageScopeOwner = identity,
+  packages: KernelPackagesRefs | undefined,
 ): MountBackend | null {
   if (!packages) {
     return null;
   }
 
-  return new PackageMountBackend(identity, packages, scopeOwner);
+  return new PackageMountBackend(identity, packages);
 }
 
 export function isPackageMountPath(path: string): boolean {
@@ -46,8 +40,7 @@ export function isPackageMountPath(path: string): boolean {
 class PackageMountBackend implements MountBackend {
   constructor(
     private readonly identity: ProcessIdentity,
-    private readonly packages: PackageStore,
-    private readonly scopeOwner: PackageScopeOwner,
+    private readonly packages: KernelPackagesRefs,
   ) {}
 
   handles(path: string): boolean {
@@ -55,7 +48,7 @@ class PackageMountBackend implements MountBackend {
   }
 
   async readFile(path: string): Promise<string> {
-    const entry = this.requireCommandEntry(path);
+    const entry = await this.requireCommandEntry(path);
     return renderPackageCommandShim(entry);
   }
 
@@ -79,7 +72,7 @@ class PackageMountBackend implements MountBackend {
     if (!p.startsWith("/usr/local/bin/")) {
       return false;
     }
-    return this.findCommandEntry(commandNameFromPath(p)) !== null;
+    return (await this.findCommandEntry(commandNameFromPath(p))) !== null;
   }
 
   async stat(path: string): Promise<ExtendedMountStat> {
@@ -88,7 +81,7 @@ class PackageMountBackend implements MountBackend {
       return makeDirectoryStat(this.identity.uid);
     }
 
-    const entry = this.requireCommandEntry(p);
+    const entry = await this.requireCommandEntry(p);
     const content = renderPackageCommandShim(entry);
     return {
       isFile: true,
@@ -115,7 +108,7 @@ class PackageMountBackend implements MountBackend {
       return ["bin"];
     }
     if (p === "/usr/local/bin") {
-      return this.listCommands().map((entry) => entry.command);
+      return (await this.listCommands()).map((entry) => entry.command);
     }
     throw new Error(`ENOENT: no such file or directory, scandir '${p}'`);
   }
@@ -140,22 +133,22 @@ class PackageMountBackend implements MountBackend {
     throw new Error(`ENOENT: no such file or directory, utimes '${p}'`);
   }
 
-  private requireCommandEntry(path: string): PackageCommandEntry {
+  private async requireCommandEntry(path: string): Promise<PackageCommandEntry> {
     const p = normalizePath(path);
     if (!p.startsWith("/usr/local/bin/")) {
       throw new Error(`EISDIR: illegal operation on a directory, read '${p}'`);
     }
 
     const command = commandNameFromPath(p);
-    const entry = this.findCommandEntry(command);
+    const entry = await this.findCommandEntry(command);
     if (!entry) {
       throw new Error(`ENOENT: no such file or directory, open '${p}'`);
     }
     return entry;
   }
 
-  private findCommandEntry(command: string): PackageCommandEntry | null {
-    for (const entry of this.listCommands()) {
+  private async findCommandEntry(command: string): Promise<PackageCommandEntry | null> {
+    for (const entry of await this.listCommands()) {
       if (entry.command === command) {
         return entry;
       }
@@ -163,13 +156,10 @@ class PackageMountBackend implements MountBackend {
     return null;
   }
 
-  private listCommands(): PackageCommandEntry[] {
+  private async listCommands(): Promise<PackageCommandEntry[]> {
     const commands = new Map<string, PackageCommandEntry>();
 
-    for (const record of this.packages.list({
-      enabled: true,
-      scopes: visiblePackageScopesForActor(this.scopeOwner),
-    })) {
+    for (const record of await this.packages.listVisible({ enabled: true })) {
       for (const entrypoint of record.manifest.entrypoints) {
         if (!isCommandEntrypoint(entrypoint)) {
           continue;

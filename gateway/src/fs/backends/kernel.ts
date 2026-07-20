@@ -135,7 +135,7 @@ export class KernelMountBackend implements MountBackend {
     }
     if (isEtcAuth(p)) {
       this.assertEtcAuthWritable(p);
-      const existing = this.readEtcAuth(p) ?? "";
+      const existing = await this.readEtcAuth(p) ?? "";
       const appended = typeof content === "string" ? existing + content : existing + new TextDecoder().decode(content);
       this.writeEtcAuth(p, appended);
       return;
@@ -161,14 +161,14 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (isEtcAuth(p)) {
-      const mode = this.kernel?.authDirectoryWritable
+      const mode = this.kernel?.auth.authDirectoryWritable
         ? p === "/etc/shadow" ? 0o640 : 0o644
         : p === "/etc/shadow" ? 0o400 : 0o444;
       return { isFile: true, isDirectory: false, isSymbolicLink: false, mode, size: 0, mtime: new Date(), uid: 0, gid: 0 };
     }
 
     if (isCronWritablePath(p)) {
-      const stat = this.statCronFile(p);
+      const stat = await this.statCronFile(p);
       if (stat) return stat;
     }
 
@@ -231,7 +231,7 @@ export class KernelMountBackend implements MountBackend {
 
     let pid = parts[0];
     if (pid === "self") {
-      pid = this.selfProcessPid();
+      pid = await this.selfProcessPid();
     }
 
     const attrParts = parts.slice(1);
@@ -357,7 +357,7 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (attr === "profiles") {
-      return jsonText(this.listProcAiProfiles(proc.ownerUid).map((profile) => ({
+      return jsonText((await this.listProcAiProfiles(proc.ownerUid)).map((profile) => ({
         ...profile,
         values: redactProcessAiConfigValues(profile.values),
       })));
@@ -368,7 +368,7 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (attr === "effective.json") {
-      const effective = this.buildProcAiEffectiveValues(proc, local?.values ?? {}, local?.profile);
+      const effective = await this.buildProcAiEffectiveValues(proc, local?.values ?? {}, local?.profile);
       return jsonText({
         profile: local?.profile ?? null,
         values: redactProcessAiConfigValues(effective),
@@ -380,7 +380,7 @@ export class KernelMountBackend implements MountBackend {
       return undefined;
     }
 
-    const effective = this.buildProcAiEffectiveValues(proc, local?.values ?? {}, local?.profile);
+    const effective = await this.buildProcAiEffectiveValues(proc, local?.values ?? {}, local?.profile);
     if (!Object.prototype.hasOwnProperty.call(effective, key)) {
       return undefined;
     }
@@ -397,7 +397,7 @@ export class KernelMountBackend implements MountBackend {
       throw new Error(`EPERM: /proc is read-only`);
     }
 
-    const proc = this.resolveVisibleProcess(parts[0]);
+    const proc = await this.resolveVisibleProcess(parts[0]);
     if (!proc || !this.canWriteProcess(proc)) {
       throw new Error(`ENOENT: no such file or directory, open '${path}'`);
     }
@@ -438,7 +438,7 @@ export class KernelMountBackend implements MountBackend {
       return;
     }
 
-    const profile = this.findProcAiProfile(proc.ownerUid, selector);
+    const profile = await this.findProcAiProfile(proc.ownerUid, selector);
     if (!profile) {
       throw new Error(`ENOENT: AI model profile not found: ${selector}`);
     }
@@ -471,11 +471,11 @@ export class KernelMountBackend implements MountBackend {
     return result?.ok ? result.config : null;
   }
 
-  private buildProcAiEffectiveValues(
+  private async buildProcAiEffectiveValues(
     proc: ProcessRecord,
     localValues: Record<string, string>,
     profile: ProcAiConfigSnapshot["profile"] | null | undefined,
-  ): Record<string, string> {
+  ): Promise<Record<string, string>> {
     const values: Record<string, string> = {};
     const accountUids = proc.ownerUid === proc.uid ? [proc.uid] : [proc.uid, proc.ownerUid];
 
@@ -483,10 +483,10 @@ export class KernelMountBackend implements MountBackend {
       const suffix = processAiConfigSuffix(key);
       let value: string | null = null;
       for (const uid of accountUids) {
-        value = this.kernel?.config?.get(`users/${uid}/ai/${suffix}`) ?? null;
+        value = this.kernel ? await this.kernel.config.get(`users/${uid}/ai/${suffix}`) : null;
         if (value !== null) break;
       }
-      value ??= this.kernel?.config?.get(key) ?? null;
+      value ??= this.kernel ? await this.kernel.config.get(key) : null;
       if (value !== null) {
         values[key] = value;
       }
@@ -494,9 +494,11 @@ export class KernelMountBackend implements MountBackend {
 
     if (profile?.id) {
       for (const key of PROCESS_AI_CONFIG_SECRET_KEYS) {
-        const value = this.kernel?.config?.get(
-          processAiModelProfileSecretConfigKey(proc.ownerUid, profile.id, key),
-        ) ?? null;
+        const value = this.kernel
+          ? await this.kernel.config.get(
+              processAiModelProfileSecretConfigKey(proc.ownerUid, profile.id, key),
+            )
+          : null;
         if (value !== null) {
           values[key] = value;
         }
@@ -512,17 +514,27 @@ export class KernelMountBackend implements MountBackend {
     return values;
   }
 
-  private listProcAiProfiles(ownerUid: number): ProcessAiModelProfile[] {
-    return parseProcessAiModelProfiles(
-      this.kernel?.config?.get(`users/${ownerUid}/ai/model_profiles`),
+  private async listProcAiProfiles(ownerUid: number): Promise<ProcessAiModelProfile[]> {
+    if (!this.kernel) return [];
+    const profiles = parseProcessAiModelProfiles(
+      await this.kernel.config.get(`users/${ownerUid}/ai/model_profiles`),
       ownerUid,
-      this.kernel ? (key) => this.kernel!.config.get(key) : undefined,
     );
+    return Promise.all(profiles.map(async (profile) => {
+      const values = { ...profile.values };
+      for (const key of PROCESS_AI_CONFIG_SECRET_KEYS) {
+        const value = await this.kernel!.config.get(
+          processAiModelProfileSecretConfigKey(ownerUid, profile.id, key),
+        );
+        if (value) values[key] = value;
+      }
+      return { ...profile, values };
+    }));
   }
 
-  private findProcAiProfile(ownerUid: number, selector: string): ProcessAiModelProfile | null {
+  private async findProcAiProfile(ownerUid: number, selector: string): Promise<ProcessAiModelProfile | null> {
     const normalized = selector.trim().toLowerCase();
-    return this.listProcAiProfiles(ownerUid).find((profile) =>
+    return (await this.listProcAiProfiles(ownerUid)).find((profile) =>
       profile.id.toLowerCase() === normalized ||
       profile.name.toLowerCase() === normalized
     ) ?? null;
@@ -542,23 +554,23 @@ export class KernelMountBackend implements MountBackend {
     }
   }
 
-  private listReadableConfig(prefix: string): { key: string; value: string }[] {
+  private async listReadableConfig(prefix: string): Promise<{ key: string; value: string }[]> {
     if (!this.kernel) return [];
 
-    const entries = this.kernel.config.list(prefix);
+    const entries = await this.kernel.config.list(prefix);
     if (this.identity.uid === 0) return entries;
 
     return entries.filter((entry) => canReadConfigKey(this.identity.uid, entry.key));
   }
 
-  private readSys(path: string): string | undefined {
+  private async readSys(path: string): Promise<string | undefined> {
     if (!this.kernel) return undefined;
     const rel = path.slice("/sys/".length);
 
     if (rel.startsWith("config/")) {
       const configKey = rel;
       if (!canReadConfigKey(this.identity.uid, configKey)) return undefined;
-      const value = this.kernel.config.get(configKey);
+      const value = await this.kernel.config.get(configKey);
       if (value !== null) return value + "\n";
       return undefined;
     }
@@ -571,7 +583,7 @@ export class KernelMountBackend implements MountBackend {
 
       if (!canReadConfigKey(this.identity.uid, userKey)) return undefined;
 
-      const value = this.kernel.config.get(userKey);
+      const value = await this.kernel.config.get(userKey);
       if (value !== null) return value + "\n";
       return undefined;
     }
@@ -625,14 +637,14 @@ export class KernelMountBackend implements MountBackend {
     }
   }
 
-  private readSysCaps(rel: string): string | undefined {
+  private async readSysCaps(rel: string): Promise<string | undefined> {
     if (!this.kernel) return undefined;
     if (!rel) return undefined;
 
     const gid = parseInt(rel, 10);
     if (isNaN(gid)) return undefined;
 
-    const caps = this.kernel.caps.list(gid);
+    const caps = await this.kernel.caps.list(gid);
     if (caps.length === 0) return undefined;
     return caps.map((c) => c.capability).join("\n") + "\n";
   }
@@ -662,40 +674,30 @@ export class KernelMountBackend implements MountBackend {
     throw new Error("EPERM: read-only region of /sys/");
   }
 
-  private readEtcAuth(path: string): string | undefined {
+  private async readEtcAuth(path: string): Promise<string | undefined> {
     if (!this.kernel) return undefined;
-    if (path === "/etc/passwd") return this.kernel.auth.serializePasswd();
+    if (path === "/etc/passwd") return this.kernel.auth.readAuthFile("passwd");
     if (path === "/etc/shadow") {
       if (this.identity.uid !== 0) throw new Error("EACCES: permission denied, open '/etc/shadow'");
-      return this.kernel.auth.serializeShadow();
+      return this.kernel.auth.readAuthFile("shadow");
     }
-    if (path === "/etc/group") return this.kernel.auth.serializeGroup();
+    if (path === "/etc/group") return this.kernel.auth.readAuthFile("group");
     return undefined;
   }
 
   private writeEtcAuth(path: string, content: string): boolean {
     if (!this.kernel) return false;
     this.assertEtcAuthWritable(path);
-    if (path === "/etc/passwd") {
-      if (this.identity.uid !== 0) throw new Error("EACCES: permission denied, open '/etc/passwd'");
-      this.kernel.auth.importPasswd(content);
-      return true;
-    }
-    if (path === "/etc/shadow") {
-      if (this.identity.uid !== 0) throw new Error("EACCES: permission denied, open '/etc/shadow'");
-      this.kernel.auth.importShadow(content);
-      return true;
-    }
-    if (path === "/etc/group") {
-      if (this.identity.uid !== 0) throw new Error("EACCES: permission denied, open '/etc/group'");
-      this.kernel.auth.importGroup(content);
-      return true;
-    }
-    return false;
+    if (this.identity.uid !== 0) throw new Error(`EACCES: permission denied, open '${path}'`);
+    this.kernel.auth.importAuthFile!(
+      path === "/etc/passwd" ? "passwd" : path === "/etc/shadow" ? "shadow" : "group",
+      content,
+    );
+    return true;
   }
 
   private assertEtcAuthWritable(path: string): void {
-    if (!this.kernel?.authDirectoryWritable) {
+    if (!this.kernel?.auth.authDirectoryWritable || !this.kernel.auth.importAuthFile) {
       throw new Error(`EROFS: read-only file system, open '${path}'`);
     }
   }
@@ -705,17 +707,17 @@ export class KernelMountBackend implements MountBackend {
    * otherwise the caller's live default ("inbox") conversation executor (their
    * personal agent). Returns "" when no executor is live, yielding ENOENT.
    */
-  private selfProcessPid(): string {
+  private async selfProcessPid(): Promise<string> {
     if (this.selfPid) return this.selfPid;
     if (!this.kernel) return "";
-    const agentUid = this.kernel.auth.getPersonalAgentUid(this.identity.uid) ?? this.identity.uid;
+    const agentUid = await this.kernel.auth.getPersonalAgentUid(this.identity.uid) ?? this.identity.uid;
     return this.kernel.conversations?.getDefault(this.identity.uid, agentUid)?.activePid ?? "";
   }
 
-  private resolveVisibleProcess(pidSegment: string) {
+  private async resolveVisibleProcess(pidSegment: string) {
     if (!this.kernel) return null;
     const pid = pidSegment === "self"
-      ? this.selfProcessPid()
+      ? await this.selfProcessPid()
       : pidSegment;
     const proc = this.kernel.procs.get(pid);
     if (!proc) return null;
@@ -888,7 +890,7 @@ export class KernelMountBackend implements MountBackend {
     return jsonLines(messages);
   }
 
-  private readVarView(path: string): string | undefined {
+  private async readVarView(path: string): Promise<string | undefined> {
     if (path.startsWith("/var/spool/cron/")) {
       const username = decodePathSegment(path.slice("/var/spool/cron/".length));
       if (!username) return undefined;
@@ -896,7 +898,7 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (path === "/var/lib/gsv/packages/status") {
-      return renderPackageStatus(this.listVisiblePackages());
+      return renderPackageStatus(await this.listVisiblePackages());
     }
 
     if (path.startsWith("/var/lib/gsv/packages/info/")) {
@@ -930,14 +932,16 @@ export class KernelMountBackend implements MountBackend {
     return undefined;
   }
 
-  private statCronFile(path: string): ExtendedMountStat | undefined {
+  private async statCronFile(path: string): Promise<ExtendedMountStat | undefined> {
     if (!this.kernel?.cron) return undefined;
     if (path.startsWith("/var/spool/cron/")) {
       const username = decodePathSegment(path.slice("/var/spool/cron/".length));
       if (!username) return undefined;
       const content = this.kernel.cron.readUserCrontab(username);
       if (content === undefined) return undefined;
-      const user = this.kernel.auth?.getPasswdByUsername(username);
+      const user = this.kernel.auth
+        ? await this.kernel.auth.getAccountByUsername(username)
+        : null;
       const uid = user?.uid ?? (this.identity.username === username ? this.identity.uid : 0);
       const gid = user?.gid ?? (this.identity.username === username ? this.identity.gid : 0);
       return cronFileStat(content, 0o600, uid, gid);
@@ -984,11 +988,11 @@ export class KernelMountBackend implements MountBackend {
     return false;
   }
 
-  private readPackageInfoFile(file: string): string | undefined {
+  private async readPackageInfoFile(file: string): Promise<string | undefined> {
     const parsed = parsePackageInfoFile(file);
     if (!parsed) return undefined;
 
-    const packages = this.listVisiblePackages();
+    const packages = await this.listVisiblePackages();
     const record = packages.find((candidate) => candidate.packageId === parsed.packageId);
     if (!record) return undefined;
 
@@ -1024,12 +1028,10 @@ export class KernelMountBackend implements MountBackend {
     return records;
   }
 
-  private listVisiblePackages(): InstalledPackageRecord[] {
+  private async listVisiblePackages(): Promise<InstalledPackageRecord[]> {
     const packages = this.kernel?.packages;
     if (!packages) return [];
-    return packages.list({
-      scopes: visiblePackageScopesForActor(this.identity),
-    });
+    return packages.listVisible();
   }
 
   private async readVirtual(path: string): Promise<string | undefined> {
@@ -1057,44 +1059,44 @@ export class KernelMountBackend implements MountBackend {
     if (path.startsWith("/proc/") && !path.slice("/proc/".length).includes("/")) {
       const pid = path.slice("/proc/".length);
       if (pid === "version" || pid === "uptime") return false;
-      return this.resolveVisibleProcess(pid) !== null;
+      return await this.resolveVisibleProcess(pid) !== null;
     }
 
     if (path.startsWith("/proc/")) {
       const parts = path.slice("/proc/".length).split("/");
       if (parts.length >= 2 && parts[1] === "ai") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         if (!proc) return false;
         if (parts.length === 2) return true;
         return processAiConfigDirEntries(parts.slice(2)).length > 0;
       }
       if (parts.length === 2 && parts[1] === "context.d") {
-        return this.resolveVisibleProcess(parts[0]) !== null;
+        return await this.resolveVisibleProcess(parts[0]) !== null;
       }
       if (parts.length === 2 && parts[1] === "conversations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         return proc !== null;
       }
       if (parts.length === 3 && parts[1] === "conversations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         if (!proc) return false;
         const conversation = await this.getProcessConversation(proc.processId, decodePathSegment(parts[2]));
         return conversation !== null;
       }
       if (parts.length === 4 && parts[1] === "conversations" && parts[3] === "segments") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         if (!proc) return false;
         const conversation = await this.getProcessConversation(proc.processId, decodePathSegment(parts[2]));
         return conversation !== null;
       }
       if (parts.length === 4 && parts[1] === "conversations" && parts[3] === "generations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         if (!proc) return false;
         const conversation = await this.getProcessConversation(proc.processId, decodePathSegment(parts[2]));
         return conversation !== null;
       }
       if (parts.length === 5 && parts[1] === "conversations" && parts[3] === "generations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         const generation = parsePositiveIntegerSegment(parts[4]);
         if (!proc || generation === null) return false;
         const manifest = await this.getProcessConversationGenerationManifest(
@@ -1121,7 +1123,7 @@ export class KernelMountBackend implements MountBackend {
     if (path.startsWith("/sys/config/")) {
       const rel = path.slice("/sys/config/".length);
       if (rel) {
-        const nested = this.listReadableConfig(`config/${rel}`);
+        const nested = await this.listReadableConfig(`config/${rel}`);
         if (nested.length > 0) return true;
       }
     }
@@ -1134,7 +1136,7 @@ export class KernelMountBackend implements MountBackend {
         if (!isNaN(uid)) {
           if (this.identity.uid !== 0 && this.identity.uid !== uid) return false;
           const suffix = parts.slice(1).join("/");
-          const nested = this.listReadableConfig(`users/${uid}/${suffix}`);
+          const nested = await this.listReadableConfig(`users/${uid}/${suffix}`);
           if (nested.length > 0) return true;
         }
       }
@@ -1164,21 +1166,21 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (path === "/sys/config") {
-      return uniquePrefixes(this.listReadableConfig("config/"), "config/");
+      return uniquePrefixes(await this.listReadableConfig("config/"), "config/");
     }
 
     if (path.startsWith("/sys/config/")) {
       const rel = path.slice("/sys/config/".length);
       if (!rel) return undefined;
       const prefix = `config/${rel}`;
-      const entries = this.listReadableConfig(prefix);
+      const entries = await this.listReadableConfig(prefix);
       if (entries.length === 0) return undefined;
       return uniquePrefixes(entries, `${prefix}/`);
     }
 
     if (path === "/sys/users") {
       if (this.identity.uid === 0) {
-        return uniquePrefixes(this.listReadableConfig("users/"), "users/");
+        return uniquePrefixes(await this.listReadableConfig("users/"), "users/");
       }
       return [String(this.identity.uid)];
     }
@@ -1192,14 +1194,14 @@ export class KernelMountBackend implements MountBackend {
         if (this.identity.uid !== 0 && this.identity.uid !== uid) return undefined;
 
         if (parts.length === 1) {
-          const entries = this.listReadableConfig(`users/${uid}`);
+          const entries = await this.listReadableConfig(`users/${uid}`);
           if (entries.length === 0) return [];
           return uniquePrefixes(entries, `users/${uid}/`);
         }
 
         const suffix = parts.slice(1).join("/");
         const prefix = `users/${uid}/${suffix}`;
-        const entries = this.listReadableConfig(prefix);
+        const entries = await this.listReadableConfig(prefix);
         if (entries.length === 0) return undefined;
         return uniquePrefixes(entries, `${prefix}/`);
       }
@@ -1211,52 +1213,52 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (path === "/sys/capabilities") {
-      const caps = this.kernel.caps.list();
+      const caps = await this.kernel.caps.list();
       return [...new Set(caps.map((c) => String(c.gid)))].sort();
     }
 
     if (path.startsWith("/proc/")) {
       const parts = path.slice("/proc/".length).split("/");
       if (parts.length === 1) {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         if (proc) return ["ai", "context.d", "conversations", "identity", "status"];
       }
       if (parts.length >= 2 && parts[1] === "ai") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         if (!proc) return undefined;
         const entries = processAiConfigDirEntries(parts.slice(2));
         return entries.length > 0 ? entries : undefined;
       }
       if (parts.length === 2 && parts[1] === "context.d") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         if (proc) return proc.contextFiles.map((entry) => entry.name).sort();
       }
       if (parts.length === 2 && parts[1] === "conversations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         if (!proc) return undefined;
         const conversations = await this.listProcessConversations(proc.processId);
         return conversations?.map((conversation) => encodePathSegment(conversation.id)).sort();
       }
       if (parts.length === 3 && parts[1] === "conversations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         if (!proc) return undefined;
         const conversation = await this.getProcessConversation(proc.processId, decodePathSegment(parts[2]));
         if (conversation) return ["generations", "history", "segments", "status", "timeline"];
       }
       if (parts.length === 4 && parts[1] === "conversations" && parts[3] === "segments") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         if (!proc) return undefined;
         const segments = await this.listProcessConversationSegments(proc.processId, decodePathSegment(parts[2]));
         return segments?.map((segment) => encodePathSegment(segment.id)).sort();
       }
       if (parts.length === 4 && parts[1] === "conversations" && parts[3] === "generations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         if (!proc) return undefined;
         const generations = await this.listProcessConversationGenerations(proc.processId, decodePathSegment(parts[2]));
         return generations?.map((generation) => String(generation));
       }
       if (parts.length === 5 && parts[1] === "conversations" && parts[3] === "generations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
+        const proc = await this.resolveVisibleProcess(parts[0]);
         const generation = parsePositiveIntegerSegment(parts[4]);
         if (!proc || generation === null) return undefined;
         const manifest = await this.getProcessConversationGenerationManifest(
@@ -1281,7 +1283,7 @@ export class KernelMountBackend implements MountBackend {
       return ["info", "status"];
     }
     if (path === "/var/lib/gsv/packages/info") {
-      return this.listVisiblePackages().flatMap(packageInfoFileNames).sort();
+      return (await this.listVisiblePackages()).flatMap(packageInfoFileNames).sort();
     }
     if (path === "/var/spool") {
       return ["cron"];

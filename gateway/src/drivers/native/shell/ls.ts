@@ -58,7 +58,7 @@ export function buildLsCommand(fs: GsvFs, identity: ProcessIdentity, kernelCtx: 
 
     let nameCache: NameCache | null = null;
     if (flags.long) {
-      nameCache = loadNameCache(kernelCtx, identity);
+      nameCache = await loadNameCache(kernelCtx, identity);
     }
 
     let stdout = "";

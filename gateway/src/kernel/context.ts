@@ -8,12 +8,17 @@
 import type { Connection } from "agents";
 import type { MCPClientManager } from "agents/mcp/client";
 import type {
+  AccountGetArgs,
+  AccountDetail,
   ConnectArgs,
   ConnectionIdentity,
   ProcessIdentity,
+  RepoListArgs,
   RepoListResult,
   SchedulerRunArgs,
   SchedulerRunResult,
+  SysCapRecord,
+  SysConfigEntry,
 } from "@humansandmachines/gsv/protocol";
 import type { AuthenticatedCredential, AuthStore } from "./auth-store";
 import type { CapabilityStore } from "./capabilities";
@@ -24,7 +29,7 @@ import type { ConversationRegistry } from "./conversations";
 import type { AdapterStore } from "./adapter-store";
 import type { RunRouteStore } from "./run-routes";
 import type { ShellSessionStore } from "./shell-sessions";
-import type { PackageStore } from "./packages";
+import type { InstalledPackageRecord, PackageStore } from "./packages";
 import type { OAuthStore } from "./oauth-store";
 import type { McpServerStore } from "./mcp-store";
 import type { SignalWatchStore } from "./signal-watches";
@@ -111,6 +116,20 @@ export type KernelContext = {
   issueProcessRollbackAuthorization?: (processId: string) => string;
   revokeProcessRollbackAuthorization?: (authorization: string) => void;
   authenticateConnection?: (args: ConnectArgs) => Promise<KernelAuthenticationResult>;
+  /**
+   * Master-authoritative reads. On the Master these run against the local
+   * stores; in a user Kernel they forward to the Master by RPC. User Kernels
+   * never hold replicas of account, capability, config, or package state.
+   */
+  accountGet: (query: AccountGetArgs) => Promise<AccountDetail | null>;
+  readAuthFile: (kind: "passwd" | "group" | "shadow") => Promise<string>;
+  configGet: (key: string) => Promise<string | null>;
+  configList: (prefix: string) => Promise<SysConfigEntry[]>;
+  /** Explicit (non-default) Master config entries under a prefix. */
+  configListExplicit: (prefix: string) => Promise<SysConfigEntry[]>;
+  capsList: (gid?: number) => Promise<SysCapRecord[]>;
+  packagesList: (options?: { enabled?: boolean }) => Promise<InstalledPackageRecord[]>;
+  listRepos: (args?: RepoListArgs) => Promise<RepoListResult>;
   writeConfig: (key: string, value: string) => Promise<void>;
   mutateRepoMetadata: (
     mutation: RepoMetadataMutation,

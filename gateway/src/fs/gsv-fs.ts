@@ -85,17 +85,17 @@ export class GsvFs implements IFileSystem {
 
   async readFile(path: string, options?: { encoding?: BufferEncoding | null } | BufferEncoding): Promise<string> {
     const p = await this.resolveFinalPath(path);
-    return this.backendForPath(p).readFile(p, options);
+    return (await this.backendForPath(p)).readFile(p, options);
   }
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
     const p = await this.resolveFinalPath(path);
-    return this.backendForPath(p).readFileBuffer(p);
+    return (await this.backendForPath(p)).readFileBuffer(p);
   }
 
   async openFile(path: string, options?: OpenFileOptions): Promise<OpenFileResult> {
     const p = await this.resolveFinalPath(path);
-    const backend = this.backendForPath(p);
+    const backend = await this.backendForPath(p);
     if (backend.openFile) {
       const opened = await backend.openFile(p, options);
       if (opened) {
@@ -140,7 +140,7 @@ export class GsvFs implements IFileSystem {
   async writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void> {
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
     this.assertMutationAllowed(p);
-    await this.backendForPath(p).writeFile(p, content, options);
+    await (await this.backendForPath(p)).writeFile(p, content, options);
   }
 
   async writeFileStream(
@@ -153,7 +153,7 @@ export class GsvFs implements IFileSystem {
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
     options.signal?.throwIfAborted();
     this.assertMutationAllowed(p);
-    const backend = this.backendForPath(p);
+    const backend = await this.backendForPath(p);
     if (backend.writeFileStream) {
       const result = await backend.writeFileStream(p, content, options);
       if (result) {
@@ -174,14 +174,14 @@ export class GsvFs implements IFileSystem {
   async appendFile(path: string, content: FileContent, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<void> {
     const p = await this.resolveFinalPath(path, { allowMissingFinal: true });
     this.assertMutationAllowed(p);
-    await this.backendForPath(p).appendFile(p, content, options);
+    await (await this.backendForPath(p)).appendFile(p, content, options);
   }
 
   async exists(path: string): Promise<boolean> {
     const p = normalizePath(path);
     if (p === "/") return true;
     if (p === "/etc" && this.kernel) return true;
-    return this.backendForPath(p).exists(p);
+    return (await this.backendForPath(p)).exists(p);
   }
 
   async stat(path: string): Promise<FsStat> {
@@ -226,7 +226,7 @@ export class GsvFs implements IFileSystem {
     }
 
     const p = await this.resolveFinalPath(normalized);
-    return this.backendForPath(p).stat(p);
+    return (await this.backendForPath(p)).stat(p);
   }
 
   async lstat(path: string): Promise<FsStat> {
@@ -247,7 +247,7 @@ export class GsvFs implements IFileSystem {
   async mkdir(path: string, options?: MkdirOptions): Promise<void> {
     const p = normalizePath(path);
     this.assertMutationAllowed(p);
-    await this.backendForPath(p).mkdir(p, options);
+    await (await this.backendForPath(p)).mkdir(p, options);
   }
 
   async readdir(path: string): Promise<string[]> {
@@ -270,7 +270,7 @@ export class GsvFs implements IFileSystem {
     }
 
     const p = await this.resolveFinalPath(normalized);
-    return this.backendForPath(p).readdir(p);
+    return (await this.backendForPath(p)).readdir(p);
   }
 
   async readdirWithFileTypes(path: string): Promise<{ name: string; isFile: boolean; isDirectory: boolean; isSymbolicLink: boolean }[]> {
@@ -295,7 +295,7 @@ export class GsvFs implements IFileSystem {
   async rm(path: string, options?: RmOptions): Promise<void> {
     const p = normalizePath(path);
     this.assertMutationAllowed(p);
-    await this.backendForPath(p).rm(p, options);
+    await (await this.backendForPath(p)).rm(p, options);
   }
 
   async cp(src: string, dest: string, _options?: CpOptions): Promise<void> {
@@ -317,7 +317,7 @@ export class GsvFs implements IFileSystem {
   async chmod(path: string, mode: number): Promise<void> {
     const p = await this.resolveFinalPath(path);
     this.assertMutationAllowed(p);
-    const backend = this.backendForPath(p);
+    const backend = await this.backendForPath(p);
     if (!backend.chmod) {
       throw new Error(`ENOSYS: chmod not supported for '${p}'`);
     }
@@ -327,7 +327,7 @@ export class GsvFs implements IFileSystem {
   async chown(path: string, newUid?: number, newGid?: number): Promise<void> {
     const p = await this.resolveFinalPath(path);
     this.assertMutationAllowed(p);
-    const backend = this.backendForPath(p);
+    const backend = await this.backendForPath(p);
     if (!backend.chown) {
       throw new Error(`ENOSYS: chown not supported for '${p}'`);
     }
@@ -337,7 +337,7 @@ export class GsvFs implements IFileSystem {
   async symlink(target: string, linkPath: string): Promise<void> {
     const p = normalizePath(linkPath);
     this.assertMutationAllowed(p);
-    const backend = this.backendForPath(p);
+    const backend = await this.backendForPath(p);
     if (!backend.symlink) {
       throw new Error(`ENOSYS: symlinks not supported for '${p}'`);
     }
@@ -350,7 +350,7 @@ export class GsvFs implements IFileSystem {
 
   async readlink(path: string): Promise<string> {
     const p = normalizePath(path);
-    const backend = this.backendForPath(p);
+    const backend = await this.backendForPath(p);
     if (!backend.readlink) {
       throw new Error(`EINVAL: invalid argument, readlink '${p}'`);
     }
@@ -364,7 +364,7 @@ export class GsvFs implements IFileSystem {
   async utimes(path: string, atime: Date, mtime: Date): Promise<void> {
     const p = await this.resolveFinalPath(path);
     this.assertMutationAllowed(p);
-    const backend = this.backendForPath(p);
+    const backend = await this.backendForPath(p);
     if (!backend.utimes) {
       const exists = await backend.exists(p);
       if (!exists) throw new Error(`ENOENT: no such file or directory, utimes '${p}'`);
@@ -399,7 +399,7 @@ export class GsvFs implements IFileSystem {
     }
     const p = await this.resolveFinalPath(path);
     signal?.throwIfAborted();
-    const backend = this.backendForPath(p);
+    const backend = await this.backendForPath(p);
     if (!backend.search) {
       throw new Error(`ENOSYS: search is not supported for '${p}'`);
     }
@@ -412,7 +412,7 @@ export class GsvFs implements IFileSystem {
     depth = 0,
   ): Promise<string> {
     const normalized = normalizePath(path);
-    if (this.accountHomeBackend && isAccountHomeReservedPath(normalized) && !this.accountHomeBackend.handles(normalized)) {
+    if (this.accountHomeBackend && isAccountHomeReservedPath(normalized) && !(await this.accountHomeBackend.handles(normalized))) {
       throw new Error(`EACCES: permission denied, '${normalized}'`);
     }
 
@@ -428,7 +428,7 @@ export class GsvFs implements IFileSystem {
     let current = "/";
     for (let index = 0; index < parts.length; index += 1) {
       current = normalizePath(`${current}/${parts[index]}`);
-      const backend = this.backendForPath(current);
+      const backend = await this.backendForPath(current);
       let stat: ExtendedMountStat;
       try {
         stat = backend.lstat ? await backend.lstat(current) : await backend.stat(current);
@@ -469,11 +469,11 @@ export class GsvFs implements IFileSystem {
   }
 
   private async backendLstat(path: string): Promise<ExtendedMountStat> {
-    const backend = this.backendForPath(path);
+    const backend = await this.backendForPath(path);
     return backend.lstat ? backend.lstat(path) : this.statExtended(path);
   }
 
-  private backendForPath(path: string): MountBackend {
+  private async backendForPath(path: string): Promise<MountBackend> {
     if (hasInternalDirectoryMarkerSegment(path)) {
       throw new Error(`EACCES: permission denied, '${normalizePath(path)}'`);
     }
@@ -489,8 +489,9 @@ export class GsvFs implements IFileSystem {
       return this.sourceBackend;
     }
 
-    if (this.accountHomeBackend?.handles(path)) {
-      return this.accountHomeBackend;
+    const accountHomeBackend = this.accountHomeBackend;
+    if (accountHomeBackend && (await accountHomeBackend.handles(path))) {
+      return accountHomeBackend;
     }
 
     if (this.accountHomeBackend && isAccountHomeReservedPath(path)) {
@@ -504,7 +505,7 @@ export class GsvFs implements IFileSystem {
       return this.packageBackend;
     }
 
-    if (this.kernelBackend.handles(path)) {
+    if (await this.kernelBackend.handles(path)) {
       return this.kernelBackend;
     }
 

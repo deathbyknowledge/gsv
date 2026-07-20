@@ -26,7 +26,6 @@ describe("Kernel Durable Object RPC surface", () => {
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       expect(Object.prototype.hasOwnProperty.call(instance, "applyUserKernelProjection")).toBe(true);
-      expect(Object.prototype.hasOwnProperty.call(instance, "rotateUserKernelCapability")).toBe(true);
       expect(Object.prototype.hasOwnProperty.call(instance, "setState")).toBe(true);
       expect(Object.prototype.hasOwnProperty.call(instance, "sql")).toBe(true);
       expect(Object.prototype.hasOwnProperty.call(instance, "prepareRegisteredAppRunners"))
@@ -41,7 +40,6 @@ describe("Kernel Durable Object RPC surface", () => {
     });
 
     await expectHiddenRpcMethod("applyUserKernelProjection", {});
-    await expectHiddenRpcMethod("rotateUserKernelCapability", {});
     await expectHiddenRpcMethod("setState", { forged: true });
 
     await expect(kernel.listPublicPackages()).resolves.toMatchObject({
