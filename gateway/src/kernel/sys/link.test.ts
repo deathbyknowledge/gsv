@@ -17,6 +17,9 @@ type FakeAdapters = {
   linkChallenges: {
     consume: ReturnType<typeof vi.fn>;
   };
+  surfaceRoutes: {
+    clearOwnerAccountRoutes: ReturnType<typeof vi.fn>;
+  };
 };
 
 function makeContext(uid: number, adapters: FakeAdapters): KernelContext {
@@ -57,6 +60,9 @@ describe("sys.link handlers", () => {
       },
       linkChallenges: {
         consume: vi.fn(),
+      },
+      surfaceRoutes: {
+        clearOwnerAccountRoutes: vi.fn(() => 0),
       },
     };
   });
@@ -140,6 +146,11 @@ describe("sys.link handlers", () => {
       "whatsapp",
       "default",
       "wa:+123",
+    );
+    expect(adapters.surfaceRoutes.clearOwnerAccountRoutes).toHaveBeenCalledWith(
+      "whatsapp",
+      "default",
+      1000,
     );
   });
 

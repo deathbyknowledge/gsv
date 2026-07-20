@@ -102,6 +102,7 @@ const CONSOLE_OVERVIEW_SIGNALS = new Set([
   "proc.changed",
   "device.status",
   "pkg.changed",
+  "config.changed",
   "adapter.status",
   "mcp.changed",
 ]);
@@ -265,7 +266,17 @@ export function useConsoleMcpServers(options: ConsoleQueryOptions = {}) {
 
 export function useConsoleConfig(options: ConsoleQueryOptions = {}) {
   const { client, connected } = useGateway();
+  const queryClient = useQueryClient();
   const enabled = connected && (options.enabled ?? true);
+
+  useEffect(() => {
+    return client.onSignal((signal) => {
+      if (signal === "config.changed") {
+        void queryClient.invalidateQueries({ queryKey: consoleConfigQueryKey });
+      }
+    });
+  }, [client, queryClient]);
+
   const query = useQuery<ConsoleConfigEntry[]>({
     queryKey: consoleConfigQueryKey,
     enabled,

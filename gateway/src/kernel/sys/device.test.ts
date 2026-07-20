@@ -106,6 +106,11 @@ function makeContext(
   ];
   const listTokens = vi.fn(() => tokens);
   const revokeToken = vi.fn(() => true);
+  const revokeDeviceCredentials = vi.fn(async () => [{
+    tokenId: "tok-active-alpha",
+    uid: ownerUid,
+    revokedAt: 3,
+  }]);
 
   return {
     processId: options.processId,
@@ -141,6 +146,7 @@ function makeContext(
       status: { list: () => [], listAll: () => [] },
     },
     devices: devices as unknown as KernelContext["devices"],
+    revokeDeviceCredentials,
   } as KernelContext;
 }
 
@@ -388,24 +394,34 @@ describe("sys.device handlers", () => {
     }, ctx)).toThrow("Permission denied: device metadata is owner-managed");
   });
 
-  it("deletes an owned physical machine and revokes active node tokens", () => {
+  it("deletes an owned physical machine only after authoritative token revocation", async () => {
     const ctx = makeContext(1000, records.map((record) => ({ ...record })));
-    const result = handleSysDeviceDelete({ deviceId: "node-alpha" }, ctx);
+    const result = await handleSysDeviceDelete({ deviceId: "node-alpha" }, ctx);
 
     expect(result).toEqual({
       deleted: true,
       deviceId: "node-alpha",
       revokedTokens: 1,
     });
+    expect(ctx.revokeDeviceCredentials).toHaveBeenCalledWith(1000, "node-alpha");
     expect(ctx.devices.remove).toHaveBeenCalledWith("node-alpha");
-    expect(ctx.auth.revokeToken).toHaveBeenCalledWith("tok-active-alpha", "machine forgotten", 1000);
-    expect(ctx.auth.revokeToken).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ctx.revokeDeviceCredentials).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(ctx.devices.remove).mock.invocationCallOrder[0]);
   });
 
-  it("rejects deleting a shared machine owned by another user", () => {
+  it("leaves the device intact when authoritative token revocation fails", async () => {
+    const ctx = makeContext(1000, records.map((record) => ({ ...record })));
+    vi.mocked(ctx.revokeDeviceCredentials).mockRejectedValueOnce(new Error("Master unavailable"));
+
+    await expect(handleSysDeviceDelete({ deviceId: "node-alpha" }, ctx))
+      .rejects.toThrow("Master unavailable");
+    expect(ctx.devices.remove).not.toHaveBeenCalled();
+  });
+
+  it("rejects deleting a shared machine owned by another user", async () => {
     const ctx = makeContext(1001, records.map((record) => ({ ...record })), ["node-alpha"]);
 
-    expect(() => handleSysDeviceDelete({ deviceId: "node-alpha" }, ctx)).toThrow(
+    await expect(handleSysDeviceDelete({ deviceId: "node-alpha" }, ctx)).rejects.toThrow(
       "Permission denied: machine forgetting is owner-managed",
     );
     expect(ctx.devices.remove).not.toHaveBeenCalled();

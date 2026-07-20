@@ -66,6 +66,28 @@ function parseOptionalFutureTimestamp(input: unknown): number | undefined {
   return value;
 }
 
+function assertUserTokenTargetIsLoginCapable(
+  targetUid: number,
+  ctx: KernelContext,
+): void {
+  const account = ctx.auth.getPasswdByUid(targetUid);
+  const identity = account
+    ? ctx.auth.getAccountIdentity(account.username)
+    : null;
+  const isShipRoot = targetUid === 0
+    && account?.username === "root"
+    && identity?.kind === "system";
+  if (
+    !account
+    || !identity
+    || identity.uid !== targetUid
+    || identity.state !== "active"
+    || (identity.kind !== "human" && !isShipRoot)
+  ) {
+    throw new Error("Permission denied: user tokens require an active human account");
+  }
+}
+
 export async function handleSysTokenCreate(
   args: SysTokenCreateArgs,
   ctx: KernelContext,
@@ -80,6 +102,9 @@ export async function handleSysTokenCreate(
   }
 
   const kind = parseTokenKind(raw.kind);
+  if (kind === "user") {
+    assertUserTokenTargetIsLoginCapable(targetUid, ctx);
+  }
   if (kind === "service" && !isRoot) {
     throw new Error("Permission denied: only root may create service tokens");
   }

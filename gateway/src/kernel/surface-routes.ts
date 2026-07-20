@@ -68,6 +68,26 @@ export class SurfaceRouteStore {
     return true;
   }
 
+  clearOwnerAccountRoutes(adapter: string, accountId: string, uid: number): number {
+    const existing = this.sql.exec<{ surface_id: string }>(
+      `SELECT surface_id FROM surface_routes
+       WHERE adapter = ? AND account_id = ? AND uid = ?`,
+      adapter,
+      accountId,
+      uid,
+    ).toArray().length;
+    if (existing > 0) {
+      this.sql.exec(
+        `DELETE FROM surface_routes
+         WHERE adapter = ? AND account_id = ? AND uid = ?`,
+        adapter,
+        accountId,
+        uid,
+      );
+    }
+    return existing;
+  }
+
   resolvePid(
     adapter: string,
     accountId: string,

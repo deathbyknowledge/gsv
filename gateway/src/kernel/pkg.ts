@@ -1,11 +1,9 @@
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import {
+  findPackageAgentAccount,
   packageAgentAccessGroup,
-  packageAgentUsername,
-  provisionEnabledPackagesForCaller,
-  provisionPackageAgents,
-  revokePackageAgentAccess,
+  reconcilePackageAgentEntitlements,
 } from "./package-agents";
 import type {
   PkgAddArgs,
@@ -127,23 +125,20 @@ export async function handlePkgInstall(
     throw new Error(`Package review approval required before enabling: ${record.manifest.name}`);
   }
 
-  // Provision the package's agent accounts and grant the enabling human run-as
-  // rights. The enabler is the owning human, not the run-as account: when
-  // pkg.install runs from a process (the normal personal-agent path),
-  // ctx.identity.process.uid is the agent's uid, but proc.spawn authorizes the
-  // access group against the process owner — so the access group must be granted
-  // to the same human. Idempotent, so re-enabling for another human just adds
-  // them.
-  const enablingHumanUid = ctx.identity ? resolveCallerOwnerUid(ctx) : undefined;
-  if (typeof enablingHumanUid === "number" && (record.manifest.profiles?.length ?? 0) > 0) {
-    await provisionPackageAgents(ctx, record, enablingHumanUid);
-  }
-
   if (!record.enabled) {
     const updated = ctx.packages.setEnabled(record.packageId, true, record.scope);
     if (!updated) {
       throw new Error(`Failed to enable package: ${record.packageId}`);
     }
+  }
+  try {
+    await reconcilePackageAgentEntitlements(ctx);
+  } catch (error) {
+    if (!record.enabled) {
+      ctx.packages.setEnabled(record.packageId, false, record.scope);
+      await reconcilePackageAgentEntitlements(ctx).catch(() => {});
+    }
+    throw error;
   }
 
   return {
@@ -152,10 +147,10 @@ export async function handlePkgInstall(
   };
 }
 
-export function handlePkgReviewApprove(
+export async function handlePkgReviewApprove(
   args: PkgReviewApproveArgs,
   ctx: KernelContext,
-): PkgReviewApproveResult {
+): Promise<PkgReviewApproveResult> {
   const record = requirePackage(args.packageId, ctx);
   assertMutablePackageAccess(record, ctx);
   if (!record.reviewRequired) {
@@ -170,6 +165,7 @@ export function handlePkgReviewApprove(
   if (!updated) {
     throw new Error(`Failed to mark package as reviewed: ${record.packageId}`);
   }
+  await reconcilePackageAgentEntitlements(ctx);
 
   return {
     changed: record.reviewedAt == null,
@@ -285,7 +281,7 @@ export async function handlePkgAdd(
     installedAt: existing?.installedAt,
     updatedAt: Date.now(),
   });
-  await provisionEnabledPackageAgentsForCaller(ctx, updated);
+  await reconcilePackageAgentEntitlements(ctx);
 
   return {
     changed:
@@ -382,7 +378,7 @@ export async function handlePkgCreate(
     installedAt: existing?.installedAt,
     updatedAt: Date.now(),
   });
-  await provisionEnabledPackageAgentsForCaller(ctx, updated);
+  await reconcilePackageAgentEntitlements(ctx);
 
   return {
     changed:
@@ -453,7 +449,7 @@ export async function handlePkgCheckout(
     installedAt: record.installedAt,
     updatedAt: Date.now(),
   });
-  await provisionEnabledPackageAgentsForCaller(ctx, updated);
+  await reconcilePackageAgentEntitlements(ctx);
 
   return {
     changed:
@@ -473,18 +469,11 @@ export async function handlePkgRemove(
   const record = requirePackage(args.packageId, ctx);
   assertMutablePackageAccess(record, ctx);
 
-  // Revoke the removing human's run-as rights for this package's agents. Use
-  // the owning human (not the run-as account): from a personal-agent process,
-  // ctx.identity.process.uid is the agent, so revoking that would leave the
-  // human in the access group and still able to spawn the removed agent.
-  const humanUid = ctx.identity ? resolveCallerOwnerUid(ctx) : undefined;
-  if (typeof humanUid === "number" && (record.manifest.profiles?.length ?? 0) > 0) {
-    revokePackageAgentAccess(ctx, record, humanUid);
-  }
   const removed = ctx.packages.remove(record.packageId, record.scope);
   if (!removed) {
     throw new Error(`Failed to remove package: ${record.packageId}`);
   }
+  await reconcilePackageAgentEntitlements(ctx);
 
   return {
     changed: true,
@@ -527,13 +516,6 @@ export function resolveInstalledPackage(packageId: string, ctx: KernelContext): 
 
 function requirePackage(packageId: string, ctx: KernelContext): InstalledPackageRecord {
   return resolveInstalledPackage(packageId, ctx);
-}
-
-async function provisionEnabledPackageAgentsForCaller(
-  ctx: KernelContext,
-  record: InstalledPackageRecord,
-): Promise<void> {
-  await provisionEnabledPackagesForCaller(ctx, [record]);
 }
 
 function resolveUpstream(args: PkgAddArgs): { remoteUrl: string; ref: string; repoSlug: string | null } {
@@ -595,7 +577,12 @@ function repoBasenameFromUrl(remoteUrl: string): string {
 function sanitizeRepoName(value: string): string {
   const trimmed = value.trim().replace(/\.git$/i, "").toLowerCase();
   const normalized = trimmed.replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return /^[a-z0-9._-]+$/.test(normalized) ? normalized : "";
+  return normalized.length <= 128
+    && normalized !== "."
+    && normalized !== ".."
+    && /^[a-z0-9._-]+$/.test(normalized)
+    ? normalized
+    : "";
 }
 
 function resolveCreateRepo(repo: string, fallbackOwner: string): RipgitRepoRef {
@@ -618,7 +605,12 @@ function resolveCreateRepo(repo: string, fallbackOwner: string): RipgitRepoRef {
 
 function normalizeRepoOwner(owner: string): string {
   const value = String(owner ?? "").trim();
-  if (!/^[A-Za-z0-9._-]+$/.test(value)) {
+  if (
+    value.length > 128
+    || value === "."
+    || value === ".."
+    || !/^[A-Za-z0-9._-]+$/.test(value)
+  ) {
     throw new Error(`Invalid repo owner: ${owner}`);
   }
   return value;
@@ -1199,19 +1191,21 @@ function toProfileSummary(
   profile: NonNullable<InstalledPackageRecord["manifest"]["profiles"]>[number],
   ctx?: KernelContext,
 ): PkgProfileSummary {
-  const username = packageAgentUsername(record.manifest.name, profile.name);
+  const ownerUid = ctx?.identity ? resolveCallerOwnerUid(ctx) : undefined;
+  const entry = ctx && ownerUid !== undefined
+    ? findPackageAgentAccount(ctx, record, profile, ownerUid)
+    : null;
+  const username = entry?.username;
   const account: PkgProfileSummary["account"] = {
     runAs: `${record.manifest.name}#${profile.name}`,
-    username,
+    username: username ?? "",
   };
 
   if (ctx?.auth) {
-    const entry = ctx.auth.getPasswdByUsername(username);
-    const ownerUid = ctx.identity ? resolveCallerOwnerUid(ctx) : undefined;
     const ownerName = typeof ownerUid === "number"
       ? ctx.auth.getPasswdByUid(ownerUid)?.username
       : undefined;
-    const group = ctx.auth.getGroupByName(packageAgentAccessGroup(username));
+    const group = username ? ctx.auth.getGroupByName(packageAgentAccessGroup(username)) : null;
     account.provisioned = Boolean(entry);
     account.runnable = record.enabled && Boolean(entry) && (
       ownerUid === 0 ||

@@ -91,10 +91,10 @@ export function handleSysDeviceUpdate(
   };
 }
 
-export function handleSysDeviceDelete(
+export async function handleSysDeviceDelete(
   args: SysDeviceDeleteArgs,
   ctx: KernelContext,
-): SysDeviceDeleteResult {
+): Promise<SysDeviceDeleteResult> {
   const identity = ctx.identity?.process;
   if (!identity) {
     throw new Error("Authentication required");
@@ -114,22 +114,13 @@ export function handleSysDeviceDelete(
     throw new Error("Permission denied: machine forgetting is owner-managed");
   }
 
-  const revokedTokens = ctx.auth
-    .listTokens(identity.uid === 0 ? undefined : identity.uid)
-    .filter((token) =>
-      token.kind === "node" &&
-      token.allowedDeviceId === deviceId &&
-      token.revokedAt === null
-    )
-    .reduce((count, token) => (
-      ctx.auth.revokeToken(token.tokenId, "machine forgotten", identity.uid === 0 ? undefined : identity.uid)
-        ? count + 1
-        : count
-    ), 0);
+  // The Master commits every credential revocation (and its durable delivery
+  // record) before the user Kernel removes the local device record.
+  const revocations = await ctx.revokeDeviceCredentials(device.owner_uid, deviceId);
 
   return {
     deleted: ctx.devices.remove(deviceId),
     deviceId,
-    revokedTokens,
+    revokedTokens: revocations.length,
   };
 }

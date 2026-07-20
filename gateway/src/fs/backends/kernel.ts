@@ -105,7 +105,7 @@ export class KernelMountBackend implements MountBackend {
       return;
     }
     if (p.startsWith("/sys/")) {
-      this.writeSys(p, typeof content === "string" ? content : new TextDecoder().decode(content));
+      await this.writeSys(p, typeof content === "string" ? content : new TextDecoder().decode(content));
       return;
     }
     if (isCronWritablePath(p)) {
@@ -134,6 +134,7 @@ export class KernelMountBackend implements MountBackend {
       throw new Error(`EPERM: cannot append to virtual path '${p}'`);
     }
     if (isEtcAuth(p)) {
+      this.assertEtcAuthWritable(p);
       const existing = this.readEtcAuth(p) ?? "";
       const appended = typeof content === "string" ? existing + content : existing + new TextDecoder().decode(content);
       this.writeEtcAuth(p, appended);
@@ -160,7 +161,9 @@ export class KernelMountBackend implements MountBackend {
     }
 
     if (isEtcAuth(p)) {
-      const mode = p === "/etc/shadow" ? 0o640 : 0o644;
+      const mode = this.kernel?.authDirectoryWritable
+        ? p === "/etc/shadow" ? 0o640 : 0o644
+        : p === "/etc/shadow" ? 0o400 : 0o444;
       return { isFile: true, isDirectory: false, isSymbolicLink: false, mode, size: 0, mtime: new Date(), uid: 0, gid: 0 };
     }
 
@@ -634,13 +637,14 @@ export class KernelMountBackend implements MountBackend {
     return caps.map((c) => c.capability).join("\n") + "\n";
   }
 
-  private writeSys(path: string, content: string): void {
+  private async writeSys(path: string, content: string): Promise<void> {
     if (!this.kernel) throw new Error("EPERM: /sys is not available");
+    if (!this.kernel.writeConfig) throw new Error("EPERM: /sys config is read-only");
     const rel = path.slice("/sys/".length);
 
     if (rel.startsWith("config/")) {
       if (this.identity.uid !== 0) throw new Error("EPERM: only root can write to /sys/config/");
-      this.kernel.config.set(rel, content.trim());
+      await this.kernel.writeConfig(rel, content.trim());
       return;
     }
 
@@ -651,7 +655,7 @@ export class KernelMountBackend implements MountBackend {
       if (this.identity.uid !== 0 && this.identity.uid !== uid) {
         throw new Error(`EPERM: permission denied, '${path}'`);
       }
-      this.kernel.config.set(rel, content.trim());
+      await this.kernel.writeConfig(rel, content.trim());
       return;
     }
 
@@ -671,6 +675,7 @@ export class KernelMountBackend implements MountBackend {
 
   private writeEtcAuth(path: string, content: string): boolean {
     if (!this.kernel) return false;
+    this.assertEtcAuthWritable(path);
     if (path === "/etc/passwd") {
       if (this.identity.uid !== 0) throw new Error("EACCES: permission denied, open '/etc/passwd'");
       this.kernel.auth.importPasswd(content);
@@ -687,6 +692,12 @@ export class KernelMountBackend implements MountBackend {
       return true;
     }
     return false;
+  }
+
+  private assertEtcAuthWritable(path: string): void {
+    if (!this.kernel?.authDirectoryWritable) {
+      throw new Error(`EROFS: read-only file system, open '${path}'`);
+    }
   }
 
   /**

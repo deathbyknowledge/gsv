@@ -1,5 +1,7 @@
 import {
   buildAppClientRpcBase,
+  isLegacyAppSessionId,
+  parseRoutedAppSessionId,
   type AppClientSessionContext,
   type AppSessionClientContext,
   type AppSessionContext,
@@ -52,8 +54,16 @@ type VerifiedSecret =
     }
   | { ok: false };
 
+export type AppSessionIdFactory = (input: {
+  uid: number;
+  username: string;
+}) => Promise<string>;
+
 export class AppSessionStore {
-  constructor(private readonly sql: SqlStorage) {}
+  constructor(
+    private readonly sql: SqlStorage,
+    private readonly createSessionId: AppSessionIdFactory = async () => crypto.randomUUID(),
+  ) {}
 
   async issue(input: {
     uid: number;
@@ -67,8 +77,20 @@ export class AppSessionStore {
   }): Promise<IssuedAppClientSession> {
     this.pruneExpired();
     const now = Date.now();
-    const sessionId = crypto.randomUUID();
-    const expiresAt = now + input.ttlMs;
+    const sessionId = await this.createSessionId({
+      uid: input.uid,
+      username: input.username,
+    });
+    if (!isLegacyAppSessionId(sessionId) && !parseRoutedAppSessionId(sessionId)) {
+      throw new Error("Invalid app session id");
+    }
+    const expiresAt = Math.min(
+      now + input.ttlMs,
+      routeExpiryLimit(sessionId) ?? Number.MAX_SAFE_INTEGER,
+    );
+    if (expiresAt <= now) {
+      throw new Error("App session route expired before issuance");
+    }
 
     this.sql.exec(
       `INSERT INTO app_sessions (
@@ -132,7 +154,13 @@ export class AppSessionStore {
     }
 
     const now = Date.now();
-    const expiresAt = now + input.ttlMs;
+    const expiresAt = Math.min(
+      now + input.ttlMs,
+      routeExpiryLimit(input.sessionId) ?? Number.MAX_SAFE_INTEGER,
+    );
+    if (expiresAt <= now) {
+      return null;
+    }
     this.insertClient(input.sessionId, input.clientId, now, expiresAt);
     const secret = await this.insertClientKey(input.sessionId, input.clientId, now, expiresAt);
     this.touchSession(input.sessionId, now, expiresAt);
@@ -160,12 +188,14 @@ export class AppSessionStore {
   async resolve(
     sessionId: string,
     secret: string,
+    assertCurrent?: () => void,
   ): Promise<AppClientSessionContext | null> {
     this.pruneExpired();
     const verified = await this.verifySecret(sessionId, secret);
     if (!verified.ok) {
       return null;
     }
+    assertCurrent?.();
 
     const lastUsedAt = Date.now();
     this.sql.exec(
@@ -196,15 +226,23 @@ export class AppSessionStore {
     sessionId: string,
     secret: string,
     ttlMs: number,
+    assertCurrent?: () => void,
   ): Promise<AppClientSessionContext | null> {
     this.pruneExpired();
     const verified = await this.verifySecret(sessionId, secret);
     if (!verified.ok) {
       return null;
     }
+    assertCurrent?.();
 
     const now = Date.now();
-    const expiresAt = now + ttlMs;
+    const expiresAt = Math.min(
+      now + ttlMs,
+      routeExpiryLimit(sessionId) ?? Number.MAX_SAFE_INTEGER,
+    );
+    if (expiresAt <= now) {
+      return null;
+    }
     this.sql.exec(
       "UPDATE app_sessions SET last_used_at = ?, expires_at = MAX(expires_at, ?) WHERE session_id = ?",
       now,
@@ -256,6 +294,23 @@ export class AppSessionStore {
       return null;
     }
     return this.toSessionContext(row);
+  }
+
+  getActiveRoute(sessionId: string): {
+    uid: number;
+    username: string;
+    expiresAt: number;
+  } | null {
+    this.pruneExpired();
+    const row = this.getSessionRow(sessionId);
+    if (!row || row.closed_at != null || row.expires_at <= Date.now()) {
+      return null;
+    }
+    return {
+      uid: row.uid,
+      username: row.username,
+      expiresAt: row.expires_at,
+    };
   }
 
   detach(uid: number, sessionId: string, clientId: string): AppClientSessionContext | null {
@@ -519,4 +574,8 @@ function sessionState(row: AppSessionRow, clients: AppClientSessionContext[]): A
     return "expired";
   }
   return clients.length > 0 ? "active" : "detached";
+}
+
+function routeExpiryLimit(sessionId: string): number | null {
+  return parseRoutedAppSessionId(sessionId)?.expiresAt ?? null;
 }

@@ -1,122 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
-import type { InstalledPackageRecord } from "./packages";
+import type { InstalledPackageRecord, PackageInstallScope } from "./packages";
 import {
   ensurePackageAgent,
+  findPackageAgentAccount,
   packageAgentAccessGroup,
-  packageAgentUsername,
-  provisionEnabledPackageAgents,
-  provisionEnabledPackagesForCaller,
+  packageAgentRuntimeIdentity,
+  reconcilePackageAgentEntitlements,
   resolvePackageAgentRunAs,
-  revokePackageAgentAccess,
 } from "./package-agents";
 import { createProvisioningR2BucketMock } from "../test-support/mock-r2";
 
-type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
+type PasswdRow = {
+  username: string;
+  uid: number;
+  gid: number;
+  gecos: string;
+  home: string;
+  shell: string;
+};
 type GroupRow = { name: string; gid: number; members: string[] };
-
-function createCtx() {
-  const passwd: PasswdRow[] = [
-    { username: "root", uid: 0, gid: 0, gecos: "root", home: "/root", shell: "/bin/init" },
-    { username: "alice", uid: 1000, gid: 1000, gecos: "alice", home: "/home/alice", shell: "/bin/init" },
-    { username: "bob", uid: 1001, gid: 1001, gecos: "bob", home: "/home/bob", shell: "/bin/init" },
-  ];
-  const groups: GroupRow[] = [
-    { name: "users", gid: 100, members: ["alice", "bob"] },
-    { name: "alice", gid: 1000, members: [] },
-    { name: "bob", gid: 1001, members: [] },
-  ];
-  const shadow = new Map<string, string>([["root", "x"], ["alice", "x"], ["bob", "x"]]);
-  const config = new Map<string, string>();
-  const capsTable: { gid: number; capability: string }[] = [];
-  const packageRecords: InstalledPackageRecord[] = [];
-
-  const maxId = () => Math.max(0, ...passwd.map((u) => u.uid), ...groups.map((g) => g.gid));
-
-  const auth = {
-    getPasswdByUsername: vi.fn((username: string) => passwd.find((u) => u.username === username) ?? null),
-    getPasswdByUid: vi.fn((uid: number) => passwd.find((u) => u.uid === uid) ?? null),
-    allocateUid: vi.fn(() => Math.max(999, maxId()) + 1),
-    allocateGid: vi.fn(() => Math.max(99, maxId()) + 1),
-    addUser: vi.fn((entry: PasswdRow) => {
-      passwd.push({ ...entry, gecos: entry.gecos ?? entry.username, shell: entry.shell ?? "/bin/init" });
-    }),
-    setShadow: vi.fn((entry: { username: string; hash: string }) => shadow.set(entry.username, entry.hash)),
-    getGroupByName: vi.fn((name: string) => {
-      const g = groups.find((x) => x.name === name);
-      return g ? { ...g, members: [...g.members] } : null;
-    }),
-    getGroupByGid: vi.fn((gid: number) => {
-      const g = groups.find((x) => x.gid === gid);
-      return g ? { ...g, members: [...g.members] } : null;
-    }),
-    addGroup: vi.fn((entry: GroupRow) => groups.push({ ...entry, members: [...entry.members] })),
-    updateGroupMembers: vi.fn((name: string, members: string[]) => {
-      const g = groups.find((x) => x.name === name);
-      if (g) g.members = members;
-      return true;
-    }),
-    resolveGids: vi.fn((username: string, primaryGid: number) => {
-      const gids = new Set<number>([primaryGid]);
-      for (const g of groups) if (g.members.includes(username)) gids.add(g.gid);
-      return [...gids].sort((a, b) => a - b);
-    }),
-    setPersonalAgent: vi.fn(),
-  };
-
-  const caps = {
-    grant: vi.fn((gid: number, capability: string) => {
-      capsTable.push({ gid, capability });
-      return { ok: true };
-    }),
-    revoke: vi.fn((gid: number, capability: string) => {
-      for (let i = capsTable.length - 1; i >= 0; i -= 1) {
-        if (capsTable[i].gid === gid && capsTable[i].capability === capability) {
-          capsTable.splice(i, 1);
-        }
-      }
-      return { ok: true };
-    }),
-    list: vi.fn((gid?: number) =>
-      capsTable.filter((entry) => gid === undefined || entry.gid === gid),
-    ),
-    resolve: vi.fn((gids: number[]) =>
-      [...new Set(capsTable.filter((c) => gids.includes(c.gid)).map((c) => c.capability))],
-    ),
-  };
-
-  const ctx = {
-    auth: auth as unknown as KernelContext["auth"],
-    caps: caps as unknown as KernelContext["caps"],
-    config: {
-      set: vi.fn((key: string, value: string) => config.set(key, value)),
-      get: vi.fn((key: string) => config.get(key) ?? null),
-      delete: vi.fn((key: string) => config.delete(key)),
-    } as unknown as KernelContext["config"],
-    packages: {
-      resolve: vi.fn((packageId: string) => packageRecords.find((record) => record.packageId === packageId) ?? null),
-      list: vi.fn(() => packageRecords),
-    } as unknown as KernelContext["packages"],
-    // STORAGE stub satisfies home layout; no RIPGIT so context seeding no-ops.
-    env: { STORAGE: createProvisioningR2BucketMock() } as unknown as KernelContext["env"],
-    identity: { role: "user", process: { uid: 1000, gid: 1000, gids: [1000, 100], username: "alice", home: "/home/alice", cwd: "/home/alice" }, capabilities: ["*"] },
-  } as unknown as KernelContext;
-
-  return { ctx, auth, groups, passwd, shadow, config, capsTable, caps, packageRecords };
-}
-
-function record(profiles: InstalledPackageRecord["manifest"]["profiles"]): InstalledPackageRecord {
-  return {
-    packageId: "import:root/wiki:.",
-    scope: { kind: "global" },
-    enabled: true,
-    manifest: {
-      name: "wiki",
-      source: { repo: "root/wiki", ref: "main", subdir: "." },
-      profiles,
-    } as InstalledPackageRecord["manifest"],
-  } as InstalledPackageRecord;
-}
 
 const BUILDER = {
   name: "builder",
@@ -126,220 +29,363 @@ const BUILDER = {
   capabilities: ["repo.write", "fs.read"],
 };
 
-describe("ensurePackageAgent", () => {
+function record(
+  scope: PackageInstallScope = { kind: "global" },
+  profiles: InstalledPackageRecord["manifest"]["profiles"] = [BUILDER],
+): InstalledPackageRecord {
+  return {
+    packageId: "import:root/wiki:.",
+    scope,
+    enabled: true,
+    reviewRequired: false,
+    reviewedAt: null,
+    installedAt: 1,
+    updatedAt: 1,
+    artifact: { hash: "sha256:test", mainModule: "index.ts", modulePaths: [] },
+    manifest: {
+      name: "wiki",
+      description: "wiki",
+      version: "1.0.0",
+      runtime: "dynamic-worker",
+      source: { repo: "root/wiki", ref: "main", subdir: "." },
+      entrypoints: [],
+      profiles,
+    },
+  };
+}
+
+function createCtx() {
+  const passwd: PasswdRow[] = [
+    { username: "root", uid: 0, gid: 0, gecos: "root", home: "/root", shell: "/bin/init" },
+    { username: "alice", uid: 1000, gid: 1000, gecos: "Alice", home: "/home/alice", shell: "/bin/init" },
+    { username: "bob", uid: 1001, gid: 1001, gecos: "Bob", home: "/home/bob", shell: "/bin/init" },
+  ];
+  const accountKinds = new Map<string, "system" | "human" | "agent">([
+    ["root", "system"],
+    ["alice", "human"],
+    ["bob", "human"],
+  ]);
+  const reserved = new Set(passwd.map((entry) => entry.username));
+  const groups: GroupRow[] = [
+    { name: "users", gid: 100, members: ["alice", "bob"] },
+    { name: "alice", gid: 1000, members: [] },
+    { name: "bob", gid: 1001, members: [] },
+  ];
+  const shadow = new Map<string, string>([["root", "x"], ["alice", "x"], ["bob", "x"]]);
+  const config = new Map<string, string>();
+  const capsTable: { gid: number; capability: string }[] = [];
+  const packageRecords: InstalledPackageRecord[] = [];
+  const maxId = () => Math.max(0, ...passwd.map((entry) => entry.uid), ...groups.map((entry) => entry.gid));
+
+  const auth = {
+    isAccountNameReserved: vi.fn((username: string) => reserved.has(username)),
+    getPasswdEntries: vi.fn(() => passwd.map((entry) => ({ ...entry }))),
+    getPasswdByUsername: vi.fn((username: string) => passwd.find((entry) => entry.username === username) ?? null),
+    getPasswdByUid: vi.fn((uid: number) => passwd.find((entry) => entry.uid === uid) ?? null),
+    getAccountIdentity: vi.fn((username: string) => {
+      const entry = passwd.find((candidate) => candidate.username === username);
+      const kind = accountKinds.get(username);
+      return entry && kind
+        ? { username, uid: entry.uid, kind, state: "active" as const }
+        : null;
+    }),
+    allocateUid: vi.fn(() => Math.max(999, maxId()) + 1),
+    allocateGid: vi.fn(() => Math.max(99, maxId()) + 1),
+    addUser: vi.fn((entry: PasswdRow, kind: "system" | "human" | "agent") => {
+      passwd.push({ ...entry, gecos: entry.gecos ?? entry.username, shell: entry.shell ?? "/bin/init" });
+      accountKinds.set(entry.username, kind);
+      reserved.add(entry.username);
+    }),
+    setShadow: vi.fn((entry: { username: string; hash: string }) => shadow.set(entry.username, entry.hash)),
+    getGroupByName: vi.fn((name: string) => {
+      const group = groups.find((entry) => entry.name === name);
+      return group ? { ...group, members: [...group.members] } : null;
+    }),
+    getGroupByGid: vi.fn((gid: number) => {
+      const group = groups.find((entry) => entry.gid === gid);
+      return group ? { ...group, members: [...group.members] } : null;
+    }),
+    addGroup: vi.fn((entry: GroupRow) => groups.push({ ...entry, members: [...entry.members] })),
+    updateGroupMembers: vi.fn((name: string, members: string[]) => {
+      const group = groups.find((entry) => entry.name === name);
+      if (group) group.members = [...members];
+      return Boolean(group);
+    }),
+    resolveGids: vi.fn((username: string, primaryGid: number) => {
+      const gids = new Set([primaryGid]);
+      for (const group of groups) if (group.members.includes(username)) gids.add(group.gid);
+      return [...gids].sort((left, right) => left - right);
+    }),
+    setPersonalAgent: vi.fn(),
+    getPersonalAgentUid: vi.fn(() => null),
+  };
+  const caps = {
+    grant: vi.fn((gid: number, capability: string) => {
+      if (!capsTable.some((row) => row.gid === gid && row.capability === capability)) {
+        capsTable.push({ gid, capability });
+      }
+      return { ok: true };
+    }),
+    revoke: vi.fn((gid: number, capability: string) => {
+      const index = capsTable.findIndex((row) => row.gid === gid && row.capability === capability);
+      if (index >= 0) capsTable.splice(index, 1);
+      return { ok: index >= 0 };
+    }),
+    list: vi.fn((gid?: number) => capsTable.filter((row) => gid === undefined || row.gid === gid)),
+    resolve: vi.fn((gids: number[]) => [...new Set(
+      capsTable.filter((row) => gids.includes(row.gid)).map((row) => row.capability),
+    )]),
+  };
+  const packages = {
+    list: vi.fn((options?: { scopes?: PackageInstallScope[] }) => {
+      if (!options?.scopes) return packageRecords;
+      const keys = new Set(options.scopes.map(scopeString));
+      return packageRecords.filter((entry) => keys.has(scopeString(entry.scope)));
+    }),
+    resolve: vi.fn((packageId: string, scopes: PackageInstallScope[]) => {
+      for (const scope of scopes) {
+        const found = packageRecords.find((entry) => (
+          entry.packageId === packageId && scopeString(entry.scope) === scopeString(scope)
+        ));
+        if (found) return found;
+      }
+      return null;
+    }),
+  };
+  const storage = createProvisioningR2BucketMock();
+  const ctx = {
+    auth,
+    caps,
+    config: {
+      get: vi.fn((key: string) => config.get(key) ?? null),
+      set: vi.fn((key: string, value: string) => config.set(key, value)),
+      delete: vi.fn((key: string) => config.delete(key)),
+    },
+    packages,
+    env: { STORAGE: storage },
+    identity: {
+      role: "user",
+      process: {
+        uid: 1000,
+        gid: 1000,
+        gids: [100, 1000],
+        username: "alice",
+        home: "/home/alice",
+        cwd: "/home/alice",
+      },
+      capabilities: ["*"],
+    },
+  } as unknown as KernelContext;
+
+  return { ctx, passwd, accountKinds, reserved, groups, shadow, config, capsTable, packageRecords, storage };
+}
+
+function scopeString(scope: PackageInstallScope): string {
+  return scope.kind === "global" ? "global" : `user:${scope.uid}`;
+}
+
+describe("scope-specific package agents", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("provisions a locked, least-privilege agent with caps on its own gid", async () => {
-    const { ctx, groups, shadow, caps, config } = createCtx();
-    const identity = await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);
+  it("allocates a locked opaque principal with profile authority and display metadata", async () => {
+    const { ctx, shadow, capsTable, packageRecords } = createCtx();
+    const pkg = record({ kind: "user", uid: 1000 });
+    packageRecords.push(pkg);
 
-    const username = packageAgentUsername("wiki", "builder");
-    expect(identity.username).toBe(username);
-    // Locked (no login) and gid = uid (UPG).
-    expect(shadow.get(username)).toBe("!");
-    expect(identity.gid).toBe(identity.uid);
-    // Least privilege: NOT a member of users(100).
-    expect(groups.find((g) => g.name === "users")?.members).not.toContain(username);
-    // Declared caps live on the agent's own gid.
-    expect(caps.grant).toHaveBeenCalledWith(identity.gid, "repo.write");
-    expect(caps.grant).toHaveBeenCalledWith(identity.gid, "fs.read");
-    // Approval policy stored per-account.
-    expect(config.get(`users/${identity.uid}/ai/tools/approval`)).toBe('{"rules":[]}');
+    const identity = await ensurePackageAgent(ctx, pkg, BUILDER, 1000);
+
+    expect(identity.username).toMatch(/^pkg-[0-9a-f]{28}$/);
+    expect(identity.username).toHaveLength(32);
+    expect(shadow.get(identity.username)).toBe("!");
+    expect(ctx.auth.getPasswdByUid(identity.uid)?.gecos).toBe("Wiki Builder");
+    expect(capsTable.filter((row) => row.gid === identity.gid).map((row) => row.capability).sort())
+      .toEqual(["fs.read", "repo.write"]);
+    expect(ctx.config.get(`users/${identity.uid}/pkg/scope`)).toBe("user:1000");
   });
 
-  it("rejects a package profile that requests root wildcard authority", async () => {
-    const { ctx, passwd, caps } = createCtx();
-    const privileged = { ...BUILDER, capabilities: ["*"] };
+  it("never aliases package-agent identity across humans or install scopes", async () => {
+    const { ctx, groups, packageRecords } = createCtx();
+    const global = record({ kind: "global" });
+    const personal = record({ kind: "user", uid: 1000 });
+    packageRecords.push(global, personal);
 
-    await expect(ensurePackageAgent(ctx, record([privileged]), privileged, 1000))
-      .rejects.toThrow("Wildcard capability is reserved for root");
-    expect(passwd.some((entry) => entry.username === packageAgentUsername("wiki", "builder")))
-      .toBe(false);
-    expect(caps.grant).not.toHaveBeenCalledWith(expect.any(Number), "*");
+    await reconcilePackageAgentEntitlements(ctx);
+    const globalAlice = findPackageAgentAccount(ctx, global, BUILDER, 1000)!;
+    const globalBob = findPackageAgentAccount(ctx, global, BUILDER, 1001)!;
+    const personalAgent = findPackageAgentAccount(ctx, personal, BUILDER, 1000)!;
+
+    expect(new Set([globalAlice.uid, globalBob.uid, personalAgent.uid]).size).toBe(3);
+    expect(new Set([globalAlice.username, globalBob.username, personalAgent.username]).size).toBe(3);
+    expect(new Set([globalAlice.home, globalBob.home, personalAgent.home]).size).toBe(3);
+    expect(groups.find((group) => group.name === packageAgentAccessGroup(globalAlice.username))?.members)
+      .toEqual(["alice"]);
+    expect(groups.find((group) => group.name === packageAgentAccessGroup(globalBob.username))?.members)
+      .toEqual(["bob"]);
+    expect(groups.find((group) => group.name === packageAgentAccessGroup(personalAgent.username))?.members)
+      .toEqual(["alice"]);
   });
 
-  it("grants run-as via the access group without leaking caps to the human", async () => {
-    const { ctx, groups, caps, config } = createCtx();
-    const identity = await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);
+  it("provisions and resolves a distinct global package agent for root", async () => {
+    const { ctx, groups, packageRecords } = createCtx();
+    const pkg = record({ kind: "global" });
+    packageRecords.push(pkg);
 
-    const accessGroup = packageAgentAccessGroup(identity.username);
-    expect(config.get(`users/${identity.uid}/pkg/access_group`)).toBe(accessGroup);
-    // The enabling human joins the access group...
-    expect(groups.find((g) => g.name === accessGroup)?.members).toContain("alice");
-    // ...which carries NO capabilities, and is NOT the cap gid.
-    const accessGid = groups.find((g) => g.name === accessGroup)!.gid;
-    expect(accessGid).not.toBe(identity.gid);
-    expect(caps.resolve([accessGid])).toEqual([]);
-    // The human's own gids never include the agent's cap gid, so caps don't leak.
-    const aliceGids = ctx.auth.resolveGids("alice", 1000);
-    expect(aliceGids).not.toContain(identity.gid);
+    await reconcilePackageAgentEntitlements(ctx);
+    const rootAgent = findPackageAgentAccount(ctx, pkg, BUILDER, 0)!;
+    const aliceAgent = findPackageAgentAccount(ctx, pkg, BUILDER, 1000)!;
+
+    expect(rootAgent.uid).not.toBe(aliceAgent.uid);
+    expect(rootAgent.home).not.toBe(aliceAgent.home);
+    expect(groups.find((group) => group.name === packageAgentAccessGroup(rootAgent.username))?.members)
+      .toEqual(["root"]);
+    expect(resolvePackageAgentRunAs(ctx, `${pkg.packageId}#builder`, 0, true)).toMatchObject({
+      ok: true,
+      identity: { uid: rootAgent.uid, username: rootAgent.username },
+    });
   });
 
-  it("rejects reuse of a username owned by a different package", async () => {
+  it("classifies any partial package stamp as invalid", () => {
     const { ctx } = createCtx();
-    await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);
+    ctx.config.set("users/1234/pkg/scope", "global");
 
-    // A different package whose name sanitizes to the same agent username must
-    // not silently reuse (hijack) the first package's agent account.
-    const other = { ...record([BUILDER]), packageId: "user:1000:wiki@9" } as InstalledPackageRecord;
-    await expect(ensurePackageAgent(ctx, other, BUILDER, 1000)).rejects.toThrow(/name collision/i);
+    expect(packageAgentRuntimeIdentity(ctx, 1234)).toEqual({ kind: "invalid" });
   });
 
-  it("rejects reuse of a username owned by a different profile in the same package", async () => {
-    const { ctx } = createCtx();
-    const collidingProfile = {
-      ...BUILDER,
-      name: "builder!",
-      displayName: "Wiki Builder Alt",
-      capabilities: ["fs.write"],
-    };
-    expect(packageAgentUsername("wiki", collidingProfile.name)).toBe(packageAgentUsername("wiki", BUILDER.name));
+  it("adds a newly activated human to every active global package entitlement", async () => {
+    const { ctx, passwd, accountKinds, reserved, groups, packageRecords } = createCtx();
+    const pkg = record({ kind: "global" });
+    packageRecords.push(pkg);
+    await reconcilePackageAgentEntitlements(ctx);
+    const aliceAgent = findPackageAgentAccount(ctx, pkg, BUILDER, 1000)!;
 
-    await ensurePackageAgent(ctx, record([BUILDER, collidingProfile]), BUILDER, 1000);
-
-    await expect(ensurePackageAgent(ctx, record([BUILDER, collidingProfile]), collidingProfile, 1000))
-      .rejects.toThrow(/name collision/i);
-  });
-
-  it("rejects unstamped account-name collisions", async () => {
-    const { ctx, passwd, groups } = createCtx();
-    const username = packageAgentUsername("wiki", "builder");
+    const carolUid = Math.max(...passwd.map((entry) => entry.uid)) + 1;
     passwd.push({
-      username,
-      uid: 2000,
-      gid: 2000,
-      gecos: "Existing Agent",
-      home: `/home/${username}`,
+      username: "carol",
+      uid: carolUid,
+      gid: carolUid,
+      gecos: "Carol",
+      home: "/home/carol",
       shell: "/bin/init",
     });
-    groups.push({ name: username, gid: 2000, members: [] });
+    accountKinds.set("carol", "human");
+    reserved.add("carol");
+    groups.push({ name: "carol", gid: carolUid, members: [] });
+    await reconcilePackageAgentEntitlements(ctx);
 
-    await expect(ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000))
-      .rejects.toThrow(/already exists/);
+    const carolAgent = findPackageAgentAccount(ctx, pkg, BUILDER, carolUid)!;
+    expect(carolAgent.uid).not.toBe(aliceAgent.uid);
+    expect(carolAgent.home).not.toBe(aliceAgent.home);
+    expect(groups.find((group) => group.name === packageAgentAccessGroup(aliceAgent.username))?.members)
+      .toEqual(["alice"]);
+    expect(groups.find((group) => group.name === packageAgentAccessGroup(carolAgent.username))?.members)
+      .toEqual(["carol"]);
   });
 
-  it("rejects unstamped access-group collisions", async () => {
-    const { ctx, passwd, groups } = createCtx();
-    const username = packageAgentUsername("wiki", "builder");
-    const accessGroup = packageAgentAccessGroup(username);
-    groups.push({ name: accessGroup, gid: 2000, members: ["bob"] });
+  it("revokes access, capabilities, approval, and run-as when a package is disabled", async () => {
+    const { ctx, groups, capsTable, config, packageRecords } = createCtx();
+    const pkg = record({ kind: "user", uid: 1000 });
+    packageRecords.push(pkg);
+    await reconcilePackageAgentEntitlements(ctx);
+    const agent = findPackageAgentAccount(ctx, pkg, BUILDER, 1000)!;
 
-    await expect(ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000))
-      .rejects.toThrow(/access group/i);
-    expect(passwd.find((entry) => entry.username === username)).toBeUndefined();
-    expect(groups.find((group) => group.name === accessGroup)?.members).toEqual(["bob"]);
+    packageRecords[0] = { ...pkg, enabled: false };
+    await reconcilePackageAgentEntitlements(ctx);
+
+    expect(groups.find((group) => group.name === packageAgentAccessGroup(agent.username))?.members).toEqual([]);
+    expect(capsTable.filter((row) => row.gid === agent.gid)).toEqual([]);
+    expect(config.has(`users/${agent.uid}/ai/tools/approval`)).toBe(false);
+    expect(resolvePackageAgentRunAs(ctx, `${pkg.packageId}#builder`, 1000, false).ok).toBe(false);
   });
 
-  it("is idempotent across enabling humans (one shared account)", async () => {
-    const { ctx, passwd, groups } = createCtx();
-    const first = await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);
-    const before = passwd.length;
-    const second = await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1001);
+  it("deactivates a removed profile and provisions a distinct identity for its replacement", async () => {
+    const { ctx, groups, capsTable, packageRecords } = createCtx();
+    const pkg = record({ kind: "user", uid: 1000 });
+    packageRecords.push(pkg);
+    await reconcilePackageAgentEntitlements(ctx);
+    const previous = findPackageAgentAccount(ctx, pkg, BUILDER, 1000)!;
+    const replacement = { ...BUILDER, name: "editor", capabilities: ["fs.write"] };
+    const updated = record({ kind: "user", uid: 1000 }, [replacement]);
+    packageRecords[0] = updated;
 
-    expect(second.uid).toBe(first.uid);
-    expect(passwd.length).toBe(before); // no second account
-    const accessGroup = packageAgentAccessGroup(first.username);
-    expect(groups.find((g) => g.name === accessGroup)?.members).toEqual(["alice", "bob"]);
+    await reconcilePackageAgentEntitlements(ctx);
+    const next = findPackageAgentAccount(ctx, updated, replacement, 1000)!;
+
+    expect(next.uid).not.toBe(previous.uid);
+    expect(groups.find((group) => group.name === packageAgentAccessGroup(previous.username))?.members).toEqual([]);
+    expect(capsTable.filter((row) => row.gid === previous.gid)).toEqual([]);
+    expect(capsTable.filter((row) => row.gid === next.gid).map((row) => row.capability)).toEqual(["fs.write"]);
   });
 
-  it("reconciles existing package agents to the current profile", async () => {
-    const { ctx, config, caps } = createCtx();
-    const identity = await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);
+  it("reconciles security surface updates in place only within the same exact scope tuple", async () => {
+    const { ctx, capsTable, config, packageRecords } = createCtx();
+    const pkg = record({ kind: "user", uid: 1000 });
+    packageRecords.push(pkg);
+    await reconcilePackageAgentEntitlements(ctx);
+    const before = findPackageAgentAccount(ctx, pkg, BUILDER, 1000)!;
     const updatedProfile = {
       ...BUILDER,
       approvalPolicy: undefined,
       capabilities: ["fs.write"],
-      contextFiles: [{ name: "00-role.md", text: "You now edit the wiki." }],
+      contextFiles: [{ name: "00-role.md", text: "You edit the wiki." }],
     };
+    const updated = record({ kind: "user", uid: 1000 }, [updatedProfile]);
+    packageRecords[0] = updated;
 
-    await ensurePackageAgent(ctx, record([updatedProfile]), updatedProfile, 1000);
+    await reconcilePackageAgentEntitlements(ctx);
+    const after = findPackageAgentAccount(ctx, updated, updatedProfile, 1000)!;
 
-    expect(caps.revoke).toHaveBeenCalledWith(identity.gid, "repo.write");
-    expect(caps.revoke).toHaveBeenCalledWith(identity.gid, "fs.read");
-    expect(caps.grant).toHaveBeenCalledWith(identity.gid, "fs.write");
-    expect(ctx.caps.resolve([identity.gid])).toEqual(["fs.write"]);
-    expect(config.get(`users/${identity.uid}/ai/tools/approval`)).toBeUndefined();
+    expect(after.uid).toBe(before.uid);
+    expect(capsTable.filter((row) => row.gid === after.gid).map((row) => row.capability)).toEqual(["fs.write"]);
+    expect(config.has(`users/${after.uid}/ai/tools/approval`)).toBe(false);
   });
-});
 
-describe("resolvePackageAgentRunAs", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("authorizes a human in the access group and rejects others", async () => {
-    const { ctx, packageRecords } = createCtx();
-    const pkg = record([BUILDER]);
+  it("requires an enabled, reviewed record and current access membership at run-as time", async () => {
+    const { ctx, groups, packageRecords } = createCtx();
+    const pkg = { ...record({ kind: "user", uid: 1000 }), reviewRequired: true, reviewedAt: 1 };
     packageRecords.push(pkg);
-    const agent = await ensurePackageAgent(ctx, pkg, BUILDER, 1000);
+    await reconcilePackageAgentEntitlements(ctx);
+    expect(resolvePackageAgentRunAs(ctx, `${pkg.packageId}#builder`, 1000, false).ok).toBe(true);
 
-    const ok = resolvePackageAgentRunAs(ctx, "wiki#builder", 1000, false);
-    expect(ok.ok).toBe(true);
-    if (ok.ok) expect(ok.identity.uid).toBe(agent.uid);
+    const agent = findPackageAgentAccount(ctx, pkg, BUILDER, 1000)!;
+    ctx.auth.updateGroupMembers(packageAgentAccessGroup(agent.username), []);
+    expect(resolvePackageAgentRunAs(ctx, `${pkg.packageId}#builder`, 1000, false).ok).toBe(false);
 
-    // bob never enabled the package -> not in the access group.
-    const denied = resolvePackageAgentRunAs(ctx, "wiki#builder", 1001, false);
-    expect(denied.ok).toBe(false);
-
-    // root bypasses.
-    expect(resolvePackageAgentRunAs(ctx, "wiki#builder", 1001, true).ok).toBe(true);
+    groups.find((group) => group.name === packageAgentAccessGroup(agent.username))!.members = ["alice"];
+    packageRecords[0] = { ...pkg, reviewedAt: null };
+    expect(resolvePackageAgentRunAs(ctx, `${pkg.packageId}#builder`, 1000, false).ok).toBe(false);
   });
 
-  it("rejects disabled package agents even when access membership remains", async () => {
-    const { ctx, packageRecords } = createCtx();
-    const pkg = record([BUILDER]);
-    packageRecords.push(pkg);
-    await ensurePackageAgent(ctx, pkg, BUILDER, 1000);
-    packageRecords[0] = { ...pkg, enabled: false };
-
-    const res = resolvePackageAgentRunAs(ctx, "wiki#builder", 1000, false);
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.error).toMatch(/enable the package first/);
-  });
-
-  it("fails when the package agent is not provisioned", () => {
-    const { ctx, packageRecords } = createCtx();
-    packageRecords.push(record([BUILDER]));
-    const res = resolvePackageAgentRunAs(ctx, "wiki#builder", 1000, false);
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.error).toMatch(/not provisioned/);
-  });
-});
-
-describe("provisionEnabledPackageAgents", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("provisions already-enabled package profiles and skips disabled records", async () => {
-    const { ctx, passwd, groups } = createCtx();
-    const username = packageAgentUsername("wiki", "builder");
-
-    await provisionEnabledPackageAgents(ctx, { ...record([BUILDER]), enabled: false }, 1000);
-    expect(passwd.find((entry) => entry.username === username)).toBeUndefined();
-
-    await provisionEnabledPackageAgents(ctx, { ...record([BUILDER]), enabled: true }, 1000);
-
-    expect(passwd.find((entry) => entry.username === username)).toBeTruthy();
-    expect(groups.find((group) => group.name === packageAgentAccessGroup(username))?.members).toEqual(["alice"]);
-  });
-
-  it("does not provision caller-scoped records before the owning human exists", async () => {
+  it("rejects wildcard package-agent authority before reserving an account", async () => {
     const { ctx, passwd } = createCtx();
-    ctx.identity!.process.uid = 3000;
-    ctx.identity!.process.username = "pending-user";
+    const privileged = { ...BUILDER, capabilities: ["*"] };
+    const pkg = record({ kind: "user", uid: 1000 }, [privileged]);
 
-    await provisionEnabledPackagesForCaller(ctx, [{ ...record([BUILDER]), enabled: true }]);
-
-    expect(passwd.find((entry) => entry.username === packageAgentUsername("wiki", "builder"))).toBeUndefined();
+    await expect(ensurePackageAgent(ctx, pkg, privileged)).rejects.toThrow("Wildcard capability is reserved for root");
+    expect(passwd.some((entry) => entry.username.startsWith("pkg-"))).toBe(false);
   });
-});
 
-describe("revokePackageAgentAccess", () => {
-  beforeEach(() => vi.clearAllMocks());
+  it("recovers the same reserved principal after home seeding fails", async () => {
+    const { ctx, passwd, packageRecords, storage } = createCtx();
+    const pkg = record({ kind: "user", uid: 1000 });
+    packageRecords.push(pkg);
+    const originalPut = storage.put.bind(storage);
+    let failOnce = true;
+    storage.put = vi.fn(async (...args: Parameters<typeof storage.put>) => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error("home write failed");
+      }
+      return originalPut(...args);
+    });
 
-  it("removes the human from the access group on disable", async () => {
-    const { ctx, groups } = createCtx();
-    await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);
-    revokePackageAgentAccess(ctx, record([BUILDER]), 1000);
+    await expect(ensurePackageAgent(ctx, pkg, BUILDER, 1000)).rejects.toThrow("home write failed");
+    const partial = passwd.find((entry) => entry.username.startsWith("pkg-"))!;
+    const countAfterFailure = passwd.length;
 
-    const accessGroup = packageAgentAccessGroup(packageAgentUsername("wiki", "builder"));
-    expect(groups.find((g) => g.name === accessGroup)?.members).not.toContain("alice");
+    const recovered = await ensurePackageAgent(ctx, pkg, BUILDER, 1000);
+
+    expect(recovered.uid).toBe(partial.uid);
+    expect(recovered.username).toBe(partial.username);
+    expect(passwd).toHaveLength(countAfterFailure);
   });
 });

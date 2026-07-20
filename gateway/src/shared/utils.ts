@@ -8,6 +8,9 @@ import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import type {
   ProcessAuthorityResult,
 } from "./process-authority";
+import { SHIP_KERNEL_NAME } from "./kernel-names";
+
+export { SHIP_KERNEL_NAME } from "./kernel-names";
 
 export const isWebSocketRequest = (request: Request) =>
   request.method === "GET" && request.headers.get("upgrade") === "websocket";
@@ -22,10 +25,6 @@ export type RequestProcessNetFetchOptions = {
   body?: FrameBody;
   requestId?: string;
 };
-
-// One deployed Gateway/storage stack is one ship. Keep this value stable: it
-// is the Durable Object name that owns existing Kernel SQLite state.
-export const SHIP_KERNEL_NAME = "singleton";
 
 export async function getKernelPtr(
   kernelName: string = SHIP_KERNEL_NAME,
@@ -53,6 +52,57 @@ export async function resolveProcessAuthority(
 ): Promise<ProcessAuthorityResult> {
   const kernel = await getKernelPtr(kernelName);
   return kernel.resolveProcessAuthority(processId, claimedIdentity);
+}
+
+export async function resolveProcessTeardownAuthority(
+  kernelName: string,
+  processId: string,
+  claimedIdentity: unknown,
+): Promise<ProcessAuthorityResult> {
+  const kernel = await getKernelPtr(kernelName);
+  return kernel.resolveProcessTeardownAuthority(processId, claimedIdentity);
+}
+
+export async function resolveProcessLifecycleFenceAuthority(
+  kernelName: string,
+  processId: string,
+  claimedIdentity: unknown,
+  fencedGeneration: number,
+): Promise<ProcessAuthorityResult> {
+  const kernel = await getKernelPtr(kernelName);
+  return kernel.resolveProcessLifecycleFenceAuthority(
+    processId,
+    claimedIdentity,
+    fencedGeneration,
+  );
+}
+
+export async function resolveProcessPackageProjectionFenceAuthority(
+  kernelName: string,
+  processId: string,
+  claimedIdentity: unknown,
+  fencedGeneration: number,
+  fenceId: string,
+): Promise<ProcessAuthorityResult> {
+  const kernel = await getKernelPtr(kernelName);
+  return kernel.resolveProcessPackageProjectionFenceAuthority(
+    processId,
+    claimedIdentity,
+    fencedGeneration,
+    fenceId,
+  );
+}
+
+export async function consumeProcessRollbackAuthorization(
+  kernelName: string,
+  processId: string,
+  authorization: string,
+): Promise<boolean> {
+  const kernel = await getKernelPtr(kernelName);
+  return kernel.consumeProcessRollbackAuthorization({
+    processId,
+    authorization,
+  });
 }
 
 export async function requestProcessNetFetch(

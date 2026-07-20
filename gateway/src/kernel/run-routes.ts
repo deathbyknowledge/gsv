@@ -15,6 +15,8 @@ export type AdapterRunRoute = {
   uid: number;
   adapter: string;
   accountId: string;
+  actorId: string;
+  linkGeneration: number;
   surfaceKind: AdapterSurfaceKind;
   surfaceId: string;
   threadId?: string;
@@ -56,6 +58,8 @@ export class RunRouteStore {
     uid: number,
     adapter: string,
     accountId: string,
+    actorId: string,
+    linkGeneration: number,
     surfaceKind: AdapterSurfaceKind,
     surfaceId: string,
     threadId?: string,
@@ -83,6 +87,8 @@ export class RunRouteStore {
       uid,
       adapter,
       accountId,
+      actorId,
+      linkGeneration,
       surfaceKind,
       surfaceId,
       threadId: threadId ?? null,
@@ -96,6 +102,8 @@ export class RunRouteStore {
       uid,
       adapter,
       accountId,
+      actorId,
+      linkGeneration,
       surfaceKind,
       surfaceId,
       threadId,
@@ -108,7 +116,7 @@ export class RunRouteStore {
     this.pruneExpired();
 
     const rows = this.sql.exec<RowShape>(
-      `SELECT run_id, route_kind, uid, connection_id, adapter, account_id,
+      `SELECT run_id, route_kind, uid, connection_id, adapter, account_id, actor_id, link_generation,
               surface_kind, surface_id, thread_id, created_at, expires_at
        FROM run_routes
        WHERE run_id = ?
@@ -132,6 +140,17 @@ export class RunRouteStore {
     );
   }
 
+  clearForUid(uid: number): number {
+    return this.sql.exec<{ run_id: string }>(
+      "DELETE FROM run_routes WHERE uid = ? RETURNING run_id",
+      uid,
+    ).toArray().length;
+  }
+
+  clearAll(): void {
+    this.sql.exec("DELETE FROM run_routes");
+  }
+
   pruneExpired(now = Date.now()): number {
     const rows = this.sql.exec<{ cnt: number }>(
       "SELECT COUNT(*) as cnt FROM run_routes WHERE expires_at <= ?",
@@ -151,6 +170,8 @@ export class RunRouteStore {
     connectionId?: string;
     adapter?: string;
     accountId?: string;
+    actorId?: string;
+    linkGeneration?: number;
     surfaceKind?: string;
     surfaceId?: string;
     threadId?: string | null;
@@ -159,14 +180,16 @@ export class RunRouteStore {
   }): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO run_routes
-       (run_id, route_kind, uid, connection_id, adapter, account_id, surface_kind, surface_id, thread_id, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (run_id, route_kind, uid, connection_id, adapter, account_id, actor_id, link_generation, surface_kind, surface_id, thread_id, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       input.runId,
       input.routeKind,
       input.uid,
       input.connectionId ?? null,
       input.adapter ?? null,
       input.accountId ?? null,
+      input.actorId ?? null,
+      input.linkGeneration ?? null,
       input.surfaceKind ?? null,
       input.surfaceId ?? null,
       input.threadId ?? null,
@@ -183,6 +206,8 @@ type RowShape = {
   connection_id: string | null;
   adapter: string | null;
   account_id: string | null;
+  actor_id: string | null;
+  link_generation: number | null;
   surface_kind: string | null;
   surface_id: string | null;
   thread_id: string | null;
@@ -198,6 +223,8 @@ function toRoute(row: RowShape): RunRoute {
       uid: row.uid,
       adapter: row.adapter ?? "",
       accountId: row.account_id ?? "",
+      actorId: row.actor_id ?? "",
+      linkGeneration: row.link_generation ?? 0,
       surfaceKind: (row.surface_kind ?? "dm") as AdapterSurfaceKind,
       surfaceId: row.surface_id ?? "",
       threadId: row.thread_id ?? undefined,

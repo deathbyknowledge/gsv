@@ -32,22 +32,116 @@ import { resolveCallerOwnerUid } from "./context";
 import { RipgitClient, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripgit/client";
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import { visiblePackageScopesForActor } from "./packages";
-import { isRepoPublic, repoVisibilityConfigKey, setRepoVisibility } from "./repo-visibility";
+import { isRepoPublic } from "./repo-visibility";
 import { canOwnerDelegateRunAs } from "./account-access";
 
 const TEXT_DECODER = new TextDecoder();
 const STRICT_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 const TEXT_ENCODER = new TextEncoder();
 const DEFAULT_REF = "main";
+const REPO_SEGMENT_MAX_CHARACTERS = 128;
+
+export type AuthoritativeRepoDataReadCall =
+  | "repo.refs"
+  | "repo.read"
+  | "repo.search"
+  | "repo.log"
+  | "repo.diff"
+  | "repo.compare";
+
+export type AuthoritativeRepoWriteCall =
+  | "repo.create"
+  | "repo.apply"
+  | "repo.import"
+  | "repo.delete";
+
+export type AuthoritativeRepoOperationCall =
+  | "repo.list"
+  | AuthoritativeRepoDataReadCall
+  | AuthoritativeRepoWriteCall;
+
+const AUTHORITATIVE_REPO_OPERATION_CALLS = new Set<AuthoritativeRepoOperationCall>([
+  "repo.list",
+  "repo.refs",
+  "repo.read",
+  "repo.search",
+  "repo.log",
+  "repo.diff",
+  "repo.compare",
+  "repo.create",
+  "repo.apply",
+  "repo.import",
+  "repo.delete",
+]);
+
+const AUTHORITATIVE_REPO_WRITE_CALLS = new Set<AuthoritativeRepoWriteCall>([
+  "repo.create",
+  "repo.apply",
+  "repo.import",
+  "repo.delete",
+]);
+
+export function isAuthoritativeRepoOperationCall(
+  call: unknown,
+): call is AuthoritativeRepoOperationCall {
+  return typeof call === "string"
+    && AUTHORITATIVE_REPO_OPERATION_CALLS.has(call as AuthoritativeRepoOperationCall);
+}
+
+/**
+ * Decide a repo operation entirely from Master-owned account, capability,
+ * visibility, and package state. The caller performs RIPGIT work locally;
+ * this function never receives or returns repository payloads.
+ */
+export function authorizeAuthoritativeRepoOperation(
+  call: AuthoritativeRepoOperationCall,
+  normalizedRepo: unknown,
+  requestedOwner: unknown,
+  ctx: KernelContext,
+): RepoListResult | undefined {
+  if (call === "repo.list") {
+    if (requestedOwner !== undefined && typeof requestedOwner !== "string") {
+      throw new Error("repo list owner is invalid");
+    }
+    return handleRepoList(
+      requestedOwner === undefined ? undefined : { owner: requestedOwner },
+      ctx,
+    );
+  }
+  if (typeof normalizedRepo !== "string") {
+    throw new Error("repo is required");
+  }
+  // The target sends a normalized slug, but the Master parses and normalizes
+  // it independently instead of trusting that representation.
+  const repo = parseRepoSlug(normalizedRepo);
+  if (AUTHORITATIVE_REPO_WRITE_CALLS.has(call as AuthoritativeRepoWriteCall)) {
+    assertCanWriteRepo(repo, ctx);
+    if (call === "repo.delete") {
+      const slug = repoSlug(repo);
+      if (ctx.packages.list().some((record) => record.manifest.source.repo === slug)) {
+        throw new Error(`Repository ${slug} backs an installed package`);
+      }
+    }
+    return undefined;
+  }
+  assertCanReadRepo(repo, ctx);
+  return undefined;
+}
+
+export function normalizeRepoListRequestedOwner(
+  args: RepoListArgs | undefined,
+): string | undefined {
+  return typeof args?.owner === "string" && args.owner.trim().length > 0
+    ? normalizeRepoOwner(args.owner)
+    : undefined;
+}
 
 export function handleRepoList(
   args: RepoListArgs | undefined,
   ctx: KernelContext,
 ): RepoListResult {
   const identity = requireIdentity(ctx);
-  const requestedOwner = typeof args?.owner === "string" && args.owner.trim().length > 0
-    ? normalizeRepoOwner(args.owner)
-    : null;
+  const requestedOwner = normalizeRepoListRequestedOwner(args) ?? null;
   const repos = new Map<string, RepoSummary>();
 
   const add = (summary: RepoSummary) => {
@@ -125,14 +219,17 @@ export async function handleRepoCreate(
   assertCanWriteRepo(repo, ctx);
   const ref = normalizeRef(args.ref);
   const ripgit = requireRipgitClient(ctx);
-  const refs = await ripgit.refs(repo);
+  const authorize = () => authorizeRepoOperationWithMaster(ctx, "repo.create", repo);
+  await authorize();
+  const refs = await ripgit.refs(repo, authorize);
   const currentHead = refs.heads?.[ref] ?? null;
   if (currentHead) {
-    registerRepo(ctx, repo, args.description);
+    await registerRepo(ctx, repo, "repo.create", args.description);
     return { repo: repoSlug(repo), ref, head: currentHead, created: false };
   }
 
   const actor = requireIdentity(ctx).process;
+  await authorize();
   const result = await ripgit.apply(
     { ...repo, branch: ref },
     actor.username,
@@ -141,7 +238,7 @@ export async function handleRepoCreate(
     [],
     { allowEmpty: true },
   );
-  registerRepo(ctx, repo, args.description);
+  await registerRepo(ctx, repo, "repo.create", args.description);
   return { repo: repoSlug(repo), ref, head: result.head ?? null, created: true };
 }
 
@@ -151,7 +248,9 @@ export async function handleRepoRefs(
 ): Promise<RepoRefsResult> {
   const repo = parseRepoSlug(args.repo);
   assertCanReadRepo(repo, ctx);
-  const refs = await requireRipgitClient(ctx).refs(repo);
+  const authorize = () => authorizeRepoOperationWithMaster(ctx, "repo.refs", repo);
+  await authorize();
+  const refs = await requireRipgitClient(ctx).refs(repo, authorize);
   const result: RepoRefsResult = {
     repo: repoSlug(repo),
     heads: refs.heads ?? {},
@@ -171,7 +270,13 @@ export async function handleRepoRead(
   assertCanReadRepo(repo, ctx);
   const ref = normalizeReadRef(args.ref);
   const path = normalizeRepoPath(args.path, true);
-  const result = await requireRipgitClient(ctx).readPath({ ...repo, branch: ref }, path);
+  const authorize = () => authorizeRepoOperationWithMaster(ctx, "repo.read", repo);
+  await authorize();
+  const result = await requireRipgitClient(ctx).readPath(
+    { ...repo, branch: ref },
+    path,
+    authorize,
+  );
   if (result.kind === "missing") {
     throw new Error(`Path not found: ${path || "/"}`);
   }
@@ -213,10 +318,14 @@ export async function handleRepoSearch(
     throw new Error("query is required");
   }
   const prefix = normalizeRepoPath(args.prefix, true);
+  const authorize = () => authorizeRepoOperationWithMaster(ctx, "repo.search", repo);
+  await authorize();
   const result = await requireRipgitClient(ctx).search(
     { ...repo, branch: ref },
     query,
     prefix || undefined,
+    undefined,
+    authorize,
   );
   return {
     repo: repoSlug(repo),
@@ -241,7 +350,13 @@ export async function handleRepoLog(
   const ref = normalizeReadRef(args.ref);
   const limit = clampRepoLimit(args.limit);
   const offset = clampRepoOffset(args.offset);
-  const entries = await requireRipgitClient(ctx).log({ ...repo, branch: ref }, { limit, offset });
+  const authorize = () => authorizeRepoOperationWithMaster(ctx, "repo.log", repo);
+  await authorize();
+  const entries = await requireRipgitClient(ctx).log(
+    { ...repo, branch: ref },
+    { limit, offset },
+    authorize,
+  );
   return {
     repo: repoSlug(repo),
     ref,
@@ -272,9 +387,11 @@ export async function handleRepoDiff(
   if (!commit) {
     throw new Error("commit is required");
   }
+  const authorize = () => authorizeRepoOperationWithMaster(ctx, "repo.diff", repo);
+  await authorize();
   const diff = await requireRipgitClient(ctx).diffCommit(repo, commit, {
     context: clampContext(args.context),
-  });
+  }, authorize);
   return {
     repo: repoSlug(repo),
     commitHash: diff.commit_hash,
@@ -295,10 +412,12 @@ export async function handleRepoCompare(
   if (!base || !head) {
     throw new Error("base and head are required");
   }
+  const authorize = () => authorizeRepoOperationWithMaster(ctx, "repo.compare", repo);
+  await authorize();
   const comparison = await requireRipgitClient(ctx).compare(repo, base, head, {
     context: clampContext(args.context),
     stat: args.stat === true,
-  });
+  }, authorize);
   return {
     repo: repoSlug(repo),
     base: comparison.base_hash,
@@ -321,6 +440,7 @@ export async function handleRepoApply(
   }
   const ops = normalizeApplyOps(args.ops);
   const actor = requireIdentity(ctx).process;
+  await authorizeRepoOperationWithMaster(ctx, "repo.apply", repo);
   const result = await requireRipgitClient(ctx).apply(
     { ...repo, branch: ref },
     actor.username,
@@ -334,7 +454,7 @@ export async function handleRepoApply(
       allowEmpty: args.allowEmpty === true,
     },
   );
-  registerRepo(ctx, repo);
+  await registerRepo(ctx, repo, "repo.apply");
   return {
     ok: true,
     repo: repoSlug(repo),
@@ -357,6 +477,7 @@ export async function handleRepoImport(
       ? ref
       : undefined;
   const actor = requireIdentity(ctx).process;
+  await authorizeRepoOperationWithMaster(ctx, "repo.import", repo);
   const imported = await requireRipgitClient(ctx).importFromUpstream(
     { ...repo, branch: ref },
     actor.username,
@@ -367,7 +488,7 @@ export async function handleRepoImport(
     remoteUrl || undefined,
     remoteRef,
   );
-  registerRepo(ctx, repo);
+  await registerRepo(ctx, repo, "repo.import");
   const result: RepoImportResult = {
     repo: repoSlug(repo),
     ref,
@@ -399,26 +520,31 @@ export async function handleRepoDelete(
   }
 
   const actor = requireIdentity(ctx).process;
+  await authorizeRepoOperationWithMaster(ctx, "repo.delete", repo);
   await requireRipgitClient(ctx).deleteRepository(repo, actor.username);
-  unregisterRepo(ctx, repo);
+  await unregisterRepo(ctx, repo);
   return {
     deleted: true,
     repo: slug,
   };
 }
 
-export function handleRepoVisibilitySet(
+export async function handleRepoVisibilitySet(
   args: RepoVisibilitySetArgs,
   ctx: KernelContext,
-): RepoVisibilitySetResult {
+): Promise<RepoVisibilitySetResult> {
   const repo = parseRepoSlug(args.repo);
   assertCanWriteRepo(repo, ctx);
   const slug = repoSlug(repo);
   const nextPublic = args.public === true;
-  const previousPublic = isRepoPublic(slug, ctx.config);
-  setRepoVisibility(slug, nextPublic ? "public" : "private", ctx.config);
+  const result = await ctx.mutateRepoMetadata({
+    kind: "visibility",
+    call: "repo.visibility.set",
+    repo: { owner: repo.owner, repo: repo.repo },
+    public: nextPublic,
+  });
   return {
-    changed: previousPublic !== nextPublic,
+    changed: result.changed,
     repo: slug,
     public: nextPublic,
   };
@@ -436,6 +562,18 @@ function requireRipgitClient(ctx: KernelContext): RipgitClient {
     throw new Error("RIPGIT binding is required");
   }
   return new RipgitClient(ctx.env.RIPGIT);
+}
+
+async function authorizeRepoOperationWithMaster(
+  ctx: KernelContext,
+  call: AuthoritativeRepoOperationCall,
+  repo: RipgitRepoRef,
+): Promise<RepoListResult | undefined> {
+  if (ctx.kernelKind !== "user") return undefined;
+  if (!ctx.authorizeRepoOperation) {
+    throw new Error("Authoritative repository authorization is unavailable");
+  }
+  return ctx.authorizeRepoOperation(call, repoSlug(repo));
 }
 
 function assertCanReadRepo(repo: RipgitRepoRef, ctx: KernelContext): void {
@@ -589,7 +727,12 @@ function parseRepoSlug(raw: string | RipgitRepoRef): RipgitRepoRef {
 
 function normalizeRepoOwner(owner: string): string {
   const normalized = owner.trim();
-  if (!/^[A-Za-z0-9._-]+$/.test(normalized)) {
+  if (
+    normalized.length > REPO_SEGMENT_MAX_CHARACTERS
+    || normalized === "."
+    || normalized === ".."
+    || !/^[A-Za-z0-9._-]+$/.test(normalized)
+  ) {
     throw new Error(`Invalid repo owner: ${owner}`);
   }
   return normalized;
@@ -597,7 +740,12 @@ function normalizeRepoOwner(owner: string): string {
 
 function normalizeRepoName(name: string): string {
   const normalized = name.trim();
-  if (!/^[A-Za-z0-9._-]+$/.test(normalized)) {
+  if (
+    normalized.length > REPO_SEGMENT_MAX_CHARACTERS
+    || normalized === "."
+    || normalized === ".."
+    || !/^[A-Za-z0-9._-]+$/.test(normalized)
+  ) {
     throw new Error(`Invalid repo name: ${name}`);
   }
   return normalized;
@@ -779,30 +927,29 @@ function clampContext(context: number | undefined): number {
   return Math.max(0, Math.min(20, Math.trunc(context)));
 }
 
-function registerRepo(
+async function registerRepo(
   ctx: KernelContext,
   repo: Pick<RipgitRepoRef, "owner" | "repo">,
+  call: "repo.create" | "repo.apply" | "repo.import",
   description?: string,
-): void {
-  const now = String(Date.now());
-  const createdKey = repoConfigKey(repo, "created_at");
-  if (ctx.config.get(createdKey) === null) {
-    ctx.config.set(createdKey, now);
-  }
-  ctx.config.set(repoConfigKey(repo, "updated_at"), now);
-  if (typeof description === "string" && description.trim().length > 0) {
-    ctx.config.set(repoConfigKey(repo, "description"), description.trim());
-  }
+): Promise<void> {
+  await ctx.mutateRepoMetadata({
+    kind: "register",
+    call,
+    repo: { owner: repo.owner, repo: repo.repo },
+    ...(typeof description === "string" ? { description } : {}),
+  });
 }
 
-function unregisterRepo(
+async function unregisterRepo(
   ctx: KernelContext,
   repo: Pick<RipgitRepoRef, "owner" | "repo">,
-): void {
-  for (const field of ["created_at", "updated_at", "description"]) {
-    ctx.config.delete(repoConfigKey(repo, field));
-  }
-  ctx.config.delete(repoVisibilityConfigKey(repo));
+): Promise<void> {
+  await ctx.mutateRepoMetadata({
+    kind: "delete",
+    call: "repo.delete",
+    repo: { owner: repo.owner, repo: repo.repo },
+  });
 }
 
 function repoConfigKey(repo: Pick<RipgitRepoRef, "owner" | "repo">, field: string): string {

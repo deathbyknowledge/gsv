@@ -1,6 +1,7 @@
 import type { KernelContext } from "./context";
-import { resolveCallerOwnerUid } from "./context";
+import { assertLocalUserKernelUid, resolveCallerOwnerUid } from "./context";
 import { hasCapability } from "./capabilities";
+import { packageAgentRuntimeSecurityRevision } from "./package-agents";
 import type {
   ConnectionIdentity,
   ScheduleExpression,
@@ -31,6 +32,7 @@ type ScheduleRow = {
   owner_uid: number;
   creator_json: string;
   run_as_json: string;
+  package_security_revision: string | null;
   name: string;
   description: string | null;
   enabled: number;
@@ -60,6 +62,12 @@ type ScheduleRunRow = {
   result_json: string;
 };
 
+type InterruptedScheduleRow = {
+  schedule_id: string;
+  owner_uid: number;
+  running_at: number;
+};
+
 export type CronFileRecord = {
   path: string;
   ownerUid: number | null;
@@ -80,8 +88,9 @@ type CronFileScheduleRow = {
   schedule_id: string;
 };
 
-type StoredScheduleRecord = ScheduleRecord & {
+export type StoredScheduleRecord = ScheduleRecord & {
   wakeScheduleId: string | null;
+  packageSecurityRevision: string | null;
 };
 
 export class ScheduleStore {
@@ -91,6 +100,7 @@ export class ScheduleStore {
     ownerUid: number;
     creator: SchedulePrincipal;
     runAs: SchedulePrincipal;
+    packageSecurityRevision?: string;
     name: string;
     description?: string;
     enabled: boolean;
@@ -102,15 +112,16 @@ export class ScheduleStore {
     const nextRunAt = input.enabled ? computeNextRunAt(input.expression, input.now) : null;
     this.sql.exec(
       `INSERT INTO schedules (
-        schedule_id, owner_uid, creator_json, run_as_json, name, description,
+        schedule_id, owner_uid, creator_json, run_as_json, package_security_revision, name, description,
         enabled, expression_json, target_json, overlap_policy, wake_schedule_id,
         next_run_at, running_at, last_run_at, last_status, last_error,
         last_duration_ms, run_count, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'skip', NULL, ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'skip', NULL, ?, NULL, NULL, NULL, NULL, NULL, 0, ?, ?)`,
       id,
       input.ownerUid,
       JSON.stringify(input.creator),
       JSON.stringify(input.runAs),
+      input.packageSecurityRevision ?? null,
       input.name,
       input.description ?? null,
       input.enabled ? 1 : 0,
@@ -182,7 +193,7 @@ export class ScheduleStore {
     };
   }
 
-  listDue(now: number, ownerUid?: number): ScheduleRecord[] {
+  listDue(now: number, ownerUid?: number): StoredScheduleRecord[] {
     const clauses = [
       "enabled = 1",
       "next_run_at IS NOT NULL",
@@ -198,7 +209,28 @@ export class ScheduleStore {
        WHERE ${clauses.join(" AND ")}
        ORDER BY next_run_at ASC, schedule_id ASC`,
       ...bindings,
-    ).toArray().map((row) => publicRecord(toRecord(row)));
+    ).toArray().map(toRecord);
+  }
+
+  /**
+   * Return every enabled, idle schedule that should own a one-shot wake.
+   * Lifecycle recovery must include future schedules because its persisted
+   * Agent wake may have been consumed or may belong to the fenced runtime.
+   */
+  listWakeable(): StoredScheduleRecord[] {
+    return this.sql.exec<ScheduleRow>(
+      `SELECT * FROM schedules
+       WHERE enabled = 1
+         AND next_run_at IS NOT NULL
+         AND running_at IS NULL
+       ORDER BY next_run_at ASC, schedule_id ASC`,
+    ).toArray().map(toRecord);
+  }
+
+  listStored(): StoredScheduleRecord[] {
+    return this.sql.exec<ScheduleRow>(
+      "SELECT * FROM schedules ORDER BY schedule_id ASC",
+    ).toArray().map(toRecord);
   }
 
   update(id: string, patch: {
@@ -282,6 +314,105 @@ export class ScheduleStore {
       id,
     );
     return this.get(id);
+  }
+
+  /**
+   * Finish executions whose owning runtime disappeared before it could commit.
+   * The original due time remains in place so re-arming retries the schedule;
+   * the stale executor is separately generation-fenced from committing later.
+   * Keep the old wake id until recovery replaces it so the persisted Agent
+   * one-shot can be cancelled instead of becoming an untracked stale wake.
+   */
+  releaseInterruptedRuns(
+    reason: string,
+    finishedAtMs = Date.now(),
+    packageOnly = false,
+  ): number {
+    return this.releaseMatchingInterruptedRuns(reason, finishedAtMs, {
+      packageOnly,
+    });
+  }
+
+  /**
+   * Release only executions owned by one account runtime. Master lifecycle
+   * recovery uses this path so one user's fence cannot disturb another user's
+   * schedules that happen to be running in the same legacy Kernel.
+   */
+  releaseInterruptedRunsForOwner(
+    ownerUid: number,
+    reason: string,
+    finishedAtMs = Date.now(),
+  ): number {
+    if (!Number.isSafeInteger(ownerUid) || ownerUid < 0) {
+      throw new Error("ownerUid must be a safe non-negative integer");
+    }
+    return this.releaseMatchingInterruptedRuns(reason, finishedAtMs, { ownerUid });
+  }
+
+  private releaseMatchingInterruptedRuns(
+    reason: string,
+    finishedAtMs: number,
+    filter: { ownerUid?: number; packageOnly?: boolean },
+  ): number {
+    const error = (reason.trim() || "Schedule runtime was interrupted").slice(0, 512);
+    const clauses = ["running_at IS NOT NULL"];
+    const bindings: unknown[] = [];
+    if (filter.ownerUid !== undefined) {
+      clauses.push("owner_uid = ?");
+      bindings.push(filter.ownerUid);
+    }
+    if (filter.packageOnly) {
+      clauses.push("package_security_revision IS NOT NULL");
+    }
+    const interrupted = this.sql.exec<InterruptedScheduleRow>(
+      `SELECT schedule_id, owner_uid, running_at
+       FROM schedules
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY schedule_id`,
+      ...bindings,
+    ).toArray();
+    let released = 0;
+
+    for (const row of interrupted) {
+      const durationMs = Math.max(0, finishedAtMs - row.running_at);
+      const updated = this.sql.exec(
+        `UPDATE schedules
+         SET running_at = NULL,
+             last_run_at = ?,
+             last_status = 'error',
+             last_error = ?,
+             last_duration_ms = ?,
+             run_count = run_count + 1,
+             updated_at = ?
+         WHERE schedule_id = ? AND owner_uid = ? AND running_at = ?`,
+        finishedAtMs,
+        error,
+        durationMs,
+        finishedAtMs,
+        row.schedule_id,
+        row.owner_uid,
+        row.running_at,
+      );
+      if (updated.rowsWritten === 0) {
+        continue;
+      }
+      this.sql.exec(
+        `INSERT INTO schedule_runs (
+          run_id, schedule_id, owner_uid, scheduled_at, started_at, finished_at,
+          status, error, result_json
+        ) VALUES (?, ?, ?, NULL, ?, ?, 'error', ?, ?)`,
+        crypto.randomUUID(),
+        row.schedule_id,
+        row.owner_uid,
+        row.running_at,
+        finishedAtMs,
+        error,
+        JSON.stringify({ interrupted: true, error }),
+      );
+      released += 1;
+    }
+
+    return released;
   }
 
   finishRun(input: {
@@ -444,6 +575,7 @@ export function handleSchedulerList(
   const store = ctx.schedules;
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const ownerUid = callerOwnerUid === 0 ? args.ownerUid : callerOwnerUid;
+  assertLocalUserKernelUid(ctx, ownerUid, "schedule listing");
   const listed = store.list({
     ownerUid,
     includeDisabled: args.includeDisabled,
@@ -466,10 +598,15 @@ export async function handleSchedulerAdd(
 
   const principal = principalFromContext(ctx);
   const ownerUid = resolveCallerOwnerUid(ctx);
+  const packageSecurityRevision = packageAgentRuntimeSecurityRevision(
+    ctx,
+    ctx.identity!.process.uid,
+  );
   const schedule = store.create({
     ownerUid,
     creator: principal,
     runAs: principal,
+    ...(packageSecurityRevision ? { packageSecurityRevision } : {}),
     name: normalizeRequiredText(args.name, "schedule name"),
     description: normalizeOptionalText(args.description),
     enabled: args.enabled !== false,
@@ -1003,6 +1140,7 @@ function toRecord(row: ScheduleRow): StoredScheduleRecord {
     ownerUid: row.owner_uid,
     creator: parseJson<SchedulePrincipal>(row.creator_json),
     runAs: parseJson<SchedulePrincipal>(row.run_as_json),
+    packageSecurityRevision: row.package_security_revision ?? null,
     name: row.name,
     ...(row.description ? { description: row.description } : {}),
     enabled: row.enabled === 1,

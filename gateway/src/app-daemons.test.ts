@@ -3,6 +3,7 @@ import {
   AppRpcScheduleStore,
   computeInitialNextRunAt,
   computeRecurringNextRunAt,
+  type AppRpcScheduleAuthority,
 } from "./app-daemons";
 import {
   handleMockSchemaStatement,
@@ -31,18 +32,35 @@ function createMockSql() {
     if (schemaResult) return schemaResult;
 
     if (q.startsWith("SELECT * FROM app_rpc_schedules WHERE schedule_key = ?")) {
-      const [key] = bindings as [string];
-      const row = table.get(key);
+      const [key, authorityKey] = bindings as [string, string];
+      const candidate = table.get(key);
+      const row = candidate?.authority_key === authorityKey ? candidate : undefined;
       return mockSqlRows((row ? [row] : []) as T[]);
     }
 
-    if (q.startsWith("SELECT * FROM app_rpc_schedules ORDER BY")) {
-      return mockSqlRows(sortRecords([...table.values()]) as T[]);
+    if (q.startsWith("SELECT * FROM app_rpc_schedules\n       WHERE authority_key = ?")) {
+      const [authorityKey] = bindings as [string];
+      return mockSqlRows(sortRecords(
+        [...table.values()].filter((row) => row.authority_key === authorityKey),
+      ) as T[]);
     }
 
     if (q.startsWith("INSERT OR REPLACE INTO app_rpc_schedules")) {
       const [
         schedule_key,
+        logical_key,
+        authority_key,
+        owner_uid,
+        owner_username,
+        kernel_username,
+        kernel_generation,
+        package_id,
+        package_name,
+        package_updated_at,
+        artifact_hash,
+        entrypoint_name,
+        route_base,
+        runtime_authority_json,
         rpc_method,
         schedule_json,
         payload_json,
@@ -60,6 +78,19 @@ function createMockSql() {
         string,
         string,
         string,
+        number,
+        string,
+        string,
+        number,
+        string,
+        string,
+        number,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
         string | null,
         number,
         number,
@@ -74,6 +105,19 @@ function createMockSql() {
       ];
       table.set(schedule_key, {
         schedule_key,
+        logical_key,
+        authority_key,
+        owner_uid,
+        owner_username,
+        kernel_username,
+        kernel_generation,
+        package_id,
+        package_name,
+        package_updated_at,
+        artifact_hash,
+        entrypoint_name,
+        route_base,
+        runtime_authority_json,
         rpc_method,
         schedule_json,
         payload_json,
@@ -92,33 +136,67 @@ function createMockSql() {
     }
 
     if (q.startsWith("DELETE FROM app_rpc_schedules WHERE schedule_key = ?")) {
-      const [key] = bindings as [string];
-      table.delete(key);
+      const [key, authorityKey] = bindings as [string, string];
+      if (table.get(key)?.authority_key === authorityKey) {
+        table.delete(key);
+      }
       return mockSqlRows<T>();
     }
 
-    if (q.startsWith("SELECT * FROM app_rpc_schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?")) {
+    if (q.startsWith("SELECT * FROM app_rpc_schedules\n       WHERE authority_key IS NOT NULL")) {
       const [now] = bindings as [number];
       const matches = sortRecords(
         [...table.values()].filter((row) =>
           row.enabled === 1
+          && row.authority_key !== null
+          && row.runtime_authority_json !== null
           && typeof row.next_run_at === "number"
           && row.next_run_at <= now),
       );
       return mockSqlRows(matches as T[]);
     }
 
-    if (q.startsWith("SELECT next_run_at FROM app_rpc_schedules WHERE enabled = 1 AND next_run_at IS NOT NULL")) {
+    if (q.startsWith("SELECT next_run_at FROM app_rpc_schedules\n       WHERE authority_key IS NOT NULL")) {
       const match = sortRecords(
-        [...table.values()].filter((row) => row.enabled === 1 && typeof row.next_run_at === "number"),
+        [...table.values()].filter((row) =>
+          row.authority_key !== null
+          && row.runtime_authority_json !== null
+          && row.enabled === 1
+          && typeof row.next_run_at === "number"),
       )[0];
       return mockSqlRows((match ? [{ next_run_at: match.next_run_at }] : []) as T[]);
+    }
+
+    if (q === "SELECT * FROM app_rpc_schedules WHERE running_at IS NOT NULL") {
+      return mockSqlRows(
+        [...table.values()].filter((row) => row.running_at !== null) as T[],
+      );
     }
 
     return mockSqlRows<T>();
   }
 
   return { exec };
+}
+
+function scheduleAuthority(
+  patch: Partial<AppRpcScheduleAuthority> = {},
+): AppRpcScheduleAuthority {
+  return {
+    key: "authority:alice:chat:v1:main",
+    ownerUid: 1000,
+    ownerUsername: "alice",
+    kernelUsername: "alice",
+    kernelGeneration: 3,
+    packageId: "pkg-chat",
+    packageName: "chat",
+    packageUpdatedAt: 10_000,
+    artifactHash: "sha256:chat-v1",
+    entrypointName: "main",
+    routeBase: "/apps/chat",
+    runtime: { packageId: "pkg-chat", revision: 10_000 },
+    ...patch,
+  };
 }
 
 describe("app daemon schedule helpers", () => {
@@ -137,14 +215,15 @@ describe("app daemon schedule helpers", () => {
 describe("AppRpcScheduleStore", () => {
   it("upserts schedules and surfaces the earliest alarm time", () => {
     const store = new AppRpcScheduleStore(createMockSql() as unknown as SqlStorage);
+    const authority = scheduleAuthority();
 
-    const first = store.upsert({
+    const first = store.upsert(authority, {
       key: "curator:personal",
       rpcMethod: "curateInbox",
       schedule: { kind: "after", afterMs: 5_000 },
       payload: { db: "personal" },
     }, 10_000);
-    const second = store.upsert({
+    const second = store.upsert(authority, {
       key: "curator:research",
       rpcMethod: "curateInbox",
       schedule: { kind: "after", afterMs: 15_000 },
@@ -160,17 +239,19 @@ describe("AppRpcScheduleStore", () => {
 
   it("disables one-shot schedules after they run", () => {
     const store = new AppRpcScheduleStore(createMockSql() as unknown as SqlStorage);
+    const authority = scheduleAuthority();
 
-    const created = store.upsert({
+    const created = store.upsert(authority, {
       key: "wiki:once",
       rpcMethod: "curateInbox",
       schedule: { kind: "after", afterMs: 5_000 },
     }, 10_000);
-    const running = store.markRunning(created.key, created.version, 15_000);
+    const running = store.markRunning(authority, created.key, created.version, 15_000);
     expect(running?.runningAt).toBe(15_000);
     expect(running?.nextRunAt).toBeNull();
 
     const finished = store.finishRun({
+      authority,
       key: created.key,
       version: created.version,
       finishedAt: 15_100,
@@ -186,21 +267,23 @@ describe("AppRpcScheduleStore", () => {
 
   it("preserves a newer reschedule when a running job finishes", () => {
     const store = new AppRpcScheduleStore(createMockSql() as unknown as SqlStorage);
+    const authority = scheduleAuthority();
 
-    const original = store.upsert({
+    const original = store.upsert(authority, {
       key: "wiki:loop",
       rpcMethod: "curateInbox",
       schedule: { kind: "every", everyMs: 60_000 },
     }, 10_000);
-    store.markRunning(original.key, original.version, 70_000);
+    store.markRunning(authority, original.key, original.version, 70_000);
 
-    const rescheduled = store.upsert({
+    const rescheduled = store.upsert(authority, {
       key: "wiki:loop",
       rpcMethod: "curateInbox",
       schedule: { kind: "after", afterMs: 10_000 },
     }, 70_010);
 
     const finished = store.finishRun({
+      authority,
       key: original.key,
       version: original.version,
       finishedAt: 70_100,
@@ -214,5 +297,106 @@ describe("AppRpcScheduleStore", () => {
     expect(finished?.nextRunAt).toBe(80_010);
     expect(finished?.lastStatus).toBe("error");
     expect(finished?.lastError).toBe("temporary failure");
+  });
+
+  it("isolates the same logical key by immutable runtime authority", () => {
+    const store = new AppRpcScheduleStore(createMockSql() as unknown as SqlStorage);
+    const oldAuthority = scheduleAuthority();
+    const newAuthority = scheduleAuthority({
+      key: "authority:alice:chat:v2:admin",
+      packageUpdatedAt: 20_000,
+      artifactHash: "sha256:chat-v2",
+      entrypointName: "admin",
+      runtime: { packageId: "pkg-chat", revision: 20_000 },
+    });
+
+    const oldSchedule = store.upsert(oldAuthority, {
+      key: "refresh",
+      rpcMethod: "refresh",
+      schedule: { kind: "every", everyMs: 60_000 },
+      payload: { revision: 1 },
+    }, 10_000);
+    const newSchedule = store.upsert(newAuthority, {
+      key: "refresh",
+      rpcMethod: "refresh",
+      schedule: { kind: "after", afterMs: 5_000 },
+      payload: { revision: 2 },
+    }, 20_000);
+
+    expect(oldSchedule.version).toBe(1);
+    expect(newSchedule.version).toBe(1);
+    expect(store.list(oldAuthority).map((record) => record.payload)).toEqual([{ revision: 1 }]);
+    expect(store.list(newAuthority).map((record) => record.payload)).toEqual([{ revision: 2 }]);
+
+    expect(store.remove(newAuthority, "refresh")).toBe(true);
+    expect(store.get(newAuthority, "refresh")).toBeNull();
+    expect(store.get(oldAuthority, "refresh")?.payload).toEqual({ revision: 1 });
+  });
+
+  it("keeps interleaved completions inside their exact authority", () => {
+    const store = new AppRpcScheduleStore(createMockSql() as unknown as SqlStorage);
+    const firstAuthority = scheduleAuthority();
+    const secondAuthority = scheduleAuthority({
+      key: "authority:alice:chat:v2:main",
+      packageUpdatedAt: 20_000,
+      artifactHash: "sha256:chat-v2",
+      runtime: { packageId: "pkg-chat", revision: 20_000 },
+    });
+    const first = store.upsert(firstAuthority, {
+      key: "sync",
+      rpcMethod: "sync",
+      schedule: { kind: "every", everyMs: 60_000 },
+    }, 10_000);
+    const second = store.upsert(secondAuthority, {
+      key: "sync",
+      rpcMethod: "sync",
+      schedule: { kind: "every", everyMs: 60_000 },
+    }, 20_000);
+
+    store.markRunning(firstAuthority, first.key, first.version, 70_000);
+    store.markRunning(secondAuthority, second.key, second.version, 80_000);
+    store.finishRun({
+      authority: secondAuthority,
+      key: second.key,
+      version: second.version,
+      finishedAt: 80_100,
+      status: "ok",
+      durationMs: 100,
+    });
+    store.finishRun({
+      authority: firstAuthority,
+      key: first.key,
+      version: first.version,
+      finishedAt: 70_200,
+      status: "error",
+      error: "old runtime failed",
+      durationMs: 200,
+    });
+
+    expect(store.get(firstAuthority, "sync")?.lastError).toBe("old runtime failed");
+    expect(store.get(secondAuthority, "sync")?.lastStatus).toBe("ok");
+  });
+
+  it("durably disables interrupted daemon runs after a package fence drains", () => {
+    const store = new AppRpcScheduleStore(createMockSql() as unknown as SqlStorage);
+    const authority = scheduleAuthority();
+    const created = store.upsert(authority, {
+      key: "sync",
+      rpcMethod: "sync",
+      schedule: { kind: "every", everyMs: 60_000 },
+    }, 10_000);
+    store.markRunning(authority, created.key, created.version, 70_000);
+
+    expect(store.interruptRunning("Package runtime authority was fenced", 70_250)).toBe(1);
+    expect(store.get(authority, created.key)).toMatchObject({
+      enabled: false,
+      nextRunAt: null,
+      runningAt: null,
+      lastRunAt: 70_250,
+      lastStatus: "error",
+      lastError: "Package runtime authority was fenced",
+      lastDurationMs: 250,
+    });
+    expect(store.interruptRunning("Package runtime authority was fenced", 70_300)).toBe(0);
   });
 });

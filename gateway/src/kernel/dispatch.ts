@@ -50,6 +50,7 @@ import {
   forwardToProcess,
 } from "./proc-handlers";
 import { handleAccountCreate, handleAccountList } from "./agents";
+import { reconcilePackageAgentEntitlements } from "./package-agents";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleNetFetch, normalizeNetFetchTimeoutMs } from "./net";
@@ -83,6 +84,7 @@ import {
   handleRepoRefs,
   handleRepoSearch,
   handleRepoVisibilitySet,
+  normalizeRepoListRequestedOwner,
 } from "./repo";
 import {
   handleSysTokenCreate,
@@ -146,6 +148,7 @@ import {
   targetCanHandle,
   type TargetDescriptor,
 } from "./targets";
+import { isMasterOwnedSyscall } from "./master-syscalls";
 export type DispatchDeps = {
   shellSessions: ShellSessionStore;
   connections: Map<string, Connection>;
@@ -174,6 +177,10 @@ export type DispatchDeps = {
     frame: RequestFrame,
     ctx: KernelContext,
     signal?: AbortSignal,
+  ) => Promise<ResponseFrame>;
+  requestMaster?: (
+    frame: RequestFrame,
+    ctx: KernelContext,
   ) => Promise<ResponseFrame>;
 };
 
@@ -274,6 +281,10 @@ async function dispatchNative(
   const frameId = frame.id;
 
   try {
+    if (deps.requestMaster && isMasterOwnedSyscall(frame.call)) {
+      return await deps.requestMaster(frame, ctx);
+    }
+
     let data: unknown;
 
     switch (frame.call) {
@@ -416,7 +427,7 @@ async function dispatchNative(
         data = await handlePkgInstall(frame.args, ctx);
         break;
       case "pkg.review.approve":
-        data = handlePkgReviewApprove(frame.args, ctx);
+        data = await handlePkgReviewApprove(frame.args, ctx);
         break;
       case "pkg.remove":
         data = await handlePkgRemove(frame.args, ctx);
@@ -439,7 +450,7 @@ async function dispatchNative(
 
       // --- repo.* ---
       case "repo.list":
-        data = handleRepoList(frame.args, ctx);
+        data = await listReposAuthoritatively(ctx, frame.args);
         break;
       case "repo.create":
         data = await handleRepoCreate(frame.args, ctx);
@@ -472,7 +483,7 @@ async function dispatchNative(
         data = await handleRepoDelete(frame.args, ctx);
         break;
       case "repo.visibility.set":
-        data = handleRepoVisibilitySet(frame.args, ctx);
+        data = await handleRepoVisibilitySet(frame.args, ctx);
         break;
 
       // --- ai.* ---
@@ -533,7 +544,7 @@ async function dispatchNative(
         data = handleSysDeviceUpdate(frame.args, ctx);
         break;
       case "sys.device.delete":
-        data = handleSysDeviceDelete(frame.args, ctx);
+        data = await handleSysDeviceDelete(frame.args, ctx);
         break;
       case "sys.oauth.start":
         data = await handleSysOAuthStart(frame.args, ctx);
@@ -588,9 +599,14 @@ async function dispatchNative(
         break;
 
       // --- account.* ---
-      case "account.create":
-        data = await handleAccountCreate(frame.args, ctx);
+      case "account.create": {
+        const created = await handleAccountCreate(frame.args, ctx);
+        if (created.kind === "human") {
+          await reconcilePackageAgentEntitlements(ctx);
+        }
+        data = created;
         break;
+      }
       case "account.list":
         data = handleAccountList(frame.args, ctx);
         break;
@@ -817,6 +833,27 @@ function findDeviceConnection(
     }
   }
   return null;
+}
+
+async function listReposAuthoritatively(
+  ctx: KernelContext,
+  args: Parameters<typeof handleRepoList>[0],
+): Promise<unknown> {
+  if (ctx.kernelKind !== "user") {
+    return handleRepoList(args, ctx);
+  }
+  if (!ctx.authorizeRepoOperation) {
+    throw new Error("Authoritative repository authorization is unavailable");
+  }
+  const result = await ctx.authorizeRepoOperation(
+    "repo.list",
+    undefined,
+    normalizeRepoListRequestedOwner(args),
+  );
+  if (!result) {
+    throw new Error("Authoritative repository list is unavailable");
+  }
+  return result;
 }
 
 function errFrame(id: string, code: number, message: string): ResponseFrame {

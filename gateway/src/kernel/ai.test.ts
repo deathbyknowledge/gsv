@@ -391,6 +391,8 @@ describe("handleAiConfig", () => {
       ownerUid?: number;
       capabilities?: string[];
       oauthAccounts?: OAuthAccountRecord[];
+      requestSignal?: AbortSignal;
+      assertCurrentKernel?: () => void;
     } = {},
   ): KernelContext {
     const uid = options.uid ?? 1000;
@@ -455,6 +457,8 @@ describe("handleAiConfig", () => {
         })),
       },
       processId: options.processId,
+      requestSignal: options.requestSignal,
+      assertCurrentKernel: options.assertCurrentKernel ?? vi.fn(),
       env: {},
     } as unknown as KernelContext;
   }
@@ -648,9 +652,124 @@ describe("handleAiConfig", () => {
         }),
       }));
       expect(ctx.oauth.markAccountUsed).toHaveBeenCalledWith("acct-refresh", 1000);
+      expect(ctx.assertCurrentKernel).toHaveBeenCalledTimes(2);
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+
+  it("does not persist refreshed OpenAI Codex tokens from a stale Kernel generation", async () => {
+    const controller = new AbortController();
+    const assertCurrentKernel = vi.fn(() => {
+      throw new Error("User Kernel generation is no longer current");
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      access_token: "stale-refreshed-access-token",
+      refresh_token: "stale-refreshed-refresh-token",
+      id_token: fakeCodexAccessToken("chatgpt-account-1"),
+      token_type: "Bearer",
+      expires_in: 3600,
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const ctx = makeAiConfigContext({
+      "users/1000/ai/provider": "openai-codex",
+      "users/1000/ai/model": "gpt-5.5",
+    }, {
+      requestSignal: controller.signal,
+      assertCurrentKernel,
+      oauthAccounts: [
+        makeOAuthAccount({
+          accessToken: "expired-access-token",
+          refreshToken: "stored-refresh-token",
+          expiresAt: 1,
+          metadata: { chatgptAccountId: "chatgpt-account-1" },
+        }),
+      ],
+    });
+
+    try {
+      await expect(handleAiConfig({}, ctx))
+        .rejects.toThrow("User Kernel generation is no longer current");
+
+      expect(fetchSpy.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+        signal: controller.signal,
+      }));
+      expect(assertCurrentKernel).toHaveBeenCalledTimes(1);
+      expect(ctx.oauth.upsertAccount).not.toHaveBeenCalled();
+      expect(ctx.oauth.markAccountUsed).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("does not persist refreshed OpenAI Codex tokens after request cancellation", async () => {
+    const controller = new AbortController();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      controller.abort(new Error("request aborted before OAuth refresh commit"));
+      return new Response(JSON.stringify({
+        access_token: "aborted-refreshed-access-token",
+        refresh_token: "aborted-refreshed-refresh-token",
+        id_token: fakeCodexAccessToken("chatgpt-account-1"),
+        token_type: "Bearer",
+        expires_in: 3600,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const ctx = makeAiConfigContext({
+      "users/1000/ai/provider": "openai-codex",
+      "users/1000/ai/model": "gpt-5.5",
+    }, {
+      requestSignal: controller.signal,
+      oauthAccounts: [
+        makeOAuthAccount({
+          accessToken: "expired-access-token",
+          refreshToken: "stored-refresh-token",
+          expiresAt: 1,
+          metadata: { chatgptAccountId: "chatgpt-account-1" },
+        }),
+      ],
+    });
+
+    try {
+      await expect(handleAiConfig({}, ctx))
+        .rejects.toThrow("request aborted before OAuth refresh commit");
+
+      expect(fetchSpy.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+        signal: controller.signal,
+      }));
+      expect(ctx.assertCurrentKernel).not.toHaveBeenCalled();
+      expect(ctx.oauth.upsertAccount).not.toHaveBeenCalled();
+      expect(ctx.oauth.markAccountUsed).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("does not mark an OAuth account used from a stale Kernel generation", async () => {
+    const assertCurrentKernel = vi.fn(() => {
+      throw new Error("User Kernel generation is no longer current");
+    });
+    const ctx = makeAiConfigContext({
+      "users/1000/ai/provider": "openai-codex",
+      "users/1000/ai/model": "gpt-5.5",
+    }, {
+      assertCurrentKernel,
+      oauthAccounts: [
+        makeOAuthAccount({
+          metadata: { chatgptAccountId: "chatgpt-account-1" },
+        }),
+      ],
+    });
+
+    await expect(handleAiConfig({}, ctx))
+      .rejects.toThrow("User Kernel generation is no longer current");
+
+    expect(assertCurrentKernel).toHaveBeenCalledTimes(1);
+    expect(ctx.oauth.markAccountUsed).not.toHaveBeenCalled();
   });
 
   it("uses the root OpenAI Codex OAuth account for inherited global config", async () => {

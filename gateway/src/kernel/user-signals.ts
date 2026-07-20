@@ -15,6 +15,7 @@ export const USER_CONNECTION_SIGNALS = [
   "device.status",
   "adapter.status",
   "pkg.changed",
+  "config.changed",
   "mcp.changed",
   "notification.created",
   "notification.updated",

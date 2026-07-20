@@ -28,6 +28,11 @@ import { PROCESS_V004_PENDING_TOOL_DISPATCH_ID } from "./schema/v004_pending_too
 import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./schema/v005_tool_result_outcome";
 import { PROCESS_V006_PENDING_HIL_OWNER } from "./schema/v006_pending_hil_owner";
 import { processMediaMetadata } from "./media";
+import {
+  USER_KERNEL_INSTANCE_STORAGE_KEY,
+  type UserKernelInstanceMarker,
+} from "../kernel/user-kernels";
+import { userKernelName, userKernelUsername } from "../shared/kernel-names";
 
 const ROOT_IDENTITY: ProcessIdentity = {
   uid: 0,
@@ -189,8 +194,22 @@ async function registerInKernel(
   ownerIdentity: ProcessIdentity = identity,
 ) {
   const kernel = await getKernelPtr(kernelName);
-  await runInDurableObject(kernel, (instance: Kernel) => {
+  await runInDurableObject(kernel, async (instance: Kernel, state) => {
     const k = instance as any;
+    const username = kernelName ? userKernelUsername(kernelName) : null;
+    if (username) {
+      const marker: UserKernelInstanceMarker = {
+        version: 1,
+        kind: "user",
+        username,
+        uid: ownerIdentity.uid,
+        generation: 1,
+        lifecycle: "active",
+        updatedAt: Date.now(),
+      };
+      await state.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, marker);
+      k.userKernelMarker = marker;
+    }
     k.caps.seed();
     for (const account of [identity, ownerIdentity]) {
       const existing = k.auth.getPasswdByUid(account.uid);
@@ -202,7 +221,11 @@ async function registerInKernel(
           gecos: account.username,
           home: account.home,
           shell: "/bin/sh",
-        });
+        }, account.uid === 0
+          ? "system"
+          : account.uid === ownerIdentity.uid
+            ? "human"
+            : "agent");
       }
       if (!k.auth.getGroupByGid(account.gid)) {
         k.auth.addGroup({
@@ -225,7 +248,38 @@ async function registerInKernel(
         }
       }
     }
-    k.procs.spawn(pid, identity, { profile: DEFAULT_PROFILE, ownerUid: ownerIdentity.uid });
+    // Processes without an owning Kernel name exercise the v16 upgrade path.
+    // Production authorizes them in the Master only while their human owner
+    // has an explicit legacy placement, so the fixture must model that row.
+    if (!username) {
+      const placement = k.userKernels.getByUid(ownerIdentity.uid);
+      if (!placement) {
+        const reserved = k.userKernels.reserve(
+          ownerIdentity.username,
+          ownerIdentity.uid,
+        );
+        state.storage.sql.exec(
+          `UPDATE user_kernels
+           SET lifecycle = 'legacy', updated_at = ?
+           WHERE username = ? AND uid = ?
+             AND lifecycle = 'provisioning' AND generation = ?`,
+          Date.now(),
+          reserved.username,
+          reserved.uid,
+          reserved.generation,
+        );
+      } else if (
+        placement.username !== ownerIdentity.username
+        || placement.lifecycle !== "legacy"
+      ) {
+        throw new Error(`Unexpected legacy test placement for ${ownerIdentity.username}`);
+      }
+    }
+    k.procs.spawn(pid, identity, {
+      profile: DEFAULT_PROFILE,
+      ownerUid: ownerIdentity.uid,
+      ...(username ? { kernelGeneration: 1 } : {}),
+    });
   });
 }
 
@@ -539,7 +593,9 @@ describe("Process DO — mechanical", () => {
 
     it("persists its owning Kernel name and routes callbacks to that Kernel", async () => {
       const pid = `mech-setid-kernel-${crypto.randomUUID()}`;
-      const kernelName = `kernel-${crypto.randomUUID()}`;
+      const kernelName = userKernelName(
+        `proc-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+      );
       const stub = await initProcess(pid, ROOT_IDENTITY, { kernelName });
 
       const config = await runInDurableObject(stub, async (instance: Process) => {
@@ -886,7 +942,9 @@ describe("Process DO — mechanical", () => {
         type: "res",
         id: result.requestId,
         ok: false,
-        error: { message: "Process no longer exists" },
+        error: {
+          message: "Process authority unavailable — process is not initialized",
+        },
       });
       expect(result.messages).toEqual([]);
     });
@@ -6514,6 +6572,55 @@ describe("Process DO — mechanical", () => {
       });
     });
 
+    it("uses exact lifecycle-fence authority and leaves queued work paused", async () => {
+      const pid = "mech-abort-lifecycle-fence";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const authority = vi
+        .spyOn(Kernel.prototype as any, "resolveProcessLifecycleFenceAuthority")
+        .mockResolvedValue({
+          ok: true,
+          authority: {
+            processId: pid,
+            identity: ROOT_IDENTITY,
+            ownerIdentity: ROOT_IDENTITY,
+          },
+        });
+
+      try {
+        await runInDurableObject(stub, (instance: Process) => {
+          const process = instance as any;
+          const provider = new AbortController();
+          process.currentRun = { runId: "run-active", conversationId: "default" };
+          process.store.enqueue("run-queued", "wait until reactivation");
+          process.runAbortControllers.set("run-active", provider);
+          process.lifecycleFenceProviderSignal = provider.signal;
+        });
+
+        const response = await stub.recvFrame(makeReq("proc.abort", {
+          lifecycleFenceGeneration: 4,
+        } as any)) as ResponseOkFrame;
+
+        expect(response.data).toMatchObject({
+          ok: true,
+          pid,
+          aborted: true,
+          runId: "run-active",
+        });
+        expect(response.data).not.toHaveProperty("continuedQueuedRunId");
+        expect(authority).toHaveBeenCalledWith(pid, ROOT_IDENTITY, 4);
+        await runInDurableObject(stub, (instance: Process) => {
+          const process = instance as any;
+          expect(process.currentRun).toBeNull();
+          expect(process.store.queueSize()).toBe(1);
+          expect(process.lifecycleFenceProviderSignal.reason).toEqual(
+            new Error("User Kernel lifecycle was fenced"),
+          );
+        });
+      } finally {
+        authority.mockRestore();
+      }
+    });
+
     it("promotes a queued successor without waiting for finish delivery", async () => {
       const pid = "mech-finish-claims-successor";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -8002,6 +8109,62 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("legacy process authority migration", () => {
+    it("drains an admitted archive migration before acknowledging a lifecycle fence", async () => {
+      const pid = `mech-legacy-archive-fence-${crypto.randomUUID()}`;
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+      const fenceAuthority = vi
+        .spyOn(Kernel.prototype as any, "resolveProcessLifecycleFenceAuthority")
+        .mockResolvedValue({
+          ok: true,
+          authority: {
+            processId: pid,
+            identity: ROOT_IDENTITY,
+            ownerIdentity: ROOT_IDENTITY,
+          },
+        });
+
+      try {
+        const result = await runInDurableObject(stub, async (instance: Process) => {
+          const process = instance as any;
+          let migrationStarted!: () => void;
+          let releaseMigration!: () => void;
+          const started = new Promise<void>((resolve) => {
+            migrationStarted = resolve;
+          });
+          const blocked = new Promise<void>((resolve) => {
+            releaseMigration = resolve;
+          });
+          const migrate = process.migrateLegacyConversationArchivePointers.bind(process);
+          process.store.deleteValue("ownerIdentity");
+          process.migrateLegacyConversationArchivePointers = async (authority: unknown) => {
+            migrationStarted();
+            await blocked;
+            await migrate(authority);
+          };
+          const normalAuthority = process.ensureProcessAuthority();
+          await started;
+          let fenceSettled = false;
+          const fence = process.ensureProcessLifecycleFenceAuthority(7).finally(() => {
+            fenceSettled = true;
+          });
+
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          const settledBeforeRelease = fenceSettled;
+          releaseMigration();
+          await Promise.all([normalAuthority, fence]);
+          return { settledBeforeRelease, fenceSettled };
+        });
+
+        expect(result).toEqual({
+          settledBeforeRelease: false,
+          fenceSettled: true,
+        });
+        expect(fenceAuthority).toHaveBeenCalledWith(pid, ROOT_IDENTITY, 7);
+      } finally {
+        fenceAuthority.mockRestore();
+      }
+    });
+
     it("relocates an exact durable legacy segment and keeps it readable", async () => {
       const pid = `mech-legacy-archive-${crypto.randomUUID()}`;
       const stub = await initProcess(pid, SHARED_ARCHIVE_AGENT, {
@@ -8577,7 +8740,7 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         await expect(process.runTick("run-orphaned")).rejects.toThrow(
-          "process registry record not found",
+          "user Kernel is not active",
         );
         expect(process.currentRun).toMatchObject({ runId: "run-orphaned" });
         expect(process.store.getMessages()).toEqual([

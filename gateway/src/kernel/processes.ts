@@ -25,6 +25,10 @@ export type ProcessRuntimePatch = {
 export type ProcessRecord = {
   processId: string;
   parentPid: string | null;
+  /** User-Kernel generation that owns this executor; null for Master/legacy rows. */
+  kernelGeneration: number | null;
+  /** Exact package profile security surface that authorized this executor. */
+  packageSecurityRevision: string | null;
   uid: number;
   ownerUid: number;
   interactive: boolean;
@@ -43,6 +47,14 @@ export type ProcessRecord = {
   contextFiles: ProcContextFile[];
 };
 
+/** Exact executor ownership: null is reserved for Master/legacy Kernels. */
+export function processKernelGenerationMatches(
+  record: { kernelGeneration?: number | null },
+  kernelGeneration?: number,
+): boolean {
+  return (record.kernelGeneration ?? null) === (kernelGeneration ?? null);
+}
+
 export class ProcessRegistry {
   constructor(private readonly sql: SqlStorage) {}
 
@@ -56,14 +68,18 @@ export class ProcessRegistry {
       label?: string;
       cwd?: string;
       contextFiles?: ProcContextFile[];
+      kernelGeneration?: number;
+      packageSecurityRevision?: string;
     },
   ): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, owner_uid, interactive, gid, gids, username, home, cwd, context_files_json, state, active_run_id, active_conversation_id, queued_count, last_active_at, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, NULL, 0, NULL, ?, ?)`,
+        (process_id, parent_pid, kernel_generation, package_security_revision, uid, owner_uid, interactive, gid, gids, username, home, cwd, context_files_json, state, active_run_id, active_conversation_id, queued_count, last_active_at, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, NULL, 0, NULL, ?, ?)`,
       processId,
       opts.parentPid ?? null,
+      opts.kernelGeneration ?? null,
+      opts.packageSecurityRevision ?? null,
       identity.uid,
       opts.ownerUid ?? identity.uid,
       (opts.interactive ?? true) ? 1 : 0,
@@ -186,6 +202,30 @@ export class ProcessRegistry {
     return true;
   }
 
+  rebindKernelGeneration(
+    processId: string,
+    expectedGeneration: number,
+    nextGeneration: number,
+  ): boolean {
+    if (
+      !Number.isSafeInteger(expectedGeneration)
+      || expectedGeneration <= 0
+      || !Number.isSafeInteger(nextGeneration)
+      || nextGeneration <= expectedGeneration
+    ) {
+      return false;
+    }
+    this.sql.exec(
+      `UPDATE processes
+          SET kernel_generation = ?
+        WHERE process_id = ? AND kernel_generation = ?`,
+      nextGeneration,
+      processId,
+      expectedGeneration,
+    );
+    return this.get(processId)?.kernelGeneration === nextGeneration;
+  }
+
   kill(processId: string): boolean {
     const rows = [...this.sql.exec<{ process_id: string }>(
       "SELECT process_id FROM processes WHERE process_id = ?",
@@ -231,6 +271,8 @@ export class ProcessRegistry {
 type RowShape = {
   process_id: string;
   parent_pid: string | null;
+  kernel_generation: number | null;
+  package_security_revision: string | null;
   uid: number;
   owner_uid: number | null;
   interactive: number | null;
@@ -253,6 +295,8 @@ function toRecord(row: RowShape): ProcessRecord {
   return {
     processId: row.process_id,
     parentPid: row.parent_pid,
+    kernelGeneration: row.kernel_generation ?? null,
+    packageSecurityRevision: row.package_security_revision ?? null,
     uid: row.uid,
     ownerUid: row.owner_uid ?? row.uid,
     interactive: row.interactive === null ? true : row.interactive !== 0,

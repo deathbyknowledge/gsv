@@ -62,11 +62,15 @@ export type ScheduleViewStore = {
 
 export type KernelRefs = {
   auth: AuthStore;
+  /** Whether /etc/passwd, /etc/shadow, and /etc/group are authoritative here. */
+  authDirectoryWritable?: boolean;
   procs: ProcessRegistry;
   conversations?: ConversationRegistry;
   devices: DeviceRegistry;
   caps: CapabilityStore;
   config: ConfigStore;
+  /** Authoritative config write boundary; omitted for read-only projections. */
+  writeConfig?: (key: string, value: string) => Promise<void>;
   packages?: PackageStore;
   cron?: CronFileService;
   schedules?: ScheduleViewStore;

@@ -277,7 +277,7 @@ function canSendToAdapterSurface(
     return false;
   }
   if (identity.role === "service") {
-    return true;
+    return ctx.serviceBinding === true;
   }
   if (identity.role !== "user") {
     return false;
@@ -518,7 +518,7 @@ function canSeeAllAdapterStatuses(ctx: KernelContext): boolean {
     return false;
   }
   if (identity.role === "service") {
-    return true;
+    return ctx.serviceBinding === true;
   }
   return identity.role === "user" && resolveCallerOwnerUid(ctx) === 0;
 }
@@ -528,7 +528,7 @@ export async function handleAdapterInbound(
   ctx: KernelContext,
 ): Promise<AdapterInboundSyscallResult> {
   const identity = ctx.identity;
-  if (!identity || identity.role !== "service") {
+  if (!identity || identity.role !== "service" || ctx.serviceBinding !== true) {
     throw new Error("adapter.inbound requires a service identity");
   }
 
@@ -540,12 +540,15 @@ export async function handleAdapterInbound(
   if (!accountId) return { ok: false, error: "accountId is required" };
   if (!message?.surface?.id?.trim()) return { ok: false, error: "message.surface.id is required" };
 
-  const actorId = resolveActorId(message);
+  const actorId = resolveAdapterInboundActorId(message);
   if (!actorId) {
     return { ok: false, error: "message.actor.id is required" };
   }
 
-  const uid = ctx.adapters.identityLinks.resolveUid(adapter, accountId, actorId);
+  const authoritativeLink = ctx.routedAdapterOwnerUid === undefined
+    ? ctx.adapters.identityLinks.get(adapter, accountId, actorId)
+    : null;
+  const uid = ctx.routedAdapterOwnerUid ?? authoritativeLink?.uid ?? null;
   if (uid === null) {
     if (message.surface.kind !== "dm") {
       return { ok: true, droppedReason: "unlinked_actor" };
@@ -567,6 +570,13 @@ export async function handleAdapterInbound(
         expiresAt: challenge.expiresAt,
       },
     };
+  }
+
+  const linkGeneration = ctx.routedAdapterLinkGeneration
+    ?? authoritativeLink?.generation
+    ?? 0;
+  if (!Number.isSafeInteger(linkGeneration) || linkGeneration <= 0) {
+    return { ok: false, error: "Adapter identity link is stale" };
   }
 
   const userIdentity = identityForUid(uid, ctx);
@@ -702,6 +712,8 @@ export async function handleAdapterInbound(
     uid,
     adapter,
     accountId,
+    actorId,
+    linkGeneration,
     message.surface.kind,
     message.surface.id,
     message.surface.threadId,
@@ -802,7 +814,7 @@ export function handleAdapterStateUpdate(
   ctx: KernelContext,
 ): AdapterStateUpdateResult {
   const identity = ctx.identity;
-  if (!identity || identity.role !== "service") {
+  if (!identity || identity.role !== "service" || ctx.serviceBinding !== true) {
     throw new Error("adapter.state.update requires a service identity");
   }
 
@@ -1275,6 +1287,9 @@ async function spawnAdapterAgentProcess(
     interactive: true,
     label,
     cwd: agent.identity.cwd,
+    ...(ctx.kernelGeneration !== undefined
+      ? { kernelGeneration: ctx.kernelGeneration }
+      : {}),
   });
 
   const conversation = ctx.conversations.create({
@@ -1317,7 +1332,9 @@ function describeAdapterSurface(surface: AdapterSurface): string {
   return surface.kind === "dm" ? "dm" : `${surface.kind} ${label}`;
 }
 
-function resolveActorId(message: AdapterInboundMessage): string | null {
+export function resolveAdapterInboundActorId(
+  message: AdapterInboundMessage,
+): string | null {
   const actor = message.actor?.id?.trim();
   if (actor) return actor;
 

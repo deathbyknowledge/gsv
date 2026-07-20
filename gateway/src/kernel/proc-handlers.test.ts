@@ -68,14 +68,16 @@ describe("proc handlers", () => {
   });
 
   it("passes the owning Kernel name to a new conversation executor", async () => {
+    const procs = {
+      get: vi.fn(() => null),
+      spawn: vi.fn(),
+      kill: vi.fn(),
+    };
     const ctx = {
       kernelName: "kernel-human-1",
-      procs: {
-        get: vi.fn(() => null),
-        spawn: vi.fn(),
-      },
+      procs,
       conversations: {
-        setActivePid: vi.fn(),
+        setActivePid: vi.fn(() => true),
       },
     } as unknown as KernelContext;
 
@@ -99,6 +101,345 @@ describe("proc handlers", () => {
         args: expect.objectContaining({ kernelName: "kernel-human-1" }),
       }),
     );
+    expect(sendFrameToProcessMock.mock.invocationCallOrder[0])
+      .toBeLessThan(procs.spawn.mock.invocationCallOrder[0]);
+  });
+
+  it.each([
+    {
+      label: "missing response",
+      response: null,
+      error: "proc.setidentity returned no valid response",
+    },
+    {
+      label: "error response",
+      response: {
+        type: "res" as const,
+        id: "set-identity",
+        ok: false as const,
+        error: { code: 500, message: "identity rejected" },
+      },
+      error: "identity rejected",
+    },
+    {
+      label: "negative acknowledgement",
+      response: {
+        type: "res" as const,
+        id: "set-identity",
+        ok: true as const,
+        data: { ok: false },
+      },
+      error: "proc.setidentity rejected initialization",
+    },
+  ])("does not bind an executor after $label", async ({ response, error }) => {
+    sendFrameToProcessMock.mockImplementationOnce(async (_pid, frame) => (
+      response && { ...response, id: frame.type === "req" ? frame.id : "signal" }
+    ));
+    const procs = {
+      get: vi.fn(() => null),
+      spawn: vi.fn(),
+      kill: vi.fn(),
+    };
+    const conversations = { setActivePid: vi.fn(() => true) };
+    const ctx = {
+      kernelName: "user:sam",
+      kernelGeneration: 4,
+      procs,
+      conversations,
+    } as unknown as KernelContext;
+
+    await expect(resolveConversationExecutor(ctx, {
+      conversationId: "default:1000:1000",
+      ownerUid: IDENTITY.uid,
+      agentUid: IDENTITY.uid,
+      title: null,
+      isDefault: true,
+      activePid: null,
+      archiveBase: "/process-conversation-archives/1000/1000/default",
+      latestArchive: null,
+      createdAt: 1,
+      lastActiveAt: null,
+    }, IDENTITY)).rejects.toThrow(error);
+
+    expect(procs.spawn).not.toHaveBeenCalled();
+    expect(conversations.setActivePid).not.toHaveBeenCalled();
+  });
+
+  it("rejects a late initialization after the Kernel lifecycle changes", async () => {
+    let release!: () => void;
+    const pendingResponse = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let current = true;
+    sendFrameToProcessMock.mockImplementationOnce(async (_pid, frame) => {
+      await pendingResponse;
+      return {
+        type: "res",
+        id: frame.type === "req" ? frame.id : "signal",
+        ok: true,
+        data: { ok: true },
+      } as ResponseFrame;
+    });
+    const procs = {
+      get: vi.fn(() => null),
+      spawn: vi.fn(),
+      kill: vi.fn(),
+    };
+    const conversations = { setActivePid: vi.fn(() => true) };
+    const ctx = {
+      kernelName: "user:sam",
+      kernelGeneration: 4,
+      procs,
+      conversations,
+      assertCurrentKernel: vi.fn(() => {
+        if (!current) throw new Error("User Kernel lifecycle changed during provisioning");
+      }),
+    } as unknown as KernelContext;
+    const resolving = resolveConversationExecutor(ctx, {
+      conversationId: "default:1000:1000",
+      ownerUid: IDENTITY.uid,
+      agentUid: IDENTITY.uid,
+      title: null,
+      isDefault: true,
+      activePid: null,
+      archiveBase: "/process-conversation-archives/1000/1000/default",
+      latestArchive: null,
+      createdAt: 1,
+      lastActiveAt: null,
+    }, IDENTITY);
+    await vi.waitFor(() => expect(sendFrameToProcessMock).toHaveBeenCalledOnce());
+
+    current = false;
+    release();
+
+    await expect(resolving).rejects.toThrow("lifecycle changed during provisioning");
+    expect(procs.spawn).not.toHaveBeenCalled();
+    expect(conversations.setActivePid).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^proc:/),
+      expect.objectContaining({ call: "proc.kill" }),
+    );
+  });
+
+  it("kills an executor again when initialization completes after cancellation", async () => {
+    let release!: () => void;
+    const pendingResponse = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    sendFrameToProcessMock.mockImplementationOnce(async (_pid, frame) => {
+      await pendingResponse;
+      return {
+        type: "res",
+        id: frame.type === "req" ? frame.id : "signal",
+        ok: true,
+        data: { ok: true },
+      } as ResponseFrame;
+    });
+    const controller = new AbortController();
+    const procs = {
+      get: vi.fn(() => null),
+      spawn: vi.fn(),
+      kill: vi.fn(),
+    };
+    const conversations = {
+      setActivePid: vi.fn(() => true),
+      clearActivePid: vi.fn(),
+    };
+    const issueProcessRollbackAuthorization = vi.fn()
+      .mockReturnValueOnce("rollback-initial")
+      .mockReturnValueOnce("rollback-late");
+    const revokeProcessRollbackAuthorization = vi.fn();
+    const ctx = {
+      kernelName: "user:sam",
+      kernelGeneration: 4,
+      procs,
+      conversations,
+      requestSignal: controller.signal,
+      assertCurrentKernel: vi.fn(),
+      issueProcessRollbackAuthorization,
+      revokeProcessRollbackAuthorization,
+    } as unknown as KernelContext;
+    const resolving = resolveConversationExecutor(ctx, {
+      conversationId: "default:1000:1000",
+      ownerUid: IDENTITY.uid,
+      agentUid: IDENTITY.uid,
+      title: null,
+      isDefault: true,
+      activePid: null,
+      archiveBase: "/process-conversation-archives/1000/1000/default",
+      latestArchive: null,
+      createdAt: 1,
+      lastActiveAt: null,
+    }, IDENTITY);
+    await vi.waitFor(() => expect(sendFrameToProcessMock).toHaveBeenCalledOnce());
+
+    controller.abort(new Error("provisioning superseded"));
+    await expect(resolving).rejects.toThrow("provisioning superseded");
+    release();
+
+    await vi.waitFor(() => {
+      const killCalls = sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
+        frame.type === "req" && frame.call === "proc.kill"
+      ));
+      expect(killCalls).toHaveLength(2);
+      expect(killCalls.map(([, frame]) => (
+        (frame as RequestFrame).args.rollbackAuthorization
+      ))).toEqual(["rollback-initial", "rollback-late"]);
+    });
+    expect(revokeProcessRollbackAuthorization)
+      .toHaveBeenCalledWith("rollback-initial");
+    expect(revokeProcessRollbackAuthorization)
+      .toHaveBeenCalledWith("rollback-late");
+    expect(procs.spawn).not.toHaveBeenCalled();
+    expect(conversations.setActivePid).not.toHaveBeenCalled();
+  });
+
+  it("rolls back a registry row when conversation binding fails", async () => {
+    const procs = {
+      get: vi.fn(() => null),
+      spawn: vi.fn(),
+      kill: vi.fn(() => true),
+    };
+    const conversations = { setActivePid: vi.fn(() => false) };
+    const ctx = {
+      kernelName: "user:sam",
+      kernelGeneration: 4,
+      procs,
+      conversations,
+    } as unknown as KernelContext;
+
+    await expect(resolveConversationExecutor(ctx, {
+      conversationId: "default:1000:1000",
+      ownerUid: IDENTITY.uid,
+      agentUid: IDENTITY.uid,
+      title: null,
+      isDefault: true,
+      activePid: null,
+      archiveBase: "/process-conversation-archives/1000/1000/default",
+      latestArchive: null,
+      createdAt: 1,
+      lastActiveAt: null,
+    }, IDENTITY)).rejects.toThrow("Failed to bind conversation executor");
+
+    const pid = procs.spawn.mock.calls[0]?.[0];
+    expect(procs.kill).toHaveBeenCalledWith(pid);
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      pid,
+      expect.objectContaining({ call: "proc.kill" }),
+    );
+  });
+
+  it("replaces a default-conversation executor from an older user-Kernel generation", async () => {
+    const stalePid = "proc:stale-default";
+    const procs = {
+      get: vi.fn(() => ({ processId: stalePid, kernelGeneration: 3 })),
+      kill: vi.fn(() => true),
+      spawn: vi.fn(),
+    };
+    const conversations = { setActivePid: vi.fn(() => true) };
+    const ctx = {
+      kernelName: "user:sam",
+      kernelGeneration: 4,
+      procs,
+      conversations,
+    } as unknown as KernelContext;
+
+    const pid = await resolveConversationExecutor(ctx, {
+      conversationId: "default:1000:1000",
+      ownerUid: IDENTITY.uid,
+      agentUid: IDENTITY.uid,
+      title: null,
+      isDefault: true,
+      activePid: stalePid,
+      archiveBase: "/process-conversation-archives/1000/1000/default",
+      latestArchive: null,
+      createdAt: 1,
+      lastActiveAt: null,
+    }, IDENTITY);
+
+    expect(pid).not.toBe(stalePid);
+    expect(procs.kill).toHaveBeenCalledWith(stalePid);
+    expect(procs.spawn).toHaveBeenCalledWith(
+      pid,
+      IDENTITY,
+      expect.objectContaining({ kernelGeneration: 4 }),
+    );
+    expect(conversations.setActivePid).toHaveBeenCalledWith(
+      "default:1000:1000",
+      pid,
+    );
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      pid,
+      expect.objectContaining({ call: "proc.setidentity" }),
+    );
+    expect(procs.spawn.mock.invocationCallOrder[0])
+      .toBeLessThan(procs.kill.mock.invocationCallOrder[0]);
+  });
+
+  it("reuses a default-conversation executor from the current user-Kernel generation", async () => {
+    const currentPid = "proc:current-default";
+    const procs = {
+      get: vi.fn(() => ({ processId: currentPid, kernelGeneration: 4 })),
+      kill: vi.fn(),
+      spawn: vi.fn(),
+    };
+    const ctx = {
+      kernelName: "user:sam",
+      kernelGeneration: 4,
+      procs,
+    } as unknown as KernelContext;
+
+    const pid = await resolveConversationExecutor(ctx, {
+      conversationId: "default:1000:1000",
+      ownerUid: IDENTITY.uid,
+      agentUid: IDENTITY.uid,
+      title: null,
+      isDefault: true,
+      activePid: currentPid,
+      archiveBase: "/process-conversation-archives/1000/1000/default",
+      latestArchive: null,
+      createdAt: 1,
+      lastActiveAt: null,
+    }, IDENTITY);
+
+    expect(pid).toBe(currentPid);
+    expect(procs.kill).not.toHaveBeenCalled();
+    expect(procs.spawn).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves the exact fenced predecessor executor during user-Kernel provisioning", async () => {
+    const fencedPid = "proc:fenced-default";
+    const procs = {
+      get: vi.fn(() => ({ processId: fencedPid, kernelGeneration: 4 })),
+      kill: vi.fn(),
+      spawn: vi.fn(),
+    };
+    const ctx = {
+      kernelName: "user:sam",
+      kernelKind: "user",
+      kernelGeneration: 5,
+      kernelProvisioning: true,
+      procs,
+    } as unknown as KernelContext;
+
+    const pid = await resolveConversationExecutor(ctx, {
+      conversationId: "default:1000:1000",
+      ownerUid: IDENTITY.uid,
+      agentUid: IDENTITY.uid,
+      title: null,
+      isDefault: true,
+      activePid: fencedPid,
+      archiveBase: "/process-conversation-archives/1000/1000/default",
+      latestArchive: null,
+      createdAt: 1,
+      lastActiveAt: null,
+    }, IDENTITY);
+
+    expect(pid).toBe(fencedPid);
+    expect(procs.kill).not.toHaveBeenCalled();
+    expect(procs.spawn).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
   it("cleans up pending IPC call when delivery returns an error response", async () => {
@@ -861,6 +1202,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
+      config: { get: vi.fn(() => null) },
       auth: {
         isPersonalAgentUid: vi.fn(() => false),
         getPersonalAgentUid: vi.fn((uid: number) => uid === IDENTITY.uid ? personalAgent.uid : null),
@@ -923,6 +1265,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
+      config: { get: vi.fn(() => null) },
       auth: {
         getPersonalAgentUid: vi.fn((uid: number) => uid === IDENTITY.uid ? personalAgent.uid : null),
         getPasswdByUid: vi.fn((uid: number) => uid === personalAgent.uid ? personalAgent : null),
@@ -997,6 +1340,7 @@ describe("proc handlers", () => {
           process: IDENTITY,
           capabilities: ["proc.spawn"],
         },
+        config: { get: vi.fn(() => null) },
         procs,
         conversations,
       } as unknown as KernelContext;
@@ -1018,6 +1362,74 @@ describe("proc handlers", () => {
       expect(procs.kill).toHaveBeenCalledWith(pid);
     },
   );
+
+  it("rolls back a fresh spawn when its user-Kernel generation is fenced", async () => {
+    const controller = new AbortController();
+    let identityFrame: RequestFrame | null = null;
+    let resolveIdentity!: (response: ResponseFrame) => void;
+    sendFrameToProcessMock.mockImplementationOnce(async (_pid, frame) => {
+      identityFrame = frame as RequestFrame;
+      return new Promise<ResponseFrame>((resolve) => {
+        resolveIdentity = resolve;
+      });
+    });
+
+    const conversations = spawnConversationsMock();
+    const procs = {
+      get: vi.fn(() => SPAWN_PARENT),
+      spawn: vi.fn(),
+      kill: vi.fn(() => true),
+    };
+    const ctx = {
+      kernelName: "user:sam",
+      kernelGeneration: 4,
+      processId: SPAWN_PARENT.processId,
+      callerOwnerUid: IDENTITY.uid,
+      requestSignal: controller.signal,
+      identity: {
+        process: IDENTITY,
+        capabilities: ["proc.spawn"],
+      },
+      config: { get: vi.fn(() => null) },
+      procs,
+      conversations,
+    } as unknown as KernelContext;
+
+    const pending = handleProcSpawn({
+      fresh: true,
+      prompt: "This stale prompt must not run.",
+    }, ctx);
+    await vi.waitFor(() => {
+      expect(identityFrame).toMatchObject({ call: "proc.setidentity" });
+    });
+
+    controller.abort(new Error("User Kernel is not active"));
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("User Kernel is not active"),
+    });
+    const pid = procs.spawn.mock.calls[0]?.[0];
+    expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(pid, expect.objectContaining({
+      call: "proc.kill",
+      args: { pid, archive: false },
+    }));
+    expect(sendFrameToProcessMock).not.toHaveBeenCalledWith(pid, expect.objectContaining({
+      call: "proc.send",
+    }));
+    expect(conversations.clearActivePid).toHaveBeenCalledWith(pid);
+    expect(conversations.remove).toHaveBeenCalledWith("conv-1");
+    expect(procs.kill).toHaveBeenCalledWith(pid);
+
+    resolveIdentity({
+      type: "res",
+      id: identityFrame!.id,
+      ok: true,
+      data: { ok: true },
+    });
+    await vi.waitFor(() => {
+      expect(procs.kill).toHaveBeenCalledTimes(2);
+    });
+  });
 
   it("keeps a failed spawn registered when Process rollback fails", async () => {
     sendFrameToProcessMock
@@ -1041,6 +1453,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["proc.spawn"],
       },
+      config: { get: vi.fn(() => null) },
       procs,
       conversations,
     } as unknown as KernelContext;
@@ -1063,6 +1476,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
+      config: { get: vi.fn(() => null) },
       procs: {
         get: vi.fn(() => SPAWN_PARENT),
         spawn: vi.fn(),
@@ -1338,6 +1752,35 @@ describe("resolveRunAsIdentity", () => {
 });
 
 describe("handleProcList", () => {
+  it("hides process rows from stale user-Kernel generations", () => {
+    const base = {
+      ...SPAWN_PARENT,
+      state: "idle",
+      activeRunId: null,
+      activeConversationId: null,
+      queuedCount: 0,
+      lastActiveAt: null,
+      label: null,
+      createdAt: 1,
+    };
+    const list = vi.fn(() => [
+      { ...base, processId: "proc:current", kernelGeneration: 4 },
+      { ...base, processId: "proc:stale", kernelGeneration: 3 },
+    ]);
+    const ctx = {
+      kernelKind: "user",
+      kernelGeneration: 4,
+      kernelOwnerUid: IDENTITY.uid,
+      identity: { role: "user", process: IDENTITY, capabilities: ["proc.list"] },
+      procs: { list },
+      conversations: { getByActivePid: vi.fn(() => null) },
+    } as unknown as KernelContext;
+
+    expect(handleProcList({}, ctx).processes.map((record) => record.pid)).toEqual([
+      "proc:current",
+    ]);
+  });
+
   it("filters by the owning human when an agent process lists its user's processes", () => {
     const list = vi.fn(() => []);
     const ctx = {
@@ -1381,6 +1824,24 @@ describe("handleProcList", () => {
     expect(list).toHaveBeenCalledWith(undefined);
 
     list.mockClear();
+    handleProcList({ uid: 1000 }, ctx);
+    expect(list).toHaveBeenCalledWith(1000);
+  });
+
+  it("rejects root process listings outside an active user Kernel's owner", () => {
+    const list = vi.fn(() => []);
+    const ctx = {
+      kernelKind: "user",
+      kernelOwnerUid: 1000,
+      identity: { role: "user", process: { ...IDENTITY, uid: 0, username: "root" }, capabilities: ["proc.list"] },
+      procs: { get: vi.fn(() => null), list },
+      conversations: { getByActivePid: vi.fn(() => null) },
+    } as unknown as KernelContext;
+
+    expect(() => handleProcList({}, ctx)).toThrow("cross-user process listing");
+    expect(() => handleProcList({ uid: 1001 }, ctx)).toThrow("cross-user process listing");
+    expect(list).not.toHaveBeenCalled();
+
     handleProcList({ uid: 1000 }, ctx);
     expect(list).toHaveBeenCalledWith(1000);
   });

@@ -31,6 +31,7 @@ describe("user-facing signal policy", () => {
       "device.status",
       "adapter.status",
       "pkg.changed",
+      "config.changed",
       "mcp.changed",
       "notification.created",
       "notification.updated",

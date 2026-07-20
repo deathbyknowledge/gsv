@@ -189,4 +189,38 @@ describe("sys.config.get", () => {
       value: "foreign-model",
     }, ctx)).toThrow("cannot write another user's config");
   });
+
+  it.each([
+    "users/2000/pkg/security_revision",
+    "users/2000/pkg/installed/example",
+    "repos/alice/demo/visibility",
+    "setup/completed",
+    "internal/package_projection_revision",
+  ])("does not let root forge the reserved authority key %s", (key) => {
+    const ctx = makeContext(0, baseEntries);
+
+    expect(() => handleSysConfigSet({ key, value: "forged" }, ctx))
+      .toThrow("not user-overridable");
+    expect(handleSysConfigGet({ key }, ctx)).toEqual({ entries: [] });
+  });
+
+  it("lets root write only system config and explicit user overrides", () => {
+    const ctx = makeContext(0, baseEntries);
+
+    expect(handleSysConfigSet({
+      key: "config/ai/model",
+      value: "root-model",
+    }, ctx)).toEqual({ ok: true });
+    expect(handleSysConfigSet({
+      key: "users/1000/ai/model",
+      value: "user-model",
+    }, ctx)).toEqual({ ok: true });
+
+    expect(handleSysConfigGet({ key: "config/ai/model" }, ctx)).toEqual({
+      entries: [{ key: "config/ai/model", value: "root-model" }],
+    });
+    expect(handleSysConfigGet({ key: "users/1000/ai/model" }, ctx)).toEqual({
+      entries: [{ key: "users/1000/ai/model", value: "user-model" }],
+    });
+  });
 });

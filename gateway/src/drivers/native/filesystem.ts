@@ -28,11 +28,13 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
     identity,
     {
       auth: ctx.auth,
+      authDirectoryWritable: ctx.kernelKind === "master",
       procs: ctx.procs,
       conversations: ctx.conversations,
       devices: ctx.devices,
       caps: ctx.caps,
       config: ctx.config,
+      writeConfig: ctx.writeConfig,
       packages: ctx.packages,
       cron: createCronFileService(ctx),
       schedules: ctx.schedules,

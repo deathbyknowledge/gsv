@@ -17,6 +17,12 @@ function createCtx() {
     { name: "alice", gid: 1000, members: [] },
   ];
   const shadow = new Map<string, string>([["root", "x"], ["alice", "x"]]);
+  const reservedAccountNames = new Set(passwd.map((entry) => entry.username));
+  const accountKinds = new Map<string, "system" | "human" | "agent">([
+    ["root", "system"],
+    ["alice", "human"],
+  ]);
+  const userKernels = new Map<string, { username: string; uid: number; lifecycle: "provisioning" }>();
   const personalAgents = new Map<number, number>();
   const ripgitApplyBodies: Array<{
     owner: string;
@@ -37,8 +43,16 @@ function createCtx() {
       return found ? { ...found } : null;
     }),
     allocateUid: vi.fn(() => Math.max(999, ...passwd.map((u) => u.uid)) + 1),
-    addUser: vi.fn((entry: PasswdRow) => {
+    isAccountNameReserved: vi.fn((username: string) => reservedAccountNames.has(username)),
+    addUser: vi.fn((entry: PasswdRow, kind: "system" | "human" | "agent" = "human") => {
+      reservedAccountNames.add(entry.username);
+      accountKinds.set(entry.username, kind);
       passwd.push({ ...entry, gecos: entry.gecos ?? entry.username, shell: entry.shell ?? "/bin/init" });
+    }),
+    getAccountIdentity: vi.fn((username: string) => {
+      const entry = passwd.find((candidate) => candidate.username === username);
+      const kind = accountKinds.get(username);
+      return entry && kind ? { username, uid: entry.uid, kind, state: "active" } : null;
     }),
     updateUser: vi.fn((username: string, fields: Partial<Omit<PasswdRow, "username">>) => {
       const found = passwd.find((u) => u.username === username);
@@ -111,10 +125,31 @@ function createCtx() {
         ...(options.ripgit ? { RIPGIT: ripgit } : {}),
       } as unknown as KernelContext["env"],
       identity,
+      userKernels: {
+        get: vi.fn((username: string) => userKernels.get(username) ?? null),
+        reserve: vi.fn((username: string, uid: number) => {
+          const existing = userKernels.get(username);
+          if (existing) return existing;
+          const record = { username, uid, lifecycle: "provisioning" as const };
+          userKernels.set(username, record);
+          return record;
+        }),
+      } as unknown as KernelContext["userKernels"],
     } as KernelContext;
   }
 
-  return { ctxFor, auth, passwd, groups, shadow, personalAgents, ripgitApplyBodies };
+  return {
+    ctxFor,
+    auth,
+    passwd,
+    groups,
+    shadow,
+    accountKinds,
+    personalAgents,
+    ripgitApplyBodies,
+    storage,
+    userKernels,
+  };
 }
 
 function userIdentity(uid: number, username: string, capabilities: string[]): ConnectionIdentity {
@@ -260,6 +295,7 @@ describe("handleAccountCreate", () => {
     expect(groups.find((g) => g.name === "alice")?.members).toContain("scout");
     expect(auth.addUser).toHaveBeenCalledWith(
       expect.objectContaining({ username: "scout", shell: "/bin/init" }),
+      "agent",
     );
   });
 
@@ -271,6 +307,9 @@ describe("handleAccountCreate", () => {
       /unavailable/i,
     );
     await expect(handleAccountCreate({ kind: "agent", username: "Bad Name" }, ctx)).rejects.toThrow(
+      /unavailable|invalid/i,
+    );
+    await expect(handleAccountCreate({ kind: "agent", username: "Kevin" }, ctx)).rejects.toThrow(
       /unavailable|invalid/i,
     );
   });
@@ -331,6 +370,30 @@ describe("handleAccountCreate", () => {
     expect(personalAgents.get(result.account.uid)).toBe(result.personalAgent?.uid);
   });
 
+  it("resumes a human whose external home provisioning failed", async () => {
+    const { ctxFor, auth, passwd, storage, userKernels } = createCtx();
+    const ctx = ctxFor(userIdentity(0, "root", ["*"]));
+    vi.spyOn(storage, "put").mockRejectedValueOnce(new Error("R2 unavailable"));
+
+    await expect(handleAccountCreate(
+      { kind: "human", username: "bob", password: "password-123" },
+      ctx,
+    )).rejects.toThrow("R2 unavailable");
+
+    const bob = passwd.find((entry) => entry.username === "bob");
+    expect(bob).toBeTruthy();
+    expect(userKernels.get("bob")).toMatchObject({
+      uid: bob?.uid,
+      lifecycle: "provisioning",
+    });
+
+    await expect(handleAccountCreate(
+      { kind: "human", username: "bob", password: "password-123" },
+      ctx,
+    )).resolves.toMatchObject({ account: { username: "bob" }, kind: "human" });
+    expect(auth.addUser.mock.calls.filter(([entry]) => entry.username === "bob")).toHaveLength(1);
+  });
+
   it("uses a humanized personal agent username as the display name", async () => {
     const { ctxFor, passwd } = createCtx();
     const ctx = ctxFor(userIdentity(0, "root", ["*"]));
@@ -375,10 +438,13 @@ describe("handleAccountList", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("lists the caller's self and run-as-able agents, not other humans", async () => {
-    const { ctxFor } = createCtx();
+    const { ctxFor, shadow } = createCtx();
     // alice creates a custom agent she can run as.
     const aliceCtx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
     await handleAccountCreate({ kind: "agent", username: "scout" }, aliceCtx);
+    // Credential state is not account kind: even a corrupt unlocked shadow must
+    // not present an authoritative agent as a human.
+    shadow.set("scout", "x");
 
     const result = handleAccountList({}, ctxFor(userIdentity(1000, "alice", ["account.list"])));
     const names = result.accounts.map((a) => a.username);
@@ -398,13 +464,14 @@ describe("handleAccountList", () => {
   });
 
   it("lists a package agent the caller can run via its access group", () => {
-    const { ctxFor, passwd, groups, shadow } = createCtx();
+    const { ctxFor, passwd, groups, shadow, accountKinds } = createCtx();
     // A package agent: locked, the owner is NOT in its cap-bearing primary
     // group, but IS in its `<username>-run` access group.
     passwd.push({ username: "wiki-builder", uid: 2000, gid: 2000, gecos: "Wiki Builder", home: "/home/wiki-builder", shell: "/bin/init" });
     groups.push({ name: "wiki-builder", gid: 2000, members: [] });
     groups.push({ name: "wiki-builder-run", gid: 2001, members: ["alice"] });
     shadow.set("wiki-builder", "!");
+    accountKinds.set("wiki-builder", "agent");
 
     const result = handleAccountList({}, ctxFor(userIdentity(1000, "alice", ["account.list"])));
     const agent = result.accounts.find((a) => a.username === "wiki-builder");
@@ -418,25 +485,29 @@ describe("handleAccountList", () => {
     passwd.push({ username: "carol", uid: 1500, gid: 1500, gecos: "carol", home: "/home/carol", shell: "/bin/init" });
     groups.push({ name: "carol", gid: 1500, members: [] });
     shadow.set("carol", "x");
+    accountKinds.set("carol", "human");
     const carolView = handleAccountList({}, ctxFor(userIdentity(1500, "carol", ["account.list"])));
     expect(carolView.accounts.find((a) => a.username === "wiki-builder")).toBeUndefined();
   });
 
   it("filters root targeted listings through the requested owner", () => {
-    const { ctxFor, passwd, groups, shadow } = createCtx();
+    const { ctxFor, passwd, groups, shadow, accountKinds } = createCtx();
     passwd.push({ username: "bob", uid: 1500, gid: 1500, gecos: "bob", home: "/home/bob", shell: "/bin/init" });
     groups.push({ name: "bob", gid: 1500, members: [] });
     shadow.set("bob", "x");
+    accountKinds.set("bob", "human");
 
     passwd.push({ username: "wiki-builder", uid: 2000, gid: 2000, gecos: "Wiki Builder", home: "/home/wiki-builder", shell: "/bin/init" });
     groups.push({ name: "wiki-builder", gid: 2000, members: [] });
     groups.push({ name: "wiki-builder-run", gid: 2001, members: ["alice"] });
     shadow.set("wiki-builder", "!");
+    accountKinds.set("wiki-builder", "agent");
 
     passwd.push({ username: "bob-helper", uid: 2100, gid: 2100, gecos: "Bob Helper", home: "/home/bob-helper", shell: "/bin/init" });
     groups.push({ name: "bob-helper", gid: 2100, members: [] });
     groups.push({ name: "bob-helper-run", gid: 2101, members: ["bob"] });
     shadow.set("bob-helper", "!");
+    accountKinds.set("bob-helper", "agent");
 
     const result = handleAccountList({ uid: 1000 }, ctxFor(userIdentity(0, "root", ["*"])));
     const names = result.accounts.map((a) => a.username);
@@ -445,5 +516,24 @@ describe("handleAccountList", () => {
     expect(names).toContain("wiki-builder");
     expect(names).not.toContain("bob");
     expect(names).not.toContain("bob-helper");
+  });
+
+  it("keeps a locked human classified as human", () => {
+    const { ctxFor, passwd, groups, shadow, accountKinds } = createCtx();
+    passwd.push({
+      username: "bob",
+      uid: 1500,
+      gid: 1500,
+      gecos: "Bob",
+      home: "/home/bob",
+      shell: "/bin/init",
+    });
+    groups.push({ name: "bob", gid: 1500, members: [] });
+    shadow.set("bob", "!");
+    accountKinds.set("bob", "human");
+
+    const result = handleAccountList({}, ctxFor(userIdentity(0, "root", ["*"])));
+    expect(result.accounts.find((account) => account.username === "bob"))
+      .toMatchObject({ relation: "human" });
   });
 });

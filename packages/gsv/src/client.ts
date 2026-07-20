@@ -218,6 +218,8 @@ export type GsvSysNamespace = GsvClientNamespaces["sys"];
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 8_000;
 const PROTOCOL_VERSION = 2;
+const ACCOUNT_USERNAME_INPUT_MAX_CHARACTERS = 64;
+const ACCOUNT_USERNAME_INPUT_RE = /^[A-Za-z_][A-Za-z0-9_-]{0,31}$/;
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const LONG_RUNNING_REQUEST_TIMEOUT_MS = 120_000;
 const AI_TEXT_GENERATION_REQUEST_TIMEOUT_MS = 180_000;
@@ -225,6 +227,23 @@ const DEFAULT_DRIVER_KEEPALIVE_MS = 240_000;
 const DEFAULT_DRIVER_ACKNOWLEDGEMENT_TIMEOUT_MS = 10_000;
 const WEBSOCKET_CONNECTING = 0;
 const WEBSOCKET_OPEN = 1;
+
+export function canonicalizeGsvUsername(value: string): string {
+  if (value.length > ACCOUNT_USERNAME_INPUT_MAX_CHARACTERS) {
+    throw new Error("Username must match ^[a-z_][a-z0-9_-]{0,31}$");
+  }
+  const username = value.trim();
+  if (!ACCOUNT_USERNAME_INPUT_RE.test(username)) {
+    throw new Error("Username must match ^[a-z_][a-z0-9_-]{0,31}$");
+  }
+  return username.replace(/[A-Z]/g, (character) => character.toLowerCase());
+}
+
+export function buildUserWebSocketUrl(gatewayUrl: string, username: string): string {
+  const url = new URL(gatewayUrl);
+  url.pathname = `/ws/${encodeURIComponent(canonicalizeGsvUsername(username))}`;
+  return url.toString();
+}
 
 const DEFAULT_REQUEST_TIMEOUTS_MS: Record<string, number> = {
   "sys.setup": LONG_RUNNING_REQUEST_TIMEOUT_MS,
@@ -520,14 +539,14 @@ export class GSVClient {
   async connect(options: GsvConnectOptions = {}): Promise<ConnectResult> {
     const merged = this.mergeConnectOptions(options);
     const url = merged.url?.trim() ?? "";
-    const username = merged.username?.trim() ?? "";
-    const password = merged.password?.trim() ?? "";
-    const token = merged.token?.trim() ?? "";
+    const rawUsername = merged.username ?? "";
+    const password = merged.password ?? "";
+    const token = merged.token ?? "";
 
     if (!url) {
       throw new Error("Gateway URL is required");
     }
-    if (!username) {
+    if (!rawUsername.trim()) {
       throw new Error("Username is required");
     }
     if (!password && !token) {
@@ -536,6 +555,9 @@ export class GSVClient {
     if (password && token) {
       throw new Error("Use either password or token");
     }
+
+    const username = canonicalizeGsvUsername(rawUsername);
+    const socketUrl = buildUserWebSocketUrl(url, username);
 
     this.disconnect();
     const socketEpoch = ++this.socketEpoch;
@@ -549,7 +571,7 @@ export class GSVClient {
 
     let socket: WebSocket;
     try {
-      socket = await this.openSocket(url, true);
+      socket = await this.openSocket(socketUrl, true);
     } catch (error) {
       if (this.socketEpoch === socketEpoch) {
         this.setStatus({

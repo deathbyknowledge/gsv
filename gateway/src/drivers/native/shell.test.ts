@@ -20,7 +20,9 @@ import {
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type { InstalledPackageRecord } from "../../kernel/packages";
+import { applyRepoMetadataMutation } from "../../kernel/repo-metadata";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
+import { provisionR2Directory } from "../../fs/backends/r2";
 
 const generateMock = vi.hoisted(() => vi.fn());
 
@@ -46,7 +48,7 @@ vi.mock("../../shared/utils", async (importOriginal) => {
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
-beforeEach(() => {
+beforeEach(async () => {
   sendFrameToProcessMock.mockReset();
   sendFrameToProcessMock.mockImplementation(async (_pid, frame) => (
     frame.type === "req" && frame.call === "proc.setidentity"
@@ -54,6 +56,11 @@ beforeEach(() => {
       : null
   ));
   generateMock.mockReset();
+  await Promise.all([
+    provisionR2Directory(env.STORAGE, "/tmp", { uid: 0, gid: 0 }, "777"),
+    provisionR2Directory(env.STORAGE, IDENTITY.home, IDENTITY, "750"),
+    provisionR2Directory(env.STORAGE, `${IDENTITY.home}/copy-test`, IDENTITY, "750"),
+  ]);
 });
 
 const IDENTITY: ProcessIdentity = {
@@ -141,6 +148,7 @@ function makeContext(options?: {
   identity?: ProcessIdentity;
   aiRun?: (model: string, input: Record<string, unknown>) => Promise<unknown>;
   ripgit?: Fetcher;
+  mutateRepoMetadata?: KernelContext["mutateRepoMetadata"];
 }): KernelContext {
   const records = [...(options?.packages ?? [options?.pkg ?? makePackage()])];
   const identity = options?.identity ?? IDENTITY;
@@ -291,6 +299,15 @@ function makeContext(options?: {
     processId: "task:pkg",
     processRunId: options?.processRunId,
     serverVersion: "0.4.0",
+    authorizePackageRuntime: vi.fn(async () => true),
+    writeConfig: vi.fn(async () => {}),
+    mutateRepoMetadata: options?.mutateRepoMetadata ?? (async (mutation) => (
+      applyRepoMetadataMutation({
+        get: (key) => configValues.get(key) ?? null,
+        set: (key, value) => { configValues.set(key, value); },
+        delete: (key) => configValues.delete(key),
+      }, mutation)
+    )),
     getAppRunner: options?.getAppRunner,
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
@@ -919,6 +936,17 @@ describe("proc native command", () => {
       getGroupByGid: vi.fn((gid: number) => ({ name: passwd.find((u) => u.uid === gid)?.username ?? "g", gid, members: [] })),
       getGroupByName: vi.fn(() => null),
       getShadowByUsername: vi.fn((username: string) => ({ username, hash: username === "sam-agent" ? "!" : "x" })),
+      getAccountIdentity: vi.fn((username: string) => {
+        const entry = passwd.find((candidate) => candidate.username === username);
+        return entry
+          ? {
+              username,
+              uid: entry.uid,
+              kind: username === "sam-agent" ? "agent" : "human",
+              state: "active",
+            }
+          : null;
+      }),
     } as unknown as KernelContext["auth"];
 
     const result = await handleShellExec(
@@ -3061,40 +3089,74 @@ describe("pkg shell command", () => {
   });
 
   it("shows review status in pkg list output", async () => {
+    const request = vi.fn(async (frame: RequestFrame): Promise<ResponseFrame> => ({
+      type: "res",
+      id: frame.id,
+      ok: true,
+      data: {
+        packages: [{
+          name: "sample-console",
+          scope: { kind: "global" },
+          enabled: false,
+          review: { required: true, approvedAt: null },
+          source: { repo: "root/pkg-test", ref: "main", public: false },
+        }],
+      },
+    } as ResponseFrame));
     const result = await handleShellExec(
       { input: "pkg list" },
       makeContext(),
+      { request },
     );
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("sample-console");
     expect(result.stdout).toContain("pending");
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({ call: "pkg.list", args: {} }),
+      expect.any(AbortSignal),
+    );
   });
 
   it("enables an approved package through pkg enable", async () => {
+    const pkg = makePackage({
+      scope: { kind: "user", uid: 1000 },
+      reviewedAt: 100,
+      reviewRequired: true,
+    });
+    const request = vi.fn(async (frame: RequestFrame): Promise<ResponseFrame> => ({
+      type: "res",
+      id: frame.id,
+      ok: true,
+      data: {
+        changed: true,
+        package: { name: pkg.manifest.name },
+      },
+    } as ResponseFrame));
     const result = await handleShellExec(
       { input: "pkg enable sample-console" },
       makeContext({
         capabilities: ["pkg.install"],
-        pkg: makePackage({
-          scope: { kind: "user", uid: 1000 },
-          reviewedAt: 100,
-          reviewRequired: true,
-        }),
+        pkg,
       }),
+      { request },
     );
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("enabled sample-console");
     expect(result.stderr).toBe("");
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        call: "pkg.install",
+        args: { packageId: pkg.packageId },
+      }),
+      expect.any(AbortSignal),
+    );
   });
 
   it("runs package commands through app runner", async () => {
-    const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
+    const calls: Array<{ kind: "run"; value: unknown }> = [];
     const runner = {
-      async ensureRuntime(input: unknown) {
-        calls.push({ kind: "ensure", value: input });
-      },
       async runCommand(input: unknown) {
         calls.push({ kind: "run", value: input });
         return {
@@ -3132,27 +3194,29 @@ describe("pkg shell command", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("hello from runner");
-    expect(calls).toHaveLength(2);
-    expect(calls[0]?.kind).toBe("ensure");
-    expect(calls[1]).toEqual({
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({
       kind: "run",
       value: {
+        runtime: {
+          artifact: expect.objectContaining({ hash: expect.any(String) }),
+          appFrame: expect.objectContaining({
+            uid: 1000,
+            username: "sam",
+            entrypointName: "hello-world",
+          }),
+        },
         commandName: "hello-world",
         args: ["alpha", "beta"],
         cwd: "/home/sam",
-        uid: 1000,
         gid: 1000,
-        username: "sam",
       },
     });
   });
 
   it("registers owner-scoped package commands for agent-backed shells", async () => {
-    const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
+    const calls: Array<{ kind: "run"; value: unknown }> = [];
     const runner = {
-      async ensureRuntime(input: unknown) {
-        calls.push({ kind: "ensure", value: input });
-      },
       async runCommand(input: unknown) {
         calls.push({ kind: "run", value: input });
         return {
@@ -3220,26 +3284,22 @@ describe("pkg shell command", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toBe("human tool ran\n");
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual({
-      kind: "ensure",
-      value: expect.objectContaining({
-        packageId: "user:1000:human-tools",
-        appFrame: expect.objectContaining({
-          uid: 2000,
-          username: "sam-agent",
-        }),
-      }),
-    });
-    expect(calls[1]).toEqual({
       kind: "run",
       value: {
+        runtime: {
+          artifact: expect.objectContaining({ hash: expect.any(String) }),
+          appFrame: expect.objectContaining({
+            uid: 2000,
+            username: "sam-agent",
+            packageId: "user:1000:human-tools",
+          }),
+        },
         commandName: "human-tool",
         args: ["alpha"],
         cwd: "/home/sam-agent",
-        uid: 2000,
         gid: 2000,
-        username: "sam-agent",
       },
     });
   });
@@ -3444,11 +3504,8 @@ describe("pkg shell command", () => {
   });
 
   it("does not allow packages to shadow the wiki command", async () => {
-    const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
+    const calls: Array<{ kind: "run"; value: unknown }> = [];
     const runner = {
-      async ensureRuntime(input: unknown) {
-        calls.push({ kind: "ensure", value: input });
-      },
       async runCommand(input: unknown) {
         calls.push({ kind: "run", value: input });
         return {

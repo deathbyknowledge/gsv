@@ -23,7 +23,12 @@ import {
 } from "./scheduler";
 import type { KernelContext } from "./context";
 import type { Process } from "../process/do";
-import type { AuthStore } from "./auth-store";
+import type { AccountIdentityKind, AuthStore } from "./auth-store";
+import {
+  USER_KERNEL_INSTANCE_STORAGE_KEY,
+  type UserKernelInstanceMarker,
+} from "./user-kernels";
+import { userKernelName } from "../shared/kernel-names";
 
 const USER_IDENTITY: ProcessIdentity = {
   uid: 1000,
@@ -58,6 +63,7 @@ function addTestAccount(
   auth: ScheduleTestAuth,
   identity: ProcessIdentity,
   gecos: string,
+  kind: AccountIdentityKind = "human",
 ): void {
   auth.addUser({
     username: identity.username,
@@ -66,7 +72,7 @@ function addTestAccount(
     gecos,
     home: identity.home,
     shell: "/bin/init",
-  });
+  }, kind);
   auth.addGroup({ name: identity.username, gid: identity.gid, members: [] });
 }
 
@@ -77,6 +83,29 @@ function addTestUser(auth: ScheduleTestAuth): void {
 
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;
+}
+
+async function newScheduleKernel(): Promise<{
+  kernel: DurableObjectStub<Kernel>;
+  kernelName: string;
+}> {
+  const username = `sched-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+  const kernelName = userKernelName(username);
+  const kernel = await getAgentByName<Env, Kernel>(env.KERNEL, kernelName);
+  await runInDurableObject(kernel, async (instance: Kernel, state) => {
+    const marker: UserKernelInstanceMarker = {
+      version: 1,
+      kind: "user",
+      username,
+      uid: USER_IDENTITY.uid,
+      generation: 1,
+      lifecycle: "active",
+      updatedAt: Date.now(),
+    };
+    await state.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, marker);
+    (instance as unknown as { userKernelMarker: UserKernelInstanceMarker }).userKernelMarker = marker;
+  });
+  return { kernel, kernelName };
 }
 
 async function prepareScheduleTargetProcess(
@@ -156,7 +185,7 @@ function makeSchedulerContext(overrides: Partial<KernelContext> = {}): KernelCon
       capabilities: ["*"],
     },
     config: {
-      get: vi.fn(() => "UTC"),
+      get: vi.fn((key: string) => key === "config/server/timezone" ? "UTC" : null),
     },
     procs: {
       get: vi.fn(),
@@ -289,7 +318,9 @@ describe("scheduler", () => {
         capabilities: ["*"],
       },
       config: {
-        get: vi.fn(() => "Europe/Amsterdam"),
+        get: vi.fn((key: string) => (
+          key === "config/server/timezone" ? "Europe/Amsterdam" : null
+        )),
       },
       procs: {
         get: vi.fn(),
@@ -499,6 +530,40 @@ describe("scheduler", () => {
     });
   });
 
+  it("rejects root schedule listings outside an active user Kernel's owner", () => {
+    const list = vi.fn(() => ({ records: [], count: 0 }));
+    const ctx = makeSchedulerContext({
+      kernelKind: "user",
+      kernelOwnerUid: USER_IDENTITY.uid,
+      identity: {
+        role: "user",
+        process: {
+          ...USER_IDENTITY,
+          uid: 0,
+          gid: 0,
+          gids: [0],
+          username: "root",
+          home: "/root",
+          cwd: "/root",
+        },
+        capabilities: ["*"],
+      },
+      schedules: { list } as unknown as ScheduleStore,
+    });
+
+    expect(() => handleSchedulerList({}, ctx)).toThrow("cross-user schedule listing");
+    expect(() => handleSchedulerList({ ownerUid: 2000 }, ctx)).toThrow("cross-user schedule listing");
+    expect(list).not.toHaveBeenCalled();
+
+    handleSchedulerList({ ownerUid: USER_IDENTITY.uid }, ctx);
+    expect(list).toHaveBeenCalledWith({
+      ownerUid: USER_IDENTITY.uid,
+      includeDisabled: undefined,
+      limit: undefined,
+      offset: undefined,
+    });
+  });
+
   it("creates process event schedules under the owning human for agent-backed callers", async () => {
     const create = vi.fn((input) => makeScheduleRecord({
       ownerUid: input.ownerUid,
@@ -671,11 +736,7 @@ describe("scheduler", () => {
   it("runs a due schedule through the Kernel and delivers a process event", async () => {
     const pid = `sched-event-${crypto.randomUUID()}`;
     const conversationId = "ops";
-    const kernelName = `scheduler-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      kernelName,
-    );
+    const { kernel, kernelName } = await newScheduleKernel();
     const process = await getProcessByPid(pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
@@ -688,10 +749,11 @@ describe("scheduler", () => {
       };
       k.caps.seed();
       addTestUser(k.auth);
-      addTestAccount(k.auth, PERSONAL_AGENT_IDENTITY, "Sam Agent");
+      addTestAccount(k.auth, PERSONAL_AGENT_IDENTITY, "Sam Agent", "agent");
       k.auth.setPersonalAgent(USER_IDENTITY.uid, PERSONAL_AGENT_IDENTITY.uid);
       k.procs.spawn(pid, PERSONAL_AGENT_IDENTITY, {
         ownerUid: USER_IDENTITY.uid,
+        kernelGeneration: 1,
         profile: "task",
         label: "scheduled target",
       });
@@ -758,11 +820,7 @@ describe("scheduler", () => {
 
   it("records an error when a process event targets a closed conversation", async () => {
     const pid = `sched-event-closed-${crypto.randomUUID()}`;
-    const kernelName = `scheduler-closed-conversation-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      kernelName,
-    );
+    const { kernel, kernelName } = await newScheduleKernel();
     const process = await getProcessByPid(pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
@@ -775,6 +833,7 @@ describe("scheduler", () => {
       addTestUser(k.auth);
       k.procs.spawn(pid, USER_IDENTITY, {
         ownerUid: USER_IDENTITY.uid,
+        kernelGeneration: 1,
         label: "closed scheduled target",
       });
     });
@@ -817,10 +876,7 @@ describe("scheduler", () => {
   });
 
   it("runs a due command schedule through the Kernel shell", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      `scheduler-command-test-${crypto.randomUUID()}`,
-    );
+    const { kernel } = await newScheduleKernel();
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
         auth: ScheduleTestAuth;
@@ -832,6 +888,7 @@ describe("scheduler", () => {
       k.caps.seed();
       addTestUser(k.auth);
       k.procs.spawn("init:1000", USER_IDENTITY, {
+        kernelGeneration: 1,
         profile: "init",
         label: "init",
       });
@@ -877,10 +934,7 @@ describe("scheduler", () => {
   });
 
   it("runs command schedules as the stored run-as account", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      `scheduler-runas-test-${crypto.randomUUID()}`,
-    );
+    const { kernel } = await newScheduleKernel();
     const runAs: SchedulePrincipal = {
       kind: "process",
       uid: CUSTOM_AGENT_IDENTITY.uid,
@@ -898,9 +952,9 @@ describe("scheduler", () => {
         ctx: DurableObjectState;
       };
       k.caps.seed();
-      addTestAccount(k.auth, PERSONAL_AGENT_IDENTITY, "Sam Agent");
+      addTestAccount(k.auth, PERSONAL_AGENT_IDENTITY, "Sam Agent", "agent");
       k.auth.setPersonalAgent(USER_IDENTITY.uid, PERSONAL_AGENT_IDENTITY.uid);
-      addTestAccount(k.auth, CUSTOM_AGENT_IDENTITY, "Wiki Builder");
+      addTestAccount(k.auth, CUSTOM_AGENT_IDENTITY, "Wiki Builder", "agent");
       k.caps.grant(CUSTOM_AGENT_IDENTITY.gid, "shell.exec");
 
       const now = Date.now();
@@ -945,10 +999,7 @@ describe("scheduler", () => {
   });
 
   it("fails process events when the run-as account no longer exists", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      `scheduler-missing-runas-test-${crypto.randomUUID()}`,
-    );
+    const { kernel } = await newScheduleKernel();
     const record = makeScheduleRecord({
       runAs: { kind: "user", uid: 9999, username: "gone" },
       target: { kind: "process.event", pid: "missing", message: "Do not deliver." },
@@ -975,10 +1026,7 @@ describe("scheduler", () => {
       target: { kind: "process.event", pid: "missing", message: "Do not deliver." } as const,
     },
   ])("rechecks $capability when a process schedule fires", async ({ capability, target }) => {
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      `scheduler-revoked-capability-test-${crypto.randomUUID()}`,
-    );
+    const { kernel } = await newScheduleKernel();
     const record = makeScheduleRecord({ target });
 
     await runInDurableObject(kernel, (instance: Kernel) => {
@@ -1003,11 +1051,7 @@ describe("scheduler", () => {
 
   it("fires an armed one-shot schedule through the Agent alarm", async () => {
     const pid = `sched-alarm-${crypto.randomUUID()}`;
-    const kernelName = `scheduler-alarm-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      kernelName,
-    );
+    const { kernel, kernelName } = await newScheduleKernel();
     const process = await getProcessByPid(pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
@@ -1019,6 +1063,7 @@ describe("scheduler", () => {
       k.caps.seed();
       addTestUser(k.auth);
       k.procs.spawn(pid, USER_IDENTITY, {
+        kernelGeneration: 1,
         profile: "task",
         label: "alarm target",
       });
@@ -1087,10 +1132,7 @@ describe("scheduler", () => {
   });
 
   it("rounds Kernel wake rows up to avoid firing before millisecond-precision due times", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      `scheduler-wake-rounding-test-${crypto.randomUUID()}`,
-    );
+    const { kernel } = await newScheduleKernel();
     const dueAtMs = (Math.floor(Date.now() / 1_000) * 1_000) + 30_123;
 
     const row = await runInDurableObject(kernel, async (instance: Kernel) => {
@@ -1111,11 +1153,7 @@ describe("scheduler", () => {
 
   it("re-arms when an existing wake fires before the GSV schedule is due", async () => {
     const pid = `sched-early-${crypto.randomUUID()}`;
-    const kernelName = `scheduler-early-wake-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      kernelName,
-    );
+    const { kernel, kernelName } = await newScheduleKernel();
     const process = await getProcessByPid(pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
@@ -1125,6 +1163,7 @@ describe("scheduler", () => {
       };
       k.caps.seed();
       k.procs.spawn(pid, USER_IDENTITY, {
+        kernelGeneration: 1,
         profile: "task",
         label: "early wake target",
       });
@@ -1200,11 +1239,7 @@ describe("scheduler", () => {
 
   it("ignores stale wake rows before checking due state", async () => {
     const pid = `sched-stale-${crypto.randomUUID()}`;
-    const kernelName = `scheduler-stale-wake-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      kernelName,
-    );
+    const { kernel, kernelName } = await newScheduleKernel();
     const process = await getProcessByPid(pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
@@ -1214,6 +1249,7 @@ describe("scheduler", () => {
       };
       k.caps.seed();
       k.procs.spawn(pid, USER_IDENTITY, {
+        kernelGeneration: 1,
         profile: "task",
         label: "stale wake target",
       });
@@ -1288,11 +1324,7 @@ describe("scheduler", () => {
   it("force-runs a process event schedule before it is due", async () => {
     const pid = `sched-force-${crypto.randomUUID()}`;
     const conversationId = "ops";
-    const kernelName = `scheduler-force-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      kernelName,
-    );
+    const { kernel, kernelName } = await newScheduleKernel();
     const process = await getProcessByPid(pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
@@ -1304,6 +1336,7 @@ describe("scheduler", () => {
       k.caps.seed();
       addTestUser(k.auth);
       k.procs.spawn(pid, USER_IDENTITY, {
+        kernelGeneration: 1,
         profile: "task",
         label: "scheduled target",
       });
@@ -1357,10 +1390,7 @@ describe("scheduler", () => {
   });
 
   it("skips a due schedule that is already running", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      `scheduler-overlap-test-${crypto.randomUUID()}`,
-    );
+    const { kernel } = await newScheduleKernel();
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
         caps: { seed: () => void };
@@ -1370,6 +1400,7 @@ describe("scheduler", () => {
       };
       k.caps.seed();
       k.procs.spawn("init:1000", USER_IDENTITY, {
+        kernelGeneration: 1,
         profile: "init",
         label: "init",
       });
@@ -1408,13 +1439,261 @@ describe("scheduler", () => {
     });
   });
 
+  it("re-arms a due alarm that overlaps a forced run", async () => {
+    const { kernel } = await newScheduleKernel();
+    const { scheduleId, oldWakeId } = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+        scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
+      };
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "force overlap",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000 },
+        target: { kind: "process.spawn", prompt: "Run after the forced execution." },
+        now,
+      });
+      const dueAtMs = now - 1_000;
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        dueAtMs,
+        schedule.id,
+      );
+      const oldWakeId = await k.scheduleScheduleWake(schedule.id, dueAtMs);
+      k.schedules.setWakeScheduleId(schedule.id, oldWakeId);
+      expect(k.schedules.markRunning(schedule.id, now - 500)).not.toBeNull();
+      k.ctx.storage.sql.exec(
+        "UPDATE cf_agents_schedules SET time = ? WHERE id = ?",
+        Math.floor(dueAtMs / 1_000),
+        oldWakeId,
+      );
+      return { scheduleId: schedule.id, oldWakeId };
+    });
+
+    await runDurableObjectAlarm(kernel);
+
+    const state = await runInDurableObject(kernel, (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+      };
+      const schedule = k.schedules.getStored(scheduleId);
+      const wakeRows = k.ctx.storage.sql.exec<{ id: string }>(
+        "SELECT id FROM cf_agents_schedules WHERE callback = 'onScheduleDue'",
+      ).toArray();
+      return { schedule, wakeRows };
+    });
+
+    expect(state.schedule?.state.runningAtMs).not.toBeNull();
+    expect(state.schedule?.wakeScheduleId).toEqual(expect.any(String));
+    expect(state.schedule?.wakeScheduleId).not.toBe(oldWakeId);
+    expect(state.wakeRows).toEqual([
+      { id: state.schedule!.wakeScheduleId! },
+    ]);
+  });
+
+  it("releases and records an execution interrupted by runtime replacement", async () => {
+    const { kernel } = await newScheduleKernel();
+    const finishedAtMs = Date.now();
+    const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
+      const store = (instance as unknown as { schedules: ScheduleStore }).schedules;
+      const schedule = store.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "interrupted",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000 },
+        target: { kind: "process.spawn", prompt: "retry me" },
+        now: finishedAtMs - 10_000,
+      });
+      expect(store.markRunning(schedule.id, finishedAtMs - 5_000)).not.toBeNull();
+      expect(store.releaseInterruptedRuns(
+        "User Kernel lifecycle changed",
+        finishedAtMs,
+      )).toBe(1);
+      return schedule.id;
+    });
+
+    const recovered = await runInDurableObject(kernel, (instance: Kernel) => {
+      const store = (instance as unknown as { schedules: ScheduleStore }).schedules;
+      return {
+        schedule: store.get(scheduleId),
+        history: store.history(scheduleId),
+        releasedAgain: store.releaseInterruptedRuns("duplicate recovery", finishedAtMs + 1),
+      };
+    });
+
+    expect(recovered.releasedAgain).toBe(0);
+    expect(recovered.schedule?.state).toMatchObject({
+      runningAtMs: null,
+      lastStatus: "error",
+      lastError: "User Kernel lifecycle changed",
+      lastDurationMs: 5_000,
+      runCount: 1,
+    });
+    expect(recovered.history).toHaveLength(1);
+    expect(recovered.history[0]).toMatchObject({
+      status: "error",
+      error: "User Kernel lifecycle changed",
+      result: {
+        interrupted: true,
+        error: "User Kernel lifecycle changed",
+      },
+    });
+  });
+
+  it("releases interrupted executions only for the exact owner", async () => {
+    const { kernel } = await newScheduleKernel();
+    const finishedAtMs = Date.now();
+    const recovered = await runInDurableObject(kernel, (instance: Kernel) => {
+      const store = (instance as unknown as { schedules: ScheduleStore }).schedules;
+      const owned = store.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "owned interrupted run",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000 },
+        target: { kind: "process.spawn", prompt: "retry the owned run" },
+        now: finishedAtMs - 10_000,
+      });
+      const other = store.create({
+        ownerUid: PERSONAL_AGENT_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "other interrupted run",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000 },
+        target: { kind: "process.spawn", prompt: "leave the other run alone" },
+        now: finishedAtMs - 10_000,
+      });
+      expect(store.markRunning(owned.id, finishedAtMs - 5_000)).not.toBeNull();
+      expect(store.markRunning(other.id, finishedAtMs - 4_000)).not.toBeNull();
+
+      const released = store.releaseInterruptedRunsForOwner(
+        USER_IDENTITY.uid,
+        "Owner runtime was fenced",
+        finishedAtMs,
+      );
+      const releasedAgain = store.releaseInterruptedRunsForOwner(
+        USER_IDENTITY.uid,
+        "duplicate owner recovery",
+        finishedAtMs + 1,
+      );
+
+      return {
+        released,
+        releasedAgain,
+        owned: store.get(owned.id),
+        ownedHistory: store.history(owned.id),
+        other: store.get(other.id),
+        otherHistory: store.history(other.id),
+      };
+    });
+
+    expect(recovered.released).toBe(1);
+    expect(recovered.releasedAgain).toBe(0);
+    expect(recovered.owned?.state).toMatchObject({
+      runningAtMs: null,
+      lastStatus: "error",
+      lastError: "Owner runtime was fenced",
+      lastDurationMs: 5_000,
+      runCount: 1,
+    });
+    expect(recovered.ownedHistory).toHaveLength(1);
+    expect(recovered.ownedHistory[0]).toMatchObject({
+      status: "error",
+      error: "Owner runtime was fenced",
+      result: {
+        interrupted: true,
+        error: "Owner runtime was fenced",
+      },
+    });
+    expect(recovered.other?.state).toMatchObject({
+      runningAtMs: finishedAtMs - 4_000,
+      lastStatus: null,
+      lastError: null,
+      runCount: 0,
+    });
+    expect(recovered.otherHistory).toEqual([]);
+  });
+
+  it("rejects unsafe owner ids before interrupted-run recovery", async () => {
+    const { kernel } = await newScheduleKernel();
+    const errors = await runInDurableObject(kernel, (instance: Kernel) => {
+      const store = (instance as unknown as { schedules: ScheduleStore }).schedules;
+      return [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY]
+        .map((ownerUid) => {
+          try {
+            store.releaseInterruptedRunsForOwner(ownerUid, "must not run");
+            return null;
+          } catch (error) {
+            return error instanceof Error ? error.message : String(error);
+          }
+        });
+    });
+
+    expect(errors).toEqual(Array.from(
+      { length: 5 },
+      () => "ownerUid must be a safe non-negative integer",
+    ));
+  });
+
+  it("re-arms a future wake after an interrupted forced run", async () => {
+    const { kernel } = await newScheduleKernel();
+    const state = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+        userKernelMarker: UserKernelInstanceMarker;
+        scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
+        rearmPendingSchedules: (marker: UserKernelInstanceMarker) => Promise<void>;
+      };
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "future interrupted force",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000 },
+        target: { kind: "process.spawn", prompt: "Run at the original due time." },
+        now,
+      });
+      const nextRunAtMs = schedule.state.nextRunAtMs!;
+      const oldWakeId = await k.scheduleScheduleWake(schedule.id, nextRunAtMs);
+      k.schedules.setWakeScheduleId(schedule.id, oldWakeId);
+      expect(k.schedules.markRunning(schedule.id, now)).not.toBeNull();
+      expect(k.schedules.releaseInterruptedRuns("User Kernel was suspended", now + 1)).toBe(1);
+
+      await k.rearmPendingSchedules(k.userKernelMarker);
+
+      const recovered = k.schedules.getStored(schedule.id)!;
+      const wakeRows = k.ctx.storage.sql.exec<{ id: string }>(
+        "SELECT id FROM cf_agents_schedules WHERE callback = 'onScheduleDue'",
+      ).toArray();
+      return { recovered, wakeRows, oldWakeId, nextRunAtMs };
+    });
+
+    expect(state.recovered.state.nextRunAtMs).toBe(state.nextRunAtMs);
+    expect(state.recovered.state.nextRunAtMs).toBeGreaterThan(Date.now());
+    expect(state.recovered.state.runningAtMs).toBeNull();
+    expect(state.recovered.wakeScheduleId).toEqual(expect.any(String));
+    expect(state.recovered.wakeScheduleId).not.toBe(state.oldWakeId);
+    expect(state.wakeRows).toEqual([
+      { id: state.recovered.wakeScheduleId! },
+    ]);
+  });
+
   it("disables an after schedule once it runs", async () => {
     const pid = `sched-once-${crypto.randomUUID()}`;
-    const kernelName = `scheduler-once-test-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      kernelName,
-    );
+    const { kernel, kernelName } = await newScheduleKernel();
     const process = await getProcessByPid(pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
@@ -1426,6 +1705,7 @@ describe("scheduler", () => {
       k.caps.seed();
       addTestUser(k.auth);
       k.procs.spawn(pid, USER_IDENTITY, {
+        kernelGeneration: 1,
         profile: "task",
         label: "one-shot target",
       });
@@ -1472,10 +1752,7 @@ describe("scheduler", () => {
   });
 
   it("runs a due process.spawn schedule and sends the prompt to the cron process", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      `scheduler-spawn-test-${crypto.randomUUID()}`,
-    );
+    const { kernel } = await newScheduleKernel();
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
         auth: ScheduleTestAuth;
@@ -1486,9 +1763,10 @@ describe("scheduler", () => {
       };
       k.caps.seed();
       addTestUser(k.auth);
-      addTestAccount(k.auth, PERSONAL_AGENT_IDENTITY, "Sam Agent");
+      addTestAccount(k.auth, PERSONAL_AGENT_IDENTITY, "Sam Agent", "agent");
       k.auth.setPersonalAgent(USER_IDENTITY.uid, PERSONAL_AGENT_IDENTITY.uid);
       k.procs.spawn("init:1000", USER_IDENTITY, {
+        kernelGeneration: 1,
         profile: "init",
         label: "init",
       });
@@ -1565,10 +1843,7 @@ describe("scheduler", () => {
   });
 
   it("runs process-principal spawn schedules after the creator process is gone", async () => {
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      `scheduler-dead-parent-spawn-test-${crypto.randomUUID()}`,
-    );
+    const { kernel } = await newScheduleKernel();
     const runAs: SchedulePrincipal = {
       kind: "process",
       uid: CUSTOM_AGENT_IDENTITY.uid,
@@ -1585,7 +1860,7 @@ describe("scheduler", () => {
         ctx: DurableObjectState;
       };
       addTestUser(k.auth);
-      addTestAccount(k.auth, CUSTOM_AGENT_IDENTITY, "Wiki Builder");
+      addTestAccount(k.auth, CUSTOM_AGENT_IDENTITY, "Wiki Builder", "agent");
       k.caps.grant(CUSTOM_AGENT_IDENTITY.gid, "proc.spawn");
 
       const now = Date.now();

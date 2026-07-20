@@ -47,9 +47,18 @@ export type OpenAICodexToken = {
   accountId: string | null;
 };
 
+export type OpenAICodexRefreshOptions = {
+  fetcher?: typeof fetch;
+  now?: number;
+  signal?: AbortSignal;
+  assertCurrentKernel: () => void;
+};
+
 export async function startOpenAICodexDeviceFlow(
   fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<OpenAICodexDeviceStart> {
+  signal?.throwIfAborted();
   const response = await fetcher(OPENAI_CODEX_DEVICE_USER_CODE_URL, {
     method: "POST",
     headers: {
@@ -57,12 +66,15 @@ export async function startOpenAICodexDeviceFlow(
       "accept": "application/json",
     },
     body: JSON.stringify({ client_id: OPENAI_CODEX_CLIENT_ID }),
+    signal,
   });
+  signal?.throwIfAborted();
   if (!response.ok) {
     throw new Error(`OpenAI Codex device code request failed with status ${response.status}: ${await readLimitedText(response)}`);
   }
 
   const json = await readJsonObject(response);
+  signal?.throwIfAborted();
   const deviceAuthId = stringField(json, "device_auth_id");
   const userCode = stringField(json, "user_code");
   const intervalSeconds = positiveNumberField(json, "interval") ?? 5;
@@ -87,7 +99,9 @@ export async function pollOpenAICodexDeviceFlow(
     intervalSeconds?: number;
   },
   fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<OpenAICodexDevicePoll> {
+  signal?.throwIfAborted();
   const response = await fetcher(OPENAI_CODEX_DEVICE_TOKEN_URL, {
     method: "POST",
     headers: {
@@ -98,10 +112,13 @@ export async function pollOpenAICodexDeviceFlow(
       device_auth_id: input.deviceAuthId,
       user_code: input.userCode,
     }),
+    signal,
   });
+  signal?.throwIfAborted();
 
   if (response.ok) {
     const json = await readJsonObject(response);
+    signal?.throwIfAborted();
     const authorizationCode = stringField(json, "authorization_code");
     const codeVerifier = stringField(json, "code_verifier");
     if (!authorizationCode || !codeVerifier) {
@@ -133,6 +150,7 @@ export async function exchangeOpenAICodexAuthorizationCode(
   code: string,
   codeVerifier: string,
   fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<OpenAICodexToken> {
   return exchangeOpenAICodexToken({
     grant_type: "authorization_code",
@@ -140,23 +158,31 @@ export async function exchangeOpenAICodexAuthorizationCode(
     code,
     code_verifier: codeVerifier,
     redirect_uri: OPENAI_CODEX_DEVICE_REDIRECT_URI,
-  }, "exchange", fetcher);
+  }, "exchange", fetcher, undefined, signal);
 }
 
 export async function refreshOpenAICodexAccount(
   oauth: OAuthStore,
   account: OAuthAccountRecord,
-  fetcher: typeof fetch = fetch,
-  now = Date.now(),
+  options: OpenAICodexRefreshOptions,
 ): Promise<OAuthAccountRecord> {
+  const {
+    fetcher = fetch,
+    now = Date.now(),
+    signal,
+    assertCurrentKernel,
+  } = options;
   if (!account.refreshToken) {
     throw new Error("OpenAI Codex OAuth account is missing a refresh token");
   }
+  signal?.throwIfAborted();
   const token = await exchangeOpenAICodexToken({
     grant_type: "refresh_token",
     refresh_token: account.refreshToken,
     client_id: OPENAI_CODEX_CLIENT_ID,
-  }, "refresh", fetcher, account.refreshToken);
+  }, "refresh", fetcher, account.refreshToken, signal);
+  signal?.throwIfAborted();
+  assertCurrentKernel();
   return oauth.upsertAccount({
     uid: account.uid,
     kind: account.kind,
@@ -199,7 +225,9 @@ async function exchangeOpenAICodexToken(
   operation: "exchange" | "refresh",
   fetcher: typeof fetch,
   fallbackRefreshToken?: string,
+  signal?: AbortSignal,
 ): Promise<OpenAICodexToken> {
+  signal?.throwIfAborted();
   const response = await fetcher(OPENAI_CODEX_TOKEN_URL, {
     method: "POST",
     headers: {
@@ -207,12 +235,15 @@ async function exchangeOpenAICodexToken(
       "accept": "application/json",
     },
     body: new URLSearchParams(params),
+    signal,
   });
+  signal?.throwIfAborted();
   if (!response.ok) {
     throw new Error(`OpenAI Codex token ${operation} failed with status ${response.status}: ${await readLimitedText(response)}`);
   }
 
   const json = await readJsonObject(response);
+  signal?.throwIfAborted();
   const accessToken = stringField(json, "access_token");
   const refreshToken = stringField(json, "refresh_token") ??
     (operation === "refresh" ? fallbackRefreshToken ?? null : null);

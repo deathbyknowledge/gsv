@@ -8,7 +8,7 @@ declare namespace Cloudflare {
 	}
 	interface Env {
 		TEST_CHANNEL_STATE: DurableObjectNamespace<import("./src/index").TestChannelState>;
-		GATEWAY: Service /* entrypoint GatewayEntrypoint from gsv */;
+		GATEWAY: Service /* entrypoint TestGatewayEntrypoint from gsv */;
 	}
 }
 interface Env extends Cloudflare.Env {}

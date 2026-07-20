@@ -15,7 +15,11 @@ import type {
   SysMcpTransportType,
 } from "@humansandmachines/gsv/protocol";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { resolveCallerOwnerUid, type KernelContext } from "../context";
+import {
+  assertLocalUserKernelUid,
+  resolveCallerOwnerUid,
+  type KernelContext,
+} from "../context";
 import type { McpServerRecord } from "../mcp-store";
 
 export type McpAddConnectionInput = {
@@ -238,8 +242,11 @@ function parseEffectiveUid(input: unknown, ctx: KernelContext, action: string): 
     if (callerUid !== 0 && input !== callerUid && input !== ownerUid) {
       throw new Error(`Permission denied: cannot ${action} for another user`);
     }
-    return input as number;
+    const effectiveUid = input as number;
+    assertLocalUserKernelUid(ctx, effectiveUid, "MCP access");
+    return effectiveUid;
   }
+  assertLocalUserKernelUid(ctx, ownerUid, "MCP access");
   return ownerUid;
 }
 

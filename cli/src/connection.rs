@@ -21,6 +21,44 @@ pub type DisconnectFlag = Arc<AtomicBool>;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+const ACCOUNT_USERNAME_MAX_CHARACTERS: usize = 32;
+const ACCOUNT_USERNAME_INPUT_MAX_CHARACTERS: usize = 64;
+
+pub fn canonicalize_gateway_username(value: &str) -> Result<String, String> {
+    if value.chars().count() > ACCOUNT_USERNAME_INPUT_MAX_CHARACTERS {
+        return Err("Username must match ^[a-z_][a-z0-9_-]{0,31}$".to_string());
+    }
+
+    let username = value.trim();
+    if username.chars().count() > ACCOUNT_USERNAME_MAX_CHARACTERS {
+        return Err("Username must match ^[a-z_][a-z0-9_-]{0,31}$".to_string());
+    }
+    let mut chars = username.chars();
+    let valid_start = chars
+        .next()
+        .map(|character| character.is_ascii_alphabetic() || character == '_')
+        .unwrap_or(false);
+    let valid_rest = chars.all(|character| {
+        character.is_ascii_alphabetic()
+            || character.is_ascii_digit()
+            || character == '_'
+            || character == '-'
+    });
+    if !valid_start || !valid_rest {
+        return Err("Username must match ^[a-z_][a-z0-9_-]{0,31}$".to_string());
+    }
+    Ok(username.to_ascii_lowercase())
+}
+
+fn user_websocket_url(gateway_url: &str, username: &str) -> Result<String, String> {
+    let mut url =
+        url::Url::parse(gateway_url).map_err(|error| format!("Invalid gateway URL: {error}"))?;
+    if !matches!(url.scheme(), "ws" | "wss") {
+        return Err("Gateway URL must use ws:// or wss://".to_string());
+    }
+    url.set_path(&format!("/ws/{username}"));
+    Ok(url.into())
+}
 
 #[derive(Debug, Clone)]
 pub struct GatewayRpcError {
@@ -122,10 +160,18 @@ pub struct Connection {
 
 impl Connection {
     pub async fn connect(
-        opts: ConnectOptions,
+        mut opts: ConnectOptions,
         on_frame: impl Fn(Frame) + Send + 'static + Sync,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut conn = Self::open_socket(&opts.url, on_frame).await?;
+        let socket_url = if let Some(raw_username) = opts.auth_username.as_deref() {
+            let username = canonicalize_gateway_username(raw_username)?;
+            let socket_url = user_websocket_url(&opts.url, &username)?;
+            opts.auth_username = Some(username);
+            socket_url
+        } else {
+            opts.url.clone()
+        };
+        let mut conn = Self::open_socket(&socket_url, on_frame).await?;
         conn.handshake(&opts).await?;
         Ok(conn)
     }
@@ -434,5 +480,36 @@ mod tests {
 
         let error = parse_connect_result(Some(data)).unwrap_err();
         assert_eq!(error, "Gateway selected protocol 1, expected 2");
+    }
+
+    #[test]
+    fn builds_canonical_user_websocket_routes() {
+        let username = canonicalize_gateway_username(" Alice ").unwrap();
+        assert_eq!(username, "alice");
+        assert_eq!(
+            user_websocket_url("wss://gsv.example/ws?source=cli", &username).unwrap(),
+            "wss://gsv.example/ws/alice?source=cli",
+        );
+    }
+
+    #[test]
+    fn rejects_unsafe_routing_usernames() {
+        assert!(canonicalize_gateway_username("../singleton").is_err());
+        assert!(canonicalize_gateway_username("a".repeat(33).as_str()).is_err());
+        assert!(canonicalize_gateway_username("K").is_err());
+        assert!(canonicalize_gateway_username("Ａlice").is_err());
+    }
+
+    #[test]
+    fn bounds_raw_username_input_after_allowing_canonical_whitespace() {
+        let canonical = format!("A{}", "B".repeat(31));
+        let padded = format!("{}{}{}", " ".repeat(16), canonical, " ".repeat(16));
+        assert_eq!(
+            canonicalize_gateway_username(&padded).unwrap(),
+            canonical.to_ascii_lowercase(),
+        );
+
+        let oversized = format!("{}{}{}", " ".repeat(17), canonical, " ".repeat(16));
+        assert!(canonicalize_gateway_username(&oversized).is_err());
     }
 }

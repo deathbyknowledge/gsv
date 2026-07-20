@@ -22,8 +22,11 @@ export type OAuthCallbackRenderResult =
       message: string;
     };
 
-export function buildOAuthClientMetadata(origin: string): OAuthClientMetadata {
-  const clientId = `${origin}/.well-known/oauth-client/gsv.json`;
+export function buildOAuthClientMetadata(
+  origin: string,
+  options: { clientId?: string; redirectUri?: string } = {},
+): OAuthClientMetadata {
+  const clientId = options.clientId ?? `${origin}/.well-known/oauth-client/gsv.json`;
   return {
     client_id: clientId,
     client_name: "GSV",
@@ -31,7 +34,7 @@ export function buildOAuthClientMetadata(origin: string): OAuthClientMetadata {
     response_types: ["code"],
     grant_types: ["authorization_code", "refresh_token"],
     token_endpoint_auth_method: "none",
-    redirect_uris: [`${origin}/oauth/callback`],
+    redirect_uris: [options.redirectUri ?? `${origin}/oauth/callback`],
     code_challenge_methods_supported: ["S256"],
   };
 }

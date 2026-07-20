@@ -4,6 +4,7 @@ import { GsvFs, parseMode, isValidMode, resolveUserPath } from "./index";
 import type { KernelRefs } from "./index";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { provisionR2Directory, R2MountBackend } from "./backends/r2";
+import { APP_PLACEMENT_VERIFICATION_KEY_OBJECT } from "../shared/app-placement-certificate";
 
 const ROOT: ProcessIdentity = {
   uid: 0,
@@ -770,6 +771,12 @@ describe("GsvFs permissions", () => {
     for (const obj of listed.objects) {
       await env.STORAGE.delete(obj.key);
     }
+    await provisionR2Directory(
+      env.STORAGE,
+      `/${TEST_PREFIX.replace(/\/$/, "")}`,
+      ROOT,
+      "777",
+    );
   });
 
   it("root (uid 0) can read any file", async () => {
@@ -1067,6 +1074,71 @@ describe("GsvFs permissions", () => {
   });
 });
 
+describe("R2 creation parent permissions", () => {
+  const PREFIX = "test/security-parent-permissions";
+  const TOP_LEVEL_FILE = "gsv-r2-top-level-file-test";
+  const TOP_LEVEL_DIRECTORY = "gsv-r2-top-level-directory-test";
+  const TOP_LEVEL_LINK = "gsv-r2-top-level-link-test";
+
+  beforeEach(async () => {
+    const listed = await env.STORAGE.list({ prefix: `${PREFIX}/` });
+    await env.STORAGE.delete([
+      ...listed.objects.map((object) => object.key),
+      TOP_LEVEL_FILE,
+      `${TOP_LEVEL_DIRECTORY}/.dir`,
+      TOP_LEVEL_LINK,
+    ]);
+  });
+
+  it("denies non-root creation directly beneath the root", async () => {
+    for (const identity of [SAM, ALICE]) {
+      const fs = makeFs(identity);
+      await expect(fs.writeFile(`/${TOP_LEVEL_FILE}`, "nope")).rejects.toThrow("EACCES");
+      await expect(fs.mkdir(`/${TOP_LEVEL_DIRECTORY}`)).rejects.toThrow("EACCES");
+      await expect(fs.symlink("/missing", `/${TOP_LEVEL_LINK}`)).rejects.toThrow("EACCES");
+    }
+
+    const rootFs = makeFs(ROOT);
+    await expect(rootFs.writeFile(`/${TOP_LEVEL_FILE}`, "root-owned")).resolves.toBeUndefined();
+    await expect(rootFs.mkdir(`/${TOP_LEVEL_DIRECTORY}`)).resolves.toBeUndefined();
+    await expect(rootFs.symlink(`/${TOP_LEVEL_FILE}`, `/${TOP_LEVEL_LINK}`)).resolves.toBeUndefined();
+  });
+
+  it("denies both users from creating beneath an implicit markerless parent", async () => {
+    const implicitParent = `${PREFIX}/implicit`;
+    await putFile(`${implicitParent}/existing.txt`, "legacy", {
+      uid: String(SAM.uid),
+      gid: String(SAM.gid),
+      mode: "600",
+    });
+
+    await expect(makeFs(SAM).writeFile(`/${implicitParent}/sam.txt`, "nope"))
+      .rejects.toThrow("EACCES");
+    await expect(makeFs(ALICE).writeFile(`/${implicitParent}/alice.txt`, "nope"))
+      .rejects.toThrow("EACCES");
+    await expect(env.STORAGE.head(`${implicitParent}/sam.txt`)).resolves.toBeNull();
+    await expect(env.STORAGE.head(`${implicitParent}/alice.txt`)).resolves.toBeNull();
+  });
+
+  it("allows creation only through an explicitly writable parent marker", async () => {
+    const ownedParent = `/${PREFIX}/sam-owned`;
+    await provisionR2Directory(env.STORAGE, ownedParent, SAM, "700");
+
+    const samFs = makeFs(SAM);
+    await expect(samFs.writeFile(`${ownedParent}/file.txt`, "mine")).resolves.toBeUndefined();
+    await expect(samFs.mkdir(`${ownedParent}/directory`)).resolves.toBeUndefined();
+    await expect(samFs.symlink(`${ownedParent}/file.txt`, `${ownedParent}/link`))
+      .resolves.toBeUndefined();
+
+    const aliceFs = makeFs(ALICE);
+    await expect(aliceFs.writeFile(`${ownedParent}/intrusion.txt`, "nope"))
+      .rejects.toThrow("EACCES");
+    await expect(aliceFs.mkdir(`${ownedParent}/intrusion`)).rejects.toThrow("EACCES");
+    await expect(aliceFs.symlink(`${ownedParent}/file.txt`, `${ownedParent}/intrusion-link`))
+      .rejects.toThrow("EACCES");
+  });
+});
+
 describe("GsvFs write metadata", () => {
   const TEST_PREFIX = "test/meta/";
 
@@ -1075,6 +1147,12 @@ describe("GsvFs write metadata", () => {
     for (const obj of listed.objects) {
       await env.STORAGE.delete(obj.key);
     }
+    await provisionR2Directory(
+      env.STORAGE,
+      `/${TEST_PREFIX.replace(/\/$/, "")}`,
+      ROOT,
+      "777",
+    );
   });
 
   it("write stamps uid, gid, and mode 644 on new files", async () => {
@@ -1198,7 +1276,7 @@ describe("GsvFs write metadata", () => {
     const backend = new R2MountBackend({
       head: async () => null,
       put: async () => null,
-    } as unknown as R2Bucket, SAM);
+    } as unknown as R2Bucket, ROOT);
 
     await expect(backend.writeFileStream("/conditional-stream.txt", source, {
       expectedSize: 1,
@@ -1446,6 +1524,12 @@ describe("GsvFs directory removal", () => {
     for (const obj of listed.objects) {
       await env.STORAGE.delete(obj.key);
     }
+    await provisionR2Directory(
+      env.STORAGE,
+      `/${TEST_PREFIX.replace(/\/$/, "")}`,
+      ROOT,
+      "777",
+    );
   });
 
   it("removes an empty directory created via mkdir", async () => {
@@ -1562,7 +1646,13 @@ describe("GsvFs system storage boundaries", () => {
   const LEGACY_ARCHIVE_KEY = "home/shared-agent/conversations/conversation/archive.jsonl.gz";
 
   beforeEach(async () => {
-    await env.STORAGE.delete([PUBLIC_KEY, RUNTIME_KEY, ARCHIVE_KEY, LEGACY_ARCHIVE_KEY]);
+    await env.STORAGE.delete([
+      PUBLIC_KEY,
+      RUNTIME_KEY,
+      APP_PLACEMENT_VERIFICATION_KEY_OBJECT,
+      ARCHIVE_KEY,
+      LEGACY_ARCHIVE_KEY,
+    ]);
   });
 
   it("keeps public assets readable but root-managed", async () => {
@@ -1587,6 +1677,31 @@ describe("GsvFs system storage boundaries", () => {
     await expect(fs.rm("/runtime/package-artifacts", { recursive: true }))
       .rejects.toThrow("EACCES");
     await expect(fs.readdir("/process-source-overlays")).rejects.toThrow("EACCES");
+  });
+
+  it("keeps the edge placement trust anchor root-owned and off mounted paths", async () => {
+    await env.STORAGE.put(APP_PLACEMENT_VERIFICATION_KEY_OBJECT, "public-key", {
+      customMetadata: {
+        uid: "0",
+        gid: "0",
+        mode: "444",
+        gsvInternal: "app-placement-verification-key-v1",
+      },
+    });
+    const fs = makeFs(SAM);
+    const mountedPath = `/${APP_PLACEMENT_VERIFICATION_KEY_OBJECT}`;
+
+    await expect(fs.readFile(mountedPath)).rejects.toThrow("EACCES");
+    await expect(fs.writeFile(mountedPath, "forged-key")).rejects.toThrow("EACCES");
+    await expect(fs.rm(mountedPath)).rejects.toThrow("EACCES");
+    await expect(env.STORAGE.head(APP_PLACEMENT_VERIFICATION_KEY_OBJECT))
+      .resolves.toMatchObject({
+        customMetadata: expect.objectContaining({
+          uid: "0",
+          mode: "444",
+          gsvInternal: "app-placement-verification-key-v1",
+        }),
+      });
   });
 
   it("keeps current and legacy conversation archives off the non-root filesystem", async () => {

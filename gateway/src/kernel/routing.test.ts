@@ -49,6 +49,10 @@ function createMockSql() {
       return mockSqlRows((route ? [route] : []) as T[]);
     }
 
+    if (normalized === "SELECT * FROM routing_table") {
+      return mockSqlRows([...routes.values()] as T[]);
+    }
+
     if (normalized.startsWith(
       "SELECT id, origin_type, origin_id, device_id, schedule_id FROM routing_table WHERE driver_connection_id = ?",
     )) {
@@ -70,6 +74,29 @@ function createMockSql() {
 
     if (normalized === "DELETE FROM routing_table WHERE id = ?") {
       routes.delete(bindings[0] as string);
+      return mockSqlRows<T>();
+    }
+
+    if (
+      normalized.startsWith("DELETE FROM routing_table WHERE (origin_type = ? AND origin_id = ?)")
+      && normalized.endsWith("RETURNING *")
+    ) {
+      const origins = new Set<string>();
+      for (let index = 0; index < bindings.length; index += 2) {
+        origins.add(`${bindings[index] as string}\0${bindings[index + 1] as string}`);
+      }
+      const removed: MockSqlRow[] = [];
+      for (const [id, route] of routes) {
+        if (origins.has(`${route.origin_type as string}\0${route.origin_id as string}`)) {
+          removed.push(route);
+          routes.delete(id);
+        }
+      }
+      return mockSqlRows(removed as T[]);
+    }
+
+    if (normalized === "DELETE FROM routing_table") {
+      routes.clear();
       return mockSqlRows<T>();
     }
 
@@ -105,6 +132,121 @@ describe("RoutingTable", () => {
       expiresAt: 6_000,
       scheduleId: "schedule-1",
     });
+  });
+
+  it("drains every persisted route for lifecycle fencing", () => {
+    const routes = new RoutingTable(createMockSql() as unknown as SqlStorage);
+    routes.register(
+      "request-1",
+      "fs.read",
+      { type: "process", id: "process-1" },
+      "browser",
+      "driver-1",
+      { scheduleId: "schedule-1" },
+    );
+    routes.register(
+      "request-2",
+      "net.fetch",
+      { type: "connection", id: "connection-1" },
+      "laptop",
+      "driver-2",
+    );
+
+    expect(routes.drain()).toEqual([
+      expect.objectContaining({
+        id: "request-1",
+        origin: { type: "process", id: "process-1" },
+        scheduleId: "schedule-1",
+      }),
+      expect.objectContaining({
+        id: "request-2",
+        origin: { type: "connection", id: "connection-1" },
+      }),
+    ]);
+    expect(routes.get("request-1")).toBeNull();
+    expect(routes.get("request-2")).toBeNull();
+    expect(routes.drain()).toEqual([]);
+  });
+
+  it("atomically drains only routes with an exact origin", () => {
+    vi.spyOn(Date, "now").mockReturnValue(2_000);
+    const sql = createMockSql();
+    const exec = vi.spyOn(sql, "exec");
+    const routes = new RoutingTable(sql as unknown as SqlStorage);
+    const hostileOriginId = "process-2' OR 1 = 1 --";
+
+    routes.register(
+      "request-1",
+      "fs.read",
+      { type: "process", id: "process-1" },
+      "browser",
+      "driver-1",
+      { ttlMs: 4_000, scheduleId: "schedule-1" },
+    );
+    routes.register(
+      "request-2",
+      "net.fetch",
+      { type: "process", id: hostileOriginId },
+      "laptop",
+      "driver-2",
+    );
+    routes.register(
+      "request-3",
+      "fs.write",
+      { type: "connection", id: "connection-1" },
+      "desktop",
+      "driver-3",
+    );
+
+    expect(routes.drainForOrigins([
+      { type: "process", id: "process-1" },
+      { type: "process", id: "process-1" },
+      { type: "process", id: hostileOriginId },
+    ])).toEqual([
+      {
+        id: "request-1",
+        call: "fs.read",
+        origin: { type: "process", id: "process-1" },
+        deviceId: "browser",
+        driverConnectionId: "driver-1",
+        createdAt: 2_000,
+        expiresAt: 6_000,
+        scheduleId: "schedule-1",
+      },
+      expect.objectContaining({
+        id: "request-2",
+        origin: { type: "process", id: hostileOriginId },
+      }),
+    ]);
+    expect(routes.get("request-1")).toBeNull();
+    expect(routes.get("request-2")).toBeNull();
+    expect(routes.get("request-3")).not.toBeNull();
+
+    const deleteCall = exec.mock.calls.find(([query]) => (
+      typeof query === "string" && query.includes("RETURNING *")
+    ));
+    expect(deleteCall?.[0]).not.toContain(hostileOriginId);
+    expect(deleteCall?.slice(1)).toEqual([
+      "process",
+      "process-1",
+      "process",
+      hostileOriginId,
+    ]);
+  });
+
+  it("bounds an origin drain before issuing SQL", () => {
+    const sql = createMockSql();
+    const exec = vi.spyOn(sql, "exec");
+    const routes = new RoutingTable(sql as unknown as SqlStorage);
+    const origins = Array.from({ length: 257 }, (_, index) => ({
+      type: "process" as const,
+      id: `process-${index}`,
+    }));
+
+    expect(() => routes.drainForOrigins(origins)).toThrow(RangeError);
+    expect(exec).not.toHaveBeenCalled();
+    expect(routes.drainForOrigins([])).toEqual([]);
+    expect(exec).not.toHaveBeenCalled();
   });
 
   it("fails only routes owned by the disconnected driver connection", () => {

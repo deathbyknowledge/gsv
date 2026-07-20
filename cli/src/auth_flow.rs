@@ -169,7 +169,7 @@ where
     F: FnMut(GatewayAuth) -> Fut,
     Fut: Future<Output = Result<(), Box<dyn std::error::Error>>>,
 {
-    let has_explicit_token = normalize_auth_field(cli_token.clone()).is_some();
+    let has_explicit_token = preserve_credential(cli_token.clone()).is_some();
 
     if gateway_is_in_setup_mode(url).await? {
         if !can_prompt_interactively() && (cli_username.is_none() || cli_password.is_none()) {
@@ -321,6 +321,10 @@ fn normalize_auth_field(value: Option<String>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+fn preserve_credential(value: Option<String>) -> Option<String> {
+    value.filter(|credential| !credential.is_empty())
+}
+
 pub(crate) fn format_unix_ms(timestamp_ms: i64) -> String {
     Utc.timestamp_millis_opt(timestamp_ms)
         .single()
@@ -329,7 +333,9 @@ pub(crate) fn format_unix_ms(timestamp_ms: i64) -> String {
 }
 
 fn resolve_gateway_username(cfg: &CliConfig, cli_username: Option<String>) -> Option<String> {
-    normalize_auth_field(cli_username).or_else(|| normalize_auth_field(cfg.gateway_username()))
+    normalize_auth_field(cli_username)
+        .or_else(|| normalize_auth_field(cfg.gateway_username()))
+        .map(|username| username.to_ascii_lowercase())
 }
 
 const DEFAULT_USER_SESSION_TTL_HOURS: u32 = 8;
@@ -435,8 +441,8 @@ async fn resolve_interactive_gateway_auth(
     let fresh_cfg = CliConfig::load();
     let mut username = resolve_gateway_username(&fresh_cfg, cli_username.clone())
         .or_else(|| resolve_gateway_username(cfg, cli_username));
-    let mut password = normalize_auth_field(cli_password);
-    let explicit_token = normalize_auth_field(token);
+    let mut password = preserve_credential(cli_password);
+    let explicit_token = preserve_credential(token);
 
     if username.is_none() && (password.is_some() || explicit_token.is_some()) {
         return Err("Username is required when using password/token authentication".into());
@@ -494,7 +500,7 @@ pub(crate) fn resolve_device_gateway_auth(
 ) -> Result<GatewayAuth, Box<dyn std::error::Error>> {
     let username = resolve_gateway_username(cfg, cli_username);
     let token =
-        normalize_auth_field(token).or_else(|| normalize_auth_field(cfg.default_device_token()));
+        preserve_credential(token).or_else(|| preserve_credential(cfg.default_device_token()));
 
     if token.is_some() && username.is_none() {
         return Err("Username is required when using --token for device auth".into());
@@ -532,11 +538,12 @@ pub(crate) async fn run_auth_setup(
         device_label,
         device_expires_at,
     } = options;
-    let cli_username = normalize_auth_field(username);
-    let cfg_username = normalize_auth_field(cfg.gateway_username());
+    let cli_username = normalize_auth_field(username).map(|username| username.to_ascii_lowercase());
+    let cfg_username =
+        normalize_auth_field(cfg.gateway_username()).map(|username| username.to_ascii_lowercase());
     let mut username = cli_username.clone().or_else(|| cfg_username.clone());
-    let mut password = normalize_auth_field(password);
-    let mut root_password = normalize_auth_field(root_password);
+    let mut password = preserve_credential(password);
+    let mut root_password = preserve_credential(root_password);
     let mut ai_provider = normalize_auth_field(ai_provider).map(|p| p.to_ascii_lowercase());
     let mut ai_model = normalize_auth_field(ai_model);
     let mut ai_api_key = ai_api_key.filter(|value| !value.trim().is_empty());
@@ -561,7 +568,7 @@ pub(crate) async fn run_auth_setup(
         }
         if root_password
             .as_ref()
-            .map(|value| value.trim().len() < 8)
+            .map(|value| value.len() < 8)
             .unwrap_or(false)
         {
             return Err("Root password must be at least 8 characters".into());
@@ -802,9 +809,10 @@ pub(crate) async fn run_auth_login(
         return Err("--ttl-hours must be greater than 0".into());
     }
 
-    let mut username =
-        normalize_auth_field(username).or_else(|| normalize_auth_field(cfg.gateway_username()));
-    let mut password = normalize_auth_field(password);
+    let mut username = normalize_auth_field(username)
+        .or_else(|| normalize_auth_field(cfg.gateway_username()))
+        .map(|username| username.to_ascii_lowercase());
+    let mut password = preserve_credential(password);
 
     if username.is_none() && can_prompt_interactively() {
         username = prompt_line("Gateway username", None)?;
@@ -904,9 +912,22 @@ fn prompt_line(
 pub(crate) fn prompt_secret(prompt: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let mut prompt = password(prompt).allow_empty();
     let value = prompt.interact()?;
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
+    if value.is_empty() {
         return Ok(None);
     }
-    Ok(Some(trimmed.to_string()))
+    Ok(Some(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preserve_credential;
+
+    #[test]
+    fn credential_normalization_preserves_whitespace() {
+        assert_eq!(
+            preserve_credential(Some("  exact credential  ".to_string())),
+            Some("  exact credential  ".to_string()),
+        );
+        assert_eq!(preserve_credential(Some(String::new())), None);
+    }
 }

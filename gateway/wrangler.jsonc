@@ -55,7 +55,7 @@
 		"directory": "../web/dist/",
 		"binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/ws", "/apps/*", "/git/*", "/public/*", "/runtime/*", "/downloads/*", "/oauth/*", "/.well-known/*"]
+    "run_worker_first": ["/ws", "/ws/*", "/apps/*", "/git/*", "/public/*", "/runtime/*", "/downloads/*", "/oauth/*", "/.well-known/*"]
 	},
 	// Channel service bindings (Gateway → Channel RPC)
 	"services": [
@@ -68,6 +68,11 @@
 			"binding": "CHANNEL_DISCORD",
 			"service": "gsv-channel-discord",
 			"entrypoint": "DiscordChannel"
+		},
+		{
+			"binding": "CHANNEL_WHATSAPP",
+			"service": "gsv-channel-whatsapp",
+			"entrypoint": "WhatsAppChannelEntrypoint"
 		},
 		{
 			"binding": "RIPGIT",

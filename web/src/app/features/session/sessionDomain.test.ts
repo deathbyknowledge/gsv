@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { OnboardingDraft } from "@humansandmachines/gsv/protocol";
 import type { SessionPhase, SessionSnapshot } from "../../services/session/sessionService";
 import {
+  buildSetupPayload,
   buildNodeBootstrapCommand,
   resolveVisibleView,
   validateSetupDetails,
@@ -116,6 +117,17 @@ describe("validateSetupDetails", () => {
       message: "Invalid device ID. Use 1-48 lowercase letters, numbers, underscores, or hyphens, starting with a letter or number.",
       step: "system",
     });
+  });
+});
+
+describe("buildSetupPayload", () => {
+  it("preserves password bytes", () => {
+    const draft = setupDraft({
+      password: "  password123  ",
+      passwordConfirm: "  password123  ",
+    });
+
+    expect(buildSetupPayload(draft).password).toBe("  password123  ");
   });
 });
 

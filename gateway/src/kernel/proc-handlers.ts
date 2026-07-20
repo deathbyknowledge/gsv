@@ -9,7 +9,7 @@
 import type { FrameBody, RequestFrame, ResponseFrame } from "../protocol/frames";
 import type { ResultOf, SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
-import { resolveCallerOwnerUid } from "./context";
+import { assertLocalUserKernelUid, resolveCallerOwnerUid } from "./context";
 import type {
   InteractionOrigin,
   ProcessIdentity,
@@ -33,12 +33,16 @@ import { resolveUserPath } from "../fs";
 import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
-import { resolvePackageAgentRunAs } from "./package-agents";
+import {
+  packageAgentRuntimeSecurityRevision,
+  resolvePackageAgentRunAs,
+} from "./package-agents";
 import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
 import {
   findProcessAiModelProfile,
   omitProcessAiConfigSecrets,
 } from "../process/ai-config";
+import { processKernelGenerationMatches } from "./processes";
 
 const DEFAULT_IPC_CALL_TIMEOUT_MS = 60_000;
 const MIN_IPC_CALL_TIMEOUT_MS = 1_000;
@@ -54,8 +58,11 @@ export function handleProcList(
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const isRoot = callerOwnerUid === 0;
   const uid = isRoot ? args.uid : callerOwnerUid;
+  assertLocalUserKernelUid(ctx, uid, "process listing");
 
-  const records = ctx.procs.list(uid);
+  const records = ctx.procs.list(uid).filter((record) => (
+    processKernelGenerationMatches(record, ctx.kernelGeneration)
+  ));
 
   const processes: ProcListEntry[] = records.map((r) => {
     const conversation = ctx.conversations.getByActivePid(r.processId);
@@ -84,6 +91,7 @@ export async function handleProcSpawn(
   args: ProcSpawnArgs,
   ctx: KernelContext,
 ): Promise<ProcSpawnResult> {
+  ctx.requestSignal?.throwIfAborted();
   const identity = ctx.identity!;
   const pid = `proc:${crypto.randomUUID()}`;
   const explicitRunAs = typeof args.runAs === "string" && args.runAs.trim().length > 0;
@@ -106,6 +114,7 @@ export async function handleProcSpawn(
   if (useDefaultExecutor) {
     const human = resolveCallerOwnerIdentity(ctx, identity.process);
     const pidResolved = await ensureDefaultConversationExecutor(ctx, human);
+    ctx.requestSignal?.throwIfAborted();
     const record = ctx.procs.get(pidResolved);
     if (!record) {
       return { ok: false, error: "Failed to resolve personal-agent executor" };
@@ -123,6 +132,7 @@ export async function handleProcSpawn(
           ...(origin ? { origin } : {}),
         },
       });
+      ctx.requestSignal?.throwIfAborted();
     }
 
     return {
@@ -196,8 +206,27 @@ export async function handleProcSpawn(
     baseIdentity = resolved.identity;
   } else if (!parent) {
     const agent = await ensurePersonalAgent(ctx, identity.process);
+    ctx.requestSignal?.throwIfAborted();
     baseIdentity = agent.identity;
   }
+
+  let packageSecurityRevision: string | null;
+  try {
+    packageSecurityRevision = packageAgentRuntimeSecurityRevision(ctx, baseIdentity.uid);
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  if (
+    ctx.authorizePackageAgentRuntime
+    && !await ctx.authorizePackageAgentRuntime(
+      ownerUid,
+      baseIdentity,
+      packageSecurityRevision,
+    )
+  ) {
+    return { ok: false, error: "Package agent runtime authorization was revoked" };
+  }
+  ctx.requestSignal?.throwIfAborted();
 
   const spawnIdentity: ProcessIdentity = {
     ...baseIdentity,
@@ -208,6 +237,7 @@ export async function handleProcSpawn(
 
   let conversationId: string | null = null;
   try {
+    ctx.requestSignal?.throwIfAborted();
     ctx.procs.spawn(pid, spawnIdentity, {
       parentPid: parentPid ?? undefined,
       ownerUid,
@@ -215,6 +245,10 @@ export async function handleProcSpawn(
       label: args.label,
       cwd: spawnIdentity.cwd,
       contextFiles: args.assignment?.contextFiles ?? [],
+      ...(ctx.kernelGeneration !== undefined
+        ? { kernelGeneration: ctx.kernelGeneration }
+        : {}),
+      ...(packageSecurityRevision ? { packageSecurityRevision } : {}),
     });
 
     // Each spawned process gets its own durable conversation. Its transcript
@@ -231,7 +265,7 @@ export async function handleProcSpawn(
     }
 
     const requestId = crypto.randomUUID();
-    const response = await sendFrameToProcess(pid, {
+    const response = await raceWithAbort(sendFrameToProcess(pid, {
       type: "req",
       id: requestId,
       call: "proc.setidentity",
@@ -244,7 +278,12 @@ export async function handleProcSpawn(
         assignment: args.assignment as ProcSpawnAssignment | undefined,
         conversationId,
       },
+    }), ctx.requestSignal, {
+      onLateResolve: () => {
+        void rollbackSpawn(ctx, pid, conversationId).catch(() => {});
+      },
     });
+    ctx.requestSignal?.throwIfAborted();
     if (!response || response.type !== "res" || response.id !== requestId) {
       throw new Error("proc.setidentity returned no valid response");
     }
@@ -253,6 +292,26 @@ export async function handleProcSpawn(
     }
     if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
       throw new Error("proc.setidentity rejected initialization");
+    }
+
+    if (args.prompt) {
+      ctx.requestSignal?.throwIfAborted();
+      const origin = interactionOriginForContext(ctx);
+      await raceWithAbort(sendFrameToProcess(pid, {
+        type: "req",
+        id: crypto.randomUUID(),
+        call: "proc.send",
+        args: {
+          pid,
+          message: args.prompt,
+          ...(origin ? { origin } : {}),
+        },
+      }), ctx.requestSignal, {
+        onLateResolve: () => {
+          void rollbackSpawn(ctx, pid, conversationId).catch(() => {});
+        },
+      });
+      ctx.requestSignal?.throwIfAborted();
     }
   } catch (error) {
     try {
@@ -270,20 +329,6 @@ export async function handleProcSpawn(
     };
   }
 
-  if (args.prompt) {
-    const origin = interactionOriginForContext(ctx);
-    await sendFrameToProcess(pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.send",
-      args: {
-        pid,
-        message: args.prompt,
-        ...(origin ? { origin } : {}),
-      },
-    });
-  }
-
   return {
     ok: true,
     pid,
@@ -298,12 +343,29 @@ async function rollbackSpawn(
   conversationId: string | null,
 ): Promise<void> {
   const requestId = crypto.randomUUID();
-  const response = await sendFrameToProcess(pid, {
-    type: "req",
-    id: requestId,
-    call: "proc.kill",
-    args: { pid, archive: false },
-  });
+  const rollbackAuthorization = ctx.issueProcessRollbackAuthorization?.(pid);
+  let response: Awaited<ReturnType<typeof sendFrameToProcess>>;
+  try {
+    response = await sendFrameToProcess(pid, {
+      type: "req",
+      id: requestId,
+      call: "proc.kill",
+      args: {
+        pid,
+        archive: false,
+        ...(rollbackAuthorization
+          ? {
+              rollbackAuthorization,
+              rollbackKernelName: ctx.kernelName,
+            }
+          : {}),
+      },
+    });
+  } finally {
+    if (rollbackAuthorization) {
+      ctx.revokeProcessRollbackAuthorization?.(rollbackAuthorization);
+    }
+  }
   if (!response || response.type !== "res" || response.id !== requestId) {
     throw new Error("proc.kill returned no valid response");
   }
@@ -591,6 +653,25 @@ export async function forwardToProcess(
 
   if (proc.ownerUid !== callerOwnerUid && identity.process.uid !== 0) {
     throw new Error(`Permission denied: cannot access process ${pid}`);
+  }
+  if (
+    ctx.authorizePackageAgentRuntime
+    && !await ctx.authorizePackageAgentRuntime(
+      proc.ownerUid,
+      {
+        uid: proc.uid,
+        gid: proc.gid,
+        gids: proc.gids,
+        username: proc.username,
+        home: proc.home,
+        cwd: proc.cwd,
+      },
+      proc.packageSecurityRevision,
+      undefined,
+      pid,
+    )
+  ) {
+    throw new Error(`Process authority revoked: ${pid}`);
   }
 
   const processFrame = frame.call === "proc.send"

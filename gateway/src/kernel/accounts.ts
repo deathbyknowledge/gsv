@@ -21,7 +21,7 @@ import type { KernelContext } from "./context";
 import type { AuthStore } from "./auth-store";
 import type { PasswdEntry } from "../auth/passwd";
 import { isValidCapability } from "./capabilities";
-import { ACCOUNT_USERNAME_RE } from "../auth/login";
+import { ACCOUNT_USERNAME_RE, canonicalizeLoginUsername } from "../auth/login";
 
 export { ACCOUNT_USERNAME_RE } from "../auth/login";
 
@@ -31,7 +31,9 @@ export const MIN_PASSWORD_LENGTH = 8;
 
 /** A username is available when it collides with no existing user or group. */
 export function isUsernameAvailable(auth: AuthStore, name: string): boolean {
-  return !auth.getPasswdByUsername(name) && !auth.getGroupByName(name);
+  return !auth.isAccountNameReserved(name)
+    && !auth.getPasswdByUsername(name)
+    && !auth.getGroupByName(name);
 }
 
 /**
@@ -39,9 +41,8 @@ export function isUsernameAvailable(auth: AuthStore, name: string): boolean {
  * malformed or already taken.
  */
 export function normalizeAccountName(auth: AuthStore, value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const name = value.trim().toLowerCase();
-  if (!ACCOUNT_USERNAME_RE.test(name)) return null;
+  const name = canonicalizeLoginUsername(value);
+  if (!name) return null;
   if (!isUsernameAvailable(auth, name)) return null;
   return name;
 }
@@ -115,7 +116,7 @@ export async function createAccount(
   if (!ACCOUNT_USERNAME_RE.test(username)) {
     throw new Error("username must match ^[a-z_][a-z0-9_-]{0,31}$");
   }
-  if (auth.getPasswdByUsername(username)) {
+  if (auth.isAccountNameReserved(username) || auth.getPasswdByUsername(username)) {
     throw new Error(`User already exists: ${username}`);
   }
   if (input.accessGroupName && auth.getGroupByName(input.accessGroupName)) {
@@ -153,56 +154,67 @@ export async function createAccount(
   const gid = uid; // User Private Group
   const home = `/home/${username}`;
 
-  auth.addUser({
-    username,
-    uid,
-    gid,
-    gecos: input.gecos ?? username,
-    home,
-    shell: "/bin/init",
-  });
-
-  auth.setShadow(makeShadowEntry(username, shadowHash));
-
-  // Private primary group (gid = uid). The owner joins it so they can act as
-  // this account.
-  if (!auth.getGroupByName(username) && !auth.getGroupByGid(gid)) {
-    auth.addGroup({ name: username, gid, members: crossMember ? [ownerUsername!] : [] });
-  }
-
-  if (input.shared ?? true) {
-    const usersGroup = auth.getGroupByName("users");
-    if (usersGroup && !usersGroup.members.includes(username)) {
-      auth.updateGroupMembers("users", [...usersGroup.members, username]);
-    }
-  }
-
-  // Cross-membership: the new account joins the owner's private group.
-  if (crossMember) {
-    const ownerGroup = auth.getGroupByName(ownerUsername!);
-    if (ownerGroup && !ownerGroup.members.includes(username)) {
-      auth.updateGroupMembers(ownerUsername!, [...ownerGroup.members, username]);
-    }
-  }
-
-  if (input.personalAgentOf != null) {
-    auth.setPersonalAgent(input.personalAgentOf, uid);
-  }
-
-  // Capabilities live on the account's own gid (only the account is a member),
-  // so run-as authorization (granted via the access group below) never confers
-  // these capabilities on the authorized human.
-  for (const capability of input.capabilities ?? []) {
-    const granted = ctx.caps.grant(gid, capability);
-    if (!granted.ok) {
-      throw new Error(granted.error ?? `Failed to grant capability: ${capability}`);
-    }
-  }
-
   let accessGroupGid: number | undefined;
-  if (input.accessGroupName) {
-    accessGroupGid = auth.allocateGid();
-    auth.addGroup({ name: input.accessGroupName, gid: accessGroupGid, members: [] });
+  const writeIdentity = () => {
+    auth.addUser({
+      username,
+      uid,
+      gid,
+      gecos: input.gecos ?? username,
+      home,
+      shell: "/bin/init",
+    }, input.kind);
+
+    auth.setShadow(makeShadowEntry(username, shadowHash));
+
+    // Private primary group (gid = uid). The owner joins it so they can act as
+    // this account.
+    if (!auth.getGroupByName(username) && !auth.getGroupByGid(gid)) {
+      auth.addGroup({ name: username, gid, members: crossMember ? [ownerUsername!] : [] });
+    }
+
+    if (input.shared ?? true) {
+      const usersGroup = auth.getGroupByName("users");
+      if (usersGroup && !usersGroup.members.includes(username)) {
+        auth.updateGroupMembers("users", [...usersGroup.members, username]);
+      }
+    }
+
+    // Cross-membership: the new account joins the owner's private group.
+    if (crossMember) {
+      const ownerGroup = auth.getGroupByName(ownerUsername!);
+      if (ownerGroup && !ownerGroup.members.includes(username)) {
+        auth.updateGroupMembers(ownerUsername!, [...ownerGroup.members, username]);
+      }
+    }
+
+    if (input.personalAgentOf != null) {
+      auth.setPersonalAgent(input.personalAgentOf, uid);
+    }
+
+    // Capabilities live on the account's own gid (only the account is a member),
+    // so run-as authorization never confers these capabilities on the owner.
+    for (const capability of input.capabilities ?? []) {
+      const granted = ctx.caps.grant(gid, capability);
+      if (!granted.ok) {
+        throw new Error(granted.error ?? `Failed to grant capability: ${capability}`);
+      }
+    }
+
+    if (input.accessGroupName) {
+      accessGroupGid = auth.allocateGid();
+      auth.addGroup({ name: input.accessGroupName, gid: accessGroupGid, members: [] });
+    }
+
+    if (input.kind === "human") {
+      ctx.userKernels?.reserve(username, uid);
+    }
+  };
+
+  if (ctx.transactionSync) {
+    ctx.transactionSync(writeIdentity);
+  } else {
+    writeIdentity();
   }
 
   const entry = auth.getPasswdByUid(uid)!;

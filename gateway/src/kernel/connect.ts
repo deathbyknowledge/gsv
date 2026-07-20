@@ -16,18 +16,25 @@ import type {
   ConnectionIdentity,
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
-import type { AuthTokenRole } from "./auth-store";
+import type { AuthenticatedCredential, AuthTokenRole } from "./auth-store";
 import type { CapabilityStore } from "./capabilities";
 import { isValidCapability } from "./capabilities";
 import type { KernelContext } from "./context";
 import { SERVER_RELEASE } from "../version";
+import { provisionR2Directory } from "../fs/backends/r2";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
 import { USER_CONNECTION_SIGNALS } from "./user-signals";
 import { UNAVAILABLE_LOGIN_SOURCE_SCOPE } from "./login-source";
+import { isSetupCommissioningPending } from "./sys/setup";
 
 export type ConnectOutcome =
-  | { ok: true; identity: ConnectionIdentity; result: ConnectResult }
+  | {
+      ok: true;
+      identity: ConnectionIdentity;
+      credential: AuthenticatedCredential;
+      result: ConnectResult;
+    }
   | { ok: false; code: number; message: string; details?: unknown };
 
 export const SETUP_REQUIRED_ERROR_CODE = 425;
@@ -44,6 +51,7 @@ export async function ensureKernelBootstrapped(ctx: KernelContext): Promise<void
   ctx.caps.seed();
   migrateUserPrivateGroups(ctx);
   await ensurePublicAssetStorageLayout(ctx.env);
+  await provisionR2Directory(ctx.env.STORAGE, "/tmp", { uid: 0, gid: 0 }, "777");
   await ensureAccountHomeLayout(ctx.env, {
     uid: 0,
     gid: 0,
@@ -100,10 +108,16 @@ export async function handleConnect(
     return { ok: false, code: 103, message: "Invalid client role" };
   }
 
-  // First-boot provisioning (SQLite, no R2)
-  await ensureKernelBootstrapped(ctx);
+  // Commissioning exists only on the master. User Kernels are provisioned by
+  // an authenticated master RPC and must never bootstrap root themselves.
+  if (ctx.kernelKind === "master") {
+    await ensureKernelBootstrapped(ctx);
+  }
 
-  if (auth.isSetupMode()) {
+  if (
+    ctx.kernelKind === "master"
+    && (auth.isSetupMode() || isSetupCommissioningPending(ctx.config))
+  ) {
     return {
       ok: false,
       code: SETUP_REQUIRED_ERROR_CODE,
@@ -113,13 +127,17 @@ export async function handleConnect(
   }
 
   // Authentication
-  const process = await resolveIdentity(args, ctx);
+  const process = ctx.authenticateConnection
+    ? await ctx.authenticateConnection(args)
+    : await authenticateConnectionIdentity(args, ctx.auth, ctx.loginSourceScope);
   if (!process.ok) {
     return { ok: false, code: 401, message: process.error };
   }
   const identity = process.identity;
 
-  const capabilities = resolveConnectionCapabilities(role, identity, caps);
+  const capabilities = "capabilities" in process && Array.isArray(process.capabilities)
+    ? process.capabilities.filter((capability): capability is string => typeof capability === "string")
+    : resolveConnectionCapabilities(role, identity, caps);
 
   // Build ConnectionIdentity based on role
   let connectionIdentity: ConnectionIdentity;
@@ -200,11 +218,16 @@ export async function handleConnect(
     signals: buildSignalList(role),
   };
 
-  return { ok: true, identity: connectionIdentity, result };
+  return {
+    ok: true,
+    identity: connectionIdentity,
+    credential: process.credential,
+    result,
+  };
 }
 
-type IdentityOutcome =
-  | { ok: true; identity: ProcessIdentity }
+export type IdentityOutcome =
+  | { ok: true; identity: ProcessIdentity; credential: AuthenticatedCredential }
   | { ok: false; error: string };
 
 function withDefaultProcessContext(identity: {
@@ -235,13 +258,13 @@ function resolveConnectionCapabilities(
   }
 }
 
-async function resolveIdentity(
+export async function authenticateConnectionIdentity(
   args: ConnectArgs,
-  ctx: KernelContext,
+  auth: KernelContext["auth"],
+  loginSourceScope: KernelContext["loginSourceScope"],
 ): Promise<IdentityOutcome> {
-  const { auth } = ctx;
   const role = args.client.role;
-  const sourceScope = ctx.loginSourceScope ?? UNAVAILABLE_LOGIN_SOURCE_SCOPE;
+  const sourceScope = loginSourceScope ?? UNAVAILABLE_LOGIN_SOURCE_SCOPE;
 
   if (!args.auth) {
     return { ok: false, error: "Authentication required" };
@@ -264,7 +287,11 @@ async function resolveIdentity(
       deviceId: role === "driver" ? args.client.id : undefined,
     });
     if (!result.ok) return { ok: false, error: result.error };
-    return { ok: true, identity: withDefaultProcessContext(result.identity) };
+    return {
+      ok: true,
+      identity: withDefaultProcessContext(result.identity),
+      credential: result.credential,
+    };
   }
 
   if (hasToken) {
@@ -272,14 +299,22 @@ async function resolveIdentity(
       role: "user",
     });
     if (!result.ok) return { ok: false, error: result.error };
-    return { ok: true, identity: withDefaultProcessContext(result.identity) };
+    return {
+      ok: true,
+      identity: withDefaultProcessContext(result.identity),
+      credential: result.credential,
+    };
   }
 
   if (!hasPassword) return { ok: false, error: "Password or token required" };
   const result = await auth.authenticate(username, args.auth.password!, sourceScope);
   if (!result.ok) return { ok: false, error: result.error };
 
-  return { ok: true, identity: withDefaultProcessContext(result.identity) };
+  return {
+    ok: true,
+    identity: withDefaultProcessContext(result.identity),
+    credential: result.credential,
+  };
 }
 
 function buildSignalList(role: string): string[] {

@@ -8,7 +8,7 @@ function normalizedStatements(): string[] {
 
 function createdTables(): string[] {
   return normalizedStatements()
-    .map((statement) => statement.match(/^CREATE TABLE IF NOT EXISTS ([a-z_]+)/)?.[1])
+    .map((statement) => statement.match(/^CREATE TABLE (?:IF NOT EXISTS )?([a-z_]+)/)?.[1])
     .filter((name): name is string => Boolean(name));
 }
 
@@ -21,6 +21,7 @@ function createdIndexes(): string[] {
 function createTableStatement(name: string): string {
   const statement = normalizedStatements().find((candidate) => (
     candidate.startsWith(`CREATE TABLE IF NOT EXISTS ${name} `)
+    || candidate.startsWith(`CREATE TABLE ${name} `)
   ));
   if (!statement) {
     throw new Error(`missing CREATE TABLE statement for ${name}`);
@@ -31,7 +32,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(15);
+    expect(KERNEL_MIGRATIONS).toHaveLength(23);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -92,6 +93,38 @@ describe("kernel schema migrations", () => {
       id: 15,
       name: "rate_limit_logins",
     });
+    expect(KERNEL_MIGRATIONS[15]).toMatchObject({
+      id: 16,
+      name: "add_user_kernels",
+    });
+    expect(KERNEL_MIGRATIONS[16]).toMatchObject({
+      id: 17,
+      name: "bind_adapter_routes",
+    });
+    expect(KERNEL_MIGRATIONS[17]).toMatchObject({
+      id: 18,
+      name: "fence_auth_token_sessions",
+    });
+    expect(KERNEL_MIGRATIONS[18]).toMatchObject({
+      id: 19,
+      name: "bind_process_kernel_generation",
+    });
+    expect(KERNEL_MIGRATIONS[19]).toMatchObject({
+      id: 20,
+      name: "bind_package_security_revisions",
+    });
+    expect(KERNEL_MIGRATIONS[20]).toMatchObject({
+      id: 21,
+      name: "fence_user_kernel_projections",
+    });
+    expect(KERNEL_MIGRATIONS[21]).toMatchObject({
+      id: 22,
+      name: "register_app_runtimes",
+    });
+    expect(KERNEL_MIGRATIONS[22]).toMatchObject({
+      id: 23,
+      name: "bind_oauth_flow_kernel_owner",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -131,6 +164,14 @@ describe("kernel schema migrations", () => {
       "link_challenge_attempts",
       "unix_id_allocator",
       "auth_login_attempts",
+      "account_identities",
+      "user_kernels",
+      "identity_link_generations",
+      "auth_token_revocation_outbox",
+      "auth_token_revocation_tombstones",
+      "kernel_projection_state",
+      "app_runtime_runners",
+      "app_runtime_lifecycle_fences",
     ]);
   });
 
@@ -142,6 +183,33 @@ describe("kernel schema migrations", () => {
     expect(processes).toContain("cwd TEXT NOT NULL");
     expect(processes).toContain("context_files_json TEXT NOT NULL DEFAULT '[]'");
     expect(processes).toContain("active_conversation_id TEXT");
+  });
+
+  it("binds process executors to a nullable user-Kernel generation", () => {
+    expect(normalizedStatements()).toContain(
+      "ALTER TABLE processes ADD COLUMN kernel_generation INTEGER CHECK (kernel_generation IS NULL OR kernel_generation > 0)",
+    );
+  });
+
+  it("binds package security revisions to processes and schedules", () => {
+    expect(normalizedStatements()).toContain(
+      "ALTER TABLE processes ADD COLUMN package_security_revision TEXT",
+    );
+    expect(normalizedStatements()).toContain(
+      "ALTER TABLE schedules ADD COLUMN package_security_revision TEXT",
+    );
+  });
+
+  it("registers AppRunners by actor and owning Kernel identity", () => {
+    const runners = createTableStatement("app_runtime_runners");
+
+    expect(runners).toContain("owner_uid INTEGER");
+    expect(runners).toContain("owner_username TEXT");
+    expect(runners).toContain("kernel_owner_uid INTEGER");
+    expect(runners).toContain("kernel_owner_username TEXT");
+    expect(normalizedStatements()).toContain(
+      "CREATE INDEX app_runtime_runners_kernel_owner ON app_runtime_runners ( kernel_owner_uid, kernel_owner_username, owner_uid, runner_name )",
+    );
   });
 
   it("removes obsolete process mount metadata", () => {
@@ -263,6 +331,17 @@ describe("kernel schema migrations", () => {
       "idx_adapter_status_owner",
       "idx_ipc_calls_source_run",
       "idx_auth_login_attempts_expiry",
+      "idx_auth_token_revocation_outbox_due",
     ]));
+  });
+
+  it("keeps live credential fences free of raw authentication material", () => {
+    const outbox = createTableStatement("auth_token_revocation_outbox");
+    const tombstones = createTableStatement("auth_token_revocation_tombstones");
+
+    expect(outbox).toContain("token_id TEXT PRIMARY KEY");
+    expect(outbox).toContain("attempt_count INTEGER NOT NULL DEFAULT 0");
+    expect(tombstones).toContain("token_id TEXT PRIMARY KEY");
+    expect(`${outbox} ${tombstones}`).not.toMatch(/token_hash|token_prefix|password|credential/);
   });
 });

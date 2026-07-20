@@ -4,6 +4,7 @@ import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import { packageAgentAccessGroup } from "../../kernel/package-agents";
 import { GsvFs } from "../gsv-fs";
 import { createAccountHomeBackend } from "./account-home";
+import { provisionR2Directory } from "./r2";
 
 const ALICE: ProcessIdentity = {
   uid: 1000,
@@ -183,6 +184,7 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
 describe("AccountHomeMountBackend delegated routing", () => {
   beforeEach(async () => {
     await clearHomeStorage();
+    await provisionR2Directory(env.STORAGE, ALICE.home, ALICE, "750");
   });
 
   it("reserves target home paths for delegated routing", () => {

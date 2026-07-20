@@ -1,3 +1,5 @@
+import { canonicalizeGsvUsername } from "@humansandmachines/gsv/client";
+
 export type ExtensionConfig = {
   gatewayUrl: string;
   username: string;
@@ -31,8 +33,8 @@ export function normalizeConfig(value: unknown): ExtensionConfig {
   const record = isRecord(value) ? value : {};
   return {
     gatewayUrl: normalizeGatewayUrl(record.gatewayUrl, DEFAULT_CONFIG.gatewayUrl),
-    username: normalizeString(record.username, DEFAULT_CONFIG.username),
-    token: normalizeString(record.token, DEFAULT_CONFIG.token),
+    username: normalizeUsername(record.username, DEFAULT_CONFIG.username),
+    token: normalizeCredential(record.token, DEFAULT_CONFIG.token),
     deviceId: normalizeDeviceId(record.deviceId),
     autoConnect: typeof record.autoConnect === "boolean" ? record.autoConnect : DEFAULT_CONFIG.autoConnect,
   };
@@ -74,6 +76,20 @@ export function normalizeGatewayUrl(value: unknown, fallback = ""): string {
 
 function normalizeString(value: unknown, fallback: string): string {
   return typeof value === "string" ? value.trim() : fallback;
+}
+
+function normalizeCredential(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function normalizeUsername(value: unknown, fallback: string): string {
+  const raw = typeof value === "string" ? value : fallback;
+  if (!raw.trim()) return "";
+  try {
+    return canonicalizeGsvUsername(raw);
+  } catch {
+    return "";
+  }
 }
 
 function normalizeDeviceId(value: unknown): string {

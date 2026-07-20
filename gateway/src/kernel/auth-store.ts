@@ -30,7 +30,7 @@ import {
   LoginAttemptStore,
   type LoginCredentialKind,
 } from "./login-attempts";
-import { loginCredentialWork } from "../auth/login";
+import { canonicalizeLoginUsername, loginCredentialWork } from "../auth/login";
 import type { LoginSourceScope } from "./login-source";
 
 export const AUTHENTICATION_FAILED_MESSAGE = "Authentication failed";
@@ -49,12 +49,28 @@ export type AuthIdentity = {
   home: string;
 };
 
+/** Non-secret provenance retained for the lifetime of an authenticated socket. */
+export type AuthenticatedCredential =
+  | { kind: "password" }
+  | { kind: "token"; tokenId: string; expiresAt: number | null };
+
 export type AuthResult =
-  | { ok: true; identity: AuthIdentity }
+  | { ok: true; identity: AuthIdentity; credential: AuthenticatedCredential }
   | { ok: false; error: string; retryAfterMs?: number };
 
 export type AuthTokenKind = "node" | "service" | "user";
 export type AuthTokenRole = "driver" | "service" | "user";
+export type AccountIdentityKind = "human" | "agent" | "system";
+
+export type AccountIdentityRecord = {
+  username: string;
+  uid: number;
+  kind: AccountIdentityKind;
+  state: "active" | "retired";
+  createdAt: number;
+  updatedAt: number;
+  retiredAt: number | null;
+};
 
 export type AuthTokenIssueInput = {
   uid: number;
@@ -96,6 +112,11 @@ export type AuthTokenRecord = {
 type TokenAuthOptions = {
   role?: AuthTokenRole;
   deviceId?: string;
+};
+
+type VerifiedAuthentication = {
+  identity: AuthIdentity;
+  credential: AuthenticatedCredential;
 };
 
 export class AuthStore {
@@ -145,7 +166,7 @@ export class AuthStore {
     this.addUser({
       username: "root", uid: 0, gid: 0,
       gecos: "root", home: "/root", shell: "/bin/init",
-    });
+    }, "system");
 
     this.setShadow(makeShadowEntry("root", "!"));
 
@@ -183,7 +204,28 @@ export class AuthStore {
     return rows[0] ?? null;
   }
 
-  addUser(entry: PasswdEntry): void {
+  addUser(
+    entry: PasswdEntry,
+    kind: AccountIdentityKind,
+  ): void {
+    if (!(["human", "agent", "system"] as const).includes(kind)) {
+      throw new Error(`Invalid account kind for ${entry.username}`);
+    }
+    if (canonicalizeLoginUsername(entry.username) !== entry.username) {
+      throw new Error(`Invalid canonical account username: ${entry.username}`);
+    }
+    if (
+      !Number.isSafeInteger(entry.uid)
+      || entry.uid < 0
+      || !Number.isSafeInteger(entry.gid)
+      || entry.gid < 0
+    ) {
+      throw new Error(`Invalid Unix identity for ${entry.username}`);
+    }
+    if ((kind === "system") !== (entry.uid < 1000)) {
+      throw new Error(`Invalid account kind for ${entry.username}`);
+    }
+    this.reserveAccountIdentity(entry.username, entry.uid, kind);
     this.observeUnixId(Math.max(entry.uid, entry.gid));
     this.sql.exec(
       "INSERT INTO passwd (username, uid, gid, gecos, home, shell) VALUES (?, ?, ?, ?, ?, ?)",
@@ -194,6 +236,9 @@ export class AuthStore {
   updateUser(username: string, fields: Partial<Omit<PasswdEntry, "username">>): boolean {
     const existing = this.getPasswdByUsername(username);
     if (!existing) return false;
+    if (fields.uid !== undefined && fields.uid !== existing.uid) {
+      throw new Error("Account uid is immutable");
+    }
 
     this.observeUnixId(Math.max(fields.uid ?? existing.uid, fields.gid ?? existing.gid));
 
@@ -212,9 +257,87 @@ export class AuthStore {
   removeUser(username: string): boolean {
     const existing = this.getPasswdByUsername(username);
     if (!existing) return false;
+    const now = Date.now();
+    this.sql.exec(
+      `UPDATE account_identities
+       SET state = 'retired', updated_at = ?, retired_at = ?
+       WHERE username = ?`,
+      now,
+      now,
+      username,
+    );
     this.sql.exec("DELETE FROM passwd WHERE username = ?", username);
     this.sql.exec("DELETE FROM shadow WHERE username = ?", username);
     return true;
+  }
+
+  getAccountIdentity(username: string): AccountIdentityRecord | null {
+    const row = this.sql.exec<{
+      username: string;
+      uid: number;
+      kind: AccountIdentityKind;
+      state: "active" | "retired";
+      created_at: number;
+      updated_at: number;
+      retired_at: number | null;
+    }>(
+      `SELECT username, uid, kind, state, created_at, updated_at, retired_at
+       FROM account_identities
+       WHERE username = ?`,
+      username,
+    ).toArray()[0];
+    return row
+      ? {
+          username: row.username,
+          uid: row.uid,
+          kind: row.kind,
+          state: row.state,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          retiredAt: row.retired_at,
+        }
+      : null;
+  }
+
+  isAccountNameReserved(username: string): boolean {
+    return this.getAccountIdentity(username) !== null;
+  }
+
+  reserveAccountIdentity(
+    username: string,
+    uid: number,
+    kind: AccountIdentityKind,
+  ): AccountIdentityRecord {
+    const byName = this.getAccountIdentity(username);
+    const byUid = this.sql.exec<{ username: string }>(
+      "SELECT username FROM account_identities WHERE uid = ?",
+      uid,
+    ).toArray()[0];
+    if (byName || byUid) {
+      if (
+        !byName
+        || byName.uid !== uid
+        || byUid?.username !== username
+        || byName.kind !== kind
+        || byName.state === "retired"
+      ) {
+        throw new Error(`Permanent account identity conflicts for ${username}`);
+      }
+      return byName;
+    }
+
+    const now = Date.now();
+    this.sql.exec(
+      `INSERT INTO account_identities (
+         username, uid, kind, state, created_at, updated_at, retired_at
+       ) VALUES (?, ?, ?, 'active', ?, ?, NULL)`,
+      username,
+      uid,
+      kind,
+      now,
+      now,
+    );
+    return this.getAccountIdentity(username)!;
   }
 
   /** Reserve a never-reused id for a user and its User Private Group. */
@@ -251,7 +374,7 @@ export class AuthStore {
     );
   }
 
-  async setPassword(username: string, hash: string): Promise<boolean> {
+  setPassword(username: string, hash: string): boolean {
     const existing = this.getShadowByUsername(username);
     if (!existing) return false;
 
@@ -452,7 +575,7 @@ export class AuthStore {
     verifier: (
       canonicalUsername: string,
       boundedCredential: string,
-    ) => Promise<AuthIdentity | null>,
+    ) => Promise<VerifiedAuthentication | null>,
   ): Promise<AuthResult> {
     const reservation = await this.loginAttempts.reserve(
       username,
@@ -465,9 +588,9 @@ export class AuthStore {
     const credentialWork = loginCredentialWork(credential);
     const canonicalUsername = reservation.canonicalUsername ?? "";
 
-    let identity: AuthIdentity | null;
+    let authenticated: VerifiedAuthentication | null;
     try {
-      identity = await verifier(canonicalUsername, credentialWork.value);
+      authenticated = await verifier(canonicalUsername, credentialWork.value);
     } catch (error) {
       this.loginAttempts.complete(reservation, false);
       throw error;
@@ -475,15 +598,21 @@ export class AuthStore {
 
     const success = reservation.canonicalUsername !== null
       && credentialWork.valid
-      && identity !== null;
+      && authenticated !== null;
     this.loginAttempts.complete(reservation, success);
-    return success ? { ok: true, identity: identity! } : authenticationFailure();
+    return success
+      ? {
+          ok: true,
+          identity: authenticated!.identity,
+          credential: authenticated!.credential,
+        }
+      : authenticationFailure();
   }
 
   private async verifyPasswordIdentity(
     username: string,
     credential: string,
-  ): Promise<AuthIdentity | null> {
+  ): Promise<VerifiedAuthentication | null> {
     const user = this.getPasswdByUsername(username);
     const shadow = this.getShadowByUsername(username);
     const hasPasswordHash = Boolean(
@@ -501,15 +630,32 @@ export class AuthStore {
       valid = false;
     }
 
-    if (!user || !hasPasswordHash || !valid) return null;
-    return this.authIdentity(user);
+    // PBKDF2 yields the Durable Object input gate. Re-read both rows after it
+    // completes so a concurrent password, account, gid, or home mutation can
+    // never authenticate an obsolete identity snapshot.
+    const currentUser = this.getPasswdByUsername(username);
+    const currentShadow = this.getShadowByUsername(username);
+    if (
+      !user
+      || !hasPasswordHash
+      || !valid
+      || !currentUser
+      || currentUser.uid !== user.uid
+      || !currentShadow
+      || currentShadow.hash !== verificationHash
+      || !this.isLoginCapableAccount(currentUser)
+    ) return null;
+    return {
+      identity: this.authIdentity(currentUser),
+      credential: { kind: "password" },
+    };
   }
 
   private async verifyTokenIdentity(
     username: string,
     token: string,
     options: TokenAuthOptions,
-  ): Promise<AuthIdentity | null> {
+  ): Promise<VerifiedAuthentication | null> {
     const user = this.getPasswdByUsername(username);
 
     const tokenHash = await hashToken(token);
@@ -531,10 +677,13 @@ export class AuthStore {
     if (!user || rows.length === 0) return null;
 
     const tokenRow = rows[0];
+    const currentUser = this.getPasswdByUsername(username);
     const now = Date.now();
+    if (!currentUser || currentUser.uid !== user.uid) return null;
     if (tokenRow.revoked_at !== null) return null;
     if (tokenRow.expires_at !== null && tokenRow.expires_at <= now) return null;
     if (options.role && tokenRow.allowed_role && tokenRow.allowed_role !== options.role) return null;
+    if (options.role === "user" && !this.isLoginCapableAccount(currentUser)) return null;
     if (options.role === "driver") {
       if (!options.deviceId || !tokenRow.allowed_device_id) return null;
       if (tokenRow.allowed_device_id !== options.deviceId) return null;
@@ -552,7 +701,14 @@ export class AuthStore {
       tokenRow.token_id,
     );
 
-    return this.authIdentity(user);
+    return {
+      identity: this.authIdentity(currentUser),
+      credential: {
+        kind: "token",
+        tokenId: tokenRow.token_id,
+        expiresAt: tokenRow.expires_at,
+      },
+    };
   }
 
   private authIdentity(user: PasswdEntry): AuthIdentity {
@@ -563,6 +719,19 @@ export class AuthStore {
       username: user.username,
       home: user.home,
     };
+  }
+
+  private isLoginCapableAccount(user: PasswdEntry): boolean {
+    const identity = this.getAccountIdentity(user.username);
+    if (
+      !identity
+      || identity.uid !== user.uid
+      || identity.state !== "active"
+    ) {
+      return false;
+    }
+    return identity.kind === "human"
+      || (identity.kind === "system" && user.uid === 0 && user.username === "root");
   }
 
   async issueToken(input: AuthTokenIssueInput): Promise<IssuedAuthToken> {
@@ -657,24 +826,32 @@ export class AuthStore {
     ).toArray().map(mapTokenRow);
   }
 
+  getToken(tokenId: string, uid?: number): AuthTokenRecord | null {
+    const tokens = typeof uid === "number" ? this.listTokens(uid) : this.listTokens();
+    return tokens.find((token) => token.tokenId === tokenId) ?? null;
+  }
+
   revokeToken(tokenId: string, reason?: string, uid?: number): boolean {
     const rows = typeof uid === "number"
-      ? this.sql.exec<{ token_id: string }>(
-          "SELECT token_id FROM auth_tokens WHERE token_id = ? AND uid = ? LIMIT 1",
+      ? this.sql.exec<{ token_id: string; revoked_at: number | null }>(
+          "SELECT token_id, revoked_at FROM auth_tokens WHERE token_id = ? AND uid = ? LIMIT 1",
           tokenId,
           uid,
         ).toArray()
-      : this.sql.exec<{ token_id: string }>(
-          "SELECT token_id FROM auth_tokens WHERE token_id = ? LIMIT 1",
+      : this.sql.exec<{ token_id: string; revoked_at: number | null }>(
+          "SELECT token_id, revoked_at FROM auth_tokens WHERE token_id = ? LIMIT 1",
           tokenId,
         ).toArray();
 
     if (rows.length === 0) return false;
+    if (rows[0].revoked_at !== null) return true;
 
     const now = Date.now();
     if (typeof uid === "number") {
       this.sql.exec(
-        "UPDATE auth_tokens SET revoked_at = ?, revoked_reason = ? WHERE token_id = ? AND uid = ?",
+        `UPDATE auth_tokens
+         SET revoked_at = ?, revoked_reason = ?
+         WHERE token_id = ? AND uid = ? AND revoked_at IS NULL`,
         now,
         reason ?? null,
         tokenId,
@@ -682,7 +859,9 @@ export class AuthStore {
       );
     } else {
       this.sql.exec(
-        "UPDATE auth_tokens SET revoked_at = ?, revoked_reason = ? WHERE token_id = ?",
+        `UPDATE auth_tokens
+         SET revoked_at = ?, revoked_reason = ?
+         WHERE token_id = ? AND revoked_at IS NULL`,
         now,
         reason ?? null,
         tokenId,
@@ -713,8 +892,95 @@ export class AuthStore {
 
   importPasswd(raw: string): void {
     const entries = parsePasswd(raw);
+    const byUsername = new Map(entries.map((entry) => [entry.username, entry]));
+    const byUid = new Map(entries.map((entry) => [entry.uid, entry]));
+    if (byUsername.size !== entries.length || byUid.size !== entries.length) {
+      throw new Error("passwd contains duplicate immutable identities");
+    }
+    const reserved = this.sql.exec<{
+      username: string;
+      uid: number;
+      state: "active" | "retired";
+    }>(
+      "SELECT username, uid, state FROM account_identities",
+    ).toArray();
+    for (const identity of reserved) {
+      const named = byUsername.get(identity.username);
+      const numbered = byUid.get(identity.uid);
+      if (identity.state === "active" && (!named || named.uid !== identity.uid)) {
+        throw new Error(`passwd cannot remove or remap permanent identity ${identity.username}`);
+      }
+      if (named && named.uid !== identity.uid) {
+        throw new Error(`passwd cannot remap permanent identity ${identity.username}`);
+      }
+      if (numbered && numbered.username !== identity.username) {
+        throw new Error(`passwd cannot reuse permanent uid ${identity.uid}`);
+      }
+    }
+
+    for (const e of entries) {
+      if (
+        canonicalizeLoginUsername(e.username) !== e.username
+        || !Number.isSafeInteger(e.uid)
+        || e.uid < 0
+        || !Number.isSafeInteger(e.gid)
+        || e.gid < 0
+      ) {
+        throw new Error(`passwd contains invalid identity ${e.username}`);
+      }
+      const identity = this.getAccountIdentity(e.username);
+      const existing = this.getPasswdByUsername(e.username);
+      if (
+        !identity
+        || identity.state !== "active"
+        || identity.uid !== e.uid
+        || !existing
+        || existing.uid !== e.uid
+      ) {
+        throw new Error(`passwd cannot add or restore identity ${e.username}`);
+      }
+    }
+
+    // /etc/passwd is a metadata view, not an alternate account-creation path.
+    // All identities and kinds already exist, so only mutable fields are updated.
+    for (const e of entries) {
+      this.updateUser(e.username, {
+        gid: e.gid,
+        gecos: e.gecos,
+        home: e.home,
+        shell: e.shell,
+      });
+    }
+  }
+
+  replaceRuntimeDirectory(input: {
+    accounts: Array<{
+      entry: PasswdEntry;
+      kind: AccountIdentityKind;
+      locked: boolean;
+    }>;
+    groups: GroupEntry[];
+    ownerUid: number;
+    personalAgentUid: number | null;
+  }): void {
+    this.sql.exec("DELETE FROM personal_agents");
+    this.sql.exec("DELETE FROM groups");
+    this.sql.exec("DELETE FROM shadow");
     this.sql.exec("DELETE FROM passwd");
-    for (const e of entries) this.addUser(e);
+
+    for (const account of input.accounts) {
+      this.addUser(account.entry, account.kind);
+      this.setShadow(makeShadowEntry(
+        account.entry.username,
+        account.locked ? "!" : "$master-auth$",
+      ));
+    }
+    for (const group of input.groups) {
+      this.addGroup(group);
+    }
+    if (input.personalAgentUid !== null) {
+      this.setPersonalAgent(input.ownerUid, input.personalAgentUid);
+    }
   }
 
   importShadow(raw: string): void {

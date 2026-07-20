@@ -31,6 +31,10 @@ function createCtx(overrides?: {
   const passwd: PasswdRow[] = [
     { username: "root", uid: 0, gid: 0, gecos: "root", home: "/root", shell: "/bin/init" },
   ];
+  const accountKinds = new Map<string, "system" | "human" | "agent">([
+    ["root", "system"],
+  ]);
+  const reservedAccountNames = new Set(passwd.map((entry) => entry.username));
   const groups: GroupRow[] = [usersGroup];
   const shadowRoot = { username: "root", hash: "!" };
   const personalAgents = new Map<number, number>();
@@ -50,9 +54,19 @@ function createCtx(overrides?: {
       const found = passwd.find((u) => u.uid === uid);
       return found ? { ...found } : null;
     }),
+    getAccountIdentity: vi.fn((username: string) => {
+      const found = passwd.find((entry) => entry.username === username);
+      const kind = accountKinds.get(username);
+      return found && kind
+        ? { username, uid: found.uid, kind, state: "active" as const }
+        : null;
+    }),
     allocateUid: vi.fn(() => Math.max(999, ...passwd.map((u) => u.uid)) + 1),
     allocateGid: vi.fn(() => Math.max(99, maxId()) + 1),
-    addUser: vi.fn((entry: PasswdRow) => {
+    isAccountNameReserved: vi.fn((username: string) => reservedAccountNames.has(username)),
+    addUser: vi.fn((entry: PasswdRow, kind: "system" | "human" | "agent") => {
+      reservedAccountNames.add(entry.username);
+      accountKinds.set(entry.username, kind);
       passwd.push({
         username: entry.username,
         uid: entry.uid,
@@ -97,6 +111,8 @@ function createCtx(overrides?: {
       createdAt: 1_700_000_000_000,
       expiresAt: null,
     })),
+    listTokens: vi.fn(() => []),
+    revokeToken: vi.fn(() => true),
     resolveGids: vi.fn((_username: string, primaryGid: number) => [primaryGid]),
     getShadowByUsername: vi.fn((username: string) => (username === "root" ? shadowRoot : null)),
   };
@@ -197,11 +213,12 @@ describe("handleSysSetup", () => {
         gid: 1000,
         home: "/home/alice",
       }),
+      "human",
     );
     expect(usersGroup.members).toContain("alice");
-    expect(config.set).toHaveBeenCalledWith("config/ai/provider", "openrouter");
-    expect(config.set).toHaveBeenCalledWith("config/ai/model", "qwen/qwen3.5-35b-a3b");
-    expect(config.set).toHaveBeenCalledWith("config/ai/api_key", "or-key");
+    expect(config.set).toHaveBeenCalledWith("users/1000/ai/provider", "openrouter");
+    expect(config.set).toHaveBeenCalledWith("users/1000/ai/model", "qwen/qwen3.5-35b-a3b");
+    expect(config.set).toHaveBeenCalledWith("users/1000/ai/api_key", "or-key");
     expect(config.set).toHaveBeenCalledWith("config/server/timezone", "Europe/Amsterdam");
     expect(storage.put).toHaveBeenCalledWith(
       "home/alice/.dir",
@@ -233,6 +250,7 @@ describe("handleSysSetup", () => {
         gecos: "Mira",
         home: "/home/mira",
       }),
+      "agent",
     );
     expect(auth.setPersonalAgent).toHaveBeenCalledWith(1000, 1001);
   });
@@ -242,8 +260,22 @@ describe("handleSysSetup", () => {
       packageId: "import:root/wiki:.",
       scope: { kind: "global" },
       enabled: true,
+      reviewRequired: false,
+      reviewedAt: null,
+      installedAt: 1,
+      updatedAt: 1,
+      artifact: {
+        hash: "sha256:test",
+        mainModule: "index.ts",
+        modulePaths: [],
+      },
       manifest: {
         name: "wiki",
+        description: "wiki",
+        version: "1.0.0",
+        runtime: "dynamic-worker",
+        source: { repo: "root/wiki", ref: "main", subdir: "." },
+        entrypoints: [],
         profiles: [{
           name: "builder",
           displayName: "Wiki Builder",
@@ -263,11 +295,19 @@ describe("handleSysSetup", () => {
       ctx,
     );
 
-    expect(passwd.find((entry) => entry.username === "wiki-builder")).toEqual(
-      expect.objectContaining({ uid: 1002, gid: 1002 }),
-    );
+    const aliceAccessGroup = groups.find((group) => (
+      group.name.startsWith("pkg-") && group.name.endsWith("-run")
+      && group.members.includes("alice")
+    ));
+    const packageAgent = passwd.find((entry) => (
+      aliceAccessGroup?.name === `${entry.username}-run`
+    ));
+    expect(packageAgent).toEqual(expect.objectContaining({
+      username: expect.stringMatching(/^pkg-[0-9a-f]{28}$/),
+    }));
+    expect(packageAgent?.gid).toBe(packageAgent?.uid);
     expect(new Set(passwd.map((entry) => entry.uid)).size).toBe(passwd.length);
-    expect(groups.find((group) => group.name === "wiki-builder-run")?.members).toEqual(["alice"]);
+    expect(aliceAccessGroup?.members).toEqual(["alice"]);
   });
 
   it("seeds shipped skills into root home after first setup bootstrap", async () => {
@@ -360,60 +400,178 @@ describe("handleSysSetup", () => {
     await firstSetup;
 
     expect(JSON.parse(configValues.get("internal/setup/commissioning") ?? "null")).toMatchObject({
-      version: 1,
+      version: 2,
       status: "completed",
       mutationStarted: true,
+      username: "alice",
+      uid: 1000,
     });
   });
 
-  it("blocks replay after a setup failure may have mutated external state", async () => {
+  it("retries the same commissioning request after a transient bootstrap failure", async () => {
     handleSysBootstrapMock.mockRejectedValueOnce(new Error("bootstrap failed"));
-    const ripgit = { fetch: vi.fn() } as unknown as Fetcher;
+    const ripgit = {
+      fetch: vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/apply")) {
+          return new Response(JSON.stringify({ ok: true, head: "home123" }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("missing", { status: 404 });
+      }),
+    } as Fetcher;
     const configValues = new Map<string, string>();
     const first = createCtx({ configValues, ripgit });
-    const restarted = createCtx({ configValues, ripgit });
 
     await expect(handleSysSetup(
       { username: "alice", password: "password-123" },
       first.ctx,
     )).rejects.toThrow("bootstrap failed");
 
-    expect(JSON.parse(configValues.get("internal/setup/commissioning") ?? "null")).toMatchObject({
-      status: "blocked",
-      mutationStarted: true,
+    const retryableState = JSON.parse(
+      configValues.get("internal/setup/commissioning") ?? "null",
+    );
+    expect(retryableState).toMatchObject({
+      version: 2,
+      status: "retryable",
+      mutationStarted: false,
+      username: "alice",
     });
+    expect(retryableState.requestHash).toMatch(/^\$pbkdf2-sha512\$/);
+    expect(JSON.stringify(retryableState)).not.toContain("password-123");
     await expect(handleSysSetup(
-      { username: "bob", password: "password-456" },
-      restarted.ctx,
-    )).rejects.toThrow("System setup is blocked after an interrupted attempt");
-    expect(handleSysBootstrapMock).toHaveBeenCalledTimes(1);
+      { username: "alice", password: "password-123" },
+      first.ctx,
+    )).resolves.toMatchObject({ user: { username: "alice" } });
+    expect(handleSysBootstrapMock).toHaveBeenCalledTimes(2);
   });
 
-  it("permits retry only when failure happened before mutations started", async () => {
+  it("accepts a fresh node expiry on retry while binding the device options", async () => {
+    const now = Date.now();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    const originalExpiry = now + 60_000;
+    const refreshedExpiry = now + 180_000;
+    const { ctx, auth } = createCtx();
+    const provision = vi.fn()
+      .mockRejectedValueOnce(new Error("user Kernel unavailable"))
+      .mockResolvedValue(undefined);
+    const request = {
+      username: "alice",
+      password: "password-123",
+      node: {
+        deviceId: "macbook",
+        label: "Alice's Mac",
+        expiresAt: originalExpiry,
+      },
+    };
+
+    try {
+      await expect(handleSysSetup(request, ctx, {
+        provisionUserKernels: provision,
+      })).rejects.toThrow("user Kernel unavailable");
+      expect(JSON.parse(
+        ctx.config.get("internal/setup/commissioning") ?? "null",
+      )).toMatchObject({ nodeExpiryLifetimeMs: 60_000 });
+
+      // The first absolute deadline has elapsed. A normal CLI retry computes
+      // a new timestamp from the same user-selected lifetime.
+      nowSpy.mockReturnValue(now + 120_000);
+      await expect(handleSysSetup({
+        ...request,
+        node: { ...request.node, label: "Different device", expiresAt: refreshedExpiry },
+      }, ctx, {
+        provisionUserKernels: provision,
+      })).rejects.toThrow("does not match");
+      await expect(handleSysSetup({
+        ...request,
+        node: { deviceId: request.node.deviceId, label: request.node.label },
+      }, ctx, {
+        provisionUserKernels: provision,
+      })).rejects.toThrow("does not match");
+      await expect(handleSysSetup({
+        ...request,
+        node: {
+          ...request.node,
+          expiresAt: now + 120_000 + (24 * 60 * 60 * 1000),
+        },
+      }, ctx, {
+        provisionUserKernels: provision,
+      })).rejects.toThrow("does not match");
+
+      await expect(handleSysSetup({
+        ...request,
+        node: { ...request.node, expiresAt: refreshedExpiry },
+      }, ctx, {
+        provisionUserKernels: provision,
+      })).resolves.toMatchObject({ user: { username: "alice", uid: 1000 } });
+
+      expect(provision).toHaveBeenCalledTimes(2);
+      expect(auth.issueToken).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        allowedDeviceId: "macbook",
+        expiresAt: originalExpiry,
+      }));
+      expect(auth.issueToken).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        allowedDeviceId: "macbook",
+        expiresAt: refreshedExpiry,
+      }));
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("does not claim commissioning when its first durable write fails", async () => {
     const { ctx, config, configValues } = createCtx();
     const persist = (key: string, value: string) => {
       configValues.set(key, value);
     };
     config.set
-      .mockImplementationOnce(persist)
       .mockImplementationOnce(() => {
         throw new Error("commissioning state write failed");
-      });
+      })
+      .mockImplementation(persist);
 
     await expect(handleSysSetup(
       { username: "alice", password: "password-123" },
       ctx,
     )).rejects.toThrow("commissioning state write failed");
     expect(ctx.auth.addUser).not.toHaveBeenCalled();
-    expect(JSON.parse(configValues.get("internal/setup/commissioning") ?? "null")).toMatchObject({
-      status: "retryable",
-      mutationStarted: false,
-    });
+    expect(configValues.has("internal/setup/commissioning")).toBe(false);
 
     await expect(handleSysSetup(
       { username: "alice", password: "password-123" },
       ctx,
     )).resolves.toMatchObject({ user: { username: "alice" } });
+  });
+
+  it("resumes after identity mutation and rejects a different commissioning request", async () => {
+    const { ctx, configValues, auth } = createCtx();
+    const provision = vi.fn()
+      .mockRejectedValueOnce(new Error("user Kernel unavailable"))
+      .mockResolvedValue(undefined);
+    const request = { username: "alice", password: "password-123" };
+
+    await expect(handleSysSetup(request, ctx, {
+      provisionUserKernels: provision,
+    })).rejects.toThrow("user Kernel unavailable");
+
+    expect(auth.addUser).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(configValues.get("internal/setup/commissioning") ?? "null")).toMatchObject({
+      status: "retryable",
+      mutationStarted: true,
+      username: "alice",
+      uid: 1000,
+    });
+    await expect(handleSysSetup(
+      { username: "alice", password: "different-password" },
+      ctx,
+      { provisionUserKernels: provision },
+    )).rejects.toThrow("does not match");
+    await expect(handleSysSetup(request, ctx, {
+      provisionUserKernels: provision,
+    })).resolves.toMatchObject({ user: { username: "alice", uid: 1000 } });
+    expect(auth.addUser).toHaveBeenCalledTimes(2);
+    expect(provision).toHaveBeenCalledTimes(2);
   });
 
   it("requires a valid username and password", async () => {

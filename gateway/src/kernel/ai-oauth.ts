@@ -33,16 +33,24 @@ export async function resolveAiProviderOAuthApiKey(
 
     const needsRefresh = openAICodexAccountNeedsRefresh(account);
     let activeAccount = needsRefresh
-      ? await refreshOpenAICodexAccount(ctx.oauth, account)
+      ? await refreshOpenAICodexAccount(ctx.oauth, account, {
+          signal: ctx.requestSignal,
+          assertCurrentKernel: ctx.assertCurrentKernel,
+        })
       : account;
     let openAiCodexAccountId = resolveOpenAiCodexAccountId(activeAccount);
     if (!openAiCodexAccountId && !needsRefresh) {
-      activeAccount = await refreshOpenAICodexAccount(ctx.oauth, account);
+      activeAccount = await refreshOpenAICodexAccount(ctx.oauth, account, {
+        signal: ctx.requestSignal,
+        assertCurrentKernel: ctx.assertCurrentKernel,
+      });
       openAiCodexAccountId = resolveOpenAiCodexAccountId(activeAccount);
     }
     if (!openAiCodexAccountId) {
       throw new Error("OpenAI Codex OAuth account is missing ChatGPT account id. Reconnect OpenAI Codex to refresh the stored account metadata.");
     }
+    ctx.requestSignal?.throwIfAborted();
+    ctx.assertCurrentKernel();
     ctx.oauth.markAccountUsed(activeAccount.accountId, activeAccount.uid);
     return {
       apiKey: activeAccount.accessToken,

@@ -49,7 +49,7 @@ export function buildCustomCommands(
   const crontab = buildCrontabCommand(fs, ctx);
   const codemode = buildCodeModeCommand(fs, identity, ctx, options?.request);
   const mcp = buildMcpCommand(ctx);
-  const pkg = buildPkgCommand(ctx);
+  const pkg = buildPkgCommand(ctx, options?.request);
   const skills = buildSkillsCommand(fs, ctx, identity);
   const wiki = buildWikiCommand(ctx);
   const proc = buildProcCommand(ctx);

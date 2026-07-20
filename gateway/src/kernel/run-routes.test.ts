@@ -23,6 +23,8 @@ function createMockSql() {
         connectionId,
         adapter,
         accountId,
+        actorId,
+        linkGeneration,
         surfaceKind,
         surfaceId,
         threadId,
@@ -34,6 +36,8 @@ function createMockSql() {
         number,
         string | null,
         string | null,
+        string | null,
+        number | null,
         string | null,
         string | null,
         string | null,
@@ -49,6 +53,8 @@ function createMockSql() {
         connection_id: connectionId,
         adapter,
         account_id: accountId,
+        actor_id: actorId,
+        link_generation: linkGeneration,
         surface_kind: surfaceKind,
         surface_id: surfaceId,
         thread_id: threadId,
@@ -102,6 +108,18 @@ function createMockSql() {
         }
       }
       return mockSqlRows<T>();
+    }
+
+    if (q === "DELETE FROM run_routes WHERE uid = ? RETURNING run_id") {
+      const [uid] = bindings as [number];
+      const removed: MockSqlRow[] = [];
+      for (const [runId, row] of table.entries()) {
+        if (row.uid === uid) {
+          removed.push({ run_id: runId });
+          table.delete(runId);
+        }
+      }
+      return mockSqlRows(removed as T[]);
     }
 
     if (q.startsWith("DELETE FROM run_routes") && q.includes("route_kind = 'adapter'")) {
@@ -161,6 +179,8 @@ describe("RunRouteStore", () => {
       1001,
       "whatsapp",
       "default",
+      "actor-a",
+      7,
       "thread",
       "surface-a",
       "thread-1",
@@ -173,6 +193,8 @@ describe("RunRouteStore", () => {
     if (route?.kind === "adapter") {
       expect(route.adapter).toBe("whatsapp");
       expect(route.accountId).toBe("default");
+      expect(route.actorId).toBe("actor-a");
+      expect(route.linkGeneration).toBe(7);
       expect(route.surfaceKind).toBe("thread");
       expect(route.threadId).toBe("thread-1");
       expect(route.expiresAt).toBe(3_000);
@@ -182,6 +204,8 @@ describe("RunRouteStore", () => {
       1001,
       "whatsapp",
       "default",
+      "actor-a",
+      7,
       "thread",
       "surface-a",
       "thread-1",
@@ -209,12 +233,47 @@ describe("RunRouteStore", () => {
 
     store.setConnectionRoute("run-c1", 1000, "conn-a");
     store.setConnectionRoute("run-c2", 1000, "conn-b");
-    store.setAdapterRoute("run-a1", 1000, "discord", "default", "dm", "dm-1");
+    store.setAdapterRoute(
+      "run-a1",
+      1000,
+      "discord",
+      "default",
+      "actor-a",
+      3,
+      "dm",
+      "dm-1",
+    );
 
     store.clearForConnection("conn-a");
 
     expect(store.get("run-c1")).toBeNull();
     expect(store.get("run-c2")).not.toBeNull();
     expect(store.get("run-a1")).not.toBeNull();
+  });
+
+  it("clears both route kinds for one exact uid", () => {
+    vi.spyOn(Date, "now").mockReturnValue(60_000);
+
+    const sql = createMockSql();
+    const store = new RunRouteStore(sql as unknown as SqlStorage);
+
+    store.setConnectionRoute("run-u1-connection", 1000, "conn-a");
+    store.setAdapterRoute(
+      "run-u1-adapter",
+      1000,
+      "discord",
+      "default",
+      "actor-a",
+      3,
+      "dm",
+      "dm-1",
+    );
+    store.setConnectionRoute("run-u2-connection", 1001, "conn-b");
+
+    expect(store.clearForUid(1000)).toBe(2);
+    expect(store.get("run-u1-connection")).toBeNull();
+    expect(store.get("run-u1-adapter")).toBeNull();
+    expect(store.get("run-u2-connection")).not.toBeNull();
+    expect(store.clearForUid(1000)).toBe(0);
   });
 });

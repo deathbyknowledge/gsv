@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppSessionStore } from "./app-sessions";
+import { buildRoutedAppSessionId } from "../protocol/app-session";
 import { mockSqlRows, type MockSqlRow } from "../test-support/mock-sql";
 
 function createMockSql() {
@@ -327,6 +328,39 @@ describe("AppSessionStore", () => {
     expect(resolved?.lastUsedAt).toBe(20_000);
   });
 
+  it("uses a routed id factory and never extends past its locator expiry", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(100_000);
+    const sessionId = buildRoutedAppSessionId({
+      username: "alice",
+      uid: 1000,
+      generation: 2,
+      expiresAt: 125_000,
+      nonce: "4f57c735-a614-4e0f-a36a-e5c60b94db15",
+      placementCertificate: "A".repeat(86),
+    }, "A".repeat(43));
+    const store = new AppSessionStore(
+      createMockSql() as unknown as SqlStorage,
+      async () => sessionId,
+    );
+
+    const issued = await store.issue({
+      uid: 1000,
+      username: "alice",
+      packageId: "pkg-chat",
+      packageName: "chat",
+      entrypointName: "Chat",
+      routeBase: "/apps/chat",
+      clientId: "win-1",
+      ttlMs: 60_000,
+    });
+    expect(issued.sessionId).toBe(sessionId);
+    expect(issued.expiresAt).toBe(125_000);
+
+    vi.spyOn(Date, "now").mockReturnValue(120_000);
+    const refreshed = await store.refresh(sessionId, issued.secret, 30_000);
+    expect(refreshed?.expiresAt).toBe(125_000);
+  });
+
   it("refreshes an existing session without changing its socket path", async () => {
     vi.spyOn(Date, "now").mockReturnValue(100_000);
 
@@ -351,6 +385,43 @@ describe("AppSessionStore", () => {
     expect(refreshed?.expiresAt).toBe(135_000);
     expect(refreshed?.lastUsedAt).toBe(105_000);
   });
+
+  it.each(["resolve", "refresh"] as const)(
+    "checks the target lease after secret verification and before %s mutation",
+    async (mode) => {
+      vi.spyOn(Date, "now").mockReturnValue(100_000);
+      const store = new AppSessionStore(createMockSql() as unknown as SqlStorage);
+      const issued = await store.issue({
+        uid: 1000,
+        username: "alice",
+        packageId: "pkg-chat",
+        packageName: "chat",
+        entrypointName: "Chat",
+        routeBase: "/apps/chat",
+        clientId: "win-1",
+        ttlMs: 10_000,
+      });
+      vi.spyOn(Date, "now").mockReturnValue(105_000);
+      const assertCurrent = vi.fn(() => {
+        throw new Error("target lease fenced");
+      });
+
+      const access = mode === "refresh"
+        ? store.refresh(issued.sessionId, issued.secret, 30_000, assertCurrent)
+        : store.resolve(issued.sessionId, issued.secret, assertCurrent);
+      await expect(access).rejects.toThrow("target lease fenced");
+
+      expect(assertCurrent).toHaveBeenCalledOnce();
+      expect(store.list(1000)).toEqual([expect.objectContaining({
+        lastUsedAt: null,
+        expiresAt: 110_000,
+        clients: [expect.objectContaining({
+          lastUsedAt: null,
+          expiresAt: 110_000,
+        })],
+      })]);
+    },
+  );
 
   it("attaches additional clients without invalidating existing sessions", async () => {
     vi.spyOn(Date, "now").mockReturnValue(200_000);

@@ -158,6 +158,25 @@ export class CapabilityStore {
       `SELECT gid, capability FROM group_capabilities ORDER BY gid, capability`,
     ).toArray();
   }
+
+  replaceRuntimeProjection(records: Array<{ gid: number; capability: string }>): void {
+    for (const record of records) {
+      if (!Number.isSafeInteger(record.gid) || record.gid < 0 || !isValidCapability(record.capability)) {
+        throw new Error("Invalid capability projection");
+      }
+      if (record.capability === "*" && record.gid !== 0) {
+        throw new Error("Wildcard capability is reserved for root");
+      }
+    }
+    this.sql.exec("DELETE FROM group_capabilities");
+    for (const record of records) {
+      this.sql.exec(
+        "INSERT INTO group_capabilities (gid, capability) VALUES (?, ?)",
+        record.gid,
+        record.capability,
+      );
+    }
+  }
 }
 
 /**

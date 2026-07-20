@@ -13,7 +13,11 @@ import type {
   SysOAuthStartArgs,
   SysOAuthStartResult,
 } from "@humansandmachines/gsv/protocol";
-import type { KernelContext } from "../context";
+import {
+  assertLocalUserKernelUid,
+  resolveCallerOwnerUid,
+  type KernelContext,
+} from "../context";
 import type {
   OAuthAccountRecord,
   OAuthConnectionKind,
@@ -33,8 +37,10 @@ import {
   pollOpenAICodexDeviceFlow,
   startOpenAICodexDeviceFlow,
 } from "./openai-codex-oauth";
+import { buildRoutedOAuthState } from "../../shared/callback-routes";
 
 const OAUTH_FLOW_TTL_MS = 10 * 60 * 1000;
+const OAUTH_TOKEN_EXCHANGE_TIMEOUT_MS = 30_000;
 const OAUTH_KINDS = new Set<OAuthConnectionKind>(["ai-provider", "mcp-server", "generic"]);
 const OAUTH_DEVICE_FLOW_KIND: OAuthConnectionKind = "ai-provider";
 const EXTRA_AUTH_RESERVED_PARAMS = new Set([
@@ -57,6 +63,11 @@ export type OAuthCallbackInput = {
 export type OAuthCallbackResult =
   | { ok: true; account: SysOAuthAccountSummary }
   | { ok: false; status: number; message: string };
+
+export type OAuthCallbackOperation = {
+  release: () => void;
+  signal?: AbortSignal;
+};
 
 function requireUid(ctx: KernelContext): number {
   const uid = ctx.identity?.process.uid;
@@ -174,6 +185,7 @@ export async function handleSysOAuthStart(
   if (!isRoot && targetUid !== callerUid) {
     throw new Error("Permission denied: cannot start OAuth for another user");
   }
+  assertLocalUserKernelUid(ctx, targetUid, "OAuth access");
 
   const kind = parseKind(raw.kind);
   const provider = parseRequiredString(raw.provider, "provider", 200);
@@ -190,12 +202,22 @@ export async function handleSysOAuthStart(
   const now = Date.now();
   ctx.oauth.cleanupExpiredFlows(now);
 
-  const state = createOpaqueToken();
+  const flowId = crypto.randomUUID();
+  const state = ctx.kernelKind === "user" && ctx.kernelUsername && ctx.kernelGeneration
+    ? buildRoutedOAuthState(
+        ctx.kernelUsername,
+        ctx.kernelGeneration,
+        flowId,
+        createOpaqueToken(),
+      )
+    : createOpaqueToken();
   const stateHash = await sha256Hex(state);
   const pkce = await createPkcePair();
   const flow = ctx.oauth.createFlow({
+    flowId,
     stateHash,
     uid: targetUid,
+    kernelOwnerUid: resolveCallerOwnerUid(ctx),
     kind,
     provider,
     accountKey,
@@ -243,6 +265,7 @@ export async function handleSysOAuthDeviceStart(
   if (!isRoot && targetUid !== callerUid) {
     throw new Error("Permission denied: cannot start OAuth for another user");
   }
+  assertLocalUserKernelUid(ctx, targetUid, "OAuth access");
 
   const provider = parseRequiredString(raw.provider, "provider", 200);
   if (provider !== OPENAI_CODEX_PROVIDER) {
@@ -257,11 +280,14 @@ export async function handleSysOAuthDeviceStart(
   const now = Date.now();
   ctx.oauth.cleanupExpiredFlows(now);
 
-  const device = await startOpenAICodexDeviceFlow(fetcher);
+  const device = await startOpenAICodexDeviceFlow(fetcher, ctx.requestSignal);
   const stateHash = await sha256Hex(createOpaqueToken());
+  ctx.requestSignal?.throwIfAborted();
+  ctx.assertCurrentKernel();
   const flow = ctx.oauth.createFlow({
     stateHash,
     uid: targetUid,
+    kernelOwnerUid: resolveCallerOwnerUid(ctx),
     kind,
     provider,
     accountKey,
@@ -309,6 +335,7 @@ export async function handleSysOAuthDevicePoll(
 
   const flowId = parseRequiredString(raw.flowId, "flowId", 200);
   const effectiveUid = isRoot ? requestedUid : callerUid;
+  assertLocalUserKernelUid(ctx, effectiveUid, "OAuth access");
   const flow = ctx.oauth.getFlow(flowId, effectiveUid);
   if (!flow) {
     throw new Error("OAuth device flow not found or expired");
@@ -327,7 +354,7 @@ export async function handleSysOAuthDevicePoll(
     deviceAuthId,
     userCode,
     intervalSeconds,
-  }, fetcher);
+  }, fetcher, ctx.requestSignal);
   if (poll.status === "pending") {
     return {
       status: "pending",
@@ -341,8 +368,11 @@ export async function handleSysOAuthDevicePoll(
     poll.authorizationCode,
     poll.codeVerifier,
     fetcher,
+    ctx.requestSignal,
   );
   const now = Date.now();
+  ctx.requestSignal?.throwIfAborted();
+  ctx.assertCurrentKernel();
   const account = ctx.oauth.upsertAccount({
     uid: flow.uid,
     kind: flow.kind,
@@ -361,6 +391,8 @@ export async function handleSysOAuthDevicePoll(
       ...(token.accountId ? { chatgptAccountId: token.accountId } : {}),
     },
   });
+  ctx.requestSignal?.throwIfAborted();
+  ctx.assertCurrentKernel();
   ctx.oauth.deleteFlow(flow.flowId);
   return {
     status: "complete",
@@ -381,6 +413,7 @@ export function handleSysOAuthList(
   }
 
   const effectiveUid = isRoot ? requestedUid : callerUid;
+  assertLocalUserKernelUid(ctx, effectiveUid, "OAuth access");
   const result: SysOAuthListResult = {
     accounts: ctx.oauth.listAccounts(effectiveUid).map(summarizeAccount),
   };
@@ -404,6 +437,7 @@ export function handleSysOAuthForget(
   }
 
   const effectiveUid = isRoot ? requestedUid : callerUid;
+  assertLocalUserKernelUid(ctx, effectiveUid, "OAuth access");
   return { forgotten: ctx.oauth.deleteAccount(accountId, effectiveUid) };
 }
 
@@ -411,20 +445,58 @@ export async function completeOAuthCallback(
   input: OAuthCallbackInput,
   oauth: OAuthStore,
   fetcher: typeof fetch = fetch,
+  authorizeCommit?: (flow: OAuthFlowRecord) => boolean | Promise<boolean>,
+  acquireOperation?: (flow: OAuthFlowRecord) => OAuthCallbackOperation | null,
 ): Promise<OAuthCallbackResult> {
   const state = input.state?.trim();
   if (!state) {
     return { ok: false, status: 400, message: "Missing OAuth state" };
   }
 
-  const flow = oauth.getFlowByStateHash(await sha256Hex(state));
-  if (!flow) {
+  const stateHash = await sha256Hex(state);
+  const candidate = acquireOperation
+    ? oauth.getFlowByStateHash(stateHash)
+    : null;
+  if (acquireOperation && !candidate) {
     return { ok: false, status: 400, message: "OAuth flow not found or expired" };
   }
 
+  const operation = acquireOperation && candidate
+    ? acquireOperation(candidate)
+    : undefined;
+  if (acquireOperation && !operation) {
+    return { ok: false, status: 409, message: "OAuth session is no longer active" };
+  }
+
+  try {
+    const flow = oauth.consumeFlowByStateHash(stateHash);
+    if (!flow) {
+      return { ok: false, status: 400, message: "OAuth flow not found or expired" };
+    }
+    return await completeConsumedOAuthCallback(
+      input,
+      flow,
+      oauth,
+      fetcher,
+      authorizeCommit,
+      operation?.signal,
+    );
+  } finally {
+    operation?.release();
+  }
+}
+
+async function completeConsumedOAuthCallback(
+  input: OAuthCallbackInput,
+  flow: OAuthFlowRecord,
+  oauth: OAuthStore,
+  fetcher: typeof fetch,
+  authorizeCommit?: (flow: OAuthFlowRecord) => boolean | Promise<boolean>,
+  operationSignal?: AbortSignal,
+): Promise<OAuthCallbackResult> {
+
   const providerError = input.error?.trim();
   if (providerError) {
-    oauth.deleteFlow(flow.flowId);
     const detail = input.errorDescription?.trim();
     return {
       ok: false,
@@ -440,9 +512,21 @@ export async function completeOAuthCallback(
     return { ok: false, status: 400, message: "Missing OAuth authorization code" };
   }
 
-  const token = await exchangeAuthorizationCode(flow, code, fetcher);
+  const token = await exchangeAuthorizationCode(
+    flow,
+    code,
+    boundedOAuthFetcher(fetcher, operationSignal),
+  );
   if (!token.ok) {
     return token;
+  }
+
+  if (authorizeCommit && !(await authorizeCommit(flow))) {
+    return {
+      ok: false,
+      status: 409,
+      message: "OAuth session is no longer active",
+    };
   }
 
   const now = Date.now();
@@ -463,8 +547,29 @@ export async function completeOAuthCallback(
       authorizedAt: now,
     },
   });
-  oauth.deleteFlow(flow.flowId);
   return { ok: true, account: summarizeAccount(account) };
+}
+
+function boundedOAuthFetcher(
+  fetcher: typeof fetch,
+  operationSignal?: AbortSignal,
+): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const timeout = new AbortController();
+    const timeoutId = setTimeout(() => {
+      timeout.abort(new Error("OAuth token exchange timed out"));
+    }, OAUTH_TOKEN_EXCHANGE_TIMEOUT_MS);
+    const signals = [init?.signal, operationSignal, timeout.signal]
+      .filter((signal): signal is AbortSignal => signal !== undefined && signal !== null);
+    try {
+      return await fetcher(input, {
+        ...init,
+        signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals),
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }) as typeof fetch;
 }
 
 function summarizeFlow(flow: OAuthFlowRecord): SysOAuthFlowSummary {

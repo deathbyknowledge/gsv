@@ -22,6 +22,8 @@ import type {
   ChannelOutboundMessage,
   ChannelPeer,
   ChannelSender,
+  GatewayFrame,
+  GatewayRequestFrame,
   SendResult,
   ShellExecArgs,
   ShellExecResult,
@@ -30,16 +32,7 @@ import type {
 } from "../../shared/src/types";
 
 type GatewayChannelBinding = Fetcher & {
-  channelInbound: (
-    channelId: string,
-    accountId: string,
-    message: ChannelInboundMessage,
-  ) => Promise<{ ok: boolean; sessionKey?: string; status?: string; error?: string }>;
-  channelStatusChanged: (
-    channelId: string,
-    accountId: string,
-    status: ChannelAccountStatus,
-  ) => Promise<void>;
+  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
 };
 
 type RecordedMessage = { direction: "in" | "out"; message: ChannelOutboundMessage | ChannelInboundMessage; timestamp: number };
@@ -134,11 +127,15 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     const state = this.getStateDO(accountId);
     await state.start();
     
-    await this.env.GATEWAY.channelStatusChanged("test", accountId, {
+    await this.callGateway("adapter.state.update", {
+      adapter: "test",
       accountId,
-      connected: true,
-      authenticated: true,
-      mode: "test",
+      status: {
+        accountId,
+        connected: true,
+        authenticated: true,
+        mode: "test",
+      },
     });
     
     return { ok: true };
@@ -148,10 +145,14 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     const state = this.getStateDO(accountId);
     await state.stop();
     
-    await this.env.GATEWAY.channelStatusChanged("test", accountId, {
+    await this.callGateway("adapter.state.update", {
+      adapter: "test",
       accountId,
-      connected: false,
-      authenticated: false,
+      status: {
+        accountId,
+        connected: false,
+        authenticated: false,
+      },
     });
     
     return { ok: true };
@@ -324,7 +325,20 @@ export class TestChannel extends WorkerEntrypoint<Env> {
     console.log(`[TestChannel] Simulating inbound from ${peer.id}: ${text}`);
 
     try {
-      const result = await this.env.GATEWAY.channelInbound("test", accountId, message);
+      const result = await this.callGateway<{ ok: boolean; error?: string }>(
+        "adapter.inbound",
+        {
+          adapter: "test",
+          accountId,
+          message: {
+            ...message,
+            surface: message.peer,
+            actor: message.sender,
+            peer: undefined,
+            sender: undefined,
+          },
+        },
+      );
       if (!result.ok) {
         return { ok: false, messageId, error: result.error || "Gateway rejected message" };
       }
@@ -338,6 +352,23 @@ export class TestChannel extends WorkerEntrypoint<Env> {
   async getMessages(accountId: string): Promise<RecordedMessage[]> {
     const state = this.getStateDO(accountId);
     return await state.getMessages();
+  }
+
+  private async callGateway<T = unknown>(call: string, args: unknown): Promise<T> {
+    const frame: GatewayRequestFrame = {
+      type: "req",
+      id: crypto.randomUUID(),
+      call,
+      args,
+    };
+    const response = await this.env.GATEWAY.serviceFrame(frame);
+    if (!response || response.type !== "res") {
+      throw new Error("No response from gateway serviceFrame");
+    }
+    if (!response.ok) {
+      throw new Error(response.error?.message ?? `Gateway error on ${call}`);
+    }
+    return (response.data ?? {}) as T;
   }
 
   async getOutboundMessages(accountId: string): Promise<ChannelOutboundMessage[]> {

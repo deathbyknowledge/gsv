@@ -1,4 +1,8 @@
-import type { GSVClient, GsvConnectOptions } from "@humansandmachines/gsv/client";
+import {
+  canonicalizeGsvUsername,
+  type GSVClient,
+  type GsvConnectOptions,
+} from "@humansandmachines/gsv/client";
 import type {
   ConnectResult,
   ServerBuild,
@@ -605,9 +609,9 @@ export function createSessionService(client: GSVClient): SessionService {
   const login = async (input: SessionLoginInput): Promise<ConnectResult> => {
     cancelSilentReconnect();
     const url = deriveGatewayUrlFromOrigin();
-    const username = input.username.trim();
-    const password = input.password?.trim() ?? "";
-    const token = input.token?.trim() ?? "";
+    const username = canonicalizeGsvUsername(input.username);
+    const password = input.password ?? "";
+    const token = input.token ?? "";
 
     setSnapshot({
       phase: "authenticating",
@@ -673,8 +677,8 @@ export function createSessionService(client: GSVClient): SessionService {
   const setup = async (input: SessionSetupInput): Promise<SysSetupResult> => {
     cancelSilentReconnect();
     const url = deriveGatewayUrlFromOrigin();
-    const username = input.username.trim();
-    const password = input.password.trim();
+    const username = canonicalizeGsvUsername(input.username);
+    const password = input.password;
 
     setSnapshot({
       phase: "authenticating",
@@ -686,7 +690,11 @@ export function createSessionService(client: GSVClient): SessionService {
     });
 
     try {
-      const result = await client.requestOnce(url, "sys.setup", input);
+      const result = await client.requestOnce(url, "sys.setup", {
+        ...input,
+        username,
+        password,
+      });
       pendingSetupLogin = { username, password };
       storeValue(STORAGE_USERNAME, username);
 

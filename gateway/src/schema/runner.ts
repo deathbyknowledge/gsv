@@ -40,7 +40,7 @@ export function runSqlMigrations(
   const applied = new Map(appliedRows.map((row) => [row.id, row]));
 
   for (const migration of migrations) {
-    const checksum = migrationChecksum(migration);
+    const checksum = sqlMigrationChecksum(migration);
     const existing = applied.get(migration.id);
     if (existing) {
       if (existing.name !== migration.name || existing.checksum !== checksum) {
@@ -125,7 +125,7 @@ function validateMigrations(migrations: readonly SqlMigration[]): void {
   }
 }
 
-function migrationChecksum(migration: SqlMigration): string {
+export function sqlMigrationChecksum(migration: SqlMigration): string {
   const input = JSON.stringify({
     id: migration.id,
     name: migration.name,

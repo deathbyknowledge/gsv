@@ -25,7 +25,11 @@ type FakeAdapterStatusStore = {
 type MakeContextOptions = {
   identity?: KernelContext["identity"];
   identityLinks?: Record<string, unknown>;
+  kernelKind?: KernelContext["kernelKind"];
   routePid?: string | null;
+  routedAdapterOwnerUid?: number;
+  routedAdapterLinkGeneration?: number;
+  serviceBinding?: boolean;
   surfaceRoute?: Record<string, unknown> | null;
   processId?: string;
   callerOwnerUid?: number;
@@ -99,9 +103,14 @@ function makeContext(
     home: "/home/helper",
     shell: "/bin/init",
   };
+  const configuredResolveUid = options.identityLinks?.resolveUid;
+  const resolveUid = typeof configuredResolveUid === "function"
+    ? configuredResolveUid as (...args: unknown[]) => number | null
+    : vi.fn(() => 1000);
 
   return {
     kernelName: "kernel-adapter",
+    kernelKind: options.kernelKind ?? "master",
     env: {
       STORAGE: makeStorageBucket(),
       ...env,
@@ -183,7 +192,23 @@ function makeContext(
         ...status,
       },
       identityLinks: {
-        resolveUid: vi.fn(() => 1000),
+        resolveUid,
+        get: vi.fn((adapter: string, accountId: string, actorId: string) => {
+          const uid = resolveUid(adapter, accountId, actorId);
+          return uid === null
+            ? null
+            : {
+                adapter,
+                accountId,
+                actorId,
+                uid,
+                generation: 1,
+                createdAt: 1,
+                linkedByUid: uid,
+                metadata: null,
+              };
+        }),
+        isCurrentGeneration: vi.fn(() => true),
         listByAccount: vi.fn(() => []),
         list: vi.fn(() => []),
         ...options.identityLinks,
@@ -211,6 +236,9 @@ function makeContext(
       capabilities: [],
     },
     callerOwnerUid: options.callerOwnerUid,
+    routedAdapterOwnerUid: options.routedAdapterOwnerUid,
+    routedAdapterLinkGeneration: options.routedAdapterLinkGeneration ?? 1,
+    serviceBinding: options.serviceBinding ?? true,
   } as unknown as KernelContext;
 }
 
@@ -219,6 +247,50 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 describe("adapter lifecycle handlers", () => {
   beforeEach(() => {
     sendFrameToProcessMock.mockReset();
+  });
+
+  it("denies adapter service syscalls from a generic service WebSocket", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "msg-1" }));
+    const status = {
+      upsert: vi.fn(() => ({ ownerUid: 1000 })),
+    };
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: { adapterSend },
+    }, status, {
+      serviceBinding: false,
+    });
+
+    await expect(handleAdapterInbound({
+      adapter: "whatsapp",
+      accountId: "primary",
+      message: {
+        messageId: "msg-forged-service",
+        surface: { kind: "dm", id: "dm-1" },
+        actor: { id: "wa:+123" },
+        text: "hello",
+      },
+    }, ctx)).rejects.toThrow("adapter.inbound requires a service identity");
+
+    expect(() => handleAdapterStateUpdate({
+      adapter: "whatsapp",
+      accountId: "primary",
+      status: {
+        accountId: "primary",
+        connected: true,
+        authenticated: true,
+      },
+    }, ctx)).toThrow("adapter.state.update requires a service identity");
+
+    await expect(handleAdapterSend({
+      adapter: "whatsapp",
+      accountId: "primary",
+      surface: { kind: "dm", id: "wa:+123" },
+      text: "hello",
+    }, ctx)).resolves.toEqual({ ok: false, error: "Permission denied" });
+
+    expect(status.upsert).not.toHaveBeenCalled();
+    expect(adapterSend).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
   it("notifies root and linked users when adapter state changes", () => {
@@ -1011,6 +1083,145 @@ describe("adapter lifecycle handlers", () => {
     if (!result.ok) {
       expect(result.error).toContain("Adapter service unavailable");
     }
+  });
+
+  it("routes trusted linked-adapter inbound to the existing owner process", async () => {
+    sendFrameToProcessMock
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "history-routed",
+        ok: true,
+        data: { pendingHil: null },
+      } as any)
+      .mockResolvedValueOnce({
+        type: "res",
+        id: "send-routed",
+        ok: true,
+        data: {
+          ok: true,
+          status: "started",
+          runId: "run-routed-owner",
+          queued: false,
+        },
+      } as any);
+    const resolveUid = vi.fn(() => null);
+    const ctx = makeContext(
+      {
+        CHANNEL_WHATSAPP: {
+          adapterSetActivity: vi.fn(async () => ({ ok: true as const })),
+        },
+      },
+      { upsert: vi.fn() },
+      {
+        kernelKind: "user",
+        routedAdapterOwnerUid: 1000,
+        identityLinks: { resolveUid },
+        routePid: "pid-1",
+      },
+    );
+
+    const result = await handleAdapterInbound(
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        message: {
+          messageId: "msg-routed-owner",
+          surface: { kind: "dm", id: "dm-1" },
+          actor: { id: "wa:+123" },
+          text: "hello from the routed adapter",
+        },
+      },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      delivered: {
+        uid: 1000,
+        pid: "pid-1",
+        runId: "run-routed-owner",
+      },
+    });
+    expect(resolveUid).not.toHaveBeenCalled();
+    expect(ctx.adapters.linkChallenges.issue).not.toHaveBeenCalled();
+    expect(ctx.adapters.surfaceRoutes.resolvePid).toHaveBeenCalledWith(
+      "whatsapp",
+      "primary",
+      "dm",
+      "dm-1",
+      1000,
+    );
+    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
+      2,
+      "pid-1",
+      expect.objectContaining({
+        call: "proc.send",
+        args: expect.objectContaining({ message: "hello from the routed adapter" }),
+      }),
+    );
+  });
+
+  it("preserves the Master-local challenge path without a routed owner", async () => {
+    const resolveUid = vi.fn(() => null);
+    const ctx = makeContext({}, { upsert: vi.fn() }, {
+      identityLinks: { resolveUid },
+    });
+
+    const result = await handleAdapterInbound(
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        message: {
+          messageId: "msg-unlinked",
+          surface: { kind: "dm", id: "dm-unlinked" },
+          actor: { id: "wa:unknown" },
+          text: "hello",
+        },
+      },
+      ctx,
+    );
+
+    expect(resolveUid).toHaveBeenCalledWith("whatsapp", "primary", "wa:unknown");
+    expect(ctx.adapters.linkChallenges.issue).toHaveBeenCalledWith({
+      adapter: "whatsapp",
+      accountId: "primary",
+      actorId: "wa:unknown",
+      surfaceKind: "dm",
+      surfaceId: "dm-unlinked",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      challenge: { code: "ABCD" },
+    });
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+  });
+
+  it("does not let a user identity assert a routed adapter owner", async () => {
+    const resolveUid = vi.fn(() => 1000);
+    const ctx = makeContext({}, { upsert: vi.fn() }, {
+      identity: userIdentity(),
+      kernelKind: "user",
+      routedAdapterOwnerUid: 1000,
+      identityLinks: { resolveUid },
+    });
+
+    await expect(handleAdapterInbound(
+      {
+        adapter: "whatsapp",
+        accountId: "primary",
+        message: {
+          messageId: "msg-user-forgery",
+          surface: { kind: "dm", id: "dm-1" },
+          actor: { id: "wa:+123" },
+          text: "hello",
+        },
+      },
+      ctx,
+    )).rejects.toThrow("adapter.inbound requires a service identity");
+
+    expect(resolveUid).not.toHaveBeenCalled();
+    expect(ctx.adapters.linkChallenges.issue).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
   it("adapter.inbound returns a reminder when a confirmation is pending", async () => {

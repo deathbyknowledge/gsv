@@ -12,6 +12,10 @@ import {
 import {
   refreshOpenAICodexAccount,
 } from "./openai-codex-oauth";
+import {
+  buildRoutedOAuthState,
+  parseRoutedOAuthState,
+} from "../../shared/callback-routes";
 
 type FakeOAuth = {
   cleanupExpiredFlows: ReturnType<typeof vi.fn>;
@@ -20,26 +24,41 @@ type FakeOAuth = {
   listFlows: ReturnType<typeof vi.fn>;
   deleteAccount: ReturnType<typeof vi.fn>;
   getFlow: ReturnType<typeof vi.fn>;
-  getFlowByStateHash: ReturnType<typeof vi.fn>;
+  consumeFlowByStateHash: ReturnType<typeof vi.fn>;
   upsertAccount: ReturnType<typeof vi.fn>;
   deleteFlow: ReturnType<typeof vi.fn>;
 };
 
-function makeContext(uid: number, oauth: FakeOAuth): KernelContext {
+function makeContext(
+  uid: number,
+  oauth: FakeOAuth,
+  userKernel?: { username: string; generation: number; ownerUid?: number },
+): KernelContext {
+  const username = userKernel?.username ?? (uid === 0 ? "root" : `user${uid}`);
   return {
+    kernelName: userKernel ? `user:${userKernel.username}` : "singleton",
+    kernelKind: userKernel ? "user" : "master",
+    ...(userKernel
+      ? {
+          kernelUsername: userKernel.username,
+          kernelGeneration: userKernel.generation,
+          kernelOwnerUid: userKernel.ownerUid ?? uid,
+        }
+      : {}),
     identity: {
       role: "user",
       process: {
         uid,
         gid: uid,
         gids: [uid],
-        username: uid === 0 ? "root" : `user${uid}`,
-        home: uid === 0 ? "/root" : `/home/user${uid}`,
-        cwd: uid === 0 ? "/root" : `/home/user${uid}`,
+        username,
+        home: uid === 0 ? "/root" : `/home/${username}`,
+        cwd: uid === 0 ? "/root" : `/home/${username}`,
       },
       capabilities: ["*"],
     },
     oauth,
+    assertCurrentKernel: vi.fn(),
   } as unknown as KernelContext;
 }
 
@@ -57,7 +76,7 @@ function createFakeOAuth(): FakeOAuth {
     listFlows: vi.fn(() => []),
     deleteAccount: vi.fn(() => true),
     getFlow: vi.fn(),
-    getFlowByStateHash: vi.fn(),
+    consumeFlowByStateHash: vi.fn(),
     upsertAccount: vi.fn((input) => ({
       accountId: "acct-1",
       ...input,
@@ -120,8 +139,8 @@ describe("sys.oauth handlers", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
   });
 
-  it("starts a user-scoped PKCE authorization flow", async () => {
-    const ctx = makeContext(1000, oauth);
+  it("starts a user-Kernel PKCE flow with a routed, generation-bound state", async () => {
+    const ctx = makeContext(1000, oauth, { username: "alice", generation: 7 });
 
     const result = await handleSysOAuthStart(
       {
@@ -147,10 +166,12 @@ describe("sys.oauth handlers", () => {
     expect(url.searchParams.get("code_challenge")).toBeTruthy();
     const state = url.searchParams.get("state");
     expect(state).toBeTruthy();
-    // MCP OAuth callbacks are claimed only for nonce.serverId states. Generic
-    // OAuth state must stay opaque so shared /oauth/callback routing falls
-    // through to sys.oauth instead of the MCP callback handler.
-    expect(state).not.toContain(".");
+    const createdFlow = oauth.createFlow.mock.calls[0]?.[0];
+    expect(parseRoutedOAuthState(state)).toEqual({
+      username: "alice",
+      generation: 7,
+      flowId: createdFlow.flowId,
+    });
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(oauth.createFlow).toHaveBeenCalledWith(expect.objectContaining({
       uid: 1000,
@@ -160,6 +181,73 @@ describe("sys.oauth handlers", () => {
       codeVerifier: expect.any(String),
     }));
     expect(result.flow).not.toHaveProperty("codeVerifier");
+  });
+
+  it("keeps legacy master-Kernel OAuth state opaque", async () => {
+    const ctx = makeContext(1000, oauth);
+
+    const result = await handleSysOAuthStart(
+      {
+        kind: "generic",
+        provider: "example",
+        authorizationEndpoint: "https://auth.example.com/oauth/authorize",
+        tokenEndpoint: "https://auth.example.com/oauth/token",
+        clientId: "client-123",
+        redirectUri: "https://gsv.example.com/oauth/callback",
+      },
+      ctx,
+    );
+
+    const state = new URL(result.authorizationUrl).searchParams.get("state");
+    expect(state).toMatch(/^[A-Za-z0-9_-]{32,256}$/);
+    expect(parseRoutedOAuthState(state)).toBeNull();
+  });
+
+  it("rejects root OAuth access outside an active user Kernel's owner", async () => {
+    const ctx = makeContext(0, oauth, {
+      username: "alice",
+      generation: 7,
+      ownerUid: 1000,
+    });
+    const fetcher = vi.fn();
+
+    await expect(handleSysOAuthStart({
+      kind: "generic",
+      provider: "example",
+      authorizationEndpoint: "https://auth.example.com/oauth/authorize",
+      tokenEndpoint: "https://auth.example.com/oauth/token",
+      clientId: "client-123",
+      redirectUri: "https://gsv.example.com/oauth/callback",
+    }, ctx)).rejects.toThrow("cross-user OAuth access");
+    await expect(handleSysOAuthDeviceStart({
+      uid: 1001,
+      kind: "ai-provider",
+      provider: "openai-codex",
+    }, ctx, fetcher)).rejects.toThrow("cross-user OAuth access");
+    await expect(handleSysOAuthDevicePoll({
+      flowId: "flow-1",
+    }, ctx, fetcher)).rejects.toThrow("cross-user OAuth access");
+    expect(() => handleSysOAuthList({}, ctx)).toThrow("cross-user OAuth access");
+    expect(() => handleSysOAuthForget({
+      uid: 1001,
+      accountId: "acct-1",
+    }, ctx)).toThrow("cross-user OAuth access");
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(oauth.createFlow).not.toHaveBeenCalled();
+    expect(oauth.getFlow).not.toHaveBeenCalled();
+    expect(oauth.listAccounts).not.toHaveBeenCalled();
+    expect(oauth.deleteAccount).not.toHaveBeenCalled();
+  });
+
+  it("preserves root OAuth targeting on the legacy Master Kernel", () => {
+    const ctx = makeContext(0, oauth);
+
+    handleSysOAuthList({ uid: 1001 }, ctx);
+    handleSysOAuthForget({ uid: 1001, accountId: "acct-1" }, ctx);
+
+    expect(oauth.listAccounts).toHaveBeenCalledWith(1001);
+    expect(oauth.deleteAccount).toHaveBeenCalledWith("acct-1", 1001);
   });
 
   it("rejects non-root OAuth start for another uid", async () => {
@@ -346,8 +434,109 @@ describe("sys.oauth handlers", () => {
       },
     }));
     expect(oauth.deleteFlow).toHaveBeenCalledWith("flow-1");
+    expect(ctx.assertCurrentKernel).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(result)).not.toContain(accessToken);
     expect(JSON.stringify(result)).not.toContain("refresh-token-1");
+  });
+
+  it("does not persist device OAuth tokens when the poll request is aborted", async () => {
+    const controller = new AbortController();
+    const ctx = makeContext(1000, oauth);
+    ctx.requestSignal = controller.signal;
+    oauth.getFlow.mockReturnValue({
+      ...flow,
+      clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+      authorizationEndpoint: "https://auth.openai.com/codex/device",
+      tokenEndpoint: "https://auth.openai.com/oauth/token",
+      redirectUri: "https://auth.openai.com/deviceauth/callback",
+      scope: "openid profile email offline_access",
+      extraAuthParams: {
+        device_auth_id: "device-auth-1",
+        user_code: "ABCD-EFGH",
+        interval_seconds: "5",
+      },
+    });
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "https://auth.openai.com/api/accounts/deviceauth/token") {
+        return new Response(JSON.stringify({
+          authorization_code: "authorization-code-1",
+          code_verifier: "code-verifier-1",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      controller.abort(new Error("request aborted before OAuth commit"));
+      return new Response(JSON.stringify({
+        access_token: "new-access-token",
+        refresh_token: "new-refresh-token",
+        token_type: "Bearer",
+        expires_in: 3600,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    await expect(handleSysOAuthDevicePoll({
+      flowId: "flow-1",
+    }, ctx, fetcher)).rejects.toThrow("request aborted before OAuth commit");
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const call of fetcher.mock.calls) {
+      expect(call[1]).toEqual(expect.objectContaining({ signal: controller.signal }));
+    }
+    expect(ctx.assertCurrentKernel).not.toHaveBeenCalled();
+    expect(oauth.upsertAccount).not.toHaveBeenCalled();
+    expect(oauth.deleteFlow).not.toHaveBeenCalled();
+  });
+
+  it("does not persist device OAuth tokens from a stale Kernel generation", async () => {
+    const ctx = makeContext(1000, oauth);
+    ctx.assertCurrentKernel = vi.fn(() => {
+      throw new Error("User Kernel generation is no longer current");
+    });
+    oauth.getFlow.mockReturnValue({
+      ...flow,
+      clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+      authorizationEndpoint: "https://auth.openai.com/codex/device",
+      tokenEndpoint: "https://auth.openai.com/oauth/token",
+      redirectUri: "https://auth.openai.com/deviceauth/callback",
+      scope: "openid profile email offline_access",
+      extraAuthParams: {
+        device_auth_id: "device-auth-1",
+        user_code: "ABCD-EFGH",
+        interval_seconds: "5",
+      },
+    });
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "https://auth.openai.com/api/accounts/deviceauth/token") {
+        return new Response(JSON.stringify({
+          authorization_code: "authorization-code-1",
+          code_verifier: "code-verifier-1",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        access_token: "stale-access-token",
+        refresh_token: "stale-refresh-token",
+        token_type: "Bearer",
+        expires_in: 3600,
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    await expect(handleSysOAuthDevicePoll({
+      flowId: "flow-1",
+    }, ctx, fetcher)).rejects.toThrow("User Kernel generation is no longer current");
+
+    expect(ctx.assertCurrentKernel).toHaveBeenCalledTimes(1);
+    expect(oauth.upsertAccount).not.toHaveBeenCalled();
+    expect(oauth.deleteFlow).not.toHaveBeenCalled();
   });
 
   it("preserves an existing OpenAI Codex refresh token when refresh omits rotation", async () => {
@@ -386,8 +575,13 @@ describe("sys.oauth handlers", () => {
       });
     });
 
-    const result = await refreshOpenAICodexAccount(oauth as any, account, fetcher);
+    const assertCurrentKernel = vi.fn();
+    const result = await refreshOpenAICodexAccount(oauth as any, account, {
+      fetcher,
+      assertCurrentKernel,
+    });
 
+    expect(assertCurrentKernel).toHaveBeenCalledTimes(1);
     expect(result.refreshToken).toBe("stored-refresh-token");
     expect(oauth.upsertAccount).toHaveBeenCalledWith(expect.objectContaining({
       uid: 1000,
@@ -442,7 +636,7 @@ describe("sys.oauth handlers", () => {
   });
 
   it("exchanges an OAuth callback code and stores tokens behind the summary boundary", async () => {
-    oauth.getFlowByStateHash.mockReturnValue(flow);
+    oauth.consumeFlowByStateHash.mockReturnValueOnce(flow);
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = init?.body as URLSearchParams;
       expect(body.get("grant_type")).toBe("authorization_code");
@@ -476,8 +670,104 @@ describe("sys.oauth handlers", () => {
       expiresAt: 1_700_003_600_000,
       scope: "openid profile email",
     }));
-    expect(oauth.deleteFlow).toHaveBeenCalledWith("flow-1");
+    expect(oauth.consumeFlowByStateHash).toHaveBeenCalledWith(
+      expect.stringMatching(/^[a-f0-9]{64}$/),
+    );
+    expect(oauth.deleteFlow).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("access-secret");
     expect(JSON.stringify(result)).not.toContain("refresh-secret");
+
+    const replay = await completeOAuthCallback(
+      { state: "state-value", code: "auth-code" },
+      oauth as unknown as Parameters<typeof completeOAuthCallback>[1],
+      fetcher,
+    );
+    expect(replay).toEqual({
+      ok: false,
+      status: 400,
+      message: "OAuth flow not found or expired",
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not commit callback credentials after lifecycle authorization is lost", async () => {
+    oauth.consumeFlowByStateHash.mockReturnValueOnce(flow);
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      access_token: "access-secret",
+      token_type: "Bearer",
+      expires_in: 3600,
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const authorizeCommit = vi.fn(async () => false);
+
+    const result = await completeOAuthCallback(
+      { state: "state-value", code: "auth-code" },
+      oauth as unknown as Parameters<typeof completeOAuthCallback>[1],
+      fetcher,
+      authorizeCommit,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      message: "OAuth session is no longer active",
+    });
+    expect(authorizeCommit).toHaveBeenCalledTimes(1);
+    expect(oauth.upsertAccount).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "username",
+      "gsv1o~bob~7~01234567-89ab-4def-8123-456789abcdef~abcdefghijklmnopqrstuvwxyz_ABCDEF",
+      { username: "bob", generation: 7 },
+    ],
+    [
+      "generation",
+      "gsv1o~alice~8~01234567-89ab-4def-8123-456789abcdef~abcdefghijklmnopqrstuvwxyz_ABCDEF",
+      { username: "alice", generation: 8 },
+    ],
+  ])("rejects a routed state with a swapped %s at the consuming Kernel", async (
+    _field,
+    tamperedState,
+    tamperedRoute,
+  ) => {
+    const validState = buildRoutedOAuthState(
+      "alice",
+      7,
+      "01234567-89ab-4def-8123-456789abcdef",
+      "abcdefghijklmnopqrstuvwxyz_ABCDEF",
+    );
+    const validStateHash = await sha256Hex(validState);
+    expect(parseRoutedOAuthState(tamperedState)).toEqual({
+      ...tamperedRoute,
+      flowId: "01234567-89ab-4def-8123-456789abcdef",
+    });
+    oauth.consumeFlowByStateHash.mockImplementation((stateHash: string) =>
+      stateHash === validStateHash ? flow : null,
+    );
+    const fetcher = vi.fn();
+
+    const result = await completeOAuthCallback(
+      { state: tamperedState, code: "auth-code" },
+      oauth as unknown as Parameters<typeof completeOAuthCallback>[1],
+      fetcher as unknown as typeof fetch,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 400,
+      message: "OAuth flow not found or expired",
+    });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}

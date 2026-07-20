@@ -10,6 +10,8 @@ type FakeAuth = {
   issueToken: ReturnType<typeof vi.fn>;
   listTokens: ReturnType<typeof vi.fn>;
   revokeToken: ReturnType<typeof vi.fn>;
+  getPasswdByUid: ReturnType<typeof vi.fn>;
+  getAccountIdentity: ReturnType<typeof vi.fn>;
 };
 
 function makeContext(uid: number, auth: FakeAuth): KernelContext {
@@ -49,6 +51,16 @@ describe("sys.token handlers", () => {
       })),
       listTokens: vi.fn(() => []),
       revokeToken: vi.fn(() => true),
+      getPasswdByUid: vi.fn((uid: number) => ({
+        username: uid === 0 ? "root" : `user${uid}`,
+        uid,
+      })),
+      getAccountIdentity: vi.fn((username: string) => ({
+        username,
+        uid: username === "root" ? 0 : Number(username.slice(4)),
+        kind: username === "root" ? "system" : "human",
+        state: "active",
+      })),
     };
   });
 
@@ -116,6 +128,40 @@ describe("sys.token handlers", () => {
         ctx,
       ),
     ).rejects.toThrow("Permission denied: only root may create service tokens");
+    expect(auth.issueToken).not.toHaveBeenCalled();
+  });
+
+  it("allows active humans and ship root to create user tokens", async () => {
+    await expect(handleSysTokenCreate(
+      { kind: "user" },
+      makeContext(1000, auth),
+    )).resolves.toMatchObject({ token: { uid: 1000, kind: "user" } });
+    await expect(handleSysTokenCreate(
+      { kind: "user" },
+      makeContext(0, auth),
+    )).resolves.toMatchObject({ token: { uid: 0, kind: "user" } });
+  });
+
+  it("rejects user tokens for agent accounts even when requested by root", async () => {
+    auth.getPasswdByUid.mockImplementation((uid: number) => ({
+      username: uid === 0 ? "root" : "scout",
+      uid,
+    }));
+    auth.getAccountIdentity.mockImplementation((username: string) => ({
+      username,
+      uid: username === "root" ? 0 : 1000,
+      kind: username === "root" ? "system" : "agent",
+      state: "active",
+    }));
+
+    await expect(handleSysTokenCreate(
+      { kind: "user" },
+      makeContext(1000, auth),
+    )).rejects.toThrow("user tokens require an active human account");
+    await expect(handleSysTokenCreate(
+      { uid: 1000, kind: "user" },
+      makeContext(0, auth),
+    )).rejects.toThrow("user tokens require an active human account");
     expect(auth.issueToken).not.toHaveBeenCalled();
   });
 

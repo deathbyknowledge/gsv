@@ -191,6 +191,40 @@ function createMockSql() {
       return mockSqlRows<T>();
     }
 
+    // AuthStore - permanent account identities
+    if (q.startsWith("INSERT INTO account_identities")) {
+      const table = getTable("account_identities");
+      const [username, uid, kind, created_at, updated_at] = bindings as [
+        string,
+        number,
+        string,
+        number,
+        number,
+      ];
+      table.push({
+        username,
+        uid,
+        kind,
+        state: "active",
+        created_at,
+        updated_at,
+        retired_at: null,
+      });
+      return mockSqlRows<T>();
+    }
+
+    if (q.includes("FROM account_identities") && q.includes("WHERE username = ?")) {
+      const table = getTable("account_identities");
+      const [username] = bindings as [string];
+      return mockSqlRows(table.filter((row) => row.username === username) as T[]);
+    }
+
+    if (q.includes("FROM account_identities") && q.includes("WHERE uid = ?")) {
+      const table = getTable("account_identities");
+      const [uid] = bindings as [number];
+      return mockSqlRows(table.filter((row) => row.uid === uid) as T[]);
+    }
+
     // AuthStore - passwd
     if (q.startsWith("SELECT COUNT") && q.includes("passwd")) {
       const table = getTable("passwd");
@@ -336,6 +370,8 @@ function makeCtx(sql: ReturnType<typeof createMockSql>): KernelContext {
 
   return {
     env: env as any,
+    kernelName: "singleton",
+    kernelKind: "master",
     auth,
     caps,
     config,
@@ -403,6 +439,39 @@ describe("handleConnect", () => {
     if (!result.ok) expect(result.code).toBe(401);
   });
 
+  it("keeps commissioning reachable after auth commits but provisioning is retryable", async () => {
+    const ctx = makeCtx(sql);
+    const hash = await hashPassword("root-password");
+    await ctx.auth.bootstrap();
+    await ctx.auth.setPassword("root", hash);
+    ctx.config.set("internal/setup/commissioning", JSON.stringify({
+      version: 2,
+      attemptId: "attempt-1",
+      status: "retryable",
+      username: "alice",
+      uid: 1000,
+      agentName: null,
+      requestHash: hash,
+      passwordHash: hash,
+      rootPasswordHash: hash,
+      nodeExpiryLifetimeMs: null,
+      startedAt: 1,
+      updatedAt: 2,
+      leaseExpiresAt: 3,
+      mutationStarted: true,
+    }));
+
+    const result = await handleConnect(
+      { protocol: 2, client: { id: "c1", version: "1", platform: "test", role: "user" } },
+      ctx,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      code: 425,
+      details: { setupMode: true, next: "sys.setup" },
+    });
+  });
+
   it("authenticates with valid token", async () => {
     const ctx = makeCtx(sql);
     const rootHash = await hashPassword("root-password");
@@ -424,7 +493,13 @@ describe("handleConnect", () => {
     if (result.ok) {
       expect(result.identity.process.uid).toBe(0);
       expect(result.identity.capabilities).toContain("*");
+      expect(result.credential).toEqual({
+        kind: "token",
+        tokenId: issued.tokenId,
+        expiresAt: null,
+      });
       expect(result.result.protocol).toBe(2);
+      expect(result.result).not.toHaveProperty("credential");
     }
   });
 
@@ -669,6 +744,8 @@ describe("handleConnect", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.identity.process.uid).toBe(0);
+      expect(result.credential).toEqual({ kind: "password" });
+      expect(result.result).not.toHaveProperty("credential");
     }
   });
 

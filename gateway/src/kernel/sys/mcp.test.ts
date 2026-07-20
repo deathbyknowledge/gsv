@@ -5,6 +5,7 @@ import {
   handleSysMcpAdd,
   handleSysMcpCall,
   handleSysMcpList,
+  handleSysMcpRefresh,
   handleSysMcpRemove,
 } from "./mcp";
 
@@ -38,10 +39,23 @@ type SdkMcpServerRow = {
 function makeContext(
   uid: number,
   mcpServers: FakeMcpServers,
-  options: { ownerUid?: number; processId?: string } = {},
+  options: {
+    ownerUid?: number;
+    processId?: string;
+    userKernelOwnerUid?: number;
+  } = {},
 ): KernelContext {
   const ownerUid = options.ownerUid ?? uid;
   return {
+    kernelName: options.userKernelOwnerUid === undefined ? "singleton" : "user:alice",
+    kernelKind: options.userKernelOwnerUid === undefined ? "master" : "user",
+    ...(options.userKernelOwnerUid === undefined
+      ? {}
+      : {
+          kernelUsername: "alice",
+          kernelGeneration: 1,
+          kernelOwnerUid: options.userKernelOwnerUid,
+        }),
     identity: {
       role: "user",
       process: {
@@ -228,6 +242,43 @@ describe("sys.mcp handlers", () => {
       url: "https://mcp.example.com/mcp",
     }, ctx)).rejects.toThrow("Permission denied: cannot add MCP servers for another user");
     expect(ctx.addMcpServerConnection).not.toHaveBeenCalled();
+  });
+
+  it("rejects every root MCP operation outside an active user Kernel's owner", async () => {
+    const ctx = makeContext(0, mcpServers, { userKernelOwnerUid: 1000 });
+
+    await expect(handleSysMcpAdd({
+      uid: 1001,
+      name: "Other",
+      url: "https://other.example.com/mcp",
+    }, ctx)).rejects.toThrow("cross-user MCP access");
+    expect(() => handleSysMcpList({}, ctx)).toThrow("cross-user MCP access");
+    await expect(handleSysMcpRemove({
+      uid: 1001,
+      serverId: "server-1",
+    }, ctx)).rejects.toThrow("cross-user MCP access");
+    await expect(handleSysMcpRefresh({
+      uid: 1001,
+      serverId: "server-1",
+    }, ctx)).rejects.toThrow("cross-user MCP access");
+    await expect(handleSysMcpCall({
+      uid: 1001,
+      serverId: "server-1",
+      name: "lookup",
+    }, ctx)).rejects.toThrow("cross-user MCP access");
+
+    expect(ctx.addMcpServerConnection).not.toHaveBeenCalled();
+    expect(mcpServers.list).not.toHaveBeenCalled();
+    expect(mcpServers.get).not.toHaveBeenCalled();
+    expect(ctx.callMcpTool).not.toHaveBeenCalled();
+  });
+
+  it("preserves root MCP targeting on the legacy Master Kernel", () => {
+    const ctx = makeContext(0, mcpServers);
+
+    handleSysMcpList({ uid: 1001 }, ctx);
+
+    expect(mcpServers.list).toHaveBeenCalledWith(1001);
   });
 
   it("rejects non-local plain HTTP MCP servers", async () => {

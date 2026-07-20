@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GSVClient } from "../dist/client.js";
+import {
+  buildUserWebSocketUrl,
+  canonicalizeGsvUsername,
+  GSVClient,
+} from "../dist/client.js";
 import {
   BINARY_FRAME_CANCEL,
   BINARY_FRAME_DATA,
@@ -26,8 +30,9 @@ class FakeWebSocket extends EventTarget {
   closeCalls = [];
   connectSignals = ["device.pong"];
 
-  constructor() {
+  constructor(url) {
     super();
+    this.url = String(url);
     FakeWebSocket.instance = this;
     queueMicrotask(() => {
       this.readyState = 1;
@@ -156,6 +161,54 @@ test("closes a WebSocket that is still opening when the connection is cancelled"
     code: 1000,
     reason: "connection settings changed",
   }]);
+});
+
+test("routes authenticated connections by canonical username without normalizing credentials", async () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+  await client.connect({
+    url: "ws://test/ws",
+    username: " Alice ",
+    password: "  exact password  ",
+  });
+
+  const socket = FakeWebSocket.instance;
+  assert.equal(socket.url, "ws://test/ws/alice");
+  const connect = JSON.parse(socket.sent[0]);
+  assert.deepEqual(connect.args.auth, {
+    username: "alice",
+    password: "  exact password  ",
+  });
+  client.close();
+});
+
+test("builds canonical user routes while preserving gateway query parameters", () => {
+  assert.equal(
+    buildUserWebSocketUrl("wss://gsv.example/ws?source=test", "HANK"),
+    "wss://gsv.example/ws/hank?source=test",
+  );
+});
+
+test("rejects non-ASCII username aliases before case folding", () => {
+  assert.throws(
+    () => canonicalizeGsvUsername("K"),
+    /Username must match/,
+  );
+  assert.throws(
+    () => canonicalizeGsvUsername("Ａlice"),
+    /Username must match/,
+  );
+});
+
+test("bounds raw username input while allowing canonical-length whitespace", () => {
+  const canonical = `A${"B".repeat(31)}`;
+  assert.equal(
+    canonicalizeGsvUsername(`                ${canonical}                `),
+    canonical.toLowerCase(),
+  );
+  assert.throws(
+    () => canonicalizeGsvUsername(`                 ${canonical}                `),
+    /Username must match/,
+  );
 });
 
 test("closes an established WebSocket immediately when it errors", async () => {

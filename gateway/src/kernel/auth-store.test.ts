@@ -7,7 +7,7 @@ import {
   AUTHENTICATION_FAILED_MESSAGE,
   AuthStore,
 } from "./auth-store";
-import { hashPassword, makeShadowEntry, verify } from "../auth/shadow";
+import { hashPassword, isLocked, makeShadowEntry, verify } from "../auth/shadow";
 import { LOGIN_TARGET_ATTEMPT_LIMIT } from "./login-attempts";
 import { LOGIN_CREDENTIAL_MAX_CHARACTERS } from "../auth/login";
 import type { Kernel } from "./do";
@@ -35,7 +35,7 @@ describe("AuthStore Unix id allocation", () => {
         gecos: "",
         home: "/home/alice",
         shell: "/bin/init",
-      });
+      }, "human");
       auth.addGroup({ name: "alice", gid: userId, members: [] });
 
       const groupId = auth.allocateGid();
@@ -61,7 +61,7 @@ describe("AuthStore Unix id allocation", () => {
         gecos: "",
         home: "/home/imported",
         shell: "/bin/init",
-      });
+      }, "human");
       expect(auth.removeUser("imported")).toBe(true);
 
       expect(auth.allocateGid()).toBe(9001);
@@ -82,6 +82,139 @@ describe("AuthStore Unix id allocation", () => {
 });
 
 describe("AuthStore authentication boundary", () => {
+  it("returns only non-secret credential provenance on successful authentication", async () => {
+    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+
+    await runInDurableObject(kernel, async (_instance: Kernel, state) => {
+      const auth = new AuthStore(state.storage.sql);
+      await auth.bootstrap();
+      await auth.setPassword("root", await hashPassword("correct-password"));
+      const expiresAt = Date.now() + 60_000;
+      const issued = await auth.issueToken({ uid: 0, kind: "user", expiresAt });
+
+      await expect(auth.authenticate(
+        "root",
+        "correct-password",
+        UNAVAILABLE_LOGIN_SOURCE_SCOPE,
+      )).resolves.toMatchObject({
+        ok: true,
+        credential: { kind: "password" },
+      });
+      await expect(auth.authenticateToken(
+        "root",
+        issued.token,
+        UNAVAILABLE_LOGIN_SOURCE_SCOPE,
+        { role: "user" },
+      )).resolves.toMatchObject({
+        ok: true,
+        credential: {
+          kind: "token",
+          tokenId: issued.tokenId,
+          expiresAt,
+        },
+      });
+    });
+  });
+
+  it("rejects a password result when the authoritative hash changes during verification", async () => {
+    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+
+    await runInDurableObject(kernel, async (_instance: Kernel, state) => {
+      const auth = new AuthStore(state.storage.sql);
+      await auth.bootstrap();
+      const originalHash = await hashPassword("original-password");
+      const replacementHash = await hashPassword("replacement-password");
+      await auth.setPassword("root", originalHash);
+
+      const realDeriveBits = crypto.subtle.deriveBits.bind(crypto.subtle);
+      let entered!: () => void;
+      const verificationEntered = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let release!: () => void;
+      const verificationGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const deriveBits = vi.spyOn(crypto.subtle, "deriveBits").mockImplementation(async (
+        ...args: Parameters<SubtleCrypto["deriveBits"]>
+      ) => {
+        entered();
+        await verificationGate;
+        return realDeriveBits(...args);
+      });
+
+      try {
+        const pending = auth.authenticate(
+          "root",
+          "original-password",
+          UNAVAILABLE_LOGIN_SOURCE_SCOPE,
+        );
+        await verificationEntered;
+        auth.setShadow(makeShadowEntry("root", replacementHash));
+        release();
+        await expect(pending).resolves.toEqual(GENERIC_AUTH_FAILURE);
+      } finally {
+        release();
+        deriveBits.mockRestore();
+      }
+    });
+  });
+
+  it("returns the current account identity after token hashing yields", async () => {
+    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+
+    await runInDurableObject(kernel, async (_instance: Kernel, state) => {
+      const auth = new AuthStore(state.storage.sql);
+      await auth.bootstrap();
+      const issued = await auth.issueToken({ uid: 0, kind: "user" });
+
+      const realDigest = crypto.subtle.digest.bind(crypto.subtle);
+      let digestCalls = 0;
+      let entered!: () => void;
+      const tokenHashEntered = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let release!: () => void;
+      const tokenHashGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const digest = vi.spyOn(crypto.subtle, "digest").mockImplementation(async (
+        ...args: Parameters<SubtleCrypto["digest"]>
+      ) => {
+        digestCalls += 1;
+        if (digestCalls === 2) {
+          entered();
+          await tokenHashGate;
+        }
+        return realDigest(...args);
+      });
+
+      try {
+        const pending = auth.authenticateToken(
+          "root",
+          issued.token,
+          UNAVAILABLE_LOGIN_SOURCE_SCOPE,
+          { role: "user" },
+        );
+        await tokenHashEntered;
+        expect(auth.updateUser("root", { gid: 1234, home: "/root-current" })).toBe(true);
+        release();
+        await expect(pending).resolves.toMatchObject({
+          ok: true,
+          identity: {
+            uid: 0,
+            gid: 1234,
+            home: "/root-current",
+            gids: expect.arrayContaining([1234]),
+          },
+        });
+      } finally {
+        release();
+        digest.mockRestore();
+      }
+    });
+  });
+
   it("uses one password failure shape and PBKDF2 work for absent credential state", async () => {
     const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
 
@@ -96,7 +229,7 @@ describe("AuthStore authentication boundary", () => {
         gecos: "",
         home: "/home/missing-shadow",
         shell: "/bin/init",
-      });
+      }, "human");
       auth.addUser({
         username: "locked-user",
         uid: 4001,
@@ -104,7 +237,7 @@ describe("AuthStore authentication boundary", () => {
         gecos: "",
         home: "/home/locked-user",
         shell: "/bin/init",
-      });
+      }, "human");
       auth.setShadow(makeShadowEntry("locked-user", "!"));
 
       const deriveBits = vi.spyOn(crypto.subtle, "deriveBits");
@@ -158,6 +291,49 @@ describe("AuthStore authentication boundary", () => {
         role: "driver",
         deviceId: "other-device",
       })).toEqual(GENERIC_AUTH_FAILURE);
+    });
+  });
+
+  it("denies interactive password and historical user-token auth for agents", async () => {
+    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+
+    await runInDurableObject(kernel, async (_instance: Kernel, state) => {
+      const auth = new AuthStore(state.storage.sql);
+      await auth.bootstrap();
+      auth.addUser({
+        username: "scout",
+        uid: 1000,
+        gid: 1000,
+        gecos: "Scout",
+        home: "/home/scout",
+        shell: "/bin/init",
+      }, "agent");
+      auth.setShadow(makeShadowEntry(
+        "scout",
+        await hashPassword("misconfigured-agent-password"),
+      ));
+      // Emulate a user token minted before account-kind checks were enforced.
+      const historical = await auth.issueToken({ uid: 1000, kind: "user" });
+      const deriveBits = vi.spyOn(crypto.subtle, "deriveBits");
+
+      await expect(auth.authenticate(
+        "scout",
+        "misconfigured-agent-password",
+        UNAVAILABLE_LOGIN_SOURCE_SCOPE,
+      )).resolves.toEqual(GENERIC_AUTH_FAILURE);
+      expect(deriveBits).toHaveBeenCalledTimes(1);
+      await expect(auth.authenticateToken(
+        "scout",
+        historical.token,
+        UNAVAILABLE_LOGIN_SOURCE_SCOPE,
+        { role: "user" },
+      )).resolves.toEqual(GENERIC_AUTH_FAILURE);
+      await expect(auth.authenticatePasswordOrToken(
+        "scout",
+        historical.token,
+        UNAVAILABLE_LOGIN_SOURCE_SCOPE,
+      )).resolves.toEqual(GENERIC_AUTH_FAILURE);
+      deriveBits.mockRestore();
     });
   });
 
@@ -269,6 +445,161 @@ describe("AuthStore authentication boundary", () => {
       await expect(
         auth.authenticatePasswordOrToken("unknown-user", "wrong-credential", UNAVAILABLE_LOGIN_SOURCE_SCOPE),
       ).resolves.toEqual(GENERIC_AUTH_FAILURE);
+    });
+  });
+});
+
+describe("AuthStore permanent account identities", () => {
+  it("tombstones a removed username so neither its name nor uid can be reused", async () => {
+    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+
+    await runInDurableObject(kernel, async (_instance: Kernel, state) => {
+      const auth = new AuthStore(state.storage.sql);
+      await auth.bootstrap();
+      auth.addUser({
+        username: "alice",
+        uid: 1000,
+        gid: 1000,
+        gecos: "Alice",
+        home: "/home/alice",
+        shell: "/bin/init",
+      }, "human");
+
+      expect(auth.removeUser("alice")).toBe(true);
+      expect(auth.getAccountIdentity("alice")).toMatchObject({
+        username: "alice",
+        uid: 1000,
+        kind: "human",
+        state: "retired",
+      });
+      expect(() => auth.addUser({
+        username: "alice",
+        uid: 1001,
+        gid: 1001,
+        gecos: "Alice 2",
+        home: "/home/alice",
+        shell: "/bin/init",
+      }, "human")).toThrow(/permanent account identity conflicts/i);
+      expect(() => auth.addUser({
+        username: "bob",
+        uid: 1000,
+        gid: 1000,
+        gecos: "Bob",
+        home: "/home/bob",
+        shell: "/bin/init",
+      }, "human")).toThrow(/permanent account identity conflicts/i);
+    });
+  });
+
+  it("rejects passwd imports that remap or remove an active identity", async () => {
+    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+
+    await runInDurableObject(kernel, async (_instance: Kernel, state) => {
+      const auth = new AuthStore(state.storage.sql);
+      await auth.bootstrap();
+      auth.addUser({
+        username: "alice",
+        uid: 1000,
+        gid: 1000,
+        gecos: "Alice",
+        home: "/home/alice",
+        shell: "/bin/init",
+      }, "human");
+
+      expect(() => auth.importPasswd(
+        "root:x:0:0:root:/root:/bin/init\nalice:x:1001:1001:Alice:/home/alice:/bin/init\n",
+      )).toThrow(/cannot remove or remap permanent identity alice/i);
+      expect(() => auth.importPasswd(
+        "root:x:0:0:root:/root:/bin/init\n",
+      )).toThrow(/cannot remove or remap permanent identity alice/i);
+      expect(() => auth.importPasswd(
+        "root:x:0:0:root:/root:/bin/init\nalice:x:1000:1000:Alice:/home/alice:/bin/init\nmallory:x:1001:1001:Mallory:/home/mallory:/bin/init\n",
+      )).toThrow(/cannot add or restore identity mallory/i);
+      expect(auth.getPasswdByUsername("alice")).toMatchObject({ uid: 1000 });
+      expect(auth.getPasswdByUsername("mallory")).toBeNull();
+      expect(auth.getAccountIdentity("mallory")).toBeNull();
+    });
+  });
+
+  it("rejects non-canonical names before reserving them", async () => {
+    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+
+    await runInDurableObject(kernel, async (_instance: Kernel, state) => {
+      const auth = new AuthStore(state.storage.sql);
+      await auth.bootstrap();
+
+      expect(() => auth.addUser({
+        username: "Alice",
+        uid: 1000,
+        gid: 1000,
+        gecos: "Alice",
+        home: "/home/Alice",
+        shell: "/bin/init",
+      }, "human")).toThrow(/canonical account username/i);
+      expect(auth.getAccountIdentity("Alice")).toBeNull();
+      expect(auth.getPasswdByUsername("Alice")).toBeNull();
+    });
+  });
+});
+
+describe("AuthStore runtime directory projection", () => {
+  it("materializes projected kinds while keeping inaccessible credentials locked", async () => {
+    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+
+    await runInDurableObject(kernel, async (_instance: Kernel, state) => {
+      const auth = new AuthStore(state.storage.sql);
+      auth.replaceRuntimeDirectory({
+        accounts: [
+          {
+            entry: {
+              username: "root",
+              uid: 0,
+              gid: 0,
+              gecos: "root",
+              home: "/root",
+              shell: "/bin/init",
+            },
+            kind: "system",
+            locked: true,
+          },
+          {
+            entry: {
+              username: "alice",
+              uid: 1000,
+              gid: 1000,
+              gecos: "alice",
+              home: "/home/alice",
+              shell: "/bin/init",
+            },
+            kind: "human",
+            locked: false,
+          },
+          {
+            entry: {
+              username: "bob",
+              uid: 1001,
+              gid: 1001,
+              gecos: "bob",
+              home: "/home/bob",
+              shell: "/bin/init",
+            },
+            kind: "human",
+            locked: true,
+          },
+        ],
+        groups: [
+          { name: "root", gid: 0, members: [] },
+          { name: "alice", gid: 1000, members: [] },
+          { name: "bob", gid: 1001, members: [] },
+        ],
+        ownerUid: 1000,
+        personalAgentUid: null,
+      });
+
+      expect(auth.getAccountIdentity("bob")).toMatchObject({ kind: "human" });
+      expect(isLocked(auth.getShadowByUsername("root")!)).toBe(true);
+      expect(isLocked(auth.getShadowByUsername("bob")!)).toBe(true);
+      expect(isLocked(auth.getShadowByUsername("alice")!)).toBe(false);
     });
   });
 });

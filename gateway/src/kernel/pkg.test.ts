@@ -14,6 +14,16 @@ import {
   handlePkgSync,
 } from "./pkg";
 import type { KernelContext } from "./context";
+import { reconcilePackageAgentEntitlements } from "./package-agents";
+
+vi.mock("./package-agents", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./package-agents")>();
+  return {
+    ...actual,
+    findPackageAgentAccount: vi.fn(() => null),
+    reconcilePackageAgentEntitlements: vi.fn(async () => {}),
+  };
+});
 
 const GSV_SDK_PACKAGE_VERSION = gsvPackageInfo.version;
 
@@ -212,7 +222,8 @@ describe("pkg syscalls", () => {
         }],
       },
     };
-    const setEnabled = vi.fn();
+    const setEnabled = vi.fn(() => true);
+    vi.mocked(reconcilePackageAgentEntitlements).mockRejectedValueOnce(new Error("agent provisioning failed"));
     const ctx = {
       config: {
         ...makeConfig(),
@@ -222,26 +233,13 @@ describe("pkg syscalls", () => {
         resolve: vi.fn(() => record),
         setEnabled,
       },
-      auth: {
-        getPasswdByUsername: vi.fn((username: string) =>
-          username === "wiki-builder"
-            ? {
-                username,
-                uid: 2000,
-                gid: 2000,
-                gecos: "Existing Agent",
-                home: `/home/${username}`,
-                shell: "/bin/init",
-              }
-            : null,
-        ),
-      },
       identity: makeRootIdentity(),
     } as unknown as KernelContext;
 
     await expect(handlePkgInstall({ packageId: record.packageId }, ctx))
-      .rejects.toThrow(/already exists/);
-    expect(setEnabled).not.toHaveBeenCalled();
+      .rejects.toThrow(/agent provisioning failed/);
+    expect(setEnabled).toHaveBeenNthCalledWith(1, record.packageId, true, record.scope);
+    expect(setEnabled).toHaveBeenNthCalledWith(2, record.packageId, false, record.scope);
   });
 
   it("resolves user-scoped packages through the owning human for agent-backed installs", async () => {
@@ -580,6 +578,33 @@ describe("pkg syscalls", () => {
       enabled: true,
       reviewRequired: false,
     }));
+  });
+
+  it("rejects dot-segment package repository names before calling ripgit", async () => {
+    const fetcher = makeFetcher(() => {
+      throw new Error("ripgit should not be called");
+    });
+    const ctx = {
+      env: { RIPGIT: fetcher },
+      identity: {
+        role: "user",
+        capabilities: ["pkg.create"],
+        process: {
+          uid: 1000,
+          gid: 100,
+          gids: [100],
+          username: "alice",
+          home: "/home/alice",
+          cwd: "/home/alice",
+        },
+      },
+    } as unknown as KernelContext;
+
+    await expect(handlePkgCreate({
+      repo: "..",
+      displayName: "Invalid",
+    }, ctx)).rejects.toThrow("Invalid repo name");
+    expect(fetcher.calls).toHaveLength(0);
   });
 
   it("bases a new package ref on the repo default branch", async () => {

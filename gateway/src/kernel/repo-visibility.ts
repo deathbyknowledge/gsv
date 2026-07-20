@@ -54,7 +54,12 @@ function parseRepoSlug(raw: string): { owner: string; repo: string } {
 
 function normalizeRepoSegment(value: string | undefined, label: string): string {
   const normalized = (value ?? "").trim();
-  if (!/^[A-Za-z0-9._-]+$/.test(normalized)) {
+  if (
+    normalized.length > 128
+    || normalized === "."
+    || normalized === ".."
+    || !/^[A-Za-z0-9._-]+$/.test(normalized)
+  ) {
     throw new Error(`Invalid repo ${label}: ${value ?? ""}`);
   }
   return normalized;

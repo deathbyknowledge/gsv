@@ -704,11 +704,18 @@ export class R2MountBackend implements MountBackend {
     if (this.identity.uid === 0) return;
 
     const parts = normalizePath(path).split("/").filter(Boolean);
-    if (parts.length <= 1) return;
+    if (parts.length <= 1) {
+      throw new Error("EACCES: permission denied, '/'");
+    }
 
     const parentKey = parts.slice(0, -1).join("/");
     const marker = await this.bucket.head(directoryMarkerKey(parentKey));
-    if (!marker) return;
+    // An R2 prefix can make a directory appear to exist, but it carries no
+    // ownership authority. Only an explicit directory marker may authorize a
+    // non-root caller to create, remove, or rename a child.
+    if (!marker || !isDirectoryMarker(marker)) {
+      throw new Error(`EACCES: permission denied, '/${parentKey}'`);
+    }
 
     this.assertMode(marker, EXEC_BIT, `/${parentKey}`);
     this.assertMode(marker, WRITE_BIT, `/${parentKey}`);

@@ -1,11 +1,18 @@
+import { env } from "cloudflare:workers";
+import { runInDurableObject } from "cloudflare:test";
+import { getAgentByName } from "agents";
 import { describe, expect, it, vi } from "vitest";
+import { Kernel } from "./do";
 import {
   artifactMetadataFromArtifact,
   computePackageArtifactHash,
+  KernelBinding,
   loadPackageArtifact,
+  PackageStore,
   packageArtifactPublicBase,
   packageArtifactStorageKey,
   packageArtifactToWorkerCode,
+  resolveAppKernelForFrame,
   storePackageArtifact,
   type PackageArtifact,
 } from "./packages";
@@ -110,6 +117,432 @@ async function packageArtifact(
     hash: await computePackageArtifactHash(candidate),
   };
 }
+
+function activeAppFrame() {
+  const now = Date.now();
+  return {
+    uid: 1000,
+    username: "alice",
+    kernelOwnerUid: 1000,
+    kernelUsername: "alice",
+    kernelGeneration: 4,
+    packageId: "pkg-chat",
+    packageName: "chat",
+    packageUpdatedAt: 1_700_000_000_000,
+    packageArtifactHash: "sha256:chat-v1",
+    entrypointName: "Chat",
+    routeBase: "/apps/chat",
+    issuedAt: now,
+    expiresAt: now + 60_000,
+  };
+}
+
+function activePackageRecord() {
+  return {
+    packageId: "pkg-chat",
+    scope: { kind: "global" as const },
+    enabled: true,
+    updatedAt: 1_700_000_000_000,
+    artifact: { hash: "sha256:chat-v1" },
+    manifest: {
+      name: "chat",
+      entrypoints: [{
+        name: "Chat",
+        kind: "ui" as const,
+        module: "src/main.ts",
+        route: "/apps/chat",
+        syscalls: ["fs.read", "fs.write"],
+      }],
+    },
+  };
+}
+
+function masterPackageAuthority(
+  record: ReturnType<typeof activePackageRecord> | null,
+  lifecycle: "active" | "legacy" = "legacy",
+) {
+  const actor = {
+    uid: 1000,
+    gid: 1000,
+    username: "alice",
+    home: "/home/alice",
+  };
+  const kernel = Object.create(Kernel.prototype) as any;
+  Object.defineProperty(kernel, "name", { value: "singleton" });
+  kernel.userKernels = {
+    get: vi.fn(() => ({
+      username: "alice",
+      uid: 1000,
+      lifecycle,
+      generation: 4,
+    })),
+  };
+  kernel.auth = {
+    getPasswdByUid: vi.fn((uid: number) => uid === actor.uid ? actor : null),
+    resolveGids: vi.fn(() => [actor.gid]),
+  };
+  kernel.caps = { resolve: vi.fn(() => ["fs.read"]) };
+  kernel.packages = { resolve: vi.fn(() => record) };
+  kernel.projectionState = {
+    masterRevision: vi.fn(() => 1),
+    packageFence: vi.fn(() => null),
+  };
+  kernel.appRuntimes = {
+    getLifecycleFence: vi.fn(() => null),
+    rememberRunner: vi.fn(),
+  };
+  kernel.transitioningUserKernels = new Set();
+  kernel.activeMasterUserOperations = new Map();
+  kernel.userKernelMarker = null;
+  kernel.activeTargetOperations = new Map();
+  kernel.targetOperationDrainWaiters = new Map();
+  return kernel;
+}
+
+describe("authoritative package runtime revisions", () => {
+  it("routes an active frame directly to its authorized user Kernel", async () => {
+    const frame = activeAppFrame();
+    const runnerName = "app-control-v3:1000:1000:pkg-chat";
+    const resolveAppFrameKernel = vi.fn(async () => ({
+      ok: false as const,
+    }));
+    const master = {
+      setName: vi.fn(async () => {}),
+      resolveAppFrameKernel,
+    };
+    const user = {
+      setName: vi.fn(async () => {}),
+      authorizeAppFrame: vi.fn(async () => true),
+    };
+    const namespace = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn((id: string) => id === "singleton" ? master : user),
+    };
+
+    await expect(resolveAppKernelForFrame(
+      { KERNEL: namespace } as unknown as Env,
+      frame,
+      "fs.read",
+      runnerName,
+    )).resolves.toBe(user);
+
+    expect(user.authorizeAppFrame).toHaveBeenCalledWith(frame, runnerName);
+    expect(resolveAppFrameKernel).not.toHaveBeenCalled();
+    expect(namespace.idFromName).not.toHaveBeenCalledWith("singleton");
+  });
+
+  it("fails closed when the selected active user Kernel denies the frame", async () => {
+    const frame = activeAppFrame();
+    const user = {
+      setName: vi.fn(async () => {}),
+      authorizeAppFrame: vi.fn(async () => false),
+    };
+    const master = {
+      setName: vi.fn(async () => {}),
+      resolveAppFrameKernel: vi.fn(),
+    };
+    const namespace = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn((id: string) => id === "singleton" ? master : user),
+    };
+
+    await expect(resolveAppKernelForFrame(
+      { KERNEL: namespace } as unknown as Env,
+      frame,
+    )).resolves.toBeNull();
+
+    expect(user.authorizeAppFrame).toHaveBeenCalledWith(frame);
+    expect(master.resolveAppFrameKernel).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["non-canonical username", { kernelUsername: "Alice" }],
+    ["missing username", { kernelUsername: undefined }],
+    ["zero generation", { kernelGeneration: 0 }],
+    ["negative generation", { kernelGeneration: -1 }],
+    ["fractional generation", { kernelGeneration: 1.5 }],
+    ["unsafe generation", { kernelGeneration: Number.MAX_SAFE_INTEGER + 1 }],
+  ])("rejects an active frame with a %s before selecting any Kernel", async (_label, patch) => {
+    const namespace = {
+      idFromName: vi.fn(),
+      get: vi.fn(),
+    };
+
+    await expect(resolveAppKernelForFrame(
+      { KERNEL: namespace } as unknown as Env,
+      { ...activeAppFrame(), ...patch },
+    )).resolves.toBeNull();
+
+    expect(namespace.idFromName).not.toHaveBeenCalled();
+    expect(namespace.get).not.toHaveBeenCalled();
+  });
+
+  it("retains the Master resolver only for a canonical legacy frame", async () => {
+    const frame = {
+      ...activeAppFrame(),
+      kernelGeneration: undefined,
+    };
+    const runnerName = "app-control-v3:1000:1000:pkg-chat";
+    const master = {
+      setName: vi.fn(async () => {}),
+      resolveAppFrameKernel: vi.fn(async () => ({
+        ok: true as const,
+        kernelName: "singleton",
+      })),
+    };
+    const namespace = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn(() => master),
+    };
+
+    await expect(resolveAppKernelForFrame(
+      { KERNEL: namespace } as unknown as Env,
+      frame,
+      "fs.read",
+      runnerName,
+    )).resolves.toBe(master);
+
+    expect(master.resolveAppFrameKernel).toHaveBeenCalledWith(frame, "fs.read", runnerName);
+    expect(namespace.idFromName).toHaveBeenCalledWith("singleton");
+  });
+
+  it("does not accept a non-Master target from the legacy resolver", async () => {
+    const frame = {
+      ...activeAppFrame(),
+      kernelGeneration: undefined,
+    };
+    const master = {
+      setName: vi.fn(async () => {}),
+      resolveAppFrameKernel: vi.fn(async () => ({
+        ok: true as const,
+        kernelName: "user:alice",
+      })),
+    };
+    const namespace = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn(() => master),
+    };
+
+    await expect(resolveAppKernelForFrame(
+      { KERNEL: namespace } as unknown as Env,
+      frame,
+    )).resolves.toBeNull();
+  });
+
+  it("still lets the selected target appRequest enforce each syscall", async () => {
+    const frame = activeAppFrame();
+    const appRequest = vi.fn(async (_context: unknown, request: { id: string }) => ({
+      type: "res" as const,
+      id: request.id,
+      ok: false as const,
+      error: { code: 403, message: "Permission denied: fs.read" },
+    }));
+    const user = {
+      setName: vi.fn(async () => {}),
+      authorizeAppFrame: vi.fn(async () => true),
+      appRequest,
+    };
+    const master = {
+      setName: vi.fn(async () => {}),
+      resolveAppFrameKernel: vi.fn(),
+    };
+    const namespace = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn((id: string) => id === "singleton" ? master : user),
+    };
+    const binding = new KernelBinding({
+      props: { appFrame: frame },
+    } as any, {
+      KERNEL: namespace,
+    } as any);
+
+    await expect(binding.requestFrame("fs.read", { path: "/secret" }))
+      .rejects.toThrow("Permission denied: fs.read");
+
+    expect(user.authorizeAppFrame).toHaveBeenCalledWith(frame);
+    expect(appRequest).toHaveBeenCalledWith(
+      frame,
+      expect.objectContaining({ type: "req", call: "fs.read", args: { path: "/secret" } }),
+    );
+    expect(master.resolveAppFrameKernel).not.toHaveBeenCalled();
+  });
+
+  it("cancels a request body when the active target denies the frame", async () => {
+    const cancel = vi.fn();
+    const body = {
+      stream: new ReadableStream<Uint8Array>({ cancel }),
+      length: 1,
+    };
+    const user = {
+      setName: vi.fn(async () => {}),
+      authorizeAppFrame: vi.fn(async () => false),
+      appRequest: vi.fn(),
+    };
+    const namespace = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn(() => user),
+    };
+    const binding = new KernelBinding({
+      props: { appFrame: activeAppFrame() },
+    } as any, {
+      KERNEL: namespace,
+    } as any);
+
+    await expect(binding.requestFrame("fs.read", { path: "/secret" }, { body }))
+      .rejects.toThrow("Authentication failed");
+
+    expect(user.appRequest).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("hard-cuts generation-bearing active frames from the Master resolver", async () => {
+    const record = activePackageRecord();
+    const kernel = masterPackageAuthority(record, "active");
+
+    await expect(kernel.resolveAppFrameKernel(activeAppFrame()))
+      .resolves.toEqual({ ok: false });
+    expect(kernel.packages.resolve).not.toHaveBeenCalled();
+  });
+
+  it("preserves only a canonical generation-less legacy UUID frame", async () => {
+    const sessionId = "4f57c735-a614-4e0f-a36a-e5c60b94db15";
+    const kernel = masterPackageAuthority(activePackageRecord());
+    kernel.appSessions = {
+      getActiveRoute: vi.fn(() => ({ username: "alice", uid: 1000 })),
+    };
+    const frame = {
+      ...activeAppFrame(),
+      kernelGeneration: undefined,
+      sessionId,
+    };
+
+    await expect(kernel.resolveAppFrameKernel(frame)).resolves.toMatchObject({
+      ok: true,
+      kernelName: "singleton",
+      lifecycle: "legacy",
+    });
+    await expect(kernel.resolveAppFrameKernel({
+      ...frame,
+      kernelGeneration: 4,
+    })).resolves.toEqual({ ok: false });
+    await expect(kernel.resolveAppFrameKernel({
+      ...frame,
+      sessionId: ` ${sessionId}`,
+    })).resolves.toEqual({ ok: false });
+  });
+
+  it("rejects stale, replaced, disabled, and removed legacy package runtimes", async () => {
+    const frame = { ...activeAppFrame(), kernelGeneration: undefined };
+    const record = activePackageRecord();
+    const kernel = masterPackageAuthority(record);
+
+    await expect(kernel.resolveAppFrameKernel(frame)).resolves.toMatchObject({
+      ok: true,
+      kernelName: "singleton",
+    });
+    await expect(kernel.resolveAppFrameKernel({
+      ...frame,
+      packageUpdatedAt: frame.packageUpdatedAt - 1,
+    })).resolves.toEqual({ ok: false });
+    await expect(kernel.resolveAppFrameKernel({
+      ...frame,
+      packageArtifactHash: "sha256:chat-v0",
+    })).resolves.toEqual({ ok: false });
+
+    record.enabled = false;
+    await expect(kernel.resolveAppFrameKernel(frame)).resolves.toEqual({ ok: false });
+
+    kernel.packages.resolve.mockReturnValue(null);
+    await expect(kernel.resolveAppFrameKernel(frame)).resolves.toEqual({ ok: false });
+  });
+
+  it("requires both entrypoint declaration and actor capability for each legacy syscall", async () => {
+    const frame = { ...activeAppFrame(), kernelGeneration: undefined };
+    const record = activePackageRecord();
+    const kernel = masterPackageAuthority(record);
+
+    await expect(kernel.resolveAppFrameKernel(frame, "fs.read")).resolves.toMatchObject({
+      ok: true,
+      kernelName: "singleton",
+    });
+    await expect(kernel.resolveAppFrameKernel(frame, "fs.write"))
+      .resolves.toEqual({ ok: false });
+
+    kernel.caps.resolve.mockReturnValue(["fs.read", "net.fetch"]);
+    await expect(kernel.resolveAppFrameKernel(frame, "net.fetch"))
+      .resolves.toEqual({ ok: false });
+  });
+
+  it("advances PackageStore revisions across mutations in the same millisecond", async () => {
+    const kernel = await getAgentByName(env.KERNEL, crypto.randomUUID());
+
+    await runInDurableObject(kernel, async (_instance, state) => {
+      const bucket = makeBucket();
+      const store = new PackageStore(state.storage.sql, bucket);
+      const artifact = await packageArtifact({
+        mainModule: "src/main.ts",
+        modules: [{
+          path: "src/main.ts",
+          kind: "esm",
+          content: "export default {};",
+        }],
+      });
+      const timestamp = 1_700_000_000_000;
+      const now = vi.spyOn(Date, "now").mockReturnValue(timestamp);
+
+      try {
+        const input = {
+          packageId: "pkg-chat",
+          scope: { kind: "global" as const },
+          manifest: {
+            name: "chat",
+            description: "",
+            version: "1.0.0",
+            runtime: "dynamic-worker" as const,
+            source: {
+              repo: "root/chat",
+              ref: "main",
+              subdir: ".",
+            },
+            entrypoints: [{
+              name: "Chat",
+              kind: "ui" as const,
+              module: "src/main.ts",
+              route: "/apps/chat",
+              syscalls: ["fs.read"],
+            }],
+          },
+          artifact,
+          enabled: true,
+          reviewRequired: false,
+          reviewedAt: null,
+          installedAt: timestamp,
+          updatedAt: timestamp,
+        };
+        const installed = await store.install(input);
+        const reinstalled = await store.install(input);
+        expect(store.setEnabled(input.packageId, false, input.scope)).toBe(true);
+        const disabled = store.get(input.packageId, input.scope)!;
+        expect(store.setReviewed(input.packageId, timestamp, input.scope)).toBe(true);
+        const reviewed = store.get(input.packageId, input.scope)!;
+
+        expect([
+          installed.updatedAt,
+          reinstalled.updatedAt,
+          disabled.updatedAt,
+          reviewed.updatedAt,
+        ]).toEqual([
+          timestamp,
+          timestamp + 1,
+          timestamp + 2,
+          timestamp + 3,
+        ]);
+      } finally {
+        now.mockRestore();
+      }
+    });
+  });
+});
 
 describe("package artifacts", () => {
   it("stores public package files under the public fs root", async () => {

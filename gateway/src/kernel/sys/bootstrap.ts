@@ -68,7 +68,10 @@ export async function handleSysBootstrap(
   }
   const commissioningBootstrap =
     ctx.identity.capabilities.includes("*")
-    && ctx.auth?.isSetupMode?.() === true;
+    && (
+      ctx.auth?.isSetupMode?.() === true
+      || ctx.userKernels?.get(ctx.identity.process.username)?.lifecycle === "provisioning"
+    );
   if (ctx.identity.process.uid !== 0 && !commissioningBootstrap) {
     throw new Error("Permission denied: system bootstrap requires root");
   }

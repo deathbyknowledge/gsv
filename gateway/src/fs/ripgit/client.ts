@@ -231,10 +231,15 @@ const DEFAULT_BRANCH = "main";
 export class RipgitClient {
   constructor(private readonly binding: Fetcher) {}
 
-  async readPath(repo: RipgitRepoRef, path: string): Promise<RipgitPathResult> {
+  async readPath(
+    repo: RipgitRepoRef,
+    path: string,
+    authorizeResponse?: () => unknown | Promise<unknown>,
+  ): Promise<RipgitPathResult> {
     const response = await this.binding.fetch(this.makeReadUrl(repo, path), {
       headers: this.makeInternalHeaders(),
     });
+    await this.authorizeResponse(response, authorizeResponse);
     if (response.status === 404) {
       return { kind: "missing" };
     }
@@ -366,11 +371,13 @@ export class RipgitClient {
     query: string,
     prefix?: string,
     signal?: AbortSignal,
+    authorizeResponse?: () => unknown | Promise<unknown>,
   ): Promise<{ matches: RipgitSearchMatch[]; truncated?: boolean }> {
     const response = await this.binding.fetch(this.makeSearchUrl(repo, query, prefix), {
       headers: this.makeInternalHeaders(),
       signal,
     });
+    await this.authorizeResponse(response, authorizeResponse);
     if (!response.ok) {
       throw new Error(await this.readError(response, `search '${repo.owner}/${repo.repo}'`));
     }
@@ -386,10 +393,14 @@ export class RipgitClient {
     };
   }
 
-  async refs(repo: RipgitRepoRef): Promise<RipgitRefsResponse> {
+  async refs(
+    repo: RipgitRepoRef,
+    authorizeResponse?: () => unknown | Promise<unknown>,
+  ): Promise<RipgitRefsResponse> {
     const response = await this.binding.fetch(this.makeRefsUrl(repo), {
       headers: this.makeInternalHeaders(),
     });
+    await this.authorizeResponse(response, authorizeResponse);
     if (!response.ok) {
       throw new Error(await this.readError(response, `refs '${repo.owner}/${repo.repo}'`));
     }
@@ -402,6 +413,7 @@ export class RipgitClient {
       limit?: number;
       offset?: number;
     },
+    authorizeResponse?: () => unknown | Promise<unknown>,
   ): Promise<RipgitLogEntry[]> {
     const response = await this.binding.fetch(
       this.makeLogUrl(repo, options?.limit, options?.offset),
@@ -409,6 +421,7 @@ export class RipgitClient {
         headers: this.makeInternalHeaders(),
       },
     );
+    await this.authorizeResponse(response, authorizeResponse);
     if (!response.ok) {
       throw new Error(await this.readError(response, `log '${repo.owner}/${repo.repo}'`));
     }
@@ -421,6 +434,7 @@ export class RipgitClient {
     options?: {
       context?: number;
     },
+    authorizeResponse?: () => unknown | Promise<unknown>,
   ): Promise<RipgitCommitDiffResponse> {
     const response = await this.binding.fetch(
       this.makeDiffUrl(repo, commit, options?.context),
@@ -428,6 +442,7 @@ export class RipgitClient {
         headers: this.makeInternalHeaders(),
       },
     );
+    await this.authorizeResponse(response, authorizeResponse);
     if (!response.ok) {
       throw new Error(await this.readError(response, `diff '${repo.owner}/${repo.repo}:${commit}'`));
     }
@@ -442,6 +457,7 @@ export class RipgitClient {
       context?: number;
       stat?: boolean;
     },
+    authorizeResponse?: () => unknown | Promise<unknown>,
   ): Promise<RipgitCompareResponse> {
     const response = await this.binding.fetch(
       this.makeCompareUrl(repo, base, head, options?.context, options?.stat),
@@ -449,6 +465,7 @@ export class RipgitClient {
         headers: this.makeInternalHeaders(),
       },
     );
+    await this.authorizeResponse(response, authorizeResponse);
     if (!response.ok) {
       throw new Error(await this.readError(response, `compare '${repo.owner}/${repo.repo}:${base}...${head}'`));
     }
@@ -479,6 +496,19 @@ export class RipgitClient {
       throw new Error(await this.readError(response, `snapshot package '${repo.owner}/${repo.repo}:${subdir}'`));
     }
     return response.json<RipgitPackageSnapshotResponse>();
+  }
+
+  private async authorizeResponse(
+    response: Response,
+    authorize?: () => unknown | Promise<unknown>,
+  ): Promise<void> {
+    if (!authorize) return;
+    try {
+      await authorize();
+    } catch (error) {
+      await response.body?.cancel().catch(() => {});
+      throw error;
+    }
   }
 
   private makeReadUrl(repo: RipgitRepoRef, path: string): URL {

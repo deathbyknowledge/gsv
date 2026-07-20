@@ -25,7 +25,7 @@
     {
       "binding": "GATEWAY",
       "service": "gsv",
-      "entrypoint": "GatewayEntrypoint"
+      "entrypoint": "WhatsAppGatewayEntrypoint"
     }
   ],
   "migrations": [

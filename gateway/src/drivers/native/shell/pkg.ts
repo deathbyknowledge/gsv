@@ -1,26 +1,17 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
-import type { AppRunnerCommandInput } from "../../../app-runner";
+import {
+  captureAppRunnerRuntime,
+  type AppRunnerCommandInput,
+} from "../../../app-runner";
 import type { KernelContext } from "../../../kernel/context";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
 import {
-  handlePkgAdd,
-  handlePkgCheckout,
-  handlePkgCreate,
-  handlePkgInstall,
-  handlePkgList,
-  handlePkgPublicList,
-  handlePkgPublicSet,
-  handlePkgRemoteAdd,
-  handlePkgRemoteList,
-  handlePkgRemoteRemove,
-  handlePkgRemove,
-  handlePkgReviewApprove,
   isRepoPublic,
   resolveInstalledPackage,
 } from "../../../kernel/pkg";
 import {
-  packageAgentUsername,
+  findPackageAgentAccount,
   packageAgentAccessGroup,
 } from "../../../kernel/package-agents";
 import {
@@ -29,7 +20,12 @@ import {
   type InstalledPackageRecord,
   type PackageEntrypoint,
 } from "../../../kernel/packages";
-import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
+import type {
+  PkgPublicListResult,
+  ProcessIdentity,
+} from "@humansandmachines/gsv/protocol";
+import type { RequestFrame, ResponseFrame } from "../../../protocol/frames";
+import type { ArgsOf, ResultOf, SyscallName } from "../../../syscalls";
 import { requireCommandCapability } from "./common";
 
 type PackageCommandResult = {
@@ -39,23 +35,6 @@ type PackageCommandResult = {
 };
 
 type PackageRunnerStub = {
-  ensureRuntime(input: {
-    packageId: string;
-    packageName: string;
-    routeBase: string;
-    entrypointName: string;
-    artifact: InstalledPackageRecord["artifact"];
-    appFrame: {
-      uid: number;
-      username: string;
-      packageId: string;
-      packageName: string;
-      entrypointName: string;
-      routeBase: string;
-      issuedAt: number;
-      expiresAt: number;
-    };
-  }): Promise<void>;
   runCommand(input: AppRunnerCommandInput): Promise<PackageCommandResult>;
 };
 
@@ -130,10 +109,15 @@ function buildPackageCommand(
   });
 }
 
-export function buildPkgCommand(ctx: KernelContext) {
+type NativeShellRequest = (
+  frame: RequestFrame,
+  signal?: AbortSignal,
+) => Promise<ResponseFrame>;
+
+export function buildPkgCommand(ctx: KernelContext, request?: NativeShellRequest) {
   return defineCommand("pkg", async (args, bashCtx): Promise<ExecResult> => {
     try {
-      return await runPkgCommand(args, ctx, bashCtx.cwd);
+      return await runPkgCommand(args, ctx, bashCtx.cwd, request, bashCtx.signal);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {
@@ -145,7 +129,13 @@ export function buildPkgCommand(ctx: KernelContext) {
   });
 }
 
-async function runPkgCommand(args: string[], ctx: KernelContext, _cwd: string): Promise<ExecResult> {
+async function runPkgCommand(
+  args: string[],
+  ctx: KernelContext,
+  _cwd: string,
+  request?: NativeShellRequest,
+  signal?: AbortSignal,
+): Promise<ExecResult> {
   const [subcommand = "help", ...rest] = args;
 
   switch (subcommand) {
@@ -155,12 +145,12 @@ async function runPkgCommand(args: string[], ctx: KernelContext, _cwd: string): 
       return { stdout: pkgUsage(), stderr: "", exitCode: 0 };
     case "list": {
       requireCommandCapability(ctx, "pkg.list");
-      const result = handlePkgList({}, ctx);
+      const result = await requestPkg(request, "pkg.list", {}, signal);
       return { stdout: formatPkgList(result.packages), stderr: "", exitCode: 0 };
     }
     case "remotes": {
       requireCommandCapability(ctx, "pkg.remote.list");
-      const result = handlePkgRemoteList({}, ctx);
+      const result = await requestPkg(request, "pkg.remote.list", {}, signal);
       return { stdout: formatPkgRemotes(result.remotes), stderr: "", exitCode: 0 };
     }
     case "show":
@@ -187,7 +177,7 @@ async function runPkgCommand(args: string[], ctx: KernelContext, _cwd: string): 
     }
     case "add": {
       requireCommandCapability(ctx, "pkg.add");
-      const result = await handlePkgAdd(parsePkgAddArgs(rest), ctx);
+      const result = await requestPkg(request, "pkg.add", parsePkgAddArgs(rest), signal);
       return {
         stdout: `${result.package.enabled ? "imported and enabled" : "imported"} ${result.package.name} from ${result.imported.repo} (${result.imported.ref})\n`,
         stderr: "",
@@ -196,7 +186,7 @@ async function runPkgCommand(args: string[], ctx: KernelContext, _cwd: string): 
     }
     case "create": {
       requireCommandCapability(ctx, "pkg.create");
-      const result = await handlePkgCreate(parsePkgCreateArgs(rest), ctx);
+      const result = await requestPkg(request, "pkg.create", parsePkgCreateArgs(rest), signal);
       return {
         stdout: `${result.created ? "created" : "updated"} ${result.package.name} in ${result.repo}:${result.subdir} (${result.ref})\n`,
         stderr: "",
@@ -207,12 +197,17 @@ async function runPkgCommand(args: string[], ctx: KernelContext, _cwd: string): 
       const [remoteSubcommand, ...remoteArgs] = rest;
       if (!remoteSubcommand || remoteSubcommand === "list") {
         requireCommandCapability(ctx, "pkg.remote.list");
-        const result = handlePkgRemoteList({}, ctx);
+        const result = await requestPkg(request, "pkg.remote.list", {}, signal);
         return { stdout: formatPkgRemotes(result.remotes), stderr: "", exitCode: 0 };
       }
       if (remoteSubcommand === "add") {
         requireCommandCapability(ctx, "pkg.remote.add");
-        const result = handlePkgRemoteAdd(parsePkgRemoteAddArgs(remoteArgs), ctx);
+        const result = await requestPkg(
+          request,
+          "pkg.remote.add",
+          parsePkgRemoteAddArgs(remoteArgs),
+          signal,
+        );
         return {
           stdout: `${result.changed ? "added" : "updated"} remote ${result.remote.name} -> ${result.remote.baseUrl}\n`,
           stderr: "",
@@ -225,7 +220,7 @@ async function runPkgCommand(args: string[], ctx: KernelContext, _cwd: string): 
         if (!name) {
           throw new Error("Usage: pkg remote remove <name>");
         }
-        const result = handlePkgRemoteRemove({ name }, ctx);
+        const result = await requestPkg(request, "pkg.remote.remove", { name }, signal);
         return {
           stdout: `${result.removed ? "removed" : "missing"} remote ${name}\n`,
           stderr: "",
@@ -236,22 +231,32 @@ async function runPkgCommand(args: string[], ctx: KernelContext, _cwd: string): 
     }
     case "discover": {
       requireCommandCapability(ctx, "pkg.public.list");
-      const result = await handlePkgPublicList({ remote: String(rest[0] ?? "").trim() || undefined }, ctx);
+      const result = await requestPkg(
+        request,
+        "pkg.public.list",
+        { remote: String(rest[0] ?? "").trim() || undefined },
+        signal,
+      );
       return { stdout: formatPkgPublicCatalog(result), stderr: "", exitCode: 0 };
     }
     case "public": {
       const publicSubcommand = String(rest[0] ?? "").trim();
       if (!publicSubcommand || publicSubcommand === "list") {
         requireCommandCapability(ctx, "pkg.public.list");
-        const result = await handlePkgPublicList({ remote: String(rest[1] ?? "").trim() || undefined }, ctx);
+        const result = await requestPkg(
+          request,
+          "pkg.public.list",
+          { remote: String(rest[1] ?? "").trim() || undefined },
+          signal,
+        );
         return { stdout: formatPkgPublicCatalog(result), stderr: "", exitCode: 0 };
       }
       if (publicSubcommand === "on" || publicSubcommand === "off") {
         requireCommandCapability(ctx, "pkg.public.set");
-        const result = handlePkgPublicSet({
+        const result = await requestPkg(request, "pkg.public.set", {
           ...resolvePkgPublicTarget(rest[1], ctx),
           public: publicSubcommand === "on",
-        }, ctx);
+        }, signal);
         return {
           stdout: `${result.public ? "published" : "hidden"} ${result.repo}\n`,
           stderr: "",
@@ -263,19 +268,34 @@ async function runPkgCommand(args: string[], ctx: KernelContext, _cwd: string): 
     case "approve": {
       requireCommandCapability(ctx, "pkg.review.approve");
       const target = resolvePkgTarget(rest[0], ctx);
-      const result = handlePkgReviewApprove({ packageId: target.packageId }, ctx);
+      const result = await requestPkg(
+        request,
+        "pkg.review.approve",
+        { packageId: target.packageId },
+        signal,
+      );
       return { stdout: `${result.changed ? "approved" : "already approved"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
     }
     case "enable": {
       requireCommandCapability(ctx, "pkg.install");
       const target = resolvePkgTarget(rest[0], ctx);
-      const result = await handlePkgInstall({ packageId: target.packageId }, ctx);
+      const result = await requestPkg(
+        request,
+        "pkg.install",
+        { packageId: target.packageId },
+        signal,
+      );
       return { stdout: `${result.changed ? "enabled" : "already enabled"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
     }
     case "disable": {
       requireCommandCapability(ctx, "pkg.remove");
       const target = resolvePkgTarget(rest[0], ctx);
-      const result = await handlePkgRemove({ packageId: target.packageId }, ctx);
+      const result = await requestPkg(
+        request,
+        "pkg.remove",
+        { packageId: target.packageId },
+        signal,
+      );
       return { stdout: `${result.changed ? "disabled" : "already disabled"} ${result.package.name}\n`, stderr: "", exitCode: 0 };
     }
     case "sync":
@@ -284,12 +304,44 @@ async function runPkgCommand(args: string[], ctx: KernelContext, _cwd: string): 
       const parsed = parsePkgUpdateArgs(rest);
       const target = resolvePkgTarget(parsed.packageId, ctx);
       const ref = parsed.ref ?? target.manifest.source.ref;
-      const result = await handlePkgCheckout({ packageId: target.packageId, ref }, ctx);
+      const result = await requestPkg(
+        request,
+        "pkg.checkout",
+        { packageId: target.packageId, ref },
+        signal,
+      );
       return { stdout: `${result.changed ? "updated" : "already on"} ${ref} for ${result.package.name}\n`, stderr: "", exitCode: 0 };
     }
     default:
       throw new Error(`Unknown pkg subcommand: ${subcommand}`);
   }
+}
+
+async function requestPkg<S extends SyscallName>(
+  request: NativeShellRequest | undefined,
+  call: S,
+  args: ArgsOf<S>,
+  signal?: AbortSignal,
+): Promise<ResultOf<S>> {
+  if (!request) {
+    throw new Error("direct syscall transport is unavailable");
+  }
+  signal?.throwIfAborted();
+  const response = await request({
+    type: "req",
+    id: crypto.randomUUID(),
+    call,
+    args,
+  } as unknown as RequestFrame, signal);
+  signal?.throwIfAborted();
+  if (!response.ok) {
+    throw new Error(response.error.message);
+  }
+  if (response.body) {
+    await response.body.stream.cancel(`${call} returned an unexpected body`).catch(() => {});
+    throw new Error(`${call} returned an unexpected body`);
+  }
+  return response.data as ResultOf<S>;
 }
 
 function resolvePkgTarget(rawPackageId: string | undefined, ctx: KernelContext): InstalledPackageRecord {
@@ -340,9 +392,10 @@ function formatPkgStatus(pkg: InstalledPackageRecord, ctx: KernelContext): strin
     ? pkg.manifest.entrypoints.map((entry) => `${entry.name}:${entry.kind}`).join(", ")
     : "none";
   const profiles = (pkg.manifest.profiles ?? []).map((profile) => {
-    const username = packageAgentUsername(pkg.manifest.name, profile.name);
-    const provisioned = ctx.auth.getPasswdByUsername(username) ? "installed" : "not installed";
-    const group = ctx.auth.getGroupByName(packageAgentAccessGroup(username));
+    const account = findPackageAgentAccount(ctx, pkg, profile, resolveCallerOwnerUid(ctx));
+    const username = account?.username ?? "not-provisioned";
+    const provisioned = account ? "installed" : "not installed";
+    const group = account ? ctx.auth.getGroupByName(packageAgentAccessGroup(account.username)) : null;
     const access = group?.members.length ? `, access ${group.members.join(",")}` : "";
     return `${profile.name} (${pkg.manifest.name}#${profile.name} -> ${username}, ${provisioned}${access})`;
   });
@@ -433,7 +486,7 @@ function formatPkgSource(target: InstalledPackageRecord): string {
   return lines.join("\n");
 }
 
-function formatPkgPublicCatalog(result: Awaited<ReturnType<typeof handlePkgPublicList>>): string {
+function formatPkgPublicCatalog(result: PkgPublicListResult): string {
   const lines = [
     `source: ${result.serverName}`,
     `origin: ${result.source.kind === "remote" ? result.source.baseUrl ?? result.source.name : "local"}`,
@@ -712,31 +765,36 @@ async function runPackageCommand(
   const commandName = entrypoint.command?.trim() || entrypoint.name;
   const routeBase = packageRouteBase(record.manifest.name);
   const runner = ctx.getAppRunner(identity.uid, record.packageId) as PackageRunnerStub;
+  const kernelOwnerUid = ctx.kernelOwnerUid ?? resolveCallerOwnerUid(ctx);
   const now = Date.now();
-  await runner.ensureRuntime({
+  const appFrame = {
+    uid: identity.uid,
+    username: identity.username,
+    kernelOwnerUid,
+    ...(ctx.kernelUsername ? { kernelUsername: ctx.kernelUsername } : {}),
+    ...(ctx.kernelGeneration !== undefined
+      ? { kernelGeneration: ctx.kernelGeneration }
+      : {}),
     packageId: record.packageId,
     packageName: record.manifest.name,
-    routeBase,
+    packageUpdatedAt: record.updatedAt,
+    packageArtifactHash: record.artifact.hash,
     entrypointName: commandName,
-    artifact: record.artifact,
-    appFrame: {
-      uid: identity.uid,
-      username: identity.username,
-      packageId: record.packageId,
-      packageName: record.manifest.name,
-      entrypointName: commandName,
-      routeBase,
-      issuedAt: now,
-      expiresAt: now + 365 * 24 * 60 * 60 * 1000,
-    },
-  });
-
+    routeBase,
+    issuedAt: now,
+    expiresAt: now + 365 * 24 * 60 * 60 * 1000,
+  };
+  if (!(await ctx.authorizePackageRuntime(appFrame))) {
+    throw new Error("Package runtime authorization expired");
+  }
   return runner.runCommand({
+    runtime: captureAppRunnerRuntime({
+      artifact: record.artifact,
+      appFrame,
+    }),
     commandName,
     args,
     cwd,
-    uid: identity.uid,
     gid: identity.gid,
-    username: identity.username,
   });
 }

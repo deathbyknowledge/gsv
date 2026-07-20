@@ -182,6 +182,13 @@ export class ConfigStore {
     return true;
   }
 
+  replaceRuntimeProjection(entries: Array<{ key: string; value: string }>): void {
+    this.sql.exec("DELETE FROM config_kv");
+    for (const entry of entries) {
+      this.set(entry.key, entry.value);
+    }
+  }
+
   /**
    * List all keys (and values) under a prefix.
    * e.g. list("config/ai") returns all /sys/config/ai/* entries.

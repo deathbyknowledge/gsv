@@ -13,6 +13,7 @@ import {
   armSchedule,
   normalizeScheduleExpression,
 } from "./scheduler";
+import { packageAgentRuntimeSecurityRevision } from "./package-agents";
 
 const USER_CRON_PREFIX = "/var/spool/cron/";
 const SYSTEM_CRON_PREFIX = "/etc/cron.d/";
@@ -165,10 +166,12 @@ async function replaceCronFile(
     const ownerUid = input.ownerUid === null
       ? job.user.uid
       : scheduleOwnerUidForUserCrontab(ctx, job.user);
+    const packageSecurityRevision = packageAgentRuntimeSecurityRevision(ctx, process.uid);
     const schedule = store.create({
       ownerUid,
       creator: principalFromIdentity(requireActor(ctx), ctx.processId),
       runAs: principalFromProcess(process),
+      ...(packageSecurityRevision ? { packageSecurityRevision } : {}),
       name: `cron ${input.path}:${job.lineNumber}`,
       description: `Installed from ${input.path}:${job.lineNumber}`,
       enabled: true,

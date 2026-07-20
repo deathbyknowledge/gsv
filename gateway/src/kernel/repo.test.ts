@@ -12,6 +12,7 @@ import {
   handleRepoRead,
   handleRepoVisibilitySet,
 } from "./repo";
+import { applyRepoMetadataMutation } from "./repo-metadata";
 
 type FetchCall = {
   url: string;
@@ -110,6 +111,7 @@ function makeContext(
     packages: {
       list: () => packages,
     },
+    mutateRepoMetadata: async (mutation) => applyRepoMetadataMutation(config, mutation),
   } as unknown as KernelContext;
 }
 
@@ -271,20 +273,20 @@ describe("repo syscalls", () => {
     expect(fetcher.calls).toHaveLength(0);
   });
 
-  it("updates repo visibility metadata", () => {
+  it("updates repo visibility metadata", async () => {
     const fetcher = makeFetcher(() => {
       throw new Error("ripgit should not be called");
     });
     const ctx = makeContext(fetcher);
 
-    expect(handleRepoVisibilitySet({ repo: "alice/demo", public: true }, ctx)).toEqual({
+    await expect(handleRepoVisibilitySet({ repo: "alice/demo", public: true }, ctx)).resolves.toEqual({
       changed: true,
       repo: "alice/demo",
       public: true,
     });
     expect(ctx.config.get("repos/alice/demo/visibility")).toBe("public");
 
-    expect(handleRepoVisibilitySet({ repo: "alice/demo", public: false }, ctx)).toEqual({
+    await expect(handleRepoVisibilitySet({ repo: "alice/demo", public: false }, ctx)).resolves.toEqual({
       changed: true,
       repo: "alice/demo",
       public: false,
@@ -377,6 +379,19 @@ describe("repo syscalls", () => {
       repo: "bob/private",
       path: "README.md",
     }, ctx)).rejects.toThrow("Forbidden: cannot read repo bob/private");
+  });
+
+  it("rejects dot-segment repository names before calling ripgit", async () => {
+    const fetcher = makeFetcher(() => {
+      throw new Error("ripgit should not be called");
+    });
+    const ctx = makeContext(fetcher);
+
+    await expect(handleRepoRead({
+      repo: "alice/..",
+      path: "README.md",
+    }, ctx)).rejects.toThrow("Invalid repo name");
+    expect(fetcher.calls).toHaveLength(0);
   });
 
   it("lets the owning human list and write repos owned by their agent", async () => {

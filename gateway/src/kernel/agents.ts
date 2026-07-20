@@ -26,7 +26,7 @@ import type {
   ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame } from "../protocol/frames";
-import { isLocked } from "../auth/shadow";
+import { raceWithAbort } from "../shared/abort";
 import { sendFrameToProcess } from "../shared/utils";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
@@ -37,10 +37,13 @@ import {
   createAccount,
   isUsernameAvailable,
   normalizeAccountName,
+  seedPersona,
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
 import { DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../prompts/persona";
+import { canonicalizeLoginUsername } from "../auth/login";
+import { processKernelGenerationMatches } from "./processes";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -185,10 +188,19 @@ export async function ensurePersonalAgent(
     if (entry) {
       const reconciled = reconcilePersonalAgentDisplayName(auth, entry, human) ?? entry;
       const identity = accountIdentity(auth, reconciled);
+      const resumingProvisioning = ctx.userKernels?.get(human.username)?.lifecycle === "provisioning";
       await ensureAccountHomeLayout(ctx.env, identity, {
         userContextUsername: human.username,
         seedPromptContext: true,
+        seedBootContext: resumingProvisioning,
       });
+      if (resumingProvisioning) {
+        await seedPersona(
+          ctx.env,
+          identity,
+          defaultPersonaContext(identity.username, human.username),
+        );
+      }
       return { identity, created: false };
     }
     // Stale mapping (account removed) — fall through and recreate.
@@ -222,15 +234,34 @@ export async function handleAccountCreate(
   }
 
   const kind: AccountKind = args.kind === "human" ? "human" : "agent";
-  const name = normalizeAccountName(auth, args.username);
-  if (!name) {
-    throw new Error(`Invalid or unavailable username: ${String(args.username)}`);
-  }
+  const canonicalName = canonicalizeAccountCreateName(args.username);
 
   if (kind === "human") {
     // Creating human accounts is an administrative action.
     if (caller.process.uid !== 0) {
       throw new Error("Creating human accounts requires root");
+    }
+    const existing = auth.getPasswdByUsername(canonicalName);
+    const placement = ctx.userKernels?.get(canonicalName);
+    if (existing) {
+      const accountKind = auth.getAccountIdentity(canonicalName)?.kind;
+      if (
+        accountKind !== "human"
+        || placement?.uid !== existing.uid
+        || placement.lifecycle !== "provisioning"
+      ) {
+        throw new Error(`Invalid or unavailable username: ${String(args.username)}`);
+      }
+      const identity = accountIdentity(auth, existing);
+      await ensureAccountHomeLayout(ctx.env, identity, {
+        cleanupGeneratedPromptContext: true,
+      });
+      const agent = await ensurePersonalAgent(ctx, identity);
+      return { account: identity, kind, personalAgent: agent.identity };
+    }
+    const name = normalizeAccountName(auth, canonicalName);
+    if (!name) {
+      throw new Error(`Invalid or unavailable username: ${String(args.username)}`);
     }
     const { identity } = await createAccount(ctx, {
       kind: "human",
@@ -241,6 +272,11 @@ export async function handleAccountCreate(
     });
     const agent = await ensurePersonalAgent(ctx, identity);
     return { account: identity, kind, personalAgent: agent.identity };
+  }
+
+  const name = normalizeAccountName(auth, canonicalName);
+  if (!name) {
+    throw new Error(`Invalid or unavailable username: ${String(args.username)}`);
   }
 
   const ownerUid = resolveCallerOwnerUid(ctx);
@@ -265,6 +301,14 @@ export async function handleAccountCreate(
     contextFiles: extraContextFiles,
   });
   return { account: identity, kind };
+}
+
+function canonicalizeAccountCreateName(value: unknown): string {
+  const name = canonicalizeLoginUsername(value);
+  if (!name) {
+    throw new Error(`Invalid or unavailable username: ${String(value)}`);
+  }
+  return name;
 }
 
 /**
@@ -293,8 +337,11 @@ export function handleAccountList(
 
     if (!canOwnerRunAsAccount(auth, ownerUid, entry, useRootRunAsBypass)) continue;
 
-    const shadow = auth.getShadowByUsername(entry.username);
-    const isAgent = shadow ? isLocked(shadow) : false;
+    const account = auth.getAccountIdentity(entry.username);
+    if (!account || account.uid !== entry.uid || account.state !== "active") {
+      throw new Error(`Account identity is incomplete: ${entry.username}`);
+    }
+    const isAgent = account.kind === "agent";
     const isSelf = entry.uid === ownerUid;
     const isPersonalAgent = personalAgentUid === entry.uid;
     let relation: AccountRelation;
@@ -356,8 +403,30 @@ export async function resolveConversationExecutor(
   agentIdentity: ProcessIdentity,
   opts?: { interactive?: boolean; label?: string },
 ): Promise<string> {
-  if (conversation.activePid && ctx.procs.get(conversation.activePid)) {
-    return conversation.activePid;
+  ctx.requestSignal?.throwIfAborted();
+  ctx.assertCurrentKernel?.();
+
+  let stalePid: string | null = null;
+  if (conversation.activePid) {
+    const active = ctx.procs.get(conversation.activePid);
+    if (active && processKernelGenerationMatches(active, ctx.kernelGeneration)) {
+      return conversation.activePid;
+    }
+    if (
+      active
+      && ctx.kernelKind === "user"
+      && ctx.kernelProvisioning === true
+      && typeof ctx.kernelGeneration === "number"
+      && active.kernelGeneration === ctx.kernelGeneration - 1
+    ) {
+      // Suspension exact-acks cancellation before advancing the generation.
+      // Keep that quiesced executor bound until activation atomically rebinds
+      // it; replacing it here would strand its live transcript and media.
+      return conversation.activePid;
+    }
+    if (active) {
+      stalePid = conversation.activePid;
+    }
   }
 
   const interactive = opts?.interactive ?? true;
@@ -371,29 +440,147 @@ export async function resolveConversationExecutor(
     ? accountIdentity(ctx.auth, ownerEntry)
     : agentIdentity;
   const pid = `proc:${crypto.randomUUID()}`;
-  ctx.procs.spawn(pid, agentIdentity, {
-    ownerUid: conversation.ownerUid,
-    interactive,
-    label: opts?.label,
-  });
-  ctx.conversations.setActivePid(conversation.conversationId, pid);
+  const rollbackAuthorization = ctx.issueProcessRollbackAuthorization?.(pid);
+  const requestId = crypto.randomUUID();
+  try {
+    const response = await raceWithAbort(sendFrameToProcess(pid, {
+      type: "req",
+      id: requestId,
+      call: "proc.setidentity",
+      args: {
+        pid,
+        kernelName: ctx.kernelName,
+        ownerIdentity,
+        identity: agentIdentity,
+        interactive,
+        conversationId: conversation.conversationId,
+        ...(conversation.latestArchive ? { hydrateFrom: conversation.latestArchive } : {}),
+      },
+    } as RequestFrame), ctx.requestSignal, {
+      onLateResolve: () => {
+        const lateAuthorization = ctx.issueProcessRollbackAuthorization?.(pid);
+        void rollbackConversationExecutor(ctx, pid, lateAuthorization)
+          .catch(() => {})
+          .finally(() => {
+            if (lateAuthorization) {
+              ctx.revokeProcessRollbackAuthorization?.(lateAuthorization);
+            }
+          });
+      },
+    });
+    ctx.requestSignal?.throwIfAborted();
+    ctx.assertCurrentKernel?.();
+    if (!response || response.type !== "res" || response.id !== requestId) {
+      throw new Error("proc.setidentity returned no valid response");
+    }
+    if (!response.ok) {
+      throw new Error(response.error.message);
+    }
+    if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
+      throw new Error("proc.setidentity rejected initialization");
+    }
 
-  await sendFrameToProcess(pid, {
-    type: "req",
-    id: crypto.randomUUID(),
-    call: "proc.setidentity",
-    args: {
-      pid,
-      kernelName: ctx.kernelName,
-      ownerIdentity,
-      identity: agentIdentity,
-      interactive,
-      conversationId: conversation.conversationId,
-      ...(conversation.latestArchive ? { hydrateFrom: conversation.latestArchive } : {}),
-    },
-  } as RequestFrame);
+    const bindExecutor = () => {
+      ctx.procs.spawn(pid, agentIdentity, {
+        ownerUid: conversation.ownerUid,
+        interactive,
+        label: opts?.label,
+        ...(ctx.kernelGeneration !== undefined
+          ? { kernelGeneration: ctx.kernelGeneration }
+          : {}),
+      });
+      if (!ctx.conversations.setActivePid(conversation.conversationId, pid)) {
+        throw new Error(`Failed to bind conversation executor: ${conversation.conversationId}`);
+      }
+    };
+    if (ctx.transactionSync) {
+      ctx.transactionSync(bindExecutor);
+    } else {
+      bindExecutor();
+    }
+  } catch (error) {
+    let rollbackError: unknown;
+    try {
+      await rollbackConversationExecutor(ctx, pid, rollbackAuthorization);
+    } catch (failure) {
+      rollbackError = failure;
+    } finally {
+      if (rollbackAuthorization) {
+        ctx.revokeProcessRollbackAuthorization?.(rollbackAuthorization);
+      }
+    }
+    if (rollbackError) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; executor rollback failed: ${
+          rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+        }`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  if (rollbackAuthorization) {
+    ctx.revokeProcessRollbackAuthorization?.(rollbackAuthorization);
+  }
+
+  if (stalePid) {
+    ctx.procs.kill(stalePid);
+  }
 
   return pid;
+}
+
+async function rollbackConversationExecutor(
+  ctx: KernelContext,
+  pid: string,
+  rollbackAuthorization?: string,
+): Promise<void> {
+  let rollbackError: unknown;
+  try {
+    const requestId = crypto.randomUUID();
+    const response = await sendFrameToProcess(pid, {
+      type: "req",
+      id: requestId,
+      call: "proc.kill",
+      args: {
+        pid,
+        archive: false,
+        ...(rollbackAuthorization
+          ? {
+              rollbackAuthorization,
+              rollbackKernelName: ctx.kernelName,
+            }
+          : {}),
+      },
+    } as RequestFrame);
+    if (!response || response.type !== "res" || response.id !== requestId) {
+      throw new Error("proc.kill returned no valid response");
+    }
+    if (!response.ok) {
+      throw new Error(response.error.message);
+    }
+    if ((response.data as { ok?: unknown } | undefined)?.ok !== true) {
+      throw new Error("proc.kill rejected executor rollback");
+    }
+  } catch (error) {
+    rollbackError = error;
+  }
+
+  try {
+    const clearBinding = () => {
+      ctx.conversations.clearActivePid?.(pid);
+      ctx.procs.kill(pid);
+    };
+    if (ctx.transactionSync) {
+      ctx.transactionSync(clearBinding);
+    } else {
+      clearBinding();
+    }
+  } catch (error) {
+    rollbackError ??= error;
+  }
+
+  if (rollbackError) throw rollbackError;
 }
 
 /**

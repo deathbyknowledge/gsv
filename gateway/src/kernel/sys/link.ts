@@ -101,8 +101,15 @@ export function handleSysUnlink(
     throw new Error("Permission denied");
   }
 
+  const remove = () => {
+    const removed = ctx.adapters.identityLinks.unlink(adapter, accountId, actorId);
+    if (removed) {
+      ctx.adapters.surfaceRoutes.clearOwnerAccountRoutes(adapter, accountId, existing.uid);
+    }
+    return removed;
+  };
   return {
-    removed: ctx.adapters.identityLinks.unlink(adapter, accountId, actorId),
+    removed: ctx.transactionSync ? ctx.transactionSync(remove) : remove(),
   };
 }
 

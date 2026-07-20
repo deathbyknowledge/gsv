@@ -31,10 +31,14 @@ function createTableStatement(name: string): string {
 describe("app runner schema migrations", () => {
   it("starts the app-runner component at a v1 baseline", () => {
     expect(APP_RUNNER_SCHEMA_COMPONENT).toBe("app-runner");
-    expect(APP_RUNNER_MIGRATIONS).toHaveLength(1);
+    expect(APP_RUNNER_MIGRATIONS).toHaveLength(2);
     expect(APP_RUNNER_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_app_runner_schema",
+    });
+    expect(APP_RUNNER_MIGRATIONS[1]).toMatchObject({
+      id: 2,
+      name: "bind_schedule_authority",
     });
   });
 
@@ -52,7 +56,37 @@ describe("app runner schema migrations", () => {
     expect(schedules).toContain("last_duration_ms INTEGER");
   });
 
+  it("binds daemon schedules to exact runtime authority", () => {
+    const statements = normalizedStatements();
+    for (const column of [
+      "logical_key TEXT",
+      "authority_key TEXT",
+      "owner_uid INTEGER",
+      "owner_username TEXT",
+      "kernel_username TEXT",
+      "kernel_generation INTEGER CHECK (kernel_generation IS NULL OR kernel_generation > 0)",
+      "package_id TEXT",
+      "package_name TEXT",
+      "package_updated_at INTEGER",
+      "artifact_hash TEXT",
+      "entrypoint_name TEXT",
+      "route_base TEXT",
+      "runtime_authority_json TEXT",
+    ]) {
+      expect(statements).toContain(`ALTER TABLE app_rpc_schedules ADD COLUMN ${column}`);
+    }
+  });
+
+  it("fails legacy unbound schedules closed", () => {
+    expect(normalizedStatements()).toContain(
+      "UPDATE app_rpc_schedules SET logical_key = schedule_key, enabled = 0, next_run_at = NULL, running_at = NULL, last_status = 'error', last_error = 'Legacy schedule authority is unbound'",
+    );
+  });
+
   it("includes current indexes owned by the app runner", () => {
-    expect(createdIndexes()).toEqual(["idx_app_rpc_schedules_due"]);
+    expect(createdIndexes()).toEqual([
+      "idx_app_rpc_schedules_due",
+      "idx_app_rpc_schedules_authority",
+    ]);
   });
 });

@@ -3,6 +3,8 @@ export type OAuthConnectionKind = "ai-provider" | "mcp-server" | "generic";
 export type OAuthFlowRecord = {
   flowId: string;
   uid: number;
+  /** Human Kernel owner that admitted the flow; null only for pre-v23 states. */
+  kernelOwnerUid: number | null;
   kind: OAuthConnectionKind;
   provider: string;
   accountKey: string;
@@ -19,9 +21,10 @@ export type OAuthFlowRecord = {
   expiresAt: number;
 };
 
-export type OAuthFlowCreateInput = Omit<OAuthFlowRecord, "flowId"> & {
+export type OAuthFlowCreateInput = Omit<OAuthFlowRecord, "flowId" | "kernelOwnerUid"> & {
   flowId?: string;
   stateHash: string;
+  kernelOwnerUid: number;
 };
 
 export type OAuthAccountRecord = {
@@ -55,6 +58,7 @@ export type OAuthAccountUpsertInput = Omit<
 type OAuthFlowRow = {
   flow_id: string;
   uid: number;
+  kernel_owner_uid: number | null;
   kind: string;
   provider: string;
   account_key: string;
@@ -95,17 +99,21 @@ export class OAuthStore {
   constructor(private readonly sql: SqlStorage) {}
 
   createFlow(input: OAuthFlowCreateInput): OAuthFlowRecord {
+    if (!Number.isSafeInteger(input.kernelOwnerUid) || input.kernelOwnerUid < 0) {
+      throw new Error("OAuth flow Kernel owner uid is invalid");
+    }
     const flowId = input.flowId ?? crypto.randomUUID();
     this.sql.exec(
       `INSERT INTO oauth_flows (
-        flow_id, state_hash, uid, kind, provider, account_key, label,
+        flow_id, state_hash, uid, kernel_owner_uid, kind, provider, account_key, label,
         authorization_endpoint, token_endpoint, client_id, redirect_uri,
         scope, resource, extra_auth_params_json, code_verifier,
         created_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       flowId,
       input.stateHash,
       input.uid,
+      input.kernelOwnerUid,
       input.kind,
       input.provider,
       input.accountKey,
@@ -124,6 +132,7 @@ export class OAuthStore {
     return {
       flowId,
       uid: input.uid,
+      kernelOwnerUid: input.kernelOwnerUid,
       kind: input.kind,
       provider: input.provider,
       accountKey: input.accountKey,
@@ -150,6 +159,18 @@ export class OAuthStore {
     if (!row) return null;
     if (row.expires_at <= now) {
       this.deleteFlow(row.flow_id);
+      return null;
+    }
+    return flowFromRow(row);
+  }
+
+  /** Atomically claim a callback flow before any external token exchange. */
+  consumeFlowByStateHash(stateHash: string, now = Date.now()): OAuthFlowRecord | null {
+    const row = this.sql.exec<OAuthFlowRow>(
+      "DELETE FROM oauth_flows WHERE state_hash = ? RETURNING *",
+      stateHash,
+    ).toArray()[0];
+    if (!row || row.expires_at <= now) {
       return null;
     }
     return flowFromRow(row);
@@ -333,6 +354,7 @@ function flowFromRow(row: OAuthFlowRow): OAuthFlowRecord {
   return {
     flowId: row.flow_id,
     uid: row.uid,
+    kernelOwnerUid: row.kernel_owner_uid,
     kind: row.kind as OAuthConnectionKind,
     provider: row.provider,
     accountKey: row.account_key,

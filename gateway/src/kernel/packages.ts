@@ -18,7 +18,11 @@ import type {
 } from "../protocol/app-frame";
 import type { RequestFrame, ResponseFrame } from "../protocol/frames";
 import { decodeBase64Bytes } from "../shared/base64";
-import { SHIP_KERNEL_NAME } from "../shared/utils";
+import { canonicalizeLoginUsername } from "../auth/login";
+import {
+  SHIP_KERNEL_NAME,
+  userKernelName,
+} from "../shared/kernel-names";
 import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 
 /**
@@ -43,6 +47,12 @@ export type PackageRuntime = "dynamic-worker" | "node" | "web-ui";
 
 type PackageAssemblerBinding = Fetcher & Pick<PackageAssemblerInterface, "assemblePackage">;
 const PACKAGE_PUBLIC_FILE_WRITE_CONCURRENCY = 2;
+
+async function cancelUnlockedBody(body: BinaryBody | undefined, reason: string): Promise<void> {
+  if (body && !body.stream.locked) {
+    await body.stream.cancel(reason).catch(() => {});
+  }
+}
 
 export type PackageModuleKind =
   | "esm"
@@ -162,8 +172,79 @@ export interface PackageProfileManifest {
 }
 
 type KernelAppStub = {
-  appRequest: (context: AppFrameContext, frame: RequestFrame) => Promise<ResponseFrame>;
+  appRequest: (
+    context: AppFrameContext,
+    frame: RequestFrame,
+    runnerName?: string,
+  ) => Promise<ResponseFrame>;
+  authorizeAppFrame: (
+    context: AppFrameContext,
+    runnerName?: string,
+  ) => Promise<boolean>;
 };
+
+type MasterAppRouteStub = {
+  resolveAppFrameKernel: (
+    context: AppFrameContext,
+    call?: string,
+    runnerName?: string,
+  ) => Promise<
+    | { ok: true; kernelName: string }
+    | { ok: false }
+  >;
+};
+
+export async function resolveAppKernelForFrame(
+  env: Env,
+  appFrame: AppFrameContext,
+  call?: string,
+  runnerName?: string,
+): Promise<KernelAppStub | null> {
+  if (!appFrame || typeof appFrame !== "object") {
+    return null;
+  }
+
+  const { kernelUsername, kernelGeneration } = appFrame;
+  if (kernelGeneration !== undefined) {
+    const canonicalUsername = canonicalizeLoginUsername(kernelUsername);
+    if (
+      canonicalUsername === null
+      || canonicalUsername !== kernelUsername
+      || !Number.isSafeInteger(kernelGeneration)
+      || kernelGeneration <= 0
+    ) {
+      return null;
+    }
+
+    const kernel = await getAgentByName(
+      env.KERNEL,
+      userKernelName(canonicalUsername),
+    ) as unknown as KernelAppStub;
+    const authorized = runnerName === undefined
+      ? await kernel.authorizeAppFrame(appFrame)
+      : await kernel.authorizeAppFrame(appFrame, runnerName);
+    return authorized ? kernel : null;
+  }
+
+  // A canonical username without a generation is valid only for an explicit
+  // legacy account. Master remains the authority for that compatibility path.
+  if (
+    kernelUsername !== undefined
+    && canonicalizeLoginUsername(kernelUsername) !== kernelUsername
+  ) {
+    return null;
+  }
+  const master = await getAgentByName(
+    env.KERNEL,
+    SHIP_KERNEL_NAME,
+  ) as unknown as MasterAppRouteStub;
+  const route = runnerName === undefined
+    ? await master.resolveAppFrameKernel(appFrame, call)
+    : await master.resolveAppFrameKernel(appFrame, call, runnerName);
+  return route.ok && route.kernelName === SHIP_KERNEL_NAME
+    ? master as unknown as KernelAppStub
+    : null;
+}
 
 export class KernelBinding extends WorkerEntrypoint<Env, KernelBindingProps> {
   private getAppFrame(): AppFrameContext {
@@ -188,24 +269,33 @@ export class KernelBinding extends WorkerEntrypoint<Env, KernelBindingProps> {
     args: ArgsOf<S>,
     options: { body?: BinaryBody } = {},
   ): Promise<{ data: ResultOf<S>; body?: BinaryBody }> {
-    const kernel = await getAgentByName(this.env.KERNEL, SHIP_KERNEL_NAME) as KernelAppStub;
-    const frame: RequestFrame<S> = {
-      type: "req",
-      id: crypto.randomUUID(),
-      call,
-      args,
-      ...(options.body ? { body: options.body } : {}),
-    };
+    const appFrame = this.getAppFrame();
+    try {
+      const kernel = await resolveAppKernelForFrame(this.env, appFrame, call);
+      if (!kernel) {
+        throw new Error("Authentication failed");
+      }
+      const frame: RequestFrame<S> = {
+        type: "req",
+        id: crypto.randomUUID(),
+        call,
+        args,
+        ...(options.body ? { body: options.body } : {}),
+      };
 
-    const response = await kernel.appRequest(this.getAppFrame(), frame as RequestFrame);
-    if (!response.ok) {
-      throw new Error(response.error.message);
+      const response = await kernel.appRequest(appFrame, frame as RequestFrame);
+      if (!response.ok) {
+        throw new Error(response.error.message);
+      }
+
+      return {
+        data: response.data as ResultOf<S>,
+        ...(response.body ? { body: response.body } : {}),
+      };
+    } catch (error) {
+      await cancelUnlockedBody(options.body, "App request rejected");
+      throw error;
     }
-
-    return {
-      data: response.data as ResultOf<S>,
-      ...(response.body ? { body: response.body } : {}),
-    };
   }
 }
 
@@ -950,17 +1040,26 @@ function packageGlobalOutbound(egress: PackageRuntimeAccess["egress"]): Fetcher 
   if (egress.mode === "inherit") {
     return undefined;
   }
-  const allow = normalizeOutboundAllowlist(egress.allow);
   return {
     fetch(input: RequestInfo | URL, init?: RequestInit) {
       const request = outboundRequest(input, init);
       const url = new URL(request.url);
-      if (!isOutboundAllowed(url, allow)) {
+      if (!isPackageOutboundAllowed(egress, url)) {
         return Promise.reject(new Error(`Outbound request denied: ${url.origin}`));
       }
       return fetch(request);
     },
   } as Fetcher;
+}
+
+export function isPackageOutboundAllowed(
+  egress: PackageRuntimeAccess["egress"],
+  url: URL,
+): boolean {
+  if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+  if (egress?.mode === "inherit") return true;
+  if (egress?.mode !== "allowlist") return false;
+  return isOutboundAllowed(url, normalizeOutboundAllowlist(egress.allow));
 }
 
 function normalizeOutboundAllowlist(allow: readonly string[] | undefined): Set<string> {
@@ -1081,6 +1180,7 @@ export class PackageStore {
 
   async install(input: PackageInstallRecordInput): Promise<InstalledPackageRecord> {
     const now = Date.now();
+    const existing = this.get(input.packageId, input.scope);
     const artifact = await validatePackageArtifact(input.artifact);
     const manifest = normalizeStoredManifest(input.manifest, artifact);
     const artifactMetadata = {
@@ -1092,7 +1192,7 @@ export class PackageStore {
       manifest,
       artifact: artifactMetadata,
       installedAt: input.installedAt ?? now,
-      updatedAt: input.updatedAt ?? now,
+      updatedAt: nextPackageUpdatedAt(existing?.updatedAt, input.updatedAt ?? now),
     };
 
     assertValidPackageRecord(record);
@@ -1121,6 +1221,42 @@ export class PackageStore {
     );
 
     return record;
+  }
+
+  /**
+   * Replace the non-secret package metadata projected into a user Kernel.
+   * Artifacts remain content-addressed in shared R2; this never copies module
+   * bodies or makes the user Kernel authoritative for global installation.
+   */
+  replaceRuntimeProjection(records: InstalledPackageRecord[]): void {
+    for (const record of records) {
+      assertValidPackageRecord(record);
+    }
+
+    this.sql.exec("DELETE FROM packages");
+    for (const record of records) {
+      this.sql.exec(
+        `INSERT INTO packages
+          (package_id, scope_key, scope_kind, scope_uid, name, version, runtime, enabled, manifest_json, artifact_hash, artifact_meta_json, grants_json, installed_at, updated_at, review_required, reviewed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        record.packageId,
+        packageScopeKey(record.scope),
+        record.scope.kind,
+        record.scope.kind === "user" ? record.scope.uid : null,
+        record.manifest.name,
+        record.manifest.version,
+        record.manifest.runtime,
+        record.enabled ? 1 : 0,
+        JSON.stringify(record.manifest),
+        record.artifact.hash,
+        JSON.stringify(record.artifact),
+        record.grants ? JSON.stringify(record.grants) : null,
+        record.installedAt,
+        record.updatedAt,
+        record.reviewRequired ? 1 : 0,
+        record.reviewedAt ?? null,
+      );
+    }
   }
 
   async getArtifact(hash: string): Promise<PackageArtifact> {
@@ -1218,7 +1354,7 @@ export class PackageStore {
     this.sql.exec(
       "UPDATE packages SET enabled = ?, updated_at = ? WHERE package_id = ? AND scope_key = ?",
       enabled ? 1 : 0,
-      Date.now(),
+      nextPackageUpdatedAt(existing.updatedAt),
       packageId,
       packageScopeKey(scope),
     );
@@ -1243,7 +1379,7 @@ export class PackageStore {
       "UPDATE packages SET reviewed_at = ?, artifact_meta_json = ?, updated_at = ? WHERE package_id = ? AND scope_key = ?",
       reviewedAt,
       JSON.stringify(artifactMetadata),
-      Date.now(),
+      nextPackageUpdatedAt(existing.updatedAt),
       packageId,
       packageScopeKey(scope),
     );
@@ -1263,6 +1399,15 @@ export class PackageStore {
     return true;
   }
 
+}
+
+function nextPackageUpdatedAt(
+  previous: number | undefined,
+  requested: number = Date.now(),
+): number {
+  return previous === undefined
+    ? requested
+    : Math.max(requested, previous + 1);
 }
 
 type RowShape = {

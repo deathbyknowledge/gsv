@@ -11,8 +11,10 @@
  * Permission model:
  *   Read:  root reads all; non-root reads own users/{uid}/*, delegated agent
  *          overridable config, and only non-sensitive config/*
- *   Write: root writes all; non-root writes user-overridable config for their
- *          own account and delegated agents
+ *   Write: root writes system config plus explicitly user-overridable keys;
+ *          non-root writes those user-overridable keys only for their own
+ *          account and delegated agents. Package, repo, setup, and internal
+ *          namespaces remain exclusive to their owning typed operations.
  */
 
 import type { KernelContext } from "../context";
@@ -61,9 +63,10 @@ function canRead(ctx: KernelContext, key: string): boolean {
 
 function canWrite(ctx: KernelContext, key: string): boolean {
   const uid = ctx.identity!.process.uid;
-  if (uid === 0) return true;
+  if (uid === 0 && key.startsWith("config/")) return true;
   const parsed = parseUserConfigKey(key);
   if (!parsed || !isUserOverridableConfigSubkey(parsed.sub)) return false;
+  if (uid === 0) return true;
   return canManageUserConfig(ctx, parsed.uid);
 }
 

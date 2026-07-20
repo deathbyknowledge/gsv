@@ -113,8 +113,8 @@ export function useSessionScreensState({
     event.preventDefault();
 
     const username = loginUsername.trim();
-    const password = loginPassword.trim();
-    const token = loginToken.trim();
+    const password = loginPassword;
+    const token = loginToken;
 
     if (!username) {
       setLoginValidationError("Username is required.");

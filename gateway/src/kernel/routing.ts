@@ -30,6 +30,19 @@ export type FailedDeviceRoute = Pick<
 >;
 
 const DEFAULT_TTL_MS = 60_000;
+const MAX_DRAIN_ORIGINS = 256;
+
+type RouteRow = {
+  id: string;
+  call: string;
+  origin_type: string;
+  origin_id: string;
+  device_id: string;
+  driver_connection_id: string | null;
+  created_at: number;
+  expires_at: number | null;
+  schedule_id: string | null;
+};
 
 export class RoutingTable {
   constructor(private readonly sql: SqlStorage) {}
@@ -125,6 +138,68 @@ export class RoutingTable {
     };
   }
 
+  /**
+   * Atomically remove every in-flight route.
+   *
+   * Lifecycle fencing uses this to make persisted routes unreachable before
+   * their late device responses can be delivered into a suspended user
+   * Kernel. The caller owns cancelling route wakes, bodies, and remote work.
+   */
+  drain(): RouteEntry[] {
+    const rows = this.sql.exec<RouteRow>("SELECT * FROM routing_table").toArray();
+
+    if (rows.length > 0) {
+      this.sql.exec("DELETE FROM routing_table");
+    }
+
+    return rows.map(toRouteEntry);
+  }
+
+  /**
+   * Atomically remove routes owned by any exact origin in a bounded batch.
+   *
+   * Origin values are always SQL bindings. Only the fixed placeholder shape is
+   * assembled into the query, so caller-controlled ids cannot alter the match.
+   */
+  drainForOrigins(origins: Iterable<RouteOrigin>): RouteEntry[] {
+    const uniqueOrigins = new Map<string, RouteOrigin>();
+    let originCount = 0;
+
+    for (const origin of origins) {
+      originCount += 1;
+      if (originCount > MAX_DRAIN_ORIGINS) {
+        throw new RangeError(
+          `Cannot drain routes for more than ${MAX_DRAIN_ORIGINS} origins`,
+        );
+      }
+      if (
+        (origin.type !== "connection"
+          && origin.type !== "process"
+          && origin.type !== "app")
+        || typeof origin.id !== "string"
+      ) {
+        throw new TypeError("Invalid route origin");
+      }
+      uniqueOrigins.set(`${origin.type}\0${origin.id}`, origin);
+    }
+
+    if (uniqueOrigins.size === 0) return [];
+
+    const bindings: string[] = [];
+    const predicates: string[] = [];
+    for (const origin of uniqueOrigins.values()) {
+      predicates.push("(origin_type = ? AND origin_id = ?)");
+      bindings.push(origin.type, origin.id);
+    }
+
+    return this.sql.exec<RouteRow>(
+      `DELETE FROM routing_table
+       WHERE ${predicates.join(" OR ")}
+       RETURNING *`,
+      ...bindings,
+    ).toArray().map(toRouteEntry);
+  }
+
   failForDevice(deviceId: string): FailedDeviceRoute[] {
     const rows = [...this.sql.exec<{
       id: string;
@@ -209,4 +284,20 @@ export class RoutingTable {
       scheduleId: row.schedule_id,
     }));
   }
+}
+
+function toRouteEntry(row: RouteRow): RouteEntry {
+  return {
+    id: row.id,
+    call: row.call as SyscallName,
+    origin: {
+      type: row.origin_type as "connection" | "process" | "app",
+      id: row.origin_id,
+    },
+    deviceId: row.device_id,
+    driverConnectionId: row.driver_connection_id,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    scheduleId: row.schedule_id,
+  };
 }
