@@ -24,8 +24,8 @@ The model should therefore distinguish:
 - A transport frame: the envelope used to move requests, responses, and async
   push messages across WebSocket, service binding, app bridge, or process
   boundaries.
-- A scheduler: Kernel-owned cron/timer service that dispatches typed work under
-  an explicit principal.
+- A scheduler: user-Kernel-owned cron/timer service that dispatches typed work
+  under an explicit canonical account and uid.
 
 This keeps the OS analogy clear. A GSV process is closer to a daemon than a
 single terminal session. Conversations are attachments to that daemon. Events
@@ -374,16 +374,17 @@ The existing `sched.*` syscall names should become the public scheduler surface:
 - `sched.remove`
 - `sched.run`
 
-The scheduler should be Kernel-owned. It should store schedule definitions,
-calculate next fire times, run due work, enforce permissions, track run history,
-and dispatch typed targets.
+The scheduler should be owned by the human's `user:<username>` Kernel. It should
+store schedule definitions, calculate next fire times, run due work, enforce
+permissions, track run history, and dispatch typed targets without routing each
+wake through the Master Control Program.
 
 Schedule records should include:
 
 - id
 - owner uid
-- creator principal
-- run-as principal
+- creator canonical username and uid
+- run-as canonical username and uid
 - name and description
 - enabled state
 - schedule expression
@@ -533,11 +534,12 @@ Still pending:
 
 Defer cross-user IPC until ACLs are in place.
 
-### 7. Implement Kernel scheduler
+### 7. Complete user-Kernel scheduler ownership
 
 Implemented:
 
-- Kernel-owned schedule store and `sched.*` syscall handlers.
+- Kernel schedule store and `sched.*` syscall handlers. Legacy deployments
+  still host that store in `singleton` until per-user state migration.
 - `at`, `after`, `every`, and timezone-aware five-field cron expressions.
 - `process.spawn` targets for scheduled background work.
 - `process.event` targets that enter process context as visible process events.
@@ -546,8 +548,12 @@ Implemented:
 
 Still pending:
 
+- Migrate each explicit-legacy human's existing schedule rows and wake ownership
+  from `singleton` to a provisioned user Kernel, fence old alarms, and rearm
+  them without dual writers. Clean commissioning and active user-Kernel accounts
+  already keep schedule definitions and wakes in their owning shard.
 - `process.lifecycle` schedule targets.
-- package-owned Kernel schedules and package event targets.
+- package-owned user-Kernel schedules and package event targets.
 
 ### 8. Add filesystem views
 

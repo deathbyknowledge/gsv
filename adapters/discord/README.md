@@ -91,7 +91,8 @@ Discord Gateway API (wss://gateway.discord.gg)
 └─────────────────────────────────────────┘
         ↓ Service Binding RPC
 ┌─────────────────────────────────────────┐
-│  GatewayEntrypoint.channelInbound()     │
+│  DiscordGatewayEntrypoint.serviceFrame │
+│  adapter.inbound / adapter.state.update│
 └─────────────────────────────────────────┘
         ↓ Gateway DO RPC
 ┌─────────────────────────────────────────┐
@@ -128,4 +129,4 @@ You can configure Gateway's `dmPolicy` to control this behavior.
 
 ### Messages not being processed
 - Check Discord worker logs for RPC delivery failures
-- Check Gateway logs for `channelInbound` / `channelStatusChanged` errors
+- Check Gateway logs for scoped `adapter.inbound` / `adapter.state.update` errors

@@ -9,18 +9,20 @@ surface over WebSocket; `infra` talks directly to Cloudflare.
 `--url` is a top-level option, so place it before the subcommand:
 
 ```bash
-gsv --url wss://example.workers.dev/ws chat "hello"
+gsv --url wss://example.workers.dev/ws --user alice chat "hello"
 ```
 
 | Option | Env | Description |
 | --- | --- | --- |
-| `--url <URL>` | `GSV_URL` | Gateway WebSocket URL. Defaults to `gateway.url` in local config, then `ws://localhost:8787/ws`. |
+| `--url <URL>` | `GSV_URL` | Gateway WebSocket URL. Defaults to `gateway.url` in local config, then `ws://localhost:8787/ws`. The CLI derives `/ws/<canonical-username>` for normal connections; first-run commissioning uses `/ws`. |
 | `-u, --user <USER>` | | Gateway username override. |
 | `-p, --password <PASS>` | | Password for non-interactive login/setup. |
 | `-t, --token <TOKEN>` | `GSV_TOKEN` | Non-interactive credential. User commands require a username with token auth. |
 
 Local CLI config is stored at `~/.config/gsv/config.toml`. Remote user commands use
 the cached session token from `gsv auth login`, or prompt/login when needed.
+The CLI canonicalizes the configured username and requires the normal WebSocket
+route to name that same account; the path does not replace authentication.
 
 ## Chat and Shell
 
@@ -174,14 +176,25 @@ gsv auth link-list [--uid UID]
 gsv auth unlink --adapter ID --account-id ACCOUNT --actor-id ACTOR
 ```
 
-`setup` initializes a gateway in setup mode, optionally configures AI provider
-settings, and can issue a device token with `--device-id`, `--device-label`, and
+`setup` connects to the commissioning-only `/ws` route, initializes a gateway in
+setup mode, permanently reserves the first human's canonical username,
+provisions its `user:<username>` Kernel and `user:root`, optionally configures AI
+provider settings, and can issue a device token with `--device-id`,
+`--device-label`, and
 `--device-expires-at` (Unix milliseconds). Interactive setup prompts for missing
 values and saves `gateway.username`, `device.id`, and `device.token` when issued.
+Normal connections derive `/ws/<username>` from the configured Gateway URL and
+canonical username.
 
-`login` creates a short-lived user token with `sys.token.create` and caches it
-locally. The default TTL is 8 hours. `logout` clears only the cached local session
-token.
+`auth setup` commissions a new ship; it is not a public registration command.
+Model-mediated admission and public self-registration remain closed and have no
+CLI or Gateway endpoint. Existing accounts classified as `legacy` by migration
+v16 continue using `/ws` until an explicit state migration exists.
+
+`login` connects to `/ws/<username>`, authenticates through that provisioned user
+Kernel, creates a short-lived user token with `sys.token.create`, and caches it
+locally. The default TTL is 8 hours. `logout` clears only the cached local
+session token.
 
 Link commands bind adapter identities, such as WhatsApp or Discord actors, to
 GSV users. Use a one-time `CODE` from an adapter flow or provide the adapter,
@@ -273,6 +286,13 @@ the same but auto-refreshes mutable refs such as `latest`, `stable`, and `dev`.
 Both accept `--bundle-dir PATH` for local bundles, `--api-token` or
 `CF_API_TOKEN`, `--account-id` or `CF_ACCOUNT_ID`, and `--discord-bot-token` or
 `DISCORD_BOT_TOKEN`.
+
+Adapter entrypoints are a coordinated hard cutover. Upgrade the complete
+component set (the default, or `--all`) when moving from a release that used the
+generic Gateway adapter binding. The rollout uploads a Gateway exporting the
+scoped entrypoints and redeploys every selected adapter with its matching
+binding; deploying only the Gateway intentionally makes older generic adapter
+bindings fail closed.
 
 `destroy` tears down Workers. If no component or `--all` is supplied, it targets
 all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`

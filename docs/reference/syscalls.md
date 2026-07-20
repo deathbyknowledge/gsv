@@ -525,9 +525,9 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `proc.list` | `handleProcList` | Reads the Kernel process registry. Root may select any owner; a non-root caller is always restricted to its owning human, regardless of an explicit `uid` argument. |
+| `proc.list` | `handleProcList` | Reads the current Kernel's process registry. A non-root caller is always restricted to its owning human, regardless of an explicit `uid` argument. On the legacy Master, root may list all owners or select any uid. On an active user Kernel, root must select that shard's owner uid; wildcard and cross-user lists fail closed because cross-shard administration is not yet forwarded. |
 | `proc.profile.list` | `handleProcProfileList` | Returns system AI profiles plus enabled package-backed profiles visible to the caller. Package entries are sorted by package name and display name. |
-| `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. A default interactive top-level spawn reuses the caller's default conversation executor; custom spawns get UUID pids. |
+| `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers the process in the owning user Kernel, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. A default interactive top-level spawn reuses the caller's default conversation executor; custom spawns get UUID pids. |
 | `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media entries contain process-scoped keys returned by `proc.media.write` or external URLs; inline `media.data` is not accepted. Media-bearing user messages are admitted immediately and generation starts after background media preparation. Touches workspace activity before forwarding. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
@@ -551,7 +551,7 @@ Runtime behavior:
 | `proc.conversation.segments` | Process DO | Lists recorded lifecycle segments for `conversationId` or `default`, including archive paths and summary marker ids. |
 | `proc.reset` | Process DO | Archives every non-empty conversation in private owner-scoped internal storage, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
 | `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers the validated IPC envelope from the kernel into the target conversation. |
-| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, ship-Kernel route, distinct owner and run-as identities, interaction mode, assignment context, and owner-scoped conversation hydration pointers; `assignment.autoStart` can create a run immediately. Existing process state without a stored Kernel name retains the same ship-Kernel route named `singleton`. |
+| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, immutable canonical owner username/uid, run-as identity, owning `user:<username>` Kernel object name, interaction mode, assignment context, and owner-scoped conversation hydration pointers; `assignment.autoStart` can create a run immediately. The owning Kernel registry separately binds the pid to its exact user-Kernel generation and rejects stale executor calls; Master/legacy rows retain a null generation. An implicit `singleton` route is migration-only and must be removed after legacy process state is rebound. |
 
 ```ts
 type ProcContextFile = { name: string; text: string };
@@ -987,44 +987,59 @@ type RepoSyscalls = {
 
 `sys.*` covers setup, configuration, devices, workspaces, tokens, and account links.
 
+Device, OAuth, and MCP runtime state is user-Kernel-local. On an active user
+Kernel, the calls below can only inspect that shard's records. A
+root request that selects another uid, or a root list whose omitted uid means
+"all", fails closed where the operation would require another shard; GSV does
+not yet forward these administrative operations. The legacy Master keeps its
+existing root selection behavior for legacy runtime state.
+
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and starts/reconciles the user init process. Setup mode rejects with `425` and `next: "sys.setup"`. |
+| `sys.connect` | `handleConnect` | First request on a normal `/ws/<canonical-username>` connection. The provisioned user Kernel requires the path and credential username to match, asks `singleton` to authenticate, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and starts/reconciles the user init process. Commissioning-incomplete normal routes reject with `425`; the client reconnects to `/ws` before invoking `sys.setup`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Durably claims one commissioning attempt before mutation, rejecting concurrent calls and blocking unsafe replay after a partial failure. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, and optional system bootstrap. Username, password, and timezone are validated. |
+| `sys.setup` | `handleSysSetup` | Commissioning-only `/ws` bootstrap on `singleton`. Durably leases one normalized request before mutation and rejects concurrent or mismatched calls. The same request resumes retryable/expired attempts with its reserved uid and reconciles completed steps. Permanently reserves the first human's canonical username and uid/gid plus root, provisions `user:root` and `user:<username>`, and creates passwords, groups/home, optional timezone, optional AI config, optional node token, home layout, and optional system bootstrap. Username, password, and timezone are validated. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv` and `root/gsv-manual`, registers both as public system repositories, and seeds repository skills into the caller's home. By default, stable gateway builds pin `root/gsv` to their matching `vX.Y.Z` release tag; dev and other non-release builds use `main`. Explicit args win, followed by `GSV_BOOTSTRAP_REF` and a ref embedded in `GSV_BOOTSTRAP_UPSTREAM`; the upstream accepts `owner/repo`, a git URL, or either form with `#ref`. The manual remains on its independently configured ref, defaulting to `main`. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
-| `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
-| `sys.device.list` | `handleSysDeviceList` | Lists devices accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
+| `sys.config.set` | `handleSysConfigSet` | Writes a Master-authoritative config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. Successful `config/*` writes refresh every active user Kernel; `users/<uid>/*` writes refresh only that uid's placement and emit `config.changed` after the filtered projection is current. |
+| `sys.device.list` | `handleSysDeviceList` | Lists targets accessible in the current Kernel registry by owner uid or group ACL. Root sees all targets in that registry. Active shards do not yet discover or forward another user's devices, including from `user:root`; the legacy Master retains its local legacy view. Defaults to online targets unless `includeOffline` is true. |
 | `sys.device.get` | `handleSysDeviceGet` | Reads one device descriptor. Missing or inaccessible devices return `device: null` rather than a permission error. |
 | `sys.device.update` | `handleSysDeviceUpdate` | Updates owner-managed device metadata. Root or the device owner may update the process-visible `description`; group-only device access can use the device but cannot edit its metadata. Missing or inaccessible devices return `device: null`. |
 | `sys.device.delete` | `handleSysDeviceDelete` | Forgets an owned physical device, disconnects any live device socket, and revokes active node tokens bound to that device. Group-only access cannot forget. Missing or inaccessible devices return `deleted: false`. |
 | `sys.workspace.list` | `handleSysWorkspaceList` | Lists workspaces for caller uid by default. Root may request any uid; non-root may only request self. Adds active process summary and process count. |
-| `sys.oauth.start` | `handleSysOAuthStart` | Starts an OAuth authorization-code + PKCE flow for an AI provider, MCP server, or generic integration. Returns an authorization URL and pending flow summary. Redirects must target `/oauth/callback` on the deployed GSV origin. Non-root is scoped to self. |
-| `sys.oauth.list` | `handleSysOAuthList` | Lists OAuth account summaries without access or refresh tokens. Non-root is scoped to self; root can list all or one uid. `includePending: true` also returns unexpired pending flows. |
+| `sys.oauth.start` | `handleSysOAuthStart` | Starts an OAuth authorization-code + PKCE flow for an AI provider, MCP server, or generic integration. Returns an authorization URL and pending flow summary. Redirects must target `/oauth/callback` on the deployed GSV origin. Non-root is scoped to self; active user Kernels additionally require the effective uid to be the shard owner. |
+| `sys.oauth.list` | `handleSysOAuthList` | Lists OAuth account summaries without access or refresh tokens. Non-root is scoped to self. Root can list all or one uid on the legacy Master, but an active user Kernel accepts only its exact owner uid and rejects the wildcard default. `includePending: true` also returns unexpired pending flows. |
 | `sys.oauth.forget` | `handleSysOAuthForget` | Deletes a stored OAuth account. Non-root can delete only own accounts. Missing or inaccessible accounts return `forgotten: false`. |
-| `sys.mcp.add` | `handleSysMcpAdd` | Connects a user-owned HTTP MCP server through the Kernel MCP client manager. Server URLs and callback hosts must use HTTPS except localhost development URLs. Returns the server summary, including `authUrl` when OAuth sign-in is required. Uses `/oauth/callback` and client metadata when possible. Non-root is scoped to self. |
-| `sys.mcp.list` | `handleSysMcpList` | Lists caller-owned MCP servers with connection state, OAuth URL, discovered tools, resource count, and prompt count. Root may pass `uid`; non-root is scoped to self. |
+| `sys.mcp.add` | `handleSysMcpAdd` | Connects a user-owned HTTP MCP server through the owning user Kernel MCP client manager. Server URLs and callback hosts must use HTTPS except localhost development URLs. Returns the server summary, including `authUrl` when OAuth sign-in is required. Uses `/oauth/callback` and client metadata when possible. Non-root is scoped to self. |
+| `sys.mcp.list` | `handleSysMcpList` | Lists caller-owned MCP servers with connection state, OAuth URL, discovered tools, resource count, and prompt count. Root may select a uid on the legacy Master; on an active user Kernel the effective uid must be the shard owner. Non-root is scoped to self. |
 | `sys.mcp.remove` | `handleSysMcpRemove` | Removes a caller-owned MCP server from GSV ownership metadata and the underlying MCP client manager. Missing or inaccessible servers return `removed: false`. |
 | `sys.mcp.refresh` | `handleSysMcpRefresh` | Reconnects and rediscovers a caller-owned MCP server when possible. Returns the latest summary or `server: null` when inaccessible. |
 | `sys.mcp.call` | `handleSysMcpCall` | Calls a tool on a caller-owned MCP server. Generated CodeMode MCP functions and the native shell `mcp call` command use this path. Native `mcp status/tools/describe/search/codemode` provide discovery around the same summaries returned by `sys.mcp.list`. |
-| `sys.token.create` | `handleSysTokenCreate` | Creates a hashed node, service, or user token. Root may target any uid. Role defaults must match token kind; driver/node tokens may bind to `allowedDeviceId`. Raw token is returned only once. |
-| `sys.token.list` | `handleSysTokenList` | Lists token metadata, including revoked tokens, never raw token values. Non-root is scoped to self; root can list all or one uid. |
-| `sys.token.revoke` | `handleSysTokenRevoke` | Revokes a token by id with optional reason. Non-root can revoke only own tokens. Missing or inaccessible token returns `revoked: false`. |
-| `sys.link` | `handleSysLink` | User-role only. Links an adapter/account/actor to a uid. Adapter is lowercased; root may link to any uid, non-root only self. |
-| `sys.unlink` | `handleSysUnlink` | User-role only. Removes an adapter identity link. Missing links return `removed: false`; non-root can unlink only self-owned links. |
-| `sys.link.list` | `handleSysLinkList` | User-role only. Lists identity links newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
-| `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase, cryptographically random, single-use link challenge for the caller uid, marks it used, and creates/replaces the identity link. Invalid, expired, used, or rate-limited attempts share the same error; failed guesses have durable per-user and Kernel-wide budgets. |
+| `sys.token.create` | `handleSysTokenCreate` | Uses a narrow Master Control Program call to create a hashed node, service, or user token. Root may target any uid. Role defaults must match token kind; driver/node tokens may bind to `allowedDeviceId`. Raw token is returned only once. |
+| `sys.token.list` | `handleSysTokenList` | Uses a narrow Master Control Program call to list token metadata, including revoked tokens, never raw token values. Non-root is scoped to self; root can list all or one uid. |
+| `sys.token.revoke` | `handleSysTokenRevoke` | Uses a narrow Master Control Program call to revoke a token by id with optional reason. Non-root can revoke only own tokens. Missing or inaccessible token returns `revoked: false`. |
+| `sys.link` | `handleSysLink` | User-role only. Uses a narrow Master Control Program call to link a normalized adapter/account/actor to a canonical username and uid. Root may link to any uid; non-root only self. The Master resolves this authoritative table on inbound delivery. |
+| `sys.unlink` | `handleSysUnlink` | User-role only. Uses a narrow Master Control Program call to remove an adapter identity link. Missing links return `removed: false`; non-root can unlink only self-owned links. Generation-bound route projections are not implemented yet. |
+| `sys.link.list` | `handleSysLinkList` | User-role only. Uses a narrow Master Control Program call to list authoritative identity-link metadata newest-first. Non-root is implicitly scoped to self; root may list all or filter by uid. |
+| `sys.link.consume` | `handleSysLinkConsume` | User-role only. Consumes an uppercase, cryptographically random, single-use link challenge for the caller uid, marks it used, then uses a narrow Master Control Program mutation to create or replace the identity link. Invalid, expired, used, or rate-limited attempts share the same error; failed guesses have durable limits. |
 
 `sys.connect`, `sys.setup`, and `sys.setup.assist` are special-cased before normal auth/capability dispatch. Other `sys.*` calls require a connected identity and are denied in setup mode.
 
 OAuth callbacks are handled by the Gateway HTTP route `GET /oauth/callback`.
-Gateway forwards that route to the Kernel, where the inherited Agent MCP client
-manager gets first chance to consume MCP OAuth callbacks before the generic
-`sys.oauth.*` callback handler runs. `sys.oauth.start` callers must pass the
-exact redirect URI they registered with the remote provider, normally
+For active user Kernels, generic state contains a parseable username/generation
+routing prefix; MCP uses the same locator in a scoped callback path. The Gateway
+asks `singleton` to validate that exact active placement. The locator is not
+authority. Migration v23 records the human Kernel owner that admitted each new
+`oauth_flows` row. The generic callback acquires that exact owner's lifecycle
+admission before atomically consuming the full high-entropy flow state, then
+holds it through the bounded code exchange and credential commit. Pre-v23
+authorization-code callback rows retain a `NULL` owner and fail closed rather
+than deriving one from their run-as uid or locator. That Kernel's Agent MCP
+client manager gets first chance to consume MCP OAuth callbacks before the
+generic `sys.oauth.*` callback handler runs. `sys.oauth.start` callers must pass
+the exact redirect URI they registered with the remote provider, normally
 `https://<gsv-origin>/oauth/callback`. The Gateway also serves client metadata
 at `/.well-known/oauth-client/gsv.json` for providers that accept client
 metadata URLs; in those cases the `clientId` can be that metadata URL, and the
@@ -1321,9 +1336,9 @@ Signal frames themselves are described in [WebSocket Protocol Reference](/refere
 
 ## Scheduler: `sched.*`
 
-Scheduler syscalls are Kernel-owned. Schedule records live in Kernel SQLite,
-GSV computes timezone-aware next fire times, and Cloudflare Agent schedules are
-used only as concrete wake-ups.
+Scheduler syscalls are user-Kernel-owned. Schedule records live in the owning
+user Kernel SQLite, GSV computes timezone-aware next fire times, and Cloudflare
+Agent schedules are used only as concrete wake-ups.
 
 The user-facing interface depends on the delivery contract. From a
 process-backed shell, use the following form when each firing should enter the
@@ -1349,7 +1364,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `sched.list` | `handleSchedulerList` | Lists schedules visible to the caller. Non-root callers see schedules for their owning user; root may pass `ownerUid`. |
+| `sched.list` | `handleSchedulerList` | Lists schedules in the current Kernel. Non-root callers see schedules for their owning user. On the legacy Master, root may pass any `ownerUid` or omit it to list all. On an active user Kernel, root must pass that shard's owner uid; wildcard and cross-user lists fail closed because cross-shard administration is not yet forwarded. |
 | `sched.add` | `handleSchedulerAdd` | Creates a user-owned schedule, validates the expression and target, computes the next run, and arms a Kernel wake. |
 | `sched.update` | `handleSchedulerUpdate` | Updates schedule metadata, expression, enabled state, or target, then re-arms the wake. |
 | `sched.remove` | `handleSchedulerRemove` | Removes a schedule and cancels its pending wake when present. |

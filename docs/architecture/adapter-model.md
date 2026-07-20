@@ -58,8 +58,15 @@ This gives GSV:
 - lower overhead than extra HTTP surfaces between your own services
 - a clearer separation between transport logic and Kernel routing
 
-Trust is established at deploy time. If the binding exists, that adapter worker
-is part of the trusted deployment.
+Trust is established at deploy time, but it is not ambient. Each adapter binds
+to an adapter-specific Gateway entrypoint that accepts only that adapter's
+normalized `adapter.inbound` and `adapter.state.update` frames. The generic
+Gateway entrypoint rejects adapter frames, and a scoped binding rejects frames
+claiming another adapter.
+
+The scoped entrypoints are a coordinated hard cutover, not a mixed-version
+compatibility path. Deploy the Gateway exporting them and every adapter using
+the matching binding as one rollout; old generic bindings fail closed.
 
 ## Inbound flow
 
@@ -67,11 +74,27 @@ The inbound path looks like this:
 
 1. A platform event arrives at the adapter worker.
 2. The adapter normalizes it into a GSV adapter message.
-3. The adapter calls the Kernel with `adapter.inbound` using a service identity.
-4. The Kernel resolves the adapter account and external actor.
-5. The Kernel checks identity links and routing state.
-6. The message is delivered to a durable process, usually `init:{uid}` or a routed process.
-7. The process runs the normal agent loop and emits `proc.run.*` signals.
+3. The adapter calls the Gateway service binding with `adapter.inbound`; it does
+   not send a trusted username or uid.
+4. The adapter-specific Gateway entrypoint rejects frame bodies and extracts an
+   exact, bounded routing envelope: adapter, account, external actor, frame id,
+   and surface kind/id. Message text, media, reply context, and the full frame
+   remain at the Gateway boundary.
+5. `singleton` receives only that envelope. It resolves the authoritative
+   identity link and placement, then returns either a compact unknown-actor
+   challenge/drop response, an explicit legacy route, or an active placement
+   plus a short-lived one-shot delivery authorization. It never receives or
+   awaits the active user's full message frame.
+6. For an active placement, the Gateway sends the full frame directly to the
+   user Kernel with the exact owner uid, Kernel generation, link generation,
+   and one-shot authorization. The target consumes that authorization at the
+   Master, which rechecks the current link and placement, then rechecks its own
+   lifecycle before dispatch. Generic direct adapter delivery fails closed.
+7. Only a linked actor whose placement is explicitly `legacy` sends the full
+   frame through `singleton`.
+8. The message is delivered to a durable process, usually `init:{uid}` or a
+   routed process.
+9. The process runs the normal agent loop and emits `proc.run.*` signals.
 
 The important point is that inbound adapter traffic does not create a special
 kind of bot runtime. It feeds the same durable process model that the CLI and
@@ -82,20 +105,36 @@ Desktop use.
 The outbound path is the reverse:
 
 1. A process produces text or tool-driven output.
-2. The Kernel decides which surface should receive it.
-3. If that surface is an adapter route, the Kernel sends the reply through the adapter worker.
+2. The owning user Kernel decides which surface should receive it.
+3. If that surface is an adapter route, the user Kernel sends the reply through the adapter worker.
 4. The adapter worker formats it for the target platform and delivers it.
 
 Again, the adapter is a transport surface, not the place where durable agent
 state lives.
+
+Adapter-backed shell targets are a separate command surface. Active user
+Kernels do not yet receive the Master adapter-account/status/link projection
+needed to discover those targets, so adapter-shell discovery remains a
+multiuser release gate even though inbound and outbound messaging are routed.
 
 ## Identity linking
 
 External actors are not automatically local users.
 
 GSV uses identity links so that a WhatsApp sender or Discord user can be mapped
-to a local uid. That mapping is what allows inbound messages to reach the right
-process and allows DM replies to satisfy pending human-in-the-loop approvals.
+to an immutable canonical username and local uid. That mapping selects the
+owning user Kernel and allows inbound messages to reach the right process and DM
+replies to satisfy pending human-in-the-loop approvals. A payload username is
+never trusted as that mapping.
+
+The Master Control Program owns global adapter-account and identity-link
+uniqueness and performs the current per-message metadata lookup. That lookup is
+not a payload relay: active-user and unknown-actor text, media, reply context,
+and frames do not enter `singleton`. Publishing bounded, generation-bound link
+projections to the trusted adapter worker and owning user Kernel would remove
+the remaining per-message lookup and is future work. Unknown actors can use
+only the account's linking route, which the Master can answer from bounded
+actor and surface metadata.
 
 Without a link:
 
@@ -104,8 +143,8 @@ Without a link:
 
 ## Surface routing
 
-After an actor is linked, the Kernel can route a given adapter surface to a
-specific process.
+After an actor is linked, the owning user Kernel can route a given adapter
+surface to a specific process.
 
 That means you can choose whether inbound adapter traffic goes to:
 

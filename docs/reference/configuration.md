@@ -1,20 +1,49 @@
 # Configuration Reference
 
-GSV configuration is a SQLite-backed key/value store owned by the Kernel Durable Object. Keys are slash-separated strings and explicit overrides are stored as strings. System-wide configuration lives under `config/`; per-user overrides live under `users/{uid}/`.
+GSV configuration is a logical SQLite-backed key/value namespace. During the
+current routing transition, both system-wide `config/` values and authoritative
+per-user `users/{uid}/` values live in the Master Control Program named
+`singleton`. Filtered values are copied into each active user Kernel as a
+runtime projection. Keys are slash-separated strings and explicit overrides are
+stored as strings.
 
-The same store is exposed through:
+After a successful authoritative write, `config/*` changes refresh every active
+user Kernel, while `users/{uid}/*` changes refresh only that uid's active
+placement. Targets pull the current filtered Master snapshot instead of applying
+the invalidation payload, so delayed invalidations cannot restore stale values.
+Connected user clients receive `config.changed` after their local projection is
+current.
+
+The v21 projection clock assigns the complete filtered snapshot a monotonic
+Master revision and SHA-256 digest. A user Kernel rejects revision rollback and
+different bytes under the same revision. Package-authority mutations use an
+additional durable package fence and do not reopen package runtime admission
+until active targets install the exact committed revision.
+
+The combined authorized view is exposed through:
 
 - `/sys/config/*` for system configuration.
 - `/sys/users/{uid}/*` for user-scoped configuration.
 - `sys.config.get` and `sys.config.set` for syscall clients.
 
-Code defaults are overlaid at read time. An explicit SQLite value wins; deleting that explicit value reveals the code default again. Prefix reads include both explicit values and matching defaults, with explicit values overriding default entries of the same key.
+Code defaults are overlaid at read time. An explicit authoritative value wins;
+deleting it reveals the code default again. Prefix reads include readable
+values plus matching defaults, with explicit values overriding defaults of the
+same key.
 
 ## Access Model
 
-Root (`uid 0`) can read and write all configuration. Non-root users can read their own `users/{uid}/*` keys and non-sensitive `config/*` keys. Sensitive system keys are hidden from non-root reads, including prefix listings.
+Root (`uid 0`) can read and write all configuration. Active user Kernels forward
+`sys.config.get` and `sys.config.set` to `singleton`; non-root users can read
+their own `users/{uid}/*` keys and only a literal positive allowlist of reviewed
+shared `config/*` keys. Every unknown system key is private by default, including
+prefix listings; adding a ConfigStore default does not publish it.
 
-Sensitive final path segments include `api_key`, `secret`, `token`, `password`, `access_token`, `refresh_token`, and `client_secret`. Suffixes such as `_api_key`, `_secret`, `_token`, and `_password` are also treated as sensitive.
+Sensitive-name detection still recognizes final path segments such as
+`api_key`, `secret`, `token`, `password`, `access_token`, `refresh_token`, and
+`client_secret`, plus suffixes such as `_api_key`, `_secret`, `_token`, and
+`_password`. That classification is defense in depth for masking and handling;
+the absence of a sensitive-looking name never grants non-root read access.
 
 `sys.config.set` lets non-root users write only their own `users/{uid}/ai/*` keys. System writes under `/sys/config/*` require root.
 
@@ -131,7 +160,8 @@ not a writable configuration key.
 
 ## Package Config
 
-Package-related config is also stored in the same key/value store:
+Package-related config uses the same logical namespace while retaining the same
+Master-versus-user ownership split:
 
 | Key Pattern | Description |
 |---|---|

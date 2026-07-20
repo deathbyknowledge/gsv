@@ -5,6 +5,54 @@ Items are grouped by subsystem and ordered roughly by dependency.
 
 ---
 
+## Username-sharded Kernel split
+
+Implemented for clean commissioning and newly created login-capable humans:
+
+- [x] Keep `singleton` as the Master Control Program for immutable canonical
+  usernames, never-reused uid/gid allocation, credentials, groups,
+  capabilities, package/configuration/repository authority, adapter links, and
+  user-Kernel lifecycle.
+- [x] Provision `user:<canonical-username>` for each login-capable human and
+  keep that owner's WebSockets, devices, process registry, routes, schedules,
+  OAuth/MCP state, and runtime projections there.
+- [x] Route normal clients through `/ws/<canonical-username>` while reserving
+  `/ws` for commissioning and accounts explicitly marked `legacy` by v16.
+- [x] Persist the v21 monotonic Master projection revision, installed
+  username/uid/generation/digest, and crash-recoverable package fence. Package
+  changes drain Kernel, Process, schedule, and registered AppRunner work before
+  an exact target refresh clears admission.
+- [x] Persist the v22 actually-used AppRunner registry, binding exact control or
+  data runner name, package actor identity, controlling Kernel-owner identity,
+  and package. Package/lifecycle fences close admission, abort tracked
+  cancelable work, wait for tracked operation release, and fail closed across
+  recovery.
+- [x] Verify a Master-issued P-256 app-placement certificate at the edge before
+  selecting an active user DO, then require the target's generation-bound local
+  HMAC and session. Generation-less UUID sessions are explicit-legacy only.
+- [x] Resolve active app sessions at their user Kernel and send admitted bodies
+  directly to AppRunner; send active adapter frames directly to their user
+  Kernel. `singleton` receives only bounded authority or adapter-link metadata.
+- [x] Keep one shared R2 physical backing store and enforce uid/gid/mode plus
+  ancestor permissions in `GsvFs` or an equivalent narrow typed store.
+
+Remaining release and migration work:
+
+- [ ] Migrate v16 `legacy` Kernel runtime state owner by owner without dual
+  writers. There is no automatic singleton-to-user-Kernel migration today.
+- [ ] Migrate verified package-owned SQL from preserved legacy
+  `app:<actorUid>:<package>` and pre-owner-qualified `app-data:` objects into
+  isolated `app-data-v2:<kernelOwnerUid>:<actorUid>:<encodedPackageId>`
+  objects. Old objects are currently unreachable, not silently copied.
+- [ ] Replace the per-message Master adapter link/placement metadata lookup with
+  bounded generation projections after the sharded route is proven. Payloads
+  already bypass the Master.
+- [ ] Complete cross-shard root administration, legacy storage metadata cleanup,
+  security audit/budget ledgers, abuse controls, and the adversarial migrated
+  instance matrix required by the multiuser release contract.
+- [ ] Implement the charter and model-mediated admission design only after all
+  public-registration gates pass. Public registration remains closed.
+
 ## Next slice (recommended start)
 
 Consolidated plan for identity + auth work:
@@ -116,10 +164,15 @@ Passwords are for humans (interactive login). Tokens are for non-interactive cli
 
 ## Identity links (channel → uid mapping)
 
-Map external channel identities to internal UIDs. Stored in kernel SQLite.
+Map external channel identities to immutable canonical usernames/uids. The
+authoritative directory and persistent link generation live in Master Kernel
+SQLite.
 
 - [x] `identity_links` table:
-  - `(adapter TEXT, account_id TEXT, actor_id TEXT, uid INTEGER, created_at INTEGER, linked_by_uid INTEGER, metadata_json TEXT, PRIMARY KEY (adapter, account_id, actor_id))`
+  - `(adapter, account_id, actor_id)` primary key plus uid, generation,
+    creation/linking metadata
+- [x] `identity_link_generations` retains and advances the generation even
+  after unlink so a removed route cannot become current again
 - [x] `link(adapter, accountId, actorId, uid)` / `unlink(...)` / `resolveUid(...)` / `list(uid?)` in `IdentityLinkStore`
 - [x] Pairing flow (Phase 2B base): unknown DM identity returns challenge prompt
 - [x] `link_challenges` table/store for one-time code + expiry + use tracking
@@ -157,7 +210,8 @@ Merged into unified `GsvFs`. The R2 permission logic now lives in `GsvFs` alongs
 
 ## `sys.connect` handler (kernel)
 
-- [x] Read `/etc/passwd` and `/etc/shadow` from R2, authenticate
+- [x] Read `/etc/passwd` and `/etc/shadow` through the Kernel SQLite-backed
+  virtual filesystem, authenticate
 - [x] Build `ConnectionIdentity` with resolved capabilities
 - [x] Handle first-boot, setup mode, reconnect
 - [x] Handle driver + service connections
@@ -397,10 +451,12 @@ First-boot experience when the system has no users. Setup mode walks through con
 Wire adapter workers as kernel endpoints. Adapters deliver inbound activity to the kernel,
 kernel resolves uid via identity links, routes to user processes, and sends outbound replies via adapter bindings.
 
-- [x] Re-enable `GatewayEntrypoint` Service Binding RPC bridge (`serviceFrame`) for adapter service calls
+- [x] Export adapter-scoped Service Binding RPC entrypoints (`DiscordGatewayEntrypoint`, `TelegramGatewayEntrypoint`, `WhatsAppGatewayEntrypoint`, and `TestGatewayEntrypoint`); the generic `GatewayEntrypoint` rejects adapter frames
 - [x] `adapter.send` handler: route outbound messages to adapter via Service Binding RPC
 - [x] `adapter.status` handler: return last-known status with optional live refresh
-- [x] Adapter inbound flow: adapter → kernel → `resolveUid(adapter, accountId, actorId)` → process routing
+- [x] Adapter inbound flow: scoped Gateway entrypoint → bounded Master
+  link/placement lookup → direct active-user frame to owning user Kernel →
+  process routing; explicit legacy frames alone relay through `singleton`
 - [x] Handle unknown DM identity (Phase 2B base): issue pairing challenge code
 - [x] Track adapter account status updates in kernel store and emit `adapter.status` signal
 - [x] Explicit adapter/account lifecycle: native `adapter.connect` / `adapter.disconnect` across adapters
@@ -443,8 +499,8 @@ Routes paths internally:
 ## ConfigStore (`kernel/config.ts`)
 
 SQLite key-value store for runtime config exposed at `/sys/config/*` and `/sys/users/{uid}/*`.
-System config is the runtime truth — R2 dotfiles (`/etc/gsv/config`, `~/.config/gsv/config`)
-are seed files loaded on first connect (like `sysctl -p` loading `/etc/sysctl.conf`).
+Master Kernel SQLite is authoritative. Active user Kernels receive filtered,
+revisioned runtime projections; R2 dotfiles are not a second config authority.
 
 - [x] `config_kv` table: `(key TEXT PRIMARY KEY, value TEXT NOT NULL)`
 - [x] `get(key)`, `set(key, value)`, `delete(key)`, `list(prefix)`
@@ -459,7 +515,9 @@ are seed files loaded on first connect (like `sysctl -p` loading `/etc/sysctl.co
 ## System config (`sys.config.*`)
 
 - [x] `sys.config.get` / `sys.config.set` handlers — thin wrappers around `ConfigStore` + permission checks
-- [x] Key-level permission model: root full access; non-root reads `config/*` + own `users/{uid}/*`; writes only `users/{uid}/{overridable}/*`
+- [x] Key-level permission model: root full access; non-root reads a literal
+  allowlist of shared `config/*` keys plus own `users/{uid}/*`; writes only
+  `users/{uid}/{overridable}/*`
 - [x] Users group granted `sys.config.get` + `sys.config.set` capabilities (fine-grained check in handler)
 
 ## File transfer (`fs.transfer`)
@@ -513,8 +571,8 @@ Orchestrated binary streaming between R2 and devices. Future work — port from 
 ## Worker entrypoint & routing
 
 - [x] Update `src/index.ts` fetch handler
-- [x] Wire `/ws`, `/health`, `/media/*`
-- [ ] Port `GatewayEntrypoint` Service Binding RPC for channel inbound
+- [x] Wire commissioning `/ws`, user-scoped `/ws/<canonical-username>`, `/health`, and `/media/*`
+- [x] Route channel inbound through adapter-scoped Gateway Service Binding RPC entrypoints
 - [x] Export Process DO + Kernel DO in `wrangler.jsonc`
 
 ## CLI updates (Rust)
@@ -522,8 +580,10 @@ Orchestrated binary streaming between R2 and devices. Future work — port from 
 - [x] Update frame types: `method` → `call`, add `sig` frame, `session` domain → `proc` domain
 - [x] Update connect flow: `sys.connect` with new `ConnectResult`
 - [x] Add auth fields in `ConnectArgs.auth` (`username`, `password`, `token`)
-- [x] Clarify current behavior: kernel auth treats `token` as alternate credential input (`token ?? password`) and validates against `/etc/shadow`
-- [ ] Design first-class token model (issuance, rotation, revoke, scope) separate from password auth
+- [x] Authenticate `token` through the first-class hashed `auth_tokens` store;
+  password verification remains in shadow records
+- [x] Design first-class token model (issuance, rotation, revoke, scope)
+  separate from password auth
 - [x] Add dedicated token management syscalls once first-class token model exists
 - [x] Device commands use `shell.*` domain instead of `proc.*`
 - [x] `gsv shell` interactive REPL (connects as user, sends `shell.exec`)

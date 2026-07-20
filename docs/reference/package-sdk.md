@@ -112,6 +112,45 @@ Reserved built-ins:
 
 Every other public method is exposed as backend RPC.
 
+### Runtime authority and routing
+
+An active browser session uses a generation-bound route handle. It binds the
+owner's canonical username and uid, user-Kernel generation, expiry, nonce, and a
+Master-issued P-256 placement certificate into a user-Kernel HMAC. The Gateway
+verifies the certificate before it selects `user:<username>`; that Kernel then
+verifies the HMAC, active marker, local session, package revision, artifact, and
+entrypoint. The user Kernel resolves session metadata; admitted request and
+response bodies flow between the Gateway and AppRunner rather than through
+`singleton`.
+
+A generation-less UUID is an explicit legacy compatibility form only. It is
+accepted through `singleton` only while the account placement is still
+`legacy`; current user-Kernel sessions never fall back to it.
+
+Every AppRunner-owned HTTP, socket, RPC, command, signal, SQL, outbound, and
+daemon path supplies its exact current control or data object name during
+Kernel authorization. Migration v22 records that object only after successful
+authorization, binding the package actor username/uid, controlling Kernel-owner
+username/uid, and package id. The Kernel owner, run-as actor, and package
+jointly determine the physical
+`app-control-v3:<kernelOwnerUid>:<actorUid>:<encodedPackageId>` or
+`app-data-v2:<kernelOwnerUid>:<actorUid>:<encodedPackageId>` name; the human
+Kernel owner determines which user Kernel may exercise package/lifecycle fence
+authority. A registry write failure denies the call, and the deterministic
+object name alone grants nothing.
+
+Package-authority and user-lifecycle transitions persist a gate in each observed
+AppRunner, close admission and sockets, abort tracked cancelable request,
+response, and outbound streams, delete alarms, and wait for tracked SQL,
+command, signal, and daemon wrappers to release before the Kernel fence clears.
+Preparing the fence first persists a monotonic, never-reused runtime epoch.
+Loader RPC promises without a cancellation handle are abandoned when their
+wrapper is aborted and remain observed; Loader keys, entrypoints, and every
+package-to-platform call carry the exact epoch, so late work from the revoked
+epoch cannot acquire current authority. Package code must not detach
+authority-bearing work past the tracked call/stream lifetime and must not rely
+on a late result being accepted after its authority revision changes.
+
 ## Browser Client
 
 Import browser helpers from `@humansandmachines/gsv/sdk`.
@@ -238,6 +277,8 @@ Rules:
 - undeclared backend paths remain session-authenticated
 - package code is still responsible for webhook signature checks and any
   route-specific authorization
+- routing binds an explicit owner and entrypoint; a request username is never
+  used to search for a matching package runtime
 
 ## Browser entry rules
 
@@ -252,10 +293,22 @@ Rules:
 
 Current behavior:
 
-- the storage boundary is package-runtime scoped
+- the storage boundary is the immutable controlling Kernel-owner uid/run-as
+  actor uid/package tuple, physically named
+  `app-data-v2:<kernelOwnerUid>:<actorUid>:<encodedPackageId>`
+- package SQL runs in a data-only Durable Object physically separate from app
+  sessions, daemon schedules, and schema migration control state
 - the API is async from package code
 - bindings accept `string`, `number`, `boolean`, and `null`
 - booleans are stored as numeric SQLite values
+- the current data object is registered only after exact Kernel authority
+  succeeds and participates in package/lifecycle drains once observed
+
+For upgrades from the pre-isolation and pre-owner-qualified AppRunner layouts,
+the old `app:` and `app-data:` package SQL bytes remain preserved but
+unavailable. The fresh `app-data-v2:` store is not a successful data migration;
+continuity remains blocked on the documented explicit AppRunner package-data
+migration.
 
 ## Ship source changes
 

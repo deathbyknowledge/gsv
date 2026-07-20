@@ -1,8 +1,16 @@
 # WebSocket Protocol Reference
 
 Gateway control requests, responses, and signals use JSON text frames over
-`GET /ws`. Requests and successful responses may attach a byte stream carried
-by binary frames.
+WebSocket. Active user-Kernel connections use
+`GET /ws/<canonical-username>` and route to the provisioned Kernel named
+`user:<canonical-username>`. `GET /ws` reaches the Master Control Program named
+`singleton` for first-run commissioning and for accounts explicitly recorded as
+`legacy`. Requests and successful responses may attach a byte stream carried by
+binary frames.
+
+> Clean commissioning and newly created human accounts use the split. Accounts
+> discovered by v16 remain `legacy`; public registration remains closed until
+> migration and the security release gates pass.
 
 The current protocol is syscall-based:
 
@@ -119,12 +127,66 @@ Error:
 
 ## Connection Lifecycle
 
-1. Open a websocket to `GET /ws`.
-2. Send `sys.connect` as the first request.
-3. Wait for a normal success response or a structured error.
-4. After connect succeeds, exchange syscall requests, responses, and signals until the socket closes.
+### Normal connection
 
-The gateway rejects setup-mode connections with error code `425` and details:
+1. Canonicalize the account username and open a WebSocket to
+   `GET /ws/<canonical-username>`.
+2. The Gateway asks `singleton` for the username's active placement and route
+   generation, then selects `user:<canonical-username>`. The path and placement
+   are locators only; neither grants authority.
+3. Send `sys.connect` as the first request. `auth.username` must canonicalize to
+   the same username as the path.
+4. The user Kernel verifies its provisioning state and asks `singleton` to
+   authenticate the credentials and return bounded identity authority.
+5. Wait for a normal success response or a structured error.
+6. After connect succeeds, exchange syscall requests, responses, and signals
+   until the socket closes.
+
+The WebSocket and app routes bind the current user-Kernel generation. An
+explicit lifecycle transition fences the target and closes affected sockets.
+Credential-reset and destructive-group-change hooks are not wired to that
+transition yet.
+
+Package app sockets use their `/apps/sessions/.../socket` route rather than the
+control-plane `/ws` route. For an active account, the session handle carries a
+Master-issued P-256 certificate for the exact username/uid/generation placement
+and a separate user-Kernel HMAC. The Gateway verifies the certificate before it
+selects the user DO; the target then verifies the HMAC and local session. A
+generation-less UUID session is accepted only for an explicitly `legacy`
+placement.
+
+Canonicalization trims surrounding whitespace, rejects raw non-ASCII input,
+validates `[A-Za-z_][A-Za-z0-9_-]{0,31}`, and ASCII-lowercases. The URL segment
+is decoded exactly once. Canonical usernames are immutable and never reused.
+
+An arbitrary Durable Object name could otherwise be addressed whether or not an
+account was provisioned. The Gateway therefore checks the Master placement
+before instantiating a candidate object. Unknown and non-active scoped routes
+return HTTP 404 before upgrade. Path/credential mismatch and invalid credentials
+fail inside an upgraded active socket. Canonical usernames are public identity,
+so the protocol does not promise username non-enumerability.
+
+### Commissioning connection
+
+1. An uncommissioned deployment opens a WebSocket to `GET /ws`.
+2. The Gateway routes it to `singleton` in commissioning mode.
+3. The client uses the setup discovery and `sys.setup` flow. Normal login,
+   device, and service connections are not accepted on this route.
+4. Commissioning permanently reserves the first human's canonical username and
+   uid/gid plus the root account, provisions both `user:<username>` and
+   `user:root`, and becomes complete only when the Master Control Program and
+   both user Kernels agree.
+
+Commissioning persists a leased, checkpointed request. An exact retry can
+resume after a transient failure or expired lease and reconcile already-created
+state; concurrent or input-mismatched requests are rejected.
+
+After commissioning, `/ws` is not a fallback for an active user Kernel. Only an
+account explicitly marked `legacy` may continue logging in there; active users
+must use `/ws/<canonical-username>`.
+
+The Gateway rejects a normal-route connection while commissioning is incomplete
+with error code `425` and details:
 
 ```json
 {
@@ -133,11 +195,16 @@ The gateway rejects setup-mode connections with error code `425` and details:
 }
 ```
 
+The client reconnects to `/ws` before invoking that commissioning syscall.
+
 ---
 
 ## `sys.connect`
 
-`sys.connect` is the handshake syscall. It authenticates the caller, assigns identity, registers drivers or services, and returns the allowed syscall/signal surface.
+`sys.connect` is the normal-route handshake syscall. The user Kernel checks the
+route and provisioning binding, asks the Master Control Program to authenticate
+the caller, assigns identity, registers drivers or services, and returns the
+allowed syscall/signal surface.
 
 ### Request
 
@@ -171,7 +238,7 @@ The gateway rejects setup-mode connections with error code `425` and details:
 | `client.role` | `"user" \| "driver" \| "service"` | Yes | Connection role |
 | `client.channel` | `string` | No | Required for `service` role |
 | `driver.implements` | `string[]` | No | Required for `driver` role |
-| `auth.username` | `string` | No | Required when authenticating |
+| `auth.username` | `string` | No | Required when authenticating; must match the canonical username in the WebSocket path |
 | `auth.password` | `string` | No | User-password auth |
 | `auth.token` | `string` | No | Token auth. Required for machine connections. |
 
@@ -226,8 +293,8 @@ The websocket protocol is uniform: every operation is a `req` frame with a sysca
 |---|---|
 | `fs.*` | Native on `gsv`, or routed to a driver when `args.target` names a device |
 | `shell.exec` | Native on `gsv`, routed to a driver when `args.target` names a device, or routed by `args.sessionId` for an existing shell session |
-| `proc.*` | Kernel and Process DO control plane |
-| `pkg.*`, `repo.*`, `sys.*`, `sched.*`, `notification.*`, `signal.*` | Kernel-handled |
+| `proc.*` | Owning user Kernel and Process DO control plane |
+| `pkg.*`, `repo.*`, `sys.*`, `sched.*`, `notification.*`, `signal.*` | Owning user-Kernel handled; global operations use narrow typed Master Control Program calls |
 | `adapter.*` | Service-binding / adapter control path |
 | `ai.tools`, `ai.config` | Kernel-internal process bootstrap path |
 | Other `ai.*` | Capability-gated inference and media operations |
@@ -242,7 +309,7 @@ Use the [Syscalls Reference](/reference/syscalls) for the full syscall surface.
 
 The connect response advertises the signal set allowed for the role.
 
-Current role defaults from `buildSignalList()`:
+Role defaults from `buildSignalList()`:
 
 ### User connections
 
@@ -258,6 +325,7 @@ Current role defaults from `buildSignalList()`:
 - `device.status`
 - `adapter.status`
 - `pkg.changed`
+- `config.changed`
 - `mcp.changed`
 - `notification.created`
 - `notification.updated`
@@ -271,7 +339,8 @@ Current role defaults from `buildSignalList()`:
 
 Service connections receive no ambient signals. Adapter workers report state through the gateway service binding.
 
-`proc.run.*` signals are emitted by Process DOs and relayed through run-route tracking. In the current kernel:
+`proc.run.*` signals are emitted by Process DOs and relayed through the owning
+user Kernel's run-route tracking:
 
 - user connections receive routed process signals for their own runs
 - `proc.run.hil.requested` is broadcast to every connected user client for the

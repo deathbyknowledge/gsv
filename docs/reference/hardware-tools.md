@@ -13,6 +13,14 @@ This is the important rule for agents: choose `target: "gsv"` for Gateway-native
 
 The Gateway includes accessible online devices in `ai.tools` context and in `sys.device.list`. Device notes are included there too, so processes can choose targets using the user's own description of what each machine is for. Devices also appear in the native filesystem under `/sys/devices`.
 
+On an active user Kernel, that catalog is shard-local. Cross-user device
+discovery and forwarding, including root access from `user:root`, are not
+implemented and fail closed. Adapter workers also expose shell-backed targets
+in the legacy Kernel, but active user Kernels do not yet receive the
+adapter-account/status/link projection needed to discover those targets. Both
+cross-shard device routing and adapter-shell target discovery are multiuser
+release gates.
+
 ## Agent-Visible Tools
 
 | Tool | Syscall | Description |

@@ -9,8 +9,9 @@ Process DO model.
 ## Process, Not Session
 
 Each agent process is a Durable Object with a SQLite-backed `ProcessStore`.
-Kernel SQLite stores process registry data such as PID, uid/gid, profile, cwd,
-workspace id, parent, and state. Process SQLite stores the mutable run state:
+The owning user Kernel SQLite stores process registry data such as PID,
+canonical owner username, uid/gid, profile, cwd, workspace id, parent, and state.
+Process SQLite stores the mutable run state:
 
 - `messages`: active conversation history.
 - `pending_tool_calls`: durable tool dispatches from registration through
@@ -21,7 +22,7 @@ workspace id, parent, and state. Process SQLite stores the mutable run state:
 - `process_kv`: process metadata such as identity, profile, current run, and
   process-local context files.
 
-The Kernel delivers frames to the Process DO through `recvFrame`. `proc.send`
+The owning user Kernel delivers frames to the Process DO through `recvFrame`. `proc.send`
 starts or supersedes a user run and queues background-origin work, `proc.history` reads stored messages, `proc.reset`
 archives and clears history, and `proc.kill` optionally archives history before
 wiping the process.
@@ -30,7 +31,7 @@ wiping the process.
 
 A normal user message follows this path:
 
-1. The Kernel authorizes the caller and forwards `proc.send` to the target
+1. The owning user Kernel authorizes the caller and forwards `proc.send` to the target
    Process DO.
 2. The process appends the user message immediately. Media preparation proceeds
    in the background and generation waits for it.
@@ -48,7 +49,7 @@ cleanly.
 
 ## Prompt Assembly
 
-On the first tick for a run, the process asks the Kernel for runtime inputs:
+On the first tick for a run, the process asks its owning user Kernel for runtime inputs:
 
 - `ai.config` resolves provider, model, reasoning, output limit, system/profile context
   files, approval policy, and context byte budget.
@@ -128,9 +129,11 @@ Routable tools require a `target`. `target: "gsv"` runs the native Kernel
 implementation; a device id routes the same syscall to that connected device.
 
 The Process DO does not execute device work itself. It registers the pending
-call, sends the request to the Kernel, and waits for a response frame. The Kernel
-either handles the syscall natively, forwards it to another Process/AppRunner
-surface, or routes it to a device driver.
+call, sends the request to its installed owning user-Kernel route, and waits for
+a response frame. That Kernel either handles the syscall natively, forwards it
+to another Process/AppRunner surface, or routes it to a device driver. A global
+or cross-user operation may make a narrow Master Control Program call; ordinary
+syscalls do not traverse `singleton`.
 
 ## Tool Results and Continuation
 

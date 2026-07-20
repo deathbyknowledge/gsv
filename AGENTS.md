@@ -75,10 +75,44 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - Request cancellation does not recursively kill an already-created durable shell session unless that contract explicitly says so.
 - `proc.abort` stops the active run, `proc.reset` resets conversation state while preserving the process, and `proc.kill` tears the process down.
 - Archive and media cleanup must remain coherent across reset and kill.
+- A user-Kernel lifecycle transition persists its non-active generation marker
+  and fences local ingress before it exact-acknowledges `proc.abort` from every
+  Process DO registered to the fenced generation. Lifecycle abort preserves
+  queued input, history, and media; it must not become implicit process
+  deletion.
+- Authorized activation may rebind only same-owner Process records from the
+  exact immediately preceding user-Kernel generation. Activation failure
+  re-fences and aborts those executors without deleting them.
 
 ### Protocol and routing
 
 - Payload types are explicit at syscall and protocol boundaries.
+- `/ws` is the commissioning route and the temporary login route for accounts
+  recorded as `legacy` by the v16 migration. Freshly provisioned human, device,
+  and service connections use `/ws/<canonical-username>`. The Gateway asks the
+  Master Control Program for the current placement before selecting
+  `user:<canonical-username>`; placement is only a locator and never
+  authenticates the caller.
+- A user Kernel must persist and validate its provisioning state. Arbitrary
+  Durable Object names exist on demand, so an unprovisioned, provisioning,
+  suspended, or retired object fails closed. Only `active` accepts normal
+  connections. Unknown and non-active scoped routes currently fail with HTTP
+  404 before WebSocket upgrade; credential failures occur inside the socket.
+- An active app-session handle binds canonical username, uid, Kernel generation,
+  expiry, nonce, and a Master-issued P-256 placement certificate into a local
+  user-Kernel HMAC. The Gateway verifies the placement certificate before it
+  selects `user:<username>`; the target then verifies its marker, HMAC, and
+  local session. A generation-less UUID is accepted only for an account whose
+  Master placement is explicitly `legacy`. OAuth and MCP callback locators are
+  parseable routing hints bound to the current generation; the target atomically
+  consumes the full opaque flow state. Adapter delivery currently performs a
+  live Master identity-link and placement lookup, but active-user payloads are
+  forwarded directly to the user Kernel. In every case, routing metadata is
+  not resource authority by itself.
+- Git HTTP authentication and repository ACL checks are bounded Master
+  admission work, fenced by the same per-user lifecycle-transition barrier and
+  exact placement snapshot. Request bodies and repository operations belong to
+  RIPGIT after admission; they do not transit the Master or a user Kernel.
 - Body streams have one owner and one terminal outcome: consumed, forwarded, or cancelled.
 - Device disconnects, timeouts, malformed responses, and caller cancellation must clean up routes and bodies.
 - Filesystem, shell, and network behavior must remain consistent between local gateway and device implementations.
@@ -86,11 +120,74 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 
 ### Data and security
 
-- One deployment is one ship security domain: one Kernel owns its global
-  identity, uid/gid, authorization, and resource-ownership namespace. The
-  Kernel singleton is a ship-wide authority, not a singleton human account.
-- Numeric uids and gids are never reused. Usernames are aliases and must not be
-  treated as durable ownership keys.
+- One deployment is one ship security domain. The Kernel Durable Object named
+  `singleton` is its Master Control Program: it owns the global account-name,
+  uid/gid, group, capability, and cross-user authorization namespace, plus any
+  future admission policy.
+  It is not the steady-state router for every user's traffic.
+- Clean commissioning and newly created login-capable humans receive one
+  provisioned user Kernel named `user:<canonical-username>`. Accounts discovered
+  by the v16 upgrade remain explicitly `legacy` until a state migration exists.
+  An active user Kernel owns the human's connections, devices, process registry,
+  routing, schedules, OAuth/MCP state, and other local runtime coordination,
+  while Process and AppRunner objects retain their existing execution ownership.
+  Package records and `sys.config.*` remain Master-authoritative today and are
+  copied into user Kernels as runtime projections. System configuration is
+  private by default: only a literal allowlist of deliberately shared
+  `config/...` semantics may enter a non-root projection. Never infer that an
+  unknown key is safe from the absence of words such as `secret` or `token`.
+- The v21 projection state binds every installed user-Kernel snapshot to the
+  canonical username, uid, Kernel generation, monotonic Master revision, and
+  SHA-256 digest. A package-authority mutation durably fences the Master and all
+  active targets, drains Kernel, Process, schedule, and registered AppRunner
+  work, installs the exact committed revision, and clears the fence only after
+  exact acknowledgements. A crash leaves admission closed until recovery
+  re-prepares the same fence and completes the refresh.
+- Authority-bearing AppRunner control objects use the versioned name
+  `app-control-v3:<kernelOwnerUid>:<actorUid>:<encodedPackageId>`. They contain
+  only exact-bound runtime/session and daemon control state. Package-reachable
+  SQLite lives in the separate data-only object
+  `app-data-v2:<kernelOwnerUid>:<actorUid>:<encodedPackageId>`; it must never
+  share a database with control tables or accept app traffic. The
+  pre-owner-qualified `app-control-v2:` and `app-data:` objects, and the older
+  combined `app:<uid>:<package-id>` objects, are preserved but unreachable
+  pending an explicit package-data migration. Never initialize, read, or write
+  them from a current route.
+- The v22 AppRunner registry records only deterministic control/data objects
+  after successful current Kernel authorization. Each row binds the exact object
+  name, run-as actor username/uid, controlling human Kernel-owner username/uid,
+  and package. The Kernel owner, actor, and package jointly determine the runner
+  name; the Kernel owner determines package/lifecycle fence authority. A fence
+  durably increments a monotonic, never-reused local runtime epoch before it
+  closes admission, aborts tracked cancelable request/response/outbound work,
+  closes sockets, and deletes alarms. It waits for each tracked wrapper to
+  release before exact acknowledgement. Opaque Loader RPC promises without a
+  cancellation handle are abandoned when the fence aborts their wrapper; they
+  stay observed, while their old epoch can never reacquire AppRunner or GSV
+  authority.
+  Loader keys, entrypoint props, and package-to-platform calls carry the exact
+  epoch. Do not detach authority-bearing work beyond the tracked operation
+  lifetime. Do not infer an AppRunner's authority from its deterministic object
+  name or enumerate unused objects by instantiating them.
+- The v23 Kernel migration binds every newly created `oauth_flows` row to the
+  human Kernel owner that admitted it. An authorization-code callback acquires
+  that exact owner's lifecycle operation before atomically consuming the opaque
+  state and holds admission through the bounded token exchange and credential
+  commit. Pre-v23 callback rows remain unbound and fail closed; never infer their
+  Kernel owner from the flow's run-as uid or its routing locator.
+- Canonical usernames are lower-case ASCII public account identifiers. They are
+  immutable, globally unique within the ship, permanently reserved, and never
+  reused, including after deletion. Mutable human-facing names live in display
+  fields such as GECOS, not in the canonical username. Do not add a second
+  account identifier or mutable login alias in front of this identity; the
+  username maps directly to `user:<canonical-username>`.
+- Numeric uids and gids are immutable, ship-scoped filesystem ownership keys and
+  are never reused. Device ids, token ids, PIDs, adapter account ids, and other
+  typed resource identifiers remain distinct; a username alone never
+  authenticates one of those actors.
+- Public self-registration and model-mediated admission are not implemented and
+  remain closed. Do not expose account creation publicly until the documented
+  multiuser release gates pass.
 - Enforce authorization in the Kernel, not only in UI or callers.
 - R2 does not enforce GSV's custom uid/gid/mode metadata. User-reachable R2
   operations go through GsvFs, or a narrow typed store with equivalent

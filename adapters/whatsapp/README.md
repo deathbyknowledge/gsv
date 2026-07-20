@@ -7,7 +7,8 @@ WhatsApp channel integration for GSV using the [Baileys](https://github.com/Whis
 ```
 ┌──────────────────┐   [Service Binding RPC]    ┌─────────────────┐
 │  WhatsApp DO     │ ─────────────────────────▶ │    Gateway      │
-│  (Baileys WS)    │   channelInbound/status    │  Entrypoint     │
+│  (Baileys WS)    │   scoped serviceFrame      │ WhatsAppGateway │
+│                  │   inbound/state.update     │  Entrypoint     │
 └──────────────────┘                            └────────┬────────┘
         ▲                                                │
         │                                                │
@@ -15,7 +16,9 @@ WhatsApp channel integration for GSV using the [Baileys](https://github.com/Whis
               WhatsAppChannelEntrypoint.send()
 ```
 
-**Inbound messages** (user → bot): WhatsApp DO calls Gateway via Service Binding RPC (`channelInbound`).
+**Inbound messages** (user → bot): WhatsApp calls the adapter-scoped Gateway
+service binding with `adapter.inbound`. Status changes use
+`adapter.state.update`; the binding rejects other adapter identities and calls.
 
 **Outbound messages** (bot → user): Gateway calls WhatsApp channel via Service Binding RPC.
 
