@@ -71,7 +71,7 @@ function IntegrationsConsoleSection({
       listMeta={refreshing ? "REFRESHING" : `${ready.length}/${servers.length} READY`}
       emptyObject="INTEGRATIONS"
       rows={rows}
-      connectLabel="NEW INTEGRATION"
+      connectLabel="+ CONNECT NEW INTEGRATION"
       onConnect={onOpenCreate}
       search={{ value: query, placeholder: "Search integrations…", onChange: setQuery }}
     />

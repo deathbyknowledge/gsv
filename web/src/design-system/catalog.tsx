@@ -38,6 +38,7 @@ import agentImage from "./stories/AgentImage.story";
 import avatar from "./stories/Avatar.story";
 import tile from "./stories/Tile.story";
 import objectCard from "./stories/ObjectCard.story";
+import externalApplicationTile from "./stories/ExternalApplicationTile.story";
 import surface from "./stories/Surface.story";
 import iconButton from "./stories/IconButton.story";
 import lineGlyphs from "./stories/LineGlyphs.story";
@@ -109,6 +110,7 @@ const STORIES: Story[] = [
   asciiGalaxyScan,
   tile,
   objectCard,
+  externalApplicationTile,
   surface,
   agentImage,
   avatar,

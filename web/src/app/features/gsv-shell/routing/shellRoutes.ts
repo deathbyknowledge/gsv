@@ -20,6 +20,7 @@ const TOP_LEVEL_SURFACES: Record<string, Exclude<ShellSurfaceId, "desktop" | "ap
   "list-template": "list-template",
   machines: "machines",
   messengers: "messengers",
+  models: "models",
   repositories: "repositories",
   repos: "repositories",
   tasks: "runtime",

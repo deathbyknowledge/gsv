@@ -25,7 +25,6 @@ import {
   shellRouteFromLocation,
 } from "../routing/shellRoutes";
 
-export type PickerId = "gsv";
 
 const MIN_CHAT_WIDTH = 380;
 const DEFAULT_CHAT_WIDTH = 460;
@@ -130,10 +129,10 @@ export function useGsvShellState({
     return initialTab ? upsertTab(persistedTabs, initialTab) : persistedTabs;
   });
   const [activeTabKey, setActiveTabKey] = useState<string | null>(() => initialTab?.key ?? null);
-  const [manualRailCollapsed, setManualRailCollapsed] = useState(false);
+  // The rail starts collapsed by design; expanding is an explicit user action
+  // (icon click / toggle / divider drag) and lasts for the session.
+  const [manualRailCollapsed, setManualRailCollapsed] = useState(true);
   const [selectedObjectId, setSelectedObjectId] = useState<DesktopObjectId | null>(null);
-  const [pickerId, setPickerId] = useState<PickerId | null>(null);
-  const [gsvOpen, setGsvOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
   const [chatDragging, setChatDragging] = useState(false);
@@ -210,10 +209,7 @@ export function useGsvShellState({
     if (route.surface === "desktop") {
       setActiveSurface("desktop");
       setActiveTabKey(null);
-      setSelectedObjectId(null);
-      setPickerId(null);
-      setGsvOpen(false);
-      return;
+      setSelectedObjectId(null);      return;
     }
 
     const tab = shellTabForRoute(route);
@@ -224,10 +220,7 @@ export function useGsvShellState({
     setOpenTabs((current) => upsertTab(current, tab));
     setActiveTabKey(tab.key);
     setActiveSurface(route.surface);
-    setSelectedObjectId(null);
-    setPickerId(null);
-    setGsvOpen(false);
-  };
+    setSelectedObjectId(null);  };
 
   useEffect(() => {
     const onPopState = () => {
@@ -266,10 +259,7 @@ export function useGsvShellState({
     setOpenTabs((current) => upsertTab(current, tab));
     setActiveTabKey(tab.key);
     setActiveSurface("app");
-    setSelectedObjectId(null);
-    setPickerId(null);
-    setGsvOpen(false);
-    return tab.key;
+    setSelectedObjectId(null);    return tab.key;
   };
 
   const syncActiveSettingsRoute = (route: ShellSettingsRoute): void => {
@@ -304,10 +294,7 @@ export function useGsvShellState({
     if (!shouldKeepObjectTab) {
       setActiveTabKey(settingsTab.key);
     }
-    setSelectedObjectId(null);
-    setPickerId(null);
-    setGsvOpen(false);
-  };
+    setSelectedObjectId(null);  };
 
   const syncActiveLibraryRoute = (route: ShellLibraryRoute): void => {
     if (activeSurface !== "library") {
@@ -318,12 +305,16 @@ export function useGsvShellState({
     const libraryTab = shellTabForLibraryRoute(route);
     setOpenTabs((current) => upsertTab(current, libraryTab));
     setActiveTabKey(libraryTab.key);
-    setSelectedObjectId(null);
-    setPickerId(null);
-    setGsvOpen(false);
-  };
+    setSelectedObjectId(null);  };
 
   const openObject = (child: DesktopChildObject): void => {
+    // Native children open their system surface (files, library, terminal,
+    // repositories) rather than an object-detail tab.
+    if (child.surface) {
+      openSurface(child.surface);
+      return;
+    }
+
     if (child.appRoute) {
       openAppRoute(child.appRoute, child.label);
       return;
@@ -334,10 +325,7 @@ export function useGsvShellState({
     setOpenTabs((current) => upsertTab(current, tab));
     setActiveTabKey(tab.key);
     setActiveSurface(tab.surface);
-    setSelectedObjectId(null);
-    setPickerId(null);
-    setGsvOpen(false);
-  };
+    setSelectedObjectId(null);  };
 
   const backToDesktop = (): void => {
     activateRoute({ surface: "desktop" });
@@ -357,17 +345,6 @@ export function useGsvShellState({
       setOpenTabs((current) => current.filter((tab) => tab.key !== key));
     }
     activateRoute({ surface: "desktop" });
-  };
-
-  const openControlMenu = (): void => {
-    setSelectedObjectId(null);
-    setGsvOpen(false);
-    if (railCollapsed && autoRailCollapsed) {
-      setPickerId("gsv");
-      return;
-    }
-    setManualRailCollapsed(false);
-    setPickerId(null);
   };
 
   const startChatDrag = (event: JSX.TargetedMouseEvent<HTMLDivElement>): void => {
@@ -440,6 +417,12 @@ export function useGsvShellState({
     setManualRailCollapsed((value) => !value);
   };
 
+  /** Return the rail to its collapsed default — called after navigating from
+   *  the expanded rail, which acts as a transient reveal menu. */
+  const collapseRail = (): void => {
+    setManualRailCollapsed(true);
+  };
+
   const toggleChatMax = (): void => {
     if (resolvedChatWidth >= maxChatWidth - 1) {
       setChatWidth(DEFAULT_CHAT_WIDTH);
@@ -460,9 +443,6 @@ export function useGsvShellState({
     setChatOpen(false);
   };
 
-  const pickerTitle = "GSV // CONTROL";
-  const pickerSubtitle = "System surfaces";
-
   const statusContext = activeSurface !== "desktop"
     ? activePageTab?.title ?? shellSurfaceLabel(activeSurface)
     : selectedObject
@@ -473,33 +453,28 @@ export function useGsvShellState({
     activeSurface,
     activePageTab,
     activeTabKey,
+    autoRailCollapsed,
     backToDesktop,
     chatDragging,
     chatOpen,
     closeActiveScreen,
     closeMobilePanels,
+    collapseRail,
     desktopCollapsed,
-    gsvOpen,
     maxChatWidth,
     mobileLayout,
     mobileMenuOpen,
-    openControlMenu,
     openMobileMenu,
     openObject,
     openAppRoute,
     openSettingsRoute,
     openSurface,
     openTabs,
-    pickerId,
-    pickerSubtitle,
-    pickerTitle,
     railCollapsed,
     revealDesktop,
     resolvedChatWidth,
     selectedObjectId,
     setChatOpen,
-    setGsvOpen,
-    setPickerId,
     setSelectedObjectId,
     showRail,
     startChatDrag,

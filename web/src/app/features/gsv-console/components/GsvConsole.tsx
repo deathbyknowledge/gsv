@@ -65,7 +65,10 @@ function surfaceTail(surface: ShellSurfaceId): string {
     return "GSV · CONSOLE";
   }
   if (surface === "runtime") {
-    return "GSV · RUNTIME";
+    return "GSV · TASKS";
+  }
+  if (surface === "models") {
+    return "GSV · MODELS";
   }
   if (surface === "messengers") {
     return "GSV · MESSENGERS";
@@ -106,7 +109,7 @@ function listKindForSurface(surface: SettingsListSurface): ConsoleListKind {
 
 function settingsRouteLabel(route: SettingsRoute): string {
   if (route.view === "overview") {
-    return "SETTINGS";
+    return "OVERVIEW";
   }
   if (route.view === "crew") {
     return "CREW";
@@ -169,7 +172,7 @@ function libraryPageName(path: string): string {
 
 function settingsRouteTail(route: SettingsRoute): string {
   if (route.view === "overview") {
-    return "GSV · CONTROL";
+    return "GSV · OVERVIEW";
   }
   if (route.view === "crew" || route.view === "agent") {
     return "GSV · CREW";
@@ -304,7 +307,7 @@ export function GsvConsole({
       );
     }
     if (isPackageSettingsKind(kind)) {
-      return <PackageListPage {...options} kind={kind} onOpenApp={onOpenApp} />;
+      return <PackageListPage {...options} kind={kind} onOpenApp={onOpenApp} onOpenSurface={onOpenSurface} />;
     }
     return null;
   };
@@ -313,20 +316,22 @@ export function GsvConsole({
       navigateSettingsRoute({ view: "overview" });
       return;
     }
-    if (surface === "model-default") {
-      navigateSettingsRoute({ view: "config", kind: "models", select: "default" });
+    // Crew, models, and tasks are promoted nav surfaces — the overview links
+    // open the top-level pages rather than the legacy /settings/* nesting.
+    if (surface === "models" || surface === "model-default") {
+      onOpenSurface?.("models");
       return;
     }
-    if (surface === "models" || surface === "overrides") {
-      navigateSettingsRoute({ view: "config", kind: surface });
+    if (surface === "overrides") {
+      navigateSettingsRoute({ view: "config", kind: "overrides" });
       return;
     }
     if (surface === "crew") {
-      navigateSettingsRoute({ view: "crew" });
+      onOpenSurface?.("crew");
       return;
     }
     if (surface === "tasks") {
-      navigateSettingsRoute({ view: "list", kind: "tasks" });
+      onOpenSurface?.("runtime");
       return;
     }
     if (surface === "new-agent") {
@@ -363,7 +368,7 @@ export function GsvConsole({
     ? [
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
         {
-          label: "SETTINGS",
+          label: "OVERVIEW",
           onClick: inNestedSettings ? () => guardedSettingsNavigate({ view: "overview" }) : undefined,
           notLast: inNestedSettings,
         },
@@ -398,6 +403,14 @@ export function GsvConsole({
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
         { label: "CREW", onClick: backToCrew, notLast: true },
         { label: shellSurfaceLabel(activeSurface) },
+      ]
+    : activeSurface === "models" && settingsConfigDetail
+    ? [
+        // Standalone models surface with an open detail: GSV → MODELS → [detail],
+        // same shape as the settings config trail.
+        { label: "GSV", onClick: onBackToDesktop, notLast: true },
+        { label: shellSurfaceLabel("models"), onClick: settingsConfigDetail.onExit, notLast: true },
+        { label: settingsConfigDetail.label },
       ]
     : activeSurface === "library" && libraryDetail
     ? [
@@ -440,6 +453,8 @@ export function GsvConsole({
     ? goLibraryIndex
     : activeSurface === "agent"
     ? backToCrew
+    : activeSurface === "models" && settingsConfigDetail
+    ? settingsConfigDetail.onExit
     : surfaceDetail
     ? clearSurfaceDetail
     : onBackToDesktop;
@@ -492,6 +507,8 @@ export function GsvConsole({
           )
         ) : activeSurface === "runtime" ? (
           <RuntimePage key={surfaceDetailSeq} onNewTask={onNewTask ?? onOpenChat} onSelectionChange={setSurfaceDetail} />
+        ) : activeSurface === "models" ? (
+          <ConsoleConfigPage kind="models" onDetailChange={setSettingsConfigDetail} />
         ) : activeSurface === "crew" ? (
           <ConsoleCrewPage onManageAgent={openAgent} onCreateAgent={openNewAgent} />
         ) : activeSurface === "agent" ? (
@@ -508,7 +525,7 @@ export function GsvConsole({
         ) : activeSurface === "integrations" ? (
           <IntegrationsPage key={surfaceDetailSeq} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "applications" ? (
-          <PackageListPage key={surfaceDetailSeq} kind="applications" onOpenApp={onOpenApp} onSelectionChange={setSurfaceDetail} />
+          <PackageListPage key={surfaceDetailSeq} kind="applications" onOpenApp={onOpenApp} onOpenSurface={onOpenSurface} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "library" ? (
           <LibraryPage
             route={libraryRoute}

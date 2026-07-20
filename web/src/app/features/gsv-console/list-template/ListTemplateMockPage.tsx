@@ -27,7 +27,7 @@ const MOCK_SURFACES: readonly MockSurface[] = [
     key: "machines",
     listTitle: "MACHINES",
     emptyObject: "MACHINES",
-    connectLabel: "CONNECT NEW MACHINE",
+    connectLabel: "+ CONNECT NEW MACHINE",
     connect: { kind: "section", section: "machines" },
     state: "ONLINE",
     rows: [
@@ -40,7 +40,7 @@ const MOCK_SURFACES: readonly MockSurface[] = [
     key: "integrations",
     listTitle: "INTEGRATIONS",
     emptyObject: "INTEGRATIONS",
-    connectLabel: "NEW INTEGRATION",
+    connectLabel: "+ CONNECT NEW INTEGRATION",
     connect: { kind: "section", section: "integrations" },
     state: "READY",
     rows: [
@@ -53,7 +53,7 @@ const MOCK_SURFACES: readonly MockSurface[] = [
     key: "tasks",
     listTitle: "TASKS",
     emptyObject: "TASKS",
-    connectLabel: "NEW TASK",
+    connectLabel: "+ NEW TASK",
     connect: { kind: "chat" },
     state: "ACTIVE",
     rows: [
