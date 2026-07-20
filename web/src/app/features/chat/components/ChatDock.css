@@ -934,9 +934,10 @@
   text-wrap: pretty;
 }
 
-/* Meta row is the shared MessageMeta component; the timestamp is always
-   visible — hovering anywhere on the bubble (not just the row) reveals the
-   icon actions. */
+/* Meta row is the shared MessageMeta component; hovering anywhere on the
+   bubble (not just the row) reveals its timestamp and icon actions. */
+.gsv-chat-user-message:hover .gsv-mm-time,
+.gsv-chat-user-message:focus-within .gsv-mm-time,
 .gsv-chat-user-message:hover .gsv-mm-actions,
 .gsv-chat-user-message:focus-within .gsv-mm-actions {
   opacity: 1;
@@ -1023,9 +1024,10 @@
   outline: 1px solid var(--accent);
   outline-offset: 2px;
 }
-/* Meta row is the shared MessageMeta component; the timestamp is always
-   visible — hovering anywhere on the surface (not just the row) reveals the
-   icon actions. */
+/* Meta row is the shared MessageMeta component; hovering anywhere on the
+   surface (not just the row) reveals its timestamp and icon actions. */
+.gsv-chat-system-surface:hover .gsv-mm-time,
+.gsv-chat-system-surface:focus-within .gsv-mm-time,
 .gsv-chat-system-surface:hover .gsv-mm-actions,
 .gsv-chat-system-surface:focus-within .gsv-mm-actions {
   opacity: 1;
@@ -1046,6 +1048,8 @@
   text-wrap: pretty;
   user-select: text;
 }
+.gsv-chat-system-error:hover .gsv-mm-time,
+.gsv-chat-system-error:focus-within .gsv-mm-time,
 .gsv-chat-system-error:hover .gsv-mm-actions,
 .gsv-chat-system-error:focus-within .gsv-mm-actions {
   opacity: 1;

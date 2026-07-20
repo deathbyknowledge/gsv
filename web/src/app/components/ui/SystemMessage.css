@@ -23,9 +23,10 @@
   text-wrap: pretty;
 }
 
-/* Meta row is the shared MessageMeta component; the timestamp is always
-   visible — hovering anywhere on the message (not just the row) reveals the
-   icon actions. */
+/* Meta row is the shared MessageMeta component; hovering anywhere on the
+   message (not just the row) reveals its timestamp and icon actions. */
+.gsv-sm:hover .gsv-mm-time,
+.gsv-sm:focus-within .gsv-mm-time,
 .gsv-sm:hover .gsv-mm-actions,
 .gsv-sm:focus-within .gsv-mm-actions {
   opacity: 1;
