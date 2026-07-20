@@ -212,6 +212,15 @@
   white-space: nowrap;
 }
 
+/* Quiet elapsed ticker beside the active run's label. */
+.gsv-chat-feedback-detail {
+  flex: none;
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+}
+
 .gsv-chat-feedback-action {
   margin-left: auto;
   flex: none;

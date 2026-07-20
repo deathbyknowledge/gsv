@@ -1406,14 +1406,7 @@ function activityGroupStatus(
   return chatTranscriptActivityGroupTone(entries, active);
 }
 
-function activityDuration(entries: readonly TranscriptActivityEntry[]): string {
-  const timestamps = entries
-    .map((entry) => entry.message.timestamp)
-    .filter((timestamp): timestamp is number => typeof timestamp === "number" && Number.isFinite(timestamp));
-  if (timestamps.length < 2) {
-    return "";
-  }
-  const seconds = Math.max(1, Math.round((Math.max(...timestamps) - Math.min(...timestamps)) / 1000));
+function formatActivitySeconds(seconds: number): string {
   if (seconds < 60) {
     return `${seconds}s`;
   }
@@ -1422,7 +1415,41 @@ function activityDuration(entries: readonly TranscriptActivityEntry[]): string {
   return remaining > 0 ? `${minutes}m ${remaining}s` : `${minutes}m`;
 }
 
-function activityGroupTitle(
+function activityTimestamps(entries: readonly TranscriptActivityEntry[]): number[] {
+  return entries
+    .map((entry) => entry.message.timestamp)
+    .filter((timestamp): timestamp is number => typeof timestamp === "number" && Number.isFinite(timestamp));
+}
+
+function activityDuration(entries: readonly TranscriptActivityEntry[]): string {
+  const timestamps = activityTimestamps(entries);
+  if (timestamps.length < 2) {
+    return "";
+  }
+  return formatActivitySeconds(Math.max(1, Math.round((Math.max(...timestamps) - Math.min(...timestamps)) / 1000)));
+}
+
+/** Live elapsed for the active run's line: first activity → `now`. Clamped to
+ *  1s so server/client clock skew never renders 0 or negative. */
+export function activityElapsed(entries: readonly TranscriptActivityEntry[], now: number): string {
+  const timestamps = activityTimestamps(entries);
+  if (timestamps.length === 0) {
+    return "";
+  }
+  return formatActivitySeconds(Math.max(1, Math.round((now - Math.min(...timestamps)) / 1000)));
+}
+
+/** True while some entry is concretely in flight (a tool executing, reasoning
+ *  streaming) — as opposed to the run merely being open between entries. */
+function activityGroupHasBusyEntry(entries: readonly TranscriptActivityEntry[]): boolean {
+  return entries.some((entry) => (
+    entry.kind === "tool"
+      ? toolEntryTone(entry.message) === "running"
+      : entry.message.streaming === true || entry.message.status === "running"
+  ));
+}
+
+export function activityGroupTitle(
   entries: readonly TranscriptActivityEntry[],
   active: boolean,
 ): string {
@@ -1433,6 +1460,13 @@ function activityGroupTitle(
 
   if (status === "done" && duration && entries.length > 1) {
     return tools.length > 0 ? `worked for ${duration}` : `reasoned for ${duration}`;
+  }
+  // The active run keeps its group "running" even between entries (every tool
+  // momentarily done, the model deciding its next move). The last tool's
+  // title would read as finished work there — stay generic until something
+  // concrete starts.
+  if (status === "running" && tools.length > 0 && !activityGroupHasBusyEntry(entries)) {
+    return "working";
   }
   if (tools.length > 0) {
     return toolGroupTitle(tools);
@@ -1463,6 +1497,20 @@ function ActivityLine({
     : status === "error"
       ? "error"
       : usedBackup ? "attention" : "success";
+  // Tick the active run's line once a second so its elapsed visibly moves —
+  // a frozen duration mid-run reads as a finished state. One group is active
+  // per transcript, so at most one interval runs.
+  const ticking = active && feedbackStatus === "running";
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ticking) {
+      return undefined;
+    }
+    setNow(Date.now());
+    const timer = globalThis.setInterval(() => setNow(Date.now()), 1000);
+    return () => globalThis.clearInterval(timer);
+  }, [ticking]);
+  const elapsed = ticking ? activityElapsed(entries, now) : "";
   const runId = entries.find((entry) => entry.message.runId)?.message.runId;
   const firstMessageId = entries[0]?.message.id;
   const target: ChatReasoningTarget | null = runId
@@ -1474,6 +1522,7 @@ function ActivityLine({
   return (
     <ChatFeedbackMessage
       label={activityGroupTitle(entries, active)}
+      detail={elapsed ? `· ${elapsed}` : undefined}
       status={feedbackStatus}
       action={target && onOpenReasoning ? (
         <Hint position="top" text="Expand reasoning">

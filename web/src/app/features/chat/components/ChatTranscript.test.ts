@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ChatTranscriptRow } from "../domain/transcript";
 import {
+  activityElapsed,
+  activityGroupTitle,
   buildTranscriptRenderItems,
   collectGroupEntries,
   collectRunEntries,
@@ -179,5 +181,67 @@ describe("findMessageById", () => {
 
   it("returns null on a miss", () => {
     expect(findMessageById([tool("t1", "run-1")], "nope")).toBeNull();
+  });
+});
+
+describe("activityGroupTitle", () => {
+  const doneTool = (id: string, timestamp: number) => ({
+    kind: "tool" as const,
+    message: msg({ id, role: "toolResult", text: "done", timestamp, toolCallId: id, toolName: "Shell" }),
+  });
+  const runningTool = (id: string, timestamp: number) => ({
+    kind: "tool" as const,
+    message: msg({ id, role: "tool", status: "running", timestamp, toolCallId: id, toolName: "Shell" }),
+  });
+
+  it("labels the active run's gap between tools generically", () => {
+    const entries = [doneTool("t1", 1000), doneTool("t2", 4000)];
+
+    expect(activityGroupTitle(entries, true)).toBe("working");
+  });
+
+  it("keeps the concrete tool title while a tool is in flight", () => {
+    const entries = [doneTool("t1", 1000), runningTool("t2", 4000)];
+
+    const title = activityGroupTitle(entries, true);
+    expect(title).not.toBe("working");
+    expect(title.startsWith("worked for")).toBe(false);
+  });
+
+  it("labels a tool-less active group as thinking", () => {
+    const entries = [{
+      kind: "reasoning" as const,
+      message: msg({ id: "r1", role: "assistant", streaming: true, thinking: ["pondering"], timestamp: 1000 }),
+    }];
+
+    expect(activityGroupTitle(entries, true)).toBe("thinking");
+  });
+
+  it("summarizes a finished group with its duration", () => {
+    const entries = [doneTool("t1", 1000), doneTool("t2", 6000)];
+
+    expect(activityGroupTitle(entries, false)).toBe("worked for 5s");
+  });
+
+  describe("activityElapsed", () => {
+    it("ticks from the group's first activity", () => {
+      const entries = [doneTool("t1", 10_000), doneTool("t2", 20_000)];
+
+      expect(activityElapsed(entries, 22_500)).toBe("13s");
+      expect(activityElapsed(entries, 10_000 + 95_000)).toBe("1m 35s");
+    });
+
+    it("clamps clock skew to one second", () => {
+      expect(activityElapsed([doneTool("t1", 10_000)], 9_000)).toBe("1s");
+    });
+
+    it("is empty without timestamps", () => {
+      const entries = [{
+        kind: "tool" as const,
+        message: msg({ id: "t1", role: "toolResult", timestamp: null }),
+      }];
+
+      expect(activityElapsed(entries, 1000)).toBe("");
+    });
   });
 });
