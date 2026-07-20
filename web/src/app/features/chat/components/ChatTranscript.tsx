@@ -287,12 +287,25 @@ function assistantBlocks(text: string): AssistantBlock[] {
   return blocks.length > 0 ? blocks : [{ kind: "text", text }];
 }
 
+const chatMarkdownPurifier = DOMPurify();
+
+chatMarkdownPurifier.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName !== "A") {
+    return;
+  }
+  const href = node.getAttribute("href");
+  if (href && /^https?:\/\//i.test(href)) {
+    node.setAttribute("target", "_blank");
+    node.setAttribute("rel", "noopener noreferrer");
+  }
+});
+
 function renderMarkdownHtml(value: string): string {
   try {
     const html = parseMarkdown(value, { async: false, breaks: true, gfm: true });
-    return DOMPurify.sanitize(html);
+    return chatMarkdownPurifier.sanitize(html);
   } catch {
-    return DOMPurify.sanitize(value);
+    return chatMarkdownPurifier.sanitize(value);
   }
 }
 
@@ -714,76 +727,6 @@ function toolActivityTitle(message: ChatDockMessage): string {
   const name = toolDisplayName(message);
   if (warning) return `${name} ${denied ? "denied" : "cancelled"}`;
   return failed ? `${name} failed` : running ? `Using ${name}` : `Used ${name}`;
-}
-
-function toolActivityPreview(message: ChatDockMessage): string {
-  const syscall = toolSyscall(message);
-  const tone = toolEntryTone(message);
-  if (tone === "running") {
-    if (syscall === "shell.exec") return "Running command.";
-    if (syscall === "fs.read") return "Reading file.";
-    if (syscall === "fs.search") return "Searching files.";
-    if (syscall === "fs.write") return "Preparing file write.";
-    if (syscall === "fs.edit") return "Preparing edit.";
-    if (syscall === "fs.delete") return "Preparing delete.";
-    if (syscall === "codemode.exec" || syscall === "codemode.run") return "Running process-local script.";
-    if (syscall === "sys.mcp.call") return "Calling MCP tool.";
-    return `Using ${toolDisplayName(message)}.`;
-  }
-
-  if (tone === "error") {
-    const output = asRecord(message.toolOutput);
-    return message.text || asString(output?.error) || "Tool call failed.";
-  }
-  if (tone === "warning") {
-    return message.text || (message.toolOutcome === "denied" ? "Tool access denied." : "Tool call cancelled.");
-  }
-
-  const output = message.toolOutput;
-  const record = asRecord(output);
-  if (syscall === "shell.exec") {
-    const input = shellInputText(message);
-    return input ? truncateInline(input, 140) : "Command completed.";
-  }
-  if (syscall === "fs.read") {
-    const content = asString(record?.content);
-    const directories = Array.isArray(record?.directories) ? record.directories : [];
-    const files = Array.isArray(record?.files) ? record.files : [];
-    if (content) return "Read file content.";
-    if (directories.length || files.length) {
-      return `Listed ${directories.length} dirs and ${files.length} files.`;
-    }
-    return "Read completed.";
-  }
-  if (syscall === "fs.write") {
-    const size = asNumber(record?.size);
-    return size !== null ? `Wrote ${size} ${size === 1 ? "byte" : "bytes"}.` : "Wrote file.";
-  }
-  if (syscall === "fs.edit") {
-    const replacements = asNumber(record?.replacements);
-    return replacements !== null ? `${replacements} ${replacements === 1 ? "replacement" : "replacements"}.` : "Edited file.";
-  }
-  if (syscall === "fs.delete") {
-    return "Deleted file.";
-  }
-  if (syscall === "fs.search") {
-    const matches = Array.isArray(record?.matches) ? record.matches : [];
-    const count = asNumber(record?.count) ?? matches.length;
-    return `${count} ${count === 1 ? "match" : "matches"}.`;
-  }
-  if (syscall === "codemode.exec" || syscall === "codemode.run") {
-    const status = asString(record?.status);
-    if (status === "failed") return asString(record?.error) || "CodeMode script failed.";
-    if (status === "completed") return "CodeMode script completed.";
-    return "CodeMode completed.";
-  }
-  if (typeof output === "string" && output.trim()) {
-    return truncateInline(output, 140);
-  }
-  if (message.text.trim() && !message.text.trim().startsWith("{")) {
-    return truncateInline(message.text, 140);
-  }
-  return "Completed.";
 }
 
 function toolGroupStatus(tools: readonly ChatDockMessage[]): ChatTranscriptToolTone {
