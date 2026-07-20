@@ -146,7 +146,6 @@ export function deriveChatLiveActivity(
   if (stopping) {
     return liveActivity({
       activity: "Stopping",
-      runStateLabel: "stopping",
       status: "update",
       statusLabel: "stopping",
       task: "Stopping current run",

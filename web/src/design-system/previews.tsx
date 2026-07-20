@@ -224,7 +224,7 @@ const MOCK_ADAPTER_ACCOUNT: ConsoleAdapterAccount = {
 const MOCK_ADAPTER_INVENTORY: ConsoleAdapter[] = [
   {
     adapter: "telegram", available: true, supportsConnect: true, supportsDisconnect: true,
-    supportsSend: true, supportsStatus: true, supportsShellExec: false, supportsActivity: true,
+    supportsSend: true, supportsStatus: true, supportsActivity: true,
     accounts: [MOCK_ADAPTER_ACCOUNT],
   },
 ];

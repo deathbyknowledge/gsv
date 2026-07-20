@@ -12,7 +12,6 @@ describe("chat live activity", () => {
 
     expect(deriveChatLiveActivity(state, true)).toMatchObject({
       activity: "Stopping",
-      runStateLabel: "stopping",
       status: "update",
       statusLabel: "stopping",
     });
