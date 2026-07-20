@@ -198,11 +198,12 @@
 }
 
 /* Long run titles must ellipsize in the narrow dock rather than wrap or push
-   the expand affordance out (reaches into the Tag's nested label span). */
+   the expand affordance out (reaches into the Tag's nested label span). The
+   ancestors get ONLY min-width:0 — overflow:hidden here would clip the status
+   dot's box-shadow glow into a square; the label span alone clips. */
 .gsv-chat-feedback > span:first-child,
 .gsv-chat-feedback > span:first-child > span {
   min-width: 0;
-  overflow: hidden;
 }
 
 .gsv-chat-feedback > span:first-child > span > span:last-child {
