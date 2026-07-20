@@ -1,0 +1,226 @@
+/* ============================================================
+   Assets tab — inventory grids for the app's visual assets.
+   Uses the catalog's dark-theme tokens (gsv-tokens.css). Scoped
+   under .as-* so nothing leaks into app or catalog chrome.
+   ============================================================ */
+
+.as-section {
+  margin-top: 10px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule-section);
+}
+.as-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.as-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.as-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* Fixed square frame the asset sits in. */
+.as-frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--void);
+  overflow: hidden;
+}
+.as-frame img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* Single-colour SVGs (root icons + doticons) render as tinted CSS
+   masks — the same way the app paints them via Icon's mask-image. */
+.as-mask {
+  display: inline-block;
+  background-color: var(--accent-bright);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+.as-tile.is-unused .as-mask {
+  background-color: var(--text-dim);
+}
+
+.as-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.5625rem; /* 9px */
+  letter-spacing: 0.08em;
+  color: var(--text);
+  text-align: center;
+}
+.as-tile.is-unused .as-name {
+  color: var(--text-dim);
+}
+
+/* Visible UNUSED badge — the primary flag. */
+.as-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border: 1px solid var(--warn);
+  border-radius: 2px;
+  background: var(--bg-warn);
+  color: var(--warn);
+  font-size: 0.5rem; /* 8px */
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+/* Compact row for the PWA pngs. */
+.as-pwa-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-start;
+}
+.as-pwa-row .as-frame {
+  width: 56px;
+  height: 56px;
+}
+
+/* Fixed-size contained cell for live animations. */
+.as-anim-cell {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--void);
+}
+
+/* ------------------------------------------------------------
+   Scoped subset of the app-launch loader chrome (styles.css) so
+   createAppLaunchLoader renders correctly inside a catalog cell
+   without importing the global app stylesheet.
+   ------------------------------------------------------------ */
+.as-applaunch .app-launch-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.as-applaunch .app-launch-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    linear-gradient(rgba(150, 140, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150, 140, 255, 0.035) 1px, transparent 1px),
+    radial-gradient(ellipse 78% 72% at 50% 50%, rgba(128, 113, 221, 0.12), transparent 68%),
+    #050414;
+  background-size: 42px 42px, 42px 42px, auto, auto;
+}
+.as-applaunch .app-launch-layout {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  justify-items: center;
+  align-items: center;
+}
+.as-applaunch .app-launch-visual {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #07060f;
+  box-shadow: inset 0 0 0 1px rgba(128, 113, 221, 0.1);
+  isolation: isolate;
+}
+.as-applaunch .app-launch-galaxy-pre {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--gsv-font-mono), ui-monospace, monospace;
+  font-size: 8px;
+  font-variant-ligatures: none;
+  font-weight: 400;
+  line-height: 8px;
+  letter-spacing: 0;
+  pointer-events: none;
+  white-space: pre;
+  -webkit-font-smoothing: none;
+  text-rendering: geometricPrecision;
+  user-select: none;
+}
+.as-applaunch .app-launch-galaxy-nebula {
+  color: #272350;
+}
+.as-applaunch .app-launch-galaxy-stars {
+  color: #5d5798;
+  text-shadow: 0 0 4px rgba(128, 113, 221, 0.4);
+}
+.as-applaunch .app-launch-galaxy-foreground {
+  color: #8071dd;
+  text-shadow:
+    0 0 5px rgba(140, 120, 235, 0.55),
+    0 0 14px rgba(110, 95, 209, 0.28);
+}
+.as-applaunch .app-launch-galaxy-texture {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+.as-applaunch .app-launch-galaxy-scanlines {
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 0, 0, 0.22) 3px
+  );
+  mix-blend-mode: multiply;
+}
+.as-applaunch .app-launch-galaxy-vignette {
+  background: radial-gradient(
+    ellipse 86% 84% at 50% 50%,
+    rgba(0, 0, 0, 0) 66%,
+    rgba(0, 0, 0, 0.42) 100%
+  );
+}
+.as-applaunch .app-launch-copy {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -52,9 +52,9 @@
   box-shadow: 0 0 8px rgba(120, 110, 230, 0.2);
 }
 .gsv-btn-primary.is-disabled {
-  border-color: #3a3676;
+  border-color: #4a4494; /* was #3a3676 (1.9:1 vs void); boundary now 2.4:1 */
   background: #1e1b45;
-  color: #565199;
+  color: #8781cf; /* was #565199 (2.3:1); label now 4.7:1 on the disabled fill */
   box-shadow: none;
 }
 
@@ -81,9 +81,9 @@
   border-color: #7a72d4;
 }
 .gsv-btn-secondary.is-disabled {
-  border-color: #25224d;
+  border-color: #403a7d; /* was #25224d (1.4:1 vs void); boundary now 2.0:1 */
   background: transparent;
-  color: #565199;
+  color: #8781cf; /* was #565199 (2.9:1); label now 5.8:1 on void */
 }
 
 /* — success — */
@@ -110,9 +110,9 @@
   box-shadow: 0 0 8px rgba(94, 242, 160, 0.2);
 }
 .gsv-btn-success.is-disabled {
-  border-color: #1c4a32;
+  border-color: #266043; /* was #1c4a32 (2.0:1 vs void); boundary now 2.7:1 */
   background: #10261d;
-  color: #4b8768;
+  color: #5fa37e; /* was #4b8768 (3.8:1); label now 5.3:1 on the disabled fill */
   box-shadow: none;
 }
 
@@ -139,9 +139,9 @@
   box-shadow: 0 0 8px rgba(200, 60, 90, 0.2);
 }
 .gsv-btn-danger.is-disabled {
-  border-color: #3a2030;
+  border-color: #6b3a52; /* was #3a2030 (1.4:1 vs void); boundary now 2.2:1 */
   background: #1e1018;
-  color: #565199;
+  color: #8781cf; /* was #565199 (2.7:1); label now 5.3:1 on the disabled fill */
   box-shadow: none;
 }
 
@@ -168,9 +168,10 @@
   border-color: #9a4060;
 }
 .gsv-btn-dghost.is-disabled {
-  border-color: #2a1420;
+  border-color: #4a2438; /* was #2a1420 (1.2:1 vs void); 1.5:1 — kept below the
+                            enabled ghost border (#5a2b3a) so the hierarchy holds */
   background: transparent;
-  color: #565199;
+  color: #8781cf; /* was #565199 (2.9:1); label now 5.8:1 on void */
 }
 
 /* — link — */
@@ -194,8 +195,8 @@
   opacity: 0.65;
 }
 .gsv-btn-link.is-disabled {
-  color: #565199;
-  border-color: #25224d;
+  color: #8781cf; /* was #565199 (2.9:1); label now 5.8:1 on void */
+  border-color: #403a7d; /* was #25224d (1.4:1 vs void); underline now 2.0:1 */
 }
 .gsv-btn-link svg {
   display: block;
@@ -203,6 +204,56 @@
 }
 .gsv-btn-link.is-disabled svg {
   filter: none;
+}
+
+/* — link tones — action-colour variants; the default stays accent — */
+.gsv-btn-link.is-tone-error:not(.is-disabled) {
+  color: var(--error);
+  border-color: var(--error);
+}
+.gsv-btn-link.is-tone-error:not(.is-disabled):hover,
+.gsv-btn-link.is-tone-error:not(.is-disabled):focus-visible {
+  color: #ffa0b4;
+  border-color: #ffa0b4;
+}
+.gsv-btn-link.is-tone-error:not(.is-disabled) svg {
+  filter: drop-shadow(0 0 3px rgba(255, 111, 140, 0.5));
+}
+.gsv-btn-link.is-tone-neutral:not(.is-disabled) {
+  color: var(--label);
+  border-color: var(--idle);
+}
+.gsv-btn-link.is-tone-neutral:not(.is-disabled):hover,
+.gsv-btn-link.is-tone-neutral:not(.is-disabled):focus-visible {
+  color: #d6d2f5;
+  border-color: #8a84c9;
+}
+.gsv-btn-link.is-tone-neutral:not(.is-disabled) svg {
+  filter: drop-shadow(0 0 3px rgba(154, 149, 207, 0.45));
+}
+.gsv-btn-link.is-tone-success:not(.is-disabled) {
+  color: var(--online);
+  border-color: var(--online);
+}
+.gsv-btn-link.is-tone-success:not(.is-disabled):hover,
+.gsv-btn-link.is-tone-success:not(.is-disabled):focus-visible {
+  color: #8df5bd;
+  border-color: #8df5bd;
+}
+.gsv-btn-link.is-tone-success:not(.is-disabled) svg {
+  filter: drop-shadow(0 0 3px rgba(94, 242, 160, 0.5));
+}
+.gsv-btn-link.is-tone-attention:not(.is-disabled) {
+  color: var(--update);
+  border-color: var(--update);
+}
+.gsv-btn-link.is-tone-attention:not(.is-disabled):hover,
+.gsv-btn-link.is-tone-attention:not(.is-disabled):focus-visible {
+  color: #ffe08a;
+  border-color: #ffe08a;
+}
+.gsv-btn-link.is-tone-attention:not(.is-disabled) svg {
+  filter: drop-shadow(0 0 3px rgba(255, 210, 77, 0.5));
 }
 
 .gsv-btn.is-disabled {

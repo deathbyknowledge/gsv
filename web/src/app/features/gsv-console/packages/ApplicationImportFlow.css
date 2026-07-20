@@ -73,9 +73,9 @@
 }
 
 .application-import-agent-review-head strong {
-  /* value-normalized to .gsv-label (11px); no JSX class handle on <strong> */
+  /* size from .gsv-label (13px); no JSX class handle on <strong> */
   color: var(--text-title);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   letter-spacing: 0.14em;
 }
 
@@ -105,7 +105,7 @@
 }
 
 .application-import-inline-error {
-  /* size from .gsv-sublabel (10px); 0.08em tracking kept intentionally */
+  /* size from .gsv-sublabel (12px); 0.08em tracking kept intentionally */
   padding: 14px;
   border-color: color-mix(in srgb, var(--error) 55%, var(--border));
   color: var(--error);

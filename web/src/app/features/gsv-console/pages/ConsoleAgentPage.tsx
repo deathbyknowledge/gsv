@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   AgentEditor,
   type AgentEditorDraft,
@@ -40,11 +40,11 @@ import {
   serializeApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
 import {
-  CREW_HUMAN_IMAGE,
-  agentImageSrcForAccount,
-  agentImageSrcForIndex,
+  avatarForAccount,
   isHumanCrewAccount,
   labelForConsoleAccountRelation,
+  pickAgentImage,
+  usedAgentImages,
 } from "../domain/agentPresentation";
 import {
   useConsoleAgentContext,
@@ -86,10 +86,30 @@ export function ConsoleAgentPage({
   const newAgentFallbackOptions = fallbackModelOptionsForAccount(config.config, null, ownerUid, "", inheritedNewAgentFallback);
 
   if (createNew) {
+    // The draft avatar is picked ONCE at editor mount (unused-portrait
+    // contract), so the editor must not mount while accounts/config are still
+    // loading — an empty pool snapshot reads as "everything unused" and can
+    // duplicate an existing portrait. Empty-but-loaded data is a valid state
+    // (first agent ever), so this gates on loading only, never emptiness.
+    if (accounts.resource.isUnavailable || config.resource.isUnavailable) {
+      return (
+        <ConsolePage flush>
+          <ConsolePageState kind="offline" label="AGENT" />
+        </ConsolePage>
+      );
+    }
+    if (accounts.resource.isLoading || config.resource.isLoading) {
+      return (
+        <ConsolePage flush>
+          <ConsolePageState kind="loading" label="AGENT" />
+        </ConsolePage>
+      );
+    }
     return (
       <ConsolePage flush>
         <NewAgentEditorSurface
-          accountCount={accounts.resource.data?.length ?? 0}
+          accounts={accounts.resource.data ?? []}
+          config={config.config}
           modelOptions={newAgentModelOptions}
           fallbackModelOptions={newAgentFallbackOptions}
           toolTargets={toolTargets}
@@ -212,7 +232,7 @@ function AgentEditorSurface({
               modelOptionsKey(fallbackModelOptions),
             ].join(":")}
             mode="manage"
-            avatarSrc={isHumanCrewAccount(account) ? CREW_HUMAN_IMAGE : agentImageSrcForAccount(account, accounts)}
+            avatarSrc={avatarForAccount(account, config, accounts)}
             avatarCover={!isHumanCrewAccount(account)}
             containerWidth={width || undefined}
             initialName={account.displayName}
@@ -265,7 +285,8 @@ function AgentEditorSurface({
 }
 
 function NewAgentEditorSurface({
-  accountCount,
+  accounts,
+  config,
   modelOptions,
   fallbackModelOptions,
   toolTargets,
@@ -274,7 +295,8 @@ function NewAgentEditorSurface({
   onAgentCreated,
   onBackToCrew,
 }: {
-  accountCount: number;
+  accounts: readonly ConsoleAccount[];
+  config: readonly ConsoleConfigEntry[];
   modelOptions: AgentEditorModelOption[];
   fallbackModelOptions: AgentEditorModelOption[];
   toolTargets: readonly AgentToolTarget[];
@@ -286,6 +308,9 @@ function NewAgentEditorSurface({
   const rootRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const createAgent = useCreateConsoleAgent();
+  // Picked once per draft: random portrait no current agent shows (repeats
+  // only once the pool is exhausted). The preview IS the assigned image.
+  const draftAvatar = useMemo(() => pickAgentImage(usedAgentImages(accounts, config)), []);
 
   useLayoutEffect(() => {
     const node = rootRef.current;
@@ -308,7 +333,7 @@ function NewAgentEditorSurface({
           <AgentEditor
             key={`new-agent-draft:${normalizedApprovalPolicy(defaultApprovalPolicy)}`}
             mode="new"
-            avatarSrc={agentImageSrcForIndex(accountCount)}
+            avatarSrc={draftAvatar}
             avatarCover
             containerWidth={width || undefined}
             initialRole="AGENT"
@@ -323,7 +348,7 @@ function NewAgentEditorSurface({
             toolTargets={[...toolTargets]}
             inheritedReasoning={inheritedReasoning}
             onCreate={async (draft) => {
-              const created = await createAgent.mutateAsync(agentDraftToCreateInput(draft, defaultApprovalPolicy));
+              const created = await createAgent.mutateAsync(agentDraftToCreateInput(draft, defaultApprovalPolicy, draftAvatar));
               window.setTimeout(() => {
                 if (created.uid !== null) {
                   onAgentCreated?.(created.uid);
@@ -339,11 +364,12 @@ function NewAgentEditorSurface({
   );
 }
 
-function agentDraftToCreateInput(draft: AgentEditorDraft, defaultApprovalPolicy: string) {
+function agentDraftToCreateInput(draft: AgentEditorDraft, defaultApprovalPolicy: string, avatarSrc?: string) {
   return {
     name: draft.name,
     role: draft.role,
     description: draft.description,
+    avatarSrc,
     model: draft.modelIndex === 0 ? "" : draft.model,
     fallbackModel: draft.fallbackModelIndex === 0 ? "" : draft.fallbackModel,
     reasoning: draft.reasoningIndex === 0 ? "" : draft.reasoning,

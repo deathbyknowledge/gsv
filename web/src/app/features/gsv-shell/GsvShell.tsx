@@ -617,6 +617,7 @@ export function GsvShell({
           newTaskSignal={newTaskSignal}
           open={shell.chatOpen}
           width={shell.resolvedChatWidth}
+          mobileLayout={shell.mobileLayout}
           activeConversationId={selectedChatConversationId ?? activeChatProcess?.activeConversationId ?? null}
           dragging={shell.chatDragging}
           atMax={shell.resolvedChatWidth >= shell.maxChatWidth - 1}

@@ -1,10 +1,11 @@
-import type { JSX } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import { Icon } from "./Icon";
 import { Tag, type TagTone } from "./Tag";
 import "./ListRow.css";
 
 export type ListRowStatus = "online" | "error" | "idle" | "live" | "none" | "update" | "warn";
 export type ListRowStatusDotPlacement = "leading" | "trailing";
+export type ListRowDensity = "default" | "compact";
 
 export interface ListRowProps {
   className?: string;
@@ -15,9 +16,15 @@ export interface ListRowProps {
   tag?: string;
   tagTone?: TagTone;
   chevron?: boolean;
+  /** Hover label rendered next to the chevron (e.g. "Switch agent"). */
+  chevronLabel?: string;
   icon?: string;
   iconTitle?: string;
+  /** Custom leading node (e.g. an avatar image); takes precedence over `icon`. */
+  leading?: ComponentChildren;
   statusDotPlacement?: ListRowStatusDotPlacement;
+  /** Row density — "compact" tightens padding/gap/icon for dense popover lists. */
+  density?: ListRowDensity;
   style?: JSX.CSSProperties;
   active?: boolean;
   onClick?: () => void;
@@ -26,7 +33,7 @@ export interface ListRowProps {
 const STATUS_TEXT: Record<Exclude<ListRowStatus, "none">, string> = {
   online: "var(--online)",
   error: "var(--error)",
-  idle: "#9a95cf",
+  idle: "var(--meta)",
   live: "var(--live)",
   update: "var(--update)",
   warn: "var(--warn)",
@@ -51,13 +58,17 @@ export function ListRow({
   tag = "",
   tagTone = "update",
   chevron = false,
+  chevronLabel = "",
   icon,
   iconTitle,
+  leading,
   statusDotPlacement = "leading",
+  density = "default",
   style,
   active = false,
   onClick,
 }: ListRowProps) {
+  const compact = density === "compact";
   const st = status || "online";
   const hasDot = st !== "none";
   const dotKey = (st === "none" ? "online" : st) as Exclude<ListRowStatus, "none">;
@@ -75,9 +86,10 @@ export function ListRow({
     color: "inherit",
     display: "flex",
     alignItems: "center",
-    gap: "14px",
+    gap: compact ? "10px" : "14px",
     overflow: "hidden",
-    padding: "15px 20px",
+    padding: compact ? "8px 14px" : "15px 20px",
+    ...(compact ? { minHeight: "34px" } : {}),
     cursor: onClick ? "pointer" : "default",
     transition: "background .12s",
     font: "inherit",
@@ -96,9 +108,11 @@ export function ListRow({
 
   const content = (
     <>
-      {icon ? (
+      {leading ? (
+        <span class="lr-leading">{leading}</span>
+      ) : icon ? (
         <span class="lr-icon">
-          <Icon name={icon} size={18} title={iconTitle ?? label} />
+          <Icon name={icon} size={compact ? 14 : 18} title={iconTitle ?? label} />
         </span>
       ) : null}
       {hasDot && statusDotPlacement === "leading" ? <span class={dotClass} style={dotStyle} /> : null}
@@ -110,7 +124,8 @@ export function ListRow({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            /* size + .04em tracking from .gsv-listitem */
+            /* size + .04em tracking from .gsv-listitem; compact drops to 13px */
+            ...(compact ? { fontSize: "0.8125rem" } : {}),
             color: "var(--text)",
           }}
         >
@@ -126,7 +141,7 @@ export function ListRow({
               whiteSpace: "nowrap",
               /* size from .gsv-sublabel; .04em tracking kept intentionally */
               letterSpacing: ".04em",
-              color: "#8c86c8",
+              color: "var(--text-muted)",
               marginTop: "6px",
             }}
           >
@@ -142,7 +157,8 @@ export function ListRow({
       ) : null}
       {hasDot && statusDotPlacement === "trailing" ? <span class={dotClass} style={dotStyle} /> : null}
       {chevron ? (
-        <span class="lr-chevron" style={{ display: "inline-flex", flex: "none", alignItems: "center" }}>
+        <span class="lr-chevron" style={{ position: "relative", display: "inline-flex", flex: "none", alignItems: "center" }}>
+          {chevronLabel ? <span class="lr-chevron-label gsv-sublabel">{chevronLabel}</span> : null}
           <svg width="9" height="12" viewBox="0 0 9 12" aria-hidden="true" style={{ filter: "drop-shadow(0 0 3px rgba(150,140,255,.5))" }}>
             <path d="M0 0 L9 6 L0 12 Z" fill="var(--accent)" />
           </svg>
@@ -155,7 +171,14 @@ export function ListRow({
   const mergedStyle = style ? { ...rootStyle, ...style } : rootStyle;
 
   return onClick ? (
-    <button type="button" onClick={onClick} class={rootClass} data-clickable="true" style={mergedStyle}>
+    <button
+      type="button"
+      onClick={onClick}
+      class={rootClass}
+      data-clickable="true"
+      aria-current={active ? "true" : undefined}
+      style={mergedStyle}
+    >
       {content}
     </button>
   ) : (

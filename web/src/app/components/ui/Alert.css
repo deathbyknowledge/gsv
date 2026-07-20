@@ -29,9 +29,25 @@
 
 .gsv-alert-body {
   min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* Dismiss (×) — interactive, unlike the decorative leading icon. */
+.gsv-alert-dismiss {
+  flex: none;
+  margin-left: auto;
+  margin-top: -1px;
+  display: inline-flex;
+}
+.gsv-alert-dismiss .gsv-ibtn-ghost {
+  color: var(--alert-color);
+}
+.gsv-alert-dismiss .gsv-ibtn-ghost:hover,
+.gsv-alert-dismiss .gsv-ibtn-ghost:focus-visible {
+  color: var(--text-hi);
 }
 .gsv-alert-title {
-  /* size + family from .gsv-label (11px); weight 600 + .14em tracking kept intentionally */
+  /* size + family from .gsv-label (13px); weight 600 + .14em tracking kept intentionally */
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;

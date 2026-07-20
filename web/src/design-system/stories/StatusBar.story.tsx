@@ -20,6 +20,30 @@ const story: Story = {
         </div>
       </div>
       <div class="ds-cell">
+        <div class="ds-label">Status tones (statusLabel / statusTone)</div>
+        <div class="ds-col" style={{ width: "760px", maxWidth: "100%" }}>
+          <StatusBar statusLabel="GSV ONLINE" statusTone="online" />
+          <StatusBar statusLabel="SYNCING" statusTone="loading" />
+          <StatusBar statusLabel="GSV OFFLINE" statusTone="offline" />
+          <StatusBar statusLabel="LINK FAULT" statusTone="error" />
+        </div>
+      </div>
+      <div class="ds-cell">
+        <div class="ds-label">Hide model / status (showModel · showStatus)</div>
+        <div class="ds-col" style={{ width: "760px", maxWidth: "100%" }}>
+          <StatusBar showModel={false} />
+          <StatusBar showStatus={false} />
+          <StatusBar showModel={false} showStatus={false} />
+        </div>
+      </div>
+      <div class="ds-cell">
+        <div class="ds-label">Alignment (align: center · between)</div>
+        <div class="ds-col" style={{ width: "760px", maxWidth: "100%" }}>
+          <StatusBar align="center" />
+          <StatusBar label="GENERAL SYSTEMS VEHICLE · SECURE TERMINAL" align="between" />
+        </div>
+      </div>
+      <div class="ds-cell">
         <div class="ds-label">Custom label (centered)</div>
         <div class="ds-row" style={{ width: "760px", maxWidth: "100%" }}>
           <StatusBar label="GENERAL SYSTEMS VEHICLE · SECURE TERMINAL" />

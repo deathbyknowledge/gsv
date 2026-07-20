@@ -12,7 +12,6 @@ describe("chat live activity", () => {
 
     expect(deriveChatLiveActivity(state, true)).toMatchObject({
       activity: "Stopping",
-      runStateLabel: "stopping",
       status: "update",
       statusLabel: "stopping",
     });
@@ -38,7 +37,6 @@ describe("chat live activity", () => {
 
     expect(deriveChatLiveActivity(state)).toMatchObject({
       activity: "Awaiting approval: Running npm test",
-      runStateLabel: "awaiting approval",
       status: "warn",
       statusLabel: "awaiting approval",
     });
@@ -68,7 +66,6 @@ describe("chat live activity", () => {
 
     expect(deriveChatLiveActivity(state)).toMatchObject({
       activity: "Reading design.md",
-      runStateLabel: "using tools",
       status: "live",
       statusLabel: "using tools",
     });
@@ -96,7 +93,6 @@ describe("chat live activity", () => {
 
     expect(deriveChatLiveActivity(thinking)).toMatchObject({
       activity: "Thinking",
-      runStateLabel: "thinking",
       statusLabel: "thinking",
     });
 
@@ -105,7 +101,6 @@ describe("chat live activity", () => {
       rows: [{ ...thinking.rows[0], text: "Here is" }],
     })).toMatchObject({
       activity: "Writing reply",
-      runStateLabel: "writing reply",
       statusLabel: "writing reply",
     });
   });
@@ -124,7 +119,6 @@ describe("chat live activity", () => {
     const patched = applyChatLiveActivityToAgent(agent, {
       activity: "Reading package.json",
       agentStatus: "live",
-      runStateLabel: "using tools",
       status: "live",
       statusLabel: "using tools",
       tasks: [{ name: "Reading package.json", status: "running" }],

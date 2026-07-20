@@ -1,16 +1,18 @@
-# Atom porting guide (.dc.html → Preact)
+# Component authoring guide (ui/ atoms + catalog stories)
 
-How to port a GSV design-system component from its Claude Design `.dc.html` source
-into this web client. Follow this exactly so every ported atom is consistent.
+Conventions for components in `web/src/app/components/ui/` and their design-system
+catalog stories. (Historical note: these atoms were originally ported from Claude
+Design `.dc.html` sources; that migration is complete and the sources are gone —
+what remains below are the conventions every new or edited atom must follow.)
 
-## Inputs & outputs
+## Outputs
 
-- **Source:** `/tmp/gsv_design/<Name>.dc.html` (read the WHOLE file).
-- **Component output:** `web/src/app/components/ui/<Name>.tsx` (+ `<Name>.css` only if
-  the source has a `<style>` block with classes; pure inline-style atoms like
-  `StatusDot`/`Tag` need no `.css`).
-- **Story output:** `web/src/design-system/stories/<Name>.story.tsx` — default-exports a
-  `Story` (see `web/src/design-system/story.ts`).
+- **Component:** `web/src/app/components/ui/<Name>.tsx` (+ `<Name>.css` only if it
+  needs classes with pseudo-states; pure inline-style atoms like `StatusDot`/`Tag`
+  need no `.css`).
+- **Story:** `web/src/design-system/stories/<Name>.story.tsx` — default-exports a
+  `Story` (see `web/src/design-system/story.ts`), registered in
+  `web/src/design-system/catalog.tsx`.
 
 ## Canonical examples — read these first
 
@@ -24,28 +26,22 @@ into this web client. Follow this exactly so every ported atom is consistent.
 
 1. **Preact functional component.** `import { useState } from "preact/hooks";` for state.
    Use `class=` (not `className`), matching the existing files.
-2. **Props mirror the `data-props` JSON** at the bottom of the `.dc.html`. Turn each
-   `tsType` into a real TS type. Export the prop interface and any enums.
-3. **Transcribe values VERBATIM.** If the source CSS uses a literal hex (`#5a52a8`),
-   keep the literal hex. If it uses `var(--token)`, keep the `var(--token)`. **Do NOT
-   convert between them, and do NOT invent or "improve" any color, size, or spacing.**
-   This is a faithful port, not a redesign.
-4. **Font:** wherever the source sets `font-family:'Departure Mono','JetBrains Mono',monospace`,
-   use `var(--gsv-font-mono)` instead (defined in `gsv-fonts.css` — same stack).
-5. **State:** the `.dc.html` uses `class Component extends DCLogic { state=…; renderVals() }`.
-   Port `this.state`/`setState` to `useState`. When a component accepts `value`,
-   treat it as controlled whenever it is provided, as in `TextInput.tsx`.
+2. **Export the prop interface** and any variant/size enums as real TS types.
+3. **Don't invent or "improve" colors, sizes, or spacing.** Use existing design tokens
+   (`var(--token)`) where the design uses them; keep literal values literal.
+4. **Font:** for the mono stack use `var(--gsv-font-mono)` (defined in `gsv-fonts.css`).
+5. **State:** when a component accepts `value`, treat it as controlled whenever it is
+   provided, as in `TextInput.tsx`.
 6. **Pseudo-states** (`:hover`/`:active`/`:focus-within`) go in real CSS in the `.css`
-   file (the source keeps them in its `<helmet><style>`). Don't use inline hover.
-7. **Booleans:** props are real booleans here (the catalog passes real booleans), so you
-   do NOT need the source's `=== 'true'` string coercion. Just type them `boolean`.
-8. **Handlers:** preserve `onChange`/`onClick` semantics — forward them straight through.
-   `onChange` signatures follow the source (e.g. `(value: string) => void`,
-   `(index: number) => void`).
+   file. Don't use inline hover.
+7. **Booleans:** props are real booleans, typed `boolean`.
+8. **Handlers:** forward `onChange`/`onClick` semantics straight through; keep simple
+   value-first signatures (e.g. `(value: string) => void`, `(index: number) => void`).
 9. **SVG in JSX:** keep kebab-case attributes as-is (`stroke-width`, `stroke-linecap`) —
    Preact accepts them. See the clear icon in `TextInput.tsx`.
-10. **Do NOT** modify `catalog.tsx`, `catalog.css`, `story.ts`, other components, or any
-    file outside your assigned set. The orchestrator wires story imports into the catalog.
+10. **Scope:** when authoring a component + story, don't modify `catalog.tsx`,
+    `catalog.css`, `story.ts`, or other components — story registration is wired in
+    `catalog.tsx` as its own explicit step.
 
 ## Story file shape
 
@@ -76,5 +72,4 @@ Catalog layout helpers available (from `catalog.css`): `ds-col`, `ds-row`, `ds-g
 ## Verify before finishing
 
 - `cd web && npx tsc --noEmit` — your files must add **no** type errors.
-- Re-read your `.tsx` against the `.dc.html` and confirm every state/variant/size is present
-  and values match exactly.
+- Confirm the story shows every state/variant/size the component exposes.

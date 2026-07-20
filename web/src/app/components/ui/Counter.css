@@ -36,13 +36,37 @@
   color: #fff;
 }
 .gsv-st-val {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 1px;
   color: #f4f2ff;
   border-left: 1px solid #322e74;
   border-right: 1px solid #322e74;
   letter-spacing: 0.05em;
+  transition: background 0.12s;
+}
+.gsv-st-val:focus-within {
+  background: #171441;
+}
+.gsv-st-input {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: center;
+  min-width: 1ch;
+}
+.gsv-st-input:focus {
+  outline: none;
+}
+.gsv-st-unit {
+  flex: none;
 }
 .gsv-st.is-disabled {
   opacity: 0.45;
@@ -85,13 +109,13 @@
   min-height: 13px;
 }
 .gsv-fld-lab-t {
-  /* size from .gsv-sublabel (10px, up from 9.5px very-wide eyebrow) */
+  /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: #b3aee2;
 }
 .gsv-fld-req {
-  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor) */
+  /* size from .gsv-sublabel (12px) */
   color: #7d78b8;
   letter-spacing: 0.14em;
 }
@@ -117,7 +141,7 @@
   border-radius: 1px;
 }
 .gsv-fld-msg {
-  /* size from .gsv-sublabel (10px, up from 9.5px sub-floor) */
+  /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.1em;
 }
 .gsv-fld.is-error .gsv-fld-msg {

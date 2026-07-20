@@ -1,3 +1,5 @@
+import "./Tag.css";
+
 export type TagTone = "update" | "online" | "error" | "warn" | "info" | "accent" | "idle";
 export type TagSize = "small" | "medium";
 
@@ -6,6 +8,8 @@ export interface TagProps {
   label?: string;
   boxed?: boolean;
   dot?: boolean;
+  /** Blink the dot while an action is in progress. */
+  pulse?: boolean;
   size?: TagSize;
 }
 
@@ -30,11 +34,14 @@ const BORDER: Record<TagTone, string> = {
 };
 
 /** Tag — ported from Tag.dc.html. Badge in boxed or plain form, optional dot. */
-export function Tag({ tone = "update", label = "UPDATE", boxed = false, dot = false, size = "small" }: TagProps) {
+export function Tag({ tone = "update", label = "UPDATE", boxed = false, dot = false, pulse = false, size = "small" }: TagProps) {
   const color = COLOR[tone] ?? COLOR.update;
   const dotGlow = tone === "idle" ? "none" : `0 0 6px ${color}`;
   const dotEl = dot ? (
-    <span style={{ width: "6px", height: "6px", borderRadius: "50%", flex: "none", background: color, boxShadow: dotGlow }} />
+    <span
+      class={pulse ? "gsv-tag-dot--pulse" : undefined}
+      style={{ width: "6px", height: "6px", borderRadius: "50%", flex: "none", background: color, boxShadow: dotGlow }}
+    />
   ) : null;
 
   if (boxed) {

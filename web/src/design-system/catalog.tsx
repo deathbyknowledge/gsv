@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { STORY_GROUP_ORDER, type Story, type StoryGroup } from "./story";
 import { Search } from "../app/components/ui/Search";
 
@@ -16,6 +16,7 @@ import textInput from "./stories/TextInput.story";
 import search from "./stories/Search.story";
 import textArea from "./stories/TextArea.story";
 import select from "./stories/Select.story";
+import twoLevelSelect from "./stories/TwoLevelSelect.story";
 import segmented from "./stories/Segmented.story";
 import checkbox from "./stories/Checkbox.story";
 import radio from "./stories/Radio.story";
@@ -42,27 +43,35 @@ import iconButton from "./stories/IconButton.story";
 import lineGlyphs from "./stories/LineGlyphs.story";
 import sectionHeader from "./stories/SectionHeader.story";
 import addAction from "./stories/AddAction.story";
-import settingsDashboard from "./stories/SettingsDashboard.story";
-import crewPage from "./stories/CrewPage.story";
-import agentDetail from "./stories/AgentDetail.story";
-import settingsList from "./stories/SettingsList.story";
-import objectDetail from "./stories/ObjectDetail.story";
-import consoleDetailHeader from "./stories/ConsoleDetailHeader.story";
-import filesRedesign from "./stories/FilesRedesign.story";
 import iconMenu from "./stories/IconMenu.story";
 import desktopHint from "./stories/DesktopHint.story";
+import listTemplate from "./stories/templates/List.story";
+import cardListTemplate from "./stories/templates/CardList.story";
+import detailTemplate from "./stories/templates/Detail.story";
+import editorTemplate from "./stories/templates/Editor.story";
+import dashboardTemplate from "./stories/templates/Dashboard.story";
+import filesTemplate from "./stories/templates/Files.story";
+import libraryTemplate from "./stories/templates/Library.story";
+import authTemplate from "./stories/templates/Auth.story";
+import assetImages from "./stories/assets/Images.story";
+import assetDoticons from "./stories/assets/Doticons.story";
+import assetAnimations from "./stories/assets/Animations.story";
 import consoleHeader from "./stories/ConsoleHeader.story";
 import breadcrumbs from "./stories/Breadcrumbs.story";
-import pageHeader from "./stories/PageHeader.story";
 import statusBar from "./stories/StatusBar.story";
 import messageInput from "./stories/MessageInput.story";
 import systemMessage from "./stories/SystemMessage.story";
+import messageMeta from "./stories/MessageMeta.story";
+import chatMessageTypography from "./stories/ChatMessageTypography.story";
+import chatDockHeader from "./stories/ChatDockHeader.story";
+import chatSwipeRow from "./stories/ChatSwipeRow.story";
 import tabs from "./stories/Tabs.story";
+import popoverMenu from "./stories/PopoverMenu.story";
 import confirmModal from "./stories/ConfirmModal.story";
 import agentCard from "./stories/AgentCard.story";
 import crewTile from "./stories/CrewTile.story";
 import agentEditor from "./stories/AgentEditor.story";
-import authLayout from "./stories/AuthLayout.story";
+import agentToolsPanel from "./stories/AgentToolsPanel.story";
 import link from "./stories/Link.story";
 
 const STORIES: Story[] = [
@@ -78,6 +87,7 @@ const STORIES: Story[] = [
   search,
   textArea,
   select,
+  twoLevelSelect,
   segmented,
   checkbox,
   radio,
@@ -111,26 +121,36 @@ const STORIES: Story[] = [
   desktopHint,
   consoleHeader,
   breadcrumbs,
-  pageHeader,
   statusBar,
   messageInput,
   systemMessage,
+  messageMeta,
+  chatMessageTypography,
+  chatDockHeader,
+  chatSwipeRow,
   tabs,
-  authLayout,
   link,
   // Composite
+  popoverMenu,
   confirmModal,
   agentCard,
   crewTile,
   agentEditor,
-  // Templates
-  settingsDashboard,
-  crewPage,
-  agentDetail,
-  settingsList,
-  objectDetail,
-  consoleDetailHeader,
-  filesRedesign,
+  agentToolsPanel,
+  // Templates — generic page archetypes: wireframe + live preview of the real
+  // component at /design/preview/<id> (see previews.tsx)
+  listTemplate,
+  cardListTemplate,
+  detailTemplate,
+  editorTemplate,
+  dashboardTemplate,
+  filesTemplate,
+  libraryTemplate,
+  authTemplate,
+  // Assets — usage-audited inventory of images, icon sets, and animations
+  assetImages,
+  assetDoticons,
+  assetAnimations,
 ];
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -177,18 +197,20 @@ function useScrollSpy(slugs: string[]): string {
   return active;
 }
 
-type Tab = "components" | "templates";
+type Tab = "components" | "templates" | "assets";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "components", label: "Components" },
   { id: "templates", label: "Templates" },
+  { id: "assets", label: "Assets" },
 ];
 
 export function Catalog() {
   const [tab, setTab] = useState<Tab>("components");
   const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  const noun = tab === "templates" ? "templates" : "components";
+  const noun = tab;
 
   // Case-insensitive match across the searchable fields of a story.
   const q = query.trim().toLowerCase();
@@ -198,10 +220,14 @@ export function Catalog() {
     s.group.toLowerCase().includes(q) ||
     (s.blurb?.toLowerCase().includes(q) ?? false);
 
-  // Templates live in their own tab; everything else is the Components tab.
-  // Search narrows within the active tab.
+  // Templates and Assets live in their own tabs; everything else is the
+  // Components tab. Search narrows within the active tab.
   const tabStories = STORIES.filter((s) =>
-    tab === "templates" ? s.group === "Templates" : s.group !== "Templates",
+    tab === "templates"
+      ? s.group === "Templates"
+      : tab === "assets"
+        ? s.group === "Assets"
+        : s.group !== "Templates" && s.group !== "Assets",
   ).filter(matchesQuery);
 
   const byGroup = new Map<StoryGroup, Story[]>();
@@ -215,14 +241,16 @@ export function Catalog() {
 
   const selectTab = (id: Tab) => {
     setTab(id);
-    window.scrollTo(0, 0);
+    // `.ds-root` is its own scroll container (inside the fixed-height #app),
+    // so resetting the window scroll position would be a no-op.
+    rootRef.current?.scrollTo(0, 0);
   };
 
   return (
-    <div class="ds-root">
+    <div class="ds-root" ref={rootRef}>
       <header class="ds-topbar">
         <h1>GSV Design System</h1>
-        <span class="ds-sub">migration preview · web/ port</span>
+        <span class="ds-sub">component catalog</span>
         <div class="ds-search">
           <Search
             value={query}

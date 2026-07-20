@@ -28,6 +28,7 @@ const story: Story = {
         <div class="ds-label">States & extras</div>
         <div class="ds-col">
           <TextInput label="REQUIRED" requirement="required" description="Shown above the field." placeholder="role" />
+          <TextInput label="OPTIONAL" requirement="optional" placeholder="nickname" />
           <TextInput label="WITH COUNTER" maxLength={24} value="hello" />
           <TextInput label="PREFIX / SUFFIX" prefix="@" suffix=".gsv" value="captain" />
           <TextInput label="CLEARABLE" clearable value="clear me" />

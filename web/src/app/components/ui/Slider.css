@@ -17,12 +17,12 @@
   min-width: 0;
 }
 .gsv-sl-label {
-  /* size from .gsv-sublabel (10px, very-wide .22em HUD eyebrow, up from 9.5px) */
+  /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.22em;
   color: #b3aee2;
 }
 .gsv-sl-num {
-  /* size from .gsv-sublabel (10px) */
+  /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.06em;
   color: #cbc7ff;
 }
@@ -65,7 +65,7 @@
   pointer-events: none;
 }
 .gsv-sl-req {
-  /* size from .gsv-sublabel (10px, up from 9.5px) */
+  /* size from .gsv-sublabel (12px) */
   color: #7d78b8;
   letter-spacing: 0.14em;
   margin-left: 7px;
@@ -89,7 +89,7 @@
   border-radius: 1px;
 }
 .gsv-sl-msg {
-  /* size from .gsv-sublabel (10px, up from 9.5px) */
+  /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.1em;
 }
 .gsv-sl.is-error .gsv-sl-msg {

@@ -1,0 +1,71 @@
+/* SwipeRow — mobile swipe-to-reveal action rail for transcript messages.
+   The row is a horizontal scroll-snap scroller: pane (message) + rail. Both
+   pan axes stay allowed (pan-x pan-y) so vertical transcript scrolling can
+   start on a message; the browser axis-locks per gesture. overscroll-behavior
+   keeps a rail over-swipe from bleeding into any ancestor horizontal pan. */
+.gsv-chat-swipe {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  touch-action: pan-x pan-y;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.gsv-chat-swipe::-webkit-scrollbar {
+  display: none;
+}
+
+/* The shell paints thin colored scrollbars on EVERY element
+   (`.gsv-shell-root *`, gsvShell.css) — same (0,1,0) specificity as the bare
+   class above, so in-app the tie falls to bundle order; and once
+   scrollbar-width computes `thin`, WebKit ignores the ::-webkit-scrollbar
+   fallback too. The suppression must out-specify the shell global. */
+.gsv-shell-root .gsv-chat-swipe {
+  scrollbar-width: none;
+}
+
+.gsv-chat-swipe-track {
+  display: flex;
+  align-items: stretch;
+}
+
+.gsv-chat-swipe-pane {
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: start;
+}
+
+/* Right-aligned rows (user bubbles) keep hugging their edge inside the pane. */
+.gsv-chat-swipe--end .gsv-chat-swipe-pane {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* The revealed drawer: a quiet raised column with a left hairline. */
+.gsv-chat-action-rail {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  margin-left: 8px;
+  padding: 2px;
+  border-left: 1px solid var(--rule-inner);
+  background: var(--panel);
+  scroll-snap-align: end;
+}
+
+/* Touch sizing for whatever icon buttons the rail hosts (.gsv-mm-btn, the
+   reasoning button…) — the glyphs stay small, the hit area doesn't. */
+.gsv-chat-action-rail button {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  scroll-margin-inline-end: 4px;
+}

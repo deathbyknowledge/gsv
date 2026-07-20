@@ -2,6 +2,9 @@ import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import DOMPurify from "dompurify";
 import { parse as parseMarkdown } from "marked";
+import { CopyIconButton, MessageMeta } from "../../../components/ui/MessageMeta";
+import { ReasoningGlyph } from "../../../components/ui/ReasoningGlyph";
+import { ActionRail, SwipeRow, TranscriptMobileContext, useTranscriptMobile } from "./SwipeRow";
 import { SystemMessage } from "../../../components/ui/SystemMessage";
 import { Hint, Tooltip } from "../../../components/ui/Tooltip";
 import type {
@@ -14,6 +17,8 @@ import {
   type VirtualTranscriptItem,
   type VirtualTranscriptSource,
 } from "../hooks/useVirtualTranscript";
+import type { ChatFeedbackEntry } from "../hooks/useChatFeedback";
+import { ChatFeedbackMessage, type ChatFeedbackStatus } from "./ChatFeedbackMessage";
 import { ChatMediaAttachment } from "./ChatMediaAttachment";
 import {
   chatTranscriptActiveGroupIndex,
@@ -28,6 +33,7 @@ import {
   chatTranscriptShouldPauseFollowForWheel,
   nextChatTranscriptBottomFollow,
 } from "./ChatTranscriptScrollPolicy";
+import type { ChatReasoningTarget } from "./ChatReasoningPanel";
 
 export type ChatDockMessageRole = ChatTranscriptRowRole;
 export type ChatDockMessage = ChatTranscriptRow;
@@ -41,11 +47,18 @@ type ChatTranscriptProps = {
   errorMessage?: string;
   action?: ComponentChildren;
   conversationId?: string | null;
+  /** Ephemeral operation feedback lines appended after the newest message. */
+  feedback?: readonly ChatFeedbackEntry[];
   hasOlderMessages?: boolean;
   loadingOlderMessages?: boolean;
   onLoadOlder?: () => Promise<void> | void;
   processId?: string;
+  /** Shell mobile layout: timestamps stay inline; message actions move into
+   *  the swipe-to-reveal rail. */
+  mobile?: boolean;
   onBranch?: (messageId: number) => void;
+  /** Opens the full-body reasoning panel for a run or an assistant reply. */
+  onOpenReasoning?: (target: ChatReasoningTarget) => void;
 };
 
 type CopyState = {
@@ -53,7 +66,7 @@ type CopyState = {
   status: "copied" | "failed";
 };
 
-type TranscriptActivityEntry =
+export type TranscriptActivityEntry =
   | { kind: "backup"; message: ChatDockMessage }
   | { kind: "reasoning"; message: ChatDockMessage }
   | { kind: "tool"; message: ChatDockMessage };
@@ -65,6 +78,7 @@ type TranscriptRenderItem =
 type TranscriptVirtualEntry = VirtualTranscriptSource & (
   | { kind: "olderLoader" }
   | { item: TranscriptRenderItem; kind: "item" }
+  | { feedback: ChatFeedbackEntry; kind: "feedback" }
 );
 
 type TranscriptViewport = {
@@ -209,12 +223,12 @@ function roleGlyph(role: ChatDockMessageRole): ComponentChildren {
 
 function copyButtonLabel(copied: boolean, failed: boolean): string {
   if (copied) {
-    return "COPIED";
+    return "Copied";
   }
   if (failed) {
-    return "FAILED";
+    return "Copy failed";
   }
-  return "COPY";
+  return "Copy message";
 }
 
 function CopyButton({
@@ -230,13 +244,8 @@ function CopyButton({
   text: string;
   onCopy: () => void;
 }) {
-  const label = copyButtonLabel(copied, failed);
-
   return (
-    <Hint
-      text={copied ? "Copied to clipboard" : "Copy message text"}
-      position={role === "user" ? "top-end" : "top"}
-    >
+    <Hint text={copyButtonLabel(copied, failed)}>
       <button
         type="button"
         class={`gsv-chat-copy${failed ? " is-failed" : ""}`}
@@ -244,13 +253,12 @@ function CopyButton({
         onClick={onCopy}
         aria-label={copied ? `Copied ${roleLabel(role).toLowerCase()} message` : `Copy ${roleLabel(role).toLowerCase()} message`}
       >
-        <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true">
+        <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
           <g fill="none" stroke="currentColor" stroke-width="1.5">
             <rect x="3" y="3" width="7" height="7" />
             <rect x="6" y="6" width="7" height="7" />
           </g>
         </svg>
-        {label}
       </button>
     </Hint>
   );
@@ -451,7 +459,7 @@ function backupModelSummary(backupModel: ChatBackupModelInfo): string {
   return `The selected model failed, so GSV continued with ${modelRefLabel(backupModel.to)}.`;
 }
 
-function backupModelDetails(backupModel: ChatBackupModelInfo): string {
+export function backupModelDetails(backupModel: ChatBackupModelInfo): string {
   const lines = [backupModelSummary(backupModel)];
   if (backupModel.reason) {
     lines.push(`Reason: ${backupModel.reason}`);
@@ -492,11 +500,11 @@ function toolSyscall(message: ChatDockMessage): string | null {
   return inferToolSyscall(message.toolName, message.toolSyscall);
 }
 
-function toolEntryTone(message: ChatDockMessage): ChatTranscriptToolTone {
+export function toolEntryTone(message: ChatDockMessage): ChatTranscriptToolTone {
   return chatTranscriptToolTone(message);
 }
 
-function toolStatusLabel(message: ChatDockMessage): string {
+export function toolStatusLabel(message: ChatDockMessage): string {
   return chatTranscriptToolStatusLabel(message);
 }
 
@@ -525,7 +533,7 @@ function toolDisplayName(message: ChatDockMessage): string {
   return name;
 }
 
-type ToolDetailSection = {
+export type ToolDetailSection = {
   body: ComponentChildren;
   label: string;
 };
@@ -616,7 +624,7 @@ function editToolDiff(args: Record<string, unknown> | null): ToolDetailSection |
   };
 }
 
-function toolDetailSections(tool: ChatDockMessage): ToolDetailSection[] {
+export function toolDetailSections(tool: ChatDockMessage): ToolDetailSection[] {
   const syscall = toolSyscall(tool);
   const kind = fileToolKind(syscall);
   const args = asRecord(tool.toolArgs);
@@ -673,7 +681,7 @@ function ToolDiffPreview({ oldText, newText }: { oldText: string; newText: strin
   );
 }
 
-function toolActivityTitle(message: ChatDockMessage): string {
+export function toolActivityTitle(message: ChatDockMessage): string {
   const syscall = toolSyscall(message);
   const target = toolPathTarget(message) || "file";
   const tone = toolEntryTone(message);
@@ -751,7 +759,7 @@ function toolGroupTitle(tools: readonly ChatDockMessage[]): string {
   return latest ? lowercaseFirst(toolActivityTitle(latest)) : "completed work";
 }
 
-function reasoningText(message: ChatDockMessage): string {
+export function reasoningText(message: ChatDockMessage): string {
   return message.thinking?.filter((entry) => entry.trim()).join("\n\n") ?? "";
 }
 
@@ -791,7 +799,46 @@ function activityRunId(entry: TranscriptActivityEntry): string | null {
   return entry.message.runId || null;
 }
 
-function buildTranscriptRenderItems(messages: readonly ChatDockMessage[]): TranscriptRenderItem[] {
+/** All activity entries belonging to a run, in transcript order — used by the
+ *  full-body reasoning panel to resolve a run target from the raw rows. */
+export function collectRunEntries(
+  messages: readonly ChatDockMessage[],
+  runId: string,
+): TranscriptActivityEntry[] {
+  const entries: TranscriptActivityEntry[] = [];
+  for (const message of messages) {
+    const entry = activityEntryForMessage(message);
+    if (entry && activityRunId(entry) === runId) {
+      entries.push(entry);
+    }
+  }
+  return entries;
+}
+
+export function findMessageById(
+  messages: readonly ChatDockMessage[],
+  id: string,
+): ChatDockMessage | null {
+  return messages.find((message) => message.id === id) ?? null;
+}
+
+/** The contiguous activity group containing a message — the fallback target
+ *  for groups that carry no run id. */
+export function collectGroupEntries(
+  messages: readonly ChatDockMessage[],
+  messageId: string,
+): TranscriptActivityEntry[] {
+  for (const item of buildTranscriptRenderItems(messages)) {
+    if (item.kind === "activityGroup" && item.entries.some((entry) => entry.message.id === messageId)) {
+      return item.entries;
+    }
+  }
+  return [];
+}
+
+/** Exported for tests — the transcript's message/activity-group interleave,
+ *  including the synthetic streaming-reasoning tail. */
+export function buildTranscriptRenderItems(messages: readonly ChatDockMessage[]): TranscriptRenderItem[] {
   const items: TranscriptRenderItem[] = [];
   let index = 0;
 
@@ -833,10 +880,42 @@ function buildTranscriptRenderItems(messages: readonly ChatDockMessage[]): Trans
     });
   }
 
+  // A row with visible text no longer counts as a reasoning-only activity
+  // entry, so for tool-less runs the "thinking · EXPAND REASONING" line used
+  // to vanish the moment the answer started streaming. While the tail row is
+  // still streaming and carries reasoning, keep a synthetic activity line
+  // below it — unless the run already has a real group carrying the link.
+  const last = messages[messages.length - 1];
+  if (
+    last
+    && normalizedRole(last.role) === "assistant"
+    && last.streaming === true
+    && last.text.trim().length > 0
+    && reasoningText(last)
+  ) {
+    const hasRunGroup = Boolean(last.runId) && items.some((item) =>
+      item.kind === "activityGroup"
+      && item.entries.some((entry) => entry.message.runId === last.runId));
+    if (!hasRunGroup) {
+      items.push({
+        kind: "activityGroup",
+        entries: [{ kind: "reasoning", message: last }],
+        id: `activity-tail:${last.runId || last.id}`,
+        index: messages.length - 1,
+      });
+    }
+  }
+
   return items;
 }
 
-function estimateMessageHeight(message: ChatDockMessage): number {
+/** The per-message key for copy + expansion state — the single source shared
+ *  by TranscriptRenderItemView and the virtualization estimates. */
+function renderItemMessageKey(item: TranscriptRenderItem & { kind: "message" }): string {
+  return `${normalizedRole(item.message.role)}:${item.message.id}:${item.index}`;
+}
+
+function estimateMessageHeight(message: ChatDockMessage, expanded: boolean): number {
   const role = normalizedRole(message.role);
   const textLength = message.text.length + (message.thinking?.join("\n\n").length ?? 0);
   const mediaHeight = (message.media?.length ?? 0) * 92;
@@ -847,37 +926,44 @@ function estimateMessageHeight(message: ChatDockMessage): number {
     return Math.max(86, 52 + Math.ceil(textLength / 72) * 23 + mediaHeight);
   }
   if (role === "system") {
-    return Math.max(64, 44 + Math.ceil(textLength / 80) * 18);
+    // The SYSTEM eyebrow row adds a line above the summary/meta.
+    if (message.isError && !expanded) {
+      return 72;
+    }
+    return Math.max(80, 60 + Math.ceil(textLength / 80) * 18);
   }
   return Math.max(120, 92 + Math.ceil(textLength / 72) * 18);
 }
 
-function estimateRenderItemHeight(item: TranscriptRenderItem, active: boolean): number {
+function estimateRenderItemHeight(item: TranscriptRenderItem, expandedKeys: ReadonlySet<string>): number {
   if (item.kind === "activityGroup") {
-    const status = activityGroupStatus(item.entries, active);
-    const expanded = status === "running";
-    return expanded ? Math.max(112, 76 + item.entries.length * 42) : 58;
+    return 34;
   }
-  return estimateMessageHeight(item.message);
+  return estimateMessageHeight(item.message, expandedKeys.has(renderItemMessageKey(item)));
 }
 
-function estimateKeyForRenderItem(item: TranscriptRenderItem): string {
+function estimateKeyForRenderItem(item: TranscriptRenderItem, expandedKeys: ReadonlySet<string>): string {
   if (item.kind === "activityGroup") {
     const signature = item.entries
       .map((entry) => `${entry.kind}:${entry.message.id}:${entry.message.status ?? ""}:${entry.message.toolOutcome ?? ""}:${entry.message.text.length}:${reasoningText(entry.message).length}:${entry.message.backupModel ? "backup" : ""}`)
       .join("|");
     return `${item.id}:${signature}`;
   }
-  return `${item.id}:${item.message.status ?? ""}:${item.message.toolOutcome ?? ""}:${item.message.text.length}:${reasoningText(item.message).length}:${item.message.backupModel ? "backup" : ""}:${item.message.media?.length ?? 0}`;
+  const expanded = expandedKeys.has(renderItemMessageKey(item)) ? "expanded" : "";
+  return `${item.id}:${item.message.status ?? ""}:${item.message.toolOutcome ?? ""}:${item.message.text.length}:${reasoningText(item.message).length}:${item.message.backupModel ? "backup" : ""}:${item.message.media?.length ?? 0}:${expanded}`;
 }
 
 function buildVirtualEntries({
   activeActivityGroupId,
+  expandedKeys,
+  feedback,
   hasOlderMessages,
   loadingOlderMessages,
   renderItems,
 }: {
   activeActivityGroupId: string | null;
+  expandedKeys: ReadonlySet<string>;
+  feedback: readonly ChatFeedbackEntry[];
   hasOlderMessages: boolean;
   loadingOlderMessages: boolean;
   renderItems: TranscriptRenderItem[];
@@ -896,11 +982,21 @@ function buildVirtualEntries({
     const active = item.kind === "activityGroup" && item.id === activeActivityGroupId;
     entries.push({
       alwaysRender: item.kind === "activityGroup" && activityGroupStatus(item.entries, active) === "running",
-      estimateHeight: estimateRenderItemHeight(item, active),
-      estimateKey: estimateKeyForRenderItem(item),
+      estimateHeight: estimateRenderItemHeight(item, expandedKeys),
+      estimateKey: estimateKeyForRenderItem(item, expandedKeys),
       item,
       key: item.id,
       kind: "item",
+    });
+  }
+  for (const entry of feedback) {
+    entries.push({
+      alwaysRender: entry.status === "running",
+      estimateHeight: 34,
+      estimateKey: `${entry.status}|${entry.label}`,
+      feedback: entry,
+      key: `feedback:${entry.id}`,
+      kind: "feedback",
     });
   }
   return entries;
@@ -915,6 +1011,13 @@ function summarizeSystemText(text: string): string {
     return trimmed;
   }
   return `${trimmed.slice(0, 89).trim()}...`;
+}
+
+/** True when the full text carries more than the one-line summary shows —
+ *  either it was truncated or the original has multi-line formatting. */
+function systemTextHasMore(text: string, summary: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized !== summary || text.trim() !== normalized;
 }
 
 function UserMessage({
@@ -932,37 +1035,73 @@ function UserMessage({
   onCopy: () => void;
   onBranch?: (messageId: number) => void;
 }) {
-  const origin = originLabel(message.origin);
+  const mobile = useTranscriptMobile();
+  // Built once, routed by breakpoint: desktop puts them in the meta row,
+  // mobile in the swipe rail — never both (no duplicate controls for AT).
+  const branchAction = message.messageId && onBranch ? (
+    <Hint text="Branch a new conversation from this message">
+      <button
+        type="button"
+        class="gsv-mm-btn"
+        aria-label="Branch a new conversation from this message"
+        onClick={() => onBranch(message.messageId as number)}
+      >
+        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="4.5" cy="4" r="2" />
+            <circle cx="4.5" cy="12" r="2" />
+            <circle cx="11.5" cy="8" r="2" />
+            <path d="M4.5 6 L4.5 10 M6.5 12 C10 12 11.5 10.5 11.5 10" />
+          </g>
+        </svg>
+      </button>
+    </Hint>
+  ) : null;
+  const copyAction = (
+    <CopyIconButton
+      copyLabel={copyButtonLabel(copied, failed)}
+      copyAriaLabel={copied ? "Copied user message" : "Copy user message"}
+      copyDisabled={!message.text.trim()}
+      copyFailed={failed}
+      onCopy={onCopy}
+    />
+  );
+
   return (
     <div class="gsv-chat-user-message">
-      <div class="gsv-chat-user-message-inner">
-        {message.text ? <div class="gsv-chat-user-message-text gsv-prose">{message.text}</div> : null}
-        {message.media?.length ? (
-          <div class="gsv-chat-media-list">
-            {message.media.map((media, index) => (
-              <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={processId} />
-            ))}
-          </div>
-        ) : null}
-        <div class="gsv-chat-user-message-meta gsv-sublabel">
-          {message.time ? <span>{message.time}</span> : null}
-          {origin ? <span title={origin}>{origin}</span> : null}
-          {message.messageId && onBranch ? (
-            <Hint text="Branch a new conversation from this message" position="top-end">
-              <button type="button" class="gsv-chat-copy" onClick={() => onBranch(message.messageId as number)}>
-                BRANCH
-              </button>
-            </Hint>
+      <SwipeRow
+        align="end"
+        rail={(
+          <ActionRail>
+            {branchAction}
+            {copyAction}
+          </ActionRail>
+        )}
+      >
+        <div class="gsv-chat-user-message-inner">
+          {message.text ? <div class="gsv-chat-user-message-text gsv-prose">{message.text}</div> : null}
+          {message.media?.length ? (
+            <div class="gsv-chat-media-list">
+              {message.media.map((media, index) => (
+                <ChatMediaAttachment key={`${message.id}:media:${index}`} media={media} processId={processId} />
+              ))}
+            </div>
           ) : null}
-          <CopyButton
-            copied={copied}
-            failed={failed}
-            role="user"
-            text={message.text}
-            onCopy={onCopy}
-          />
+          {mobile ? (
+            <MessageMeta time={message.time} />
+          ) : (
+            <MessageMeta
+              time={message.time}
+              copyLabel={copyButtonLabel(copied, failed)}
+              copyAriaLabel={copied ? "Copied user message" : "Copy user message"}
+              copyDisabled={!message.text.trim()}
+              copyFailed={failed}
+              onCopy={onCopy}
+              actions={branchAction ?? undefined}
+            />
+          )}
         </div>
-      </div>
+      </SwipeRow>
     </div>
   );
 }
@@ -971,40 +1110,161 @@ function SystemSurfaceMessage({
   copied,
   failed,
   message,
+  expanded,
+  onToggleExpand,
   onCopy,
 }: {
   copied: boolean;
   failed: boolean;
   message: ChatDockMessage;
+  expanded: boolean;
+  onToggleExpand: () => void;
   onCopy: () => void;
 }) {
-  const origin = originLabel(message.origin);
-  const [expanded, setExpanded] = useState(false);
+  const mobile = useTranscriptMobile();
   const summary = message.meta || summarizeSystemText(message.text);
+  const expandable = systemTextHasMore(message.text, summary);
+
+  // Three stacked rows: SYSTEM eyebrow (never truncated), one-line summary
+  // (click to expand), shared meta row below — same shape as other messages.
+  const body = (
+    <>
+      <div class="gsv-chat-system-label gsv-message-label">SYSTEM</div>
+      {!expanded && summary ? (
+        <div class="gsv-chat-system-line">
+          <small class="gsv-prose">{summary}</small>
+        </div>
+      ) : null}
+      {expanded ? <div class="gsv-chat-system-detail gsv-prose">{message.text}</div> : null}
+    </>
+  );
 
   return (
-    <article class="gsv-chat-system-surface">
-      <div class="gsv-chat-system-line">
-        <span>SYSTEM</span>
-        {summary ? <small>{summary}</small> : null}
-      </div>
-      <div class="gsv-chat-system-actions">
-        <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
-          <i aria-hidden="true" data-expanded={expanded ? "true" : undefined}>{">"}</i>
-          DETAILS
-        </button>
-        {message.time ? <span>{message.time}</span> : null}
-        {origin ? <span title={origin}>{origin}</span> : null}
-        <CopyButton
-          copied={copied}
-          failed={failed}
-          role="system"
-          text={message.text}
-          onCopy={onCopy}
+    <SwipeRow
+      rail={(
+        <ActionRail>
+          <CopyIconButton
+            copyLabel={copyButtonLabel(copied, failed)}
+            copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
+            copyDisabled={!message.text.trim()}
+            copyFailed={failed}
+            onCopy={onCopy}
+          />
+        </ActionRail>
+      )}
+    >
+      <article class="gsv-chat-system-surface">
+        {expandable ? (
+          <Hint text={expanded ? "Click to collapse" : "Click to expand"}>
+            <div
+              role="button"
+              tabIndex={0}
+              class="gsv-chat-system-toggle"
+              aria-expanded={expanded}
+              aria-label={expanded ? "Collapse system message" : "Expand system message"}
+              onClick={onToggleExpand}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onToggleExpand();
+                }
+              }}
+            >
+              {body}
+            </div>
+          </Hint>
+        ) : body}
+        <MessageMeta
+          mirror
+          time={message.time}
+          copyLabel={copyButtonLabel(copied, failed)}
+          copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
+          copyDisabled={!message.text.trim()}
+          copyFailed={failed}
+          onCopy={mobile ? undefined : onCopy}
         />
-      </div>
-      {expanded ? <div class="gsv-chat-system-detail">{message.text}</div> : null}
-    </article>
+      </article>
+    </SwipeRow>
+  );
+}
+
+/** System failure rows render as a red feedback line; clicking (when there is
+ *  more than the summarized line) swaps it for the full text shown once. */
+function SystemErrorLine({
+  copied,
+  failed,
+  message,
+  expanded,
+  onToggleExpand,
+  onCopy,
+}: {
+  copied: boolean;
+  failed: boolean;
+  message: ChatDockMessage;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onCopy: () => void;
+}) {
+  const mobile = useTranscriptMobile();
+  const summary = summarizeSystemText(message.text);
+  const expandable = systemTextHasMore(message.text, summary);
+  // Same three-row shape as info system messages: the SYSTEM eyebrow stays
+  // visible above the red line / expanded text.
+  const body = (
+    <>
+      <div class="gsv-chat-system-label gsv-message-label">SYSTEM</div>
+      {expanded
+        ? <div class="gsv-chat-system-error-full gsv-prose">{message.text}</div>
+        : <ChatFeedbackMessage label={summary} status="error" />}
+    </>
+  );
+
+  return (
+    <SwipeRow
+      rail={(
+        <ActionRail>
+          <CopyIconButton
+            copyLabel={copyButtonLabel(copied, failed)}
+            copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
+            copyDisabled={!message.text.trim()}
+            copyFailed={failed}
+            onCopy={onCopy}
+          />
+        </ActionRail>
+      )}
+    >
+      <article class="gsv-chat-system-error">
+        {expandable ? (
+          <Hint text={expanded ? "Click to collapse" : "Click to expand"}>
+            <div
+              role="button"
+              tabIndex={0}
+              class="gsv-chat-system-toggle"
+              aria-expanded={expanded}
+              aria-label={expanded ? "Collapse system error" : "Expand system error"}
+              onClick={onToggleExpand}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onToggleExpand();
+                }
+              }}
+            >
+              {body}
+            </div>
+          </Hint>
+        ) : body}
+        <MessageMeta
+          mirror
+          time={message.time}
+          copyLabel={copyButtonLabel(copied, failed)}
+          copyAriaLabel={copied ? "Copied system message" : "Copy system message"}
+          copyDisabled={!message.text.trim()}
+          copyFailed={failed}
+          onCopy={mobile ? undefined : onCopy}
+        />
+      </article>
+    </SwipeRow>
   );
 }
 
@@ -1089,14 +1349,7 @@ function activityGroupStatus(
   return chatTranscriptActivityGroupTone(entries, active);
 }
 
-function activityDuration(entries: readonly TranscriptActivityEntry[]): string {
-  const timestamps = entries
-    .map((entry) => entry.message.timestamp)
-    .filter((timestamp): timestamp is number => typeof timestamp === "number" && Number.isFinite(timestamp));
-  if (timestamps.length < 2) {
-    return "";
-  }
-  const seconds = Math.max(1, Math.round((Math.max(...timestamps) - Math.min(...timestamps)) / 1000));
+function formatActivitySeconds(seconds: number): string {
   if (seconds < 60) {
     return `${seconds}s`;
   }
@@ -1105,7 +1358,41 @@ function activityDuration(entries: readonly TranscriptActivityEntry[]): string {
   return remaining > 0 ? `${minutes}m ${remaining}s` : `${minutes}m`;
 }
 
-function activityGroupTitle(
+function activityTimestamps(entries: readonly TranscriptActivityEntry[]): number[] {
+  return entries
+    .map((entry) => entry.message.timestamp)
+    .filter((timestamp): timestamp is number => typeof timestamp === "number" && Number.isFinite(timestamp));
+}
+
+function activityDuration(entries: readonly TranscriptActivityEntry[]): string {
+  const timestamps = activityTimestamps(entries);
+  if (timestamps.length < 2) {
+    return "";
+  }
+  return formatActivitySeconds(Math.max(1, Math.round((Math.max(...timestamps) - Math.min(...timestamps)) / 1000)));
+}
+
+/** Live elapsed for the active run's line: first activity → `now`. Clamped to
+ *  1s so server/client clock skew never renders 0 or negative. */
+export function activityElapsed(entries: readonly TranscriptActivityEntry[], now: number): string {
+  const timestamps = activityTimestamps(entries);
+  if (timestamps.length === 0) {
+    return "";
+  }
+  return formatActivitySeconds(Math.max(1, Math.round((now - Math.min(...timestamps)) / 1000)));
+}
+
+/** True while some entry is concretely in flight (a tool executing, reasoning
+ *  streaming) — as opposed to the run merely being open between entries. */
+function activityGroupHasBusyEntry(entries: readonly TranscriptActivityEntry[]): boolean {
+  return entries.some((entry) => (
+    entry.kind === "tool"
+      ? toolEntryTone(entry.message) === "running"
+      : entry.message.streaming === true || entry.message.status === "running"
+  ));
+}
+
+export function activityGroupTitle(
   entries: readonly TranscriptActivityEntry[],
   active: boolean,
 ): string {
@@ -1117,6 +1404,13 @@ function activityGroupTitle(
   if (status === "done" && duration && entries.length > 1) {
     return tools.length > 0 ? `worked for ${duration}` : `reasoned for ${duration}`;
   }
+  // The active run keeps its group "running" even between entries (every tool
+  // momentarily done, the model deciding its next move). The last tool's
+  // title would read as finished work there — stay generic until something
+  // concrete starts.
+  if (status === "running" && tools.length > 0 && !activityGroupHasBusyEntry(entries)) {
+    return "working";
+  }
   if (tools.length > 0) {
     return toolGroupTitle(tools);
   }
@@ -1126,196 +1420,66 @@ function activityGroupTitle(
   return status === "running" ? "thinking" : "reasoned";
 }
 
-function EntryControls({
-  expanded,
-  hasDetails,
-  label,
-  status,
-  onToggle,
-}: {
-  expanded: boolean;
-  hasDetails: boolean;
-  label: string;
-  status: string;
-  onToggle: () => void;
-}) {
-  return (
-    <Hint text={hasDetails ? (expanded ? `Hide ${label.toLowerCase()} · ${status}` : `Show ${label.toLowerCase()} · ${status}`) : status} position="left">
-    <div class="gsv-chat-tool-entry-controls" aria-label={status}>
-      {hasDetails ? (
-        <button
-          type="button"
-          class="gsv-chat-tool-entry-expand"
-          aria-expanded={expanded}
-          onClick={onToggle}
-        >
-          <i aria-hidden="true" data-expanded={expanded ? "true" : undefined}>{">"}</i>
-          {label}
-        </button>
-      ) : null}
-    </div>
-    </Hint>
-  );
-}
-
-function ReasoningEntry({ message }: { message: ChatDockMessage }) {
-  const [expanded, setExpanded] = useState(false);
-  const text = reasoningText(message);
-  const status = message.streaming ? "THINKING" : "REASONED";
-  return (
-    <div class={`gsv-chat-tool-entry gsv-chat-reasoning-entry${message.streaming ? " is-running" : " is-done"}`}>
-      <span class="gsv-chat-tool-entry-status" aria-hidden="true" />
-      <div class="gsv-chat-tool-entry-main">
-        <strong class="gsv-prose">{message.streaming ? "Thinking" : "Reasoned"}</strong>
-      </div>
-      <EntryControls
-        expanded={expanded}
-        hasDetails={Boolean(text)}
-        label="REASONING"
-        status={status}
-        onToggle={() => setExpanded((value) => !value)}
-      />
-      {text && expanded ? (
-        <div class="gsv-chat-tool-entry-detail-body">
-          <pre>{text}</pre>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function BackupModelEntry({ message }: { message: ChatDockMessage }) {
-  const [expanded, setExpanded] = useState(false);
-  const backupModel = message.backupModel;
-  const details = backupModel ? backupModelDetails(backupModel) : "";
-  const running = message.streaming === true || message.status === "running";
-  return (
-    <div class={`gsv-chat-tool-entry gsv-chat-backup-model-entry${running ? " is-running" : " is-done"}`}>
-      <span class="gsv-chat-tool-entry-status" aria-hidden="true" />
-      <div class="gsv-chat-tool-entry-main">
-        <strong class="gsv-prose">{running ? "Switching to backup model" : "Backup model used"}</strong>
-      </div>
-      <EntryControls
-        expanded={expanded}
-        hasDetails={Boolean(details)}
-        label="DETAILS"
-        status={running ? "RUNNING" : "DONE"}
-        onToggle={() => setExpanded((value) => !value)}
-      />
-      {details && expanded ? (
-        <div class="gsv-chat-tool-entry-detail-body">
-          <pre>{details}</pre>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ToolEntry({ tool }: { tool: ChatDockMessage }) {
-  const [expanded, setExpanded] = useState(false);
-  const tone = toolEntryTone(tool);
-  const details = toolDetailSections(tool);
-  const hasDetails = details.length > 0;
-  return (
-    <div class={`gsv-chat-tool-entry is-${tone}`}>
-      <span class="gsv-chat-tool-entry-status" aria-hidden="true" />
-      <div class="gsv-chat-tool-entry-main">
-        <strong class="gsv-prose">{toolActivityTitle(tool)}</strong>
-      </div>
-      <EntryControls
-        expanded={expanded}
-        hasDetails={hasDetails}
-        label="DETAILS"
-        status={toolStatusLabel(tool)}
-        onToggle={() => setExpanded((value) => !value)}
-      />
-      {hasDetails && expanded ? (
-        <div class="gsv-chat-tool-entry-detail-body">
-          {details.map((section, index) => (
-            <div class="gsv-chat-tool-detail-section" key={`${section.label}:${index}`}>
-              <small>{section.label}</small>
-              {section.body}
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function RunActivityCard({
+/** ActivityLine — the plain feedback line that replaced the boxed run card:
+ *  status dot + group title, with an "Expand reasoning" affordance opening the
+ *  full-body reasoning panel (HAM-366 / HAM-360). */
+function ActivityLine({
   active,
   entries,
+  onOpenReasoning,
 }: {
   active: boolean;
   entries: readonly TranscriptActivityEntry[];
+  onOpenReasoning?: (target: ChatReasoningTarget) => void;
 }) {
   const status = activityGroupStatus(entries, active);
-  const [expanded, setExpanded] = useState(status === "running");
-  const wasRunningRef = useRef(status === "running");
-  const runId = entries.find((entry) => entry.message.runId)?.message.runId;
-  const title = activityGroupTitle(entries, active);
-  const warningTool = status === "warning"
-    ? [...entries].reverse().find((entry) => entry.kind === "tool" && toolEntryTone(entry.message) === "warning")
-    : null;
-  const statusLabel = status === "error"
-    ? "ERROR"
-    : status === "running"
-      ? "RUNNING"
-      : warningTool
-        ? toolStatusLabel(warningTool.message)
-        : "DONE";
-
+  // A completed backup-model switch is an attention state, not a success.
+  const usedBackup = entries.some((entry) => entry.kind === "backup");
+  const feedbackStatus: ChatFeedbackStatus = status === "running"
+    ? "running"
+    : status === "error"
+      ? "error"
+      : usedBackup ? "attention" : "success";
+  // Tick the active run's line once a second so its elapsed visibly moves —
+  // a frozen duration mid-run reads as a finished state. One group is active
+  // per transcript, so at most one interval runs.
+  const ticking = active && feedbackStatus === "running";
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (status === "running" && !wasRunningRef.current) {
-      setExpanded(true);
+    if (!ticking) {
+      return undefined;
     }
-    wasRunningRef.current = status === "running";
-  }, [status]);
+    setNow(Date.now());
+    const timer = globalThis.setInterval(() => setNow(Date.now()), 1000);
+    return () => globalThis.clearInterval(timer);
+  }, [ticking]);
+  const elapsed = ticking ? activityElapsed(entries, now) : "";
+  const runId = entries.find((entry) => entry.message.runId)?.message.runId;
+  const firstMessageId = entries[0]?.message.id;
+  const target: ChatReasoningTarget | null = runId
+    ? { kind: "run", runId }
+    : firstMessageId
+      ? { kind: "group", messageId: firstMessageId }
+      : null;
 
   return (
-    <article class={`gsv-chat-tool-group-card is-${status}`}>
-      <span class="gsv-chat-tool-corner is-top-left" aria-hidden="true" />
-      <span class="gsv-chat-tool-corner is-top-right" aria-hidden="true" />
-      <span class="gsv-chat-tool-corner is-bottom-left" aria-hidden="true" />
-      <span class="gsv-chat-tool-corner is-bottom-right" aria-hidden="true" />
-
-      <header class="gsv-chat-tool-group-head">
-        <span class="gsv-chat-tool-group-dot" aria-hidden="true" />
-        <strong class="gsv-prose">{title}</strong>
-        <small>{statusLabel}</small>
-        <button
-          type="button"
-          class="gsv-chat-tool-group-toggle"
-          aria-label={expanded ? "Collapse tool activity" : "Expand tool activity"}
-          aria-expanded={expanded}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          <i aria-hidden="true" data-expanded={expanded ? "true" : undefined}>{">"}</i>
-        </button>
-      </header>
-
-      {expanded ? (
-        <>
-          <div class="gsv-chat-tool-group-id">
-            <span>{runId ? `RUN ${shortId(runId)}` : "RUN ACTIVITY"}</span>
-            <small>{entries.length} {entries.length === 1 ? "ENTRY" : "ENTRIES"}</small>
-          </div>
-
-          <div class="gsv-chat-tool-entry-list">
-            {entries.map((entry, index) => {
-              if (entry.kind === "backup") {
-                return <BackupModelEntry key={`backup:${entry.message.id}:${index}`} message={entry.message} />;
-              }
-              if (entry.kind === "reasoning") {
-                return <ReasoningEntry key={`reasoning:${entry.message.id}:${index}`} message={entry.message} />;
-              }
-              return <ToolEntry key={`tool:${entry.message.toolCallId || entry.message.id}:${index}`} tool={entry.message} />;
-            })}
-          </div>
-        </>
-      ) : null}
-    </article>
+    <ChatFeedbackMessage
+      label={activityGroupTitle(entries, active)}
+      detail={elapsed ? `· ${elapsed}` : undefined}
+      status={feedbackStatus}
+      action={target && onOpenReasoning ? (
+        <Hint position="top" text="Expand reasoning">
+          <button
+            type="button"
+            class="gsv-chat-reasoning-icon gsv-chat-reasoning-icon--attention"
+            aria-label="Expand reasoning"
+            onClick={() => onOpenReasoning(target)}
+          >
+            <ReasoningGlyph size={16} />
+          </button>
+        </Hint>
+      ) : undefined}
+    />
   );
 }
 
@@ -1325,55 +1489,73 @@ function AssistantProcessMessage({
   message,
   processId,
   onCopy,
+  onOpenReasoning,
 }: {
   copied: boolean;
   failed: boolean;
   message: ChatDockMessage;
   processId: string;
   onCopy: () => void;
+  onOpenReasoning?: (target: ChatReasoningTarget) => void;
 }) {
-  const [reasoningOpen, setReasoningOpen] = useState(false);
+  const mobile = useTranscriptMobile();
   const reasoning = reasoningText(message);
   const assistantText = message.text.trim()
     ? message.text
     : message.streaming ? "Thinking..." : "";
-  const hasMeta = Boolean(message.backupModel || reasoning);
+
+  const reasoningAction = reasoning && onOpenReasoning ? (
+    <Hint position="top" text="Expand reasoning">
+      <button
+        type="button"
+        class="gsv-chat-reasoning-icon"
+        aria-label="Expand reasoning"
+        onClick={() => onOpenReasoning({ kind: "message", messageId: message.id })}
+      >
+        <ReasoningGlyph size={13} />
+      </button>
+    </Hint>
+  ) : null;
+  // The backup badge is informational and stays inline in the meta row on
+  // both breakpoints; interactive actions move to the rail on mobile.
+  const badge = message.backupModel ? <BackupModelBadge backupModel={message.backupModel} /> : null;
+  const inlineMeta = mobile
+    ? badge
+    : (badge || reasoningAction) ? (
+        <>
+          {badge}
+          {reasoningAction}
+        </>
+      ) : null;
 
   return (
-    <>
+    <SwipeRow
+      rail={(
+        <ActionRail>
+          {reasoningAction}
+          <CopyIconButton
+            copyLabel={copyButtonLabel(copied, failed)}
+            copyAriaLabel={copied ? "Copied assistant message" : "Copy assistant message"}
+            copyDisabled={!assistantText.trim()}
+            copyFailed={failed}
+            onCopy={onCopy}
+          />
+        </ActionRail>
+      )}
+    >
       <SystemMessage
         text={assistantText}
         time={message.time}
-        meta={hasMeta ? (
-          <>
-            {message.backupModel ? <BackupModelBadge backupModel={message.backupModel} /> : null}
-            {reasoning ? (
-              <button
-                type="button"
-                class="gsv-chat-reasoning-toggle"
-                aria-expanded={reasoningOpen}
-                onClick={() => setReasoningOpen((value) => !value)}
-              >
-                <i aria-hidden="true" data-expanded={reasoningOpen ? "true" : undefined}>{">"}</i>
-                REASONING
-              </button>
-            ) : null}
-          </>
-        ) : null}
+        meta={inlineMeta}
         copyLabel={copyButtonLabel(copied, failed)}
         copyDisabled={!assistantText.trim()}
         copyFailed={failed}
         copyTitle={copied ? "Copied" : "Copy message"}
         copyAriaLabel={copied ? "Copied assistant message" : "Copy assistant message"}
-        onCopy={onCopy}
+        onCopy={mobile ? undefined : onCopy}
       >
         <AssistantText text={assistantText} streaming={message.streaming === true} />
       </SystemMessage>
-      {reasoning && reasoningOpen ? (
-        <div class="gsv-chat-assistant-reasoning">
-          <pre>{reasoning}</pre>
-        </div>
-      ) : null}
       {message.media?.length ? (
         <div class="gsv-chat-media-list is-assistant">
           {message.media.map((media, index) => (
@@ -1381,7 +1563,7 @@ function AssistantProcessMessage({
           ))}
         </div>
       ) : null}
-    </>
+    </SwipeRow>
   );
 }
 
@@ -1390,13 +1572,19 @@ function ProcessMessage({
   failed,
   message,
   processId,
+  expanded,
+  onToggleExpand,
   onCopy,
+  onOpenReasoning,
 }: {
   copied: boolean;
   failed: boolean;
   message: ChatDockMessage;
   processId: string;
+  expanded: boolean;
+  onToggleExpand: () => void;
   onCopy: () => void;
+  onOpenReasoning?: (target: ChatReasoningTarget) => void;
 }) {
   const messageRole = normalizedRole(message.role);
   const role = roleClass(messageRole);
@@ -1415,11 +1603,22 @@ function ProcessMessage({
   }
 
   if (messageRole === "system") {
-    return (
+    return message.isError ? (
+      <SystemErrorLine
+        copied={copied}
+        failed={failed}
+        message={message}
+        expanded={expanded}
+        onToggleExpand={onToggleExpand}
+        onCopy={onCopy}
+      />
+    ) : (
       <SystemSurfaceMessage
         copied={copied}
         failed={failed}
         message={message}
+        expanded={expanded}
+        onToggleExpand={onToggleExpand}
         onCopy={onCopy}
       />
     );
@@ -1433,6 +1632,7 @@ function ProcessMessage({
         message={message}
         processId={processId}
         onCopy={onCopy}
+        onOpenReasoning={onOpenReasoning}
       />
     );
   }
@@ -1445,7 +1645,7 @@ function ProcessMessage({
       </div>
       <div class="gsv-chat-message-body">
         {showHead ? (
-          <div class="gsv-chat-message-head gsv-sublabel">
+          <div class="gsv-chat-message-head gsv-message-label">
             <span>{label}</span>
             {message.meta ? <small>{message.meta}</small> : null}
           </div>
@@ -1503,25 +1703,31 @@ function VirtualTranscriptRow({
 function TranscriptRenderItemView({
   activeActivityGroupId,
   copyState,
+  expandedKeys,
   item,
   onBranch,
   onCopy,
+  onOpenReasoning,
+  onToggleExpand,
   processId,
 }: {
   activeActivityGroupId: string | null;
   copyState: CopyState | null;
+  expandedKeys: ReadonlySet<string>;
   item: TranscriptRenderItem;
   onBranch?: (messageId: number) => void;
   onCopy: (message: ChatDockMessage, messageId: string) => void;
+  onOpenReasoning?: (target: ChatReasoningTarget) => void;
+  onToggleExpand: (messageId: string) => void;
   processId: string;
 }) {
   if (item.kind === "activityGroup") {
-    return <RunActivityCard active={item.id === activeActivityGroupId} entries={item.entries} />;
+    return <ActivityLine active={item.id === activeActivityGroupId} entries={item.entries} onOpenReasoning={onOpenReasoning} />;
   }
 
   const message = item.message;
   const messageRole = normalizedRole(message.role);
-  const messageId = `${messageRole}:${message.id}:${item.index}`;
+  const messageId = renderItemMessageKey(item);
   const copied = copyState?.id === messageId && copyState.status === "copied";
   const failed = copyState?.id === messageId && copyState.status === "failed";
 
@@ -1540,7 +1746,10 @@ function TranscriptRenderItemView({
       failed={failed}
       message={message}
       processId={processId}
+      expanded={expandedKeys.has(messageId)}
+      onToggleExpand={() => onToggleExpand(messageId)}
       onCopy={() => onCopy(message, messageId)}
+      onOpenReasoning={onOpenReasoning}
     />
   );
 }
@@ -1588,15 +1797,38 @@ export function ChatTranscript({
   emptyTitle = "No active conversation",
   errorMessage = "Process history could not be loaded.",
   conversationId = null,
+  feedback = [],
   hasOlderMessages = false,
   loadingOlderMessages = false,
   messages,
+  mobile = false,
   onBranch,
   onLoadOlder,
+  onOpenReasoning,
   processId = "",
   state = "ready",
 }: ChatTranscriptProps) {
   const [copyState, setCopyState] = useState<CopyState | null>(null);
+  // Expanded system messages, keyed like copyState ids — parent-owned so the
+  // flag survives virtualized rows unmounting off-screen.
+  const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(new Set());
+  const toggleExpanded = useCallback((messageId: string) => {
+    // Expansion grows the message downward from its own top edge, so freeze
+    // the scroll position: the SYSTEM label stays put and the text reads from
+    // the start. Without this the sticky bottom pin re-fires on the height
+    // change and jumps the viewport to the END of the expanded body. Sticking
+    // resumes once the user scrolls back to the bottom.
+    stickToBottomRef.current = false;
+    setExpandedKeys((current) => {
+      const next = new Set(current);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  }, []);
   const copyResetTimer = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
@@ -1616,10 +1848,12 @@ export function ChatTranscript({
   }, [activeRunId, renderItems]);
   const virtualEntries = useMemo(() => buildVirtualEntries({
     activeActivityGroupId,
+    expandedKeys,
+    feedback,
     hasOlderMessages,
     loadingOlderMessages,
     renderItems,
-  }), [activeActivityGroupId, hasOlderMessages, loadingOlderMessages, renderItems]);
+  }), [activeActivityGroupId, expandedKeys, feedback, hasOlderMessages, loadingOlderMessages, renderItems]);
   const virtual = useVirtualTranscript({
     entries: virtualEntries,
     scrollTop: viewport.scrollTop,
@@ -1764,6 +1998,7 @@ export function ChatTranscript({
   const transcriptIdentity = `${processId}:${conversationId ?? ""}`;
   const tailMessage = messages[messages.length - 1];
   const tailKey = `${transcriptIdentity}:${messages.length}:${tailMessage?.id ?? "empty"}`;
+  const feedbackKey = feedback.map((entry) => `${entry.id}:${entry.status}:${entry.label}`).join("|");
 
   useLayoutEffect(() => {
     const anchor = scrollAnchorRef.current;
@@ -1813,9 +2048,10 @@ export function ChatTranscript({
       updateViewportForNode(latestNode);
     });
     return () => cancelAnimationFrame(frame);
-  }, [messages.length, tailKey, transcriptIdentity, updateViewportForNode, virtual.totalHeight]);
+  }, [feedbackKey, messages.length, tailKey, transcriptIdentity, updateViewportForNode, virtual.totalHeight]);
 
   return (
+    <TranscriptMobileContext.Provider value={mobile}>
     <div
       class="gsv-chat-transcript"
       aria-live="polite"
@@ -1835,7 +2071,11 @@ export function ChatTranscript({
           description={errorMessage}
           tone="error"
         />
-      ) : messages.length === 0 ? (
+      ) : messages.length === 0 && feedback.length === 0 ? (
+        /* Feedback lines (voice status + failures) must surface even before the
+           first message — the composer no longer alerts for voice, so this is
+           their only surface. The empty state only wins a truly quiet
+           transcript. */
         <TranscriptState
           action={action}
           title={emptyTitle}
@@ -1859,13 +2099,21 @@ export function ChatTranscript({
                 >
                   {loadingOlderMessages ? "LOADING" : "LOAD OLDER"}
                 </button>
+              ) : item.entry.kind === "feedback" ? (
+                <ChatFeedbackMessage
+                  label={item.entry.feedback.label}
+                  status={item.entry.feedback.status}
+                />
               ) : (
                 <TranscriptRenderItemView
                   activeActivityGroupId={activeActivityGroupId}
                   copyState={copyState}
+                  expandedKeys={expandedKeys}
                   item={item.entry.item}
                   onBranch={onBranch}
                   onCopy={copyMessage}
+                  onOpenReasoning={onOpenReasoning}
+                  onToggleExpand={toggleExpanded}
                   processId={processId}
                 />
               )}
@@ -1879,5 +2127,6 @@ export function ChatTranscript({
         </button>
       ) : null}
     </div>
+    </TranscriptMobileContext.Provider>
   );
 }

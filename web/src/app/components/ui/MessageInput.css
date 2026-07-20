@@ -84,28 +84,96 @@
   cursor: default;
 }
 
+/* Shell follows the DS form-input treatment (TextInput/TextArea palette).
+   Deliberately NO hover state on the shell. */
 .gsv-mi-bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: #0c0a22;
-  border: 1px solid var(--border);
+  background: #0a0822;
+  border: 1px solid #4a449e;
   border-radius: 7px;
   padding: 8px 11px;
+  transition: border-color 0.14s, box-shadow 0.14s;
 }
 .gsv-mi-bar:focus-within {
-  border-color: var(--dashed);
+  border-color: #b3aeff;
+  box-shadow: 0 0 0 1px rgba(150, 140, 255, 0.22), 0 0 16px rgba(150, 140, 255, 0.14);
+}
+/* Disabled shell (composer lock / dictation): dimmed border + inert text
+   entry; the mic keeps full presence so recording can be stopped. */
+.gsv-mi-bar.is-disabled {
+  border-color: #25224d;
+  box-shadow: none;
+}
+.gsv-mi-bar.is-disabled .gsv-mi-input {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 /* Composer icon buttons use the floating IconButton variant; these rules only
    layer per-control state tones over that borderless base. */
 
-/* Dictation mic while recording — pink tone. */
+/* — conversation mode — the transcription icon slides into the attach slot;
+   attach collapses away; mic/send are not rendered; an end-conversation link
+   button takes the right edge. */
+.gsv-mi-attach-slot {
+  display: inline-flex;
+  flex: none;
+  overflow: hidden;
+  transition: width 0.22s ease, opacity 0.18s ease, margin-right 0.22s ease;
+  width: 26px;
+}
+.gsv-mi.is-conversation .gsv-mi-attach-slot {
+  width: 0;
+  opacity: 0;
+  margin-right: -10px; /* cancel the flex gap the empty slot would leave */
+  pointer-events: none;
+}
+
+.gsv-mi-voice-slot {
+  display: inline-flex;
+  flex: none;
+}
+@keyframes gsvMiSlideLeft {
+  0% {
+    transform: translateX(46px);
+    opacity: 0.4;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.gsv-mi.is-conversation .gsv-mi-voice-slot {
+  order: -1;
+  animation: gsvMiSlideLeft 0.22s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gsv-mi.is-conversation .gsv-mi-voice-slot {
+    animation: none;
+  }
+  .gsv-mi-attach-slot {
+    transition: none;
+  }
+}
+
+.gsv-mi-end-convo {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+}
+
+/* Dictation mic while recording — the shared light-purple ACTIVE treatment
+   (same as the conversation-mode live icon). */
 .gsv-ibtn-floating.gsv-mi-voice.is-active {
-  color: #ff8aa0;
+  color: #bdb8ff;
+}
+.gsv-ibtn-floating.gsv-mi-voice.is-active svg {
+  filter: drop-shadow(0 0 5px rgba(132, 122, 255, 0.5));
 }
 .gsv-ibtn-floating.gsv-mi-voice.is-active:hover {
-  color: #ffc1cc;
+  color: var(--accent-bright);
 }
 
 .gsv-mi-input {
@@ -125,12 +193,12 @@
 }
 
 .gsv-mi-input::placeholder {
-  color: #7d78b8;
+  color: #565199;
 }
 
 .gsv-mi-input:disabled {
-  color: #565178;
-  cursor: default;
+  color: #565199;
+  cursor: not-allowed;
 }
 
 /* Send — the primary composer action, brighter than the other floating icons;

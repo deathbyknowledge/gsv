@@ -1,5 +1,5 @@
 export interface AgentImageProps {
-  /** Crew index 0–2 → /img/agent-<n>.png. Ignored if `src` is provided. */
+  /** Crew index 0–4 → /img/agent-<n>.png. Ignored if `src` is provided. */
   agent?: number;
   /** Explicit image src; wins over `agent`. */
   src?: string;

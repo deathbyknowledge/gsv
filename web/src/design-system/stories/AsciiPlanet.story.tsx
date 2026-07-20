@@ -12,6 +12,13 @@ const story: Story = {
         <AsciiPlanet variant="moon" formDuration={3.4} />
       </div>
       <div class="ds-cell">
+        <div class="ds-label">Ringed variants (orbit · giant)</div>
+        <div class="ds-row" style={{ alignItems: "center" }}>
+          <AsciiPlanet variant="orbit" animate={false} />
+          <AsciiPlanet variant="giant" animate={false} />
+        </div>
+      </div>
+      <div class="ds-cell">
         <div class="ds-label">Compact variants</div>
         <div class="ds-row" style={{ alignItems: "center" }}>
           <AsciiPlanet variant="disc" animate={false} />

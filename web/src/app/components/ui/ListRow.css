@@ -14,6 +14,12 @@
   color: var(--accent-bright);
 }
 
+.lr-leading {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
 .lr-main,
 .lr-label,
 .lr-sub {
@@ -45,4 +51,41 @@
 .lr[data-clickable="true"]:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
+}
+
+/* Chevron (+ optional label) is a hover/focus affordance only — applies to
+   every ListRow consumer (was previously duplicated per surface). */
+.lr .lr-chevron {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.lr[data-clickable="true"]:hover .lr-chevron,
+.lr[data-clickable="true"]:focus-visible .lr-chevron {
+  opacity: 1;
+}
+
+/* The hover label floats out of flow, extending leftward from the arrow so it
+   never reserves row width; the row hover background masks what's beneath. */
+.lr-chevron-label {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--hover);
+  padding: 3px 2px 3px 10px;
+  color: var(--accent);
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+/* Touch devices (no hover) would otherwise never see the chevron affordance.
+   Reveal the arrow; keep the floating label hover/focus-only so it never sits
+   over row text without the masking row-hover background behind it. */
+@media (hover: none) {
+  .lr[data-clickable="true"] .lr-chevron {
+    opacity: 1;
+  }
+  .lr .lr-chevron-label {
+    display: none;
+  }
 }

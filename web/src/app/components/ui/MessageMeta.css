@@ -1,0 +1,85 @@
+/* MessageMeta — shared quiet meta row: hover-revealed timestamp + icon
+   actions on desktop (touch keeps both visible — no hover there, and the
+   mobile swipe rows rely on the inline timestamp), clustered together (no
+   spread) on the message's aligned edge. Default (user bubbles): [time icons]
+   hugging the right; the --mirror variant (left-aligned messages): [icons
+   time] hugging the left. Size + family come from .gsv-sublabel (12px). */
+.gsv-mm {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 5px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.gsv-mm-time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.gsv-mm:hover .gsv-mm-time,
+.gsv-mm:focus-within .gsv-mm-time {
+  opacity: 1;
+}
+@media (hover: none) {
+  .gsv-mm-time {
+    opacity: 1;
+  }
+}
+
+.gsv-mm-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  /* Icons follow the timestamp's quiet-until-hover behavior. */
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.gsv-mm:hover .gsv-mm-actions,
+.gsv-mm:focus-within .gsv-mm-actions {
+  opacity: 1;
+}
+@media (hover: none) {
+  .gsv-mm-actions {
+    opacity: 1;
+  }
+}
+
+/* Mirrored variant for left-aligned messages: the [icons time] cluster hugs
+   the left edge instead. DOM order is unchanged — visual swap only. */
+.gsv-mm--mirror {
+  justify-content: flex-start;
+}
+.gsv-mm--mirror .gsv-mm-actions {
+  order: -1;
+}
+
+.gsv-mm-btn {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+}
+.gsv-mm-btn:hover,
+.gsv-mm-btn:focus-visible {
+  color: #9a94ff;
+  outline: none;
+}
+.gsv-mm-btn:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+.gsv-mm-btn.is-failed {
+  color: var(--error);
+}

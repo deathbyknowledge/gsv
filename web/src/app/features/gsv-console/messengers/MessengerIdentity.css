@@ -66,7 +66,7 @@
 }
 
 .gsv-messenger-identity-empty {
-  /* size from .gsv-sublabel (10px); tracking + uppercase kept intentionally */
+  /* size from .gsv-sublabel (12px); tracking + uppercase kept intentionally */
   min-height: 54px;
   padding: 18px;
   color: var(--text-dim);

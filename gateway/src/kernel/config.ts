@@ -152,8 +152,9 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
 
 // Per-user config keys follow the same structure under "users/{uid}/ai/*".
 // e.g. "users/1000/ai/provider" overrides "config/ai/provider" for uid 1000.
-// Only AI config is user-overridable; server/shell/process config is system-only.
-export const USER_OVERRIDABLE_PREFIXES = ["ai/"] as const;
+// Only AI config and UI presentation prefs (e.g. "users/{uid}/ui/avatar") are
+// user-overridable; server/shell/process config is system-only.
+export const USER_OVERRIDABLE_PREFIXES = ["ai/", "ui/"] as const;
 
 export class ConfigStore {
   constructor(private readonly sql: SqlStorage) {}

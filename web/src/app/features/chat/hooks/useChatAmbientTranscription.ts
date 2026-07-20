@@ -14,12 +14,7 @@ import {
 } from "../../presence/constants";
 import { createPresenceRecorder, type AmbientSegment, type PresenceRecorder } from "../../presence/recording";
 import type { PresenceState } from "../../presence/types";
-import {
-  dictationTitle,
-  formatVoiceInputAlert,
-  liveTranscriptionTitle,
-  normalizeTranscriptionRequestError,
-} from "../domain/voiceFeedback";
+import { normalizeTranscriptionRequestError } from "../domain/voiceFeedback";
 
 type ChatAmbientTranscriptionArgs = {
   activeRunCount?: number;
@@ -64,6 +59,9 @@ type ChatAmbientTranscription = {
   dictationTitle: string;
   dictationUnavailable: boolean;
   error: string;
+  /** Increments on every failure occurrence — consecutive failures keep the
+   *  same state/note, so consumers key error feedback on this instead. */
+  errorNonce: number;
   liveActive: boolean;
   liveTitle: string;
   liveUnavailable: boolean;
@@ -92,6 +90,27 @@ function cancellationError(message: string): Error {
   return error;
 }
 
+/** Tooltip titles stay plain action labels — never status or error text; the
+ *  chat feedback lines are the status surface. Only the capability notice
+ *  (unsupported browser) is allowed through, since it explains a disabled
+ *  control. */
+function ambientTitle(state: PresenceState): string {
+  if (state === "unsupported") {
+    return "Live transcription is unavailable in this browser";
+  }
+  return isLiveState(state) ? "End conversation" : "Start conversation";
+}
+
+function dictationTitle(state: PresenceState): string {
+  if (state === "unsupported") {
+    return "Dictation is unavailable in this browser";
+  }
+  if (state === "recording" || state === "transcribing") {
+    return "Stop dictation";
+  }
+  return "Dictate message";
+}
+
 function isLiveState(state: PresenceState): boolean {
   return state === "listening"
     || state === "capturing"
@@ -115,6 +134,7 @@ export function useChatAmbientTranscription({
   const [mode, setModeValue] = useState<ChatVoiceInputMode>("idle");
   const [note, setNoteValue] = useState("");
   const [error, setError] = useState("");
+  const [errorNonce, setErrorNonce] = useState(0);
   const destroyedRef = useRef(false);
   const stateRef = useRef(state);
   const modeRef = useRef<ChatVoiceInputMode>(mode);
@@ -171,7 +191,16 @@ export function useChatAmbientTranscription({
     } else if (message !== undefined) {
       setNoteValue(message);
     }
-    setError(nextState === "error" ? formatVoiceInputAlert(message) : "");
+    if (nextState === "error") {
+      // Recorder-driven failures (microphone, push transcription) must reach
+      // consumers like ambient-segment failures do — keep an earlier, more
+      // specific message when one was already set. The nonce distinguishes
+      // consecutive failures whose state/note are identical.
+      setError((current) => current || message || "Voice input failed");
+      setErrorNonce((nonce) => nonce + 1);
+    } else {
+      setError("");
+    }
   }, []);
 
   const setMode = useCallback((nextMode: ChatVoiceInputMode) => {
@@ -575,8 +604,8 @@ export function useChatAmbientTranscription({
   const active = dictationActive || liveActive;
   const liveUnavailable = !liveActive && (disabled || !connected || !canUseAmbientMode());
   const dictationUnavailable = !dictationActive && (disabled || !connected || !canUseBrowserVoiceRecorder());
-  const currentDictationTitle = dictationTitle(state, note);
-  const currentLiveTitle = liveTranscriptionTitle(state, note);
+  const currentDictationTitle = dictationTitle(state);
+  const currentLiveTitle = ambientTitle(state);
   const title = liveActive ? currentLiveTitle : currentDictationTitle;
 
   return {
@@ -585,6 +614,7 @@ export function useChatAmbientTranscription({
     dictationTitle: currentDictationTitle,
     dictationUnavailable,
     error,
+    errorNonce,
     liveActive,
     liveTitle: currentLiveTitle,
     liveUnavailable,

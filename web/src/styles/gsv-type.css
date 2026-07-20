@@ -3,11 +3,12 @@
  * font-family/size/weight/letter-spacing only (no color/margin) so they
  * compose freely.
  *
- * Sizing convention (a11y pass):
+ * Sizing convention (a11y pass; machine scale bumped one step 2026-07-13 so
+ * input labels & chrome stay readable):
  *   - font-size in rem (root = browser default 16px) so text honors the
  *     user's font-size preference; px equivalent noted inline.
- *   - 0.75rem (12px) is the floor for primary text. Only .gsv-sublabel dips
- *     below it (10px) and must be reserved for non-primary chrome.
+ *   - 0.75rem (12px) is the hard floor for ALL text — no sub-floor
+ *     exceptions anymore (.gsv-sublabel used to dip to 10px).
  *   - letter-spacing stays in em so tracking scales with each element's size.
  *   - line-height stays unitless (added where titles / multi-line need it).
  */
@@ -15,7 +16,7 @@
 .gsv-title {
   font-family: var(--gsv-font-mono);
   font-weight: 700;
-  font-size: 1.1875rem; /* 19px */
+  font-size: 1.3125rem; /* 21px (was 19px) */
   line-height: 1.2;
   letter-spacing: 0.14em;
 }
@@ -23,39 +24,49 @@
 .gsv-section {
   font-family: var(--gsv-font-mono);
   font-weight: 600;
-  font-size: 0.875rem; /* 14px */
+  font-size: 1rem; /* 16px (was 14px) */
   letter-spacing: 0.2em;
 }
 
 .gsv-sublabel {
-  /* Exception to the 12px floor — non-primary chrome only (eyebrows, hints). */
+  /* Non-primary chrome (eyebrows, hints, input labels) — now at the floor. */
   font-family: var(--gsv-font-mono);
   font-weight: 500;
-  font-size: 0.625rem; /* 10px */
+  font-size: 0.75rem; /* 12px (was 10px) */
   letter-spacing: 0.2em;
 }
 
 .gsv-listitem {
   font-family: var(--gsv-font-mono);
   font-weight: 400;
-  font-size: 0.75rem; /* 12px (raised from 11px to the floor) */
+  font-size: 0.875rem; /* 14px (was 12px) */
   letter-spacing: 0.04em;
 }
 
 .gsv-meta {
   font-family: var(--gsv-font-mono);
   font-weight: 400;
-  font-size: 0.75rem; /* 12px (raised from 11px to the floor) */
+  font-size: 0.875rem; /* 14px (was 12px) */
   letter-spacing: 0.32em;
 }
 
 .gsv-label {
-  /* Non-primary control / object label tier (11px) — sits between
-   * .gsv-sublabel (10px) and .gsv-listitem (12px). Non-primary use only. */
+  /* Non-primary control / object label tier — sits between
+   * .gsv-sublabel (12px) and .gsv-listitem (14px). Non-primary use only. */
   font-family: var(--gsv-font-mono);
   font-weight: 500;
-  font-size: 0.6875rem; /* 11px */
+  font-size: 0.8125rem; /* 13px (was 11px) */
   letter-spacing: 0.08em;
+}
+
+.gsv-message-label {
+  /* Chat message label tier ("SYSTEM", "APPROVAL REQUIRED", …): matches the
+   * Tag / link-button chrome scale (10px). Deliberately below the 12px
+   * reading floor — non-reading chrome, same exemption as Tag. */
+  font-family: var(--gsv-font-mono);
+  font-weight: 500;
+  font-size: 0.625rem; /* 10px */
+  letter-spacing: 0.14em;
 }
 
 /* Paragraph scale — Departure Mono (kept for consistency with library/HUD

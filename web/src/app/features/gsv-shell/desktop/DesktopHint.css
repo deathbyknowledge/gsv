@@ -23,7 +23,7 @@
 }
 
 .gsv-space-hint-min {
-  /* size + family from .gsv-sublabel (10px); tracking kept */
+  /* size + family from .gsv-sublabel (12px); tracking kept */
   letter-spacing: 0.18em;
   white-space: nowrap;
   text-transform: uppercase;
@@ -40,7 +40,7 @@
 .gsv-space-hint-line {
   /* reserve height so the readout never shifts while typing */
   min-height: 1.9em;
-  /* size + family from .gsv-section (14px, down from 15px); normal weight + tracking + line-height kept */
+  /* size + family from .gsv-section (16px); normal weight + tracking + line-height kept */
   font-weight: 400;
   line-height: 1.9;
   letter-spacing: 0.16em;

@@ -51,6 +51,8 @@ export function Counter(props: CounterProps) {
   const fieldId = useId();
 
   const [stateVal, setStateVal] = useState<number | undefined>(undefined);
+  /** Free-typed text while the value input is being edited; null when idle. */
+  const [draft, setDraft] = useState<string | null>(null);
 
   const cur = stateVal === undefined ? props.value ?? 1 : stateVal;
   const val = Math.max(min, Math.min(max, isNaN(cur) ? 0 : cur));
@@ -59,6 +61,17 @@ export function Counter(props: CounterProps) {
     v = Math.max(min, Math.min(max, v));
     setStateVal(v);
     onChange?.(v);
+  };
+
+  const commitDraft = () => {
+    if (draft === null) {
+      return;
+    }
+    const parsed = Number(draft.trim());
+    if (draft.trim() !== "" && Number.isFinite(parsed)) {
+      set(Math.round(parsed));
+    }
+    setDraft(null);
   };
 
   const req = requirement && requirement !== "none" ? requirement : "";
@@ -123,8 +136,42 @@ export function Counter(props: CounterProps) {
             <rect x="3" y="7" width="10" height="2" fill="currentColor" />
           </svg>
         </button>
-        <span class="gsv-st-val" aria-live="polite" aria-atomic="true" role="status">
-          {display}
+        <span class="gsv-st-val">
+          <input
+            class="gsv-st-input"
+            type="text"
+            inputmode="numeric"
+            disabled={disabled}
+            value={draft ?? String(val)}
+            aria-label={label || "Value"}
+            style={{ width: `${Math.max((draft ?? String(val)).length, 1)}ch` }}
+            onInput={(event) => setDraft((event.currentTarget as HTMLInputElement).value)}
+            onBlur={commitDraft}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitDraft();
+              } else if (event.key === "Escape" && draft !== null) {
+                event.stopPropagation();
+                setDraft(null);
+              }
+            }}
+          />
+          {unit ? <span class="gsv-st-unit">{unit}</span> : null}
+          <span
+            aria-live="polite"
+            aria-atomic="true"
+            style={{
+              position: "absolute",
+              width: "1px",
+              height: "1px",
+              overflow: "hidden",
+              clip: "rect(0 0 0 0)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {display}
+          </span>
         </span>
         <button
           type="button"

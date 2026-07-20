@@ -33,6 +33,10 @@ const story: Story = {
           <Checkbox checked label="WITH DESCRIPTION" description="Runs the agent without holding the foreground session." />
           <Checkbox checked={false} status="error" message="This field is required" label="ERROR" />
           <Checkbox checked status="success" message="Saved" label="SUCCESS" />
+          <Checkbox checked status="info" message="Applies to new runs only" label="INFO" />
+          <Checkbox checked status="warning" message="May increase cost" label="WARNING" />
+          <Checkbox requirement="required" label="REQUIRED" />
+          <Checkbox requirement="optional" label="OPTIONAL" />
         </div>
       </div>
     </div>

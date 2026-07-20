@@ -1,0 +1,161 @@
+/* ChatReasoningPanel — full-body reasoning view under the persistent chat
+   header (HAM-360). Plain text lines with hairline separators; no boxes. */
+.gsv-chat-reasoning-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--node-bg);
+  cursor: pointer;
+}
+
+.gsv-chat-rp-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+/* .gsv-chat-rp-head/-back/-meta are shared panel chrome — the archive panel
+   reuses them for its header. */
+.gsv-chat-rp-back {
+  appearance: none;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  /* Explicit link-button scale (10px) — `font: inherit` here used to lose to
+     the sublabel class and cascade up to the 16px body default. */
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+  padding: 4px 0;
+  transition: color 0.12s;
+}
+.gsv-chat-rp-back i {
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1;
+}
+.gsv-chat-rp-back:hover,
+.gsv-chat-rp-back:focus-visible {
+  color: var(--accent-bright);
+  outline: none;
+}
+
+.gsv-chat-rp-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--meta);
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+}
+
+.gsv-chat-rp-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px 20px;
+}
+
+.gsv-chat-rp-entry {
+  padding: 10px 0;
+}
+.gsv-chat-rp-entry + .gsv-chat-rp-entry {
+  border-top: 1px solid var(--rule-inner);
+}
+
+.gsv-chat-rp-entry-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.gsv-chat-rp-entry-line strong {
+  color: var(--text);
+  font-weight: 500;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.gsv-chat-rp-entry.is-error .gsv-chat-rp-entry-line strong {
+  color: var(--error);
+}
+
+.gsv-chat-rp-entry-status {
+  flex: none;
+  color: var(--meta);
+  letter-spacing: 0.14em;
+}
+
+.gsv-chat-rp-detail-toggle {
+  appearance: none;
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  /* Explicit link-button scale (10px) — `font: inherit` cascaded up to the
+     16px body default, same accident as .gsv-chat-rp-back above. */
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+  padding: 0 0 1px;
+  border-bottom: 1px solid currentColor;
+  transition: color 0.12s;
+}
+.gsv-chat-rp-detail-toggle:hover,
+.gsv-chat-rp-detail-toggle:focus-visible {
+  color: var(--accent-bright);
+  outline: none;
+}
+
+/* Reasoning reads as prose, not a cramped code block. */
+.gsv-chat-rp-prose {
+  margin: 8px 0 2px;
+  color: var(--prose-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: auto;
+}
+
+.gsv-chat-rp-detail {
+  margin-top: 8px;
+  cursor: auto;
+}
+.gsv-chat-rp-detail-section + .gsv-chat-rp-detail-section {
+  margin-top: 10px;
+}
+.gsv-chat-rp-detail-section small {
+  display: block;
+  color: var(--meta);
+  letter-spacing: 0.18em;
+  margin-bottom: 4px;
+}
+.gsv-chat-rp-detail-section pre {
+  margin: 0;
+  padding: 9px 11px;
+  background: var(--field-deep);
+  border: 1px solid var(--rule-inner);
+  color: var(--node-label);
+  font-family: var(--gsv-font-mono);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.gsv-chat-rp-empty {
+  color: var(--text-muted);
+  max-width: 46ch;
+}

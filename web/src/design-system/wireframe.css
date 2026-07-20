@@ -1,0 +1,130 @@
+/* ============================================================
+   Templates archetype wireframes — schematic, rectangles-only.
+   Tuned to the catalog's dark void + periwinkle hairline vocab
+   (tokens defined in gsv-tokens.css / used across catalog.css).
+   ============================================================ */
+
+.ds-wire {
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background:
+    radial-gradient(600px 380px at 78% -20%, rgba(60, 52, 140, 0.14), transparent 60%),
+    var(--void);
+  padding: 16px;
+}
+.ds-wire-ratio {
+  font-family: var(--gsv-font-mono);
+  font-size: 0.5625rem; /* 9px → visual caption */
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+.ds-wire-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ds-wire-row {
+  display: flex;
+}
+.ds-wire-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* A single schematic region — a labeled rectangle. */
+.ds-wire-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border-raised);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+.ds-wire-box.is-muted {
+  border-style: solid;
+  background: color-mix(in srgb, var(--panel-2) 60%, transparent);
+}
+.ds-wire-box.is-dashed {
+  border-style: dashed;
+  background: transparent;
+}
+.ds-wire-box.is-accent {
+  border-color: var(--accent);
+  background: var(--selected);
+}
+.ds-wire-label {
+  font-family: var(--gsv-font-mono);
+  font-size: 0.5625rem; /* 9px */
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ds-wire-box.is-accent .ds-wire-label {
+  color: var(--accent-bright);
+}
+
+.ds-wire-grid {
+  display: grid;
+}
+
+/* "LIVE PREVIEW ↗" link — styled here (not catalog.css). */
+.ds-btn-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 8px 16px;
+  font-family: var(--gsv-font-mono);
+  font-size: 0.625rem; /* 10px */
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--accent-bright);
+  background: var(--selected);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.ds-btn-preview:hover {
+  background: color-mix(in srgb, var(--selected) 70%, var(--accent) 30%);
+  box-shadow: 0 0 12px rgba(120, 110, 220, 0.35);
+}
+.ds-btn-preview .ds-btn-preview-arrow {
+  font-size: 0.75rem;
+}
+
+/* Blurb copy above each wireframe. */
+.ds-tpl-blurb {
+  font-family: var(--gsv-font-mono);
+  font-size: 0.6875rem; /* 11px */
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  max-width: 640px;
+  margin: 0 0 4px;
+}
+.ds-tpl-note {
+  font-family: var(--gsv-font-mono);
+  font-size: 0.625rem; /* 10px */
+  line-height: 1.5;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  max-width: 640px;
+  margin: 0;
+}
+.ds-tpl-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}

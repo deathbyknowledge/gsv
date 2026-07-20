@@ -42,7 +42,7 @@
   box-shadow: 0 0 14px color-mix(in srgb, var(--online) 45%, transparent);
 }
 .gsv-complete-kicker {
-  /* size + family from .gsv-sublabel (10px, up from 9px); tracking kept wider */
+  /* size + family from .gsv-sublabel (12px); tracking kept wider */
   letter-spacing: 0.28em;
   text-transform: uppercase;
   color: var(--text-dim);
@@ -63,7 +63,7 @@
   gap: 6px;
 }
 .gsv-complete-k {
-  /* size + family from .gsv-label (11px); weight 400 + wide tracking kept */
+  /* size + family from .gsv-label (13px); weight 400 + wide tracking kept */
   font-weight: 400;
   letter-spacing: 0.32em;
   text-transform: uppercase;
@@ -104,7 +104,7 @@
   color: var(--text-hi);
 }
 .gsv-complete-more-tag {
-  /* size + family from .gsv-sublabel (10px, up from 9px); tracking matches */
+  /* size + family from .gsv-sublabel (12px); tracking matches */
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--accent-bright);
@@ -163,9 +163,9 @@
 }
 
 .gsv-complete-alert {
-  /* size from .gsv-label (11px); no JSX handle (className prop) → value-normalized */
+  /* size from .gsv-label (13px); no JSX handle (className prop) → value-normalized */
   margin: 0;
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   letter-spacing: 0.06em;
   color: var(--error);
 }
@@ -185,7 +185,7 @@
   padding: 8px 18px;
   background: var(--node-bg);
   border-top: 1px solid var(--border);
-  /* size + family from .gsv-sublabel (10px); tracking kept narrower */
+  /* size + family from .gsv-sublabel (12px); tracking kept narrower */
   letter-spacing: 0.1em;
   color: var(--text-dim);
   white-space: nowrap;

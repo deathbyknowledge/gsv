@@ -181,6 +181,18 @@ describe("sys.config.get", () => {
     }, ctx)).toThrow("not user-overridable");
   });
 
+  it("allows delegated writes to ui presentation prefs (e.g. the agent avatar)", () => {
+    const ctx = makeContext(1000, baseEntries);
+
+    expect(handleSysConfigSet({
+      key: "users/2000/ui/avatar",
+      value: "/img/agent-3.png",
+    }, ctx)).toEqual({ ok: true });
+    expect(handleSysConfigGet({ key: "users/2000/ui/avatar" }, ctx)).toEqual({
+      entries: [{ key: "users/2000/ui/avatar", value: "/img/agent-3.png" }],
+    });
+  });
+
   it("rejects writes to accounts the owner cannot manage", () => {
     const ctx = makeContext(1000, baseEntries);
 

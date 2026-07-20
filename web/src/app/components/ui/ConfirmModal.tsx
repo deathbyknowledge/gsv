@@ -101,7 +101,11 @@ export function ConfirmModal({
       style={{
         position: "relative",
         width: `${width}px`,
+        minWidth: 0,
         maxWidth: "100%",
+        maxHeight: "100%",
+        display: "flex",
+        flexDirection: "column",
         background: "#0e0b24",
         border: "1px solid var(--primary-hi)",
         boxShadow: "0 0 0 1px #060414,0 18px 50px rgba(0,0,0,.6)",
@@ -130,7 +134,7 @@ export function ConfirmModal({
         </button>
       </div>
 
-      <div style={{ display: "flex", gap: "16px", padding: "24px 22px 20px" }}>
+      <div style={{ display: "flex", gap: "16px", padding: "24px 22px 20px", flex: "1 1 auto", minHeight: 0, overflow: "auto" }}>
         <svg
           width="46"
           height="46"
@@ -145,7 +149,7 @@ export function ConfirmModal({
           <rect x="11.1" y="9" width="1.8" height="5.4" fill="var(--warn)" stroke="none" />
           <rect x="11.1" y="16" width="1.8" height="1.8" fill="var(--warn)" stroke="none" />
         </svg>
-        <div style={{ paddingTop: "2px", fontFamily: "'Space Grotesk',sans-serif" }}>
+        <div style={{ paddingTop: "2px", fontFamily: "'Space Grotesk',sans-serif", minWidth: 0, overflowWrap: "anywhere" }}>
           <div id={descId} class="gsv-prose" style={{ lineHeight: "1.65", color: "var(--text)" }}>{message}</div>
           <div class="gsv-prose-sm" style={{ color: "#9a95cf", marginTop: "9px", letterSpacing: ".04em" }}>{note}</div>
           {children ? <div class="gsv-cm-extra">{children}</div> : null}

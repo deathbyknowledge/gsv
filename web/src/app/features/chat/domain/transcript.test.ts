@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ChatHistory } from "./processes";
 import {
+  SYSTEM_ERROR_PREFIXES,
   addOptimisticUserMessage,
   applyChatSignal,
+  classifySystemError,
   emptyChatRuntimeState,
   transcriptRowsFromHistory,
 } from "./transcript";
@@ -777,5 +779,77 @@ describe("chat transcript rows", () => {
       expect.objectContaining({ id: "message:42", role: "user", text: "hello" }),
     ]));
     expect(state.rows.filter((row) => row.id.startsWith("optimistic:user:"))).toHaveLength(1);
+  });
+});
+
+describe("system error classification", () => {
+  it("recognizes every known gateway failure prefix", () => {
+    for (const prefix of SYSTEM_ERROR_PREFIXES) {
+      expect(classifySystemError(`${prefix} something specific`)).toBe(true);
+    }
+  });
+
+  it("recognizes real gateway messages", () => {
+    expect(classifySystemError("Generation failed: error code: 1031")).toBe(true);
+    expect(classifySystemError("Generation failed.")).toBe(true);
+    expect(classifySystemError("  Context limit reached for openai/gpt-5.")).toBe(true);
+    expect(classifySystemError(
+      "Context limit reached, but auto-compaction could not archive any older messages.",
+    )).toBe(true);
+  });
+
+  it("fail-safe: informational system messages stay neutral", () => {
+    expect(classifySystemError("Watched signal fired: deploy finished")).toBe(false);
+    expect(classifySystemError("Schedule event: nightly summary queued")).toBe(false);
+    expect(classifySystemError("IPC reply from worker-2")).toBe(false);
+    expect(classifySystemError("")).toBe(false);
+    // Error-ish wording that is not a known gateway format must NOT go red.
+    expect(classifySystemError("The user said generation failed earlier")).toBe(false);
+  });
+
+  it("marks history system rows with isError", () => {
+    const rows = transcriptRowsFromHistory(history([
+      {
+        id: 7,
+        clientId: "7",
+        role: "system",
+        runId: "run-9",
+        content: "Generation failed: error code: 1031",
+        text: "Generation failed: error code: 1031",
+        timestamp: 5,
+        origin: undefined,
+        metadata: undefined,
+      },
+      {
+        id: 8,
+        clientId: "8",
+        role: "system",
+        runId: "run-9",
+        content: "Schedule event: tick",
+        text: "Schedule event: tick",
+        timestamp: 6,
+        origin: undefined,
+        metadata: undefined,
+      },
+    ]));
+    const errorRow = rows.find((row) => row.id === "message:7");
+    const infoRow = rows.find((row) => row.id === "message:8");
+    expect(errorRow?.isError).toBe(true);
+    expect(infoRow?.isError).toBeUndefined();
+  });
+
+  it("marks live proc.changed system rows with isError", () => {
+    const seeded = applyChatSignal(emptyChatRuntimeState(), "proc.changed", {
+      pid: "pid-1",
+      conversationId: "default",
+      changes: ["messages"],
+      role: "system",
+      content: "Generation failed: error code: 1031",
+      messageId: 43,
+      timestamp: Date.now(),
+    }, { pid: "pid-1", conversationId: "default" }).state;
+    expect(seeded.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "message:43", role: "system", isError: true }),
+    ]));
   });
 });

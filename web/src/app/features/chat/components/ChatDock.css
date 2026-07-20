@@ -67,7 +67,14 @@
 }
 
 .gsv-chat-modal-wrap {
+  /* min-width: 0 keeps the grid item shrinkable below its content's
+     min-content width — otherwise the wrap overflows the centered track at
+     narrow pane widths and the dialog reads as off-centre. */
+  min-width: 0;
   max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  display: flex;
 }
 
 .gsv-chat-head {
@@ -119,7 +126,7 @@
   align-items: center;
   gap: 6px;
   color: #b6b1ff;
-  font-size: 0.625rem; /* 10px, size from .gsv-sublabel */
+  font-size: 0.75rem; /* 12px, size from .gsv-sublabel */
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -171,6 +178,56 @@
   will-change: transform;
 }
 
+/* Reduced motion: still the blinking activity caret and panel entrances
+   (the Tag pulse and composer slide guard themselves in their own files). */
+@media (prefers-reduced-motion: reduce) {
+  .gsv-chat-agent-activity i,
+  .gsv-chat-agent-panel,
+  .gsv-shell-viewport.is-mobile .gsv-chat {
+    animation: none;
+  }
+}
+
+/* Feedback line — plain-tag operation/run status in the chat body flow. */
+.gsv-chat-feedback {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 2px;
+}
+
+/* Long run titles must ellipsize in the narrow dock rather than wrap or push
+   the expand affordance out (reaches into the Tag's nested label span). The
+   ancestors get ONLY min-width:0 — overflow:hidden here would clip the status
+   dot's box-shadow glow into a square; the label span alone clips. */
+.gsv-chat-feedback > span:first-child,
+.gsv-chat-feedback > span:first-child > span {
+  min-width: 0;
+}
+
+.gsv-chat-feedback > span:first-child > span > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Quiet elapsed ticker beside the active run's label. */
+.gsv-chat-feedback-detail {
+  flex: none;
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+}
+
+.gsv-chat-feedback-action {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+}
+
 .gsv-chat-empty {
   max-width: 260px;
   display: grid;
@@ -181,7 +238,7 @@
 }
 
 .gsv-chat-empty strong {
-  /* size + family from .gsv-listitem (12px); bold weight + tracking + case kept */
+  /* size + family from .gsv-listitem (14px); bold weight + tracking + case kept */
   color: var(--text);
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -251,7 +308,7 @@
 }
 
 .gsv-chat-min small {
-  /* size + family from .gsv-label (11px); italic, weight + tracking kept */
+  /* size + family from .gsv-label (13px); italic, weight + tracking kept */
   color: var(--accent-bright);
   font-weight: 400;
   font-style: italic;
@@ -376,7 +433,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.gsv-shell-root .gsv-chat-agent-conversation:hover,
+/* Hover brightening is pointer-only — on touch the tap would otherwise leave
+   the sticky :hover color behind after the sheet closes. Focus-visible keeps
+   the bright color for keyboard users on every device. */
+@media (hover: hover) {
+  .gsv-shell-root .gsv-chat-agent-conversation:hover {
+    color: #e6e4ff;
+  }
+}
 .gsv-shell-root .gsv-chat-agent-conversation:focus-visible {
   color: #e6e4ff;
   outline: none;
@@ -395,7 +459,7 @@
   gap: 7px;
   max-width: 100%;
   margin-top: 7px;
-  /* size + family from .gsv-sublabel (10px); tracking, weight + line-height kept */
+  /* size + family from .gsv-sublabel (12px); tracking, weight + line-height kept */
   font-weight: 400;
   letter-spacing: 0.12em;
   line-height: 1.2;
@@ -421,9 +485,14 @@
   color: var(--online);
 }
 
-.gsv-shell-root .gsv-chat-agent-model:hover,
+/* Pointer-only hover — same sticky-tap rationale as the branch trigger. */
+@media (hover: hover) {
+  .gsv-shell-root .gsv-chat-agent-model:hover,
+  .gsv-shell-root .gsv-chat-agent-activity:hover {
+    color: #e6e4ff;
+  }
+}
 .gsv-shell-root .gsv-chat-agent-model:focus-visible,
-.gsv-shell-root .gsv-chat-agent-activity:hover,
 .gsv-shell-root .gsv-chat-agent-activity:focus-visible {
   color: #e6e4ff;
   outline: none;
@@ -521,7 +590,7 @@
   color: #b6b1ff;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -622,12 +691,12 @@
 }
 
 .gsv-shell-root .gsv-chat .gsv-mi-voice.is-active {
-  color: #ff8aa0;
+  color: #bdb8ff;
 }
 
 .gsv-shell-root .gsv-chat .gsv-mi-voice.is-active:hover,
 .gsv-shell-root .gsv-chat .gsv-mi-voice.is-active:focus-visible {
-  color: #ffc1cc;
+  color: var(--accent-bright);
 }
 
 .gsv-shell-root .gsv-chat .gsv-mi-send:disabled {
@@ -691,455 +760,156 @@
   color: #7d78b8;
 }
 
+/* Body container — everything under the persistent header. Positioned so the
+   popover family can anchor to exactly the body region (and, on mobile, fill it
+   as a sheet) without knowing the header's height. */
+.gsv-chat-main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Popover positioning only — the shared shell chrome (background, border,
+   shadow, entry animation, header bar, list, footer actions, context stat-grid)
+   now lives in PopoverMenu.css and the DS ListRow. Each popover's top/left is
+   set at open time by ChatDock so it anchors directly under the control that
+   opened it — coordinates are relative to .gsv-chat-main, so a negative top
+   overlaps the header band (z 72 paints above the header's z 55); widths come
+   from the PopoverMenu width preset. On mobile the sheet block below owns
+   placement instead. */
 .gsv-chat-popover {
   position: absolute;
   z-index: 72;
-  background: #0c0a22;
-  border: 1px solid var(--border-raised);
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.65);
-  color: #cdd2e0;
-  font-family: var(--gsv-font-mono);
-  animation: gsvChatPanelIn 0.14s ease;
 }
 
-.gsv-chat-popover header {
-  min-height: 39px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--header-bar);
-}
-
-.gsv-chat-popover header > span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-title);
-  font-size: 0.6875rem; /* 10.5px → size from .gsv-label (11px) */
-  letter-spacing: 0.16em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.gsv-chat-popover header small {
-  flex: none;
-  color: #7d78b8;
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-/* Popover widths only — their top/left are set at open time by ChatDockHeader so
-   each one anchors directly under the control that opened it. */
-.gsv-chat-model-popover,
-.gsv-chat-task-popover,
-.gsv-chat-conversations-popover {
-  width: min(256px, calc(100% - 28px));
-}
-
-.gsv-chat-context-popover {
-  width: min(232px, calc(100% - 24px));
-}
-
-.gsv-chat-popover-section {
-  display: grid;
-  gap: 5px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--rule-inner);
-}
-
-.gsv-chat-popover-section:last-child {
-  border-bottom: 0;
-}
-
-.gsv-chat-popover-section span,
-.gsv-chat-popover-label,
-.gsv-chat-context-grid span {
-  color: var(--text-dim);
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-}
-
-.gsv-chat-popover-section strong,
-.gsv-chat-context-grid strong,
-.gsv-chat-model-label {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--node-label);
-  font-size: 0.6875rem; /* 11px, size from .gsv-label */
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.gsv-chat-popover-label {
-  padding: 10px 14px 6px;
-  border-bottom: 1px solid var(--rule-inner);
-  background: rgba(121, 111, 255, 0.035);
-}
-
-.gsv-chat-model-options {
-  display: flex;
-  flex-direction: column;
-  border-bottom: 1px solid var(--rule-inner);
-}
-
-/* Branch list can grow unbounded — a process may accrue many conversation
-   branches — so cap it and scroll internally instead of pushing rows past the
-   dock/viewport where they'd be unreachable (the removed ChatConversationBar
-   used to cap visible branches + an overflow select). */
-.gsv-chat-conversations-popover .gsv-chat-model-options {
+/* Desktop height caps for the row lists — mobile lifts them (the sheet body
+   scrolls instead). */
+.gsv-popover-conversations .gsv-popover-list {
   max-height: min(288px, 44vh);
-  overflow-y: auto;
 }
-
-.gsv-chat-model-row {
-  min-height: 34px;
-  display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border: 0;
-  border-bottom: 1px solid var(--rule-inner);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font-family: var(--gsv-font-mono);
-  text-align: left;
-}
-
-.gsv-chat-model-row:last-child {
-  border-bottom: 0;
-}
-
-.gsv-chat-model-row.is-current {
-  background: rgba(132, 122, 255, 0.08);
-}
-
-.gsv-chat-model-row:hover,
-.gsv-chat-model-row:focus-visible,
-.gsv-chat-reasoning-options button:hover,
-.gsv-chat-reasoning-options button:focus-visible {
-  background: #171441;
-  outline: none;
-}
-
-.gsv-chat-model-row:disabled,
-.gsv-chat-reasoning-options button:disabled,
-.gsv-chat-popover-action:disabled {
-  opacity: 0.46;
-  cursor: not-allowed;
-}
-
-.gsv-chat-model-current {
-  width: 10px;
-  height: 10px;
-  position: relative;
-}
-
-.gsv-chat-model-row.is-current .gsv-chat-model-current::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 1px;
-  width: 5px;
-  height: 8px;
-  border: solid #bdb8ff;
-  border-width: 0 1px 1px 0;
-  transform: rotate(42deg);
-}
-
-.gsv-chat-model-row small {
-  flex: none;
-  color: #7d78b8;
-  font-size: 0.625rem; /* 7.5px → size from .gsv-sublabel (10px) */
-  letter-spacing: 0.12em;
-}
-
-.gsv-chat-model-label {
-  display: grid;
-  gap: 2px;
-}
-
-.gsv-chat-model-label strong,
-.gsv-chat-model-label em {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gsv-chat-model-label strong {
-  color: var(--node-label);
-  font-size: 0.6875rem; /* 11px, size from .gsv-label */
-  font-style: normal;
-  font-weight: 500;
-}
-
-.gsv-chat-model-label em {
-  color: #7d78b8;
-  font-size: 0.625rem; /* 8px → size from .gsv-sublabel (10px) */
-  font-style: normal;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.gsv-chat-model-empty {
-  min-height: 38px;
-  display: grid;
-  place-items: center;
-  color: #7d78b8;
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
-  letter-spacing: 0.14em;
-}
-
-.gsv-chat-reasoning-options {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-bottom: 1px solid var(--rule-inner);
-}
-
-.gsv-chat-reasoning-options button {
-  min-width: 0;
-  min-height: 32px;
-  border: 0;
-  border-right: 1px solid var(--rule-inner);
-  background: transparent;
-  color: #9aa4b8;
-  cursor: pointer;
-  font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
-  letter-spacing: 0.1em;
-}
-
-.gsv-chat-reasoning-options button:last-child {
-  border-right: 0;
-}
-
-.gsv-chat-reasoning-options button.is-current {
-  background: rgba(132, 122, 255, 0.08);
-  color: #e6e4ff;
-}
-
-.gsv-chat-task-list {
-  display: flex;
-  flex-direction: column;
+.gsv-popover-tasks .gsv-popover-list {
   max-height: 228px;
-  overflow-y: auto;
 }
 
-.gsv-chat-task-row {
-  min-height: 36px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 14px;
-  border-bottom: 1px solid var(--rule-inner);
-}
-
-button.gsv-chat-task-row {
-  width: 100%;
-  border: 0;
-  border-bottom: 1px solid var(--rule-inner);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font-family: var(--gsv-font-mono);
-  text-align: left;
-}
-
-button.gsv-chat-task-row:hover,
-button.gsv-chat-task-row:focus-visible {
-  background: #171441;
-  outline: none;
-}
-
-.gsv-chat-task-row.is-current {
-  background: rgba(132, 122, 255, 0.08);
-}
-
-.gsv-chat-task-row.is-current .gsv-chat-task-name,
-.gsv-chat-task-row.is-current small {
-  color: #e6e4ff;
-}
-
-.gsv-chat-task-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 0.6875rem; /* 11px, size from .gsv-label */
-  letter-spacing: 0.03em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gsv-chat-task-row small {
-  flex: none;
-  color: #9a95cf;
-  font-size: 0.625rem; /* 8px → size from .gsv-sublabel (10px) */
-  letter-spacing: 0.12em;
-}
-
-.gsv-chat-popover-action {
-  width: 100%;
-  min-height: 36px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: 0;
-  border-top: 1px solid var(--rule-inner);
-  background: transparent;
-  color: #9a94ff;
-  padding: 10px 14px;
-  cursor: pointer;
-  font-family: var(--gsv-font-mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-decoration: underline;
-}
-
-.gsv-chat-popover-action:hover,
-.gsv-chat-popover-action:focus-visible {
-  color: var(--accent-bright);
-  outline: none;
-}
-
-.gsv-chat-context-popover-meter {
-  padding: 12px 14px 4px;
-}
-
-.gsv-chat-context-heading {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.gsv-chat-context-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px 12px;
-  padding: 10px 14px 13px;
-}
-
-.gsv-chat-context-grid strong {
-  justify-self: end;
-  color: #cbc7ff;
-}
-
+/* Agent panel — in-flow body state under the persistent header: the agent's
+   tasks (search + NEW TASK + rows) with the crew pinned at the bottom as
+   vertical rows (HAM-310 / HAM-488). */
 .gsv-chat-agent-panel {
-  position: absolute;
-  inset: 0;
-  z-index: 80;
+  flex: 1;
+  min-height: 0;
   background: var(--node-bg);
   display: flex;
   flex-direction: column;
-  min-height: 0;
   overflow: hidden;
   animation: gsvChatPanelIn 0.18s ease;
 }
 
-.gsv-chat-agent-panel-card {
-  flex: none;
-}
-
-.gsv-chat-agent-panel-crew {
+.gsv-chat-agent-tasks {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.gsv-chat-agent-tasks-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+}
+
+.gsv-chat-agent-tasks-bar > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.gsv-chat-agent-tasks-list {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 
-.gsv-chat-agent-crew-list {
-  display: flex;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  border-bottom: 1px solid var(--border);
-}
-
-.gsv-chat-agent-crew-tile,
-.gsv-chat-agent-crew-add {
-  flex: 1 0 116px;
-  min-width: 116px;
-  min-height: 139px;
-  border: 0;
-  border-right: 1px solid var(--rule-inner);
-  background: transparent;
-  color: inherit;
-}
-
-.gsv-chat-agent-crew-tile {
+.gsv-chat-agent-crew {
+  flex: none;
+  max-height: 42%;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 13px 11px;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-  transition: background 120ms ease, box-shadow 120ms ease;
+  border-top: 1px solid var(--border);
 }
 
-.gsv-chat-agent-crew-tile:hover,
-.gsv-chat-agent-crew-tile:focus-visible,
-.gsv-chat-agent-crew-tile.is-active {
-  background: var(--hover);
+.gsv-chat-agent-crew-rows {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.gsv-chat-agent-panel .lr {
+  padding: 12px 14px;
+}
+
+/* Composer lock — while context compaction is pending (or has failed) the
+   composer is disabled; hovering or focusing the area reveals an interactive
+   bubble explaining why (with a "start a new task" action on failure). */
+.gsv-chat-composer-lock {
+  position: relative;
+  flex: none;
+}
+
+.gsv-chat-composer-lock-bubble {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 2px);
+  z-index: 30;
+  padding: 9px 11px;
+  background: #05040f;
+  border: 1px solid var(--border-raised);
+  color: var(--label);
+  letter-spacing: 0.08em;
+  line-height: 1.6;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+.gsv-chat-composer-lock:hover .gsv-chat-composer-lock-bubble.is-active,
+.gsv-chat-composer-lock:focus-within .gsv-chat-composer-lock-bubble.is-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .gsv-chat-composer-lock-bubble.is-active {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.gsv-chat-inline-link {
+  appearance: none;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  letter-spacing: inherit;
+  padding: 0;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+
+.gsv-chat-inline-link:hover,
+.gsv-chat-inline-link:focus-visible {
+  color: var(--accent-bright);
   outline: none;
 }
 
-.gsv-chat-agent-crew-tile.is-active {
-  box-shadow: inset 0 0 0 1.6px var(--accent-bright), 0 0 18px rgba(150, 140, 255, 0.3);
+.gsv-chat-inline-link:disabled {
+  color: var(--text-dim);
   cursor: default;
-}
-
-.gsv-chat-agent-crew-tile strong {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--text);
-  font-family: var(--gsv-font-mono);
-  font-size: 0.6875rem; /* 11px, size from .gsv-label */
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.gsv-chat-agent-crew-tile > span:last-child {
-  color: #a8a2dc;
-  font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → size from .gsv-sublabel (10px) */
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.gsv-chat-agent-crew-add {
-  justify-content: center;
-  gap: 9px;
-  min-height: 139px;
-  padding: 13px 11px;
-  font-size: 10px;
-  letter-spacing: 0.06em;
-}
-
-.gsv-chat-agent-crew-add .gsv-crew-tile-add-icon {
-  width: 30px;
-  height: 30px;
-}
-
-.gsv-chat-agent-crew-list > :last-child {
-  border-right: 0;
 }
 
 .gsv-chat-user-message {
@@ -1164,36 +934,13 @@ button.gsv-chat-task-row:focus-visible {
   text-wrap: pretty;
 }
 
-.gsv-chat-user-message-meta {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 5px;
-  /* size + family from .gsv-sublabel (10px, up from 9px); weight + tracking kept */
-  font-weight: 400;
-  letter-spacing: 0.1em;
-  color: var(--text-dim);
-}
-
-.gsv-chat-user-message-meta button {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0;
-  cursor: pointer;
-  font: inherit;
-  letter-spacing: inherit;
-}
-
-.gsv-chat-user-message-meta button:hover,
-.gsv-chat-user-message-meta button:focus-visible {
-  color: #9a94ff;
-  outline: none;
+/* Meta row is the shared MessageMeta component; hovering anywhere on the
+   bubble (not just the row) reveals its timestamp and icon actions. */
+.gsv-chat-user-message:hover .gsv-mm-time,
+.gsv-chat-user-message:focus-within .gsv-mm-time,
+.gsv-chat-user-message:hover .gsv-mm-actions,
+.gsv-chat-user-message:focus-within .gsv-mm-actions {
+  opacity: 1;
 }
 
 .gsv-chat-system-surface {
@@ -1207,11 +954,17 @@ button.gsv-chat-task-row:focus-visible {
   align-items: baseline;
   gap: 8px;
   min-width: 0;
-  font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 10px, size from .gsv-sublabel */
-  letter-spacing: 0.06em;
   line-height: 1.5;
+  /* label = .gsv-message-label (10px mono), summary = .gsv-prose (13px) */
   color: #7d78b8;
+}
+
+/* The SYSTEM eyebrow row — attention label color (same as APPROVAL REQUIRED),
+   its own line above the summary so it never truncates; the summary/detail
+   copy stays muted. */
+.gsv-chat-system-label {
+  margin-bottom: 5px;
+  color: var(--update);
 }
 
 .gsv-chat-system-line span,
@@ -1224,7 +977,6 @@ button.gsv-chat-task-row:focus-visible {
 
 .gsv-chat-system-line small {
   color: #8f89ca;
-  font-size: inherit;
   font-weight: 400;
 }
 
@@ -1235,7 +987,7 @@ button.gsv-chat-task-row:focus-visible {
   margin-top: 8px;
   color: var(--text-dim);
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.1em;
 }
 
@@ -1260,26 +1012,56 @@ button.gsv-chat-task-row:focus-visible {
   outline: none;
 }
 
-.gsv-chat-system-actions button i {
-  display: inline-block;
-  font-size: 8px;
-  font-style: normal;
-  transform-origin: center;
-  transition: transform 120ms ease;
+/* Clicking the line itself expands a system message in place (the summary is
+   replaced by the full text — shown once, no repetition). min/max-width keep
+   the ellipsis chain bounded inside the Hint's inline-flex wrapper. */
+.gsv-chat-system-toggle {
+  cursor: pointer;
+  min-width: 0;
+  max-width: 100%;
+}
+.gsv-chat-system-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Meta row is the shared MessageMeta component; hovering anywhere on the
+   surface (not just the row) reveals its timestamp and icon actions. */
+.gsv-chat-system-surface:hover .gsv-mm-time,
+.gsv-chat-system-surface:focus-within .gsv-mm-time,
+.gsv-chat-system-surface:hover .gsv-mm-actions,
+.gsv-chat-system-surface:focus-within .gsv-mm-actions {
+  opacity: 1;
 }
 
-.gsv-chat-system-actions button i[data-expanded="true"] {
-  transform: rotate(90deg);
+/* System failure rows: red feedback line collapsed, full error prose when
+   expanded. */
+.gsv-chat-system-error {
+  flex: none;
+  padding: 2px 0;
+}
+.gsv-chat-system-error-full {
+  /* size + family from .gsv-prose (13px) */
+  color: var(--error);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+  user-select: text;
+}
+.gsv-chat-system-error:hover .gsv-mm-time,
+.gsv-chat-system-error:focus-within .gsv-mm-time,
+.gsv-chat-system-error:hover .gsv-mm-actions,
+.gsv-chat-system-error:focus-within .gsv-mm-actions {
+  opacity: 1;
 }
 
 .gsv-chat-system-detail {
+  /* size + family from .gsv-prose (13px, paragraph tier) */
   margin-top: 8px;
   padding: 10px 12px;
   border: 1px solid var(--rule-inner);
   background: #0c0a22;
   color: #9089d4;
-  font-family: var(--gsv-font-mono);
-  font-size: 10.5px;
   line-height: 1.65;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1310,12 +1092,13 @@ button.gsv-chat-task-row:focus-visible {
 }
 
 /* Live transcription button uses the floating IconButton variant; this only adds
-   the green "live" active glow over that borderless base. */
+   the light-purple ACTIVE glow over that borderless base (matches the dictation
+   mic and the speech toggle's active purple). */
 .gsv-ibtn-floating.gsv-chat-live-icon.is-active {
-  color: #7df0b2;
+  color: #bdb8ff;
 }
 .gsv-ibtn-floating.gsv-chat-live-icon.is-active svg {
-  filter: drop-shadow(0 0 5px rgba(125, 240, 178, 0.5));
+  filter: drop-shadow(0 0 5px rgba(132, 122, 255, 0.5));
 }
 
 .gsv-chat-command-abort span {
@@ -1325,220 +1108,98 @@ button.gsv-chat-task-row:focus-visible {
   display: block;
 }
 
+/* Approval prompt — unboxed text in the chat body flow (HAM-487): yellow
+   label title, muted paragraph message, right-aligned toned link buttons. */
 .gsv-chat-hil {
   flex: none;
-  position: relative;
   margin: 0 14px 12px;
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg, #100e2a, var(--node-bg));
-  color: #cdd2e0;
-  padding: 0;
-  display: grid;
-  gap: 0;
-  overflow: hidden;
-}
-
-.gsv-chat-hil::before,
-.gsv-chat-hil::after {
-  content: "";
-  position: absolute;
-  width: 7px;
-  height: 7px;
-  pointer-events: none;
-}
-
-.gsv-chat-hil::before {
-  top: 4px;
-  left: 4px;
-  border-top: 1px solid var(--bracket);
-  border-left: 1px solid var(--bracket);
-}
-
-.gsv-chat-hil::after {
-  right: 4px;
-  bottom: 4px;
-  border-right: 1px solid var(--bracket);
-  border-bottom: 1px solid var(--bracket);
-}
-
-.gsv-chat-hil-head {
   min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--border);
-  background: #171436;
 }
 
 .gsv-chat-hil.is-busy {
   opacity: 0.82;
 }
 
-.gsv-chat-hil span,
-.gsv-chat-hil small {
-  color: var(--text-dim);
-  font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
-  letter-spacing: 0.12em;
+.gsv-chat-hil-title {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--update);
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
-.gsv-chat-hil-head span {
-  color: var(--update);
-}
-
-.gsv-chat-hil strong {
+.gsv-chat-hil-title strong {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-hi);
-  font-size: 12px;
+  font-weight: 500;
 }
 
-.gsv-chat-hil p {
-  margin: 0;
-  padding: 10px 14px 0;
-  color: #cdd2e0;
-  font-size: 11.5px;
-  line-height: 1.5;
+.gsv-chat-hil-body {
+  margin: 7px 0 0;
+  color: var(--text-muted);
   overflow-wrap: anywhere;
 }
 
-.gsv-chat-hil small {
+.gsv-chat-hil-meta {
   display: block;
   min-width: 0;
-  padding: 8px 14px 0;
-  color: #7d78b8;
+  margin-top: 6px;
+  color: var(--text-dim);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The Hint wrappers around the truncating labels must not shrink-wrap them —
+   the bubble is portaled, so the wrapper is layout-only here. */
+.gsv-chat-hil-title .gsv-tt {
+  min-width: 0;
+}
+.gsv-chat-hil-title .gsv-tt strong {
+  max-width: 100%;
+}
+.gsv-chat-hil > .gsv-tt {
+  display: block;
+  min-width: 0;
 }
 
 .gsv-chat-hil-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 10px 14px 12px;
+  gap: 16px;
+  margin-top: 10px;
 }
 
-.gsv-chat-hil-actions button {
-  min-height: 30px;
-  border: 1px solid var(--border);
-  background: #0a0820;
-  color: #b3aeff;
-  padding: 0 12px;
-  cursor: pointer;
-  font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
-  letter-spacing: 0.12em;
-}
-
-.gsv-chat-hil-actions button:hover,
-.gsv-chat-hil-actions button:focus-visible {
-  border-color: #b3aeff;
-  color: #e6e4ff;
-  outline: none;
-}
-
-.gsv-chat-hil-actions button:disabled {
-  opacity: 0.56;
-  cursor: wait;
-}
-
-.gsv-chat-hil-approve {
-  background: rgba(35, 49, 24, 0.72) !important;
-  color: #d7ffbd !important;
-  border-color: rgba(165, 239, 125, 0.44) !important;
-}
-
-.gsv-chat-hil-deny {
-  color: #ffb199 !important;
-  border-color: rgba(255, 177, 153, 0.44) !important;
-}
-
-.gsv-chat-control-error {
+/* Control alerts render through the DS dismissible Alert; this wrapper only
+   spaces them within the dock column. */
+.gsv-chat-control-alert {
   flex: none;
   margin: 10px 14px 0;
-  border: 1px solid rgba(255, 177, 153, 0.46);
-  background: rgba(67, 20, 24, 0.46);
-  color: #ffb199;
-  padding: 8px 10px;
-  font-size: 11px;
-  line-height: 1.4;
 }
 
-.gsv-chat-control-success {
-  flex: none;
-  margin: 10px 14px 0;
-  border: 1px solid rgba(94, 242, 160, 0.4);
-  background: rgba(18, 54, 38, 0.42);
-  color: var(--online);
-  padding: 8px 10px;
-  font-size: 11px;
-  line-height: 1.4;
-}
-
+/* Archive browser — a full-body panel like the reasoning panel (its header
+   reuses the shared .gsv-chat-rp-head/-back/-meta chrome). */
 .gsv-chat-archive {
-  flex: none;
-  max-height: 42%;
-  min-height: 168px;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--border);
   background: #090818;
 }
 
-.gsv-chat-archive > header {
-  min-height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: #111029;
-  font-family: var(--gsv-font-mono);
-}
-
-.gsv-chat-archive > header div {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.gsv-chat-archive > header span,
-.gsv-chat-archive > header button,
 .gsv-chat-archive-segments button,
 .gsv-chat-archive-empty {
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
   text-transform: uppercase;
-}
-
-.gsv-chat-archive > header span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #9aa4b8;
-}
-
-.gsv-chat-archive > header strong {
-  color: #e6e4ff;
-  font-size: 0.625rem; /* 10px, size from .gsv-sublabel */
-  font-weight: 500;
-}
-
-.gsv-chat-archive > header button {
-  flex: none;
-  border: 0;
-  background: transparent;
-  color: #9a94ff;
-  cursor: pointer;
 }
 
 .gsv-chat-archive-layout {
@@ -1637,7 +1298,8 @@ button.gsv-chat-task-row:focus-visible {
   gap: 8px;
   flex-wrap: wrap;
   color: #a8a2dc;
-  /* size + family from .gsv-sublabel (10px, up from 8.5px); weight + tracking kept */
+  /* size + family from .gsv-message-label (10px, label tier); weight +
+     tracking kept */
   font-weight: 400;
   letter-spacing: 0.12em;
 }
@@ -1657,7 +1319,7 @@ button.gsv-chat-task-row:focus-visible {
 
 .gsv-chat-message-text {
   color: #cdd2e0;
-  font-size: 13.5px;
+  font-size: 0.8125rem; /* 13px, size from .gsv-prose (paragraph tier) */
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1814,7 +1476,7 @@ button.gsv-chat-task-row:focus-visible {
   border-bottom: 1px solid var(--rule-inner);
   color: #9aa4b8;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -1864,23 +1526,40 @@ button.gsv-chat-task-row:focus-visible {
   max-width: 100%;
 }
 
-.gsv-chat-reasoning-toggle {
+/* Per-message reasoning icon — opens the full-body reasoning panel. */
+.gsv-chat-reasoning-icon {
   border: 0;
   background: transparent;
   color: inherit;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
   padding: 0;
   cursor: pointer;
   font: inherit;
-  letter-spacing: inherit;
 }
 
-.gsv-chat-reasoning-toggle:hover,
-.gsv-chat-reasoning-toggle:focus-visible {
+.gsv-chat-reasoning-icon:hover,
+.gsv-chat-reasoning-icon:focus-visible {
   color: #9a94ff;
   outline: none;
+}
+
+/* Attention-toned variant — the activity line's expand-reasoning button (kept
+   in the line's yellow per the round-1 spec). Padding widens the hit area
+   beyond the 16px glyph without moving the line's layout. */
+.gsv-chat-reasoning-icon--attention {
+  color: var(--update);
+  padding: 6px;
+  margin: -6px;
+}
+
+.gsv-chat-reasoning-icon--attention:hover,
+.gsv-chat-reasoning-icon--attention:focus-visible {
+  color: #ffe08a;
+}
+
+.gsv-chat-reasoning-icon--attention svg {
+  filter: drop-shadow(0 0 3px rgba(255, 210, 77, 0.5));
 }
 
 .gsv-chat-backup-model-badge {
@@ -1895,39 +1574,6 @@ button.gsv-chat-task-row:focus-visible {
   padding: 1px 5px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.gsv-chat-reasoning-toggle i {
-  display: inline-block;
-  font-style: normal;
-  transform: rotate(0deg);
-  transition: transform 0.12s;
-}
-
-.gsv-chat-reasoning-toggle i[data-expanded="true"] {
-  transform: rotate(90deg);
-}
-
-.gsv-chat-assistant-reasoning {
-  margin-left: 39px;
-  max-width: calc(100% - 39px);
-  border-left: 2px solid color-mix(in srgb, var(--accent) 48%, transparent);
-  padding-left: 9px;
-}
-
-.gsv-chat-assistant-reasoning pre {
-  max-height: 240px;
-  margin: 0;
-  overflow: auto;
-  border: 1px solid var(--rule-inner);
-  background: #070612;
-  color: #9aa4b8;
-  font-family: var(--gsv-font-mono);
-  font-size: 11px;
-  line-height: 1.5;
-  padding: 9px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .gsv-chat-message-thinking {
@@ -1958,7 +1604,7 @@ button.gsv-chat-task-row:focus-visible {
   background: #0c0a22;
   color: #cdd2e0;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 10px, size from .gsv-sublabel */
+  font-size: 0.75rem; /* 12px, size from .gsv-sublabel */
   letter-spacing: 0.04em;
 }
 
@@ -2085,6 +1731,10 @@ button.gsv-chat-task-row:focus-visible {
 .gsv-chat-audio-player input {
   width: 100%;
   accent-color: var(--accent-bright);
+  /* The seek slider owns its horizontal drag — without this the mobile
+     swipe-row scroller (touch-action: pan-x) hijacks scrubbing. Same pattern
+     as the DS Slider hit area. */
+  touch-action: none;
 }
 
 .gsv-chat-audio-player span {
@@ -2130,7 +1780,7 @@ button.gsv-chat-task-row:focus-visible {
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  /* size + family from .gsv-sublabel (10px, up from 9px); weight + tracking kept */
+  /* size + family from .gsv-sublabel (12px); weight + tracking kept */
   font-weight: 400;
   letter-spacing: 0.1em;
   color: var(--text-dim);
@@ -2323,7 +1973,7 @@ button.gsv-chat-task-row:focus-visible {
   flex: none;
   color: var(--online);
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.14em;
 }
 
@@ -2349,7 +1999,7 @@ button.gsv-chat-task-row:focus-visible {
   border-bottom: 1px solid var(--rule-inner);
   color: var(--text-dim);
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
@@ -2397,7 +2047,7 @@ button.gsv-chat-task-row:focus-visible {
   align-items: center;
   color: #9a94ff;
   cursor: pointer;
-  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.16em;
 }
 
@@ -2405,7 +2055,7 @@ button.gsv-chat-task-row:focus-visible {
   display: block;
   margin: 8px 0 4px;
   color: #7d78b8;
-  font-size: 0.625rem; /* 8px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.16em;
 }
 
@@ -2427,291 +2077,13 @@ button.gsv-chat-task-row:focus-visible {
   padding: 8px 14px 12px;
   color: var(--text-dim);
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → size from .gsv-sublabel (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.1em;
 }
 
-.gsv-chat-tool-group-card {
-  flex: none;
-  min-width: 0;
-  max-width: 100%;
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg, #100e2a, var(--node-bg));
-}
-
-.gsv-chat-tool-group-card.is-error {
-  border-color: rgba(255, 114, 142, 0.48);
-}
-
-.gsv-chat-tool-group-card.is-warning {
-  border-color: color-mix(in srgb, var(--warn) 52%, transparent);
-}
-
-.gsv-chat-tool-group-card.is-running {
-  border-color: rgba(154, 148, 255, 0.56);
-}
-
-.gsv-chat-tool-group-head {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 9px;
-  min-height: 48px;
-  padding: 11px 12px 11px 14px;
-  border-bottom: 1px solid var(--border);
-  background: #171436;
-}
-
-.gsv-chat-tool-group-dot {
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--online);
-  box-shadow: 0 0 8px var(--online);
-}
-
-.gsv-chat-tool-group-card.is-error .gsv-chat-tool-group-dot {
-  background: var(--error);
-  box-shadow: 0 0 8px var(--error);
-}
-
-.gsv-chat-tool-group-card.is-warning .gsv-chat-tool-group-dot {
-  background: var(--warn);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 72%, transparent);
-}
-
-.gsv-chat-tool-group-card.is-running .gsv-chat-tool-group-dot {
-  background: var(--accent-bright);
-  box-shadow: 0 0 8px rgba(179, 174, 255, 0.5);
-}
-
-.gsv-chat-tool-group-head strong {
-  /* size + family from .gsv-prose (13px); italic + semibold + tracking + line-height kept */
-  min-width: 0;
-  overflow: hidden;
-  color: var(--accent-bright);
-  font-style: italic;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gsv-chat-tool-group-head small {
-  color: var(--online);
-  font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
-  letter-spacing: 0.14em;
-}
-
-.gsv-chat-tool-group-card.is-error .gsv-chat-tool-group-head small {
-  color: var(--error);
-}
-
-.gsv-chat-tool-group-card.is-warning .gsv-chat-tool-group-head small {
-  color: var(--warn);
-}
-
-.gsv-chat-tool-group-card.is-running .gsv-chat-tool-group-head small {
-  color: var(--accent-bright);
-}
-
-.gsv-chat-tool-group-toggle {
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  background: transparent;
-  color: #9a94ff;
-  cursor: pointer;
-  font-family: var(--gsv-font-mono);
-  font-size: 14px;
-  padding: 0;
-}
-
-.gsv-chat-tool-group-toggle:hover,
-.gsv-chat-tool-group-toggle:focus-visible {
-  color: #e6e4ff;
-  outline: none;
-}
-
-.gsv-chat-tool-group-toggle i {
-  display: inline-block;
-  font-style: normal;
-  transform: rotate(0deg);
-  transition: transform 0.12s;
-}
-
-.gsv-chat-tool-group-toggle i[data-expanded="true"] {
-  transform: rotate(90deg);
-}
-
-.gsv-chat-tool-group-id {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--rule-inner);
-  color: var(--text-dim);
-  font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8.5px → size from .gsv-sublabel (10px) */
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.gsv-chat-tool-group-id span,
-.gsv-chat-tool-group-id small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gsv-chat-tool-entry-list {
-  min-width: 0;
-  display: grid;
-  gap: 1px;
-  padding: 7px 0 9px;
-}
-
-.gsv-chat-tool-entry {
-  min-width: 0;
-  max-width: 100%;
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 10px;
-  padding: 8px 14px;
-}
-
-.gsv-chat-tool-entry-status {
-  width: 9px;
-  height: 9px;
-  margin-top: 5px;
-  border-radius: 2px;
-  background: #6d698b;
-}
-
-.gsv-chat-tool-entry.is-running .gsv-chat-tool-entry-status {
-  border-radius: 50%;
-  background: var(--accent-bright);
-  box-shadow: 0 0 8px rgba(179, 174, 255, 0.52);
-}
-
-.gsv-chat-tool-entry.is-done .gsv-chat-tool-entry-status {
-  background: var(--online);
-  box-shadow: 0 0 8px rgba(125, 240, 178, 0.42);
-}
-
-.gsv-chat-tool-entry.is-error .gsv-chat-tool-entry-status {
-  border-radius: 50%;
-  background: var(--error);
-  box-shadow: 0 0 8px rgba(255, 114, 142, 0.5);
-}
-
-.gsv-chat-tool-entry.is-warning .gsv-chat-tool-entry-status {
-  border-radius: 50%;
-  background: var(--warn);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 68%, transparent);
-}
-
-.gsv-chat-tool-entry-main {
-  min-width: 0;
-  display: grid;
-  gap: 0;
-}
-
-.gsv-chat-tool-entry-main strong {
-  /* size + family from .gsv-prose (13px); semibold + line-height kept */
-  min-width: 0;
-  overflow: hidden;
-  color: #cdd2e0;
-  font-weight: 500;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gsv-chat-tool-entry.is-error .gsv-chat-tool-entry-main strong {
-  color: #ffbcc8;
-}
-
-.gsv-chat-tool-entry.is-warning .gsv-chat-tool-entry-main strong {
-  color: color-mix(in srgb, var(--warn) 82%, white);
-}
-
-.gsv-chat-tool-entry-controls {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0;
-  margin-top: 2px;
-  white-space: nowrap;
-}
-
-.gsv-chat-tool-entry-expand {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  border: 0;
-  background: transparent;
-  color: #9a94ff;
-  cursor: pointer;
-  font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 8px → .gsv-sublabel floor (10px) */
-  letter-spacing: 0.16em;
-  padding: 0;
-}
-
-.gsv-chat-tool-entry-expand:hover,
-.gsv-chat-tool-entry-expand:focus-visible {
-  color: #e6e4ff;
-  outline: none;
-}
-
-.gsv-chat-tool-entry-expand i {
-  display: inline-block;
-  font-style: normal;
-  transform: rotate(0deg);
-  transition: transform 0.12s;
-}
-
-.gsv-chat-tool-entry-expand i[data-expanded="true"] {
-  transform: rotate(90deg);
-}
-
-.gsv-chat-tool-entry-detail-body {
-  grid-column: 2 / 4;
-  min-width: 0;
-  max-width: 100%;
-  margin-top: 2px;
-  color: #9aa4b8;
-  font-family: var(--gsv-font-mono);
-  font-size: 10px;
-}
-
-.gsv-chat-tool-entry-detail-body small {
-  display: block;
-  margin: 7px 0 4px;
-  color: #7d78b8;
-  font-size: 0.625rem; /* 8px → .gsv-sublabel floor (10px) */
-  letter-spacing: 0.16em;
-}
-
-.gsv-chat-tool-detail-section:first-child small {
-  margin-top: 0;
-}
+/* (Boxed run-activity card styles removed — runs render as plain feedback
+   lines; entry details live in the reasoning panel. gsv-chat-tool-muted and
+   gsv-chat-tool-diff stay: the panel's detail sections still emit them.) */
 
 .gsv-chat-tool-muted {
   margin: 0;
@@ -2719,20 +2091,6 @@ button.gsv-chat-task-row:focus-visible {
   background: #070612;
   padding: 8px;
   color: #7d78b8;
-}
-
-.gsv-chat-tool-entry-detail-body pre {
-  max-width: 100%;
-  max-height: 180px;
-  margin: 0;
-  overflow: auto;
-  border: 1px solid var(--rule-inner);
-  background: #070612;
-  padding: 8px;
-  color: #cdd2e0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .gsv-chat-tool-diff span {
@@ -2745,47 +2103,6 @@ button.gsv-chat-task-row:focus-visible {
 
 .gsv-chat-tool-diff .is-added {
   color: #bdeed0;
-}
-
-.gsv-chat-tool-entry-details {
-  min-width: 0;
-  max-width: 100%;
-  margin-top: 5px;
-  color: #9aa4b8;
-  font-family: var(--gsv-font-mono);
-  font-size: 10px;
-}
-
-.gsv-chat-tool-entry-details summary {
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-  color: #9a94ff;
-  cursor: pointer;
-  font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
-  letter-spacing: 0.16em;
-}
-
-.gsv-chat-tool-entry-details small {
-  display: block;
-  margin: 7px 0 4px;
-  color: #7d78b8;
-  font-size: 0.625rem; /* 8px → .gsv-sublabel floor (10px) */
-  letter-spacing: 0.16em;
-}
-
-.gsv-chat-tool-entry-details pre {
-  max-width: 100%;
-  max-height: 180px;
-  margin: 0;
-  overflow: auto;
-  border: 1px solid var(--rule-inner);
-  background: #070612;
-  padding: 8px;
-  color: #cdd2e0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .gsv-chat-copy {
@@ -2827,7 +2144,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 0 12px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42);
 }
@@ -2848,7 +2165,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 0 12px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
 }
 
@@ -2888,7 +2205,7 @@ button.gsv-chat-task-row:focus-visible {
   padding: 0 11px;
   cursor: pointer;
   font-family: var(--gsv-font-mono);
-  font-size: 0.625rem; /* 9px → .gsv-sublabel floor (10px) */
+  font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   letter-spacing: 0.12em;
 }
 
@@ -2942,7 +2259,7 @@ button.gsv-chat-task-row:focus-visible {
 
   .gsv-shell-root .gsv-chat-agent-model {
     gap: 5px;
-    font-size: 0.625rem; /* 8.5px → .gsv-sublabel floor (10px) */
+    font-size: 0.75rem; /* size from .gsv-sublabel (12px) */
   }
 
   .gsv-shell-root .gsv-chat-actions .gsv-chat-context-control {
@@ -2953,14 +2270,9 @@ button.gsv-chat-task-row:focus-visible {
     display: none;
   }
 
-  .gsv-chat-hil-head,
   .gsv-chat-hil-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .gsv-chat-hil-actions button {
-    width: 100%;
+    justify-content: flex-start;
+    gap: 14px;
   }
 }
 
@@ -2983,6 +2295,169 @@ button.gsv-chat-task-row:focus-visible {
 .gsv-shell-viewport.is-mobile .gsv-chat-resize,
 .gsv-shell-viewport.is-mobile .gsv-chat-min {
   display: none;
+}
+
+/* Mobile: header popovers open as full-body sheets — the panel fills the chat
+   body (.gsv-chat-main) under the persistent header. The dock-level positioner
+   skips inline anchoring on mobile, so this block owns placement. The sheet is
+   full-bleed (no side chrome; the top border is the seam under the header),
+   lists lose their desktop height caps and scroll inside the sheet, footer
+   actions pin to the bottom edge, and rows grow to touch comfort (≥44px). */
+.gsv-shell-viewport.is-mobile .gsv-chat-popover {
+  inset: 0;
+  width: auto;
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  border-top: 1px solid var(--border-raised);
+  box-shadow: none;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-popover .gsv-popover-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-popover .gsv-tls {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* In a flex-column sheet, margin-top:auto pins the footer actions to the bottom
+   even when the body doesn't grow (e.g. the context meter + stat grid). */
+.gsv-shell-viewport.is-mobile .gsv-chat-popover .gsv-popover-actions {
+  margin-top: auto;
+}
+
+/* Touch row heights. ListRow's compact metrics are inline styles on the row
+   element, hence the !important. */
+.gsv-shell-viewport.is-mobile .gsv-chat-popover .lr {
+  min-height: 44px !important;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-popover .gsv-popover-action {
+  min-height: 44px;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-popover .gsv-tls-opt {
+  min-height: 44px;
+}
+
+/* Mobile header: [avatar | rows | cluster+context], two views behind the ⋮/←
+   toggle. Every control meets the 44px touch floor; min/max are not rendered
+   on mobile (the shell's swipe/edge affordances close the drawer). */
+.gsv-shell-viewport.is-mobile .gsv-chat-head {
+  align-items: center;
+  min-height: 0;
+  padding: 10px;
+  gap: 10px;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-agent {
+  flex: 1;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-agent-main {
+  flex: none;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-m-rows {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-m-rows > * {
+  width: 100%;
+  min-height: 44px;
+  /* the OS tap flash reads as a stray highlight on these bare text rows */
+  -webkit-tap-highlight-color: transparent;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-actions {
+  flex: none;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-m-cluster {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Cluster buttons (start/abort + the ⋮/← toggle) — scoped tight so the
+   context cell below keeps its own sizing. Chrome (border/bg/color) comes
+   from the shared `.gsv-chat-actions button` rule. */
+.gsv-shell-viewport.is-mobile .gsv-chat-m-cluster button {
+  width: 44px;
+  height: 44px;
+}
+
+/* Context → compact %-only cell under the cluster (out-specifies the desktop
+   width:0/min-width:100% stretch); stretches to the cluster's width. */
+.gsv-shell-viewport.is-mobile .gsv-chat-actions .gsv-chat-context-control {
+  width: auto;
+  min-width: 0;
+  min-height: 44px;
+  align-self: stretch;
+  justify-content: center;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-actions .gsv-chat-context-control .gsv-pr {
+  display: none;
+}
+
+/* Speech mode row (the "more" view) — labeled twin of the desktop speaker
+   toggle; speechStatus text ellipsizes (it can carry long failure strings). */
+.gsv-shell-viewport.is-mobile .gsv-chat-agent-speech {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: #b6b1ff;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-agent-speech span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-agent-speech svg {
+  flex: none;
+}
+
+.gsv-shell-viewport.is-mobile .gsv-chat-agent-speech.is-active {
+  color: var(--online);
+}
+
+/* The header's height is content-driven on mobile — decouple the scrim from
+   the desktop 112px magic number (header z55 out-paints scrim z50, and the
+   full-body sheet covers the body anyway). */
+.gsv-shell-viewport.is-mobile .gsv-chat-popover-scrim {
+  inset: 0;
+}
+
+/* Only the per-row swipe scrollers own the horizontal axis on mobile — a rail
+   over-swipe must not pan the whole transcript sideways. */
+.gsv-shell-viewport.is-mobile .gsv-chat-transcript {
+  overflow-x: hidden;
 }
 
 @keyframes gsvMobileChatIn {

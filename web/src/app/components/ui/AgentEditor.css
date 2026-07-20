@@ -129,7 +129,7 @@
 }
 
 .gsv-ae-readonly-note {
-  /* size from .gsv-sublabel (10px) */
+  /* size from .gsv-sublabel (12px) */
   color: var(--text-dim);
   letter-spacing: 0.14em;
 }

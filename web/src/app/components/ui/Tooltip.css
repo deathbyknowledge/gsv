@@ -11,7 +11,7 @@
   font: inherit;
   color: inherit;
   cursor: default;
-  font-size: 0.6875rem; /* 11px — value from .gsv-label (kept inline so the bare-trigger inherit override still wins) */
+  font-size: 0.8125rem; /* 13px — value from .gsv-label (kept inline so the bare-trigger inherit override still wins) */
   letter-spacing: 0.06em;
   color: #b3aeff;
   border-bottom: 1px dashed #6b62c4;
@@ -31,6 +31,17 @@
   border-bottom: 0;
   max-width: 100%;
 }
+/* The always-mounted accessible description (aria-describedby target) —
+   visually hidden; the portaled bubble is the purely visual twin. */
+.gsv-tt-desc {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* Hint wrapper — passthrough around an existing control so the bubble anchors to
    it without disturbing the control's own box (it stays the trigger). */
 .gsv-hint {
@@ -48,7 +59,7 @@
   background: var(--accent);
   border: 1px solid var(--accent-bright);
   color: var(--void);
-  /* size + family from .gsv-sublabel (10px); line-height + tracking kept */
+  /* size + family from .gsv-sublabel (12px); line-height + tracking kept */
   letter-spacing: 0.06em;
   line-height: 1.55;
   padding: 7px 10px;
@@ -62,6 +73,56 @@
 .gsv-tt:hover .gsv-tt-bub,
 .gsv-tt:has(:focus-visible) .gsv-tt-bub {
   opacity: 1;
+}
+/* Portaled bubble (Tooltip / Hint) — rendered into <body> so no ancestor
+   `overflow` / `transform` / `z-index` can clip it (fixes the chat-header
+   clipping). Positioned in JS via inline `left`/`top`, so the absolute
+   per-position bubble rules below don't apply (the position class rides on the
+   bubble element itself, not an ancestor, so `.gsv-tt-top .gsv-tt-bub` no longer
+   matches) — but the per-position *arrow* rules still do, since the arrow is a
+   descendant of the bubble. Reveal is JS-driven via `.is-open` because the CSS
+   ancestor-`:hover` selectors above can't reach a portaled node. z-index 75 sits
+   above in-dock popovers (72) and below the modal layer (80). InfoTip keeps the
+   in-DOM absolutely-positioned bubble (base rules above), so it is untouched. */
+.gsv-tt-bub.gsv-tt-portal {
+  position: fixed;
+  z-index: 75;
+}
+.gsv-tt-bub.gsv-tt-portal.is-open {
+  opacity: 1;
+}
+/* Portaled bubble arrow — driven entirely by the resolved-side class + the
+   inline `--gsv-tt-arrow-offset` (px along the shared edge, set from placement).
+   Scoped to `.gsv-tt-portal` so InfoTip's static, wrapper-anchored arrows above
+   are untouched. The side class is the post-flip side, so the arrow always sits
+   on the edge nearest the trigger and points at it. */
+.gsv-tt-portal.gsv-tt-side-top .gsv-tt-arrow {
+  bottom: -4px;
+  left: var(--gsv-tt-arrow-offset);
+  margin-left: -3.5px;
+  border-top: none;
+  border-left: none;
+}
+.gsv-tt-portal.gsv-tt-side-bottom .gsv-tt-arrow {
+  top: -4px;
+  left: var(--gsv-tt-arrow-offset);
+  margin-left: -3.5px;
+  border-bottom: none;
+  border-right: none;
+}
+.gsv-tt-portal.gsv-tt-side-left .gsv-tt-arrow {
+  right: -4px;
+  top: var(--gsv-tt-arrow-offset);
+  margin-top: -3.5px;
+  border-bottom: none;
+  border-left: none;
+}
+.gsv-tt-portal.gsv-tt-side-right .gsv-tt-arrow {
+  left: -4px;
+  top: var(--gsv-tt-arrow-offset);
+  margin-top: -3.5px;
+  border-top: none;
+  border-right: none;
 }
 .gsv-tt-arrow {
   position: absolute;

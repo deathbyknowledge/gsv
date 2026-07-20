@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ProcContextState, ProcMediaInput, ProcUsageState } from "@humansandmachines/gsv/protocol";
 import { AgentImage } from "../../../components/ui/AgentImage";
+import { Alert } from "../../../components/ui/Alert";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { Counter } from "../../../components/ui/Counter";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
 import type { StatusTone } from "../../../components/ui/StatusDot";
-import { Hint } from "../../../components/ui/Tooltip";
+import { Hint, closeAllTooltips } from "../../../components/ui/Tooltip";
 import type { JSX } from "preact";
 import {
   buildChatAgentViewModel,
@@ -26,7 +27,6 @@ import {
   type ChatHilDecision,
   type ChatMediaUpload,
   type ChatProcessSummary,
-  type ChatRunState,
 } from "../domain/processes";
 import {
   useAbortChatProcess,
@@ -45,11 +45,13 @@ import {
   useChatRuntime,
   useDraggableMinimizedChat,
 } from "../hooks";
-import { ActiveAgentPanel } from "./ActiveAgentPanel";
+import { useChatFeedback } from "../hooks/useChatFeedback";
+import { ChatAgentPanel } from "./ChatAgentPanel";
 import { ChatApprovalBanner } from "./ChatApprovalBanner";
 import { ChatArchivePanel } from "./ChatArchivePanel";
+import { ChatReasoningPanel, type ChatReasoningTarget } from "./ChatReasoningPanel";
 import { ChatDockHeader } from "./ChatDockHeader";
-import type { ChatPopoverId } from "./ChatDockPopovers";
+import { ChatDockPopovers, type ChatPopoverId } from "./ChatDockPopovers";
 import { ChatTranscript, type ChatDockMessage } from "./ChatTranscript";
 import { formatCount, formatCurrencyCost, shortId } from "./chatUiFormat";
 import "./ChatDock.css";
@@ -62,9 +64,16 @@ export type StartedChatProcess = {
   pid: string;
 };
 
+/** What fills the dock below the (always-present) header: the chat itself, the
+ *  agent tasks panel, the full-body reasoning panel, or the archive browser. */
+type ChatBodyState = "chat" | "agent" | "reasoning" | "archive";
+
 type ChatDockProps = {
   open: boolean;
   width: number;
+  /** Shell mobile layout (root ≤760px): the dock is a full-screen drawer and
+   *  header popovers open as full-body sheets instead of anchored floaters. */
+  mobileLayout?: boolean;
   activeConversationId?: string | null;
   dragging?: boolean;
   atMax?: boolean;
@@ -88,10 +97,6 @@ type ChatDockProps = {
    *  whatever was last selected. */
   newTaskSignal?: number;
 };
-
-function formatRunStateLabel(runState: ChatRunState | string | undefined): string {
-  return runState ? runState.replaceAll("_", " ") : "idle";
-}
 
 function agentStatusTone(status: ChatAgentStatus | undefined): StatusTone | null {
   if (status === "error" || status === "idle" || status === "live" || status === "online") {
@@ -212,6 +217,7 @@ function fileToDraftAttachment(file: File): DraftAttachment {
 export function ChatDock({
   open,
   width,
+  mobileLayout = false,
   activeConversationId = null,
   dragging = false,
   atMax = false,
@@ -232,10 +238,12 @@ export function ChatDock({
   onSelectAgent,
   newTaskSignal = 0,
 }: ChatDockProps) {
-  const [agentPanelOpen, setAgentPanelOpen] = useState(false);
+  const [bodyState, setBodyState] = useState<ChatBodyState>("chat");
+  const [reasoningTarget, setReasoningTarget] = useState<ChatReasoningTarget | null>(null);
+  const asideRef = useRef<HTMLElement | null>(null);
+  const mainRef = useRef<HTMLDivElement | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<DraftAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
-  const [archiveOpen, setArchiveOpen] = useState(false);
   const [selectedArchiveSegmentId, setSelectedArchiveSegmentId] = useState("");
   const [openPopover, setOpenPopover] = useState<ChatPopoverId | null>(null);
   const [contextConfirmOpen, setContextConfirmOpen] = useState(false);
@@ -245,6 +253,8 @@ export function ChatDock({
   const [branchNotice, setBranchNotice] = useState("");
   const minimizedChat = useDraggableMinimizedChat({ open, onActivate: onToggleOpen });
   const [stoppingRun, setStoppingRun] = useState<StoppingRun | null>(null);
+  /** Snapshot of the last dismissed control error — a new distinct error re-shows. */
+  const [dismissedError, setDismissedError] = useState("");
   const activeProcessId = agent?.processId?.trim() ?? "";
   const startRunAs = agent?.runAs?.trim() ?? "";
   const hasActiveProcess = activeProcessId.length > 0;
@@ -270,6 +280,7 @@ export function ChatDock({
     args: hasActiveProcess ? { pid: activeProcessId } : {},
   });
   const { history: processHistory, runtime } = chatRuntime;
+  const feedback = useChatFeedback();
   const pendingHil = runtime.pendingHil;
   const currentRunId = runtime.activeRunId ?? pendingHil?.runId ?? null;
   const currentRunActive = Boolean(currentRunId)
@@ -281,6 +292,18 @@ export function ChatDock({
     && currentRunActive
     && (stoppingRun.runId === null || stoppingRun.runId === currentRunId),
   );
+  // The conversation the dock is showing. The raw `activeConversationId` prop
+  // is RUN-scoped (the gateway's `ln` is `activeRun?.conversationId ?? null`),
+  // so it flips to null whenever a run ends — never key user-facing resets on
+  // it directly, or they fire on every stop/completion.
+  const selectedConversationId = activeConversationId ?? runtime.conversationId ?? "default";
+  // Live mirror of the displayed process/conversation for async mutation
+  // callbacks (abort/compact): resolve() upserts, so a completion that lands
+  // after the user switched away would otherwise inject its status line into
+  // whichever transcript is now on screen. Reassigned (not mutated) each
+  // render so a captured snapshot stays a stable point-in-time identity.
+  const displayedTargetRef = useRef({ pid: activeProcessId, conversationId: selectedConversationId });
+  displayedTargetRef.current = { pid: activeProcessId, conversationId: selectedConversationId };
   const liveActivity = useMemo(
     () => deriveChatLiveActivity(runtime, stoppingCurrentRun),
     [runtime, stoppingCurrentRun],
@@ -295,7 +318,7 @@ export function ChatDock({
 
   useEffect(() => {
     if (!open) {
-      setAgentPanelOpen(false);
+      setBodyState("chat");
       setOpenPopover(null);
     }
   }, [open]);
@@ -314,22 +337,69 @@ export function ChatDock({
   }, [activeProcessId, currentRunActive, currentRunId, stoppingRun]);
 
   useEffect(() => {
-    if (agentPanelOpen) {
+    if (bodyState !== "chat") {
       setOpenPopover(null);
     }
-  }, [agentPanelOpen]);
+  }, [bodyState]);
+
+  // A blocking approval must never hide behind a panel — yank back to chat.
+  useEffect(() => {
+    if (pendingHil) {
+      setBodyState("chat");
+    }
+  }, [pendingHil]);
+
+  // Esc closes whichever panel is open and hands focus back to the header
+  // avatar button (the panel toggle).
+  useEffect(() => {
+    if (bodyState === "chat") {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.stopPropagation();
+      setBodyState("chat");
+      setReasoningTarget(null);
+      asideRef.current?.querySelector<HTMLButtonElement>(".gsv-chat-agent-main")?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [bodyState]);
 
   useEffect(() => {
     setDraftAttachments([]);
     setAttachmentError("");
-    setArchiveOpen(false);
     setSelectedArchiveSegmentId("");
     setBranchNotice("");
-  }, [activeProcessId]);
+    setDismissedError("");
+    feedback.reset();
+    // The voice status line survives a process switch (the mic keeps recording
+    // into the new composer), but feedback.reset() just dropped its entry.
+    // Re-sync both mirrors — the voice effect keys on the process id too, so
+    // it immediately re-creates an active "Listening…"/"Transcribing…" line
+    // and re-resolves a standing recorder error for the new process.
+    voiceFeedbackLabel.current = null;
+    voiceErrorNoted.current = 0;
+    setBodyState("chat");
+    compactConversation.reset();
+  }, [activeProcessId, compactConversation.reset, feedback.reset]);
 
   useEffect(() => {
     setSelectedArchiveSegmentId("");
-  }, [activeProcessId, activeConversationId]);
+    setBodyState("chat");
+    // Compaction state and its status lines are conversation-bound: a failed
+    // compact on one conversation must not lock a sibling's composer, and a
+    // pending "Freeing context" line must not resolve onto another transcript.
+    // The recorder-bound "voice" line is deliberately left alone. Keyed on the
+    // DISPLAYED conversation, not the run-scoped prop — keying on the prop
+    // fired this on every run stop/completion and wiped the abort line
+    // between begin() and resolve().
+    compactConversation.reset();
+    feedback.clear("compact");
+    feedback.clear("abort");
+  }, [activeProcessId, selectedConversationId, compactConversation.reset, feedback.clear]);
 
   // Auto-dismiss the branch success notice after a few seconds.
   useEffect(() => {
@@ -349,13 +419,11 @@ export function ChatDock({
   }), [effectiveAgent, title, effectiveStatus, effectiveStatusLabel, contextLabel]);
   const transcriptMessages = runtime.rows;
   const runState = runtime.runState ?? (effectiveStatusLabel === "loading" ? undefined : effectiveStatusLabel);
-  const runStateLabel = liveActivity?.runStateLabel ?? formatRunStateLabel(runState);
   const canAbortRun = hasActiveProcess
     && !abortProcess.isPending
     && !stoppingCurrentRun
     && (Boolean(runtime.activeRunId) || Boolean(pendingHil) || runState === "running" || runState === "awaiting_hil");
   const context = runtime.context;
-  const selectedConversationId = activeConversationId ?? runtime.conversationId ?? "default";
   const replySpeech = useChatReplySpeech({
     conversationId: selectedConversationId,
     hydrated: !processHistory.isLoading,
@@ -407,7 +475,11 @@ export function ChatDock({
   const emptyDescription = hasActiveProcess
     ? "This process has not written user, assistant, system, or tool result messages yet."
     : "Start an interactive process to begin a native chat session.";
-  const inputDisabled = !hasActiveProcess && !canStartProcess && !processLookupLoading;
+  const compactPending = compactConversation.isPending;
+  const compactFailed = compactConversation.isError;
+  const composerLocked = hasActiveProcess && (compactPending || compactFailed);
+  const inputDisabled = (!hasActiveProcess && !canStartProcess && !processLookupLoading) || composerLocked;
+  const archiveOpen = bodyState === "archive";
   const sendChatDraft = useCallback(async (
     message: string,
     media: ChatMediaUpload[] = [],
@@ -501,7 +573,58 @@ export function ChatDock({
   const voiceTitle = ambientTranscription.liveActive
     ? ambientTranscription.liveTitle
     : ambientTranscription.dictationTitle;
-  const voiceError = ambientTranscription.error;
+  // Voice status feedback lines — transient "Listening…" / "Transcribing…" in
+  // the chat body while conversation mode or dictation is active (HAM-473).
+  const voiceFeedbackLabel = useRef<string | null>(null);
+  const voiceErrorNoted = useRef(0);
+  useEffect(() => {
+    const state = ambientTranscription.state;
+    const voiceOn = ambientTranscription.liveActive || ambientTranscription.dictationActive;
+    // A failure (dictation OR conversation mode) stays in the chat as a
+    // persistent red line until the next sent message — the chat is the only
+    // failure surface; the mic tooltip keeps its plain action label. Keyed on
+    // the failure NONCE, not the error state: consecutive failures keep the
+    // same state/note (error → error), which a boolean guard swallowed.
+    if (state === "error") {
+      if (voiceErrorNoted.current !== ambientTranscription.errorNonce) {
+        voiceErrorNoted.current = ambientTranscription.errorNonce;
+        voiceFeedbackLabel.current = null;
+        feedback.resolve("voice", "error", ambientTranscription.note || "Voice input failed", { persist: true });
+      }
+      return;
+    }
+    const label = !voiceOn
+      ? null
+      : state === "recording" || state === "listening" || state === "capturing"
+        ? "Listening…"
+        : state === "transcribing" || state === "sending"
+          ? "Transcribing…"
+          : null;
+    if (!label) {
+      if (voiceFeedbackLabel.current !== null) {
+        voiceFeedbackLabel.current = null;
+        feedback.clear("voice");
+      }
+      return;
+    }
+    if (voiceFeedbackLabel.current === null) {
+      feedback.begin("voice", label, { persist: false });
+    } else if (voiceFeedbackLabel.current !== label) {
+      feedback.update("voice", label);
+    }
+    voiceFeedbackLabel.current = label;
+  }, [
+    activeProcessId,
+    ambientTranscription.state,
+    ambientTranscription.note,
+    ambientTranscription.errorNonce,
+    ambientTranscription.liveActive,
+    ambientTranscription.dictationActive,
+    feedback.begin,
+    feedback.clear,
+    feedback.resolve,
+    feedback.update,
+  ]);
   const handleVoiceClick = useCallback(() => {
     if (ambientTranscription.liveActive) {
       ambientTranscription.toggleLive();
@@ -509,24 +632,28 @@ export function ChatDock({
     }
     ambientTranscription.toggleDictation();
   }, [ambientTranscription]);
+  // Stop + compaction failures surface as feedback lines in the transcript
+  // (HAM-366/434), so they are deliberately absent from this chain.
   const controlError = spawnProcess.isError
     ? errorMessage(spawnProcess.error, "Process could not be started.")
-    : abortProcess.isError
-      ? errorMessage(abortProcess.error, "Run could not be aborted.")
-      : sendMessage.isError
-        ? errorMessage(sendMessage.error, "Message could not be sent.")
-        : hilDecision.isError
-          ? errorMessage(hilDecision.error, "Tool approval could not be applied.")
-          : compactConversation.isError
-            ? errorMessage(compactConversation.error, "Conversation could not be compacted.")
-            : forkConversation.isError
-              ? errorMessage(forkConversation.error, "Conversation could not be branched.")
-              : setProcessAiConfig.isError
-                ? errorMessage(setProcessAiConfig.error, "Process model settings could not be updated.")
-                : attachmentError || voiceError;
+    : sendMessage.isError
+      ? errorMessage(sendMessage.error, "Message could not be sent.")
+      : hilDecision.isError
+        ? errorMessage(hilDecision.error, "Tool approval could not be applied.")
+        : forkConversation.isError
+          ? errorMessage(forkConversation.error, "Conversation could not be branched.")
+          : setProcessAiConfig.isError
+            ? errorMessage(setProcessAiConfig.error, "Process model settings could not be updated.")
+            : attachmentError;
+  // Re-arm the dismissed-error snapshot once the failing state clears, so a
+  // later failure with the identical message still surfaces.
+  useEffect(() => {
+    if (!controlError) {
+      setDismissedError("");
+    }
+  }, [controlError]);
   const taskCount = activeAgent.tasksTotal > 0 ? activeAgent.tasksTotal : activeAgent.tasks.length;
   const contextLevel = context?.level ? context.level.toUpperCase() : contextPercent === null ? "UNKNOWN" : "ESTIMATED";
-  const contextModel = context ? [context.provider, context.model].filter(Boolean).join(" · ") : activeAgent.modelLabel;
   const processModel = processAiConfig.data?.values["config/ai/model"]?.trim() ?? "";
   const currentModelLabel = processModel || activeAgent.modelLabel;
   const processReasoning = processAiConfig.data?.values["config/ai/reasoning"]?.trim() ?? "";
@@ -570,16 +697,30 @@ export function ChatDock({
     const runId = runtime.activeRunId ?? pendingHil?.runId;
     const requestedStop = { pid: activeProcessId, runId: runId ?? null };
     setStoppingRun(requestedStop);
+    const target = displayedTargetRef.current;
+    const stillDisplayed = () => displayedTargetRef.current.pid === target.pid
+      && displayedTargetRef.current.conversationId === target.conversationId;
+    feedback.begin("abort", "Stopping task");
     abortProcess.mutate({
       pid: activeProcessId,
       ...(runId ? { runId } : {}),
     }, {
+      onSuccess: () => {
+        // A switch mid-flight already cleared the line; resolving would
+        // upsert it into the newly displayed transcript.
+        if (stillDisplayed()) {
+          feedback.resolve("abort", "attention", "Task interrupted");
+        }
+      },
       onError: () => {
         setStoppingRun((current) => (
           current?.pid === requestedStop.pid && current.runId === requestedStop.runId
             ? null
             : current
         ));
+        if (stillDisplayed()) {
+          feedback.resolve("abort", "error", "Error trying to stop task");
+        }
       },
     });
   };
@@ -603,6 +744,9 @@ export function ChatDock({
     const selected = Array.from(files);
     const accepted = selected.filter((file) => file.size <= MAX_CHAT_PROCESS_MEDIA_BYTES);
     setAttachmentError(accepted.length === selected.length ? "" : "Chat attachments cannot exceed 25 MiB.");
+    if (accepted.length !== selected.length) {
+      setDismissedError("");
+    }
     setDraftAttachments((current) => current.concat(accepted.map(fileToDraftAttachment)));
   };
 
@@ -640,6 +784,15 @@ export function ChatDock({
       }
       return;
     }
+    // Resolved stop/compact/voice status lines describe the previous
+    // operation; once the conversation moves on they'd sit below newer
+    // messages, so drop them. In-flight lines stay (their outcome still
+    // matters), including a live "Listening…" line.
+    for (const entry of feedback.entries) {
+      if ((entry.key === "compact" || entry.key === "abort" || entry.key === "voice") && entry.status !== "running") {
+        feedback.clear(entry.key);
+      }
+    }
   };
 
   const branchFromMessage = (messageId: number) => {
@@ -666,8 +819,9 @@ export function ChatDock({
       return;
     }
     setOpenPopover(null);
-    setArchiveOpen(false);
+    setBodyState("chat");
     setSelectedArchiveSegmentId("");
+    compactConversation.reset();
     spawnProcess.mutate({
       fresh: true,
       interactive: true,
@@ -708,6 +862,10 @@ export function ChatDock({
     }
     const normalizedKeepLast = Math.max(1, Math.min(compactKeepMax, Math.floor(keepLast)));
     setContextConfirmOpen(false);
+    const target = displayedTargetRef.current;
+    const stillDisplayed = () => displayedTargetRef.current.pid === target.pid
+      && displayedTargetRef.current.conversationId === target.conversationId;
+    feedback.begin("compact", "Freeing context");
     compactConversation.mutate({
       pid: activeProcessId,
       conversationId: selectedConversationId,
@@ -715,8 +873,21 @@ export function ChatDock({
       generateSummary: true,
     }, {
       onSuccess: (result) => {
-        setArchiveOpen(true);
+        // A switch mid-flight cleared the running line (compaction state is
+        // conversation-bound) — the archive preselect and resolve() upsert
+        // must not land on the newly displayed transcript.
+        if (!stillDisplayed()) {
+          return;
+        }
+        // Stay in chat — the feedback line is the whole signal. Preselect the
+        // fresh segment so a manual archive open lands on it.
         setSelectedArchiveSegmentId(result.segment.id);
+        feedback.resolve("compact", "success", "Context freed");
+      },
+      onError: () => {
+        if (stillDisplayed()) {
+          feedback.resolve("compact", "error", "Context freeing failed");
+        }
       },
     });
   };
@@ -743,25 +914,28 @@ export function ChatDock({
     });
   };
 
-  const clearProcessAiConfig = () => {
-    if (!hasActiveProcess || setProcessAiConfig.isPending) {
-      return;
+  const toggleAgentPanel = () => {
+    setBodyState((current) => current === "agent" ? "chat" : "agent");
+  };
+
+  const returnToChat = (opts?: { restoreFocus?: boolean }) => {
+    setBodyState("chat");
+    setReasoningTarget(null);
+    if (opts?.restoreFocus) {
+      asideRef.current?.querySelector<HTMLButtonElement>(".gsv-chat-agent-main")?.focus();
     }
-    setProcessAiConfig.mutate({
-      pid: activeProcessId,
-      clear: true,
-    });
   };
 
-  const openAgentPanel = () => {
-    setAgentPanelOpen(true);
-  };
-
-  const closeAgentPanel = () => {
-    setAgentPanelOpen(false);
+  const openReasoning = (target: ChatReasoningTarget) => {
+    setReasoningTarget(target);
+    setBodyState("reasoning");
   };
 
   const togglePopover = (popover: ChatPopoverId) => {
+    // A tooltip must never sit on top of an opened popover — covers keyboard
+    // and programmatic opens (mouse opens are handled by the tooltip's own
+    // pointerdown dismissal).
+    closeAllTooltips();
     setOpenPopover((current) => current === popover ? null : popover);
   };
 
@@ -790,6 +964,48 @@ export function ChatDock({
     }
     setOpenPopover(null);
   };
+
+  // Anchor the open popover directly under the header control that opened it —
+  // left edge aligned with the trigger, dropping just below it, clamped to stay
+  // in-bounds. The popover lives in the body container (.gsv-chat-main), so
+  // coordinates are relative to the body's top edge (a negative top overlaps
+  // the header band, painting above it — same look as the old in-header
+  // anchoring). On mobile the popover is a full-body sheet: CSS owns placement
+  // and any inline anchor left over from a desktop layout is cleared.
+  useLayoutEffect(() => {
+    const positionPopover = () => {
+      const aside = asideRef.current;
+      const main = mainRef.current;
+      if (!aside || !main || !openPopover) {
+        return;
+      }
+      const popover = main.querySelector<HTMLElement>(".gsv-chat-popover");
+      if (!popover) {
+        return;
+      }
+      if (mobileLayout) {
+        popover.style.left = "";
+        popover.style.right = "";
+        popover.style.top = "";
+        return;
+      }
+      const trigger = aside.querySelector<HTMLElement>(`[data-chat-popover-trigger="${openPopover}"]`);
+      if (!trigger) {
+        return;
+      }
+      const mainRect = main.getBoundingClientRect();
+      const triggerRect = trigger.getBoundingClientRect();
+      const margin = 12;
+      const maxLeft = Math.max(margin, mainRect.width - popover.offsetWidth - margin);
+      const left = Math.min(Math.max(triggerRect.left - mainRect.left, margin), maxLeft);
+      popover.style.left = `${left}px`;
+      popover.style.right = "auto";
+      popover.style.top = `${triggerRect.bottom - mainRect.top + 6}px`;
+    };
+    positionPopover();
+    window.addEventListener("resize", positionPopover);
+    return () => window.removeEventListener("resize", positionPopover);
+  }, [openPopover, mobileLayout, conversations.data, selectedConversationId, currentModelLabel, currentReasoningLabel]);
 
   if (!open) {
     return (
@@ -823,20 +1039,13 @@ export function ChatDock({
 
   return (
     <aside
+      ref={asideRef}
       class={`gsv-chat${dragging ? " is-dragging" : ""}`}
       aria-label="Chat"
       style={{ width: `${width}px` }}
       onClickCapture={closePopoverFromOutsideClick}
     >
       <div class="gsv-chat-resize" onMouseDown={onResizeStart} title="Resize chat" />
-      {agentPanelOpen ? (
-        <ActiveAgentPanel
-          agent={activeAgent}
-          onClose={closeAgentPanel}
-          onOpenCrew={onOpenCrew}
-          onSelectAgent={onSelectAgent}
-        />
-      ) : null}
       {contextConfirmOpen ? (
         <div class="gsv-chat-modal-layer" onClick={() => setContextConfirmOpen(false)}>
           <div class="gsv-chat-modal-wrap" onClick={(event) => event.stopPropagation()}>
@@ -845,7 +1054,6 @@ export function ChatDock({
               message={`Archive older messages, generate a summary, and keep the latest ${compactKeepLastDraft} messages active.`}
               note="Older messages remain available in the archive after compaction."
               confirmLabel="FREE CONTEXT"
-              width={470}
               onCancel={() => setContextConfirmOpen(false)}
               onConfirm={() => freeContext(compactKeepLastDraft)}
             >
@@ -866,11 +1074,38 @@ export function ChatDock({
       {openPopover ? <button type="button" class="gsv-chat-popover-scrim" aria-label="Close chat menu" onClick={() => setOpenPopover(null)} /> : null}
       <ChatDockHeader
         activeAgent={activeAgent}
-        activeProcessId={activeProcessId}
-        agentPanelOpen={agentPanelOpen}
-        archiveOpen={archiveOpen}
+        agentPanelOpen={bodyState === "agent"}
         atMax={atMax}
         canAbortRun={canAbortRun}
+        conversations={conversations.data ?? []}
+        activeConversationId={selectedConversationId}
+        contextTone={contextTone}
+        contextPercent={contextPercent}
+        contextTitle={contextTitle}
+        effectiveStatus={effectiveStatus}
+        hasActiveProcess={hasActiveProcess}
+        mobileLayout={mobileLayout}
+        modelLabel={currentModelLabel}
+        openPopover={openPopover}
+        reasoningLabel={currentReasoningLabel}
+        spawnPending={spawnProcess.isPending}
+        speakReplies={replySpeech.speakReplies}
+        speechStatus={replySpeech.speechStatus}
+        onAbortRun={abortActiveRun}
+        onOpenAgentPanel={toggleAgentPanel}
+        onStartProcess={startProcess}
+        onToggleSpeakReplies={() => replySpeech.setSpeakReplies(!replySpeech.speakReplies)}
+        onToggleMax={onToggleMax}
+        onToggleOpen={onToggleOpen}
+        onTogglePopover={togglePopover}
+      />
+
+      <div class="gsv-chat-main" ref={mainRef}>
+
+      <ChatDockPopovers
+        activeAgent={activeAgent}
+        activeProcessId={activeProcessId}
+        archiveOpen={archiveOpen}
         canFreeContext={canFreeContext}
         compactKeepLast={compactKeepLast}
         compactPending={compactConversation.isPending}
@@ -881,38 +1116,27 @@ export function ChatDock({
         }}
         onToggleArchive={() => {
           setOpenPopover(null);
-          setArchiveOpen((value) => !value);
+          setBodyState((current) => current === "archive" ? "chat" : "archive");
         }}
         conversations={conversations.data ?? []}
         activeConversationId={selectedConversationId}
         onSelectConversation={(conversationId) => {
           setOpenPopover(null);
-          setArchiveOpen(false);
+          setBodyState("chat");
           onSelectConversation?.(conversationId);
         }}
         context={context}
         contextLevel={contextLevel}
-        contextTone={contextTone}
-        contextModel={contextModel}
         contextPercent={contextPercent}
-        contextTitle={contextTitle}
-        effectiveStatus={effectiveStatus}
         hasActiveProcess={hasActiveProcess}
         messageCount={runtime.messageCount}
         modelLabel={currentModelLabel}
         openPopover={openPopover}
         processAiConfig={processAiConfig.data ?? null}
         processAiConfigBusy={setProcessAiConfig.isPending}
-        processAiConfigLoading={processAiConfig.isLoading}
-        reasoningLabel={currentReasoningLabel}
-        runStateLabel={runStateLabel}
         canStartNewTask={canStartNewTask}
-        spawnPending={spawnProcess.isPending}
-        speakReplies={replySpeech.speakReplies}
-        speechStatus={replySpeech.speechStatus}
         taskCount={taskCount}
-        onAbortRun={abortActiveRun}
-        onOpenAgentPanel={openAgentPanel}
+        onApplyModelProfile={applyProcessAiProfile}
         onOpenModels={() => {
           setOpenPopover(null);
           (onOpenModels ?? onOpenCrew)();
@@ -923,39 +1147,62 @@ export function ChatDock({
         }}
         onOpenTaskProcess={openTaskProcess}
         onStartNewTask={prepareNewTask}
-        onStartProcess={startProcess}
-        onApplyModelProfile={applyProcessAiProfile}
-        onClearProcessAiConfig={clearProcessAiConfig}
         onSetReasoning={(reasoning) => setProcessAiKey("config/ai/reasoning", reasoning)}
-        onToggleSpeakReplies={() => replySpeech.setSpeakReplies(!replySpeech.speakReplies)}
-        onToggleMax={onToggleMax}
-        onToggleOpen={onToggleOpen}
-        onTogglePopover={togglePopover}
       />
 
-      {archiveOpen && hasActiveProcess ? (
+      {bodyState === "agent" ? (
+        <ChatAgentPanel
+          agent={activeAgent}
+          activeProcessId={activeProcessId}
+          canStartNewTask={canStartNewTask}
+          onOpenTaskProcess={openTaskProcess}
+          onStartNewTask={prepareNewTask}
+          onSelectAgent={onSelectAgent}
+          onOpenCrew={onOpenCrew}
+          onClose={returnToChat}
+        />
+      ) : null}
+
+      {bodyState === "reasoning" && reasoningTarget ? (
+        <ChatReasoningPanel
+          messages={transcriptMessages}
+          target={reasoningTarget}
+          onClose={() => returnToChat({ restoreFocus: true })}
+        />
+      ) : null}
+
+      {bodyState === "archive" && hasActiveProcess ? (
         <ChatArchivePanel
           conversationId={selectedConversationId}
           processId={activeProcessId}
           selectedSegmentId={selectedArchiveSegmentId}
-          onClose={() => setArchiveOpen(false)}
+          onClose={() => returnToChat({ restoreFocus: true })}
           onSelectSegment={setSelectedArchiveSegmentId}
         />
       ) : null}
 
-      {controlError ? (
-        <div class="gsv-chat-control-error" role="status">
-          {controlError}
+      {bodyState === "chat" && controlError && controlError !== dismissedError ? (
+        <div class="gsv-chat-control-alert">
+          <Alert
+            variant="error"
+            icon="none"
+            text={controlError}
+            onDismiss={() => setDismissedError(controlError)}
+          />
         </div>
       ) : null}
 
-      {branchNotice ? (
-        <div class="gsv-chat-control-success" role="status">
-          {branchNotice}
+      {bodyState === "chat" && branchNotice ? (
+        <div class="gsv-chat-control-alert">
+          <Alert
+            variant="success"
+            text={branchNotice}
+            onDismiss={() => setBranchNotice("")}
+          />
         </div>
       ) : null}
 
-      <ChatTranscript
+      {bodyState !== "chat" ? null : <ChatTranscript
         activeRunId={runtime.activeRunId}
         action={!hasActiveProcess ? (
           <button
@@ -972,16 +1219,19 @@ export function ChatDock({
         emptyDescription={emptyDescription}
         errorMessage={transcriptError}
         conversationId={selectedConversationId}
+        feedback={feedback.entries}
         hasOlderMessages={chatRuntime.hasOlderHistory}
         messages={transcriptMessages}
+        mobile={mobileLayout}
         loadingOlderMessages={chatRuntime.loadingOlderHistory}
         onLoadOlder={chatRuntime.loadOlderHistory}
         onBranch={branchFromMessage}
+        onOpenReasoning={openReasoning}
         processId={activeProcessId}
         state={transcriptState}
-      />
+      />}
 
-      {pendingHil ? (
+      {bodyState === "chat" && pendingHil ? (
         <ChatApprovalBanner
           busy={hilDecision.isPending}
           pendingHil={pendingHil}
@@ -989,6 +1239,7 @@ export function ChatDock({
         />
       ) : null}
 
+      {bodyState !== "chat" ? null : <div class="gsv-chat-composer-lock">
       <MessageInput
         attachments={draftAttachments}
         busy={sendMessage.isPending || abortProcess.isPending || spawnProcess.isPending}
@@ -1006,6 +1257,9 @@ export function ChatDock({
         placeholder={`Message ${activeAgent.name}...`}
         running={canAbortRun}
         user={userLabel}
+        conversationMode={ambientTranscription.liveActive}
+        textDisabled={ambientTranscription.dictationActive}
+        onEndConversation={ambientTranscription.toggleLive}
         voiceActive={ambientTranscription.dictationActive || ambientTranscription.liveActive}
         voiceAction={(
           <Hint position="top-end" text={ambientTranscription.liveTitle}>
@@ -1014,7 +1268,7 @@ export function ChatDock({
               glyph="transcribe"
               size={26}
               className={`gsv-chat-live-icon${ambientTranscription.liveActive ? " is-active" : ""}`}
-              ariaLabel={ambientTranscription.liveActive ? "Stop live voice chat" : "Start live voice chat"}
+              ariaLabel={ambientTranscription.liveActive ? "End conversation" : "Start conversation"}
               disabled={ambientTranscription.liveUnavailable}
               onClick={ambientTranscription.toggleLive}
             />
@@ -1026,6 +1280,33 @@ export function ChatDock({
           : ambientTranscription.dictationUnavailable}
         voiceTitle={voiceTitle}
       />
+      {/* Kept mounted (content toggled) so screen readers announce the
+          role="status" mutation — a live region inserted pre-populated is
+          skipped by several of them. */}
+      <div
+        class={`gsv-chat-composer-lock-bubble gsv-sublabel${composerLocked ? " is-active" : ""}`}
+        role="status"
+      >
+        {!composerLocked ? null : compactFailed ? (
+          <>
+            Context compression has failed -{" "}
+            <button
+              type="button"
+              class="gsv-chat-inline-link"
+              disabled={!canStartNewTask}
+              onClick={prepareNewTask}
+            >
+              start a new task
+            </button>
+            {" "}to continue.
+          </>
+        ) : (
+          "Wait for context compression to continue this conversation."
+        )}
+      </div>
+      </div>}
+
+      </div>
     </aside>
   );
 }

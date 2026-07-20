@@ -25,6 +25,7 @@ import {
 } from "../../gsv-console/domain/consoleAgentBehavior";
 import {
   agentImageSrcForIndex,
+  avatarForAccount,
   isConsoleAgentAccount,
   labelForConsoleAccountRelation,
   sortedConsoleAccounts,
@@ -281,11 +282,12 @@ function accountCrewMembers(input: {
   accounts: readonly ConsoleAccount[];
   activeProcess: ChatProcessSummary | null;
   chatProcesses: readonly ChatProcessSummary[];
+  config: readonly ConsoleConfigEntry[];
   consoleProcesses: readonly ConsoleProcess[];
   selectedAgentId?: string | null;
 }): ChatAgentCrewData[] {
   const accounts = sortedConsoleAccounts(input.accounts).filter(isConsoleAgentAccount);
-  const members = accounts.map((account, index) => {
+  const members = accounts.map((account) => {
     const id = accountAgentId(account);
     const ownedChatProcesses = input.chatProcesses.filter((process) => ownsChatProcess(account, process));
     const ownedConsoleProcesses = input.consoleProcesses.filter((process) => ownsConsoleProcess(account, process));
@@ -302,7 +304,7 @@ function accountCrewMembers(input: {
       runAs: accountRunAs(account),
       name: account.displayName,
       role: labelForConsoleAccountRelation(account.relation),
-      imageSrc: agentImageSrcForIndex(index),
+      imageSrc: avatarForAccount(account, input.config, input.accounts),
       status: status.status,
       statusLabel: status.statusLabel,
       startable: account.runnable,
@@ -406,7 +408,6 @@ function accountBackedAgent(input: {
     return null;
   }
 
-  const primaryIndex = Math.max(0, accountList.findIndex((account) => account.uid === primaryAccount.uid));
   const ownedChatProcesses = input.chatProcesses.filter((process) => ownsChatProcess(primaryAccount, process));
   const ownedConsoleProcesses = input.consoleProcesses.filter((process) => ownsConsoleProcess(primaryAccount, process));
   const tasks = tasksForAccount(ownedConsoleProcesses);
@@ -419,6 +420,7 @@ function accountBackedAgent(input: {
     accounts: accountList,
     activeProcess: null,
     chatProcesses: input.chatProcesses,
+    config: input.config,
     consoleProcesses: input.consoleProcesses,
     selectedAgentId: accountAgentId(primaryAccount),
   });
@@ -432,7 +434,7 @@ function accountBackedAgent(input: {
     name: primaryAccount.displayName,
     role: labelForConsoleAccountRelation(primaryAccount.relation),
     description,
-    imageSrc: agentImageSrcForIndex(primaryIndex),
+    imageSrc: avatarForAccount(primaryAccount, input.config, input.accounts),
     status: status.status,
     statusLabel: status.statusLabel,
     activity: status.statusLabel,
@@ -490,6 +492,7 @@ export function buildShellChatAgent({
         accounts: accountList,
         activeProcess,
         chatProcesses,
+        config,
         consoleProcesses,
         selectedAgentId,
       })
@@ -502,7 +505,9 @@ export function buildShellChatAgent({
     name: activeAccount?.displayName ?? activeProcess.title,
     role: activeAccount ? labelForConsoleAccountRelation(activeAccount.relation) : activeProcess.username ? `PROCESS · ${activeProcess.username}` : "PROCESS",
     description: activeAgentDescription(activeProcess, activeAccount),
-    imageSrc: agentImageSrcForIndex(activeAccountIndex),
+    imageSrc: activeAccount
+      ? avatarForAccount(activeAccount, config, accounts)
+      : agentImageSrcForIndex(activeAccountIndex),
     status: agentStatusForRunState(activeProcess.runState),
     statusLabel,
     activity: statusLabel,

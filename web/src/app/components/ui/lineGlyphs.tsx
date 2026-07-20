@@ -48,3 +48,69 @@ export function FreeContextGlyph({ size = 14 }: LineGlyphProps) {
     </svg>
   );
 }
+
+/** Plus — start a new task. Solid-stroke twin of the masked "plus" doticon,
+ *  which reads dimmer than the label at popover sizes. */
+export function PlusGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 5 V19" />
+      <path d="M5 12 H19" />
+    </svg>
+  );
+}
+
+/** Bulleted list — the open-tasks overview. */
+export function TaskListGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 6 H20" />
+      <path d="M9 12 H20" />
+      <path d="M9 18 H20" />
+      <path d="M4 6 H4.01" />
+      <path d="M4 12 H4.01" />
+      <path d="M4 18 H4.01" />
+    </svg>
+  );
+}
+
+/** Vertical dots (kebab) — the mobile header's "more controls" toggle. Filled
+ *  circles rather than strokes: at small sizes dots read as dots only when
+ *  solid. */
+export function MoreVerticalGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="none">
+      <circle cx="12" cy="5" r="1.9" />
+      <circle cx="12" cy="12" r="1.9" />
+      <circle cx="12" cy="19" r="1.9" />
+    </svg>
+  );
+}
+
+/** Left arrow — returns the mobile header's "more" view to the primary one.
+ *  24-viewBox twin of IconButton's arrowBack, sized for bespoke buttons. */
+export function ArrowLeftGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 6 L8 12 L14 18" />
+      <path d="M8 12 H19" />
+    </svg>
+  );
+}
+
+/** Processor chip — the saved model profiles. */
+export function ModelChipGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="8" y="8" width="8" height="8" rx="1" />
+      <path d="M10 8 V5" />
+      <path d="M14 8 V5" />
+      <path d="M10 19 V16" />
+      <path d="M14 19 V16" />
+      <path d="M8 10 H5" />
+      <path d="M8 14 H5" />
+      <path d="M16 10 H19" />
+      <path d="M16 14 H19" />
+    </svg>
+  );
+}

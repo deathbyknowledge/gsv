@@ -4,7 +4,7 @@ import type { Story } from "../story";
 const story: Story = {
   title: "Button",
   group: "Forms",
-  blurb: "primary · secondary · danger · dangerGhost · link",
+  blurb: "primary · secondary · success · danger · dangerGhost · link",
   render: () => (
     <div class="ds-col">
       <div class="ds-cell">
@@ -16,6 +16,16 @@ const story: Story = {
           <Button variant="danger" label="DELETE" />
           <Button variant="dangerGhost" label="REMOVE" />
           <Button variant="link" label="LEARN MORE" />
+        </div>
+      </div>
+      <div class="ds-cell">
+        <div class="ds-label">Link tones</div>
+        <div class="ds-row">
+          <Button variant="link" label="DEFAULT" />
+          <Button variant="link" tone="error" label="DENY" />
+          <Button variant="link" tone="neutral" label="ALLOW ONCE" />
+          <Button variant="link" tone="success" label="ALWAYS ALLOW" />
+          <Button variant="link" tone="attention" label="EXPAND REASONING" />
         </div>
       </div>
       <div class="ds-cell">
