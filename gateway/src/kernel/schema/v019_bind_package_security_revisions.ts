@@ -5,8 +5,8 @@ import type { SqlMigration } from "../../schema/runner";
  * authorized their creation. Null is retained only for non-package and legacy
  * rows; package runtime authorization treats a missing revision as invalid.
  */
-export const KERNEL_V020_BIND_PACKAGE_SECURITY_REVISIONS: SqlMigration = {
-  id: 20,
+export const KERNEL_V019_BIND_PACKAGE_SECURITY_REVISIONS: SqlMigration = {
+  id: 19,
   name: "bind_package_security_revisions",
   statements: [
     `

@@ -26,20 +26,11 @@ import {
   KERNEL_V018_FENCE_AUTH_TOKEN_SESSIONS,
 } from "./v018_fence_auth_token_sessions";
 import {
-  KERNEL_V019_BIND_PROCESS_KERNEL_GENERATION,
-} from "./v019_bind_process_kernel_generation";
+  KERNEL_V019_BIND_PACKAGE_SECURITY_REVISIONS,
+} from "./v019_bind_package_security_revisions";
 import {
-  KERNEL_V020_BIND_PACKAGE_SECURITY_REVISIONS,
-} from "./v020_bind_package_security_revisions";
-import {
-  KERNEL_V021_FENCE_USER_KERNEL_PROJECTIONS,
-} from "./v021_fence_user_kernel_projections";
-import {
-  KERNEL_V022_REGISTER_APP_RUNTIMES,
-} from "./v022_register_app_runtimes";
-import {
-  KERNEL_V023_BIND_OAUTH_FLOW_KERNEL_OWNER,
-} from "./v023_bind_oauth_flow_kernel_owner";
+  KERNEL_V020_BIND_OAUTH_FLOW_KERNEL_OWNER,
+} from "./v020_bind_oauth_flow_kernel_owner";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -63,11 +54,8 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V016_ADD_USER_KERNELS,
   KERNEL_V017_BIND_ADAPTER_RUN_ROUTES,
   KERNEL_V018_FENCE_AUTH_TOKEN_SESSIONS,
-  KERNEL_V019_BIND_PROCESS_KERNEL_GENERATION,
-  KERNEL_V020_BIND_PACKAGE_SECURITY_REVISIONS,
-  KERNEL_V021_FENCE_USER_KERNEL_PROJECTIONS,
-  KERNEL_V022_REGISTER_APP_RUNTIMES,
-  KERNEL_V023_BIND_OAUTH_FLOW_KERNEL_OWNER,
+  KERNEL_V019_BIND_PACKAGE_SECURITY_REVISIONS,
+  KERNEL_V020_BIND_OAUTH_FLOW_KERNEL_OWNER,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

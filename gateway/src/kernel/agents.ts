@@ -657,8 +657,13 @@ async function rollbackConversationExecutor(
 export async function ensureDefaultConversationExecutor(
   ctx: KernelContext,
   human: ProcessIdentity,
+  personalAgent?: ProcessIdentity,
 ): Promise<string> {
-  const agent = await ensurePersonalAgent(ctx, human);
+  // Provisioning passes the Master-resolved personal agent directly; steady
+  // state resolves (and if needed provisions) it locally.
+  const agent = personalAgent
+    ? { identity: personalAgent, created: false }
+    : await ensurePersonalAgent(ctx, human);
   const { record } = ctx.conversations.ensureDefault(
     human.uid,
     agent.identity.uid,

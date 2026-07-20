@@ -182,18 +182,6 @@ import {
   reconcilePackageAgentEntitlements,
   validatePackageAgentProjectionSecurity,
 } from "./package-agents";
-import { KernelProjectionState } from "./projection-state";
-import {
-  AppRuntimeRegistry,
-  type AppRuntimeLifecycleFence,
-  type AppRuntimeRunnerRecord,
-} from "./app-runtime-registry";
-import type {
-  AppRunnerRuntimeFenceAck,
-  AppRunnerRuntimeFenceAuthorizationInput,
-  AppRunnerPackageRuntimeFenceIdentity as AppRunnerRuntimeFenceIdentity,
-  AppRunnerRuntimeFenceKind,
-} from "../app-runner/package-runtime-fence";
 import { canonicalizeLoginUsername } from "../auth/login";
 import { isSharedSystemConfigKey } from "./config-access";
 import {
@@ -237,17 +225,6 @@ import {
   type TokenRevocationNotice,
   type TokenRevocationOutboxRecord,
 } from "./token-revocations";
-import {
-  APP_PLACEMENT_VERIFICATION_KEY_OBJECT,
-  appPlacementVerificationKeyRecord,
-  generateAppPlacementSigningKeyRecord,
-  importAppPlacementSigningKey,
-  isAppPlacementCertificate,
-  parseAppPlacementSigningKeyRecord,
-  serializeAppPlacementVerificationKeyRecord,
-  signAppPlacementCertificate,
-  type AppPlacementSigningKeyRecord,
-} from "../shared/app-placement-certificate";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -259,8 +236,6 @@ const APP_PLACEMENT_CERTIFICATE_STORAGE_KEY = "gsv/app-placement-certificate/v1"
 const APP_SESSION_ROUTE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const APP_SESSION_ROUTE_SECRET_BYTES = 32;
 const USER_KERNEL_LIFECYCLE_AUTHORIZATION_TTL_MS = 30_000;
-const USER_KERNEL_PROVISIONING_AUTHORIZATION_TTL_MS = 30_000;
-const USER_KERNEL_ACTIVATION_AUTHORIZATION_TTL_MS = 30_000;
 const PROCESS_ROLLBACK_AUTHORIZATION_TTL_MS = 30_000;
 const ADAPTER_INBOUND_AUTHORIZATION_TTL_MS = 30_000;
 const MAX_PENDING_ADAPTER_INBOUND_AUTHORIZATIONS = 4_096;
@@ -382,21 +357,20 @@ type UserKernelLifecycleTargetRecord = Omit<UserKernelRecord, "lifecycle"> & {
 
 type UserKernelProvisioningTargetInput = {
   sourceKernelName: string;
-  authorization: string;
   username: string;
   uid: number;
   generation: number;
+  /** Master-resolved runtime payload; the target holds no Master state. */
+  ownerIdentity: ProcessIdentity;
+  personalAgent?: ProcessIdentity;
+  capabilities: string[];
 };
 
-type UserKernelProvisioningAuthorizationInput = Omit<
-  UserKernelProvisioningTargetInput,
-  "sourceKernelName"
-> & {
-  targetKernelName: string;
-};
-
-type UserKernelActivationTargetInput = UserKernelProvisioningTargetInput;
-type UserKernelActivationAuthorizationInput = UserKernelProvisioningAuthorizationInput & {
+type UserKernelActivationTargetInput = {
+  sourceKernelName: string;
+  username: string;
+  uid: number;
+  generation: number;
 };
 
 type ProcessRollbackAuthorizationInput = {
@@ -478,20 +452,6 @@ type AppPlacementCertificateGrant = {
   certificate: string;
 };
 
-type MasterAppPlacementSigningKey = {
-  record: AppPlacementSigningKeyRecord;
-  key: CryptoKey;
-};
-
-type PackageProjectionFenceAuthorizationInput = {
-  authorization: string;
-  targetKernelName: string;
-  username: string;
-  uid: number;
-  generation: number;
-  fenceId: string;
-};
-
 type PackageProjectionFenceTargetInput = Omit<
   PackageProjectionFenceAuthorizationInput,
   "targetKernelName"
@@ -508,21 +468,6 @@ type PackageProjectionRefreshTargetInput = {
   expectedProjectionRevision: number;
 };
 
-type PendingAppRunnerRuntimeFenceAuthorization = {
-  expiresAt: number;
-  action: AppRunnerRuntimeFenceAuthorizationInput["action"];
-  fence: AppRunnerRuntimeFenceIdentity;
-};
-
-type AppRunnerRuntimeFenceStub = {
-  prepareAppRunnerRuntimeFence: (
-    input: AppRunnerRuntimeFenceIdentity & { authorization: string },
-  ) => Promise<AppRunnerRuntimeFenceAck>;
-  clearAppRunnerRuntimeFence: (
-    input: AppRunnerRuntimeFenceIdentity & { authorization: string },
-  ) => Promise<AppRunnerRuntimeFenceAck>;
-};
-
 type UserKernelTargetOperationLease = {
   generation: number;
   signal: AbortSignal;
@@ -530,9 +475,6 @@ type UserKernelTargetOperationLease = {
   isPackageStamped: () => boolean;
   assertCurrent: () => void;
   release: () => void;
-};
-
-type AuthorizedUserKernelProvisioningSnapshot = UserKernelProvisioningSnapshot & {
 };
 
 type MasterUserSignalAuthorizationInput = {
@@ -579,11 +521,6 @@ type MasterKernelControlStub = {
   authorizeUserRepoOperation: (
     input: UserRepoOperationAuthorizationInput,
   ) => Promise<UserRepoOperationAuthorizationResult>;
-  getUserKernelProjection: (
-    sourceKernelName: string,
-    username: string,
-    generation: number,
-  ) => Promise<UserKernelProvisioningSnapshot>;
   resolveAppFrameKernel: (
     appFrame: AppFrameContext,
     call?: string,
@@ -591,12 +528,6 @@ type MasterKernelControlStub = {
   consumeUserKernelLifecycleAuthorization: (
     input: UserKernelLifecycleAuthorizationInput,
   ) => Promise<boolean>;
-  consumeUserKernelProvisioningAuthorization: (
-    input: UserKernelProvisioningAuthorizationInput,
-  ) => Promise<AuthorizedUserKernelProvisioningSnapshot | null>;
-  consumeUserKernelActivationAuthorization: (
-    input: UserKernelActivationAuthorizationInput,
-  ) => Promise<UserKernelProvisioningSnapshot | null>;
   consumeAdapterInboundAuthorization: (
     input: AdapterInboundAuthorizationInput,
   ) => Promise<boolean>;
@@ -606,17 +537,8 @@ type MasterKernelControlStub = {
   authorizeAdapterRunRoute: (
     input: AdapterRunRouteAuthorizationInput,
   ) => Promise<boolean>;
-  issueAppPlacementCertificate: (
-    input: UserKernelPlacementProof,
-  ) => Promise<AppPlacementCertificateGrant | null>;
   consumeMasterUserSignalAuthorization: (
     input: MasterUserSignalAuthorizationInput,
-  ) => Promise<boolean>;
-  consumePackageProjectionFenceAuthorization: (
-    input: PackageProjectionFenceAuthorizationInput,
-  ) => Promise<boolean>;
-  consumeAppRunnerRuntimeFenceAuthorization: (
-    input: AppRunnerRuntimeFenceAuthorizationInput,
   ) => Promise<boolean>;
 };
 
@@ -922,8 +844,6 @@ export class Kernel extends Host<Env> {
   private readonly oauth: OAuthStore;
   private readonly mcpServers: McpServerStore;
   private readonly userKernels: UserKernelRegistry;
-  private readonly projectionState: KernelProjectionState;
-  private readonly appRuntimes: AppRuntimeRegistry;
   private userKernelMarker: UserKernelInstanceMarker | null | undefined;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
   private readonly pendingAppResponses = new Map<string, (frame: ResponseFrame) => void>();
@@ -944,20 +864,6 @@ export class Kernel extends Host<Env> {
   private readonly userKernelLifecycleAuthorizations = new Map<
     string,
     { expiresAt: number; transition: Omit<UserKernelLifecycleAuthorizationInput, "authorization"> }
-  >();
-  private readonly userKernelProvisioningAuthorizations = new Map<
-    string,
-    {
-      expiresAt: number;
-      provisioning: Omit<UserKernelProvisioningAuthorizationInput, "authorization">;
-    }
-  >();
-  private readonly userKernelActivationAuthorizations = new Map<
-    string,
-    {
-      expiresAt: number;
-      activation: Omit<UserKernelProvisioningAuthorizationInput, "authorization">;
-    }
   >();
   private readonly processRollbackAuthorizations = new Map<
     string,
@@ -983,10 +889,6 @@ export class Kernel extends Host<Env> {
       expiresAt: number;
       fence: Omit<PackageProjectionFenceAuthorizationInput, "authorization">;
     }
-  >();
-  private readonly appRunnerRuntimeFenceAuthorizations = new Map<
-    string,
-    PendingAppRunnerRuntimeFenceAuthorization
   >();
   private readonly cancelledProcessRequests = new Map<
     string,
@@ -1041,13 +943,6 @@ export class Kernel extends Host<Env> {
     this.auth = new AuthStore(sql);
     this.tokenRevocations = new TokenRevocationStore(sql);
     this.userKernels = new UserKernelRegistry(sql);
-    this.projectionState = new KernelProjectionState(sql);
-    this.appRuntimes = new AppRuntimeRegistry(sql);
-    if (this.instanceKind === "master") {
-      this.ctx.storage.transactionSync(() => {
-        this.projectionState.recoverPendingMasterRevision();
-      });
-    }
     if (this.instanceKind === "user") {
       this.userKernelMarker = parseUserKernelInstanceMarker(
         this.ctx.storage.kv.get<unknown>(USER_KERNEL_INSTANCE_STORAGE_KEY),
@@ -1153,17 +1048,6 @@ export class Kernel extends Host<Env> {
     for (const callId of this.ipcCalls.recoverDeliveryIds()) {
       this.queueIpcCallDelivery(callId);
     }
-    if (this.instanceKind === "user" && this.projectionState.packageFence()) {
-      this.ctx.waitUntil(this.recoverPackageProjectionFence().catch((error) => {
-        console.warn("[Kernel] Package projection fence recovery remains fail-closed:", error);
-      }));
-    }
-    if (this.instanceKind === "master" && this.projectionState.packageFence()) {
-      this.queueMasterPackageFenceRecovery();
-    }
-    if (this.appRuntimes.listLifecycleFences().length > 0) {
-      this.queueAppRuntimeLifecycleFenceRecovery();
-    }
   }
 
   private get instanceKind(): "master" | "user" {
@@ -1213,218 +1097,7 @@ export class Kernel extends Host<Env> {
       for (const resolve of active.waiters) resolve();
       active.waiters.clear();
     };
-  }
-
-  private beginMasterLegacyProcessOperation(
-    record: ProcessRecord | null,
-  ): (() => void) | null {
-    if (this.instanceKind !== "master" || !record) return null;
-    const placement = this.userKernels.getByUid(record.ownerUid);
-    if (
-      !placement
-      || placement.lifecycle !== "legacy"
-      || this.appRuntimes.getLifecycleFence(placement.uid) !== null
-    ) {
-      return null;
-    }
-    return this.beginMasterUserOperation(placement.username);
-  }
-
-  private beginMasterLegacyOwnerOperation(ownerUid: number): (() => void) | null {
-    if (this.instanceKind !== "master") return null;
-    const placement = this.userKernels.getByUid(ownerUid);
-    if (
-      !placement
-      || placement.lifecycle !== "legacy"
-      || this.appRuntimes.getLifecycleFence(placement.uid) !== null
-    ) {
-      return null;
-    }
-    return this.beginMasterUserOperation(placement.username);
-  }
-
-  private beginUserKernelTargetOperation(
-    expectedGeneration: number,
-    options: {
-      packageStamped?: boolean;
-      allowProvisioning?: boolean;
-      allowLifecycleFence?: boolean;
-      allowClosedAdmission?: boolean;
-    } = {},
-  ): UserKernelTargetOperationLease {
-    const operationGeneration = this.instanceKind === "master"
-      ? this.projectionState.masterRevision()
-      : expectedGeneration;
-    const initialPackageStamped = options.packageStamped === true;
-    if (
-      this.instanceKind === "master"
-      && initialPackageStamped
-      && this.projectionState.packageFence() !== null
-    ) {
-      throw new Error("Package authority projection is fenced");
-    }
-    const marker = this.userKernelMarker === undefined
-      ? parseUserKernelInstanceMarker(
-          this.ctx.storage.kv.get<unknown>(USER_KERNEL_INSTANCE_STORAGE_KEY),
-        )
-      : this.userKernelMarker;
-    this.userKernelMarker = marker;
-    const lifecycleAllowed = marker?.lifecycle === "active"
-      || (options.allowProvisioning === true && marker?.lifecycle === "provisioning");
-    const lifecycleFence = marker
-      ? this.appRuntimes.getLifecycleFence(marker.uid)
-      : null;
-    const packageFence = initialPackageStamped ? this.projectionState.packageFence() : null;
-    if (
-      this.instanceKind === "user"
-      && (
-        !marker
-        || !lifecycleAllowed
-        || marker.generation !== expectedGeneration
-        || (
-          this.closedTargetOperationGeneration === expectedGeneration
-          && options.allowClosedAdmission !== true
-        )
-        || (lifecycleFence !== null && options.allowLifecycleFence !== true)
-        || (packageFence !== null && packageFence.kernelGeneration === expectedGeneration)
-      )
-    ) {
-      throw new Error("User Kernel target operation admission is closed");
-    }
-
-    const operationId = crypto.randomUUID();
-    const controller = new AbortController();
-    const activeOperation = {
-      generation: operationGeneration,
-      packageStamped: initialPackageStamped,
-      controller,
-    };
-    this.activeTargetOperations.set(operationId, activeOperation);
-    let released = false;
-    const assertCurrent = () => {
-      if (this.instanceKind === "master") {
-        if (
-          controller.signal.aborted
-          || (
-            activeOperation.packageStamped
-            && this.projectionState.packageFence() !== null
-          )
-        ) {
-          throw new Error("Master package authority operation was fenced");
-        }
-        return;
-      }
-      const current = this.userKernelMarker;
-      const currentLifecycleAllowed = current?.lifecycle === "active"
-        || (options.allowProvisioning === true && current?.lifecycle === "provisioning");
-      const currentLifecycleFence = current
-        ? this.appRuntimes.getLifecycleFence(current.uid)
-        : null;
-      if (
-        controller.signal.aborted
-        || !current
-        || !currentLifecycleAllowed
-        || current.generation !== expectedGeneration
-        || (
-          this.closedTargetOperationGeneration === expectedGeneration
-          && options.allowClosedAdmission !== true
-        )
-        || (
-          currentLifecycleFence !== null
-          && options.allowLifecycleFence !== true
-        )
-        || (
-          activeOperation.packageStamped
-          && this.projectionState.packageFence()?.kernelGeneration === expectedGeneration
-        )
-      ) {
-        throw new Error("User Kernel target operation was fenced");
-      }
-    };
-    return {
-      generation: operationGeneration,
-      signal: controller.signal,
-      markPackageStamped: () => {
-        if (activeOperation.packageStamped) {
-          assertCurrent();
-          return;
-        }
-        const fence = this.projectionState.packageFence();
-        if (
-          fence !== null
-          && (
-            this.instanceKind === "master"
-            || fence.kernelGeneration === expectedGeneration
-          )
-        ) {
-          controller.abort(new Error("Package authority projection is fenced"));
-          throw new Error("Package authority projection is fenced");
-        }
-        activeOperation.packageStamped = true;
-        assertCurrent();
-      },
-      isPackageStamped: () => activeOperation.packageStamped,
-      assertCurrent,
-      release: () => {
-        if (released) return;
-        released = true;
-        this.activeTargetOperations.delete(operationId);
-        this.resolveTargetOperationDrainWaiters(operationGeneration);
-      },
-    };
-  }
-
-  private closeUserKernelTargetAdmission(
-    generation: number,
-    reason: string,
-    packageOnly = false,
-  ): void {
-    if (!packageOnly) this.closedTargetOperationGeneration = generation;
-    const error = new Error(reason);
-    for (const operation of this.activeTargetOperations.values()) {
-      if (
-        operation.generation === generation
-        && (!packageOnly || operation.packageStamped)
-      ) {
-        operation.controller.abort(error);
-      }
-    }
-  }
-
-  private waitForUserKernelTargetOperations(
-    generation: number,
-    packageOnly = false,
-  ): Promise<void> {
-    if (![...this.activeTargetOperations.values()].some((operation) => (
-      operation.generation === generation
-      && (!packageOnly || operation.packageStamped)
-    ))) {
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve) => {
-      const waiters = this.targetOperationDrainWaiters.get(generation) ?? new Set();
-      waiters.add({ packageOnly, resolve });
-      this.targetOperationDrainWaiters.set(generation, waiters);
-    });
-  }
-
-  private resolveTargetOperationDrainWaiters(generation: number): void {
-    const waiters = this.targetOperationDrainWaiters.get(generation);
-    if (!waiters) return;
-    for (const waiter of [...waiters]) {
-      const stillActive = [...this.activeTargetOperations.values()].some((operation) => (
-        operation.generation === generation
-        && (!waiter.packageOnly || operation.packageStamped)
-      ));
-      if (!stillActive) {
-        waiters.delete(waiter);
-        waiter.resolve();
-      }
-    }
-    if (waiters.size === 0) this.targetOperationDrainWaiters.delete(generation);
-  }
-
-  private async waitForMasterUserOperations(username: string): Promise<void> {
+  }  private async waitForMasterUserOperations(username: string): Promise<void> {
     const active = this.activeMasterUserOperations?.get(username);
     if (!active || active.count === 0) return;
     await new Promise<void>((resolve) => active.waiters.add(resolve));
@@ -1491,96 +1164,7 @@ export class Kernel extends Host<Env> {
       && sameUserKernelPlacement(current, placement)
       ? current
       : null;
-  }
-
-
-
-  private async masterAppPlacementSigningKey(): Promise<MasterAppPlacementSigningKey> {
-    this.assertMasterKernel();
-    const existing = this.appPlacementSigningKeyPromise;
-    if (existing) return existing;
-
-    const pending = this.loadOrCreateMasterAppPlacementSigningKey();
-    this.appPlacementSigningKeyPromise = pending;
-    try {
-      return await pending;
-    } catch (error) {
-      if (this.appPlacementSigningKeyPromise === pending) {
-        this.appPlacementSigningKeyPromise = null;
-      }
-      throw error;
-    }
-  }
-
-  private async loadOrCreateMasterAppPlacementSigningKey(): Promise<
-    MasterAppPlacementSigningKey
-  > {
-    const stored = await this.ctx.storage.get<unknown>(
-      APP_PLACEMENT_SIGNING_KEY_STORAGE_KEY,
-    );
-    let record: AppPlacementSigningKeyRecord;
-    if (stored === undefined) {
-      if (await this.env.STORAGE.head(APP_PLACEMENT_VERIFICATION_KEY_OBJECT)) {
-        // Never silently replace an edge trust anchor after Master key loss.
-        // Recovery must explicitly remove the orphaned public record as part
-        // of ship reset/recommissioning.
-        throw new Error("Master app placement signing key recovery is required");
-      }
-      record = await generateAppPlacementSigningKeyRecord();
-      await this.ctx.storage.put(APP_PLACEMENT_SIGNING_KEY_STORAGE_KEY, record);
-    } else {
-      const parsed = parseAppPlacementSigningKeyRecord(stored);
-      if (!parsed) {
-        throw new Error("Master app placement signing key is invalid");
-      }
-      record = parsed;
-    }
-    return {
-      record,
-      key: await importAppPlacementSigningKey(record),
-    };
-  }
-
-  private async publishMasterAppPlacementVerificationKey(
-    record: AppPlacementSigningKeyRecord,
-  ): Promise<void> {
-    const verificationRecord = appPlacementVerificationKeyRecord(record);
-    await this.env.STORAGE.put(
-      APP_PLACEMENT_VERIFICATION_KEY_OBJECT,
-      serializeAppPlacementVerificationKeyRecord(verificationRecord),
-      {
-        httpMetadata: {
-          contentType: "application/json; charset=utf-8",
-          cacheControl: "private, no-store",
-        },
-        customMetadata: {
-          uid: "0",
-          gid: "0",
-          mode: "444",
-          gsvInternal: "app-placement-verification-key-v1",
-        },
-      },
-    );
-  }
-
-  private processKernelGenerationError(
-    processId: string,
-    marker: UserKernelInstanceMarker | null,
-  ): string | null {
-    if (!marker) {
-      return null;
-    }
-    const record = this.procs.get(processId);
-    if (!record) {
-      return "Process registry record not found";
-    }
-    if (!processKernelGenerationMatches(record, marker.generation)) {
-      return "Process belongs to a stale user Kernel generation";
-    }
-    return null;
-  }
-
-  private async authorizeCurrentPackageAgentRuntime(
+  }  private async authorizeCurrentPackageAgentRuntime(
     ownerUid: number,
     runAs: ProcessIdentity,
     packageSecurityRevision: string | null,
@@ -1771,59 +1355,6 @@ export class Kernel extends Host<Env> {
     }
     return buildRoutedAppSessionId(route, signature);
   }
-
-  private async appPlacementCertificate(
-    marker: UserKernelInstanceMarker,
-  ): Promise<string> {
-    const stored = this.ctx.storage.kv.get<unknown>(
-      APP_PLACEMENT_CERTIFICATE_STORAGE_KEY,
-    );
-    if (stored !== undefined) {
-      const cached = parseAppPlacementCertificateGrant(stored);
-      if (!cached) {
-        throw new Error("Cached app placement certificate is invalid");
-      }
-      if (
-        cached.username === marker.username
-        && cached.uid === marker.uid
-        && cached.generation === marker.generation
-      ) {
-        return cached.certificate;
-      }
-    }
-
-    const master = await getAgentByName(
-      this.env.KERNEL,
-      SHIP_KERNEL_NAME,
-    ) as unknown as MasterKernelControlStub;
-    const issued = parseAppPlacementCertificateGrant(
-      await master.issueAppPlacementCertificate({
-        sourceKernelName: this.name,
-        uid: marker.uid,
-        generation: marker.generation,
-      }),
-    );
-    if (
-      !issued
-      || issued.username !== marker.username
-      || issued.uid !== marker.uid
-      || issued.generation !== marker.generation
-    ) {
-      throw new Error("Master denied app placement certificate issuance");
-    }
-    const current = await this.requireActiveUserKernel(marker.generation);
-    if (
-      !current
-      || current.username !== marker.username
-      || current.uid !== marker.uid
-      || this.name !== userKernelName(current.username)
-    ) {
-      throw new Error("App placement certificate issuance denied");
-    }
-    this.ctx.storage.kv.put(APP_PLACEMENT_CERTIFICATE_STORAGE_KEY, issued);
-    return issued.certificate;
-  }
-
   private storedAppSessionRouteSecret(): Uint8Array | null {
     const existing = this.ctx.storage.kv.get<string>(APP_SESSION_ROUTE_SECRET_KEY);
     if (existing === undefined) {
@@ -1884,781 +1415,17 @@ export class Kernel extends Host<Env> {
       signatureBytes,
       TEXT_ENCODER.encode(signingInput),
     );
-  }
-
-  /** Consume the one-shot authorization created by the Master transition. */
-  async consumeUserKernelLifecycleAuthorization(
-    input: UserKernelLifecycleAuthorizationInput,
-  ): Promise<boolean> {
-    this.assertMasterKernel();
-    const authorization = typeof input.authorization === "string"
-      ? input.authorization
-      : "";
-    const pending = this.userKernelLifecycleAuthorizations.get(authorization);
-    this.userKernelLifecycleAuthorizations.delete(authorization);
-    if (
-      !pending
-      || pending.expiresAt <= Date.now()
-      || !sameUserKernelLifecycleAuthorization(
-        pending.transition,
-        input,
-      )
-    ) {
-      return false;
-    }
-
-    const username = canonicalizeLoginUsername(input.username);
-    const current = username ? this.userKernels.get(username) : null;
-    if (
-      !username
-      || username !== input.username
-      || input.targetKernelName !== userKernelName(username)
-      || !current
-      || current.uid !== input.uid
-      || current.lifecycle !== input.expectedLifecycle
-      || current.generation !== input.expectedGeneration
-      || !["provisioning", "suspended", "retired"].includes(input.lifecycle)
-    ) {
-      return false;
-    }
-    try {
-      const desired = describeUserKernelLifecycleTransition(current, input.lifecycle);
-      return desired.lifecycle === input.lifecycle
-        && desired.generation === input.generation;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Internal Master control seam for an eventual authenticated admin syscall.
-   * New admissions stop synchronously, existing Master mutations drain, and
-   * the target durably fences itself before the Master commits the placement.
-   * A failed target call leaves the Master unchanged; a failed Master commit
-   * leaves the target closed. Either outcome is fail-closed and retryable.
-   */
-  async transitionUserKernelLifecycle(input: {
-    username: string;
-    expectedGeneration: number;
-    lifecycle: Extract<UserKernelLifecycle, "provisioning" | "suspended" | "retired">;
-  }): Promise<UserKernelRecord> {
-    this.assertMasterKernel();
-    if (
-      this.projectionState.packageFence() !== null
-      || this.masterPackageProjectionTransitionPending !== null
-    ) {
-      throw new Error("User Kernel lifecycle changes are blocked by package projection recovery");
-    }
-    const username = canonicalizeLoginUsername(input.username);
-    const current = username ? this.userKernels.get(username) : null;
-    if (
-      !username
-      || username !== input.username
-      || !current
-      || !Number.isSafeInteger(input.expectedGeneration)
-      || input.expectedGeneration <= 0
-      || current.generation !== input.expectedGeneration
-      || !["provisioning", "suspended", "retired"].includes(input.lifecycle)
-    ) {
-      throw new Error(`User Kernel generation mismatch for ${input.username}`);
-    }
-
-    const transitions = this.transitioningUserKernels ??= new Set<string>();
-    if (transitions.has(username)) {
-      throw new Error(`User Kernel transition is already in progress for ${username}`);
-    }
-    transitions.add(username);
-    try {
-      await this.waitForMasterUserOperations(username);
-      const admitted = this.userKernels.get(username);
-      if (
-        !admitted
-        || admitted.uid !== current.uid
-        || admitted.lifecycle !== current.lifecycle
-        || admitted.generation !== current.generation
-      ) {
-        throw new Error(`User Kernel generation mismatch for ${username}`);
+  }  private async cancelPendingScheduleWakes(): Promise<void> {
+    const wakeIds: string[] = [];
+    this.ctx.storage.transactionSync(() => {
+      for (const record of this.schedules.listWakeable()) {
+        if (!record.wakeScheduleId) continue;
+        wakeIds.push(record.wakeScheduleId);
+        this.schedules.setWakeScheduleId(record.id, null);
       }
-
-      const desired = describeUserKernelLifecycleTransition(admitted, input.lifecycle);
-      if (admitted.lifecycle === "legacy") {
-        const lifecycleFence = this.ensureMasterLegacyAppRuntimeLifecycleFence(
-          admitted,
-          desired.lifecycle,
-        );
-        await this.fenceMasterLegacyUserRuntime(admitted, lifecycleFence);
-      }
-      const authorization = crypto.randomUUID();
-      const authorizedTransition: Omit<
-        UserKernelLifecycleAuthorizationInput,
-        "authorization"
-      > = {
-        targetKernelName: userKernelName(username),
-        username,
-        uid: admitted.uid,
-        expectedLifecycle: admitted.lifecycle,
-        expectedGeneration: admitted.generation,
-        generation: desired.generation,
-        lifecycle: desired.lifecycle,
-      };
-      this.userKernelLifecycleAuthorizations.set(authorization, {
-        expiresAt: Date.now() + USER_KERNEL_LIFECYCLE_AUTHORIZATION_TTL_MS,
-        transition: authorizedTransition,
-      });
-      let marker: UserKernelInstanceMarker;
-      try {
-        marker = await this.applyUserKernelLifecycleTargetFence({
-          sourceKernelName: this.name,
-          authorization,
-          username,
-          uid: admitted.uid,
-          expectedLifecycle: admitted.lifecycle,
-          expectedGeneration: admitted.generation,
-          generation: desired.generation,
-          lifecycle: desired.lifecycle,
-        });
-      } finally {
-        this.userKernelLifecycleAuthorizations.delete(authorization);
-      }
-      if (
-        marker.username !== desired.username
-        || marker.uid !== desired.uid
-        || marker.generation !== desired.generation
-        || marker.lifecycle !== desired.lifecycle
-      ) {
-        throw new Error(`User Kernel lifecycle fence failed for ${username}`);
-      }
-
-      const beforeCommit = this.userKernels.get(username);
-      if (!beforeCommit || !sameUserKernelPlacement(beforeCommit, admitted)) {
-        throw new Error(`User Kernel generation mismatch for ${username}`);
-      }
-      const committed = this.commitUserKernelLifecycleTransition(
-        username,
-        admitted,
-        input.lifecycle,
-      );
-      if (
-        committed.uid !== desired.uid
-        || committed.lifecycle !== desired.lifecycle
-        || committed.generation !== desired.generation
-      ) {
-        throw new Error(`User Kernel lifecycle barrier failed for ${username}`);
-      }
-      return committed;
-    } finally {
-      transitions.delete(username);
-      if (this.appRuntimes.getLifecycleFence(current.uid)) {
-        this.queueAppRuntimeLifecycleFenceRecovery(1);
-      }
-    }
-  }
-
-  private ensureMasterLegacyAppRuntimeLifecycleFence(
-    placement: UserKernelRecord,
-    targetLifecycle: AppRuntimeLifecycleFence["targetLifecycle"],
-  ): AppRuntimeLifecycleFence {
-    this.assertMasterKernel();
-    if (placement.lifecycle !== "legacy") {
-      throw new Error("Legacy AppRunner lifecycle fence requires legacy placement");
-    }
-    const existing = this.appRuntimes.getLifecycleFence(placement.uid);
-    if (existing) {
-      if (
-        existing.ownerUsername !== placement.username
-        || existing.sourceKernelName !== SHIP_KERNEL_NAME
-        || existing.generation !== placement.generation
-        || existing.targetLifecycle !== targetLifecycle
-      ) {
-        throw new Error("A different legacy AppRunner lifecycle fence is active");
-      }
-      return existing;
-    }
-    return this.appRuntimes.beginLifecycleFence({
-      ownerUid: placement.uid,
-      ownerUsername: placement.username,
-      sourceKernelName: SHIP_KERNEL_NAME,
-      generation: placement.generation,
-      fenceId: crypto.randomUUID(),
-      targetLifecycle,
-      createdAt: Date.now(),
     });
+    await Promise.all(wakeIds.map((wakeId) => this.cancelSchedule(wakeId)));
   }
-
-  private async fenceMasterLegacyUserRuntime(
-    placement: UserKernelRecord,
-    fence: AppRuntimeLifecycleFence,
-  ): Promise<void> {
-    this.assertMasterKernel();
-    const reason = "User Kernel is migrating from the legacy runtime";
-    const connectionIds = new Set<string>();
-    for (const [connectionId, connection] of this.connections) {
-      if (connection.state?.identity?.process.uid !== placement.uid) continue;
-      connectionIds.add(connectionId);
-      connection.close(1008, reason);
-    }
-    for (const [requestId, active] of [...this.activeRequests]) {
-      const belongsToOwner = active.origin.type === "connection"
-        ? connectionIds.has(active.origin.id)
-        : active.origin.type === "process"
-          ? this.procs.get(active.origin.id)?.ownerUid === placement.uid
-          : false;
-      if (belongsToOwner) {
-        this.cancelRequest(active.origin, requestId, reason, false);
-      }
-    }
-    for (const [scheduleId, controller] of this.activeScheduleRuns) {
-      if (this.schedules.getStored(scheduleId)?.ownerUid === placement.uid) {
-        controller.abort(new Error(reason));
-      }
-    }
-    this.schedules.releaseInterruptedRunsForOwner(placement.uid, reason);
-    const ownedProcessIds = this.procs.list()
-      .filter((process) => process.ownerUid === placement.uid)
-      .map((process) => process.processId);
-    const origins: RouteOrigin[] = [
-      ...[...connectionIds].map((id) => ({ type: "connection" as const, id })),
-      ...ownedProcessIds.map((id) => ({ type: "process" as const, id })),
-    ];
-    const routeWakeCancellations: Promise<unknown>[] = [];
-    for (let offset = 0; offset < origins.length; offset += 256) {
-      for (const route of this.routes.drainForOrigins(origins.slice(offset, offset + 256))) {
-        this.sendDeviceRequestCancel(
-          route.deviceId,
-          route.driverConnectionId,
-          route.id,
-          reason,
-        );
-        this.cancelRoutedBody(route.id, reason);
-        if (route.scheduleId) {
-          routeWakeCancellations.push(this.cancelSchedule(route.scheduleId));
-        }
-      }
-    }
-    await Promise.all(routeWakeCancellations);
-    this.runRoutes.clearForUid(placement.uid);
-    await this.abortFencedUserKernelProcesses(
-      fence.generation,
-      reason,
-      placement.uid,
-    );
-    await this.prepareRegisteredAppRunners({
-      fenceKind: "user-lifecycle",
-      ownerUid: placement.uid,
-      ownerUsername: placement.username,
-      generation: fence.generation,
-      fenceId: fence.fenceId,
-    });
-  }
-
-  private queueAppRuntimeLifecycleFenceRecovery(delaySeconds = 0): void {
-    if (
-      this.appRuntimes.listLifecycleFences().length === 0
-      || this.appRuntimeLifecycleFenceRecoveryQueued
-    ) {
-      return;
-    }
-    this.appRuntimeLifecycleFenceRecoveryQueued = true;
-    if (delaySeconds > 0) {
-      this.ctx.waitUntil(this.schedule(
-        delaySeconds,
-        "onAppRuntimeLifecycleFenceRecoveryDue",
-      ).then(() => undefined).catch(() => {
-        this.appRuntimeLifecycleFenceRecoveryQueued = false;
-      }));
-      return;
-    }
-    this.ctx.waitUntil(Promise.resolve().then(
-      () => this.onAppRuntimeLifecycleFenceRecoveryDue(),
-    ));
-  }
-
-  async onAppRuntimeLifecycleFenceRecoveryDue(): Promise<void> {
-    this.appRuntimeLifecycleFenceRecoveryQueued = false;
-    if (this.appRuntimes.listLifecycleFences().length === 0) {
-      this.appRuntimeLifecycleFenceRecoveryAttempt = 0;
-      return;
-    }
-    try {
-      await this.recoverAppRuntimeLifecycleFences();
-      this.appRuntimeLifecycleFenceRecoveryAttempt = 0;
-    } catch {
-      this.appRuntimeLifecycleFenceRecoveryAttempt += 1;
-      const retrySeconds = Math.min(
-        2 ** Math.min(this.appRuntimeLifecycleFenceRecoveryAttempt - 1, 6),
-        PACKAGE_PROJECTION_RECOVERY_MAX_DELAY_SECONDS,
-      );
-      this.queueAppRuntimeLifecycleFenceRecovery(retrySeconds);
-    }
-  }
-
-  private async recoverAppRuntimeLifecycleFences(): Promise<void> {
-    const fences = this.appRuntimes.listLifecycleFences();
-    if (this.instanceKind === "master") {
-      for (const fence of fences) {
-        if (fence.sourceKernelName !== SHIP_KERNEL_NAME) {
-          throw new Error("AppRunner lifecycle fence source mismatch");
-        }
-        const placement = this.userKernels.getByUid(fence.ownerUid);
-        if (!placement || placement.username !== fence.ownerUsername) {
-          throw new Error("AppRunner lifecycle fence owner mismatch");
-        }
-        if (placement.lifecycle === "active") {
-          await this.completeUserKernelActivation(placement);
-          continue;
-        }
-        if (placement.lifecycle === "legacy") {
-          await this.transitionUserKernelLifecycle({
-            username: placement.username,
-            expectedGeneration: placement.generation,
-            lifecycle: fence.targetLifecycle,
-          });
-          continue;
-        }
-        await this.fenceMasterLegacyUserRuntime(placement, fence);
-      }
-      return;
-    }
-
-    if (fences.length !== 1) {
-      throw new Error("User Kernel AppRunner lifecycle fence cardinality mismatch");
-    }
-    const fence = fences[0]!;
-    const marker = await this.loadUserKernelMarker();
-    if (
-      !marker
-      || marker.uid !== fence.ownerUid
-      || marker.username !== fence.ownerUsername
-      || fence.sourceKernelName !== this.name
-    ) {
-      throw new Error("User Kernel AppRunner lifecycle fence identity mismatch");
-    }
-    this.closeUserKernelTargetAdmission(
-      marker.generation,
-      "User Kernel lifecycle recovery is fenced",
-    );
-    this.fenceUserKernelRuntime("User Kernel lifecycle recovery is fenced");
-    await this.waitForUserKernelTargetOperations(marker.generation);
-    if (marker.lifecycle !== "active") {
-      await this.abortFencedUserKernelProcesses(
-        fence.generation,
-        "User Kernel lifecycle recovery is fenced",
-      );
-      await this.prepareRegisteredAppRunners({
-        fenceKind: "user-lifecycle",
-        ownerUid: fence.ownerUid,
-        ownerUsername: fence.ownerUsername,
-        generation: fence.generation,
-        fenceId: fence.fenceId,
-      });
-    }
-    if (marker.lifecycle !== "active" && marker.lifecycle !== "provisioning") {
-      return;
-    }
-
-    const master = await getAgentByName(
-      this.env.KERNEL,
-      SHIP_KERNEL_NAME,
-    ) as unknown as MasterKernelControlStub;
-    const projection = await master.getUserKernelProjection(
-      this.name,
-      marker.username,
-      marker.generation,
-    );
-    const current = await this.loadUserKernelMarker();
-    if (!sameUserKernelInstanceMarker(current, marker)) {
-      throw new Error("User Kernel lifecycle changed during activation recovery");
-    }
-    await this.activateUserKernelFromProjection(marker, projection, marker.username);
-  }
-
-  private commitUserKernelLifecycleTransition(
-    username: string,
-    current: UserKernelRecord,
-    lifecycle: Extract<UserKernelLifecycle, "provisioning" | "suspended" | "retired">,
-  ): UserKernelRecord {
-    switch (lifecycle) {
-      case "provisioning":
-        return this.userKernels.beginProvisioning(username, current.generation);
-      case "suspended":
-        return this.userKernels.suspend(username, current.generation);
-      case "retired":
-        return this.userKernels.retire(username, current.generation);
-    }
-  }
-
-  private async applyUserKernelLifecycleTargetFence(
-    transition: UserKernelLifecycleTransition,
-  ): Promise<UserKernelInstanceMarker> {
-    const target = await getAgentByName(
-      this.env.KERNEL,
-      userKernelName(transition.username),
-    ) as unknown as {
-      applyMasterUserKernelLifecycle: (
-        input: UserKernelLifecycleTransition,
-      ) => Promise<UserKernelInstanceMarker>;
-    };
-    return target.applyMasterUserKernelLifecycle(transition);
-  }
-
-  private ensureTargetAppRuntimeLifecycleFence(
-    input: UserKernelLifecycleTransition,
-  ): AppRuntimeLifecycleFence | null {
-    if (input.expectedLifecycle === "legacy") {
-      // The singleton owns and fences every legacy AppRunner until the first
-      // successful activation has completed.
-      return null;
-    }
-    const existing = this.appRuntimes.getLifecycleFence(input.uid);
-    if (existing) {
-      const sameOwner = existing.ownerUsername === input.username
-        && existing.sourceKernelName === this.name;
-      const exactRetry = existing.generation === input.expectedGeneration
-        && existing.targetLifecycle === input.lifecycle;
-      const reactivation = input.expectedLifecycle === "suspended"
-        || input.expectedLifecycle === "provisioning";
-      if (!sameOwner || (!exactRetry && !reactivation)) {
-        throw new Error("A different AppRunner lifecycle fence is active");
-      }
-      return existing;
-    }
-    return this.appRuntimes.beginLifecycleFence({
-      ownerUid: input.uid,
-      ownerUsername: input.username,
-      sourceKernelName: this.name,
-      generation: input.expectedGeneration,
-      fenceId: crypto.randomUUID(),
-      targetLifecycle: input.lifecycle,
-      createdAt: Date.now(),
-    });
-  }
-
-  private ensureProvisioningAppRuntimeLifecycleFence(
-    marker: UserKernelInstanceMarker,
-  ): AppRuntimeLifecycleFence {
-    if (marker.lifecycle !== "provisioning") {
-      throw new Error("User Kernel provisioning fence requires provisioning state");
-    }
-    const existing = this.appRuntimes.getLifecycleFence(marker.uid);
-    if (existing) {
-      if (
-        existing.ownerUsername !== marker.username
-        || existing.sourceKernelName !== this.name
-        || existing.generation > marker.generation
-      ) {
-        throw new Error("User Kernel provisioning fence identity mismatch");
-      }
-      return existing;
-    }
-    return this.appRuntimes.beginLifecycleFence({
-      ownerUid: marker.uid,
-      ownerUsername: marker.username,
-      sourceKernelName: this.name,
-      generation: marker.generation,
-      fenceId: crypto.randomUUID(),
-      targetLifecycle: "provisioning",
-      createdAt: Date.now(),
-    });
-  }
-
-  /**
-   * Target-side lifecycle fence. Only a transition matching the Master's
-   * current placement is accepted. The durable AppRunner fence intent and
-   * in-memory admission close precede teardown; the non-active marker is
-   * committed only after every owned runtime has exact-acknowledged the fence.
-   */
-  async applyMasterUserKernelLifecycle(
-    input: UserKernelLifecycleTransition,
-  ): Promise<UserKernelInstanceMarker> {
-    const instanceUsername = this.instanceUsername;
-    if (
-      this.instanceKind !== "user"
-      || !instanceUsername
-      || input.sourceKernelName !== SHIP_KERNEL_NAME
-      || typeof input.authorization !== "string"
-      || input.authorization.length === 0
-      || input.username !== instanceUsername
-      || canonicalizeLoginUsername(input.username) !== input.username
-      || this.name !== userKernelName(input.username)
-      || !Number.isSafeInteger(input.uid)
-      || input.uid < 0
-      || !Number.isSafeInteger(input.expectedGeneration)
-      || input.expectedGeneration <= 0
-      || !Number.isSafeInteger(input.generation)
-      || input.generation <= 0
-      || !["legacy", "provisioning", "active", "suspended", "retired"].includes(
-        input.expectedLifecycle,
-      )
-      || !["provisioning", "suspended", "retired"].includes(input.lifecycle)
-    ) {
-      throw new Error("User Kernel lifecycle transition denied");
-    }
-
-    const authorized = await this.isMasterUserKernelLifecycleAuthorized({
-      targetKernelName: this.name,
-      authorization: input.authorization,
-      username: input.username,
-      uid: input.uid,
-      expectedLifecycle: input.expectedLifecycle,
-      expectedGeneration: input.expectedGeneration,
-      generation: input.generation,
-      lifecycle: input.lifecycle,
-    });
-    if (!authorized) {
-      throw new Error("User Kernel lifecycle transition denied");
-    }
-
-    const existing = await this.loadUserKernelMarker();
-    const existingIsExpected = Boolean(
-      existing
-      && existing.username === input.username
-      && existing.uid === input.uid
-      && existing.generation === input.expectedGeneration
-      && existing.lifecycle === input.expectedLifecycle,
-    );
-    const existingIsDesired = Boolean(
-      existing
-      && existing.username === input.username
-      && existing.uid === input.uid
-      && existing.generation === input.generation
-      && existing.lifecycle === input.lifecycle,
-    );
-    const existingIsValidPredecessor = Boolean(
-      existing
-      && isValidUserKernelLifecyclePredecessor(existing, input),
-    );
-    if (
-      existing
-      && !existingIsExpected
-      && !existingIsDesired
-      && !existingIsValidPredecessor
-    ) {
-      throw new Error("User Kernel lifecycle identity mismatch");
-    }
-    if (
-      !existing
-      && input.expectedLifecycle !== "legacy"
-      && input.expectedLifecycle !== "provisioning"
-      && input.lifecycle !== "provisioning"
-      && input.lifecycle !== "retired"
-    ) {
-      throw new Error("User Kernel lifecycle marker is missing");
-    }
-
-    const marker: UserKernelInstanceMarker = {
-      version: 1,
-      kind: "user",
-      username: input.username,
-      uid: input.uid,
-      generation: input.generation,
-      lifecycle: input.lifecycle,
-      updatedAt: Date.now(),
-    };
-    this.closeUserKernelTargetAdmission(
-      input.expectedGeneration,
-      "User Kernel is not active",
-    );
-    const lifecycleFence = this.ensureTargetAppRuntimeLifecycleFence(input);
-    try {
-      this.fenceUserKernelRuntime("User Kernel is not active");
-      await this.waitForUserKernelTargetOperations(input.expectedGeneration);
-      await this.abortFencedUserKernelProcesses(
-        input.expectedGeneration,
-        "User Kernel is not active",
-      );
-      if (lifecycleFence) {
-        await this.prepareRegisteredAppRunners({
-          fenceKind: "user-lifecycle",
-          ownerUid: lifecycleFence.ownerUid,
-          ownerUsername: lifecycleFence.ownerUsername,
-          generation: lifecycleFence.generation,
-          fenceId: lifecycleFence.fenceId,
-        });
-      }
-      await this.ctx.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, marker);
-      this.userKernelMarker = marker;
-      if (marker.lifecycle === "provisioning") {
-        this.closedTargetOperationGeneration = null;
-      }
-      return marker;
-    } catch (error) {
-      if (lifecycleFence) this.queueAppRuntimeLifecycleFenceRecovery(1);
-      throw error;
-    }
-  }
-
-  private async abortFencedUserKernelProcesses(
-    fencedGeneration: number,
-    reason: string,
-    ownerUid?: number,
-  ): Promise<void> {
-    const processes = this.procs.list().filter((record) => (
-      this.instanceKind === "master"
-        ? record.kernelGeneration === null && record.ownerUid === ownerUid
-        : processKernelGenerationMatches(record, fencedGeneration)
-    ));
-    await Promise.all(processes.map(async (record) => {
-      const requestId = crypto.randomUUID();
-      const response = await sendFrameToProcess(record.processId, {
-        type: "req",
-        id: requestId,
-        call: "proc.abort",
-        args: {
-          pid: record.processId,
-          lifecycleFenceGeneration: fencedGeneration,
-        } as { pid: string; lifecycleFenceGeneration: number },
-      });
-      const data = response?.type === "res" && response.ok
-        ? response.data as { ok?: unknown; pid?: unknown } | undefined
-        : undefined;
-      if (
-        !response
-        || response.type !== "res"
-        || response.id !== requestId
-        || !response.ok
-        || data?.ok !== true
-        || data.pid !== record.processId
-      ) {
-        throw new Error(`Process did not exact-ack lifecycle fence: ${record.processId}`);
-      }
-
-      const current = this.procs.get(record.processId);
-      if (
-        !current
-        || current.uid !== record.uid
-        || current.ownerUid !== record.ownerUid
-        || current.kernelGeneration !== record.kernelGeneration
-      ) {
-        throw new Error(`Process identity changed during lifecycle fence: ${record.processId}`);
-      }
-      if (record.activeRunId) {
-        const finished: SignalFrame = {
-          type: "sig",
-          signal: "proc.run.finished",
-          payload: {
-            pid: record.processId,
-            runId: record.activeRunId,
-            conversationId: record.activeConversationId,
-            status: "aborted",
-            reason: "kernel.lifecycle",
-            aborted: true,
-            queuedCount: record.queuedCount,
-            timestamp: Date.now(),
-          },
-        };
-        this.updateProcessRuntimeFromSignal(record.processId, finished, record.activeRunId);
-        this.completeIpcCallsForProcessSignal(record.processId, finished);
-        this.runRoutes.delete(record.activeRunId);
-      }
-    }));
-  }
-
-  private async isMasterUserKernelLifecycleAuthorized(
-    input: UserKernelLifecycleAuthorizationInput,
-  ): Promise<boolean> {
-    const master = await getAgentByName(
-      this.env.KERNEL,
-      SHIP_KERNEL_NAME,
-    ) as unknown as MasterKernelControlStub;
-    return master.consumeUserKernelLifecycleAuthorization(input);
-  }
-
-  /** Consume the exact, one-shot provisioning request and return Master-owned state. */
-  async consumeUserKernelProvisioningAuthorization(
-    input: UserKernelProvisioningAuthorizationInput,
-  ): Promise<AuthorizedUserKernelProvisioningSnapshot | null> {
-    this.assertMasterKernel();
-    if (this.projectionState.packageFence() !== null) return null;
-    const authorization = typeof input?.authorization === "string"
-      ? input.authorization
-      : "";
-    const pending = this.userKernelProvisioningAuthorizations.get(authorization);
-    this.userKernelProvisioningAuthorizations.delete(authorization);
-    if (
-      !pending
-      || pending.expiresAt <= Date.now()
-      || !sameUserKernelProvisioningAuthorization(
-        pending.provisioning,
-        input,
-      )
-    ) {
-      return null;
-    }
-
-    const username = canonicalizeLoginUsername(input.username);
-    const placement = username ? this.userKernels.get(username) : null;
-    if (
-      !username
-      || username !== input.username
-      || input.targetKernelName !== userKernelName(username)
-      || !placement
-      || placement.uid !== input.uid
-      || placement.lifecycle !== "provisioning"
-      || placement.generation !== input.generation
-    ) {
-      return null;
-    }
-
-    const snapshot = await this.buildCommittedUserKernelProjection(username);
-    const current = this.userKernels.get(username);
-    if (
-      !current
-      || current.uid !== input.uid
-      || current.lifecycle !== "provisioning"
-      || current.generation !== input.generation
-      || this.projectionState.packageFence() !== null
-    ) {
-      return null;
-    }
-    return snapshot;
-  }
-
-  /** Consume the exact, one-shot activation confirmation after Master commit. */
-  async consumeUserKernelActivationAuthorization(
-    input: UserKernelActivationAuthorizationInput,
-  ): Promise<UserKernelProvisioningSnapshot | null> {
-    this.assertMasterKernel();
-    if (this.projectionState.packageFence() !== null) return null;
-    const authorization = typeof input?.authorization === "string"
-      ? input.authorization
-      : "";
-    const pending = this.userKernelActivationAuthorizations.get(authorization);
-    this.userKernelActivationAuthorizations.delete(authorization);
-    if (
-      !pending
-      || pending.expiresAt <= Date.now()
-      || !sameUserKernelProvisioningAuthorization(
-        pending.activation,
-        input,
-      )
-    ) {
-      return null;
-    }
-
-    const username = canonicalizeLoginUsername(input.username);
-    const placement = username ? this.userKernels.get(username) : null;
-    if (
-      !username
-      || username !== input.username
-      || input.targetKernelName !== userKernelName(username)
-      || !placement
-      || placement.uid !== input.uid
-      || placement.lifecycle !== "active"
-      || placement.generation !== input.generation
-    ) {
-      return null;
-    }
-    const snapshot = await this.buildCommittedUserKernelProjection(username);
-    const current = this.userKernels.get(username);
-    return current
-      && current.uid === input.uid
-      && current.lifecycle === "active"
-      && current.generation === input.generation
-      && this.projectionState.packageFence() === null
-      ? snapshot
-      : null;
-  }
-
   async provisionUserKernel(
     input: UserKernelProvisioningTargetInput,
   ): Promise<UserKernelInstanceMarker> {
@@ -2667,8 +1434,6 @@ export class Kernel extends Host<Env> {
       this.instanceKind !== "user"
       || !instanceUsername
       || input?.sourceKernelName !== SHIP_KERNEL_NAME
-      || typeof input.authorization !== "string"
-      || input.authorization.length === 0
       || input.username !== instanceUsername
       || canonicalizeLoginUsername(input.username) !== input.username
       || this.name !== userKernelName(input.username)
@@ -2676,72 +1441,46 @@ export class Kernel extends Host<Env> {
       || input.uid < 0
       || !Number.isSafeInteger(input.generation)
       || input.generation <= 0
+      || !isProcessIdentity(input.ownerIdentity)
+      || input.ownerIdentity.uid !== input.uid
+      || input.ownerIdentity.username !== input.username
+      || (input.personalAgent !== undefined && !isProcessIdentity(input.personalAgent))
+      || !Array.isArray(input.capabilities)
+      || input.capabilities.some((capability) => typeof capability !== "string")
     ) {
       throw new Error("User Kernel provisioning denied");
-    }
-
-    const authorizedSnapshot = await this.pullAuthorizedUserKernelProvisioningSnapshot({
-      targetKernelName: this.name,
-      authorization: input.authorization,
-      username: input.username,
-      uid: input.uid,
-      generation: input.generation,
-    });
-    if (!authorizedSnapshot) {
-      throw new Error("User Kernel provisioning denied");
-    }
-    const snapshot = authorizedSnapshot;
-    validateUserKernelProvisioningSnapshot(snapshot, instanceUsername);
-    if (
-      snapshot.username !== input.username
-      || snapshot.uid !== input.uid
-      || snapshot.generation !== input.generation
-    ) {
-      throw new Error("User Kernel provisioning identity mismatch");
     }
 
     const existing = parseUserKernelInstanceMarker(
       await this.ctx.storage.get<unknown>(USER_KERNEL_INSTANCE_STORAGE_KEY),
     );
-    if (existing) {
-      if (
-        existing.username !== snapshot.username
-        || existing.uid !== snapshot.uid
-        || existing.generation !== snapshot.generation
-        || (existing.lifecycle !== "provisioning" && existing.lifecycle !== "active")
-      ) {
-        throw new Error("User Kernel provisioning identity mismatch");
-      }
+    if (existing && (
+      existing.username !== input.username
+      || existing.uid !== input.uid
+      || existing.generation !== input.generation
+      || (existing.lifecycle !== "provisioning" && existing.lifecycle !== "active")
+    )) {
+      throw new Error("User Kernel provisioning identity mismatch");
     }
 
     const provisioning: UserKernelInstanceMarker = {
       version: 1,
       kind: "user",
-      username: snapshot.username,
-      uid: snapshot.uid,
-      generation: snapshot.generation,
+      username: input.username,
+      uid: input.uid,
+      generation: input.generation,
       lifecycle: "provisioning",
       updatedAt: Date.now(),
     };
     await this.ctx.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, provisioning);
     this.userKernelMarker = provisioning;
     if (existing?.lifecycle === "active") {
-      this.fenceUserKernelRuntime("User Kernel is not active");
       await this.cancelPendingScheduleWakes();
     }
-    const provisioningFence = this.ensureProvisioningAppRuntimeLifecycleFence(provisioning);
-    await this.prepareRegisteredAppRunners({
-      fenceKind: "user-lifecycle",
-      ownerUid: provisioningFence.ownerUid,
-      ownerUsername: provisioningFence.ownerUsername,
-      generation: provisioningFence.generation,
-      fenceId: provisioningFence.fenceId,
-    });
 
     let executorPid: string | null = null;
     try {
-      executorPid = await this.initializeUserKernelProvisioning(snapshot, provisioning);
-
+      executorPid = await this.ensureUserKernelProvisioningExecutor(provisioning, input);
       const persistedProvisioning = parseUserKernelInstanceMarker(
         await this.ctx.storage.get<unknown>(USER_KERNEL_INSTANCE_STORAGE_KEY),
       );
@@ -2756,23 +1495,8 @@ export class Kernel extends Host<Env> {
       // before this target may admit traffic or re-arm local runtime work.
       return provisioning;
     } catch (error) {
-      const executor = executorPid ? this.procs.get(executorPid) : null;
-      const isFencedPredecessor = Boolean(
-        executor
-        && provisioning.generation > 1
-        && executor.kernelGeneration === provisioning.generation - 1,
-      );
-      if (executorPid && !isFencedPredecessor) {
-        try {
-          await this.rollbackProvisionedUserKernelExecutor(executorPid);
-        } catch (rollbackError) {
-          throw new Error(
-            `${error instanceof Error ? error.message : String(error)}; executor rollback failed: ${
-              rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-            }`,
-            { cause: error },
-          );
-        }
+      if (executorPid) {
+        await this.rollbackProvisionedUserKernelExecutor(executorPid);
       }
       throw error;
     }
@@ -2786,11 +1510,8 @@ export class Kernel extends Host<Env> {
       this.instanceKind !== "user"
       || !instanceUsername
       || input?.sourceKernelName !== SHIP_KERNEL_NAME
-      || typeof input.authorization !== "string"
-      || input.authorization.length === 0
       || input.username !== instanceUsername
       || canonicalizeLoginUsername(input.username) !== input.username
-      || this.name !== userKernelName(input.username)
       || !Number.isSafeInteger(input.uid)
       || input.uid < 0
       || !Number.isSafeInteger(input.generation)
@@ -2798,8 +1519,9 @@ export class Kernel extends Host<Env> {
     ) {
       throw new Error("User Kernel activation denied");
     }
-
-    const existing = await this.loadUserKernelMarker();
+    const existing = parseUserKernelInstanceMarker(
+      await this.ctx.storage.get<unknown>(USER_KERNEL_INSTANCE_STORAGE_KEY),
+    );
     if (
       !existing
       || existing.username !== input.username
@@ -2809,335 +1531,31 @@ export class Kernel extends Host<Env> {
     ) {
       throw new Error("User Kernel activation identity mismatch");
     }
-
-    const projection = await this.pullAuthorizedUserKernelActivationProjection({
-      targetKernelName: this.name,
-      authorization: input.authorization,
-      username: input.username,
-      uid: input.uid,
-      generation: input.generation,
-    });
-    if (!projection) {
-      throw new Error("User Kernel activation denied");
-    }
-    return await this.activateUserKernelFromProjection(existing, projection, instanceUsername);
-  }
-
-  private async activateUserKernelFromProjection(
-    existing: UserKernelInstanceMarker,
-    projection: UserKernelProvisioningSnapshot,
-    instanceUsername: string,
-  ): Promise<UserKernelInstanceMarker> {
-    const lifecycleFence = existing.lifecycle === "provisioning"
-      ? this.ensureProvisioningAppRuntimeLifecycleFence(existing)
-      : this.appRuntimes.getLifecycleFence(existing.uid);
-    if (lifecycleFence) {
-      if (
-        lifecycleFence.ownerUsername !== existing.username
-        || lifecycleFence.sourceKernelName !== this.name
-      ) {
-        throw new Error("User Kernel AppRunner lifecycle fence identity mismatch");
-      }
-      this.closeUserKernelTargetAdmission(
-        existing.generation,
-        "User Kernel activation is fenced",
-      );
-    }
-    const active: UserKernelInstanceMarker = existing.lifecycle === "active"
-      ? existing
-      : {
-          version: 1,
-          kind: "user",
-          username: existing.username,
-          uid: existing.uid,
-          generation: existing.generation,
-          lifecycle: "active",
-          updatedAt: Date.now(),
-        };
-    let activationCommitStarted = existing.lifecycle === "active" && lifecycleFence !== null;
-    try {
-      if (this.userKernelMarker !== existing) {
-        throw new Error("User Kernel lifecycle changed during activation");
-      }
-      validateUserKernelProvisioningSnapshot(projection, instanceUsername);
-      if (
-        projection.username !== existing.username
-        || projection.uid !== existing.uid
-        || projection.generation !== existing.generation
-      ) {
-        throw new Error("User Kernel activation projection mismatch");
-      }
-      await this.installUserKernelProjection(projection, {
-        allowLifecycleFence: lifecycleFence !== null,
-        allowClosedAdmission: lifecycleFence !== null,
-      });
-      if (existing.lifecycle === "provisioning") {
-        await this.discardPreparedUserKernelExecutors(existing);
-        this.rebindFencedUserKernelProcesses(existing);
-        try {
-          await this.ensureUserKernelProvisioningExecutor(existing);
-        } catch (error) {
-          throw new Error(
-            `User Kernel executor activation failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            { cause: error },
-          );
-        }
-      }
-
-      if (existing.lifecycle !== "active") {
-        // A failed acknowledgement after this point is an ambiguous active
-        // commit and must run the same fail-closed recovery as a rearm error.
-        activationCommitStarted = true;
-        await this.ctx.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, active);
-        this.userKernelMarker = active;
-      }
-
-      if (!this.isCurrentUserKernelMarker(active, { allowLifecycleFence: true })) {
-        throw new Error("User Kernel lifecycle changed during activation");
-      }
-      if (lifecycleFence) {
-        await this.clearRegisteredAppRunners({
-          fenceKind: "user-lifecycle",
-          ownerUid: lifecycleFence.ownerUid,
-          ownerUsername: lifecycleFence.ownerUsername,
-          generation: lifecycleFence.generation,
-          fenceId: lifecycleFence.fenceId,
-        });
-        if (!this.isCurrentUserKernelMarker(active, { allowLifecycleFence: true })) {
-          throw new Error("User Kernel lifecycle changed during AppRunner activation");
-        }
-      }
-      // Install wakes while the durable lifecycle row still prevents them
-      // from executing. A post-open pass below replaces any wake that raced
-      // the fence window and was consumed fail-closed.
-      await this.rearmPendingSchedules(active, { allowLifecycleFence: true });
-      if (!this.isCurrentUserKernelMarker(active, { allowLifecycleFence: true })) {
-        throw new Error("User Kernel lifecycle changed during schedule activation");
-      }
-      if (lifecycleFence) {
-        if (!this.appRuntimes.clearLifecycleFence(lifecycleFence)) {
-          throw new Error("User Kernel AppRunner lifecycle fence clear failed");
-        }
-        this.purgeAppRunnerRuntimeFenceAuthorizations(
-          "user-lifecycle",
-          lifecycleFence.fenceId,
-          lifecycleFence.generation,
-        );
-      }
-      this.closedTargetOperationGeneration = null;
-      try {
-        await this.rearmPendingSchedules(active);
-      } catch (error) {
-        console.warn("[Kernel] Active schedule rearm will retry:", error);
-        this.queueUserKernelScheduleRearmRecovery();
-      }
-      return active;
-    } catch (error) {
-      const recoveryErrors: unknown[] = [];
-      if (
-        activationCommitStarted
-        && this.appRuntimes.getLifecycleFence(active.uid) !== null
-      ) {
-        try {
-          await this.restoreProvisioningAfterActivationFailure(active);
-        } catch (recoveryError) {
-          recoveryErrors.push(recoveryError);
-        }
-      }
-      if (recoveryErrors.length > 0) {
-        if (this.appRuntimes.getLifecycleFence(active.uid)) {
-          this.queueAppRuntimeLifecycleFenceRecovery(1);
-        }
-        throw new Error(
-          `${error instanceof Error ? error.message : String(error)}; activation recovery failed: ${
-            recoveryErrors.map((failure) => (
-              failure instanceof Error ? failure.message : String(failure)
-            )).join("; ")
-          }`,
-          { cause: error },
-        );
-      }
-      if (this.appRuntimes.getLifecycleFence(active.uid)) {
-        this.queueAppRuntimeLifecycleFenceRecovery(1);
-      }
-      throw error;
-    }
-  }
-
-  private async pullAuthorizedUserKernelActivationProjection(
-    input: UserKernelActivationAuthorizationInput,
-  ): Promise<UserKernelProvisioningSnapshot | null> {
-    const master = await getAgentByName(
-      this.env.KERNEL,
-      SHIP_KERNEL_NAME,
-    ) as unknown as MasterKernelControlStub;
-    return master.consumeUserKernelActivationAuthorization(input);
-  }
-
-  private async restoreProvisioningAfterActivationFailure(
-    active: UserKernelInstanceMarker,
-  ): Promise<void> {
-    const inMemory = this.userKernelMarker;
-    if (sameUserKernelInstanceMarker(inMemory ?? null, active)) {
-      this.userKernelMarker = {
-        ...active,
-        lifecycle: "provisioning",
-        updatedAt: Date.now(),
-      };
-    }
-    // Fence synchronously before touching storage so no request can enter
-    // during recovery from an active or ambiguously-committed marker.
-    this.fenceUserKernelRuntime("User Kernel activation failed");
-
-    let persistenceError: unknown;
-    try {
-      const current = parseUserKernelInstanceMarker(
-        await this.ctx.storage.get<unknown>(USER_KERNEL_INSTANCE_STORAGE_KEY),
-      );
-      const recovery = this.userKernelMarker;
-      if (
-        recovery
-        && recovery.username === active.username
-        && recovery.uid === active.uid
-        && recovery.generation === active.generation
-        && recovery.lifecycle === "provisioning"
-        && sameUserKernelInstanceMarker(current, active)
-      ) {
-        await this.ctx.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, recovery);
-      }
-    } catch (error) {
-      persistenceError = error;
-    }
-    try {
-      await this.cancelPendingScheduleWakes();
-    } catch (error) {
-      persistenceError ??= error;
-    }
-    try {
-      await this.abortFencedUserKernelProcesses(
-        active.generation,
-        "User Kernel activation failed",
-      );
-    } catch (error) {
-      persistenceError ??= error;
-    }
-    const lifecycleFence = this.appRuntimes.getLifecycleFence(active.uid);
-    if (lifecycleFence && lifecycleFence.sourceKernelName === this.name) {
-      try {
-        await this.prepareRegisteredAppRunners({
-          fenceKind: "user-lifecycle",
-          ownerUid: lifecycleFence.ownerUid,
-          ownerUsername: lifecycleFence.ownerUsername,
-          generation: lifecycleFence.generation,
-          fenceId: lifecycleFence.fenceId,
-        });
-      } catch (error) {
-        persistenceError ??= error;
-      }
-    }
-    if (persistenceError) throw persistenceError;
-  }
-
-  private rebindFencedUserKernelProcesses(
-    marker: UserKernelInstanceMarker,
-  ): void {
-    if (marker.lifecycle !== "provisioning" || marker.generation <= 1) {
-      return;
-    }
-    const fencedGeneration = marker.generation - 1;
-    this.ctx.storage.transactionSync(() => {
-      for (const process of this.procs.list()) {
-        if (process.kernelGeneration !== fencedGeneration) continue;
-        if (process.ownerUid !== marker.uid) {
-          throw new Error("Fenced process owner does not match user Kernel");
-        }
-        if (!this.procs.rebindKernelGeneration(
-          process.processId,
-          fencedGeneration,
-          marker.generation,
-        )) {
-          throw new Error(`Failed to rebind fenced process: ${process.processId}`);
-        }
-      }
-    });
-  }
-
-  private async cancelPendingScheduleWakes(): Promise<void> {
-    const wakeIds: string[] = [];
-    this.ctx.storage.transactionSync(() => {
-      for (const record of this.schedules.listWakeable()) {
-        if (!record.wakeScheduleId) continue;
-        wakeIds.push(record.wakeScheduleId);
-        this.schedules.setWakeScheduleId(record.id, null);
-      }
-    });
-    await Promise.all(wakeIds.map((wakeId) => this.cancelSchedule(wakeId)));
-  }
-
-  private async discardPreparedUserKernelExecutors(
-    marker: UserKernelInstanceMarker,
-  ): Promise<void> {
-    const pids = new Set<string>();
-    for (const conversation of this.conversations.listByOwner(marker.uid)) {
-      if (!conversation.isDefault || !conversation.activePid) continue;
-      const process = this.procs.get(conversation.activePid);
-      if (process && processKernelGenerationMatches(process, marker.generation)) {
-        pids.add(conversation.activePid);
-      }
-    }
-    for (const pid of pids) {
-      await this.rollbackProvisionedUserKernelExecutor(pid);
-    }
-  }
-
-  private async pullAuthorizedUserKernelProvisioningSnapshot(
-    input: UserKernelProvisioningAuthorizationInput,
-  ): Promise<AuthorizedUserKernelProvisioningSnapshot | null> {
-    const master = await getAgentByName(
-      this.env.KERNEL,
-      SHIP_KERNEL_NAME,
-    ) as unknown as MasterKernelControlStub;
-    return master.consumeUserKernelProvisioningAuthorization(input);
-  }
-
-  private async initializeUserKernelProvisioning(
-    snapshot: UserKernelProvisioningSnapshot,
-    provisioning: UserKernelInstanceMarker,
-  ): Promise<string> {
-    await this.installUserKernelProjection(snapshot, {
-      allowLifecycleFence: true,
-      allowClosedAdmission: true,
-    });
-
-    return this.ensureUserKernelProvisioningExecutor(provisioning);
+    const active: UserKernelInstanceMarker = {
+      ...existing,
+      lifecycle: "active",
+      updatedAt: Date.now(),
+    };
+    await this.ctx.storage.put(USER_KERNEL_INSTANCE_STORAGE_KEY, active);
+    this.userKernelMarker = active;
+    await this.rearmPendingSchedules(active);
+    return active;
   }
 
   private async ensureUserKernelProvisioningExecutor(
     marker: UserKernelInstanceMarker,
+    input: UserKernelProvisioningTargetInput,
   ): Promise<string> {
-
-    const owner = this.auth.getPasswdByUid(marker.uid);
-    if (!owner || owner.username !== marker.username) {
-      throw new Error("User Kernel projection is missing its owner");
-    }
-    const ownerIdentity: ProcessIdentity = {
-      uid: owner.uid,
-      gid: owner.gid,
-      gids: this.auth.resolveGids(owner.username, owner.gid),
-      username: owner.username,
-      home: owner.home,
-      cwd: owner.home,
-    };
+    const ownerIdentity = input.ownerIdentity;
     const connectionIdentity: ConnectionIdentity = {
       role: "user",
       process: ownerIdentity,
-      capabilities: this.caps.resolve(ownerIdentity.gids),
+      capabilities: input.capabilities,
     };
     // During provisioning the Master is mid-transition for this owner, so
-    // Master syscalls are unavailable; projected local caps cover the window.
-    if (this.instanceKind === "user" && marker.lifecycle === "active") {
+    // Master syscalls are unavailable; the input payload stands in. After
+    // activation the owner record is re-resolved against the Master.
+    if (marker.lifecycle === "active") {
       const account = await this.accountGetForIdentity(connectionIdentity, { uid: ownerIdentity.uid });
       if (account?.capabilities) {
         connectionIdentity.capabilities = account.capabilities;
@@ -3152,6 +1570,7 @@ export class Kernel extends Host<Env> {
     const pid = await ensureDefaultConversationExecutor(
       context,
       ownerIdentity,
+      input.personalAgent,
     );
     try {
       context.assertCurrentKernel();
@@ -3215,601 +1634,7 @@ export class Kernel extends Host<Env> {
     }
 
     if (rollbackError) throw rollbackError;
-  }
-
-  /**
-   * AppRunner callbacks are capabilities, not ambient trust. Each token is
-   * consumed once and is accepted only while this Kernel still owns the exact
-   * durable package/lifecycle fence that issued it.
-   */
-  async consumeAppRunnerRuntimeFenceAuthorization(
-    input: AppRunnerRuntimeFenceAuthorizationInput,
-  ): Promise<boolean> {
-    const authorization = typeof input?.authorization === "string"
-      ? input.authorization
-      : "";
-    const pending = this.appRunnerRuntimeFenceAuthorizations.get(authorization);
-    this.appRunnerRuntimeFenceAuthorizations.delete(authorization);
-    if (
-      !pending
-      || pending.expiresAt <= Date.now()
-      || pending.action !== input.action
-      || !sameAppRunnerRuntimeFenceIdentity(pending.fence, input)
-      || input.sourceKernelName !== this.name
-    ) {
-      return false;
-    }
-
-    const runner = this.appRuntimes.getRunner(input.runnerName);
-    if (
-      !runner
-      || runner.ownerUid !== input.ownerUid
-      || runner.ownerUsername !== input.ownerUsername
-      || runner.kernelOwnerUid !== input.kernelOwnerUid
-      || runner.kernelOwnerUsername !== input.kernelOwnerUsername
-      || runner.packageId !== input.packageId
-    ) {
-      return false;
-    }
-    return this.isControllingAppRunnerRuntimeFenceActive(input, runner);
-  }
-
-  private async isControllingAppRunnerRuntimeFenceActive(
-    input: AppRunnerRuntimeFenceIdentity,
-    runner: AppRuntimeRunnerRecord,
-  ): Promise<boolean> {
-    if (input.fenceKind === "package-projection") {
-      const fence = this.projectionState.packageFence();
-      if (
-        !fence
-        || fence.fenceId !== input.fenceId
-        || fence.kernelGeneration !== input.generation
-      ) {
-        return false;
-      }
-      if (this.instanceKind === "master") {
-        const placement = this.userKernels.getByUid(runner.kernelOwnerUid);
-        return Boolean(
-          input.sourceKernelName === SHIP_KERNEL_NAME
-          && placement
-          && placement.lifecycle === "legacy"
-          && placement.username === runner.kernelOwnerUsername
-          && placement.uid === runner.kernelOwnerUid,
-        );
-      }
-      const marker = await this.loadUserKernelMarker();
-      return Boolean(
-        marker
-        && marker.lifecycle === "active"
-        && input.sourceKernelName === userKernelName(marker.username)
-        && marker.username === runner.kernelOwnerUsername
-        && marker.uid === runner.kernelOwnerUid
-        && marker.generation === input.generation,
-      );
-    }
-
-    const fence = this.appRuntimes.getLifecycleFence(runner.kernelOwnerUid);
-    return Boolean(
-      fence
-      && fence.ownerUid === runner.kernelOwnerUid
-      && fence.ownerUsername === runner.kernelOwnerUsername
-      && fence.sourceKernelName === this.name
-      && fence.sourceKernelName === input.sourceKernelName
-      && fence.generation === input.generation
-      && fence.fenceId === input.fenceId,
-    );
-  }
-
-  private appRuntimeRunnersForKernelOwner(
-    ownerUid: number,
-    ownerUsername: string,
-  ): AppRuntimeRunnerRecord[] {
-    return this.appRuntimes.listRunners({
-      kernelOwnerUid: ownerUid,
-      kernelOwnerUsername: ownerUsername,
-    });
-  }
-
-  private async prepareRegisteredAppRunners(input: {
-    fenceKind: AppRunnerRuntimeFenceKind;
-    ownerUid: number;
-    ownerUsername: string;
-    generation: number;
-    fenceId: string;
-  }): Promise<void> {
-    await this.transitionRegisteredAppRunners("prepare", input);
-  }
-
-  private async clearRegisteredAppRunners(input: {
-    fenceKind: AppRunnerRuntimeFenceKind;
-    ownerUid: number;
-    ownerUsername: string;
-    generation: number;
-    fenceId: string;
-  }): Promise<void> {
-    await this.transitionRegisteredAppRunners("clear", input);
-  }
-
-  private async transitionRegisteredAppRunners(
-    action: AppRunnerRuntimeFenceAuthorizationInput["action"],
-    input: {
-      fenceKind: AppRunnerRuntimeFenceKind;
-      ownerUid: number;
-      ownerUsername: string;
-      generation: number;
-      fenceId: string;
-    },
-  ): Promise<void> {
-    const runners = this.appRuntimeRunnersForKernelOwner(
-      input.ownerUid,
-      input.ownerUsername,
-    );
-    const results = await mapWithConcurrency(
-      runners,
-      APP_RUNNER_RUNTIME_FENCE_CONCURRENCY,
-      async (runner) => {
-        const fence: AppRunnerRuntimeFenceIdentity = {
-          fenceKind: input.fenceKind,
-          sourceKernelName: this.name,
-          runnerName: runner.runnerName,
-          ownerUid: runner.ownerUid,
-          ownerUsername: runner.ownerUsername,
-          kernelOwnerUid: runner.kernelOwnerUid,
-          kernelOwnerUsername: runner.kernelOwnerUsername,
-          packageId: runner.packageId,
-          generation: input.generation,
-          fenceId: input.fenceId,
-        };
-        try {
-          await this.transitionAppRunnerRuntimeFence(action, fence);
-          return { ok: true as const };
-        } catch (error) {
-          return { ok: false as const, error };
-        }
-      },
-    );
-    const failure = results.find((result) => !result.ok);
-    if (failure && !failure.ok) throw failure.error;
-  }
-
-  private async transitionAppRunnerRuntimeFence(
-    action: AppRunnerRuntimeFenceAuthorizationInput["action"],
-    fence: AppRunnerRuntimeFenceIdentity,
-  ): Promise<void> {
-    pruneExpiredAuthorizations(this.appRunnerRuntimeFenceAuthorizations);
-    if (
-      this.appRunnerRuntimeFenceAuthorizations.size
-      >= MAX_PENDING_APP_RUNNER_RUNTIME_FENCE_AUTHORIZATIONS
-    ) {
-      throw new Error("AppRunner runtime fence authorization is busy");
-    }
-    const authorization = crypto.randomUUID();
-    this.appRunnerRuntimeFenceAuthorizations.set(authorization, {
-      expiresAt: Date.now() + APP_RUNNER_RUNTIME_FENCE_AUTHORIZATION_TTL_MS,
-      action,
-      fence,
-    });
-    try {
-      const runner = this.ctx.exports.AppRunner.getByName(
-        fence.runnerName,
-      ) as unknown as AppRunnerRuntimeFenceStub;
-      const ack = action === "prepare"
-        ? await runner.prepareAppRunnerRuntimeFence({ authorization, ...fence })
-        : await runner.clearAppRunnerRuntimeFence({ authorization, ...fence });
-      if (
-        ack.state !== (action === "prepare" ? "fenced" : "cleared")
-        || !sameAppRunnerRuntimeFenceIdentity(fence, ack)
-      ) {
-        throw new Error("AppRunner runtime fence acknowledgment mismatch");
-      }
-    } finally {
-      this.appRunnerRuntimeFenceAuthorizations.delete(authorization);
-    }
-  }
-
-  private purgeAppRunnerRuntimeFenceAuthorizations(
-    fenceKind: AppRunnerRuntimeFenceKind,
-    fenceId: string,
-    generation: number,
-  ): void {
-    for (const [authorization, pending] of this.appRunnerRuntimeFenceAuthorizations) {
-      if (
-        pending.fence.fenceKind === fenceKind
-        && pending.fence.fenceId === fenceId
-        && pending.fence.generation === generation
-      ) {
-        this.appRunnerRuntimeFenceAuthorizations.delete(authorization);
-      }
-    }
-  }
-
-  async consumePackageProjectionFenceAuthorization(
-    input: PackageProjectionFenceAuthorizationInput,
-  ): Promise<boolean> {
-    this.assertMasterKernel();
-    const authorization = typeof input.authorization === "string"
-      ? input.authorization
-      : "";
-    const pending = this.packageProjectionFenceAuthorizations.get(authorization);
-    this.packageProjectionFenceAuthorizations.delete(authorization);
-    if (
-      !pending
-      || pending.expiresAt <= Date.now()
-      || !samePackageProjectionFenceAuthorization(pending.fence, input)
-    ) {
-      return false;
-    }
-    const placement = this.userKernels.get(input.username);
-    return Boolean(
-      placement
-      && placement.lifecycle === "active"
-      && placement.username === input.username
-      && placement.uid === input.uid
-      && placement.generation === input.generation
-      && input.targetKernelName === userKernelName(input.username)
-      && !this.transitioningUserKernels.has(input.username)
-    );
-  }
-
-  async preparePackageProjectionFence(
-    input: PackageProjectionFenceTargetInput,
-  ): Promise<boolean> {
-    const instanceUsername = this.instanceUsername;
-    if (
-      this.instanceKind !== "user"
-      || !instanceUsername
-      || input.sourceKernelName !== SHIP_KERNEL_NAME
-      || input.username !== instanceUsername
-      || canonicalizeLoginUsername(input.username) !== input.username
-      || this.name !== userKernelName(input.username)
-      || !Number.isSafeInteger(input.uid)
-      || input.uid < 0
-      || !Number.isSafeInteger(input.generation)
-      || input.generation <= 0
-      || typeof input.authorization !== "string"
-      || !input.authorization
-      || typeof input.fenceId !== "string"
-      || !input.fenceId
-    ) {
-      return false;
-    }
-    const marker = await this.loadUserKernelMarker();
-    if (
-      !marker
-      || marker.lifecycle !== "active"
-      || marker.username !== input.username
-      || marker.uid !== input.uid
-      || marker.generation !== input.generation
-      || this.appRuntimes.getLifecycleFence(input.uid) !== null
-    ) {
-      return false;
-    }
-    const master = await getAgentByName(
-      this.env.KERNEL,
-      SHIP_KERNEL_NAME,
-    ) as unknown as MasterKernelControlStub;
-    if (!await master.consumePackageProjectionFenceAuthorization({
-      authorization: input.authorization,
-      targetKernelName: this.name,
-      username: input.username,
-      uid: input.uid,
-      generation: input.generation,
-      fenceId: input.fenceId,
-    })) {
-      return false;
-    }
-    if (!this.isCurrentUserKernelMarker(marker)) return false;
-
-    this.ctx.storage.transactionSync(() => {
-      this.projectionState.enterPackageFence({
-        fenceId: input.fenceId,
-        kernelGeneration: input.generation,
-        startedAt: Date.now(),
-      });
-    });
-    this.closeUserKernelTargetAdmission(
-      input.generation,
-      "Package authority projection is fenced",
-      true,
-    );
-    this.abortPackageProjectionKernelWork(input.generation, input.fenceId);
-    await this.abortPackageProjectionProcesses(input.generation, input.fenceId);
-    await this.waitForUserKernelTargetOperations(input.generation, true);
-    this.schedules.releaseInterruptedRuns(
-      "Package authority projection is fenced",
-      Date.now(),
-      true,
-    );
-    await this.prepareRegisteredAppRunners({
-      fenceKind: "package-projection",
-      ownerUid: marker.uid,
-      ownerUsername: marker.username,
-      generation: marker.generation,
-      fenceId: input.fenceId,
-    });
-    return true;
-  }
-
-  async refreshPackageProjectionFence(
-    input: PackageProjectionRefreshTargetInput,
-  ): Promise<boolean> {
-    if (
-      this.instanceKind !== "user"
-      || input.sourceKernelName !== SHIP_KERNEL_NAME
-      || input.username !== this.instanceUsername
-      || !Number.isSafeInteger(input.expectedProjectionRevision)
-      || input.expectedProjectionRevision <= 0
-    ) {
-      return false;
-    }
-    return this.refreshPackageProjectionFenceInternal({
-      username: input.username,
-      uid: input.uid,
-      generation: input.generation,
-      fenceId: input.fenceId,
-      expectedProjectionRevision: input.expectedProjectionRevision,
-    });
-  }
-
-  private async recoverPackageProjectionFence(): Promise<void> {
-    const marker = await this.loadUserKernelMarker();
-    const fence = this.projectionState.packageFence();
-    if (
-      !marker
-      || marker.lifecycle !== "active"
-      || !fence
-      || fence.kernelGeneration !== marker.generation
-    ) {
-      return;
-    }
-    this.closeUserKernelTargetAdmission(
-      marker.generation,
-      "Package authority projection recovery is fenced",
-      true,
-    );
-    this.abortPackageProjectionKernelWork(marker.generation, fence.fenceId);
-    await this.abortPackageProjectionProcesses(marker.generation, fence.fenceId);
-    await this.waitForUserKernelTargetOperations(marker.generation, true);
-    this.schedules.releaseInterruptedRuns(
-      "Package authority projection recovery is fenced",
-      Date.now(),
-      true,
-    );
-    await this.prepareRegisteredAppRunners({
-      fenceKind: "package-projection",
-      ownerUid: marker.uid,
-      ownerUsername: marker.username,
-      generation: marker.generation,
-      fenceId: fence.fenceId,
-    });
-    // A restarted target must never decide that the Master's mutation is
-    // committed merely because it can fetch a snapshot. Wake the Master and
-    // leave this local fence intact until its exact refresh RPC supplies the
-    // committed revision and fence identity.
-    const master = await getAgentByName(
-      this.env.KERNEL,
-      SHIP_KERNEL_NAME,
-    ) as unknown as MasterKernelControlStub;
-    await master.getUserKernelProjection(
-      this.name,
-      marker.username,
-      marker.generation,
-    );
-  }
-
-  private async refreshPackageProjectionFenceInternal(input: {
-    username: string;
-    uid: number;
-    generation: number;
-    fenceId: string;
-    expectedProjectionRevision?: number;
-  }): Promise<boolean> {
-    const marker = await this.loadUserKernelMarker();
-    const fence = this.projectionState.packageFence();
-    if (
-      !marker
-      || marker.lifecycle !== "active"
-      || marker.username !== input.username
-      || marker.uid !== input.uid
-      || marker.generation !== input.generation
-      || !fence
-      || (
-        fence.fenceId !== input.fenceId
-        || fence.kernelGeneration !== input.generation
-      )
-    ) {
-      return false;
-    }
-    const master = await getAgentByName(
-      this.env.KERNEL,
-      SHIP_KERNEL_NAME,
-    ) as unknown as MasterKernelControlStub;
-    const snapshot = await master.getUserKernelProjection(
-      this.name,
-      marker.username,
-      marker.generation,
-    );
-    if (
-      input.expectedProjectionRevision !== undefined
-      && snapshot.projectionRevision !== input.expectedProjectionRevision
-    ) {
-      throw new Error("Package projection refresh revision mismatch");
-    }
-    await this.installUserKernelProjection(snapshot);
-    const after = await this.loadUserKernelMarker();
-    const installed = this.projectionState.installed();
-    if (
-      !after
-      || !this.isCurrentUserKernelMarker(marker)
-      || after !== marker
-      || !installed
-      || installed.username !== marker.username
-      || installed.uid !== marker.uid
-      || installed.kernelGeneration !== marker.generation
-      || installed.revision !== snapshot.projectionRevision
-    ) {
-      return false;
-    }
-    await this.clearRegisteredAppRunners({
-      fenceKind: "package-projection",
-      ownerUid: marker.uid,
-      ownerUsername: marker.username,
-      generation: marker.generation,
-      fenceId: input.fenceId,
-    });
-    const cleared = this.ctx.storage.transactionSync(() => (
-      this.projectionState.clearPackageFence(input.fenceId, input.generation)
-    ));
-    if (cleared) {
-      this.purgeAppRunnerRuntimeFenceAuthorizations(
-        "package-projection",
-        input.fenceId,
-        input.generation,
-      );
-    }
-    return cleared;
-  }
-
-  private abortPackageProjectionKernelWork(generation: number, fenceId: string): void {
-    const reason = new Error(`Package authority projection fenced: ${fenceId}`);
-    for (const [requestId, active] of [...this.activeRequests]) {
-      if (active.origin.type === "app") {
-        this.cancelRequest(active.origin, requestId, reason.message, false);
-        continue;
-      }
-      if (active.origin.type !== "process") continue;
-      const record = this.procs.get(active.origin.id);
-      if (
-        !record
-        || (this.instanceKind === "user" && record.kernelGeneration !== generation)
-        || record.packageSecurityRevision === null
-      ) {
-        continue;
-      }
-      this.cancelRequest(active.origin, requestId, reason.message, false);
-    }
-    for (const [scheduleId, controller] of this.activeScheduleRuns) {
-      const schedule = this.schedules.getStored(scheduleId);
-      if (typeof schedule?.packageSecurityRevision === "string") {
-        controller.abort(reason);
-        this.activeScheduleRuns.delete(scheduleId);
-      }
-    }
-  }
-
-  private async abortPackageProjectionProcesses(
-    generation: number,
-    fenceId: string,
-  ): Promise<void> {
-    const processes = this.procs.list().filter((record) => (
-      (this.instanceKind === "master" || record.kernelGeneration === generation)
-      && record.packageSecurityRevision !== null
-    ));
-    await mapWithConcurrency(
-      processes,
-      PACKAGE_PROJECTION_TARGET_CONCURRENCY,
-      async (record) => {
-        const requestId = crypto.randomUUID();
-        const response = await sendFrameToProcess(record.processId, {
-          type: "req",
-          id: requestId,
-          call: "proc.abort",
-          args: {
-            pid: record.processId,
-            packageProjectionFenceGeneration: generation,
-            packageProjectionFenceId: fenceId,
-          } as {
-            pid: string;
-            packageProjectionFenceGeneration: number;
-            packageProjectionFenceId: string;
-          },
-        });
-        const data = response?.type === "res" && response.ok
-          ? response.data as { ok?: unknown; pid?: unknown } | undefined
-          : undefined;
-        if (
-          !response
-          || response.type !== "res"
-          || response.id !== requestId
-          || !response.ok
-          || data?.ok !== true
-          || data.pid !== record.processId
-        ) {
-          throw new Error(`Process did not exact-ack package projection fence: ${record.processId}`);
-        }
-        const current = this.procs.get(record.processId);
-        if (
-          !current
-          || current.uid !== record.uid
-          || current.ownerUid !== record.ownerUid
-          || current.kernelGeneration !== record.kernelGeneration
-          || current.packageSecurityRevision !== record.packageSecurityRevision
-        ) {
-          throw new Error(`Process identity changed during package fence: ${record.processId}`);
-        }
-        if (record.activeRunId) {
-          this.procs.updateRuntimeState(record.processId, {
-            state: record.queuedCount > 0 ? "queued" : "idle",
-            activeRunId: null,
-            activeConversationId: null,
-            queuedCount: record.queuedCount,
-            lastActiveAt: Date.now(),
-          });
-          this.runRoutes.delete(record.activeRunId);
-        }
-      },
-    );
-  }
-
-  async receiveMasterProjection(input: {
-    sourceKernelName: string;
-    generation: number;
-    signal?: "pkg.changed" | "config.changed";
-  }): Promise<boolean> {
-    if (
-      this.instanceKind !== "user"
-      || input.sourceKernelName !== SHIP_KERNEL_NAME
-      || !Number.isSafeInteger(input.generation)
-      || input.generation <= 0
-      || (input.signal !== undefined
-        && input.signal !== "pkg.changed"
-        && input.signal !== "config.changed")
-    ) {
-      return false;
-    }
-    const before = await this.loadUserKernelMarker();
-    if (!before || before.lifecycle !== "active" || before.generation !== input.generation) {
-      return false;
-    }
-    const master = await getAgentByName(
-      this.env.KERNEL,
-      SHIP_KERNEL_NAME,
-    ) as unknown as MasterKernelControlStub;
-    const snapshot = await master.getUserKernelProjection(
-      this.name,
-      before.username,
-      before.generation,
-    );
-    const current = await this.loadUserKernelMarker();
-    if (
-      !current
-      || current.lifecycle !== "active"
-      || current.username !== snapshot.username
-      || current.uid !== snapshot.uid
-      || current.generation !== snapshot.generation
-      || current.generation !== input.generation
-    ) {
-      return false;
-    }
-    validateUserKernelProvisioningSnapshot(snapshot, current.username);
-    await this.installUserKernelProjection(snapshot);
-    if (input.signal) {
-      this.broadcastToRole("user", input.signal);
-    }
-    return true;
-  }
-
-  async resolveUserKernelRoute(
+  }  async resolveUserKernelRoute(
     usernameInput: string,
     trustedLoginSourceAddress?: string,
   ): Promise<UserKernelRouteResult> {
@@ -3855,70 +1680,6 @@ export class Kernel extends Host<Env> {
       loginSourceScope,
     };
   }
-
-  /**
-   * Certify one exact active placement for edge routing. The active
-   * placement authenticates the requesting Kernel, and the transition
-   * barrier prevents a certificate from escaping after that placement closes.
-   */
-  async issueAppPlacementCertificate(
-    input: UserKernelPlacementProof,
-  ): Promise<AppPlacementCertificateGrant | null> {
-    this.assertMasterKernel();
-    if (
-      !input
-      || typeof input.sourceKernelName !== "string"
-      || !Number.isSafeInteger(input.uid)
-      || input.uid < 0
-      || !Number.isSafeInteger(input.generation)
-      || input.generation <= 0
-    ) {
-      return null;
-    }
-
-    const username = userKernelUsername(input.sourceKernelName);
-    const placement = this.authorizeUserKernelSource(input);
-    if (!username || !placement || placement.username !== username) {
-      return null;
-    }
-    const releaseOperation = this.beginMasterUserOperation(username);
-    if (!releaseOperation) return null;
-    try {
-      const before = this.userKernels.get(username);
-      if (
-        !before
-        || !this.isActiveUserKernelPlacement(before)
-        || !sameUserKernelPlacement(before, placement)
-      ) {
-        return null;
-      }
-      const signingKey = await this.masterAppPlacementSigningKey();
-      await this.publishMasterAppPlacementVerificationKey(signingKey.record);
-      const certificate = await signAppPlacementCertificate(signingKey.key, {
-        username,
-        uid: placement.uid,
-        generation: placement.generation,
-      });
-      const current = this.userKernels.get(username);
-      if (
-        !current
-        || !this.isActiveUserKernelPlacement(current)
-        || !sameUserKernelPlacement(current, placement)
-      ) {
-        return null;
-      }
-      return {
-        version: 1,
-        username,
-        uid: placement.uid,
-        generation: placement.generation,
-        certificate,
-      };
-    } finally {
-      releaseOperation();
-    }
-  }
-
   async resolveUserKernelCallbackRoute(
     usernameInput: string,
     generation: number,
@@ -4243,52 +2004,6 @@ export class Kernel extends Host<Env> {
       && canOwnerRunAsAccount(this.auth, ownerUid, actor, ownerUid === 0)
     );
   }
-
-  private isMasterPackageRuntimeAuthorized(
-    appFrame: AppFrameContext,
-    call?: string,
-  ): boolean {
-    if (this.projectionState.packageFence() !== null) {
-      return false;
-    }
-    const actor = this.auth.getPasswdByUid(appFrame.uid);
-    if (!actor || actor.username !== appFrame.username) {
-      return false;
-    }
-    const record = this.packages.resolve(
-      appFrame.packageId,
-      visiblePackageScopesForActor({ uid: actor.uid }),
-    );
-    if (
-      !record
-      || !record.enabled
-      || (record.reviewRequired && !record.reviewedAt)
-      || record.manifest.name !== appFrame.packageName
-      || record.updatedAt !== appFrame.packageUpdatedAt
-      || record.artifact.hash !== appFrame.packageArtifactHash
-    ) {
-      return false;
-    }
-    const entrypoint = findAppFrameEntrypoint(
-      record.manifest.entrypoints,
-      appFrame.entrypointName,
-      appFrame.routeBase,
-    );
-    if (!entrypoint) {
-      return false;
-    }
-    if (call === undefined) {
-      return true;
-    }
-    const capabilities = this.caps.resolve(
-      this.auth.resolveGids(actor.username, actor.gid),
-    );
-    return Boolean(
-      entrypoint.syscalls?.includes(call)
-      && hasCapability(capabilities, call),
-    );
-  }
-
   async authenticateUserKernelConnection(
     input: UserKernelAuthenticationInput,
   ): Promise<import("./context").KernelAuthenticationResult> {
@@ -4614,484 +2329,7 @@ export class Kernel extends Host<Env> {
     } finally {
       releaseOperation();
     }
-  }
-
-  private async runPackageProjectionMutation<T>(
-    frameId: string,
-    operation: () => Promise<T>,
-  ): Promise<T> {
-    if (
-      this.masterPackageProjectionTransitionPending !== null
-      || this.projectionState.packageFence() !== null
-    ) {
-      this.queueMasterPackageFenceRecovery();
-      throw new Error("Package authority projection transition is already in progress");
-    }
-    const fenceId = crypto.randomUUID();
-    this.masterPackageProjectionTransitionPending = fenceId;
-    try {
-      return await this.runSerializedMasterProjectionOperation(
-        () => this.runPackageProjectionMutationExclusive(frameId, fenceId, operation),
-        fenceId,
-      );
-    } finally {
-      if (this.masterPackageProjectionTransitionPending === fenceId) {
-        this.masterPackageProjectionTransitionPending = null;
-      }
-    }
-  }
-
-  private masterLegacyAppRuntimeOwners(): Array<{
-    ownerUid: number;
-    ownerUsername: string;
-  }> {
-    this.assertMasterKernel();
-    const owners = new Map<number, { ownerUid: number; ownerUsername: string }>();
-    for (const runner of this.appRuntimes.listRunners()) {
-      const placement = this.userKernels.getByUid(runner.kernelOwnerUid);
-      if (
-        !placement
-        || placement.lifecycle !== "legacy"
-        || placement.username !== runner.kernelOwnerUsername
-      ) {
-        continue;
-      }
-      const existing = owners.get(placement.uid);
-      if (existing && existing.ownerUsername !== placement.username) {
-        throw new Error("AppRunner registry owner identity conflicts");
-      }
-      owners.set(placement.uid, {
-        ownerUid: placement.uid,
-        ownerUsername: placement.username,
-      });
-    }
-    return [...owners.values()].sort((left, right) => (
-      left.ownerUsername.localeCompare(right.ownerUsername)
-    ));
-  }
-
-  private async transitionMasterLegacyAppRunners(
-    action: AppRunnerRuntimeFenceAuthorizationInput["action"],
-    generation: number,
-    fenceId: string,
-  ): Promise<void> {
-    const owners = this.masterLegacyAppRuntimeOwners();
-    const results = await mapWithConcurrency(
-      owners,
-      APP_RUNNER_RUNTIME_FENCE_CONCURRENCY,
-      async (owner) => {
-        try {
-          await this.transitionRegisteredAppRunners(action, {
-            fenceKind: "package-projection",
-            ...owner,
-            generation,
-            fenceId,
-          });
-          return { ok: true as const };
-        } catch (error) {
-          return { ok: false as const, error };
-        }
-      },
-    );
-    const failure = results.find((result) => !result.ok);
-    if (failure && !failure.ok) throw failure.error;
-  }
-
-  private async runPackageProjectionMutationExclusive<T>(
-    frameId: string,
-    fenceId: string,
-    operation: () => Promise<T>,
-  ): Promise<T> {
-    if (this.projectionState.packageFence() !== null) {
-      this.queueMasterPackageFenceRecovery();
-      throw new Error("Package authority projection recovery is in progress");
-    }
-    if (this.transitioningUserKernels.size > 0) {
-      throw new Error("A user Kernel lifecycle transition is in progress");
-    }
-    if (this.appRuntimes.listLifecycleFences().length > 0) {
-      throw new Error("An AppRunner lifecycle transition is in progress");
-    }
-    const targets = this.userKernels.list("active");
-    const releases: Array<() => void> = [];
-    for (const target of targets) {
-      const release = this.beginMasterUserOperation(target.username);
-      if (!release) {
-        for (const acquired of releases) acquired();
-        throw new Error(`Package authority transition is in progress for ${target.username}`);
-      }
-      releases.push(release);
-    }
-
-    const masterFenceGeneration = this.projectionState.masterRevision();
-    let prepared = false;
-    try {
-      this.ctx.storage.transactionSync(() => {
-        this.projectionState.enterPackageFence({
-          fenceId,
-          kernelGeneration: masterFenceGeneration,
-          startedAt: Date.now(),
-        });
-      });
-      this.closeUserKernelTargetAdmission(
-        masterFenceGeneration,
-        "Package authority projection is fenced",
-        true,
-      );
-      this.abortPackageProjectionKernelWork(masterFenceGeneration, fenceId);
-      await this.abortPackageProjectionProcesses(masterFenceGeneration, fenceId);
-      await this.waitForUserKernelTargetOperations(masterFenceGeneration, true);
-      this.schedules.releaseInterruptedRuns(
-        "Package authority projection is fenced",
-        Date.now(),
-        true,
-      );
-      try {
-        await this.transitionMasterLegacyAppRunners(
-          "prepare",
-          masterFenceGeneration,
-          fenceId,
-        );
-        await this.preparePackageProjectionTargets(targets, fenceId);
-        prepared = true;
-      } catch (error) {
-        const revision = this.projectionState.masterRevision();
-        const targetsRecovered = await this.refreshPackageProjectionTargets(
-          targets,
-          fenceId,
-          revision,
-        );
-        let runnersRecovered = false;
-        if (targetsRecovered) {
-          try {
-            await this.transitionMasterLegacyAppRunners(
-              "clear",
-              masterFenceGeneration,
-              fenceId,
-            );
-            runnersRecovered = true;
-          } catch {
-          }
-        }
-        const recovered = targetsRecovered && runnersRecovered;
-        if (recovered) {
-          this.ctx.storage.transactionSync(() => {
-            this.projectionState.clearPackageFence(fenceId, masterFenceGeneration);
-          });
-          this.purgeAppRunnerRuntimeFenceAuthorizations(
-            "package-projection",
-            fenceId,
-            masterFenceGeneration,
-          );
-        }
-        throw new Error(recovered
-          ? `Package authority fence preparation failed: ${errorMessage(error)}`
-          : "Package authority fence preparation failed and a target remains fenced");
-      }
-
-      let mutation: { value: T; revision: number } | null = null;
-      let mutationError: unknown;
-      try {
-        mutation = await this.runMasterProjectionMutation(operation, {
-          gateHeld: true,
-          packageFenceId: fenceId,
-        });
-      } catch (error) {
-        mutationError = error;
-      }
-      const revision = mutation?.revision ?? this.projectionState.masterRevision();
-
-      if (!await this.refreshPackageProjectionTargets(
-        targets,
-        fenceId,
-        revision,
-      )) {
-        throw new Error(
-          `Authoritative package state changed for ${frameId}, but a user Kernel remains fenced`,
-        );
-      }
-      await this.transitionMasterLegacyAppRunners(
-        "clear",
-        masterFenceGeneration,
-        fenceId,
-      );
-      this.ctx.storage.transactionSync(() => {
-        if (!this.projectionState.clearPackageFence(fenceId, masterFenceGeneration)) {
-          throw new Error("Master package projection fence clear failed");
-        }
-      });
-      this.purgeAppRunnerRuntimeFenceAuthorizations(
-        "package-projection",
-        fenceId,
-        masterFenceGeneration,
-      );
-      if (mutationError) throw mutationError;
-      if (!mutation) throw new Error("Master package mutation did not produce a result");
-      return mutation.value;
-    } finally {
-      for (const release of releases) release();
-      if (!prepared) {
-        for (const [authorization, pending] of this.packageProjectionFenceAuthorizations) {
-          if (pending.fence.fenceId === fenceId) {
-            this.packageProjectionFenceAuthorizations.delete(authorization);
-          }
-        }
-      }
-      if (this.projectionState.packageFence()?.fenceId === fenceId) {
-        this.queueMasterPackageFenceRecovery();
-      }
-    }
-  }
-
-  private async preparePackageProjectionTarget(
-    placement: UserKernelRecord,
-    fenceId: string,
-  ): Promise<void> {
-    pruneExpiredAuthorizations(this.packageProjectionFenceAuthorizations);
-    const authorization = crypto.randomUUID();
-    const fence: Omit<PackageProjectionFenceAuthorizationInput, "authorization"> = {
-      targetKernelName: userKernelName(placement.username),
-      username: placement.username,
-      uid: placement.uid,
-      generation: placement.generation,
-      fenceId,
-    };
-    this.packageProjectionFenceAuthorizations.set(authorization, {
-      expiresAt: Date.now() + PACKAGE_PROJECTION_FENCE_AUTHORIZATION_TTL_MS,
-      fence,
-    });
-    try {
-      const target = await getAgentByName(
-        this.env.KERNEL,
-        fence.targetKernelName,
-      ) as unknown as {
-        preparePackageProjectionFence: (
-          input: PackageProjectionFenceTargetInput,
-        ) => Promise<boolean>;
-      };
-      const accepted = await target.preparePackageProjectionFence({
-        sourceKernelName: this.name,
-        authorization,
-        username: placement.username,
-        uid: placement.uid,
-        generation: placement.generation,
-        fenceId,
-      });
-      if (!accepted) {
-        throw new Error(`User Kernel rejected package fence: ${placement.username}`);
-      }
-    } finally {
-      this.packageProjectionFenceAuthorizations.delete(authorization);
-    }
-  }
-
-  private async preparePackageProjectionTargets(
-    placements: readonly UserKernelRecord[],
-    fenceId: string,
-  ): Promise<void> {
-    const results = await mapWithConcurrency(
-      placements,
-      PACKAGE_PROJECTION_TARGET_CONCURRENCY,
-      async (placement) => {
-        try {
-          await this.preparePackageProjectionTarget(placement, fenceId);
-          return { ok: true as const };
-        } catch (error) {
-          return { ok: false as const, error };
-        }
-      },
-    );
-    const failed = results.find((result) => !result.ok);
-    if (failed && !failed.ok) throw failed.error;
-  }
-
-  private async refreshPackageProjectionTargets(
-    placements: readonly UserKernelRecord[],
-    fenceId: string,
-    expectedProjectionRevision: number,
-  ): Promise<boolean> {
-    const results = await mapWithConcurrency(
-      placements,
-      PACKAGE_PROJECTION_TARGET_CONCURRENCY,
-      async (placement) => {
-        try {
-          const target = await getAgentByName(
-            this.env.KERNEL,
-            userKernelName(placement.username),
-          ) as unknown as {
-            refreshPackageProjectionFence: (
-              input: PackageProjectionRefreshTargetInput,
-            ) => Promise<boolean>;
-          };
-          return await target.refreshPackageProjectionFence({
-            sourceKernelName: this.name,
-            username: placement.username,
-            uid: placement.uid,
-            generation: placement.generation,
-            fenceId,
-            expectedProjectionRevision,
-          });
-        } catch {
-          return false;
-        }
-      },
-    );
-    return results.every(Boolean);
-  }
-
-  private queueMasterPackageFenceRecovery(delaySeconds = 0): void {
-    if (
-      this.instanceKind !== "master"
-      || this.projectionState.packageFence() === null
-      || this.masterPackageFenceRecoveryQueued
-    ) {
-      return;
-    }
-    this.masterPackageFenceRecoveryQueued = true;
-    if (delaySeconds > 0) {
-      this.ctx.waitUntil(this.schedule(
-        delaySeconds,
-        "onMasterPackageProjectionFenceRecoveryDue",
-      ).then(() => undefined).catch((error) => {
-        this.masterPackageFenceRecoveryQueued = false;
-        console.warn("[Kernel] Failed to schedule package projection recovery:", error);
-        this.queueMasterPackageFenceRecovery();
-      }));
-      return;
-    }
-    this.ctx.waitUntil(Promise.resolve().then(
-      () => this.onMasterPackageProjectionFenceRecoveryDue(),
-    ));
-  }
-
-  async onMasterPackageProjectionFenceRecoveryDue(): Promise<void> {
-    this.masterPackageFenceRecoveryQueued = false;
-    if (this.instanceKind !== "master" || this.projectionState.packageFence() === null) {
-      this.masterPackageFenceRecoveryAttempt = 0;
-      return;
-    }
-    try {
-      await this.recoverMasterPackageProjectionFence();
-      this.masterPackageFenceRecoveryAttempt = 0;
-    } catch (error) {
-      this.masterPackageFenceRecoveryAttempt += 1;
-      const retrySeconds = Math.min(
-        2 ** Math.min(this.masterPackageFenceRecoveryAttempt - 1, 6),
-        PACKAGE_PROJECTION_RECOVERY_MAX_DELAY_SECONDS,
-      );
-      console.warn(
-        `[Kernel] Master package projection recovery remains fail-closed; retrying in ${retrySeconds}s:`,
-        error,
-      );
-      this.queueMasterPackageFenceRecovery(retrySeconds);
-    }
-  }
-
-  private async recoverMasterPackageProjectionFence(): Promise<void> {
-    this.assertMasterKernel();
-    const fence = this.projectionState.packageFence();
-    if (!fence) return;
-    await this.runSerializedMasterProjectionOperation(
-      () => this.recoverMasterPackageProjectionFenceExclusive(fence),
-      fence.fenceId,
-    );
-  }
-
-  private async recoverMasterPackageProjectionFenceExclusive(
-    fence: NonNullable<ReturnType<KernelProjectionState["packageFence"]>>,
-  ): Promise<void> {
-    const currentFence = this.projectionState.packageFence();
-    if (
-      !currentFence
-      || currentFence.fenceId !== fence.fenceId
-      || currentFence.kernelGeneration !== fence.kernelGeneration
-    ) {
-      return;
-    }
-    const placements = this.userKernels.list("active");
-    const releases: Array<() => void> = [];
-    try {
-      for (const placement of placements) {
-        const release = this.beginMasterUserOperation(placement.username);
-        if (!release) {
-          throw new Error(`User Kernel transition is active for ${placement.username}`);
-        }
-        releases.push(release);
-      }
-      this.closeUserKernelTargetAdmission(
-        fence.kernelGeneration,
-        "Package authority projection recovery is fenced",
-        true,
-      );
-      this.abortPackageProjectionKernelWork(fence.kernelGeneration, fence.fenceId);
-      await this.abortPackageProjectionProcesses(
-        fence.kernelGeneration,
-        fence.fenceId,
-      );
-      await this.waitForUserKernelTargetOperations(fence.kernelGeneration, true);
-      this.schedules.releaseInterruptedRuns(
-        "Package authority projection recovery is fenced",
-        Date.now(),
-        true,
-      );
-      if (this.projectionState.pendingMasterRevision() !== null) {
-        this.ctx.storage.transactionSync(() => {
-          this.projectionState.recoverPendingMasterRevision();
-        });
-      }
-      await this.transitionMasterLegacyAppRunners(
-        "prepare",
-        fence.kernelGeneration,
-        fence.fenceId,
-      );
-      await this.preparePackageProjectionTargets(placements, fence.fenceId);
-      const revision = this.projectionState.masterRevision();
-      if (!await this.refreshPackageProjectionTargets(
-        placements,
-        fence.fenceId,
-        revision,
-      )) {
-        throw new Error("A user Kernel rejected Master package fence recovery");
-      }
-      await this.transitionMasterLegacyAppRunners(
-        "clear",
-        fence.kernelGeneration,
-        fence.fenceId,
-      );
-      this.ctx.storage.transactionSync(() => {
-        if (!this.projectionState.clearPackageFence(
-          fence.fenceId,
-          fence.kernelGeneration,
-        )) {
-          throw new Error("Master package projection fence recovery changed concurrently");
-        }
-      });
-      this.purgeAppRunnerRuntimeFenceAuthorizations(
-        "package-projection",
-        fence.fenceId,
-        fence.kernelGeneration,
-      );
-    } finally {
-      for (const release of releases) release();
-    }
-  }
-
-  private async runMasterProjectionMutation<T>(
-    operation: () => Promise<T>,
-    options: { gateHeld?: boolean; packageFenceId?: string } = {},
-  ): Promise<{ value: T; revision: number }> {
-    this.assertMasterKernel();
-    const execute = () => this.runMasterProjectionMutationExclusive(operation, options);
-    if (options.gateHeld) {
-      return await execute();
-    }
-    return await this.runSerializedMasterProjectionOperation(
-      execute,
-      options.packageFenceId,
-    );
-  }
-
-  private async runSerializedMasterProjectionOperation<T>(
+  }  private async runSerializedMasterProjectionOperation<T>(
     operation: () => Promise<T>,
     packageFenceId?: string,
   ): Promise<T> {
@@ -5127,53 +2365,6 @@ export class Kernel extends Host<Env> {
       releaseQueue();
     }
   }
-
-  private async runMasterProjectionMutationExclusive<T>(
-    operation: () => Promise<T>,
-    options: { packageFenceId?: string } = {},
-  ): Promise<{ value: T; revision: number }> {
-    const fence = this.projectionState.packageFence();
-    if (fence && fence.fenceId !== options.packageFenceId) {
-      throw new Error("Master projection is fenced pending package recovery");
-    }
-    let releaseCommit!: () => void;
-    const committed = new Promise<void>((resolve) => {
-      releaseCommit = resolve;
-    });
-    this.pendingMasterProjectionCommit = committed;
-    let revision: number;
-    try {
-      revision = this.ctx.storage.transactionSync(() => (
-        this.projectionState.beginMasterMutation()
-      ));
-    } catch (error) {
-      if (this.pendingMasterProjectionCommit === committed) {
-        this.pendingMasterProjectionCommit = null;
-      }
-      releaseCommit();
-      throw error;
-    }
-    let value!: T;
-    let operationError: unknown;
-    try {
-      value = await operation();
-    } catch (error) {
-      operationError = error;
-    }
-    try {
-      this.ctx.storage.transactionSync(() => {
-        this.projectionState.commitMasterMutation(revision);
-      });
-    } finally {
-      if (this.pendingMasterProjectionCommit === committed) {
-        this.pendingMasterProjectionCommit = null;
-      }
-      releaseCommit();
-    }
-    if (operationError) throw operationError;
-    return { value, revision };
-  }
-
   private async provisionCreatedHumanAfterProjectionCommit(
     response: ResponseFrame,
   ): Promise<void> {
@@ -5410,57 +2601,7 @@ export class Kernel extends Host<Env> {
     });
     this.broadcastRepoProjection();
     return result;
-  }
-
-  async getUserKernelProjection(
-    sourceKernelName: string,
-    usernameInput: string,
-    generation: number,
-  ): Promise<UserKernelProvisioningSnapshot> {
-    this.assertMasterKernel();
-    const username = canonicalizeLoginUsername(usernameInput);
-    const placement = username
-      ? await this.authorizeUserKernelSource({
-          sourceKernelName,
-          uid: this.userKernels.get(username)?.uid ?? -1,
-          generation,
-        })
-      : null;
-    if (
-      !username
-      || sourceKernelName !== userKernelName(username)
-      || !placement
-      || placement.generation !== generation
-    ) {
-      throw new Error("User Kernel projection request denied");
-    }
-    if (this.projectionState.packageFence() !== null) {
-      this.queueMasterPackageFenceRecovery();
-    }
-    const snapshot = await this.buildCommittedUserKernelProjection(placement.username);
-    const current = this.userKernels.get(placement.username);
-    if (
-      !current
-      || !sameUserKernelPlacement(current, placement)
-      || !this.isActiveUserKernelPlacement(current)
-    ) {
-      throw new Error("User Kernel projection request denied");
-    }
-    return snapshot;
-  }
-
-  private async buildCommittedUserKernelProjection(
-    username: string,
-  ): Promise<UserKernelProvisioningSnapshot> {
-    const pendingCommit = this.pendingMasterProjectionCommit;
-    if (pendingCommit) await pendingCommit;
-    if (this.projectionState.pendingMasterRevision() !== null) {
-      throw new Error("User Kernel projection is temporarily unavailable");
-    }
-    return this.buildUserKernelProjection(username);
-  }
-
-  private async ensureUserKernelProvisioned(
+  }  private async ensureUserKernelProvisioned(
     usernameInput: string,
   ): Promise<UserKernelRecord> {
     this.assertMasterKernel();
@@ -5517,41 +2658,34 @@ export class Kernel extends Host<Env> {
       throw new Error(`User Kernel cannot provision from ${placement.lifecycle}`);
     }
 
-    pruneExpiredAuthorizations(this.userKernelProvisioningAuthorizations);
-    const authorization = crypto.randomUUID();
-    const authorizedProvisioning: Omit<
-      UserKernelProvisioningAuthorizationInput,
-      "authorization"
-    > = {
-      targetKernelName: userKernelName(username),
+    // The target holds no Master state; everything its runtime needs is
+    // resolved here and carried by the provisioning RPC.
+    const owner = this.auth.getPasswdByUsername(username);
+    if (!owner || owner.uid !== placement.uid) {
+      throw new Error(`User Kernel owner is unavailable: ${username}`);
+    }
+    const ownerIdentity = accountIdentity(this.auth, owner);
+    const personalAgentUid = this.auth.getPersonalAgentUid(owner.uid);
+    const agentEntry = personalAgentUid != null
+      ? this.auth.getPasswdByUid(personalAgentUid)
+      : null;
+    const target = await getAgentByName(
+      this.env.KERNEL,
+      userKernelName(username),
+    ) as unknown as {
+      provisionUserKernel: (
+        input: UserKernelProvisioningTargetInput,
+      ) => Promise<UserKernelInstanceMarker>;
+    };
+    const marker = await target.provisionUserKernel({
+      sourceKernelName: this.name,
       username,
       uid: placement.uid,
       generation: placement.generation,
-    };
-    this.userKernelProvisioningAuthorizations.set(authorization, {
-      expiresAt: Date.now() + USER_KERNEL_PROVISIONING_AUTHORIZATION_TTL_MS,
-      provisioning: authorizedProvisioning,
+      ownerIdentity,
+      ...(agentEntry ? { personalAgent: accountIdentity(this.auth, agentEntry) } : {}),
+      capabilities: this.caps.resolve(ownerIdentity.gids),
     });
-    let marker: UserKernelInstanceMarker;
-    try {
-      const target = await getAgentByName(
-        this.env.KERNEL,
-        authorizedProvisioning.targetKernelName,
-      ) as unknown as {
-        provisionUserKernel: (
-          input: UserKernelProvisioningTargetInput,
-        ) => Promise<UserKernelInstanceMarker>;
-      };
-      marker = await target.provisionUserKernel({
-        sourceKernelName: this.name,
-        authorization,
-        username,
-        uid: placement.uid,
-        generation: placement.generation,
-      });
-    } finally {
-      this.userKernelProvisioningAuthorizations.delete(authorization);
-    }
     if (
       marker.lifecycle !== "provisioning"
       || marker.username !== placement.username
@@ -5570,38 +2704,20 @@ export class Kernel extends Host<Env> {
     if (placement.lifecycle !== "active") {
       throw new Error(`User Kernel is not committed active: ${placement.username}`);
     }
-    pruneExpiredAuthorizations(this.userKernelActivationAuthorizations);
-    const authorization = crypto.randomUUID();
-    const activation: Omit<UserKernelProvisioningAuthorizationInput, "authorization"> = {
-      targetKernelName: userKernelName(placement.username),
+    const target = await getAgentByName(
+      this.env.KERNEL,
+      userKernelName(placement.username),
+    ) as unknown as {
+      activateProvisionedUserKernel: (
+        input: UserKernelActivationTargetInput,
+      ) => Promise<UserKernelInstanceMarker>;
+    };
+    const marker = await target.activateProvisionedUserKernel({
+      sourceKernelName: this.name,
       username: placement.username,
       uid: placement.uid,
       generation: placement.generation,
-    };
-    this.userKernelActivationAuthorizations.set(authorization, {
-      expiresAt: Date.now() + USER_KERNEL_ACTIVATION_AUTHORIZATION_TTL_MS,
-      activation,
     });
-    let marker: UserKernelInstanceMarker;
-    try {
-      const target = await getAgentByName(
-        this.env.KERNEL,
-        activation.targetKernelName,
-      ) as unknown as {
-        activateProvisionedUserKernel: (
-          input: UserKernelActivationTargetInput,
-        ) => Promise<UserKernelInstanceMarker>;
-      };
-      marker = await target.activateProvisionedUserKernel({
-        sourceKernelName: this.name,
-        authorization,
-        username: placement.username,
-        uid: placement.uid,
-        generation: placement.generation,
-      });
-    } finally {
-      this.userKernelActivationAuthorizations.delete(authorization);
-    }
     if (
       marker.lifecycle !== "active"
       || marker.username !== placement.username
@@ -5613,34 +2729,6 @@ export class Kernel extends Host<Env> {
     const current = this.userKernels.get(placement.username);
     if (!current || !sameUserKernelPlacement(current, placement)) {
       throw new Error(`User Kernel placement changed for ${placement.username}`);
-    }
-    const legacyFence = this.appRuntimes.getLifecycleFence(placement.uid);
-    if (legacyFence) {
-      if (
-        legacyFence.ownerUsername !== placement.username
-        || legacyFence.sourceKernelName !== SHIP_KERNEL_NAME
-      ) {
-        throw new Error(`Legacy AppRunner lifecycle fence mismatch for ${placement.username}`);
-      }
-      await this.clearRegisteredAppRunners({
-        fenceKind: "user-lifecycle",
-        ownerUid: legacyFence.ownerUid,
-        ownerUsername: legacyFence.ownerUsername,
-        generation: legacyFence.generation,
-        fenceId: legacyFence.fenceId,
-      });
-      const afterClear = this.userKernels.get(placement.username);
-      if (!afterClear || !sameUserKernelPlacement(afterClear, placement)) {
-        throw new Error(`User Kernel placement changed for ${placement.username}`);
-      }
-      if (!this.appRuntimes.clearLifecycleFence(legacyFence)) {
-        throw new Error(`Legacy AppRunner lifecycle fence clear failed for ${placement.username}`);
-      }
-      this.purgeAppRunnerRuntimeFenceAuthorizations(
-        "user-lifecycle",
-        legacyFence.fenceId,
-        legacyFence.generation,
-      );
     }
     return current;
   }
@@ -5658,296 +2746,6 @@ export class Kernel extends Host<Env> {
     });
     await this.ensureUserKernelProvisioned(root.username);
     await this.ensureUserKernelProvisioned(user.username);
-  }
-
-  private buildUserKernelProjection(username: string): UserKernelProvisioningSnapshot {
-    this.assertMasterKernel();
-    const placement = this.userKernels.get(username);
-    const owner = this.auth.getPasswdByUsername(username);
-    if (!placement || !owner || placement.uid !== owner.uid) {
-      throw new Error(`Cannot project unknown user Kernel: ${username}`);
-    }
-    const ownerAccount = this.auth.getAccountIdentity(username);
-    const isRootAccount = owner.username === "root"
-      && owner.uid === 0
-      && ownerAccount?.kind === "system";
-    if (
-      !ownerAccount
-      || ownerAccount.uid !== owner.uid
-      || ownerAccount.state !== "active"
-      || (ownerAccount.kind !== "human" && !isRootAccount)
-    ) {
-      throw new Error(`Cannot project non-human user Kernel: ${username}`);
-    }
-
-    const isRoot = owner.uid === 0;
-    const accounts = this.auth.getPasswdEntries();
-    const runnableAccounts = accounts.filter((entry) => (
-      canOwnerRunAsAccount(this.auth, owner.uid, entry, isRoot)
-    ));
-    const runnableAccountNames = new Set(runnableAccounts.map((entry) => entry.username));
-    const runnableAccountUids = new Set(runnableAccounts.map((entry) => entry.uid));
-    const capabilityAccounts = accounts.filter((entry) => (
-      entry.uid < 1000
-      || runnableAccountNames.has(entry.username)
-    ));
-    const primaryGids = new Set(capabilityAccounts.map((entry) => entry.gid));
-    const authoritativeGroups = this.auth.getGroupEntries();
-    const groups = authoritativeGroups.map((group) => ({
-      ...group,
-      members: isRoot
-        ? group.members
-        : group.gid === 0
-          ? []
-          : group.members.filter((member) => runnableAccountNames.has(member)),
-    }));
-    const relevantGids = new Set([
-      ...primaryGids,
-      ...authoritativeGroups
-        .filter((group) => (
-          group.gid < 1000
-          || primaryGids.has(group.gid)
-          || group.members.some((member) => runnableAccountNames.has(member))
-        ))
-        .map((group) => group.gid),
-    ]);
-    if (!isRoot) relevantGids.delete(0);
-
-    const config = this.config.listExplicit("").filter((entry) => {
-      if (entry.key.startsWith("config/")) {
-        return isRoot || isSharedSystemConfigKey(entry.key);
-      }
-      const match = /^users\/(\d+)\//.exec(entry.key);
-      return match ? runnableAccountUids.has(Number(match[1])) : false;
-    });
-    config.push(...selectRepoMetadataProjection(
-      this.config.listExplicit("repos"),
-      runnableAccountNames,
-      isRoot,
-    ));
-    const packages = isRoot
-      ? this.packages.list({})
-      : this.packages.list({
-          scopes: visiblePackageScopesForActor({ uid: owner.uid }),
-        });
-
-    return {
-      version: 1,
-      username: owner.username,
-      uid: owner.uid,
-      generation: placement.generation,
-      projectionRevision: this.projectionState.masterRevision(),
-      accounts: accounts.map((entry) => {
-        const account = this.auth.getAccountIdentity(entry.username);
-        if (!account || account.uid !== entry.uid || account.state !== "active") {
-          throw new Error(`Account identity projection is incomplete: ${entry.username}`);
-        }
-        const kind = account.kind;
-        return {
-          entry,
-          kind,
-          locked: !runnableAccountNames.has(entry.username)
-            || kind === "agent"
-            || isLocked(this.auth.getShadowByUsername(entry.username) ?? {
-              username: entry.username,
-              hash: "!",
-              lastchanged: "",
-              min: "",
-              max: "",
-              warn: "",
-              inactive: "",
-              expire: "",
-              reserved: "",
-            }),
-        };
-      }),
-      groups,
-      personalAgentUid: this.auth.getPersonalAgentUid(owner.uid),
-      capabilities: this.caps.list().filter((record) => relevantGids.has(record.gid)),
-      config,
-      packages,
-    };
-  }
-
-  private async installUserKernelProjection(
-    snapshot: UserKernelProvisioningSnapshot,
-    options: {
-      allowLifecycleFence?: boolean;
-      allowClosedAdmission?: boolean;
-    } = {},
-  ): Promise<void> {
-    const operation = this.beginUserKernelTargetOperation(snapshot.generation, {
-      allowProvisioning: true,
-      allowLifecycleFence: options.allowLifecycleFence,
-      allowClosedAdmission: options.allowClosedAdmission,
-    });
-    const previous = this.projectionInstallTail;
-    let release!: () => void;
-    const current = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    this.projectionInstallTail = previous.then(() => current);
-    await previous;
-    try {
-      operation.assertCurrent();
-      await this.installUserKernelProjectionSerialized(snapshot, operation);
-    } finally {
-      release();
-      operation.release();
-    }
-  }
-
-  private async installUserKernelProjectionSerialized(
-    snapshot: UserKernelProvisioningSnapshot,
-    operation: UserKernelTargetOperationLease,
-  ): Promise<void> {
-    validateUserKernelProvisioningSnapshot(snapshot, snapshot.username);
-    await validatePackageAgentProjectionSecurity(snapshot);
-    const before = await this.loadUserKernelMarker();
-    if (
-      !before
-      || (before.lifecycle !== "active" && before.lifecycle !== "provisioning")
-      || before.username !== snapshot.username
-      || before.uid !== snapshot.uid
-      || before.generation !== snapshot.generation
-    ) {
-      throw new Error("User Kernel projection generation is stale");
-    }
-    const digest = await userKernelProjectionDigest(snapshot);
-    const installed = this.projectionState.installed();
-    if (
-      installed
-      && installed.username === snapshot.username
-      && installed.uid === snapshot.uid
-      && installed.kernelGeneration === snapshot.generation
-    ) {
-      if (snapshot.projectionRevision < installed.revision) {
-        throw new Error("User Kernel projection revision is stale");
-      }
-      if (snapshot.projectionRevision === installed.revision) {
-        if (installed.digest !== digest) {
-          throw new Error("User Kernel projection changed without a new revision");
-        }
-        return;
-      }
-    }
-    await this.reconcilePackageProjectionRuntime(snapshot.config);
-    operation.assertCurrent();
-    const after = await this.loadUserKernelMarker();
-    const latestInstalled = this.projectionState.installed();
-    if (
-      !after
-      || after !== this.userKernelMarker
-      || after.username !== before.username
-      || after.uid !== before.uid
-      || after.generation !== before.generation
-      || (after.lifecycle !== "active" && after.lifecycle !== "provisioning")
-      || (
-        latestInstalled
-        && latestInstalled.username === snapshot.username
-        && latestInstalled.uid === snapshot.uid
-        && latestInstalled.kernelGeneration === snapshot.generation
-        && latestInstalled.revision >= snapshot.projectionRevision
-      )
-    ) {
-      throw new Error("User Kernel projection changed during reconciliation");
-    }
-    this.applyUserKernelProjection(snapshot, digest);
-  }
-
-  private async reconcilePackageProjectionRuntime(
-    config: readonly { key: string; value: string }[],
-  ): Promise<void> {
-    const revisions = new Map<number, string>();
-    for (const entry of config) {
-      const match = /^users\/(\d+)\/pkg\/security_revision$/.exec(entry.key);
-      if (!match) continue;
-      const uid = Number(match[1]);
-      if (
-        !Number.isSafeInteger(uid)
-        || uid < 0
-        || !/^sha256:[0-9a-f]{64}$/.test(entry.value)
-        || revisions.has(uid)
-      ) {
-        throw new Error("User Kernel package security revision projection is invalid");
-      }
-      revisions.set(uid, entry.value);
-    }
-
-    const processTeardowns: Promise<void>[] = [];
-    for (const process of this.procs.list()) {
-      const projectedRevision = revisions.get(process.uid) ?? null;
-      const localPackageIdentity = packageAgentRuntimeIdentity(
-        { config: this.config },
-        process.uid,
-      );
-      const isOrWasPackage = localPackageIdentity.kind !== "ordinary"
-        || projectedRevision !== null
-        || process.packageSecurityRevision !== null;
-      if (
-        isOrWasPackage
-        && (
-          process.packageSecurityRevision === null
-          || projectedRevision === null
-          || process.packageSecurityRevision !== projectedRevision
-        )
-      ) {
-        processTeardowns.push(this.queueRevokedProcessTeardown(
-          process.processId,
-          "Package security revision changed",
-        ));
-      }
-    }
-
-    const scheduleTeardowns: Promise<void>[] = [];
-    for (const schedule of this.schedules.listStored()) {
-      const projectedRevision = revisions.get(schedule.runAs.uid) ?? null;
-      const localPackageIdentity = packageAgentRuntimeIdentity(
-        { config: this.config },
-        schedule.runAs.uid,
-      );
-      const isOrWasPackage = localPackageIdentity.kind !== "ordinary"
-        || projectedRevision !== null
-        || schedule.packageSecurityRevision !== null;
-      if (
-        isOrWasPackage
-        && (
-          schedule.packageSecurityRevision === null
-          || projectedRevision === null
-          || schedule.packageSecurityRevision !== projectedRevision
-        )
-      ) {
-        scheduleTeardowns.push(this.disableRevokedSchedule(
-          schedule,
-          "Package security revision changed",
-        ));
-      }
-    }
-    await Promise.all([...processTeardowns, ...scheduleTeardowns]);
-  }
-
-  private applyUserKernelProjection(
-    snapshot: UserKernelProvisioningSnapshot,
-    digest: string,
-  ): void {
-    this.ctx.storage.transactionSync(() => {
-      this.auth.replaceRuntimeDirectory({
-        accounts: snapshot.accounts,
-        groups: snapshot.groups,
-        ownerUid: snapshot.uid,
-        personalAgentUid: snapshot.personalAgentUid,
-      });
-      this.caps.replaceRuntimeProjection(snapshot.capabilities);
-      this.config.replaceRuntimeProjection(snapshot.config);
-      this.packages.replaceRuntimeProjection(snapshot.packages);
-      this.projectionState.recordInstalled({
-        username: snapshot.username,
-        uid: snapshot.uid,
-        kernelGeneration: snapshot.generation,
-        revision: snapshot.projectionRevision,
-        digest,
-      });
-    });
   }
 
   private async authenticateConnectionViaMaster(
@@ -7114,114 +3912,7 @@ export class Kernel extends Host<Env> {
       claimedIdentity,
       registryGeneration,
     );
-  }
-
-  /**
-   * Exact authority for a Process DO to acknowledge a target-side lifecycle
-   * abort after the user Kernel has already persisted its non-active marker.
-   * The process must still be registered to the generation being fenced.
-   */
-  async resolveProcessLifecycleFenceAuthority(
-    processId: string,
-    claimedIdentity: unknown,
-    fencedGeneration: number,
-  ): Promise<ProcessAuthorityResult> {
-    if (
-      !Number.isSafeInteger(fencedGeneration)
-      || fencedGeneration <= 0
-    ) {
-      return { ok: false, error: "user Kernel lifecycle fence authority is unavailable" };
-    }
-    if (this.instanceKind === "master") {
-      const record = this.procs.get(processId);
-      const fence = record
-        ? this.appRuntimes.getLifecycleFence(record.ownerUid)
-        : null;
-      const placement = fence ? this.userKernels.getByUid(fence.ownerUid) : null;
-      if (
-        !record
-        || record.kernelGeneration !== null
-        || !fence
-        || fence.sourceKernelName !== SHIP_KERNEL_NAME
-        || fence.generation !== fencedGeneration
-        || !placement
-        || placement.username !== fence.ownerUsername
-        || placement.uid !== record.ownerUid
-      ) {
-        return { ok: false, error: "user Kernel lifecycle fence authority is unavailable" };
-      }
-      return this.resolveProcessRegistryAuthority(processId, claimedIdentity, undefined);
-    }
-    const marker = await this.loadUserKernelMarker();
-    const lifecycleFence = marker
-      ? this.appRuntimes.getLifecycleFence(marker.uid)
-      : null;
-    const activeRecoveryFence = Boolean(
-      marker?.lifecycle === "active"
-      && lifecycleFence
-      && lifecycleFence.sourceKernelName === this.name
-      && lifecycleFence.generation === fencedGeneration,
-    );
-    if (
-      !marker
-      || (marker.lifecycle === "active" && !activeRecoveryFence)
-      || (
-        marker.generation !== fencedGeneration
-        && marker.generation !== fencedGeneration + 1
-      )
-    ) {
-      return { ok: false, error: "user Kernel lifecycle fence authority is unavailable" };
-    }
-    return this.resolveProcessRegistryAuthority(
-      processId,
-      claimedIdentity,
-      fencedGeneration,
-    );
-  }
-
-  /** Exact authority for aborting only package-stamped processes while fenced. */
-  async resolveProcessPackageProjectionFenceAuthority(
-    processId: string,
-    claimedIdentity: unknown,
-    fencedGeneration: number,
-    fenceId: string,
-  ): Promise<ProcessAuthorityResult> {
-    if (
-      !Number.isSafeInteger(fencedGeneration)
-      || fencedGeneration <= 0
-      || typeof fenceId !== "string"
-      || !fenceId
-    ) {
-      return { ok: false, error: "package projection fence authority is unavailable" };
-    }
-    const fence = this.projectionState.packageFence();
-    const record = this.procs.get(processId);
-    if (
-      fence?.fenceId !== fenceId
-      || fence.kernelGeneration !== fencedGeneration
-      || !record
-      || record.packageSecurityRevision === null
-    ) {
-      return { ok: false, error: "package projection fence authority is unavailable" };
-    }
-    if (this.instanceKind === "user") {
-      const marker = await this.loadUserKernelMarker();
-      if (
-        !marker
-        || marker.lifecycle !== "active"
-        || marker.generation !== fencedGeneration
-      ) {
-        return { ok: false, error: "package projection fence authority is unavailable" };
-      }
-    }
-    return this.resolveProcessRegistryAuthority(
-      processId,
-      claimedIdentity,
-      this.instanceKind === "user" ? fencedGeneration : undefined,
-    );
-  }
-
-  private resolveProcessRegistryAuthority(
+  }  private resolveProcessRegistryAuthority(
     processId: string,
     claimedIdentity: unknown,
     kernelGeneration?: number,
@@ -8168,73 +4859,7 @@ export class Kernel extends Host<Env> {
       && canOwnerRunAsAccount(this.auth, placement.uid, actor, placement.uid === 0)
       && (!appFrame.sessionId || isLegacyAppSessionId(appFrame.sessionId)),
     );
-  }
-
-  private rememberAuthorizedAppRuntime(
-    appFrame: AppFrameContext,
-    runnerName?: string,
-  ): boolean {
-    const actor = this.auth.getPasswdByUid(appFrame.uid);
-    if (!actor || actor.username !== appFrame.username) return false;
-
-    let kernelOwner: { uid: number; username: string } | null = null;
-    if (this.instanceKind === "user") {
-      const marker = this.userKernelMarker;
-      if (
-        marker?.lifecycle === "active"
-        && marker.username === appFrame.kernelUsername
-        && marker.generation === appFrame.kernelGeneration
-      ) {
-        kernelOwner = { uid: marker.uid, username: marker.username };
-      }
-    } else {
-      const ownerUsername = canonicalizeLoginUsername(
-        appFrame.kernelUsername ?? appFrame.username,
-      );
-      const placement = ownerUsername ? this.userKernels.get(ownerUsername) : null;
-      if (placement?.lifecycle === "legacy") {
-        kernelOwner = { uid: placement.uid, username: placement.username };
-      }
-    }
-    if (
-      !kernelOwner
-      || appFrame.kernelOwnerUid !== kernelOwner.uid
-      || this.appRuntimes.getLifecycleFence(kernelOwner.uid) !== null
-    ) {
-      return false;
-    }
-    if (runnerName === undefined) {
-      // Compatibility-only direct Kernel bindings have no Durable Object to
-      // register. Every AppRunner-owned path supplies its exact object name.
-      return true;
-    }
-    try {
-      this.appRuntimes.rememberRunner({
-        runnerName,
-        ownerUid: actor.uid,
-        ownerUsername: actor.username,
-        kernelOwnerUid: kernelOwner.uid,
-        kernelOwnerUsername: kernelOwner.username,
-        packageId: appFrame.packageId,
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private async isAuthoritativeLocalAppFrame(
-    appFrame: AppFrameContext,
-    call?: string,
-  ): Promise<boolean> {
-    if (this.instanceKind === "user") {
-      return this.authorizeAppFrame(appFrame);
-    }
-    const route = await this.resolveAppFrameKernel(appFrame, call);
-    return route.ok && route.kernelName === this.name;
-  }
-
-  private isActiveLocalAppClient(appFrame: AppFrameContext): boolean {
+  }  private isActiveLocalAppClient(appFrame: AppFrameContext): boolean {
     if (!appFrame.sessionId || !appFrame.clientId) {
       return false;
     }
@@ -9839,71 +6464,6 @@ export class Kernel extends Host<Env> {
     this.frameBodyChannels.get(connectionId)?.close(new Error("Connection closed"));
     this.frameBodyChannels.delete(connectionId);
   }
-
-  private fenceUserKernelRuntime(reason: string): void {
-    const error = new Error(reason);
-
-    for (const [, active] of this.activeRequests) {
-      active.controller.abort(error);
-    }
-    this.activeRequests.clear();
-    for (const controller of this.activeScheduleRuns.values()) {
-      controller.abort(error);
-    }
-    this.activeScheduleRuns.clear();
-    this.schedules.releaseInterruptedRuns(reason);
-    if (this.mcp) {
-      this.ctx.waitUntil(this.mcp.closeAllConnections().catch(() => {}));
-    }
-    this.cancelledProcessRequests.clear();
-
-    for (const route of this.routes.drain()) {
-      this.sendDeviceRequestCancel(
-        route.deviceId,
-        route.driverConnectionId,
-        route.id,
-        reason,
-      );
-      this.cancelRoutedBody(route.id, reason);
-      if (route.scheduleId) {
-        this.cancelSchedule(route.scheduleId).catch(() => {});
-      }
-      try {
-        this.deliverToOrigin(route.origin, errFrame(route.id, 503, reason));
-      } catch {
-        // Lifecycle fencing must continue even if a stale origin is malformed.
-      }
-    }
-
-    for (const [routeId, body] of this.routedBodies) {
-      this.routedBodies.delete(routeId);
-      void body.cancel(reason);
-    }
-    for (const [requestId, resolve] of this.pendingAppResponses) {
-      this.pendingAppResponses.delete(requestId);
-      resolve(errFrame(requestId, 503, reason));
-    }
-
-    for (const [connectionId, connection] of this.connections) {
-      const state = connection.state;
-      if (
-        state?.step === "connected"
-        && state.identity?.role === "driver"
-      ) {
-        this.devices.setOnline(state.identity.device, false);
-      }
-      this.closeFrameBodyChannel(connectionId);
-      this.runRoutes.clearForConnection(connectionId);
-      try {
-        connection.close(1008, "Authentication failed");
-      } catch {
-        // Continue fencing every connection even if one close implementation fails.
-      }
-    }
-    this.connections.clear();
-    this.runRoutes.clearAll();
-  }
-
   private async requestDevice(
     deviceId: string,
     call: string,
@@ -10320,166 +6880,7 @@ export class Kernel extends Host<Env> {
       },
       capabilities: this.caps.resolve(gids),
     };
-  }
-
-  private applyFailedMasterMutationProjectionEffects(
-    frame: RequestFrame,
-    response: { readonly ok: boolean },
-  ): void {
-    if (response.ok || this.instanceKind !== "master") return;
-    if (failedMasterMutationNeedsGlobalPackageInvalidation(frame.call)) {
-      this.broadcastPackageProjection();
-    }
-    if (failedMasterMutationNeedsGlobalRepoInvalidation(frame.call)) {
-      this.broadcastRepoProjection();
-    }
-  }
-
-  private applyPostDispatchEffects(frame: RequestFrame, response: ResponseFrame): void {
-    if (!response.ok) return;
-
-    if (frame.call === "sys.device.delete") {
-      const data = (response as {
-        data?: {
-          deleted?: unknown;
-          deviceId?: unknown;
-        };
-      }).data;
-      if (data?.deleted === true && typeof data.deviceId === "string") {
-        this.disconnectDeviceConnections(data.deviceId, "Machine forgotten");
-      }
-    }
-
-    if (
-      frame.call === "pkg.add" ||
-      frame.call === "pkg.create" ||
-      frame.call === "pkg.sync" ||
-      frame.call === "pkg.install" ||
-      frame.call === "pkg.review.approve" ||
-      frame.call === "pkg.remove" ||
-      frame.call === "pkg.checkout" ||
-      frame.call === "pkg.public.set" ||
-      frame.call === "sys.bootstrap"
-    ) {
-      const data = (response as {
-        data?: {
-          package?: {
-            scope?: { kind?: unknown; uid?: unknown };
-          };
-          packages?: Array<{
-            scope?: { kind?: unknown; uid?: unknown };
-          }>;
-        };
-      }).data;
-      const scope = data?.package?.scope ?? data?.packages?.[0]?.scope;
-      if (
-        frame.call === "sys.bootstrap"
-        || frame.call === "pkg.public.set"
-        || scope?.kind === "global"
-      ) {
-        this.broadcastPackageProjection();
-      } else if (scope?.kind === "user" && typeof scope.uid === "number") {
-        this.broadcastPackageProjection(scope.uid);
-      }
-    }
-
-    if (
-      this.instanceKind === "master"
-      && (frame.call === "pkg.create" || frame.call === "pkg.public.set")
-    ) {
-      this.broadcastRepoProjection();
-    }
-
-    if (this.instanceKind === "master" && frame.call === "sys.config.set") {
-      const key = (frame.args as { key?: unknown }).key;
-      if (typeof key === "string") {
-        this.broadcastConfigProjection(key);
-      }
-    }
-  }
-
-  private broadcastPackageProjection(uid?: number): void {
-    if (this.instanceKind !== "master") {
-      if (uid === undefined) {
-        this.broadcastToRole("user", "pkg.changed");
-      } else {
-        this.broadcastToUserUid(uid, "pkg.changed");
-      }
-      return;
-    }
-    this.broadcastMasterProjection({ uid, signal: "pkg.changed", label: "package" });
-  }
-
-  private broadcastRepoProjection(): void {
-    this.assertMasterKernel();
-    this.broadcastMasterProjection({ label: "repository" });
-  }
-
-  private broadcastConfigProjection(key: string): void {
-    this.assertMasterKernel();
-    if (key.startsWith("config/")) {
-      this.broadcastMasterProjection({ signal: "config.changed", label: "configuration" });
-      return;
-    }
-    const match = /^users\/(\d+)\//.exec(key);
-    const uid = match ? Number(match[1]) : Number.NaN;
-    if (!Number.isSafeInteger(uid) || uid < 0) {
-      return;
-    }
-    // A user-scoped account may be a delegated/package run-as account whose
-    // config is projected into its human owner and root rather than into a
-    // Kernel named by this uid. Refresh every active projection so all views
-    // advance to the same committed revision.
-    this.broadcastMasterProjection({ signal: "config.changed", label: "configuration" });
-  }
-
-  private broadcastMasterProjection(options: {
-    uid?: number;
-    signal?: "pkg.changed" | "config.changed";
-    label: string;
-  }): void {
-    this.assertMasterKernel();
-    const activePlacements = options.uid === undefined
-      ? this.userKernels.list("active")
-      : [this.userKernels.getByUid(options.uid)].filter(
-          (placement): placement is UserKernelRecord => placement?.lifecycle === "active",
-        );
-    for (const placement of activePlacements) {
-      this.ctx.waitUntil((async () => {
-        const userKernel = await getAgentByName(
-          this.env.KERNEL,
-          userKernelName(placement.username),
-        ) as unknown as {
-          receiveMasterProjection: (input: {
-            sourceKernelName: string;
-            generation: number;
-            signal?: "pkg.changed" | "config.changed";
-          }) => Promise<boolean>;
-        };
-        await userKernel.receiveMasterProjection({
-          sourceKernelName: this.name,
-          generation: placement.generation,
-          ...(options.signal ? { signal: options.signal } : {}),
-        });
-      })().catch((error) => {
-        console.warn(`[Kernel] Failed to refresh a user ${options.label} projection:`, error);
-      }));
-    }
-
-    if (!options.signal) {
-      return;
-    }
-    if (options.uid === undefined) {
-      this.broadcastToRole("user", options.signal);
-      return;
-    }
-    const placement = this.userKernels.getByUid(options.uid);
-    if (placement?.lifecycle === "legacy") {
-      this.broadcastToUserUid(options.uid, options.signal);
-    }
-  }
-
-  private async dispatchSignalWatches(
+  }  private async dispatchSignalWatches(
     uid: number,
     processId: string,
     frame: SignalFrame,
@@ -10779,18 +7180,6 @@ export class Kernel extends Host<Env> {
       }
     }
   }
-
-  private hasActiveUserKernelGeneration(expectedGeneration: number | undefined): boolean {
-    const marker = this.userKernelMarker;
-    return Boolean(
-      marker
-      && marker.lifecycle === "active"
-      && expectedGeneration === marker.generation
-      && this.name === userKernelName(marker.username)
-      && this.appRuntimes.getLifecycleFence(marker.uid) === null,
-    );
-  }
-
   private async handleSysSetup(
     connection: Connection<ConnectionState>,
     frame: RequestFrame<"sys.setup">,
@@ -11948,17 +8337,6 @@ function sameUserKernelLifecycleAuthorization(
     && expected.lifecycle === actual.lifecycle
     && expected.generation === actual.generation;
 }
-
-function sameUserKernelProvisioningAuthorization(
-  expected: Omit<UserKernelProvisioningAuthorizationInput, "authorization">,
-  actual: UserKernelProvisioningAuthorizationInput,
-): boolean {
-  return expected.targetKernelName === actual.targetKernelName
-    && expected.username === actual.username
-    && expected.uid === actual.uid
-    && expected.generation === actual.generation;
-}
-
 function sameAdapterInboundAuthorization(
   expected: Omit<AdapterInboundAuthorizationInput, "authorization">,
   actual: AdapterInboundAuthorizationInput,
@@ -12119,53 +8497,7 @@ function parseUserKernelInstanceMarker(value: unknown): UserKernelInstanceMarker
     throw new Error("User Kernel lifecycle marker is invalid");
   }
   return marker as UserKernelInstanceMarker;
-}
-
-function parseAppPlacementCertificateGrant(
-  value: unknown,
-): AppPlacementCertificateGrant | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const keys = Object.keys(value).sort();
-  const expectedKeys = [
-    "certificate",
-    "generation",
-    "uid",
-    "username",
-    "version",
-  ];
-  if (
-    keys.length !== expectedKeys.length
-    || !expectedKeys.every((key, index) => keys[index] === key)
-  ) {
-    return null;
-  }
-  const grant = value as Partial<AppPlacementCertificateGrant>;
-  if (
-    grant.version !== 1
-    || typeof grant.username !== "string"
-    || canonicalizeLoginUsername(grant.username) !== grant.username
-    || !Number.isSafeInteger(grant.uid)
-    || (grant.uid ?? -1) < 0
-    || !Number.isSafeInteger(grant.generation)
-    || (grant.generation ?? 0) <= 0
-    || !isAppPlacementCertificate(grant.certificate)
-  ) {
-    return null;
-  }
-  return grant as AppPlacementCertificateGrant;
-}
-
-function parseUserKernelGenerationHeader(value: string | null): number | undefined {
-  if (value === null || !/^[1-9]\d{0,9}$/.test(value)) {
-    return undefined;
-  }
-  const generation = Number(value);
-  return Number.isSafeInteger(generation) ? generation : undefined;
-}
-
-function validateUserKernelProvisioningSnapshot(
+}function validateUserKernelProvisioningSnapshot(
   snapshot: UserKernelProvisioningSnapshot,
   expectedUsername: string,
 ): void {
