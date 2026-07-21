@@ -1,0 +1,33 @@
+diff --git a/src/ui/ui_main_menu.c b/src/ui/ui_main_menu.c
+index 34a9eef..277134f 100644
+--- a/src/ui/ui_main_menu.c
++++ b/src/ui/ui_main_menu.c
+@@ -17,5 +17,6 @@
+ #include "ui/page_fans.h"
+ #include "ui/page_focus_chart.h"
++#include "ui/page_gsv.h"
+ #include "ui/page_headtracker.h"
+ #include "ui/page_imagesettings.h"
+ #include "ui/page_input.h"
+@@ -52 +53 @@ static lv_obj_t *root_page;
+-#define PAGE_PACK_MAX_NUM 19
++#define PAGE_PACK_MAX_NUM 20
+@@ -307,6 +308,7 @@ void main_menu_init(void) {
+         page_packs[page_packs_count++] = &pp_elrs;
+         page_packs[page_packs_count++] = &pp_wifi;
+     }
++    page_packs[page_packs_count++] = &pp_gsv;
+     page_packs[page_packs_count++] = &pp_headtracker;
+     page_packs[page_packs_count++] = &pp_playback;
+     page_packs[page_packs_count++] = &pp_storage;
+diff --git a/src/ui/page_wifi.c b/src/ui/page_wifi.c
+index 91f9321..cf18d11 100644
+--- a/src/ui/page_wifi.c
++++ b/src/ui/page_wifi.c
+@@ -131,2 +131,6 @@ static bool page_wifi_bootup_pending = true;
+ static void page_wifi_update_services() {
++#ifdef EMULATOR_BUILD
++    LOGD("Emulator skipped WiFi service file generation");
++    return;
++#endif
+     FILE *fp = NULL;

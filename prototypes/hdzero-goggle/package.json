@@ -1,0 +1,9 @@
+{
+  "name": "@gsv/hdzero-goggle-poc",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/main.mjs && node --check src/controller.mjs && node --check src/gateway.mjs && node --check src/audio.mjs && node --check src/ipc.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}
