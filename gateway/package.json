@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@cloudflare/codemode": "^0.3.4",
-    "@earendil-works/pi-ai": "^0.80.10",
+    "@earendil-works/pi-ai": "^0.81.1",
     "@humansandmachines/gsv": "file:../packages/gsv",
     "agents": "^0.16.0",
     "just-bash": "^2.12.6",
