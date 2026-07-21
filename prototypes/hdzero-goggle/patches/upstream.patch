@@ -31,3 +31,13 @@ index 91f9321..cf18d11 100644
 +    return;
 +#endif
      FILE *fp = NULL;
+diff --git a/src/core/input_device.c b/src/core/input_device.c
+index ce9c0c4..a16265c 100644
+--- a/src/core/input_device.c
++++ b/src/core/input_device.c
+@@ -763,3 +763,4 @@ void input_device_init() {
+     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+-        printf("Error initializing SDL: %s\n", SDL_GetError());
++        fprintf(stderr, "Error initializing SDL: %s\n", SDL_GetError());
++        exit(EXIT_FAILURE);
+     }

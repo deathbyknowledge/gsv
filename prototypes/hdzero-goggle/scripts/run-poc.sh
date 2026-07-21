@@ -8,6 +8,40 @@ if [[ $EUID -eq 0 ]]; then
   exit 1
 fi
 
+configure_display() {
+  if [[ -n ${SDL_VIDEODRIVER:-} || -n ${WAYLAND_DISPLAY:-} || -n ${DISPLAY:-} ]]; then
+    return
+  fi
+
+  local runtime_dir=${XDG_RUNTIME_DIR:-"/run/user/$UID"}
+  local socket
+  for socket in "$runtime_dir"/wayland-*; do
+    if [[ -S "$socket" ]]; then
+      export XDG_RUNTIME_DIR="$runtime_dir"
+      export XDG_SESSION_TYPE=wayland
+      export WAYLAND_DISPLAY=${socket##*/}
+      export SDL_VIDEODRIVER=wayland
+      echo "Using Wayland display $WAYLAND_DISPLAY discovered from this TTY."
+      return
+    fi
+  done
+
+  for socket in /tmp/.X11-unix/X*; do
+    if [[ -S "$socket" ]]; then
+      export DISPLAY=":${socket##*X}"
+      export SDL_VIDEODRIVER=x11
+      echo "Using X11 display $DISPLAY discovered from this TTY."
+      return
+    fi
+  done
+
+  echo "No graphical display is available for the HDZero SDL emulator." >&2
+  echo "Run it from a desktop terminal, use SSH X forwarding, or set SDL_VIDEODRIVER=dummy for a headless smoke test." >&2
+  exit 1
+}
+
+configure_display
+
 SOURCE_DIR=$($POC_DIR/scripts/prepare-emulator.sh)
 BINARY="$SOURCE_DIR/build-gsv/HDZGOGGLE"
 

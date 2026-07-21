@@ -59,6 +59,12 @@ stop. Mock mode produces a deterministic transcript and streams a deterministic
 agent reply. `Speak replies` exercises the speech state without requiring an
 audio player.
 
+When launched from tmux or an SSH shell on a machine with an active desktop, the
+launcher discovers an accessible Wayland or X11 socket automatically. If no
+graphical display exists, it exits with a short diagnostic instead of leaving an
+invisible firmware loop running. `SDL_VIDEODRIVER=dummy` remains available for
+headless smoke tests.
+
 ## Connect to a real GSV gateway
 
 Build the local GSV SDK once, then provide an expiring user token and gateway
