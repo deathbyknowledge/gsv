@@ -909,6 +909,11 @@ export function FilesSurfaceSummary({
         : tab);
     });
     setActiveTabId(linkedTab.id);
+    // Match navigateBrowserTab: a deep link changes the active directory, so drop
+    // any open CREATE draft / delete feedback — otherwise a stale draft would
+    // resolve against (and write into) the newly-linked directory.
+    setCreateState(emptyCreateState());
+    setDeleteFeedback(null);
   }, [initialTarget, initialPath, targets]);
 
   useEffect(() => {
