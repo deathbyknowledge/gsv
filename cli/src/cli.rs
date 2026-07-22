@@ -61,6 +61,12 @@ pub(crate) enum Commands {
         action: AuthAction,
     },
 
+    /// User account and permission management
+    User {
+        #[command(subcommand)]
+        action: UserAction,
+    },
+
     /// Run and manage the device daemon
     Device {
         #[command(subcommand)]
@@ -444,6 +450,55 @@ pub(crate) enum AuthAction {
 }
 
 #[derive(Subcommand, Clone)]
+pub(crate) enum UserAction {
+    /// Create a human account
+    Create {
+        /// Username for the new account
+        username: String,
+
+        /// Password for the new account (if omitted, prompts interactively)
+        #[arg(long = "new-password")]
+        new_password: Option<String>,
+    },
+
+    /// Create a human account and log in as it
+    Register {
+        /// Username for the new account
+        username: String,
+
+        /// Password for the new account (if omitted, prompts interactively)
+        #[arg(long = "new-password")]
+        new_password: Option<String>,
+
+        /// Session lifetime in hours (default: 8)
+        #[arg(long, default_value_t = 8)]
+        ttl_hours: u32,
+    },
+
+    /// View or modify a user's capabilities and group memberships
+    Permissions {
+        /// Username to inspect or modify
+        username: String,
+
+        /// Capability to grant directly (repeat for multiple)
+        #[arg(long)]
+        grant: Vec<String>,
+
+        /// Direct capability to revoke (repeat for multiple)
+        #[arg(long)]
+        revoke: Vec<String>,
+
+        /// Supplementary group to add (repeat for multiple)
+        #[arg(long = "add-group")]
+        add_groups: Vec<String>,
+
+        /// Supplementary group to remove (repeat for multiple)
+        #[arg(long = "remove-group")]
+        remove_groups: Vec<String>,
+    },
+}
+
+#[derive(Subcommand, Clone)]
 pub(crate) enum AuthTokenAction {
     /// Create a new auth token
     Create {
@@ -659,4 +714,109 @@ pub(crate) enum LocalConfigAction {
         /// Value to set
         value: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_user_create() {
+        let cli = Cli::try_parse_from([
+            "gsv",
+            "user",
+            "create",
+            "alice",
+            "--new-password",
+            "correct-horse",
+        ])
+        .expect("user create should parse");
+
+        let Commands::User {
+            action:
+                UserAction::Create {
+                    username,
+                    new_password,
+                },
+        } = cli.command
+        else {
+            panic!("expected user create");
+        };
+        assert_eq!(username, "alice");
+        assert_eq!(new_password.as_deref(), Some("correct-horse"));
+    }
+
+    #[test]
+    fn parses_user_register_with_default_ttl() {
+        let cli = Cli::try_parse_from(["gsv", "user", "register", "bob"])
+            .expect("user register should parse");
+
+        let Commands::User {
+            action:
+                UserAction::Register {
+                    username,
+                    new_password,
+                    ttl_hours,
+                },
+        } = cli.command
+        else {
+            panic!("expected user register");
+        };
+        assert_eq!(username, "bob");
+        assert!(new_password.is_none());
+        assert_eq!(ttl_hours, 8);
+    }
+
+    #[test]
+    fn parses_repeated_user_permission_changes() {
+        let cli = Cli::try_parse_from([
+            "gsv",
+            "user",
+            "permissions",
+            "carol",
+            "--grant",
+            "user.admin",
+            "--grant",
+            "fs.*",
+            "--revoke",
+            "shell.*",
+            "--add-group",
+            "operators",
+            "--add-group",
+            "reviewers",
+            "--remove-group",
+            "users",
+        ])
+        .expect("user permissions should parse");
+
+        let Commands::User {
+            action:
+                UserAction::Permissions {
+                    username,
+                    grant,
+                    revoke,
+                    add_groups,
+                    remove_groups,
+                },
+        } = cli.command
+        else {
+            panic!("expected user permissions");
+        };
+        assert_eq!(username, "carol");
+        assert_eq!(grant, ["user.admin", "fs.*"]);
+        assert_eq!(revoke, ["shell.*"]);
+        assert_eq!(add_groups, ["operators", "reviewers"]);
+        assert_eq!(remove_groups, ["users"]);
+    }
+
+    #[test]
+    fn user_create_requires_a_username() {
+        let result = Cli::try_parse_from(["gsv", "user", "create"]);
+        assert!(result.is_err(), "missing username should be rejected");
+        let error = result.err().expect("parse error should be present");
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
 }

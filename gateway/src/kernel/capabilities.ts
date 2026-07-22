@@ -61,7 +61,6 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "adapter.status",
     "sys.config.get",
     "sys.config.set",
-    "sys.bootstrap",
     "sys.device.get",
     "sys.device.list",
     "sys.device.update",
@@ -124,6 +123,9 @@ export class CapabilityStore {
   grant(gid: number, capability: string): { ok: boolean; error?: string } {
     if (!isValidCapability(capability)) {
       return { ok: false, error: `Invalid capability format: ${capability}` };
+    }
+    if (capability === "*" && gid !== 0) {
+      return { ok: false, error: "The unrestricted capability is reserved for root" };
     }
 
     this.sql.exec(

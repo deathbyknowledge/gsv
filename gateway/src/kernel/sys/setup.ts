@@ -9,8 +9,7 @@ import { RipgitClient } from "../../fs";
 import { seedRepoSkillsToHome } from "./skills-seed";
 import { ensurePersonalAgent } from "../agents";
 import { provisionEnabledPackagesForCaller } from "../package-agents";
-
-const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
+import { normalizeAccountUsername } from "../../auth/username";
 
 type SetupTiming = {
   label: string;
@@ -74,10 +73,13 @@ function ensureSingleUserBootstrap(passwd: PasswdEntry[]): void {
 
 function parseSetupIdentity(args: SysSetupArgs): { username: string; password: string } {
   const raw = args as Record<string, unknown>;
-  const username = readRequiredString(raw.username, "username");
-  if (!USERNAME_RE.test(username)) {
+  if (typeof raw.username !== "string" || raw.username.length === 0) {
+    throw new Error("username is required");
+  }
+  const username = normalizeAccountUsername(raw.username);
+  if (!username) {
     throw new Error(
-      "username must match ^[a-z_][a-z0-9_-]{0,31}$",
+      "username must match ^[A-Za-z_][A-Za-z0-9_-]{0,31}$",
     );
   }
 
@@ -94,10 +96,10 @@ function parseSetupAgentName(
   value: unknown,
   username: string,
 ): string | undefined {
-  const agentName = readOptionalString(value);
-  if (!agentName) return undefined;
-  if (!USERNAME_RE.test(agentName)) {
-    throw new Error("agentName must match ^[a-z_][a-z0-9_-]{0,31}$");
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  const agentName = normalizeAccountUsername(value);
+  if (!agentName) {
+    throw new Error("agentName must match ^[A-Za-z_][A-Za-z0-9_-]{0,31}$");
   }
   if (agentName === username) {
     throw new Error("agentName must be different from username");
@@ -206,9 +208,9 @@ export async function handleSysSetup(
     home: "/root",
     cwd: "/root",
   };
-  const bootstrapIdentity: UserIdentity = {
+  const rootIdentity: UserIdentity = {
     role: "user",
-    process: bootstrapProcessIdentity,
+    process: rootProcessIdentity,
     capabilities: ["*"],
   };
   let bootstrap: SysSetupResult["bootstrap"];
@@ -221,7 +223,7 @@ export async function handleSysSetup(
         "bootstrap-system",
         () => handleSysBootstrap(rawArgs.bootstrap as SysSetupArgs["bootstrap"], {
           ...ctx,
-          identity: bootstrapIdentity,
+          identity: rootIdentity,
         }),
       );
     }
@@ -316,7 +318,7 @@ export async function handleSysSetup(
 
     const bootstrapResult = bootstrap;
     if (bootstrapResult && ctx.env.RIPGIT) {
-      // handleSysBootstrap seeds the first setup user's skills; seed root explicitly too.
+      // Bootstrap runs as root and seeds root; preserve first-user skill seeding here.
       const ripgit = new RipgitClient(ctx.env.RIPGIT);
       const sourceRepo = {
         owner: "root",
@@ -325,8 +327,8 @@ export async function handleSysSetup(
       };
       await timeSetupStep(
         timings,
-        "seed-root-skills",
-        () => seedRepoSkillsToHome(ripgit, sourceRepo, rootProcessIdentity),
+        "seed-user-skills",
+        () => seedRepoSkillsToHome(ripgit, sourceRepo, bootstrapProcessIdentity),
       );
     }
 
@@ -343,6 +345,11 @@ export async function handleSysSetup(
       await ensurePersonalAgent(ctx, processIdentity, agentName);
     });
 
+    const bootstrapIdentity: UserIdentity = {
+      role: "user",
+      process: processIdentity,
+      capabilities: ctx.caps.resolve(processIdentity.gids),
+    };
     await timeSetupStep(timings, "provision-package-agents", async () => {
       await provisionEnabledPackagesForCaller(
         { ...ctx, identity: bootstrapIdentity },

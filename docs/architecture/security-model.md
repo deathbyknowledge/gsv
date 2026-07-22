@@ -72,6 +72,10 @@ Capabilities are group based. The Kernel stores grants such as `fs.*`,
 `shell.*`, `proc.*`, `sys.config.get`, or `*` in `group_capabilities`. Every
 normal syscall is rejected unless the caller's resolved capabilities match the
 exact syscall, the syscall domain wildcard, or `*`.
+The unrestricted `*` grant is reserved for gid 0; object-level root authority
+is determined by uid 0, not by capability text.
+Account usernames are canonical lower-case ASCII; ASCII capitals are folded
+only after the raw input passes bounded ASCII validation.
 
 Default groups are intentionally OS-like:
 
@@ -96,6 +100,8 @@ Native GSV file access uses a virtual filesystem. `/sys`, `/proc`, `/dev`, and
 ordinary paths are stored in R2 with Unix-like uid/gid/mode metadata. Root can
 read/write broadly. Non-root reads and writes are checked against owner, group,
 and other mode bits where the backend supports them.
+Automatically allocated UID and GID values share a monotonic allocator and are
+never reused, because R2 ownership metadata can outlive an account or group row.
 
 Device file tools and shell tools are not a sandbox. Relative paths resolve
 against the device workspace, but absolute paths are used as-is on the device.
@@ -147,13 +153,12 @@ authenticated user and still applies normal syscall/device/resource checks.
 
 Non-builtin packages require review before they can be enabled. Package metadata
 records requested bindings and egress grants; default egress is `none`.
-Mutating package operations require root, wildcard capability, or ownership of
-the user package scope.
+Mutating package operations require root or ownership of the user package scope.
 
 Git HTTP uses Basic auth with either password or user token credentials. Public
 repository reads are allowed only for repos explicitly marked public. Package
 source repositories are readable only when their package is visible to the
-caller. Pushes require the repo owner, root, or wildcard capability.
+caller. Pushes require the repo owner or root.
 
 ## What GSV Does Not Protect Against
 

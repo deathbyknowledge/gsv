@@ -171,6 +171,38 @@ async function registerInKernel(pid: string, identity: ProcessIdentity) {
   await runInDurableObject(kernel, (instance: Kernel) => {
     const k = instance as any;
     k.caps.seed();
+
+    const byUid = k.auth.getPasswdByUid(identity.uid);
+    const byName = k.auth.getPasswdByUsername(identity.username);
+    if (!byUid && !byName) {
+      k.auth.addUser({
+        username: identity.username,
+        uid: identity.uid,
+        gid: identity.gid,
+        gecos: identity.username,
+        home: identity.home,
+        shell: "/bin/init",
+      });
+    } else if (byUid?.username !== identity.username || byName?.uid !== identity.uid) {
+      throw new Error(`Conflicting test account identity: ${identity.username}/${identity.uid}`);
+    }
+
+    if (!k.auth.getGroupByGid(identity.gid) && !k.auth.getGroupByName(identity.username)) {
+      k.auth.addGroup({ name: identity.username, gid: identity.gid, members: [] });
+    }
+    for (const gid of identity.gids) {
+      if (gid === identity.gid) continue;
+      let group = k.auth.getGroupByGid(gid);
+      if (!group) {
+        const name = gid === 100 ? "users" : `test-${gid}`;
+        k.auth.addGroup({ name, gid, members: [] });
+        group = k.auth.getGroupByGid(gid);
+      }
+      if (group && !group.members.includes(identity.username)) {
+        k.auth.updateGroupMembers(group.name, [...group.members, identity.username]);
+      }
+    }
+
     k.procs.spawn(pid, identity, { profile: DEFAULT_PROFILE });
   });
 }

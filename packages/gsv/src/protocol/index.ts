@@ -13,6 +13,7 @@ export type * from "./syscalls/interaction-origin";
 export type * from "./syscalls/notification";
 export type * from "./syscalls/ai";
 export type * from "./syscalls/apps";
+export type * from "./syscalls/user";
 export type * from "./syscalls/map";
 export * from "./adapters";
 export * from "./adapter-media-body";

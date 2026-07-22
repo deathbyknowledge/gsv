@@ -248,6 +248,32 @@ gsv auth token revoke TOKEN_ID [--reason TEXT] [--uid UID]
 `device` is the default token kind. Use `--device` to bind a driver token to one
 device ID. `--uid` is for root-managed token operations.
 
+## User Management
+
+```bash
+gsv user create USER [--new-password PASS]
+gsv user register USER [--new-password PASS] [--ttl-hours N]
+gsv user permissions USER \
+  [--grant CAPABILITY] [--revoke CAPABILITY] \
+  [--add-group GROUP] [--remove-group GROUP]
+```
+
+`create` adds a login-capable human account and its personal agent. `register`
+does the same, then logs in as the new user and replaces the locally cached
+session; its default session lifetime is 8 hours. When `--new-password` is
+omitted, both commands prompt without echo in an interactive terminal and fail
+in non-interactive use. The global `--password` option authenticates the current
+administrator; it is not the new account's password.
+
+`permissions` without change options displays the user's primary and
+supplementary groups, direct capabilities, and effective capabilities. Repeat
+`--grant`, `--revoke`, `--add-group`, or `--remove-group` to apply multiple
+changes in one request.
+
+The gateway authorizes these operations before changing account, capability, or
+group state. The current user must be uid 0 or have `user.admin` granted
+directly on their primary group; other users receive `Permission denied`.
+
 ## Config Commands
 
 ```bash

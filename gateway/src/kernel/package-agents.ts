@@ -14,6 +14,7 @@ import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { PasswdEntry } from "../auth/passwd";
 import { accountIdentity, createAccount, removeContextFile, writeContextFile } from "./accounts";
 import { ensureAccountHomeLayout } from "./account-home";
+import { isValidCapability } from "./capabilities";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import {
@@ -78,6 +79,12 @@ export async function ensurePackageAgent(
   profile: PackageProfileManifest,
   enablingHumanUid: number,
 ): Promise<ProcessIdentity> {
+  const hasInvalidCapability = (profile.capabilities ?? []).some(
+    (capability) => typeof capability !== "string" || capability === "*" || !isValidCapability(capability),
+  );
+  if (hasInvalidCapability) {
+    throw new Error(`Package profile ${profile.name} contains an invalid or root-only capability`);
+  }
   const auth = ctx.auth;
   const username = packageAgentUsername(record.manifest.name, profile.name);
   const accessGroupName = packageAgentAccessGroup(username);

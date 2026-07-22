@@ -146,6 +146,21 @@ describe("ensurePackageAgent", () => {
     expect(config.get(`users/${identity.uid}/ai/tools/approval`)).toBe('{"rules":[]}');
   });
 
+  it.each(["*", "not valid!", undefined])(
+    "rejects an ungrantable capability before creating the package agent: %s",
+    async (capability) => {
+      const { ctx, passwd, caps } = createCtx();
+      const profile = { ...BUILDER, capabilities: [capability as string] };
+
+      await expect(ensurePackageAgent(ctx, record([profile]), profile, 1000))
+        .rejects.toThrow("contains an invalid or root-only capability");
+
+      expect(passwd.find((entry) => entry.username === packageAgentUsername("wiki", "builder")))
+        .toBeUndefined();
+      expect(caps.grant).not.toHaveBeenCalled();
+    },
+  );
+
   it("grants run-as via the access group without leaking caps to the human", async () => {
     const { ctx, groups, caps, config } = createCtx();
     const identity = await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);
@@ -247,6 +262,22 @@ describe("ensurePackageAgent", () => {
     expect(caps.grant).toHaveBeenCalledWith(identity.gid, "fs.write");
     expect(ctx.caps.resolve([identity.gid])).toEqual(["fs.write"]);
     expect(config.get(`users/${identity.uid}/ai/tools/approval`)).toBeUndefined();
+  });
+
+  it("rejects an ungrantable profile before changing an existing agent", async () => {
+    const { ctx, caps, capsTable } = createCtx();
+    await ensurePackageAgent(ctx, record([BUILDER]), BUILDER, 1000);
+    const before = [...capsTable];
+    caps.grant.mockClear();
+    caps.revoke.mockClear();
+    const profile = { ...BUILDER, capabilities: ["*"] };
+
+    await expect(ensurePackageAgent(ctx, record([profile]), profile, 1000))
+      .rejects.toThrow("contains an invalid or root-only capability");
+
+    expect(capsTable).toEqual(before);
+    expect(caps.grant).not.toHaveBeenCalled();
+    expect(caps.revoke).not.toHaveBeenCalled();
   });
 });
 

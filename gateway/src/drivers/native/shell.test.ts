@@ -448,6 +448,67 @@ describe("native shell execution", () => {
     expect(read.body && await bodyToText(read.body)).toContain("from shell");
   });
 
+  it("runs user administration with a password redirected from GSV storage", async () => {
+    const ctx = makeContext({
+      capabilities: ["shell.exec", "user.admin", "fs.write"],
+      caps: {
+        list: vi.fn((gid?: number) => gid === IDENTITY.gid
+          ? [{ gid: IDENTITY.gid, capability: "user.admin" }]
+          : []),
+        resolve: vi.fn(() => []),
+      } as unknown as KernelContext["caps"],
+    });
+    const passwordPath = "/tmp/.new-user-password";
+    await expect(handleFsWrite({ path: passwordPath, content: "" }, ctx))
+      .resolves.toMatchObject({ ok: true });
+    await expect(handleShellExec({ input: `chmod 600 ${passwordPath}` }, ctx))
+      .resolves.toMatchObject({ status: "completed", exitCode: 0 });
+    await handleFsWrite({ path: passwordPath, content: "password-123\n" }, ctx);
+    await expect(handleShellExec({ input: `stat -c %a ${passwordPath}` }, ctx))
+      .resolves.toMatchObject({ status: "completed", stdout: "600\n" });
+    const request = vi.fn(async (frame: RequestFrame): Promise<ResponseFrame> => ({
+      type: "res",
+      id: frame.id,
+      ok: true,
+      data: {
+        action: "create",
+        account: {
+          uid: 1002,
+          gid: 1002,
+          gids: [1002, 100],
+          username: "alice",
+          home: "/home/alice",
+          cwd: "/home/alice",
+        },
+        personalAgent: {
+          uid: 1003,
+          gid: 1003,
+          gids: [1003, 1002, 100],
+          username: "friday",
+          home: "/home/friday",
+          cwd: "/home/friday",
+        },
+      },
+    } as ResponseFrame));
+
+    const result = await handleShellExec(
+      { input: `user create alice --password-stdin < ${passwordPath}` },
+      ctx,
+      { request },
+    );
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result.stdout).toContain("Created human account alice");
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({
+      call: "user.admin",
+      args: {
+        action: "create",
+        username: "alice",
+        password: "password-123",
+      },
+    }), expect.any(AbortSignal));
+  });
+
   it("preserves filesystem errors from fs.read", async () => {
     const result = await handleFsRead({ path: "/tmp/does-not-exist" }, makeContext());
 
@@ -614,6 +675,18 @@ describe("native shell capability discovery", () => {
     expect(result.stdout).toContain("message      Send messages and file attachments");
     expect(result.stdout).toContain("skills       Inspect and maintain reusable agent workflows");
     expect(result.stdout).not.toContain("GSV manual pages");
+  });
+
+  it("documents secure native user administration without requiring authority", async () => {
+    const result = await handleShellExec(
+      { input: "man user" },
+      makeContext({ capabilities: ["shell.exec"] }),
+    );
+
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(result.stdout).toContain("user create USER --password-stdin");
+    expect(result.stdout).toContain("protected file; do not put a password");
+    expect(result.stdout).toContain("already-authenticated WebSocket");
   });
 
   it.each([
