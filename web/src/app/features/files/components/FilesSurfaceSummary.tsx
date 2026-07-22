@@ -885,7 +885,7 @@ export function FilesSurfaceSummary({
     if (!initialTarget || !initialPath) {
       return;
     }
-    const locationKey = `${initialTarget} ${initialPath}`;
+    const locationKey = `${initialTarget}\u0000${initialPath}`;
     if (appliedLocationRef.current === locationKey) {
       return;
     }

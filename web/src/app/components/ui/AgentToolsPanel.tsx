@@ -94,13 +94,13 @@ export function AgentToolsPanel({
     onChange(next);
   };
 
-  const hasNewRow = newIndex !== null;
-
   const addRule = () => {
-    if (hasNewRow) {
-      return;
-    }
-    setEditingIndexes((current) => new Set([0, ...[...current].map((index) => index + 1)]));
+    // Open one fresh editable override pinned on top (top tie-priority). Any row
+    // currently open (a prior new row, or a pencil-edited one) collapses to a
+    // read-only summary — its values are already applied to the policy — so
+    // several overrides can be staged in a single draft without a save between
+    // each. Keeps exactly one row expanded at a time.
+    setEditingIndexes(new Set());
     setNewIndex(0);
     emit({
       ...policy,
@@ -166,7 +166,7 @@ export function AgentToolsPanel({
           <Button
             variant="link"
             label="ADD OVERRIDE"
-            disabled={disabled || hasNewRow}
+            disabled={disabled}
             onClick={addRule}
           />
         </div>
