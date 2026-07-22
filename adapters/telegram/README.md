@@ -5,6 +5,7 @@ Telegram bot integration for GSV Gateway using the Telegram Bot API webhook flow
 ## Outbound Media
 
 - Supports outbound attachments for `image`, `video`, `audio`, and `document`.
+- Accepts up to 20 attachments in one GSV reply.
 - Supports media groups (albums) with 2-10 attachments.
 - Compatible consecutive attachments are grouped automatically. Mixed media that
   Telegram cannot place in one album (such as a PNG and PDF), and sets larger

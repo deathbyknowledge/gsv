@@ -2685,6 +2685,111 @@ describe("adapter lifecycle handlers", () => {
     expect(cancel).toHaveBeenCalledOnce();
   });
 
+  it("accepts twenty outbound attachments and rejects a twenty-first", async () => {
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "outbound-20" }));
+    const ctx = makeContext({
+      CHANNEL_TELEGRAM: { adapterSend },
+    }, { upsert: vi.fn() });
+    const media = Array.from({ length: 20 }, (_, index) => ({
+      type: "document" as const,
+      mimeType: "application/pdf",
+      filename: `${index + 1}.pdf`,
+      url: `https://example.com/${index + 1}.pdf`,
+    }));
+
+    await expect(handleAdapterSend({
+      adapter: "telegram",
+      accountId: "bot",
+      surface: { kind: "dm", id: "chat-42" },
+      text: "twenty files",
+      media,
+    }, ctx)).resolves.toMatchObject({ ok: true, messageId: "outbound-20" });
+
+    await expect(handleAdapterSend({
+      adapter: "telegram",
+      accountId: "bot",
+      surface: { kind: "dm", id: "chat-42" },
+      text: "twenty-one files",
+      media: [...media, {
+        type: "document",
+        mimeType: "application/pdf",
+        filename: "21.pdf",
+        url: "https://example.com/21.pdf",
+      }],
+    }, ctx)).resolves.toMatchObject({
+      ok: false,
+      error: "Adapter media exceeds item limit (20)",
+      retryable: false,
+    });
+    expect(adapterSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows one body-backed attachment to use the complete media byte budget", async () => {
+    const maxBytes = 48 * 1024 * 1024;
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "outbound-48mib" }));
+    const cancel = vi.fn(async () => undefined);
+    const body = {
+      length: maxBytes,
+      stream: {
+        locked: false,
+        cancel,
+      } as unknown as ReadableStream<Uint8Array>,
+    };
+    const ctx = makeContext({
+      CHANNEL_TELEGRAM: { adapterSend },
+    }, { upsert: vi.fn() });
+
+    await expect(handleAdapterSend({
+      adapter: "telegram",
+      accountId: "bot",
+      surface: { kind: "dm", id: "chat-42" },
+      text: "large file",
+      media: [{
+        type: "document",
+        mimeType: "application/pdf",
+        size: maxBytes,
+        body: { offset: 0, length: maxBytes },
+      }],
+    }, ctx, body)).resolves.toMatchObject({ ok: true, messageId: "outbound-48mib" });
+    expect(adapterSend).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an attachment larger than the complete media byte budget", async () => {
+    const oversizedBytes = 48 * 1024 * 1024 + 1;
+    const adapterSend = vi.fn(async () => ({ ok: true as const, messageId: "unexpected" }));
+    const cancel = vi.fn(async () => undefined);
+    const body = {
+      length: oversizedBytes,
+      stream: {
+        locked: false,
+        cancel,
+      } as unknown as ReadableStream<Uint8Array>,
+    };
+    const ctx = makeContext({
+      CHANNEL_TELEGRAM: { adapterSend },
+    }, { upsert: vi.fn() });
+
+    await expect(handleAdapterSend({
+      adapter: "telegram",
+      accountId: "bot",
+      surface: { kind: "dm", id: "chat-42" },
+      text: "oversized file",
+      media: [{
+        type: "document",
+        mimeType: "application/pdf",
+        size: oversizedBytes,
+        body: { offset: 0, length: oversizedBytes },
+      }],
+    }, ctx, body)).resolves.toMatchObject({
+      ok: false,
+      error: `Adapter media body exceeds per-item limit (${oversizedBytes} bytes)`,
+      retryable: false,
+    });
+    expect(adapterSend).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("classifies adapter service RPC throws as retryable transport failures", async () => {
     const adapterSend = vi.fn(async () => {
       throw new Error("service binding disconnected");

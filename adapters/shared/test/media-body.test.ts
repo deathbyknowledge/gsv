@@ -3,9 +3,25 @@ import { describe, expect, it } from "vitest";
 import {
   readResponseBodyBytes,
   responseBodyToBinaryBody,
+  SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+  SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
 } from "../src/media-body";
 
 describe("adapter response media bodies", () => {
+  it("allows one materialized item to use the complete media byte budget", async () => {
+    const response = new Response(new ReadableStream<Uint8Array>(), {
+      headers: { "content-length": String(SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES) },
+    });
+
+    const body = await responseBodyToBinaryBody(response, {
+      maxBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+    });
+
+    expect(SAFE_MATERIALIZED_MEDIA_PART_BYTES).toBe(48 * 1024 * 1024);
+    expect(body.length).toBe(SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES);
+    await body.stream.cancel();
+  });
+
   it("caps a response whose length is unknown", async () => {
     let cancelled = false;
     const response = new Response(new ReadableStream<Uint8Array>({

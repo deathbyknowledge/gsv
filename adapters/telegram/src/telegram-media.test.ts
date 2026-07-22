@@ -56,14 +56,14 @@ describe("planTelegramMediaDeliveries", () => {
     ]);
   });
 
-  it("chunks compatible attachments at Telegram's ten-item limit", () => {
-    const attachments = Array.from({ length: 11 }, (_, index) =>
+  it("splits the shared twenty-item maximum into Telegram-sized groups", () => {
+    const attachments = Array.from({ length: 20 }, (_, index) =>
       media("document", `${index + 1}.pdf`)
     );
 
     const deliveries = planTelegramMediaDeliveries(attachments);
 
-    expect(deliveries.map((delivery) => delivery.length)).toEqual([10, 1]);
+    expect(deliveries.map((delivery) => delivery.length)).toEqual([10, 10]);
     expect(deliveryFilenames(deliveries).flat()).toEqual(
       attachments.map((item) => item.filename),
     );

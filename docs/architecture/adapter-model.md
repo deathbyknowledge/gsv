@@ -234,7 +234,7 @@ Adapter JSON carries media metadata, while one optional top-level binary body
 carries the bytes. Body-backed items point at contiguous `{ offset, length }`
 ranges in media-array order. The body is consumed sequentially with one owner;
 failure or cancellation cancels the remaining stream. Current Gateway limits
-are 10 items, 25 MiB per item, and 48 MiB total.
+are 20 items, 48 MiB per item, and 48 MiB total.
 
 Inbound bytes are stored once under the owning process and exposed to the agent
 at a stable read-only `/var/media/{uid}/{pid}/{id}` path. The agent can inspect

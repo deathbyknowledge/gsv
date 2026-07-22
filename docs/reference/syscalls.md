@@ -1230,7 +1230,7 @@ request's single top-level binary body, and each media item identifies its
 exact `{ offset, length }` range. Body ranges must be contiguous and ordered by
 the media array, start at zero, and cover the complete body without trailing
 bytes. A media item may use a body range or `url`, but not both. The Gateway
-accepts at most 10 items, 25 MiB per body-backed item, and 48 MiB total. The
+accepts at most 20 items, 48 MiB per body-backed item, and 48 MiB total. The
 consumer owns one top-level reader, exposes bounded parts sequentially, and
 consumes or cancels the complete body on every terminal path.
 
