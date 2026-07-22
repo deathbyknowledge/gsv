@@ -6,9 +6,12 @@ Telegram bot integration for GSV Gateway using the Telegram Bot API webhook flow
 
 - Supports outbound attachments for `image`, `video`, `audio`, and `document`.
 - Supports media groups (albums) with 2-10 attachments.
-- Telegram rule is enforced: groups containing `audio` must be all-audio, and groups containing `document` must be all-document.
+- Compatible consecutive attachments are grouped automatically. Mixed media that
+  Telegram cannot place in one album (such as a PNG and PDF), and sets larger
+  than 10 items, are split into ordered deliveries.
 - Attachment source can be `url` or a range in the request's top-level binary body.
-- If `text` is present, it is sent as caption (for groups, caption is applied to the first item).
+- If `text` is present, it is sent once as the first delivery's caption (for
+  groups, the caption is applied to the first item).
 
 ## Configuration
 

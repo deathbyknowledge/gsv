@@ -12,6 +12,10 @@ type TelegramErrorDetails = {
   telegramDescription?: unknown;
 };
 
+export type TelegramReplyParameters = {
+  message_id: number;
+};
+
 type CaptionPayloadBuilder = (
   caption?: string,
   parseMode?: "HTML",
@@ -20,21 +24,35 @@ type CaptionPayloadBuilder = (
 const FORMATTING_ERROR_PATTERN =
   /can't parse|parse entities|parse[^:]*markdown|markdown[^:]*parse|unsupported[^:]*tag|invalid[^:]*entity|entity[^:]*invalid/i;
 
+export function buildTelegramReplyParameters(
+  replyToMessageId?: number,
+): TelegramReplyParameters | undefined {
+  if (
+    typeof replyToMessageId !== "number" ||
+    !Number.isFinite(replyToMessageId)
+  ) {
+    return undefined;
+  }
+
+  return { message_id: replyToMessageId };
+}
+
 export async function sendTelegramMarkdownMessage<T>(
   callApi: TelegramApiCall<T>,
   chatId: string,
   markdown: string,
   replyToMessageId?: number,
 ): Promise<T> {
-  const replyParameters = Number.isFinite(replyToMessageId)
-    ? { reply_parameters: { message_id: replyToMessageId } }
+  const replyParameters = buildTelegramReplyParameters(replyToMessageId);
+  const replyPayload = replyParameters
+    ? { reply_parameters: replyParameters }
     : {};
 
   try {
     return await callApi("sendRichMessage", {
       chat_id: chatId,
       rich_message: { markdown },
-      ...replyParameters,
+      ...replyPayload,
     });
   } catch (error) {
     if (!isTelegramFormattingError(error)) {
@@ -47,7 +65,7 @@ export async function sendTelegramMarkdownMessage<T>(
       chat_id: chatId,
       text: markdownToTelegramHtml(markdown),
       parse_mode: "HTML",
-      ...replyParameters,
+      ...replyPayload,
     });
   } catch (error) {
     if (!isTelegramFormattingError(error)) {
@@ -58,7 +76,7 @@ export async function sendTelegramMarkdownMessage<T>(
   return callApi("sendMessage", {
     chat_id: chatId,
     text: markdown,
-    ...replyParameters,
+    ...replyPayload,
   });
 }
 
