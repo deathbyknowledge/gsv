@@ -417,14 +417,13 @@ export async function completeOAuthCallback(
     return { ok: false, status: 400, message: "Missing OAuth state" };
   }
 
-  const flow = oauth.getFlowByStateHash(await sha256Hex(state));
+  const flow = oauth.consumeFlowByStateHash(await sha256Hex(state));
   if (!flow) {
     return { ok: false, status: 400, message: "OAuth flow not found or expired" };
   }
 
   const providerError = input.error?.trim();
   if (providerError) {
-    oauth.deleteFlow(flow.flowId);
     const detail = input.errorDescription?.trim();
     return {
       ok: false,
@@ -463,7 +462,6 @@ export async function completeOAuthCallback(
       authorizedAt: now,
     },
   });
-  oauth.deleteFlow(flow.flowId);
   return { ok: true, account: summarizeAccount(account) };
 }
 
