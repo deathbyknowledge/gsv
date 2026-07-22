@@ -25,6 +25,7 @@ import { buildSchedCommand } from "./sched";
 import { buildSkillsCommand } from "./skills";
 import { buildStatCommand } from "./stat";
 import { buildTargetsCommands } from "./targets";
+import { buildUserCommand } from "./user";
 import { buildWikiCommand } from "./wiki";
 import { ShellDiscoveryCatalog } from "./discovery";
 
@@ -63,6 +64,7 @@ export function buildCustomCommands(
   const message = buildMessageCommand(fs, ctx);
   const netCommands = buildNetCommands(ctx, options?.netFetchTransport);
   const oauth = buildOAuthCommand(ctx);
+  const user = buildUserCommand(ctx, options?.request);
   const notifyCommands = buildNotifyCommands(ctx);
   const flynn = defineCommand("flynn", async (): Promise<ExecResult> => ({
     stdout: `General Systems Vehicle ${ctx.config.get("config/server/version") ?? "0.1.6"} - Steve James.\n\n"I kept dreaming of a world I thought I'd never see. And then, one day... I got in."`,
@@ -84,6 +86,7 @@ export function buildCustomCommands(
     ...targets,
     ...netCommands,
     oauth,
+    user,
     llm,
     ...mediaCommands,
     message,

@@ -78,6 +78,11 @@ const NATIVE_COMMAND_DESCRIPTORS: Record<string, NativeCommandDescriptor> = {
   net: command("Make a streamed HTTP request through GSV or another target.", "Fetch a URL or call an HTTP API with explicit request and response control.", ["http", "network", "url", "download", "api", "fetch"]),
   "gsv-fetch": command("Compatibility form of the native streamed HTTP client.", "Fetch a URL or call an HTTP API from GSV.", ["http", "network", "url", "download", "api", "fetch"], ["net"]),
   oauth: command("Inspect and manage OAuth connections.", "Connect, inspect, or forget a provider account used by GSV.", ["login", "account", "provider", "authentication", "oauth"]),
+  user: command("Create human accounts and manage their permissions.", "Register a new human or inspect and change a human account's capabilities and groups.", ["account", "human", "register", "permissions", "capabilities", "groups", "admin"], [], [
+    "user create USER --password-stdin [--json]",
+    "user register USER --password-stdin [--json]",
+    "user permissions USER [--grant CAP] [--revoke CAP] [--add-group GROUP] [--remove-group GROUP] [--json]",
+  ], ["user.admin"]),
   llm: command("Generate one text response without running an agent loop.", "Perform a one-shot text generation, rewrite, classification, or summarization.", ["ai", "text", "generate", "summarize", "rewrite", "classify"], [], ["llm [OPTIONS] PROMPT..."], ["ai.text.generate"]),
   img2txt: command("Describe or read an image with the configured vision model.", "Understand, inspect, OCR, or describe a photo, picture, screenshot, or image file.", ["image", "photo", "picture", "screenshot", "vision", "ocr", "describe", "read"], [], ["img2txt [OPTIONS] IMAGE"], ["ai.image.read"]),
   txt2img: command("Generate an image file from a text prompt.", "Create, draw, or generate a picture, photo, illustration, or image from words.", ["image", "photo", "picture", "illustration", "draw", "create", "generate"], [], ["txt2img [OPTIONS] -o PATH PROMPT..."], ["ai.image.generate"]),

@@ -137,6 +137,26 @@ mcp codemode
 mcp call Linear list_issues --args-json '{"assignee":"me","limit":5}' --json
 ```
 
+Root and delegated human administrators can manage human accounts through the
+same `user.admin` boundary used by API clients:
+
+```bash
+touch /tmp/.alice-password
+chmod 600 /tmp/.alice-password
+# Populate it with a direct trusted client that does not retain secret input.
+user create alice --password-stdin < /tmp/.alice-password
+rm /tmp/.alice-password
+user permissions alice
+user permissions alice --grant repo.create --add-group operators
+```
+
+Passwords are accepted only on command stdin. Keep them out of `shell.exec`
+command text, which may be retained in process history; use a protected input
+file. Create an empty file, set mode `0600` before populating it through a
+trusted client, and remove it after use. `register` provisions the account and
+tells the caller to start a new login, because a shell command cannot replace
+its current authenticated WebSocket identity.
+
 Scripts use the same CodeMode shape exposed to agents. A script is treated as
 the body of an async function: top-level `await` works, and the final value must
 be returned explicitly.

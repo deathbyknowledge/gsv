@@ -1234,6 +1234,17 @@ type UserAdminResult =
     };
 ```
 
+The native `gsv` shell exposes the same boundary through `user create`, `user
+register`, and `user permissions` (with `user edit-permissions` as an alias).
+Creation reads the new password only from command stdin via
+`--password-stdin`; redirect a protected file instead of placing a password in
+the `shell.exec` command text. Set the empty file to mode `0600` before a
+trusted client populates it, and remove it after use. Native `register`
+provisions the account and prints the next login action, but cannot replace the
+identity of the already authenticated WebSocket. Permission changes re-enter
+normal syscall dispatch, so they receive the same durable authorization,
+atomic mutation, and live identity refresh as a direct `user.admin` request.
+
 ## AI: `ai.*`
 
 `ai.tools` and `ai.config` are internal Process bootstrap calls. The media
