@@ -355,8 +355,7 @@ export async function validateConsoleModelConfig(
       }],
       config,
       options: {
-        maxTokens: 16,
-        reasoning: "off",
+        maxTokens: 2_048,
         timeoutMs: 30_000,
       },
       sessionAffinityKey: "gsv-console:model-validation",
