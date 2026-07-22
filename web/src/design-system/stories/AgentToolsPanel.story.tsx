@@ -41,7 +41,7 @@ function PolicyPanel({
 const story: Story = {
   title: "Agent Tools Panel",
   group: "Composite",
-  blurb: "tool approval policy · ALLOW/ASK/BLOCK default · per-tool overrides with machine scope · composes Segmented/Select/InfoTip",
+  blurb: "tool approval policy · ALLOW/ASK/BLOCK default · read-only overrides w/ pencil-edit + ✕ · new rule pins on top (one at a time) · composes Segmented/Select/InfoTip",
   render: () => (
     <div class="ds-col">
       <div class="ds-cell">

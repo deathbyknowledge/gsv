@@ -11,7 +11,9 @@ import "./ListTemplate.css";
 
 export type ListTemplateRow = {
   id: string;
-  icon: string;
+  icon?: string;
+  /** Custom leading node (e.g. an Avatar); takes precedence over `icon`. */
+  leading?: ComponentChildren;
   label: string;
   sub: string;
   tone: StatusTone;
@@ -42,6 +44,16 @@ type ListTemplateProps = {
   search?: ListTemplateSearch;
   /** Optional filter controls (Selects, chips). */
   filters?: ComponentChildren;
+  /** Optional extra content rendered below the action controls (wide: under the
+   *  action column; narrow: a full-width block between the action bar and list). */
+  actionExtra?: ComponentChildren;
+  /** When set, replaces the list column content (rows / empty state) — e.g. an
+   *  in-body editor surface with its own close affordance. */
+  listContent?: ComponentChildren;
+  /** Bounds the template to the viewport and scrolls the list column (and the
+   *  action-extra) independently, so the action controls stay anchored. Opt-in
+   *  so other list pages keep their whole-page scroll. */
+  scrollBody?: boolean;
 };
 
 function ListTemplateRowView({ row }: { row: ListTemplateRow }) {
@@ -49,6 +61,7 @@ function ListTemplateRowView({ row }: { row: ListTemplateRow }) {
     <div class="gsv-list-template-row">
       <ListRow
         icon={row.icon}
+        leading={row.leading}
         label={row.label}
         sub={row.sub}
         status={listRowStatusForTone(row.tone) as ListRowStatus}
@@ -74,13 +87,19 @@ export function ListTemplate({
   onConnect,
   search,
   filters,
+  actionExtra,
+  listContent,
+  scrollBody = false,
 }: ListTemplateProps) {
   // Action-bar arrangement keys off how many controls are present (connect is
   // always there): 1 → centered, 2 → inline, 3 → search row then filter+connect.
   const actionCount = 1 + (search ? 1 : 0) + (filters ? 1 : 0);
 
   return (
-    <div class="gsv-list-template" aria-label={`${listTitle} list`}>
+    <div
+      class={`gsv-list-template${scrollBody ? " is-scroll-body" : ""}`}
+      aria-label={`${listTitle} list`}
+    >
       <SectionHeader
         className="gsv-list-template-header"
         title={listTitle}
@@ -88,7 +107,7 @@ export function ListTemplate({
         divider
         headingLevel={2}
       />
-      <div class="gsv-list-template-body">
+      <div class="gsv-list-template-body" data-extra={actionExtra ? "true" : undefined}>
         <section class="gsv-list-template-action" data-actions={actionCount}>
           {search ? (
             <div class="gsv-list-template-search">
@@ -107,8 +126,14 @@ export function ListTemplate({
           </div>
         </section>
 
+        {actionExtra ? (
+          <section class="gsv-list-template-action-extra">{actionExtra}</section>
+        ) : null}
+
         <section class="gsv-list-template-list">
-          {rows.length === 0 ? (
+          {listContent != null ? (
+            listContent
+          ) : rows.length === 0 ? (
             <TemplateEmptyState object={emptyObject} />
           ) : (
             rows.map((row) => <ListTemplateRowView key={row.id} row={row} />)

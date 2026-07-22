@@ -37,6 +37,7 @@ export type ShellPageTab = {
   icon: string;
   type: string;
   libraryRoute?: ShellLibraryRoute;
+  filesRoute?: ShellFilesRoute;
   settingsRoute?: ShellSettingsRoute;
 };
 
@@ -47,10 +48,15 @@ export type ShellLibraryRoute =
   | { view: "capture"; db: string }
   | { view: "build"; db?: string };
 
+/** A FILES deep link: which target (machine) and which absolute directory to
+ *  open on. Absent (bare /files) restores the default target + client-side tabs. */
+export type ShellFilesRoute = { target: string; path: string };
+
 export type ShellRoute =
   | { surface: "desktop" }
   | { surface: "library"; libraryRoute?: ShellLibraryRoute }
-  | { surface: Exclude<ShellPageSurfaceId, "library">; settingsRoute?: ShellSettingsRoute };
+  | { surface: "files"; filesRoute?: ShellFilesRoute }
+  | { surface: Exclude<ShellPageSurfaceId, "library" | "files">; settingsRoute?: ShellSettingsRoute };
 
 export type DesktopChildRoute = {
   kind: DesktopObjectId;
@@ -260,6 +266,13 @@ export function shellTabForLibraryRoute(route: ShellLibraryRoute): ShellPageTab 
   };
 }
 
+export function shellTabForFilesRoute(route: ShellFilesRoute): ShellPageTab {
+  return {
+    ...shellTabForSurface("files"),
+    filesRoute: route,
+  };
+}
+
 export function shellTabForRoute(route: ShellRoute): ShellPageTab | null {
   if (route.surface === "desktop") {
     return null;
@@ -269,6 +282,9 @@ export function shellTabForRoute(route: ShellRoute): ShellPageTab | null {
   }
   if (route.surface === "library" && route.libraryRoute) {
     return shellTabForLibraryRoute(route.libraryRoute);
+  }
+  if (route.surface === "files" && route.filesRoute) {
+    return shellTabForFilesRoute(route.filesRoute);
   }
   return shellTabForSurface(route.surface);
 }
@@ -285,6 +301,13 @@ export function shellRouteForTab(tab: ShellPageTab): ShellRoute {
       surface: "library",
       libraryRoute: tab.libraryRoute ?? { view: "index" },
     };
+  }
+  if (tab.surface === "files") {
+    // Bare FILES carries no route (default target + client-side tabs); only a
+    // deep-linked tab restores the target + directory.
+    return tab.filesRoute
+      ? { surface: "files", filesRoute: tab.filesRoute }
+      : { surface: "files" };
   }
   return { surface: tab.surface };
 }

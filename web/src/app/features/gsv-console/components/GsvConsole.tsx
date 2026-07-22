@@ -7,6 +7,7 @@ import { TerminalPage } from "../../terminal/TerminalPage";
 import {
   shellSurfaceLabel,
   type DesktopObjectId,
+  type ShellFilesRoute,
   type ShellLibraryRoute,
   type ShellSettingsRoute,
   type ShellSurfaceId,
@@ -31,6 +32,7 @@ type GsvConsoleProps = {
   onClose?: () => void;
   libraryRoute?: ShellLibraryRoute;
   onLibraryRouteChange?: (route: ShellLibraryRoute) => void;
+  filesRoute?: ShellFilesRoute;
   onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop">) => void;
   onOpenSectionCreate?: (kind: DesktopObjectId) => void;
   onOpenChat?: () => void;
@@ -174,6 +176,7 @@ function settingsRouteTail(route: SettingsRoute): string {
 export function GsvConsole({
   activeSurface,
   libraryRoute = { view: "index" },
+  filesRoute,
   onBackToDesktop,
   onClose,
   onLibraryRouteChange,
@@ -497,7 +500,7 @@ export function GsvConsole({
             onRouteChange={onLibraryRouteChange}
           />
         ) : activeSurface === "files" ? (
-          <FilesPage />
+          <FilesPage filesRoute={filesRoute} />
         ) : activeSurface === "repositories" ? (
           <RepositoriesPage />
         ) : activeSurface === "terminal" ? (

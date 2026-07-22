@@ -1,5 +1,5 @@
 import type { JSX } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { AddAction } from "../../../components/ui/AddAction";
 import { Breadcrumbs } from "../../../components/ui/Breadcrumbs";
 import { Button } from "../../../components/ui/Button";
@@ -824,11 +824,21 @@ function FileTabView({
   );
 }
 
-export function FilesSurfaceSummary() {
+export function FilesSurfaceSummary({
+  initialLocation = null,
+}: {
+  /** Deep-link entry from /files/<target>/<path> — opens the surface on that
+   *  machine + directory. null keeps the default target + client-side tabs. */
+  initialLocation?: { target: string; path: string } | null;
+} = {}) {
   const { connected } = useGateway();
   const targetsQuery = useFilesTargets();
   const filesMutations = useFilesMutations();
   const targets = targetsQuery.targets;
+  // Split the deep link into primitives so the seeding/entry effects key on the
+  // target + path identity rather than the wrapping object's reference.
+  const initialTarget = initialLocation?.target ?? null;
+  const initialPath = initialLocation?.path ?? null;
   const [tabs, setTabs] = useState<FilesWorkspaceTab[]>([]);
   const [activeTabId, setActiveTabId] = useState("");
   const [drafts, setDrafts] = useState<Record<string, FileDraftState>>({});
@@ -850,10 +860,56 @@ export function FilesSurfaceSummary() {
       if (validTabs.length > 0) {
         return validTabs.length === currentTabs.length ? currentTabs : validTabs;
       }
+      // A /files/<target>/<path> deep link seeds the first tab directly at that
+      // target + directory, so the surface opens on the linked folder instead of
+      // the default target root. An unknown target falls through to the normal
+      // default (it must not crash).
+      if (initialTarget && targetIds.has(initialTarget)) {
+        return [createBrowserTab(initialTarget, initialPath ?? DEFAULT_PATH)];
+      }
       const initialTargetId = chooseInitialTarget(targets) ?? targets[0]?.id;
       return initialTargetId ? [createBrowserTab(initialTargetId, DEFAULT_PATH)] : [];
     });
+    // Seeds only when the target list (re)loads; live deep-link changes on an
+    // already-mounted surface are handled by the entry effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targets]);
+
+  // A deep link arriving (or changing) while the surface is already mounted —
+  // e.g. navigating /files/gsv/a → /files/gsv/b — opens/points a browser tab at
+  // the new target + directory and focuses it. The ref records the last-applied
+  // location so this doesn't refire on unrelated re-renders, and so it stops
+  // fighting the client-side tab state once the user starts browsing.
+  const appliedLocationRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialTarget || !initialPath) {
+      return;
+    }
+    const locationKey = `${initialTarget} ${initialPath}`;
+    if (appliedLocationRef.current === locationKey) {
+      return;
+    }
+    if (!targets.some((target) => target.id === initialTarget)) {
+      return;
+    }
+    appliedLocationRef.current = locationKey;
+    const linkedTab = createBrowserTab(initialTarget, initialPath);
+    setTabs((currentTabs) => {
+      const existing = currentTabs.find((tab) => tab.id === linkedTab.id);
+      if (!existing) {
+        return [...currentTabs, linkedTab];
+      }
+      if (existing.kind === "browser" && existing.path === linkedTab.path) {
+        return currentTabs;
+      }
+      // Browser tabs are keyed by target (one per target), so point the existing
+      // one at the linked directory rather than duplicating it.
+      return currentTabs.map((tab) => tab.id === linkedTab.id && tab.kind === "browser"
+        ? { ...tab, path: linkedTab.path, commandInput: "", commandInputKey: tab.commandInputKey + 1, searchQuery: "" }
+        : tab);
+    });
+    setActiveTabId(linkedTab.id);
+  }, [initialTarget, initialPath, targets]);
 
   useEffect(() => {
     if (tabs.length === 0) {

@@ -16,6 +16,9 @@ export interface SegmentedProps {
   disabled?: boolean;
   width?: number;
   label?: string;
+  /** Accessible name for the radiogroup when the visible label is rendered
+   *  externally (no `label` prop). Ignored when `label` is set. */
+  ariaLabel?: string;
   info?: string;
   description?: string;
   requirement?: SegmentedRequirement;
@@ -145,6 +148,7 @@ export function Segmented(props: SegmentedProps) {
         style={{ width: "100%" }}
         role="radiogroup"
         aria-labelledby={labelId}
+        aria-label={labelId ? undefined : props.ariaLabel || undefined}
         aria-describedby={describedBy}
         aria-invalid={status === "error" ? true : undefined}
       >
