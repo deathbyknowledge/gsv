@@ -126,6 +126,16 @@ function makeRootIdentity() {
   };
 }
 
+function makeNonRootWildcardIdentity() {
+  return {
+    capabilities: ["*"],
+    process: {
+      uid: 1000,
+      username: "alice",
+    },
+  };
+}
+
 describe("pkg syscalls", () => {
   it("stores public repo state as repo visibility metadata", () => {
     const config = makeConfig();
@@ -147,6 +157,17 @@ describe("pkg syscalls", () => {
       public: false,
     });
     expect(config.get("repos/alice/weather/visibility")).toBeNull();
+  });
+
+  it("does not treat a non-root wildcard capability as repo-owner authority", () => {
+    const ctx = {
+      config: makeConfig(),
+      identity: makeNonRootWildcardIdentity(),
+    } as unknown as KernelContext;
+
+    expect(() => handlePkgPublicSet({ repo: "bob/weather", public: true }, ctx)).toThrow(
+      "Forbidden: only bob or root may change visibility for bob/weather",
+    );
   });
 
   it("requires a package id for package sync", async () => {
@@ -387,6 +408,24 @@ describe("pkg syscalls", () => {
       },
     });
     expect(remove).toHaveBeenCalledWith(record.packageId, record.scope);
+  });
+
+  it("does not treat a non-root wildcard capability as global package authority", async () => {
+    const record = makeInstalledPackageRecord({
+      packageId: "import:root/gsv:packages/wiki",
+      name: "wiki",
+      sourceSubdir: "packages/wiki",
+    });
+    const ctx = {
+      packages: {
+        resolve: vi.fn(() => record),
+      },
+      identity: makeNonRootWildcardIdentity(),
+    } as unknown as KernelContext;
+
+    await expect(handlePkgRemove({ packageId: record.packageId }, ctx)).rejects.toThrow(
+      `${record.packageId} is not installed in your package scope`,
+    );
   });
 
   it("scaffolds a user-owned package repo and installs the resolved package", async () => {

@@ -219,7 +219,7 @@ function withDefaultProcessContext(identity: {
   };
 }
 
-function resolveConnectionCapabilities(
+export function resolveConnectionCapabilities(
   role: ConnectArgs["client"]["role"],
   identity: ProcessIdentity,
   caps: CapabilityStore,

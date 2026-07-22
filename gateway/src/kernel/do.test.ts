@@ -922,6 +922,55 @@ describe("Kernel device connection cleanup", () => {
   });
 });
 
+describe("Kernel connection rehydration", () => {
+  it("refreshes account groups and capabilities before restoring a user connection", () => {
+    const connection: any = {
+      id: "user-connection",
+      state: {
+        step: "connected",
+        identity: {
+          role: "user",
+          process: {
+            uid: 1000,
+            gid: 1000,
+            gids: [1000, 100],
+            username: "alice",
+            home: "/home/alice",
+            cwd: "/home/alice",
+          },
+          capabilities: ["*"],
+        },
+      },
+      setState: vi.fn((state) => {
+        connection.state = state;
+      }),
+      close: vi.fn(),
+    };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.getConnections = vi.fn(() => [connection]);
+    kernel.connections = new Map();
+    kernel.auth = {
+      getPasswdByUid: vi.fn(() => ({
+        uid: 1000,
+        gid: 1000,
+        username: "alice",
+        home: "/home/alice",
+      })),
+      resolveGids: vi.fn(() => [1000]),
+    };
+    kernel.caps = { resolve: vi.fn(() => ["fs.read"]) };
+    kernel.devices = { listOnline: vi.fn(() => []) };
+
+    kernel.rehydrateConnections();
+
+    expect(connection.state.identity).toMatchObject({
+      process: { gids: [1000] },
+      capabilities: ["fs.read"],
+    });
+    expect(kernel.connections.get(connection.id)).toBe(connection);
+  });
+});
+
 describe("Kernel user signal broadcasts", () => {
   it("does not send user signals to driver or service sockets", () => {
     const user = { state: { identity: { role: "user", process: { uid: 1000 } } }, send: vi.fn() };

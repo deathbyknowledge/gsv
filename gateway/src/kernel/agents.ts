@@ -229,7 +229,7 @@ export async function handleAccountCreate(
 
   if (kind === "human") {
     // Creating human accounts is an administrative action.
-    if (!caller.capabilities.includes("*")) {
+    if (caller.process.uid !== 0) {
       throw new Error("Creating human accounts requires root");
     }
     const { identity } = await createAccount(ctx, {

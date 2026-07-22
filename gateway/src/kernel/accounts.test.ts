@@ -275,11 +275,34 @@ describe("handleAccountCreate", () => {
     await expect(handleAccountCreate({ kind: "agent", username: "Bad Name" }, ctx)).rejects.toThrow(
       /unavailable|invalid/i,
     );
+    await expect(handleAccountCreate({ kind: "agent", username: "\u212Aite" }, ctx)).rejects.toThrow(
+      /unavailable|invalid/i,
+    );
+    await expect(handleAccountCreate({ kind: "agent", username: `alice${" ".repeat(60)}` }, ctx))
+      .rejects.toThrow(/unavailable|invalid/i);
+  });
+
+  it("normalizes ordinary ASCII uppercase usernames", async () => {
+    const { ctxFor } = createCtx();
+    const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
+
+    const result = await handleAccountCreate({ kind: "agent", username: "Scout" }, ctx);
+
+    expect(result.account.username).toBe("scout");
   });
 
   it("requires root to create a human account", async () => {
     const { ctxFor } = createCtx();
     const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
+
+    await expect(
+      handleAccountCreate({ kind: "human", username: "bob", password: "password-123" }, ctx),
+    ).rejects.toThrow(/root/i);
+  });
+
+  it("does not treat a non-root wildcard capability as root authority", async () => {
+    const { ctxFor } = createCtx();
+    const ctx = ctxFor(userIdentity(1000, "alice", ["*"]));
 
     await expect(
       handleAccountCreate({ kind: "human", username: "bob", password: "password-123" }, ctx),

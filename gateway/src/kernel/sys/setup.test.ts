@@ -266,7 +266,7 @@ describe("handleSysSetup", () => {
     expect(groups.find((group) => group.name === "wiki-builder-run")?.members).toEqual(["alice"]);
   });
 
-  it("seeds shipped skills into root home after first setup bootstrap", async () => {
+  it("runs system bootstrap as root and preserves first-user skill seeding", async () => {
     const ripgit = {
       fetch: vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input));
@@ -292,14 +292,14 @@ describe("handleSysSetup", () => {
       undefined,
       expect.objectContaining({
         identity: expect.objectContaining({
-          process: expect.objectContaining({ username: "alice" }),
+          process: expect.objectContaining({ uid: 0, username: "root" }),
         }),
       }),
     );
     expect(seedRepoSkillsToHomeMock).toHaveBeenCalledWith(
       expect.any(Object),
       { owner: "root", repo: "gsv", branch: "abc123" },
-      expect.objectContaining({ username: "root", home: "/root" }),
+      expect.objectContaining({ uid: 1000, username: "alice", home: "/home/alice" }),
     );
   });
 
@@ -325,6 +325,48 @@ describe("handleSysSetup", () => {
       },
       ctx,
     )).rejects.toThrow("username must match");
+  });
+
+  it("rejects Unicode case-fold aliases before normalizing setup usernames", async () => {
+    const { ctx, auth } = createCtx();
+
+    await expect(handleSysSetup(
+      {
+        username: "\u212Aate",
+        password: "password-123",
+      },
+      ctx,
+    )).rejects.toThrow("username must match");
+
+    expect(auth.addUser).not.toHaveBeenCalled();
+  });
+
+  it("bounds setup usernames before trimming them", async () => {
+    const { ctx, auth } = createCtx();
+
+    await expect(handleSysSetup(
+      {
+        username: `${" ".repeat(64)}alice`,
+        password: "password-123",
+      },
+      ctx,
+    )).rejects.toThrow("username must match");
+
+    expect(auth.addUser).not.toHaveBeenCalled();
+  });
+
+  it("normalizes ordinary ASCII uppercase setup usernames", async () => {
+    const { ctx } = createCtx();
+
+    const result = await handleSysSetup(
+      {
+        username: "Alice",
+        password: "password-123",
+      },
+      ctx,
+    );
+
+    expect(result.user.username).toBe("alice");
   });
 
   it("rejects a personal agent username that matches the first user", async () => {

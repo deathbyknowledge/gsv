@@ -71,6 +71,7 @@ import { APP_CLIENT_SESSION_TTL_MS, AppSessionStore } from "./app-sessions";
 import {
   ensureKernelBootstrapped,
   handleConnect,
+  resolveConnectionCapabilities,
   setupRequiredDetails,
   SETUP_REQUIRED_ERROR_CODE,
 } from "./connect";
@@ -3535,10 +3536,27 @@ export class Kernel extends Host<Env> {
       const state = connection.state;
       if (!state || state.step !== "connected" || !state.identity) continue;
 
+      const account = this.auth.getPasswdByUid(state.identity.process.uid);
+      if (!account || account.username !== state.identity.process.username) {
+        connection.close(1008, "Account unavailable");
+        continue;
+      }
+      const process = {
+        ...state.identity.process,
+        gid: account.gid,
+        gids: this.auth.resolveGids(account.username, account.gid),
+        home: account.home,
+      };
+      const identity = {
+        ...state.identity,
+        process,
+        capabilities: resolveConnectionCapabilities(state.identity.role, process, this.caps),
+      } as ConnectionIdentity;
+      connection.setState({ ...state, identity });
       this.connections.set(connection.id, connection);
-      if (state.identity.role === "driver") {
-        onlineTargets.add(state.identity.device);
-        this.devices.setOnline(state.identity.device, true);
+      if (identity.role === "driver") {
+        onlineTargets.add(identity.device);
+        this.devices.setOnline(identity.device, true);
       }
     }
 
