@@ -908,6 +908,7 @@ function ToolApprovalSettingsGroup({
         sourceLabel="System fallback"
         targets={targets}
         disabled={!editable || pending}
+        defaultDescription="When there are no overrides configured, all your agents will follow the default permission when using any tool. Overrides are machine or tool specific rules that take priority over the default action."
         onChange={(nextPolicy) => {
           setPolicy(nextPolicy);
           setStatusText("");

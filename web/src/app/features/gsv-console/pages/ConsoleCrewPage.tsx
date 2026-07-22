@@ -1,29 +1,23 @@
-import type { JSX } from "preact";
-import { useMemo, useState } from "preact/hooks";
-import { AgentCard, type AgentTask } from "../../../components/ui/AgentCard";
-import type { AvatarStatus } from "../../../components/ui/Avatar";
-import { CardListTemplate } from "../card-template/CardListTemplate";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { Avatar, type AvatarStatus } from "../../../components/ui/Avatar";
+import type { AgentToolTarget } from "../../../components/ui/agentToolApprovalOptions";
+import { CrewDefaultsPanel } from "../components/CrewDefaultsPanel";
+import { EditDefaultsPanel, type EditDefaultsSection } from "../components/EditDefaultsPanel";
 import {
   ConsolePage,
   ConsoleResourceBoundary,
 } from "../components/ConsolePageTemplate";
+import { ListTemplate, type ListTemplateRow } from "../list-template/ListTemplate";
 import type {
   ConsoleAccount,
   ConsoleConfigEntry,
   ConsoleProcess,
   ConsoleResourceState,
+  ConsoleTarget,
 } from "../domain/consoleModels";
-import { modelLabelsForConfig } from "../domain/consoleAi";
-import {
-  behaviorForAccount,
-  inheritedModelLabelForAccount,
-  modelLabelsForAccount,
-  type AgentApprovalAction,
-} from "../domain/consoleAgentBehavior";
 import {
   avatarForAccount,
   isConsoleAgentAccount,
-  isHumanCrewAccount,
   labelForConsoleAccountRelation,
   orderedCrewAccounts,
 } from "../domain/agentPresentation";
@@ -31,24 +25,13 @@ import {
   useConsoleAccounts,
   useConsoleConfig,
   useConsoleProcesses,
+  useConsoleTargets,
 } from "../hooks/useConsoleData";
 import "./ConsoleCrewPage.css";
 
-type CrewCardModel = {
-  account: ConsoleAccount;
-  processes: ConsoleProcess[];
-  imageSrc: string;
-  displayName: string;
-  role: string;
-  description: string;
-  status: AvatarStatus;
-  tasks: AgentTask[];
-  active: boolean;
-  model: string;
-  modelIsDefault: boolean;
-  modelOptions: string[];
-  permission: AgentApprovalAction;
-};
+/* The defaults panel collapses to a disclosure once the template's action
+   column folds into the horizontal bar (ListTemplate's container breakpoint). */
+const COMPACT_BREAKPOINT = 1024;
 
 type ConsoleCrewPageProps = {
   onManageAgent?: (uid: number) => void;
@@ -59,9 +42,10 @@ export function ConsoleCrewPage({ onManageAgent, onCreateAgent }: ConsoleCrewPag
   const accounts = useConsoleAccounts();
   const config = useConsoleConfig();
   const processes = useConsoleProcesses();
+  const targets = useConsoleTargets();
 
   return (
-    <ConsolePage flush>
+    <ConsolePage flush className="is-bounded">
       <ConsoleResourceBoundary
         resource={accounts.resource}
         emptyLabel="NO CREW ACCOUNTS"
@@ -71,6 +55,7 @@ export function ConsoleCrewPage({ onManageAgent, onCreateAgent }: ConsoleCrewPag
             accounts={data}
             config={config.config}
             processResource={processes.resource}
+            toolTargets={toolTargetsForConsoleTargets(targets.targets)}
             onManageAgent={onManageAgent}
             onCreateAgent={onCreateAgent}
           />
@@ -84,132 +69,102 @@ function CrewRoster({
   accounts,
   config,
   processResource,
+  toolTargets,
   onManageAgent,
   onCreateAgent,
 }: {
   accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
   processResource: ConsoleResourceState<ConsoleProcess[]>;
+  toolTargets: readonly AgentToolTarget[];
   onManageAgent?: (uid: number) => void;
   onCreateAgent?: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const processes = processResource.data ?? [];
-  const modelLabels = modelLabelsForConfig(config);
-  // Humans first; agents keep their existing rank order after.
-  const ordered = orderedCrewAccounts(accounts);
-  const ownerUid = viewerAccountForCrew(ordered)?.uid ?? null;
-  const cards = ordered.map((account) => {
-    const human = isHumanCrewAccount(account);
-    // Orb for humans; agents show their persisted portrait (legacy position
-    // fallback for agents created before portraits were fixed).
-    const imageSrc = avatarForAccount(account, config, accounts);
-    return buildCrewCard(account, processes, imageSrc, human, config, modelLabels, ownerUid);
-  });
-  const humanCount = accounts.filter(isHumanCrewAccount).length;
-  const machineCount = accounts.filter(isConsoleAgentAccount).length;
-  const crewMeta = `${humanCount} HUMAN${humanCount === 1 ? "" : "S"} / ${machineCount} MACHINE${machineCount === 1 ? "" : "S"}`;
+  // In-body edit surface: when set, the list column shows the defaults editor
+  // (opened on this section) instead of the roster; ✕ closes back to the list.
+  const [editorSection, setEditorSection] = useState<EditDefaultsSection | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
 
-  const visibleCards = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return q
-      ? cards.filter((card) =>
-          card.displayName.toLowerCase().includes(q) ||
-          card.account.displayName.toLowerCase().includes(q)
-        )
-      : cards;
-  }, [cards, query]);
+  useLayoutEffect(() => {
+    const node = rootRef.current;
+    if (!node) return;
+    const update = () => setWidth(node.clientWidth);
+    update();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", update);
+      return () => window.removeEventListener("resize", update);
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const processes = processResource.data ?? [];
+  const agents = orderedCrewAccounts(accounts).filter(isConsoleAgentAccount);
+  const crewMeta = `${agents.length} AGENT${agents.length === 1 ? "" : "S"}`;
+  const viewer = viewerAccountForCrew(accounts);
+  const compact = width > 0 && width <= COMPACT_BREAKPOINT;
+
+  const q = query.trim().toLowerCase();
+  const rows: ListTemplateRow[] = agents
+    .filter((account) => {
+      if (!q) return true;
+      const role = labelForConsoleAccountRelation(account.relation);
+      return account.displayName.toLowerCase().includes(q) || role.toLowerCase().includes(q);
+    })
+    .map((account) => {
+      const owned = processes.filter((process) => ownsProcess(account, process));
+      const unknown = owned.some((process) => process.state === "unknown");
+      const active = owned.some((process) => isRunningProcess(process) || isQueuedProcess(process));
+      const status: AvatarStatus = unknown ? "error" : active ? "live" : "idle";
+      return {
+        id: String(account.uid),
+        leading: (
+          <Avatar src={avatarForAccount(account, config, accounts)} status={status} size={30} cover />
+        ),
+        label: account.displayName,
+        sub: labelForConsoleAccountRelation(account.relation),
+        tone: status,
+        statusLabel: unknown ? "ERROR" : active ? "RUNNING" : "IDLE",
+        onOpen: onManageAgent ? () => onManageAgent(account.uid) : undefined,
+      };
+    });
 
   return (
-    <CardListTemplate
-      listTitle="CREW"
-      listMeta={crewMeta}
-      emptyObject="CREW"
-      isEmpty={visibleCards.length === 0}
-      connectLabel={onCreateAgent ? "NEW AGENT" : undefined}
-      onConnect={onCreateAgent}
-      search={{ value: query, placeholder: "Search crew…", onChange: setQuery }}
-    >
-      {visibleCards.map((card) => (
-        <div
-          class="gsv-console-crew-card-shell"
-          data-clickable={onManageAgent ? "true" : undefined}
-          key={card.account.uid}
-          onClick={onManageAgent ? () => onManageAgent(card.account.uid) : undefined}
-          onKeyDown={onManageAgent ? (event) => handleCardKeyDown(event, card.account.uid, onManageAgent) : undefined}
-          tabIndex={onManageAgent ? 0 : undefined}
-        >
-          <AgentCard
-            agentName={card.displayName}
-            agentRole={card.role}
-            description={card.description}
-            imgSrc={card.imageSrc}
-            status={card.status}
-            initialModel={card.model}
-            initialPermission={card.permission}
-            modelIsDefault={card.modelIsDefault}
-            models={card.modelOptions}
-            tasks={card.tasks}
-            tasksTotal={card.processes.length}
-            active={card.active}
-            avatarCover={!isHumanCrewAccount(card.account)}
-            showActions={false}
-            readOnly
+    <div class="gsv-console-crew" ref={rootRef}>
+      <ListTemplate
+        listTitle="CREW"
+        listMeta={crewMeta}
+        rows={rows}
+        emptyObject="AGENTS"
+        connectLabel="NEW AGENT"
+        onConnect={onCreateAgent}
+        search={{ value: query, placeholder: "Search agents…", onChange: setQuery }}
+        scrollBody
+        actionExtra={viewer ? (
+          <CrewDefaultsPanel
+            viewer={viewer}
+            config={config}
+            compact={compact}
+            onEditDefaults={() => setEditorSection("defaults")}
+            onConfigureOverrides={() => setEditorSection("overrides")}
+            onManageContext={() => setEditorSection("context")}
           />
-        </div>
-      ))}
-    </CardListTemplate>
+        ) : undefined}
+        listContent={viewer && editorSection ? (
+          <EditDefaultsPanel
+            section={editorSection}
+            onClose={() => setEditorSection(null)}
+            viewer={viewer}
+            config={config}
+            targets={toolTargets}
+          />
+        ) : undefined}
+      />
+    </div>
   );
-}
-
-function handleCardKeyDown(
-  event: JSX.TargetedKeyboardEvent<HTMLDivElement>,
-  uid: number,
-  onManageAgent: (uid: number) => void,
-): void {
-  if (event.key !== "Enter" && event.key !== " ") {
-    return;
-  }
-  event.preventDefault();
-  onManageAgent(uid);
-}
-
-function buildCrewCard(
-  account: ConsoleAccount,
-  processes: readonly ConsoleProcess[],
-  imageSrc: string,
-  isHuman: boolean,
-  config: readonly ConsoleConfigEntry[],
-  modelLabels: readonly string[],
-  ownerUid: number | null,
-): CrewCardModel {
-  const ownedProcesses = processes.filter((process) => ownsProcess(account, process));
-  const behavior = behaviorForAccount(config, account.uid, ownerUid);
-  const inheritedModelLabel = inheritedModelLabelForAccount(config, account.uid, ownerUid);
-  const queued = ownedProcesses.some(isQueuedProcess);
-  const running = ownedProcesses.some(isRunningProcess);
-  const unknown = ownedProcesses.some((process) => process.state === "unknown");
-  const role = labelForConsoleAccountRelation(account.relation);
-  // The human is always shown online; agents reflect their process state.
-  const status: AvatarStatus = isHuman
-    ? "online"
-    : unknown ? "error" : running || queued ? "live" : "idle";
-
-  return {
-    account,
-    processes: ownedProcesses,
-    imageSrc,
-    displayName: isHuman ? "Defaults" : account.displayName,
-    role,
-    description: isHuman ? "These are your preferences, applied to all your agents." : accountDescription(account),
-    status,
-    tasks: tasksForProcesses(ownedProcesses),
-    active: account.runnable,
-    model: behavior.modelLabel,
-    modelIsDefault: behavior.model.trim().length === 0,
-    modelOptions: modelLabelsForAccount(modelLabels, behavior.modelLabel || behavior.model, inheritedModelLabel),
-    permission: behavior.permission,
-  };
 }
 
 function viewerAccountForCrew(accounts: readonly ConsoleAccount[]): ConsoleAccount | null {
@@ -217,6 +172,15 @@ function viewerAccountForCrew(accounts: readonly ConsoleAccount[]): ConsoleAccou
     ?? accounts.find((account) => account.uid === 0)
     ?? accounts.find((account) => account.relation === "human")
     ?? null;
+}
+
+function toolTargetsForConsoleTargets(targets: readonly ConsoleTarget[]): AgentToolTarget[] {
+  return targets.map((target) => ({
+    id: target.deviceId,
+    label: target.label || target.deviceId,
+    online: target.online,
+    implements: target.implements,
+  }));
 }
 
 function ownsProcess(account: ConsoleAccount, process: ConsoleProcess): boolean {
@@ -229,21 +193,4 @@ function isRunningProcess(process: ConsoleProcess): boolean {
 
 function isQueuedProcess(process: ConsoleProcess): boolean {
   return process.state === "queued" || process.queuedCount > 0;
-}
-
-function tasksForProcesses(processes: readonly ConsoleProcess[]): AgentTask[] {
-  if (processes.length === 0) {
-    return [{ name: "No process activity", status: "idle" }];
-  }
-  return processes.map((process) => ({
-    name: process.label || process.pid,
-    status: process.state === "unknown" ? "error" : isRunningProcess(process) || isQueuedProcess(process) ? "running" : "idle",
-  }));
-}
-
-function accountDescription(account: ConsoleAccount): string {
-  if (account.gecos.trim().length > 0) {
-    return account.gecos;
-  }
-  return `${account.username} / uid ${account.uid}`;
 }

@@ -22,9 +22,47 @@
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  grid-template-areas: "action list";
   /* Big screens: center the action+list column to the reading cap; the panel
      border and the header divider above still span full width. */
   padding-inline: var(--gsv-gutter);
+}
+
+/* With an actionExtra block the left column splits into two rows (controls,
+   then the extra section); the list spans both. */
+.gsv-list-template-body[data-extra="true"] {
+  grid-template-areas:
+    "action list"
+    "extra list";
+  grid-template-rows: auto 1fr;
+}
+
+/* scrollBody: bound the template to the available height and scroll the list
+   column (and the action-extra) independently, so the action controls stay
+   anchored while the body scrolls (e.g. clicking a DEFAULTS row scrolls the
+   editor to a section without moving the action column). Opt-in — other list
+   pages keep their whole-page scroll. */
+.gsv-list-template.is-scroll-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  margin-bottom: 0;
+  overflow: hidden;
+}
+
+.gsv-list-template.is-scroll-body .gsv-list-template-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gsv-list-template.is-scroll-body .gsv-list-template-list {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.gsv-list-template.is-scroll-body .gsv-list-template-action-extra {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* The title bar is a full-width strip — only its inner content indents to the
@@ -35,6 +73,7 @@
 }
 
 .gsv-list-template-action,
+.gsv-list-template-action-extra,
 .gsv-list-template-list {
   min-width: 0;
   min-height: 0;
@@ -42,11 +81,30 @@
   flex-direction: column;
 }
 
+.gsv-list-template-action {
+  grid-area: action;
+}
+
+.gsv-list-template-list {
+  grid-area: list;
+  /* The column divider lives on the list (border-left) rather than the action
+     column (border-right) so it spans full height even when the left column
+     splits into action + extra rows. Same pixel position either way. */
+  border-left: 1px solid var(--rule-section);
+}
+
 /* Action column: stacked controls, connect-new pinned to the bottom. */
 .gsv-list-template-action {
-  border-right: 1px solid var(--rule-section);
   gap: 16px;
   padding: 16px;
+}
+
+/* Extra block under the action controls (e.g. CREW's defaults card). No
+   padding: card content runs flush to the column's vertical divider/edges so
+   its rules and the template lines touch (settings-template treatment). */
+.gsv-list-template-action-extra {
+  grid-area: extra;
+  padding: 0;
 }
 
 .gsv-list-template-search,
@@ -99,14 +157,28 @@
      without this the grid stretches the bar to half the height. */
   .gsv-list-template-body {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "action" "list";
     grid-template-rows: auto 1fr;
+  }
+
+  /* Extra block becomes a full-width strip between the action bar and list. */
+  .gsv-list-template-body[data-extra="true"] {
+    grid-template-areas: "action" "extra" "list";
+    grid-template-rows: auto auto 1fr;
+  }
+
+  .gsv-list-template-list {
+    border-left: 0;
+  }
+
+  .gsv-list-template-action-extra {
+    border-bottom: 1px solid var(--rule-section);
   }
 
   .gsv-list-template-action {
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
-    border-right: 0;
     border-bottom: 1px solid var(--rule-section);
   }
 

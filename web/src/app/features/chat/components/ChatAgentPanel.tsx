@@ -194,6 +194,16 @@ export function ChatAgentPanel({
               onOpenCrew();
             }}
           />
+          <ListRow
+            icon="cog"
+            label="MANAGE DEFAULTS"
+            status="none"
+            chevron
+            onClick={() => {
+              onClose();
+              onOpenCrew();
+            }}
+          />
         </div>
       </div>
     </div>

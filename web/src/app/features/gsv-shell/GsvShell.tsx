@@ -29,6 +29,7 @@ import { UnsavedGuardProvider, useUnsavedGuardController } from "./unsaved/unsav
 import {
   shellSurfaceLabel,
   type DesktopObjectId,
+  type ShellFilesRoute,
   type ShellLibraryRoute,
   type ShellSettingsRoute,
   type ShellSurfaceId,
@@ -393,6 +394,11 @@ export function GsvShell({
   const activeLibraryRoute: ShellLibraryRoute = shell.activeSurface === "library"
     ? shell.activePageTab?.libraryRoute ?? { view: "index" }
     : { view: "index" };
+  // Unlike Library (which always has a route), bare FILES carries none, so the
+  // default here is undefined — the deep-link entry point onto the surface.
+  const activeFilesRoute: ShellFilesRoute | undefined = shell.activeSurface === "files"
+    ? shell.activePageTab?.filesRoute
+    : undefined;
 
   const railProps = {
     activeSurface: shell.activeSurface,
@@ -530,6 +536,7 @@ export function GsvShell({
                         onLibraryRouteChange={shell.syncActiveLibraryRoute}
                         onSettingsRouteChange={shell.syncActiveSettingsRoute}
                         libraryRoute={activeLibraryRoute}
+                        filesRoute={activeFilesRoute}
                         settingsRoute={activeSettingsRoute}
                       />
                     ) : null}

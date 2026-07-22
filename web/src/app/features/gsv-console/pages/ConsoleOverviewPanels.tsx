@@ -21,7 +21,6 @@ import type { ConsoleListKind } from "../domain/consoleListTypes";
 import {
   avatarForAccount,
   isConsoleAgentAccount,
-  isHumanCrewAccount,
   orderedCrewAccounts,
 } from "../domain/agentPresentation";
 import type {
@@ -214,23 +213,15 @@ function crewCards(
   processes: readonly ConsoleProcess[],
   config: readonly ConsoleConfigEntry[],
 ): CrewCard[] {
-  const ordered = orderedCrewAccounts(accounts).slice(0, 3);
-  return ordered.map((account) => {
-    const human = isHumanCrewAccount(account);
-    // Human is shown first, online, with the padded orb; agents show their
-    // persisted portrait (legacy position fallback for pre-existing agents).
-    const status = human
-      ? { meta: "you", statusLabel: "ONLINE", tone: "online" as StatusTone }
-      : accountStatus(account, processes);
-    return {
-      id: String(account.uid),
-      accountUid: account.uid,
-      imageSrc: avatarForAccount(account, config, accounts),
-      cover: !human,
-      name: human ? "Defaults" : account.displayName,
-      ...status,
-    };
-  });
+  const ordered = orderedCrewAccounts(accounts).filter(isConsoleAgentAccount).slice(0, 3);
+  return ordered.map((account) => ({
+    id: String(account.uid),
+    accountUid: account.uid,
+    imageSrc: avatarForAccount(account, config, accounts),
+    cover: true,
+    name: account.displayName,
+    ...accountStatus(account, processes),
+  }));
 }
 
 function sortTargets(targets: readonly ConsoleTarget[]): ConsoleTarget[] {
@@ -550,9 +541,8 @@ function CrewPanel({
   processes: readonly ConsoleProcess[];
 }) {
   const cards = crewCards(accounts, processes, config);
-  const humanCount = accounts.filter(isHumanCrewAccount).length;
   const agentCount = accounts.filter(isConsoleAgentAccount).length;
-  const crewMeta = `${humanCount} HUMAN${humanCount === 1 ? "" : "S"} / ${agentCount} AGENT${agentCount === 1 ? "" : "S"}`;
+  const crewMeta = `${agentCount} AGENT${agentCount === 1 ? "" : "S"}`;
 
   return (
     <section class="gsv-settings-block gsv-settings-crew-block">

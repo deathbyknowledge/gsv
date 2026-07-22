@@ -101,4 +101,31 @@ describe("shellRoutes", () => {
       libraryRoute: { view: "build" },
     });
   });
+
+  it("keeps bare /files on the default surface", () => {
+    const route: ShellRoute = { surface: "files" };
+
+    expect(shellRouteToPath(route)).toBe("/files");
+    expect(shellRouteFromLocation(location("/files"))).toEqual(route);
+  });
+
+  it("round-trips files deep-link routes", () => {
+    const route: ShellRoute = {
+      surface: "files",
+      filesRoute: { target: "gsv", path: "/home/jessica/context.d" },
+    };
+
+    expect(shellRouteToPath(route)).toBe("/files/gsv/home/jessica/context.d");
+    expect(shellRouteFromLocation(location("/files/gsv/home/jessica/context.d"))).toEqual(route);
+  });
+
+  it("round-trips files routes with encoded segments", () => {
+    const route: ShellRoute = {
+      surface: "files",
+      filesRoute: { target: "hank linux", path: "/var/My Notes/todo.txt" },
+    };
+
+    expect(shellRouteToPath(route)).toBe("/files/hank%20linux/var/My%20Notes/todo.txt");
+    expect(shellRouteFromLocation(location("/files/hank%20linux/var/My%20Notes/todo.txt"))).toEqual(route);
+  });
 });
