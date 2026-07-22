@@ -672,7 +672,7 @@ describe("console agent service", () => {
     await expect(checkConsoleOpenAiCodexOAuth({ call } as any)).resolves.toEqual({ connected: false });
   });
 
-  it("validates text model settings through ai.text.generate", async () => {
+  it("validates text model settings without disabling configured reasoning", async () => {
     const call = vi.fn(async () => ({
       provider: "anthropic",
       model: "claude-test",
@@ -719,8 +719,7 @@ describe("console agent service", () => {
         },
       },
       options: {
-        maxTokens: 16,
-        reasoning: "off",
+        maxTokens: 2_048,
         timeoutMs: 30_000,
       },
       sessionAffinityKey: "gsv-console:model-validation",
