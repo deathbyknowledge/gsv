@@ -50,6 +50,7 @@ import {
   forwardToProcess,
 } from "./proc-handlers";
 import { handleAccountCreate, handleAccountList } from "./agents";
+import { handleUserAdmin } from "./user-admin";
 import { handleSysConfigGet, handleSysConfigSet } from "./sys/config";
 import { handleSysDeviceDelete, handleSysDeviceGet, handleSysDeviceList, handleSysDeviceUpdate } from "./sys/device";
 import { handleNetFetch, normalizeNetFetchTimeoutMs } from "./net";
@@ -592,6 +593,11 @@ async function dispatchNative(
         break;
       case "account.list":
         data = handleAccountList(frame.args, ctx);
+        break;
+
+      // --- user.* ---
+      case "user.admin":
+        data = await handleUserAdmin(frame.args, ctx);
         break;
 
       // --- sched.* ---

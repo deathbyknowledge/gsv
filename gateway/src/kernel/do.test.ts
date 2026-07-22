@@ -969,6 +969,141 @@ describe("Kernel connection rehydration", () => {
     });
     expect(kernel.connections.get(connection.id)).toBe(connection);
   });
+
+  it("refreshes live authority after a successful user permission change", () => {
+    const makeConnection = (uid: number, username: string): any => {
+      const current: any = {
+        id: `${username}-connection`,
+        state: {
+          step: "connected",
+          identity: {
+            role: "user",
+            process: {
+              uid,
+              gid: uid,
+              gids: [uid, 1000],
+              username,
+              home: `/home/${username}`,
+              cwd: "/work",
+            },
+            capabilities: ["user.admin", "net.fetch"],
+          },
+        },
+        setState: vi.fn((state) => {
+          current.state = state;
+        }),
+        close: vi.fn(),
+      };
+      return current;
+    };
+    const connection = makeConnection(1000, "alice");
+    const crossMember = makeConnection(1001, "bob");
+    const accounts = new Map([
+      [1000, { uid: 1000, gid: 1000, username: "alice", home: "/home/alice" }],
+      [1001, { uid: 1001, gid: 1001, username: "bob", home: "/home/bob" }],
+    ]);
+    const processes = [{ processId: "proc-as-alice", uid: 1000, ownerUid: 1001 }];
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.connections = new Map([
+      [connection.id, connection],
+      [crossMember.id, crossMember],
+    ]);
+    kernel.auth = {
+      getPasswdByUid: vi.fn((uid: number) => accounts.get(uid) ?? null),
+      resolveGids: vi.fn((username: string) => username === "alice"
+        ? [1000, 101]
+        : [1001, 1000]),
+    };
+    kernel.caps = { resolve: vi.fn(() => ["fs.read"]) };
+    kernel.procs = { list: vi.fn(() => processes) };
+    kernel.reconcileProcessIdentities = vi.fn();
+
+    kernel.applyPostDispatchEffects(
+      { call: "user.admin", args: {} },
+      {
+        ok: true,
+        data: {
+          action: "permissions",
+          user: { username: "alice", uid: 1000, gid: 1000 },
+          groups: [],
+          directCapabilities: [],
+          effectiveCapabilities: ["fs.read"],
+          changed: true,
+        },
+      },
+    );
+
+    expect(connection.state.identity).toMatchObject({
+      process: {
+        gid: 1000,
+        gids: [1000, 101],
+        home: "/home/alice",
+        cwd: "/work",
+      },
+      capabilities: ["fs.read"],
+    });
+    expect(crossMember.state.identity).toMatchObject({
+      process: { gids: [1001, 1000] },
+      capabilities: ["fs.read"],
+    });
+    expect(kernel.procs.list).toHaveBeenCalledWith();
+    expect(kernel.reconcileProcessIdentities).toHaveBeenCalledWith(processes);
+  });
+
+  it("rejects a process after its owner loses delegated run-as access", () => {
+    const bobGroup = { name: "bob", gid: 1001, members: ["alice"] };
+    const accounts = new Map([
+      [1000, { uid: 1000, gid: 1000, username: "alice", home: "/home/alice" }],
+      [1001, { uid: 1001, gid: 1001, username: "bob", home: "/home/bob" }],
+    ]);
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.procs = {
+      get: vi.fn(() => ({
+        processId: "proc-bob",
+        uid: 1001,
+        ownerUid: 1000,
+        username: "bob",
+        cwd: "/home/bob",
+      })),
+    };
+    kernel.auth = {
+      getPasswdByUid: vi.fn((uid: number) => accounts.get(uid) ?? null),
+      getPersonalAgentUid: vi.fn(() => null),
+      getGroupByGid: vi.fn(() => bobGroup),
+      getGroupByName: vi.fn(() => null),
+      resolveGids: vi.fn(() => [1001]),
+    };
+    kernel.caps = { resolve: vi.fn(() => ["fs.read"]) };
+    kernel.buildKernelContext = vi.fn((options) => options);
+
+    expect(kernel.buildProcessContext("proc-bob")).not.toBeNull();
+    bobGroup.members = [];
+    expect(kernel.buildProcessContext("proc-bob")).toBeNull();
+  });
+
+  it("rejects a schedule after its owner loses delegated run-as access", () => {
+    const bobGroup = { name: "bob", gid: 1001, members: ["alice"] };
+    const accounts = new Map([
+      [1000, { uid: 1000, gid: 1000, username: "alice", home: "/home/alice" }],
+      [1001, { uid: 1001, gid: 1001, username: "bob", home: "/home/bob" }],
+    ]);
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.auth = {
+      getPasswdByUid: vi.fn((uid: number) => accounts.get(uid) ?? null),
+      getPersonalAgentUid: vi.fn(() => null),
+      getGroupByGid: vi.fn(() => bobGroup),
+      getGroupByName: vi.fn(() => null),
+      resolveGids: vi.fn(() => [1001]),
+    };
+    const schedule = {
+      ownerUid: 1000,
+      runAs: { kind: "user", uid: 1001, username: "bob" },
+    };
+
+    expect(kernel.resolveScheduleIdentity(schedule)).toMatchObject({ uid: 1001 });
+    bobGroup.members = [];
+    expect(() => kernel.resolveScheduleIdentity(schedule)).toThrow("Permission denied");
+  });
 });
 
 describe("Kernel user signal broadcasts", () => {
@@ -2059,9 +2194,12 @@ describe("Kernel process device requests", () => {
     }));
     const kernel = Object.create(Kernel.prototype) as {
       env: Record<string, never>;
-      procs: { getIdentity: ReturnType<typeof vi.fn> };
+      procs: { get: ReturnType<typeof vi.fn> };
       caps: { resolve: ReturnType<typeof vi.fn> };
-      auth: { getPasswdByUid: ReturnType<typeof vi.fn> };
+      auth: {
+        getPasswdByUid: ReturnType<typeof vi.fn>;
+        resolveGids: ReturnType<typeof vi.fn>;
+      };
       devices: {
         canAccess: ReturnType<typeof vi.fn>;
         get: ReturnType<typeof vi.fn>;
@@ -2090,8 +2228,10 @@ describe("Kernel process device requests", () => {
       ): Promise<unknown>;
     };
     kernel.env = {};
-    kernel.procs = { getIdentity: vi.fn(() => ({
+    kernel.procs = { get: vi.fn(() => ({
+      processId: "proc_1",
       uid: 0,
+      ownerUid: 0,
       gid: 0,
       gids: [0],
       username: "root",
@@ -2099,7 +2239,15 @@ describe("Kernel process device requests", () => {
       cwd: "/root",
     })) };
     kernel.caps = { resolve: vi.fn(() => options.capabilities ?? ["net.fetch"]) };
-    kernel.auth = { getPasswdByUid: vi.fn(() => null) };
+    kernel.auth = {
+      getPasswdByUid: vi.fn(() => ({
+        uid: 0,
+        gid: 0,
+        username: "root",
+        home: "/root",
+      })),
+      resolveGids: vi.fn(() => [0]),
+    };
     kernel.devices = {
       canAccess: vi.fn(() => true),
       get: vi.fn(() => device),
@@ -2122,7 +2270,7 @@ describe("Kernel process device requests", () => {
     );
 
     expect(result).toMatchObject({ ok: true, data: { status: 204 } });
-    expect(kernel.procs.getIdentity).toHaveBeenCalledWith("proc_1");
+    expect(kernel.procs.get).toHaveBeenCalledWith("proc_1");
     expect(kernel.devices.canAccess).toHaveBeenCalledWith("linux-machine", 0, [0]);
     expect(requestDevice).toHaveBeenCalledWith(
       "linux-machine",

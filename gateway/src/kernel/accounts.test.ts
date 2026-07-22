@@ -107,7 +107,12 @@ function createCtx() {
   function ctxFor(identity: ConnectionIdentity, options: { ripgit?: boolean } = {}): KernelContext {
     return {
       auth: auth as unknown as KernelContext["auth"],
-      caps: { resolve: vi.fn(() => []) } as unknown as KernelContext["caps"],
+      caps: {
+        list: vi.fn((gid?: number) => gid === identity.process.gid
+          ? identity.capabilities.map((capability) => ({ gid, capability }))
+          : []),
+        resolve: vi.fn(() => []),
+      } as unknown as KernelContext["caps"],
       env: {
         STORAGE: storage,
         ...(options.ripgit ? { RIPGIT: ripgit } : {}),
@@ -291,13 +296,16 @@ describe("handleAccountCreate", () => {
     expect(result.account.username).toBe("scout");
   });
 
-  it("requires root to create a human account", async () => {
-    const { ctxFor } = createCtx();
+  it("denies human creation before mutating state without user.admin", async () => {
+    const { ctxFor, auth } = createCtx();
     const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
 
     await expect(
       handleAccountCreate({ kind: "human", username: "bob", password: "password-123" }, ctx),
-    ).rejects.toThrow(/root/i);
+    ).rejects.toThrow("Permission denied");
+    expect(auth.nextUid).not.toHaveBeenCalled();
+    expect(auth.addUser).not.toHaveBeenCalled();
+    expect(auth.setShadow).not.toHaveBeenCalled();
   });
 
   it("does not treat a non-root wildcard capability as root authority", async () => {
@@ -306,7 +314,21 @@ describe("handleAccountCreate", () => {
 
     await expect(
       handleAccountCreate({ kind: "human", username: "bob", password: "password-123" }, ctx),
-    ).rejects.toThrow(/root/i);
+    ).rejects.toThrow("Permission denied");
+  });
+
+  it("allows a directly delegated user administrator to create a human", async () => {
+    const { ctxFor, shadow, groups } = createCtx();
+    const ctx = ctxFor(userIdentity(1000, "alice", ["user.admin"]));
+
+    const result = await handleAccountCreate(
+      { kind: "human", username: "bob", password: "password-123" },
+      ctx,
+    );
+
+    expect(result.account.username).toBe("bob");
+    expect(shadow.get("bob")).not.toBe("!");
+    expect(groups.find((group) => group.name === "users")?.members).toContain("bob");
   });
 
   it("rejects a weak human password without mutating auth state", async () => {

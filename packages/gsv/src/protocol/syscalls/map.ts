@@ -275,6 +275,7 @@ import type {
   SignalWatchArgs,
   SignalWatchResult,
 } from "./signal";
+import type { UserAdminArgs, UserAdminResult } from "./user";
 
 export type SyscallDomains = {
   "fs.read": { args: FsReadArgs; result: FsReadResult };
@@ -392,6 +393,8 @@ export type SyscallDomains = {
 
   "account.create": { args: AccountCreateArgs; result: AccountCreateResult };
   "account.list": { args: AccountListArgs; result: AccountListResult };
+
+  "user.admin": { args: UserAdminArgs; result: UserAdminResult };
 
   "sched.list": { args: SchedulerListArgs; result: SchedulerListResult };
   "sched.add": { args: SchedulerAddArgs; result: SchedulerAddResult };

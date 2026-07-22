@@ -8,6 +8,7 @@ use crate::auth_flow::{
 };
 use crate::cli::{
     AuthAction, Cli, Commands, ConfigAction, DeviceAction, DeviceServiceAction, LocalConfigAction,
+    UserAction,
 };
 use crate::commands;
 use crate::device::{
@@ -159,6 +160,68 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     cli_password_override.clone(),
                     "auth",
                     |auth| async { commands::run_auth(&url, auth, token_action.clone()).await },
+                )
+                .await
+            }
+        },
+        Commands::User { action } => match action {
+            UserAction::Create {
+                username,
+                new_password,
+            } => {
+                let password = commands::resolve_new_user_password(new_password)?;
+                let create_action = UserAction::Create {
+                    username,
+                    new_password: Some(password),
+                };
+                run_with_auto_setup_and_login_retry(
+                    &url,
+                    &cfg,
+                    cli_token_override.clone(),
+                    cli_user_override.clone(),
+                    cli_password_override.clone(),
+                    "user",
+                    |auth| async { commands::run_user(&url, auth, create_action.clone()).await },
+                )
+                .await
+            }
+            UserAction::Register {
+                username,
+                new_password,
+                ttl_hours,
+            } => {
+                if ttl_hours == 0 {
+                    return Err("--ttl-hours must be greater than 0".into());
+                }
+                let password = commands::resolve_new_user_password(new_password)?;
+                let create_action = UserAction::Create {
+                    username: username.clone(),
+                    new_password: Some(password.clone()),
+                };
+                run_with_auto_setup_and_login_retry(
+                    &url,
+                    &cfg,
+                    cli_token_override.clone(),
+                    cli_user_override.clone(),
+                    cli_password_override.clone(),
+                    "user",
+                    |auth| async { commands::run_user(&url, auth, create_action.clone()).await },
+                )
+                .await?;
+
+                run_auth_login(&url, &cfg, Some(username), Some(password), ttl_hours).await
+            }
+            permissions_action @ UserAction::Permissions { .. } => {
+                run_with_auto_setup_and_login_retry(
+                    &url,
+                    &cfg,
+                    cli_token_override.clone(),
+                    cli_user_override.clone(),
+                    cli_password_override.clone(),
+                    "user",
+                    |auth| async {
+                        commands::run_user(&url, auth, permissions_action.clone()).await
+                    },
                 )
                 .await
             }

@@ -59,6 +59,7 @@ function addTestAccount(
   auth: ScheduleTestAuth,
   identity: ProcessIdentity,
   gecos: string,
+  members: string[] = [],
 ): void {
   auth.addUser({
     username: identity.username,
@@ -68,7 +69,7 @@ function addTestAccount(
     home: identity.home,
     shell: "/bin/init",
   });
-  auth.addGroup({ name: identity.username, gid: identity.gid, members: [] });
+  auth.addGroup({ name: identity.username, gid: identity.gid, members });
 }
 
 function addTestUser(auth: ScheduleTestAuth): void {
@@ -1312,9 +1313,15 @@ describe("scheduler", () => {
         ctx: DurableObjectState;
       };
       k.caps.seed();
+      addTestUser(k.auth);
       addTestAccount(k.auth, PERSONAL_AGENT_IDENTITY, "Sam Agent");
       k.auth.setPersonalAgent(USER_IDENTITY.uid, PERSONAL_AGENT_IDENTITY.uid);
-      addTestAccount(k.auth, CUSTOM_AGENT_IDENTITY, "Wiki Builder");
+      addTestAccount(
+        k.auth,
+        CUSTOM_AGENT_IDENTITY,
+        "Wiki Builder",
+        [USER_IDENTITY.username],
+      );
       k.caps.grant(CUSTOM_AGENT_IDENTITY.gid, "shell.exec");
 
       const now = Date.now();
@@ -2033,7 +2040,13 @@ describe("scheduler", () => {
         schedules: ScheduleStore;
         ctx: DurableObjectState;
       };
-      addTestAccount(k.auth, CUSTOM_AGENT_IDENTITY, "Wiki Builder");
+      addTestUser(k.auth);
+      addTestAccount(
+        k.auth,
+        CUSTOM_AGENT_IDENTITY,
+        "Wiki Builder",
+        [USER_IDENTITY.username],
+      );
       k.caps.grant(CUSTOM_AGENT_IDENTITY.gid, "proc.spawn");
 
       const now = Date.now();

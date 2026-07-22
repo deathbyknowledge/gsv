@@ -5,6 +5,7 @@ mod config;
 mod infra;
 mod packages;
 mod proc;
+mod user;
 
 pub(crate) use adapter::run_adapter;
 pub(crate) use auth::run_auth;
@@ -13,6 +14,7 @@ pub(crate) use config::run_config;
 pub(crate) use infra::run_infra;
 pub(crate) use packages::run_packages;
 pub(crate) use proc::run_proc;
+pub(crate) use user::{resolve_new_user_password, run_user};
 
 use chrono::{TimeZone, Utc};
 
