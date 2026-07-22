@@ -953,6 +953,58 @@ describe("GsvFs write metadata", () => {
     expect(head?.customMetadata?.mode).toBe("644");
   });
 
+  it("preserves all metadata when a group-authorized writer overwrites files", async () => {
+    const metadata = {
+      uid: "1000",
+      gid: "100",
+      mode: "660",
+      classification: "private",
+    };
+    const fs = makeFs(ALICE);
+
+    for (const streamed of [false, true]) {
+      const key = `${TEST_PREFIX}${streamed ? "streamed" : "buffered"}-group-owned.txt`;
+      await env.STORAGE.put(key, "before", { customMetadata: metadata });
+
+      if (streamed) {
+        const bytes = new TextEncoder().encode("after");
+        await fs.writeFileStream(`/${key}`, bytesToStream(bytes), { expectedSize: bytes.byteLength });
+      } else {
+        await fs.writeFile(`/${key}`, "after");
+      }
+
+      const object = await env.STORAGE.get(key);
+      expect(await object?.text()).toBe("after");
+      expect(object?.customMetadata).toEqual(metadata);
+    }
+  });
+
+  it("fills missing ownership metadata without discarding existing fields", async () => {
+    const fs = makeFs(ROOT);
+
+    for (const streamed of [false, true]) {
+      const key = `${TEST_PREFIX}${streamed ? "streamed" : "buffered"}-partial-metadata.txt`;
+      await env.STORAGE.put(key, "before", {
+        customMetadata: { classification: "private" },
+      });
+
+      if (streamed) {
+        const bytes = new TextEncoder().encode("after");
+        await fs.writeFileStream(`/${key}`, bytesToStream(bytes), { expectedSize: bytes.byteLength });
+      } else {
+        await fs.writeFile(`/${key}`, "after");
+      }
+
+      const object = await env.STORAGE.get(key);
+      expect(object?.customMetadata).toEqual({
+        classification: "private",
+        uid: "0",
+        gid: "0",
+        mode: "644",
+      });
+    }
+  });
+
   it("appends binary files without UTF-8 conversion", async () => {
     const fs = makeFs(SAM);
     const path = `/${TEST_PREFIX}binary.dat`;
@@ -1244,6 +1296,47 @@ describe("GsvFs directory removal", () => {
   });
 });
 
+describe("R2 mkdir ownership", () => {
+  const TEST_PREFIX = "test/mkdir-ownership/";
+
+  beforeEach(async () => {
+    const listed = await env.STORAGE.list({ prefix: TEST_PREFIX });
+    await env.STORAGE.delete(listed.objects.map((object) => object.key));
+  });
+
+  it("does not rewrite an existing marker during recursive mkdir", async () => {
+    const marker = `${TEST_PREFIX}claimed/.dir`;
+    const metadata = { uid: "1001", gid: "100", mode: "700", dirmarker: "1" };
+    await env.STORAGE.put(marker, "", { customMetadata: metadata });
+
+    await makeFs(SAM).mkdir(`/${TEST_PREFIX}claimed`, { recursive: true });
+
+    await expect(env.STORAGE.head(marker)).resolves.toMatchObject({ customMetadata: metadata });
+  });
+
+  it("does not replace a marker created after its existence check", async () => {
+    let markerOwner = ALICE.uid;
+    let putOptions: R2PutOptions | undefined;
+    const bucket = {
+      head: async () => null,
+      put: async (
+        _key: string,
+        _value: Parameters<R2Bucket["put"]>[1],
+        options?: R2PutOptions,
+      ) => {
+        putOptions = options;
+        if (!options?.onlyIf) markerOwner = SAM.uid;
+        return null;
+      },
+    } as unknown as R2Bucket;
+
+    await new R2MountBackend(bucket, SAM).mkdir(`/${TEST_PREFIX}raced`, { recursive: true });
+
+    expect(putOptions?.onlyIf).toEqual({ etagDoesNotMatch: "*" });
+    expect(markerOwner).toBe(ALICE.uid);
+  });
+});
+
 describe("resolveUserPath", () => {
   it("resolves ~ to home", () => {
     expect(resolveUserPath("~", "/home/sam", "/home/sam")).toBe("/home/sam");
@@ -1392,6 +1485,32 @@ describe("GsvFs virtual /sys config tree", () => {
     expect(users).toEqual(["1000"]);
 
     await expect(fs.readdir("/sys/users/1001")).rejects.toThrow("ENOENT");
+  });
+
+  it("does not expose a guessed inaccessible device directory", async () => {
+    const kernel = {
+      auth: null as never,
+      procs: null as never,
+      caps: null as never,
+      config: null as never,
+      devices: {
+        get(deviceId: string) {
+          return deviceId === "alice-device" ? { device_id: deviceId } : null;
+        },
+        canAccess(_deviceId: string, uid: number) {
+          return uid === 0;
+        },
+        listForUser() {
+          return [];
+        },
+      } as never,
+    };
+    const fs = new GsvFs(env.STORAGE, SAM, kernel);
+
+    await expect(fs.readdir("/sys/devices/alice-device")).rejects.toThrow("ENOENT");
+    await expect(fs.stat("/sys/devices/alice-device")).rejects.toThrow("ENOENT");
+    await expect(new GsvFs(env.STORAGE, ROOT, kernel).stat("/sys/devices/missing"))
+      .rejects.toThrow("ENOENT");
   });
 });
 

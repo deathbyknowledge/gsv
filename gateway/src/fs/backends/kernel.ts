@@ -1097,7 +1097,8 @@ export class KernelMountBackend implements MountBackend {
 
     if (path.startsWith("/sys/devices/") && !path.slice("/sys/devices/".length).includes("/")) {
       const deviceId = path.slice("/sys/devices/".length);
-      return this.kernel.devices.get(deviceId) !== null;
+      return this.kernel.devices.get(deviceId) !== null
+        && this.kernel.devices.canAccess(deviceId, this.identity.uid, this.identity.gids);
     }
 
     if (path.startsWith("/sys/users/") && !path.slice("/sys/users/".length).includes("/")) {
@@ -1292,7 +1293,9 @@ export class KernelMountBackend implements MountBackend {
       const parts = path.slice("/sys/devices/".length).split("/");
       if (parts.length === 1 && parts[0]) {
         const device = this.kernel.devices.get(parts[0]);
-        if (device) return ["description", "implements", "owner", "platform", "status", "version"];
+        if (device && this.kernel.devices.canAccess(parts[0], this.identity.uid, this.identity.gids)) {
+          return ["description", "implements", "owner", "platform", "status", "version"];
+        }
       }
     }
 
