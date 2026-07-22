@@ -484,7 +484,12 @@ export function GsvConsole({
               onDetailChange={setSettingsConfigDetail}
             />
           ) : settingsRoute.view === "crew" ? (
-            <ConsoleCrewPage onManageAgent={openSettingsAgent} onCreateAgent={openSettingsNewAgent} />
+            <ConsoleCrewPage
+              onManageAgent={openSettingsAgent}
+              // Route through the unsaved guard: NEW AGENT unmounts the in-body
+              // defaults editor, so a dirty draft must prompt before it's dropped.
+              onCreateAgent={() => guardedSettingsNavigate({ view: "agent", accountUid: null, createNew: true })}
+            />
           ) : (
             <ConsoleAgentPage
               accountUid={settingsRoute.accountUid}
