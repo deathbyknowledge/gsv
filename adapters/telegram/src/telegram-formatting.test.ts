@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildTelegramReplyParameters,
   callTelegramApiWithMarkdownCaption,
   isTelegramFormattingError,
   markdownToTelegramHtml,
@@ -120,6 +121,14 @@ describe("sendTelegramMarkdownMessage", () => {
       sendTelegramMarkdownMessage(callApi, "chat-1", "hello"),
     ).rejects.toBe(error);
     expect(callApi).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("buildTelegramReplyParameters", () => {
+  it("only creates reply parameters for finite message ids", () => {
+    expect(buildTelegramReplyParameters(42)).toEqual({ message_id: 42 });
+    expect(buildTelegramReplyParameters(Number.NaN)).toBeUndefined();
+    expect(buildTelegramReplyParameters()).toBeUndefined();
   });
 });
 

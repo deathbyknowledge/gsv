@@ -395,7 +395,7 @@ Adapter requests may describe several media items inside that one body. Each
 body-backed `AdapterMedia` item carries `body: { offset, length }`. Ranges
 start at zero, are contiguous in media-array order, use safe non-negative
 integers, and must describe the complete body. An item may use a body range or a
-URL, never both. The Gateway currently caps adapter media at 10 items, 25 MiB
+URL, never both. The Gateway currently caps adapter media at 20 items, 48 MiB
 per body-backed item, and 48 MiB total.
 
 The adapter media consumer keeps sole ownership of the top-level reader and

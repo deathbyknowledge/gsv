@@ -13,8 +13,8 @@ export type {
   ReadAdapterMediaBodyOptions,
 } from "../../../packages/gsv/src/protocol/adapter-media-body.js";
 
-export const SAFE_MATERIALIZED_MEDIA_PART_BYTES = 25 * 1024 * 1024;
 export const SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES = 48 * 1024 * 1024;
+export const SAFE_MATERIALIZED_MEDIA_PART_BYTES = SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES;
 
 export type ResponseBodyReadOptions = {
   maxBytes: number;

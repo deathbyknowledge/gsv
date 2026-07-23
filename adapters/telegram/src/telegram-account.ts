@@ -37,9 +37,11 @@ import type {
   BinaryBody,
 } from "./types";
 import {
+  buildTelegramReplyParameters,
   callTelegramApiWithMarkdownCaption,
   sendTelegramMarkdownMessage,
 } from "./telegram-formatting";
+import { planTelegramMediaDeliveries } from "./telegram-media";
 
 interface Env {
   GATEWAY: Fetcher & AdapterGatewayBinding;
@@ -530,14 +532,6 @@ export class TelegramAccount extends DurableObject<Env> {
       await cancelBinaryBody(body, "Telegram requires text or media");
       return { ok: false, error: "Telegram requires text or media" };
     }
-    if (media.length > 10) {
-      await cancelBinaryBody(body, "Telegram media groups support at most 10 attachments");
-      return {
-        ok: false,
-        error: "Telegram media groups support at most 10 attachments",
-      };
-    }
-
     try {
       validateAdapterMediaBody(media, body, {
         maxBytes: MAX_MEDIA_TOTAL_BODY_BYTES,
@@ -549,6 +543,7 @@ export class TelegramAccount extends DurableObject<Env> {
     }
 
     let mediaBytes: Array<Uint8Array | undefined>;
+    let acceptedMediaDeliveries = 0;
     try {
       mediaBytes = await readAdapterMediaBody(media, body, {
         maxBytes: MAX_MEDIA_TOTAL_BODY_BYTES,
@@ -636,24 +631,37 @@ export class TelegramAccount extends DurableObject<Env> {
           replyToMessageId,
         );
         sentMessageId = String(sent.message_id);
-      } else if (media.length === 1) {
-        const sent = await this.sendMediaMessage(
-          message.surface.id,
-          media[0],
-          mediaBytes[0],
-          trimmedText,
-          replyToMessageId,
-        );
-        sentMessageId = String(sent.message_id);
       } else {
-        const sent = await this.sendMediaGroupMessage(
-          message.surface.id,
-          media,
-          mediaBytes,
-          trimmedText,
-          replyToMessageId,
-        );
-        sentMessageId = sent[0] ? String(sent[0].message_id) : undefined;
+        const deliveries = planTelegramMediaDeliveries(media);
+        let mediaOffset = 0;
+        for (const [index, delivery] of deliveries.entries()) {
+          const caption = index === 0 ? trimmedText : "";
+          const deliveryBytes = mediaBytes.slice(
+            mediaOffset,
+            mediaOffset + delivery.length,
+          );
+          const firstSentMessage = delivery.length === 1
+            ? await this.sendMediaMessage(
+                message.surface.id,
+                delivery[0],
+                deliveryBytes[0],
+                caption,
+                replyToMessageId,
+              )
+            : (await this.sendMediaGroupMessage(
+                message.surface.id,
+                delivery,
+                deliveryBytes,
+                caption,
+                replyToMessageId,
+              ))[0];
+
+          acceptedMediaDeliveries += 1;
+          mediaOffset += delivery.length;
+          if (!sentMessageId && firstSentMessage) {
+            sentMessageId = String(firstSentMessage.message_id);
+          }
+        }
       }
 
       try {
@@ -678,9 +686,11 @@ export class TelegramAccount extends DurableObject<Env> {
       }
       return { ok: true, messageId: sentMessageId };
     } catch (error) {
-      const kind = error instanceof TelegramDeliveryError
-        ? error.kind
-        : "permanent";
+      const kind = acceptedMediaDeliveries > 0
+        ? "ambiguous"
+        : error instanceof TelegramDeliveryError
+          ? error.kind
+          : "permanent";
       return await fail(kind, toErrorMessage(error));
     }
   }
@@ -708,6 +718,7 @@ export class TelegramAccount extends DurableObject<Env> {
   ): Promise<TelegramMessage> {
     const { method, mediaField } = this.getTelegramSendMethod(media.type);
     const caption = text.trim() || undefined;
+    const replyParameters = buildTelegramReplyParameters(replyToMessageId);
 
     if (media.url) {
       return callTelegramApiWithMarkdownCaption(
@@ -720,9 +731,7 @@ export class TelegramAccount extends DurableObject<Env> {
           [mediaField]: media.url,
           ...(formattedCaption ? { caption: formattedCaption } : {}),
           ...(parseMode ? { parse_mode: parseMode } : {}),
-          ...(Number.isFinite(replyToMessageId)
-            ? { reply_to_message_id: replyToMessageId }
-            : {}),
+          ...(replyParameters ? { reply_parameters: replyParameters } : {}),
         }),
       );
     }
@@ -745,8 +754,8 @@ export class TelegramAccount extends DurableObject<Env> {
           if (parseMode) {
             form.set("parse_mode", parseMode);
           }
-          if (Number.isFinite(replyToMessageId)) {
-            form.set("reply_to_message_id", String(replyToMessageId));
+          if (replyParameters) {
+            form.set("reply_parameters", JSON.stringify(replyParameters));
           }
           form.set(mediaField, blob, filename);
           return form;
@@ -766,15 +775,16 @@ export class TelegramAccount extends DurableObject<Env> {
     text: string,
     replyToMessageId?: number,
   ): Promise<TelegramMessage[]> {
-    if (mediaItems.length < 2) {
+    if (mediaItems.length < 2 || mediaItems.length > 10) {
       throw new Error(
-        "Telegram media groups require at least 2 attachments",
+        "Telegram media groups require 2-10 attachments",
       );
     }
 
     this.validateMediaGroupTypes(mediaItems);
 
     const caption = text.trim() || undefined;
+    const replyParameters = buildTelegramReplyParameters(replyToMessageId);
     const preparedMedia: Array<Pick<TelegramInputMedia, "type" | "media">> = [];
     const uploadEntries: Array<{ field: string; blob: Blob; filename: string }> = [];
 
@@ -822,17 +832,15 @@ export class TelegramAccount extends DurableObject<Env> {
           return {
             chat_id: chatId,
             media: inputMedia,
-            ...(Number.isFinite(replyToMessageId)
-              ? { reply_to_message_id: replyToMessageId }
-              : {}),
+            ...(replyParameters ? { reply_parameters: replyParameters } : {}),
           };
         }
 
         const form = new FormData();
         form.set("chat_id", chatId);
         form.set("media", JSON.stringify(inputMedia));
-        if (Number.isFinite(replyToMessageId)) {
-          form.set("reply_to_message_id", String(replyToMessageId));
+        if (replyParameters) {
+          form.set("reply_parameters", JSON.stringify(replyParameters));
         }
         for (const upload of uploadEntries) {
           form.set(upload.field, upload.blob, upload.filename);
