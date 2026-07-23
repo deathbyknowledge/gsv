@@ -74,7 +74,23 @@ export default defineConfig({
       },
     ],
     ["meta", { property: "og:title", content: "GSV docs" }],
+    ["meta", { property: "og:type", content: "website" }],
+    ["meta", { property: "og:site_name", content: "GSV docs" }],
+    ["meta", { property: "og:image", content: "https://gsv.space/gsvbanner.png" }],
+    ["meta", { property: "og:image:alt", content: "GSV — a mind for your machines" }],
+    ["meta", { name: "twitter:card", content: "summary_large_image" }],
+    ["meta", { name: "twitter:image", content: "https://gsv.space/gsvbanner.png" }],
   ],
+
+  // Per-page canonical + og:url, matching the cleanUrls route for each page.
+  transformHead({ pageData }) {
+    const path = pageData.relativePath.replace(/(?:(^|\/)index)?\.md$/, "$1");
+    const url = `https://docs.gsv.space/${path}`;
+    return [
+      ["link", { rel: "canonical", href: url }],
+      ["meta", { property: "og:url", content: url }],
+    ];
+  },
 
   themeConfig: {
     siteTitle: false,
