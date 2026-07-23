@@ -741,7 +741,7 @@ function FleetPanel({
             {integrationRows.length === 0 ? <EmptyRow label="NO INTEGRATIONS" /> : rowLimit(integrationRows, 2).map((row) => (
               <MiniRow key={row.id} row={row} onClick={openDetail("integrations", row, "integrations")} />
             ))}
-            <AddRow label="NEW INTEGRATION" onClick={openCreate("integrations", "integrations")} />
+            <AddRow label="CONNECT NEW INTEGRATION" onClick={openCreate("integrations", "integrations")} />
           </div>
         )}
       />
@@ -779,7 +779,7 @@ function ApplicationsPanel({
         {rows.length === 0 ? <EmptyRow label="NO APPLICATIONS" /> : rowLimit(rows, 5).map((row) => (
           <MiniRow key={row.id} row={row} onClick={openDetail(row)} />
         ))}
-        <AddRow label="NEW APPLICATION" onClick={openCreate} />
+        <AddRow label="CONNECT NEW APPLICATION" onClick={openCreate} />
       </div>
     </section>
   );
@@ -805,7 +805,7 @@ export function SettingsOverviewDashboard({
 
   return (
     <div class="gsv-settings-overview-frame">
-      <div class="gsv-settings-overview" aria-label="GSV settings overview">
+      <div class="gsv-settings-overview" aria-label="GSV overview">
         <div class="gsv-settings-left">
         <ShipPanel
           config={data.config}

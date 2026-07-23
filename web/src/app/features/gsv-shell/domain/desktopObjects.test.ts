@@ -155,18 +155,60 @@ describe("buildDesktopObjectsFromConsole", () => {
       kind: "integrations",
       detailId: "custom-mcp",
     });
-    expect(objects.find((object) => object.id === "applications")?.children[0]?.route).toEqual({
+    // Applications leads with the four native GSV apps, then imported packages.
+    const applications = objects.find((object) => object.id === "applications");
+    expect(applications?.children).toHaveLength(5);
+    expect(applications?.children.slice(0, 4).map((child) => child.id)).toEqual([
+      "native:files",
+      "native:library",
+      "native:terminal",
+      "native:repositories",
+    ]);
+    expect(applications?.children[0]).toMatchObject({
+      label: "FILES",
+      type: "APPLICATION · GSV",
+      surface: "files",
+      iconName: "folder",
+      native: true,
+      status: "online",
+      statusLabel: "SYSTEM",
+    });
+    expect(applications?.children[0]?.route).toBeUndefined();
+    expect(applications?.children[4]?.route).toEqual({
       kind: "applications",
       detailId: "space-simulation",
     });
-    expect(objects.find((object) => object.id === "applications")?.children[0]?.appRoute).toEqual({
+    // External provenance drives the EXTERNAL / PUBLIC·PRIVATE strip tags.
+    expect(applications?.children[4]).toMatchObject({
+      sourceRepo: "gsv/space-simulation",
+      sourcePublic: true,
+    });
+    expect(applications?.children[0]?.sourceRepo).toBeUndefined();
+    expect(applications?.children[4]?.appRoute).toEqual({
       appId: "Space Simulation",
       suffix: "/",
       search: "",
       hash: "",
     });
-    expect(objects.find((object) => object.id === "applications")?.children).toHaveLength(1);
     expect(objects.find((object) => object.id === "integrations")?.children).toHaveLength(1);
+  });
+
+  it("excludes native apps from the applications count and status roll-up", () => {
+    const objects = buildDesktopObjectsFromConsole(overview);
+    const applications = objects.find((object) => object.id === "applications");
+
+    // One imported web package: the meta and status describe it alone, not the
+    // four always-online native apps.
+    expect(applications?.meta).toBe("1 web package");
+    expect(applications?.statusLabel).toBe("1/1 ONLINE");
+    expect(applications?.status).toBe("online");
+
+    const withoutPackages = buildDesktopObjectsFromConsole({ ...overview, packages: [] });
+    const emptyApplications = withoutPackages.find((object) => object.id === "applications");
+    expect(emptyApplications?.children).toHaveLength(4);
+    expect(emptyApplications?.meta).toBe("0 web packages");
+    expect(emptyApplications?.statusLabel).toBe("0 OBJECTS");
+    expect(emptyApplications?.status).toBe("idle");
   });
 });
 

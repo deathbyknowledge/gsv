@@ -71,7 +71,7 @@ function ListPreview() {
           listMeta={`${rows.length}/${LIST_ROWS.length} READY`}
           rows={rows}
           emptyObject="INTEGRATIONS"
-          connectLabel="NEW INTEGRATION"
+          connectLabel="+ CONNECT NEW INTEGRATION"
           onConnect={noop}
           search={{ value: search, placeholder: "Search…", onChange: setSearch }}
         />
@@ -101,7 +101,7 @@ function CardListPreview() {
           listMeta={`${crew.length}/${MOCK_CREW.length} CREW`}
           emptyObject="CREW"
           isEmpty={crew.length === 0}
-          connectLabel="NEW AGENT"
+          connectLabel="+ NEW AGENT"
           onConnect={noop}
           search={{ value: search, placeholder: "Search…", onChange: setSearch }}
         >

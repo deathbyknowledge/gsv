@@ -3,9 +3,10 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { AddAction } from "../../../components/ui/AddAction";
 import { GsvMark } from "../../../components/ui/GsvMark";
 import { DesktopHint } from "./DesktopHint";
-import { IconMenu } from "../../../components/ui/IconMenu";
+import { Icon } from "../../../components/ui/Icon";
 import { ObjectCard } from "../../../components/ui/ObjectCard";
 import { StatusDot } from "../../../components/ui/StatusDot";
+import { Tag } from "../../../components/ui/Tag";
 import { Tile } from "../../../components/ui/Tile";
 import {
   type DesktopChildObject,
@@ -17,18 +18,17 @@ import {
 
 export type DesktopInventoryState = "ready" | "loading" | "offline" | "error";
 
-const DESKTOP_HINT = ["> CLICK A NODE TO EXPLORE", "> CLICK GSV FOR CONTROLS"];
-const DESKTOP_HINT_MIN = "CLICK A NODE TO EXPLORE · CLICK GSV FOR CONTROLS";
+const DESKTOP_HINT = ["> CLICK A NODE TO EXPLORE", "> CLICK GSV FOR SHIP OVERVIEW"];
+const DESKTOP_HINT_MIN = "CLICK A NODE TO EXPLORE · CLICK GSV FOR SHIP OVERVIEW";
 
 type GsvDesktopProps = {
   desktopObjects: readonly DesktopObject[];
+  /** Crew agents (machine accounts) — shown in the HUD beside the machine count. */
+  agentCount: number;
   inventoryMessage: string;
   inventoryState: DesktopInventoryState;
   selectedObjectId: DesktopObjectId | null;
-  gsvOpen: boolean;
   onSelectObject: (id: DesktopObjectId | null) => void;
-  onToggleGsv: () => void;
-  onCloseGsv: () => void;
   onCreateObject: (id: DesktopObjectId) => void;
   onOpenObject: (child: DesktopChildObject) => void;
   onOpenSurface: (surface: ShellSurfaceId) => void;
@@ -87,33 +87,33 @@ function addObjectLabel(id: DesktopObjectId): string {
     return "CONNECT NEW MACHINE";
   }
   if (id === "integrations") {
-    return "NEW INTEGRATION";
+    return "CONNECT NEW INTEGRATION";
   }
-  return "NEW APPLICATION";
+  return "CONNECT NEW APPLICATION";
 }
 
-function inventoryTitle(state: DesktopInventoryState, totalObjects: number): string {
-  if (state === "loading") {
-    return "GSV · LOADING";
-  }
+/** HUD title while the live inventory is not ready (ready shows counts). */
+function inventoryTitle(state: DesktopInventoryState): string {
   if (state === "offline") {
     return "GSV · OFFLINE";
   }
   if (state === "error") {
     return "GSV · ERROR";
   }
-  return `GSV · ${totalObjects} OBJECTS`;
+  return "GSV · LOADING";
+}
+
+function countLine(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "S"}`;
 }
 
 export function GsvDesktop({
   desktopObjects,
+  agentCount,
   inventoryMessage,
   inventoryState,
   selectedObjectId,
-  gsvOpen,
   onSelectObject,
-  onToggleGsv,
-  onCloseGsv,
   onCreateObject,
   onOpenObject,
   onOpenSurface,
@@ -137,42 +137,15 @@ export function GsvDesktop({
     ? desktopObjects.find((object) => object.id === activeObjectId) ?? null
     : null;
 
-  // Hovering the GSV mark previews the controls; clicking persists them. A short
-  // grace delay lets the pointer travel from the mark into the popover.
-  const [gsvHovered, setGsvHovered] = useState(false);
-  const gsvHoverTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const openGsvHover = () => {
-    if (gsvHoverTimer.current) clearTimeout(gsvHoverTimer.current);
-    setGsvHovered(true);
-  };
-  const closeGsvHover = () => {
-    if (gsvHoverTimer.current) clearTimeout(gsvHoverTimer.current);
-    gsvHoverTimer.current = setTimeout(() => setGsvHovered(false), 140);
-  };
-  const closeGsvControls = () => {
-    if (gsvHoverTimer.current) clearTimeout(gsvHoverTimer.current);
-    setGsvHovered(false);
-    // Idempotent close — not the functional toggle. Outside-click also calls
-    // onSelectObject(null), which already clears gsvOpen in the parent; a toggle
-    // here would flip it back open within the same batched update.
-    if (gsvOpen) onCloseGsv();
-  };
-  useEffect(() => () => {
-    if (gsvHoverTimer.current) clearTimeout(gsvHoverTimer.current);
-  }, []);
-  const gsvActive = gsvOpen || gsvHovered;
-
   const branchCount = Math.max(desktopObjects.length, 1);
-  const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
-  const desktopStateClass = `${selectedObject ? " has-selected-object" : ""}${gsvOpen ? " has-gsv-open" : ""}`;
+  const machineCount = desktopObjects.find((object) => object.id === "machines")?.children.length ?? 0;
+  const desktopStateClass = selectedObject ? " has-selected-object" : "";
   const inventoryReady = inventoryState === "ready";
   const hudStatus = selectedObject
     ? selectedObject.statusLabel
-    : gsvOpen
-      ? "GSV / CONTROL"
-      : inventoryReady
-        ? "SYSTEM MAP"
-        : inventoryState.toUpperCase();
+    : inventoryReady
+      ? "SYSTEM MAP"
+      : inventoryState.toUpperCase();
 
   // When a node is selected, settle the view so its objects are readable: scroll
   // up to centre the strip, but never past the point where the tiles row sits at
@@ -253,7 +226,6 @@ export function GsvDesktop({
       aria-label="GSV desktop"
       onClick={() => {
         onSelectObject(null);
-        closeGsvControls();
       }}
     >
       <div class="gsv-space-grid" aria-hidden="true" />
@@ -264,11 +236,19 @@ export function GsvDesktop({
       <header class="gsv-space-hud">
         <div>
           <span>DESKTOP // GSV</span>
-          <strong>{selectedObject ? `GSV / ${selectedObject.label}` : inventoryTitle(inventoryState, totalObjects)}</strong>
+          <strong>
+            {selectedObject
+              ? `GSV / ${selectedObject.label}`
+              : inventoryReady
+                ? countLine(machineCount, "MACHINE")
+                : inventoryTitle(inventoryState)}
+          </strong>
           <small>
             {selectedObject
               ? `${selectedObject.meta} · ${selectedObject.statusLabel}`
-              : inventoryMessage}
+              : inventoryReady
+                ? countLine(agentCount, "AGENT")
+                : inventoryMessage}
           </small>
         </div>
         <p>{hudStatus}</p>
@@ -279,17 +259,14 @@ export function GsvDesktop({
             bubble to the section handler to deselect. Interactive children below
             stop propagation so they don't trigger a deselect. */}
         <div class="gsv-space-tree">
-          <div
-            class="gsv-space-gsv"
-            onMouseEnter={openGsvHover}
-            onMouseLeave={closeGsvHover}
-          >
+          <div class="gsv-space-gsv">
             <button
               type="button"
-              class={`gsv-space-gsv-button${gsvActive ? " is-open" : ""}`}
+              class="gsv-space-gsv-button"
+              title="SHIP OVERVIEW"
               onClick={(event) => {
                 event.stopPropagation();
-                onToggleGsv();
+                onOpenSurface("settings");
               }}
             >
               <span class="gsv-space-gsv-cross" aria-hidden="true" />
@@ -298,35 +275,10 @@ export function GsvDesktop({
             <div class="gsv-space-gsv-label gsv-section">GSV</div>
           </div>
 
-          {gsvActive ? (
-            <>
-              <span class="gsv-space-control-line" aria-hidden="true" />
-              <div
-                class="gsv-space-control-popover"
-                aria-label="GSV controls"
-                onMouseEnter={openGsvHover}
-                onMouseLeave={closeGsvHover}
-                onClick={(event) => event.stopPropagation()}
-              >
-                <IconMenu
-                  title="GSV // CONTROL"
-                  width={386}
-                  autoFocus={gsvOpen}
-                  onClose={closeGsvControls}
-                  onFiles={() => onOpenSurface("files")}
-                  onRepositories={() => onOpenSurface("repositories")}
-                  onLibrary={() => onOpenSurface("library")}
-                  onTerminal={() => onOpenSurface("terminal")}
-                  onSettings={() => onOpenSurface("settings")}
-                />
-              </div>
-            </>
-          ) : null}
-
           {inventoryReady ? (
             <>
               <div
-                class={`gsv-space-connectors${gsvOpen ? " is-control-open" : ""}`}
+                class="gsv-space-connectors"
                 style={branchCountStyle(branchCount)}
                 aria-hidden="true"
               >
@@ -386,18 +338,50 @@ export function GsvDesktop({
                 {/* No empty state: an object with no children simply shows the
                     "connect new" card below. Messengers always lists Telegram
                     and Discord, so it is never empty. */}
-                {activeObject.children.map((child) => (
-                  <ObjectCard
-                    key={child.id}
-                    label={child.label}
-                    type={child.type}
-                    blurb={child.blurb}
-                    glyph={child.glyph}
-                    status={objectCardStatus(child.status)}
-                    width={236}
-                    onClick={() => onOpenObject(child)}
-                  />
-                ))}
+                {activeObject.children.map((child) => {
+                  // External (imported) applications carry a provenance band
+                  // above the card; native and non-application children keep
+                  // an empty band so card tops stay aligned across the grid.
+                  const external = activeObject.id === "applications" && !child.native;
+                  return (
+                    <div key={child.id} class="gsv-object-strip-item">
+                      <div class="gsv-object-strip-prov">
+                        {external ? (
+                          <>
+                            <Tag label="EXTERNAL" tone="info" boxed />
+                            <Tag
+                              label={child.sourcePublic ? "PUBLIC" : "PRIVATE"}
+                              tone={child.sourcePublic ? "online" : "idle"}
+                              boxed
+                            />
+                            {child.sourceRepo ? (
+                              <span class="gsv-object-strip-prov-repo gsv-sublabel" title={child.sourceRepo}>
+                                {child.sourceRepo}
+                              </span>
+                            ) : null}
+                          </>
+                        ) : null}
+                      </div>
+                      <ObjectCard
+                        label={child.label}
+                        type={child.type}
+                        blurb={child.blurb}
+                        glyph={child.glyph}
+                        icon={child.iconName ? (
+                          <Icon
+                            name={child.iconName}
+                            size={20}
+                            color="var(--accent-bright)"
+                            dotMatrix={child.iconName.startsWith("doticons/") ? 16 : undefined}
+                          />
+                        ) : undefined}
+                        status={objectCardStatus(child.status)}
+                        width={236}
+                        onClick={() => onOpenObject(child)}
+                      />
+                    </div>
+                  );
+                })}
                 {canCreateObject(activeObject.id) ? (
                   <div class="gsv-object-strip-add">
                     <AddAction

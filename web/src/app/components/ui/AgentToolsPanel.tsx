@@ -319,7 +319,7 @@ export function AgentToolsPanel({
         <div class="gsv-tools-bar-actions">
           <Button
             variant="secondary"
-            label="ADD OVERRIDE"
+            label="+ ADD OVERRIDE"
             disabled={disabled}
             onClick={() => onChange(addRule(policy))}
           />

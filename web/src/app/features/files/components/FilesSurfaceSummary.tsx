@@ -58,7 +58,7 @@ import { useFilesMutations, useFilesPath, useFilesSearch, useFilesTargets } from
 import "./FilesSurfaceSummary.css";
 
 /** Sentinel appended to the machine Select so the user can jump to provisioning. */
-const ADD_MACHINE_OPTION = "+ ADD MACHINE";
+const ADD_MACHINE_OPTION = "+ CONNECT NEW MACHINE";
 
 /** Navigate to the machine-provisioning route. The shell has no nav context that
  *  reaches this deeply-nested console page, so we push the route + dispatch a
@@ -921,7 +921,7 @@ export function FilesSurfaceSummary() {
     tabs.some((tab) => draftDirty(tab)) ||
     (createState.open && (createState.pathInput.trim() !== "" || createState.content !== "")),
   );
-  // "+ ADD MACHINE" leaves the Files surface for the provisioning route, so
+  // "+ CONNECT NEW MACHINE" leaves the Files surface for the provisioning route, so
   // route it through the guard to prompt before discarding a dirty draft.
   const requestLeave = useUnsavedGuardLeave();
 

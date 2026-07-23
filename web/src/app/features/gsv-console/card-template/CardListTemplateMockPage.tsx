@@ -131,7 +131,7 @@ export function CardListTemplateMockPage({ onOpenChat }: { onOpenChat?: () => vo
         listMeta={listMeta}
         emptyObject={listTitle}
         isEmpty={cards.length === 0}
-        connectLabel={isCrew ? "NEW AGENT" : "CONNECT MESSENGER"}
+        connectLabel={isCrew ? "+ NEW AGENT" : "CONNECT MESSENGER"}
         onConnect={onOpenChat}
         search={showSearch ? { value: search, placeholder: "Search…", onChange: setSearch } : undefined}
         filters={showFilter ? (
