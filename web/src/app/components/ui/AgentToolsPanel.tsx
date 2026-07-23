@@ -1,30 +1,36 @@
+import { useEffect, useRef, useState } from "preact/hooks";
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
 import { InfoTip } from "./InfoTip";
 import { Segmented } from "./Segmented";
-import { Select, type SelectOption } from "./Select";
+import { Select } from "./Select";
 import { Tag } from "./Tag";
+import {
+  APPROVAL_ACTIONS,
+  actionIndex,
+  actionLabel,
+  approvalOptionValue,
+  defaultOverrideAction,
+  humanToolCapabilityLabel,
+  matchIndexForRule,
+  matchOptionsForRule,
+  targetIndexForRule,
+  targetLabelForRule,
+  targetOptionsForRule,
+  type AgentToolApprovalAction,
+  type AgentToolApprovalPolicy,
+  type AgentToolApprovalRule,
+  type AgentToolTarget,
+} from "./agentToolApprovalOptions";
 import "./AgentToolsPanel.css";
 
-export type AgentToolApprovalAction = "auto" | "ask" | "deny";
-
-export type AgentToolApprovalRule = {
-  match: string;
-  target?: string;
-  action: AgentToolApprovalAction;
-};
-
-export type AgentToolApprovalPolicy = {
-  default: AgentToolApprovalAction;
-  rules: AgentToolApprovalRule[];
-};
-
-export type AgentToolTarget = {
-  id: string;
-  label?: string;
-  online?: boolean;
-  implements?: readonly string[];
-};
+export type {
+  AgentToolApprovalAction,
+  AgentToolApprovalPolicy,
+  AgentToolApprovalRule,
+  AgentToolTarget,
+} from "./agentToolApprovalOptions";
+export { humanToolCapabilityLabel } from "./agentToolApprovalOptions";
 
 export interface AgentToolsPanelProps {
   policy: AgentToolApprovalPolicy;
@@ -32,388 +38,245 @@ export interface AgentToolsPanelProps {
   capabilities?: readonly string[];
   targets?: readonly AgentToolTarget[];
   disabled?: boolean;
+  /** Copy under the DEFAULT PERMISSIONS title. Defaults to single-agent wording;
+   *  crew defaults / system overrides pass the "all your agents" framing. */
+  defaultDescription?: string;
   onChange: (policy: AgentToolApprovalPolicy) => void;
 }
 
-type CapabilityFamily = {
-  label: string;
-  options: ApprovalMatchOption[];
-};
+const DEFAULT_PERMISSION_DESC = "Used when no approval override matches.";
 
-type ApprovalMatchOption = {
-  match: string;
-  label: string;
-  description?: string;
-};
-
-const APPROVAL_ACTIONS: AgentToolApprovalAction[] = ["auto", "ask", "deny"];
 const TOOL_APPROVAL_INFO = "Tools let agents take actions like reading files or running commands. Approvals decide what can happen automatically, what asks first, and what is blocked.";
-const CAPABILITY_FAMILIES: CapabilityFamily[] = [
-  {
-    label: "Filesystem",
-    options: [
-      { match: "fs.*", label: "All file tools", description: "Read, write, edit, search, copy, and delete files." },
-      { match: "fs.read", label: "Read files" },
-      { match: "fs.write", label: "Write files" },
-      { match: "fs.edit", label: "Edit files" },
-      { match: "fs.search", label: "Search files" },
-      { match: "fs.copy", label: "Copy files" },
-      { match: "fs.delete", label: "Delete files" },
-    ],
-  },
-  {
-    label: "Shell",
-    options: [
-      { match: "shell.*", label: "All shell tools", description: "Every shell operation." },
-      { match: "shell.exec", label: "Run shell commands" },
-    ],
-  },
-  {
-    label: "Network",
-    options: [
-      { match: "net.*", label: "All network tools", description: "Every network operation." },
-      { match: "net.fetch", label: "Fetch URLs" },
-    ],
-  },
-  {
-    label: "Repositories",
-    options: [
-      { match: "repo.*", label: "All repository tools", description: "Every ripgit repository operation." },
-      { match: "repo.list", label: "List repositories" },
-      { match: "repo.read", label: "Read repository content" },
-      { match: "repo.search", label: "Search repositories" },
-      { match: "repo.compare", label: "Compare refs" },
-      { match: "repo.diff", label: "Read diffs" },
-      { match: "repo.apply", label: "Apply repository changes" },
-      { match: "repo.import", label: "Pull upstream" },
-      { match: "repo.delete", label: "Delete repositories" },
-      { match: "repo.visibility.set", label: "Change repository visibility" },
-    ],
-  },
-  {
-    label: "Packages",
-    options: [
-      { match: "pkg.*", label: "All package tools", description: "Every package operation." },
-      { match: "pkg.list", label: "List packages" },
-      { match: "pkg.install", label: "Install packages" },
-      { match: "pkg.review.approve", label: "Approve package reviews" },
-      { match: "pkg.public.set", label: "Publish or unpublish packages" },
-      { match: "pkg.remove", label: "Remove packages" },
-    ],
-  },
-  {
-    label: "Processes",
-    options: [
-      { match: "proc.*", label: "All process tools", description: "Every process and conversation operation." },
-      { match: "proc.spawn", label: "Start processes" },
-      { match: "proc.send", label: "Send process messages" },
-      { match: "proc.history", label: "Read process history" },
-      { match: "proc.abort", label: "Abort runs" },
-      { match: "proc.reset", label: "Reset processes" },
-      { match: "proc.kill", label: "Kill processes" },
-    ],
-  },
-  {
-    label: "MCP",
-    options: [
-      { match: "sys.mcp.*", label: "All MCP tools", description: "Every MCP server operation." },
-      { match: "sys.mcp.call", label: "Call MCP tools" },
-      { match: "sys.mcp.list", label: "List MCP servers" },
-      { match: "sys.mcp.add", label: "Add MCP servers" },
-      { match: "sys.mcp.refresh", label: "Refresh MCP servers" },
-      { match: "sys.mcp.remove", label: "Remove MCP servers" },
-    ],
-  },
-  {
-    label: "System Config",
-    options: [
-      { match: "sys.config.*", label: "All system config tools", description: "Read and write gateway config." },
-      { match: "sys.config.get", label: "Read system config" },
-      { match: "sys.config.set", label: "Write system config" },
-    ],
-  },
-];
-const APPROVAL_MATCH_OPTIONS: SelectOption[] = CAPABILITY_FAMILIES.flatMap((family) =>
-  family.options.map((option) => ({
-    group: family.label,
-    label: option.label,
-    value: option.match,
-    description: option.description ?? "",
-  })),
-);
-const APPROVAL_MATCH_VALUES = CAPABILITY_FAMILIES.flatMap((family) => family.options.map((option) => option.match));
-const APPROVAL_MATCH_LABELS = new Map(
-  CAPABILITY_FAMILIES.flatMap((family) =>
-    family.options.map((option) => [option.match, option.label] as const)
-  ),
-);
-const BUILTIN_TARGET_OPTIONS: SelectOption[] = [
-  {
-    label: "All machines",
-    value: "",
-  },
-  {
-    label: "GSV computer",
-    value: "gsv",
-  },
-];
-const LEGACY_EXTERNAL_TARGET_OPTION: SelectOption = {
-  group: "Stored machine",
-  label: "All machines",
-  value: "targets/*",
-};
+const PRIORITY_INFO = "When several overrides match, the most machine-specific rule wins, then the most tool-specific. If still tied, rules higher in this list win.";
+const MACHINE_INFO = "Where this override applies: every machine, the GSV computer, or one named machine.";
+const ACTION_INFO = "What happens when the tool and machine match: allow it, ask for confirmation, or block it.";
 
-export function humanToolCapabilityLabel(capability: string): string {
-  const normalized = capability.trim();
-  if (!normalized) {
-    return "Capability";
-  }
-  const known = APPROVAL_MATCH_LABELS.get(normalized);
-  if (known) {
-    return known;
-  }
-  return normalized
-    .replace(/\.\*/g, "")
-    .split(/[._:-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+function ruleSignature(policy: AgentToolApprovalPolicy): string {
+  return JSON.stringify({ default: policy.default, rules: policy.rules });
 }
 
-function actionLabel(action: AgentToolApprovalAction): string {
-  if (action === "auto") return "Allow";
-  if (action === "deny") return "Block";
-  return "Ask";
-}
-
-function defaultOverrideAction(defaultAction: AgentToolApprovalAction): AgentToolApprovalAction {
-  if (defaultAction === "auto") return "ask";
-  if (defaultAction === "deny") return "ask";
-  return "deny";
-}
-
-function updateRule(
-  policy: AgentToolApprovalPolicy,
-  index: number,
-  patch: Partial<AgentToolApprovalRule>,
-): AgentToolApprovalPolicy {
-  return {
-    ...policy,
-    rules: policy.rules.map((rule, candidate) => candidate === index ? { ...rule, ...patch } : rule),
-  };
-}
-
-function removeRule(policy: AgentToolApprovalPolicy, index: number): AgentToolApprovalPolicy {
-  return {
-    ...policy,
-    rules: policy.rules.filter((_, candidate) => candidate !== index),
-  };
-}
-
-function addRule(policy: AgentToolApprovalPolicy): AgentToolApprovalPolicy {
-  return {
-    ...policy,
-    rules: [...policy.rules, { match: "fs.*", action: defaultOverrideAction(policy.default) }],
-  };
-}
-
-function matchOptionsForRule(match: string): SelectOption[] {
-  if (!match || APPROVAL_MATCH_VALUES.includes(match)) {
-    return APPROVAL_MATCH_OPTIONS;
-  }
-  return [
-    ...APPROVAL_MATCH_OPTIONS,
-    {
-      group: "Custom",
-      label: "Custom match",
-      value: match,
-      description: "Stored custom approval match.",
-    },
-  ];
-}
-
-function matchIndexForRule(match: string): number {
-  const options = matchOptionsForRule(match);
-  const index = options.findIndex((option) => typeof option !== "string" && option.value === match);
-  return index >= 0 ? index : 0;
-}
-
-function optionValue(option: SelectOption): string {
-  return typeof option === "string" ? option : option.value ?? option.label;
-}
-
-function targetOptionsForRule(target: string | undefined, targets: readonly AgentToolTarget[]): SelectOption[] {
-  const targetOptions = targets
-    .filter((candidate) => candidate.id.trim().length > 0)
-    .map((candidate) => {
-      const label = candidate.label?.trim() || candidate.id;
-      return {
-        group: "Machines",
-        label,
-        value: candidate.id,
-      };
-    });
-  const knownValues = new Set([
-    ...BUILTIN_TARGET_OPTIONS.map((option) => typeof option === "string" ? option : option.value ?? option.label),
-    ...targetOptions.map((option) => option.value ?? option.label),
-  ]);
-  const baseOptions = target === "targets/*"
-    ? [...BUILTIN_TARGET_OPTIONS, LEGACY_EXTERNAL_TARGET_OPTION, ...targetOptions]
-    : [...BUILTIN_TARGET_OPTIONS, ...targetOptions];
-  if (!target || knownValues.has(target) || target === "targets/*") {
-    return baseOptions;
-  }
-  return [
-    ...baseOptions,
-    {
-      group: "Stored machine",
-      label: target,
-      value: target,
-    },
-  ];
-}
-
-function targetIndexForRule(target: string | undefined, targets: readonly AgentToolTarget[]): number {
-  const options = targetOptionsForRule(target, targets);
-  const value = target ?? "";
-  const index = options.findIndex((option) => typeof option !== "string" && (option.value ?? option.label) === value);
-  return index >= 0 ? index : 0;
-}
-
-function updateRuleTarget(
-  policy: AgentToolApprovalPolicy,
-  index: number,
-  target: string,
-): AgentToolApprovalPolicy {
-  const patch: Partial<AgentToolApprovalRule> = target ? { target } : { target: undefined };
-  const next = updateRule(policy, index, patch);
-  return {
-    ...next,
-    rules: next.rules.map((rule, candidate) => candidate === index && !target
-      ? { match: rule.match, action: rule.action }
-      : rule),
-  };
-}
-
-function actionIndex(action: AgentToolApprovalAction): number {
-  return Math.max(0, APPROVAL_ACTIONS.indexOf(action));
-}
-
+/** AgentToolsPanel — controlled tool-approval editor shared by the agent
+ *  editor / create-agent form, the global settings page, and the CREW defaults
+ *  editor. Stored overrides render read-only until pencil-unlocked; ADD
+ *  OVERRIDE pins one new editable rule on top (top tie-break priority — the
+ *  gateway resolves ties first-in-list) and is guarded so only one unsaved new
+ *  rule can exist at a time. Editing/new flags are internal UI state; they
+ *  reset whenever the incoming policy changes from outside (host reset,
+ *  remount baseline, post-save refresh). */
 export function AgentToolsPanel({
   policy,
   sourceLabel,
   targets = [],
   disabled = false,
+  defaultDescription = DEFAULT_PERMISSION_DESC,
   onChange,
 }: AgentToolsPanelProps) {
   const normalizedSource = sourceLabel?.trim();
+  const [editingIndexes, setEditingIndexes] = useState<ReadonlySet<number>>(new Set());
+  const [newIndex, setNewIndex] = useState<number | null>(null);
+  // Signature of the last policy WE emitted — an incoming policy that doesn't
+  // match it is an external change (reset/baseline), so the row UI state resets.
+  const emittedRef = useRef<string | null>(null);
+  const signature = ruleSignature(policy);
+
+  useEffect(() => {
+    if (emittedRef.current === signature) {
+      emittedRef.current = null;
+      return;
+    }
+    emittedRef.current = null;
+    setEditingIndexes(new Set());
+    setNewIndex(null);
+  }, [signature]);
+
+  const emit = (next: AgentToolApprovalPolicy) => {
+    emittedRef.current = ruleSignature(next);
+    onChange(next);
+  };
+
+  const addRule = () => {
+    // Open one fresh editable override pinned on top (top tie-priority). Any row
+    // currently open (a prior new row, or a pencil-edited one) collapses to a
+    // read-only summary — its values are already applied to the policy — so
+    // several overrides can be staged in a single draft without a save between
+    // each. Keeps exactly one row expanded at a time.
+    setEditingIndexes(new Set());
+    setNewIndex(0);
+    emit({
+      ...policy,
+      rules: [{ match: "fs.*", action: defaultOverrideAction(policy.default) }, ...policy.rules],
+    });
+  };
+
+  const removeRule = (index: number) => {
+    setEditingIndexes((current) => new Set(
+      [...current].filter((candidate) => candidate !== index).map((candidate) => candidate > index ? candidate - 1 : candidate),
+    ));
+    setNewIndex((current) => current === null || current === index
+      ? null
+      : current > index ? current - 1 : current);
+    emit({
+      ...policy,
+      rules: policy.rules.filter((_, candidate) => candidate !== index),
+    });
+  };
+
+  const startEditing = (index: number) => {
+    setEditingIndexes((current) => new Set([...current, index]));
+  };
+
+  const updateRule = (index: number, next: AgentToolApprovalRule) => {
+    emit({
+      ...policy,
+      rules: policy.rules.map((rule, candidate) => candidate === index ? next : rule),
+    });
+  };
 
   return (
     <section class="gsv-tools-panel" aria-label="Agent tools">
-      <div class="gsv-tools-bar">
-        <div class="gsv-tools-title">
-          <span>TOOL APPROVAL</span>
+      <div class="gsv-tools-heading">
+        <h4 class="gsv-tools-title gsv-section">DEFAULT PERMISSIONS</h4>
+        <p class="gsv-tools-desc gsv-paragraph-small">{defaultDescription}</p>
+      </div>
+
+      <div class="gsv-tools-field">
+        <div class="gsv-tools-field-lab">
+          <span class="gsv-fld-lab-t gsv-sublabel">TOOL APPROVAL</span>
           <InfoTip text={TOOL_APPROVAL_INFO} position="right" label="Tool approval info" />
           {normalizedSource ? <Tag tone="info" label={normalizedSource.toUpperCase()} boxed /> : null}
         </div>
-        <div class="gsv-tools-bar-actions">
-          <Button
-            variant="secondary"
-            label="ADD OVERRIDE"
-            disabled={disabled}
-            onClick={() => onChange(addRule(policy))}
-          />
-        </div>
+        <Segmented
+          l0="ALLOW"
+          l1="ASK"
+          l2="BLOCK"
+          value={actionIndex(policy.default)}
+          onChange={disabled ? undefined : (index) => emit({ ...policy, default: APPROVAL_ACTIONS[index] ?? "ask" })}
+          width={300}
+          ariaLabel="Tool approval default"
+          disabled={disabled}
+        />
       </div>
 
-      <Segmented
-        l0="ALLOW"
-        l1="ASK"
-        l2="BLOCK"
-        value={actionIndex(policy.default)}
-        onChange={disabled ? undefined : (index) => onChange({ ...policy, default: APPROVAL_ACTIONS[index] ?? "ask" })}
-        width={300}
-        label="DEFAULT"
-        description="Used when no approval override matches."
-        disabled={disabled}
-      />
+      <div class="gsv-tools-field">
+        <div class="gsv-tools-field-lab gsv-tools-overrides-lab">
+          <span class="gsv-tools-overrides-name">
+            <span class="gsv-fld-lab-t gsv-sublabel">OVERRIDES</span>
+            <InfoTip text={PRIORITY_INFO} position="right" label="Override priority" />
+          </span>
+          <Button
+            variant="link"
+            label="ADD OVERRIDE"
+            disabled={disabled}
+            onClick={addRule}
+          />
+        </div>
 
-      {policy.rules.length > 0 ? (
-        <div class="gsv-tools-overrides" role="table" aria-label="Tool approval overrides">
-          <div class="gsv-tools-overrides-head" role="row">
-            <span role="columnheader">TOOL</span>
-            <span class="gsv-tools-column-head" role="columnheader">
-              MACHINE
-              <InfoTip
-                text="Where this override applies: every machine, the GSV computer, or one named machine."
-                position="top"
-                label="Machine scope"
-              />
-            </span>
-            <span class="gsv-tools-column-head" role="columnheader">
-              ACTION
-              <InfoTip
-                text="What happens when the tool and machine match: allow it, ask for confirmation, or block it."
-                position="top"
-                label="Approval action"
-              />
-            </span>
-            <span role="columnheader" aria-label="Actions" />
-          </div>
-          <div class="gsv-tools-rule-list" role="rowgroup">
-            {policy.rules.map((rule, index) => {
-              const matchOptions = matchOptionsForRule(rule.match);
-              const targetOptions = targetOptionsForRule(rule.target, targets);
+        {policy.rules.length > 0 ? (
+        <ul class="gsv-tools-rules" aria-label="Tool approval overrides">
+          {policy.rules.map((rule, index) => {
+            const toolLabel = humanToolCapabilityLabel(rule.match);
+            const isNewRule = index === newIndex;
+            const isEditing = isNewRule || editingIndexes.has(index);
+            if (!isEditing) {
               return (
-                <div class="gsv-tools-rule" role="row" key={index}>
-                  <div class="gsv-tools-rule-tool" role="cell">
-                    <Select
-                      options={matchOptions}
-                      value={matchIndexForRule(rule.match)}
-                      width={280}
-                      size="small"
-                      disabled={disabled}
-                      onChange={(selected) => onChange(updateRule(policy, index, { match: optionValue(matchOptions[selected] ?? matchOptions[0] ?? "fs.*") }))}
-                    />
+                <li class="gsv-tools-rule-item" key={index}>
+                  <div class="gsv-tools-rule-summary">
+                    <div class="gsv-tools-rule-text">
+                      <span class="gsv-listitem">{toolLabel}</span>
+                      <span class="gsv-sublabel">
+                        {targetLabelForRule(rule.target, targets)} · {actionLabel(rule.action)}
+                      </span>
+                    </div>
+                    <div class="gsv-tools-rule-buttons">
+                      <IconButton
+                        glyph="edit"
+                        size="medium"
+                        ariaLabel={`Edit override: ${toolLabel}`}
+                        disabled={disabled}
+                        onClick={() => startEditing(index)}
+                      />
+                      <IconButton
+                        glyph="close"
+                        size="medium"
+                        ariaLabel={`Remove override: ${toolLabel}`}
+                        disabled={disabled}
+                        onClick={() => removeRule(index)}
+                      />
+                    </div>
                   </div>
-                  <div class="gsv-tools-rule-target" role="cell">
-                    <Select
-                      options={targetOptions}
-                      value={targetIndexForRule(rule.target, targets)}
-                      width={190}
-                      size="small"
-                      disabled={disabled}
-                      onChange={(selected) => onChange(updateRuleTarget(policy, index, optionValue(targetOptions[selected] ?? targetOptions[0] ?? "")))}
-                    />
-                  </div>
-                  <div class="gsv-tools-rule-action" role="cell">
-                    <Select
-                      options={APPROVAL_ACTIONS.map((action) => ({
-                        label: actionLabel(action),
-                        value: action,
-                      }))}
-                      value={actionIndex(rule.action)}
-                      width={170}
-                      size="small"
-                      disabled={disabled}
-                      onChange={(selected) => onChange(updateRule(policy, index, { action: APPROVAL_ACTIONS[selected] ?? "ask" }))}
-                    />
-                  </div>
-                  <div class="gsv-tools-rule-delete" role="cell">
+                </li>
+              );
+            }
+            const matchOptions = matchOptionsForRule(rule.match);
+            const targetOptions = targetOptionsForRule(rule.target, targets);
+            return (
+              <li class="gsv-tools-rule-item is-editing" key={index}>
+                <div class="gsv-tools-rule-edit">
+                  <div class="gsv-tools-rule-edit-head">
+                    <span class="gsv-sublabel">{isNewRule ? "NEW OVERRIDE" : "EDIT OVERRIDE"}</span>
+                    {isNewRule ? <InfoTip text={PRIORITY_INFO} position="right" label="Override priority" /> : null}
                     <IconButton
                       glyph="close"
                       size="small"
-                      title="Delete override"
+                      ariaLabel={`Remove override: ${toolLabel}`}
                       disabled={disabled}
-                      onClick={() => onChange(removeRule(policy, index))}
+                      onClick={() => removeRule(index)}
                     />
                   </div>
+                  <Select
+                    label="TOOL"
+                    options={matchOptions}
+                    value={matchIndexForRule(rule.match)}
+                    block
+                    size="small"
+                    disabled={disabled}
+                    onChange={(selected) => updateRule(index, {
+                      ...rule,
+                      match: approvalOptionValue(matchOptions[selected] ?? matchOptions[0] ?? "fs.*"),
+                    })}
+                  />
+                  <Select
+                    label="MACHINE"
+                    info={MACHINE_INFO}
+                    options={targetOptions}
+                    value={targetIndexForRule(rule.target, targets)}
+                    block
+                    size="small"
+                    disabled={disabled}
+                    onChange={(selected) => {
+                      const target = approvalOptionValue(targetOptions[selected] ?? targetOptions[0] ?? "");
+                      updateRule(index, target
+                        ? { ...rule, target }
+                        : { match: rule.match, action: rule.action });
+                    }}
+                  />
+                  <Select
+                    label="ACTION"
+                    info={ACTION_INFO}
+                    options={APPROVAL_ACTIONS.map((action: AgentToolApprovalAction) => ({
+                      label: actionLabel(action),
+                      value: action,
+                    }))}
+                    value={actionIndex(rule.action)}
+                    block
+                    size="small"
+                    disabled={disabled}
+                    onChange={(selected) => updateRule(index, {
+                      ...rule,
+                      action: APPROVAL_ACTIONS[selected] ?? "ask",
+                    })}
+                  />
                 </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p class="gsv-tools-empty gsv-paragraph-small">
+          No overrides yet. Add one to set a specific rule for a tool or machine.
+        </p>
+        )}
+      </div>
     </section>
   );
 }

@@ -1,0 +1,26 @@
+/* DEFAULTS summary — the standard settings-card anatomy (ref: MODELS card on
+   the overview): compact SectionHeader + list rows with edge-to-edge rules.
+   The host column renders it FLUSH — no padding between the card's horizontal
+   rules and the template's vertical lines. */
+.gsv-defaults-summary {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* Closes the card's top edge against the action controls above. */
+  border-top: 1px solid var(--rule-section);
+}
+
+.gsv-defaults-summary-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.gsv-defaults-summary-row {
+  min-width: 0;
+  border-bottom: 1px solid var(--rule-inner);
+}
+
+/* ListRow already provides the clickable hover background and the focus-visible
+   outline (ListRow.css); no override here — an earlier one used !important and
+   stripped the keyboard focus ring. */

@@ -24,20 +24,19 @@ import type {
 } from "../domain/consoleModels";
 import {
   modelOptionsForConfig,
-  modelProfileOptionValue,
-  modelProfileSummary,
-  modelProfilesForConfig,
   type ConsoleModelOption,
 } from "../domain/consoleAi";
 import {
+  approvalForAgentSave,
+  approvalOverrideForInheritedPolicy,
   behaviorForAccount,
   defaultApprovalPolicyForConfig,
+  fallbackModelOptionsForAccount,
   inheritedFallbackModelLabelForAccount,
   inheritedModelLabelForAccount,
   inheritedReasoningForAccount,
   modelOptionsForAccount,
-  parseApprovalPolicy,
-  serializeApprovalPolicy,
+  normalizedApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
 import {
   avatarForAccount,
@@ -383,25 +382,6 @@ function agentDraftToCreateInput(draft: AgentEditorDraft, defaultApprovalPolicy:
   };
 }
 
-function normalizedApprovalPolicy(raw: string): string {
-  return serializeApprovalPolicy(parseApprovalPolicy(raw));
-}
-
-function approvalOverrideForInheritedPolicy(draftApproval: string, inheritedApproval: string): string {
-  const normalizedDraft = normalizedApprovalPolicy(draftApproval);
-  const normalizedInherited = normalizedApprovalPolicy(inheritedApproval);
-  return normalizedDraft === normalizedInherited ? "" : normalizedDraft;
-}
-
-function approvalForAgentSave(
-  draftApproval: string,
-  behavior: ReturnType<typeof behaviorForAccount>,
-): string {
-  return behavior.approvalInherited
-    ? approvalOverrideForInheritedPolicy(draftApproval, behavior.approval)
-    : normalizedApprovalPolicy(draftApproval);
-}
-
 function approvalSourceLabel(editsUserDefaults: boolean, inherited: boolean): string {
   if (editsUserDefaults) return "Your default";
   return inherited ? "Inherited default" : "Agent override";
@@ -414,57 +394,6 @@ function modelOptionsKey(options: readonly AgentEditorModelOption[]): string {
     }
     return `${option.value ?? ""}:${option.label}:${option.description ?? ""}`;
   }).join("\u0000");
-}
-
-function fallbackModelOptionsForAccount(
-  config: readonly ConsoleConfigEntry[],
-  uid: number | null,
-  ownerUid: number | null,
-  selectedValue: string,
-  inheritedLabel: string,
-): AgentEditorModelOption[] {
-  const inherited = inheritedLabel.trim();
-  const options: AgentEditorModelOption[] = [{
-    value: "",
-    label: inherited ? `Inherit: ${inherited}` : "Inherit fallback",
-    description: inherited ? "Uses the inherited fallback model." : "No fallback override.",
-  }];
-  const seen = new Set([""]);
-
-  const addProfileOptions = (profileUid: number | null) => {
-    if (profileUid === null || !Number.isFinite(profileUid)) {
-      return;
-    }
-    for (const profile of modelProfilesForConfig(config, profileUid)) {
-      const value = modelProfileOptionValue(profile.id);
-      const key = value.trim().toLowerCase();
-      if (!value || seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      options.push({
-        value,
-        label: profile.name,
-        description: modelProfileSummary(profile),
-      });
-    }
-  };
-
-  addProfileOptions(uid);
-  if (ownerUid !== uid) {
-    addProfileOptions(ownerUid);
-  }
-
-  const selected = selectedValue.trim();
-  if (selected && !seen.has(selected.toLowerCase())) {
-    options.push({
-      value: selected,
-      label: selected.replace(/^model-profile:/i, ""),
-      description: "Stored fallback model is not currently available.",
-    });
-  }
-
-  return options;
 }
 
 function agentToolTargetsForConsoleTargets(targets: readonly ConsoleTarget[]): AgentToolTarget[] {

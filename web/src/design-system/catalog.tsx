@@ -72,6 +72,7 @@ import agentCard from "./stories/AgentCard.story";
 import crewTile from "./stories/CrewTile.story";
 import agentEditor from "./stories/AgentEditor.story";
 import agentToolsPanel from "./stories/AgentToolsPanel.story";
+import contextSectionsEditor from "./stories/ContextSectionsEditor.story";
 import link from "./stories/Link.story";
 
 const STORIES: Story[] = [
@@ -137,6 +138,7 @@ const STORIES: Story[] = [
   crewTile,
   agentEditor,
   agentToolsPanel,
+  contextSectionsEditor,
   // Templates — generic page archetypes: wireframe + live preview of the real
   // component at /design/preview/<id> (see previews.tsx)
   listTemplate,

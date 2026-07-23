@@ -1,0 +1,118 @@
+.gsv-cse {
+  min-width: 0;
+}
+
+/* section tabs row */
+.gsv-cse-tabs {
+  display: flex;
+  align-items: flex-start;
+  gap: 30px;
+  flex-wrap: wrap;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--rule-inner);
+  margin-bottom: 22px;
+}
+
+.gsv-cse-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+/* code editor scrollbar */
+.gsv-ed::-webkit-scrollbar {
+  width: 9px;
+}
+.gsv-ed::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+.gsv-ed::-webkit-scrollbar-track {
+  background: var(--panel-2);
+}
+
+/* ===== section (file) tab ===== */
+.gsv-cse-file-tab {
+  appearance: none;
+  width: 78px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+}
+
+.gsv-cse-file-tab:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.gsv-cse-newfile:hover {
+  opacity: 0.8;
+}
+.gsv-cse-newfile:disabled:hover {
+  opacity: 0.45;
+}
+.gsv-cse-newfile.is-disabled {
+  cursor: not-allowed !important;
+  opacity: 0.45;
+}
+
+/* ===== code editor textarea ===== */
+.gsv-cse-editor {
+  width: 100%;
+  height: 300px;
+  resize: vertical;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  outline: none;
+  padding: 16px 17px;
+  font-family: var(--gsv-font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-title);
+}
+.gsv-cse-editor:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.gsv-cse-editor:read-only {
+  cursor: default;
+  color: var(--text-muted);
+}
+
+.gsv-cse-empty-context {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--rule-inner);
+  background: color-mix(in srgb, var(--panel-2) 86%, transparent);
+  color: var(--text-dim);
+  font-family: var(--gsv-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+}
+
+/* ===== delete modal ===== */
+.gsv-cse-modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 3, 16, 0.66);
+}
+
+.gsv-cse-modal-wrap {
+  width: 440px;
+  max-width: 90vw;
+}

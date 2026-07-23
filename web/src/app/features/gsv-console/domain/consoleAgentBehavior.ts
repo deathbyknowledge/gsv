@@ -3,6 +3,7 @@ import { approvalTargetFromValue } from "../../../domain/agentApproval";
 import {
   defaultModelLabelForConfig,
   modelProfileOptionValue,
+  modelProfileSummary,
   modelProfilesForConfig,
   modelOptionForValue,
   type ConsoleModelProfile,
@@ -342,6 +343,80 @@ export function parseApprovalPolicy(raw: string): ApprovalPolicy {
 
 export function serializeApprovalPolicy(policy: ApprovalPolicy): string {
   return JSON.stringify({ default: policy.default, rules: policy.rules });
+}
+
+export function normalizedApprovalPolicy(raw: string): string {
+  return serializeApprovalPolicy(parseApprovalPolicy(raw));
+}
+
+/** Empty string when the draft equals the inherited policy — writing "" keeps
+ *  the account on inheritance instead of materializing an identical override. */
+export function approvalOverrideForInheritedPolicy(draftApproval: string, inheritedApproval: string): string {
+  const normalizedDraft = normalizedApprovalPolicy(draftApproval);
+  const normalizedInherited = normalizedApprovalPolicy(inheritedApproval);
+  return normalizedDraft === normalizedInherited ? "" : normalizedDraft;
+}
+
+export function approvalForAgentSave(
+  draftApproval: string,
+  behavior: ConsoleAgentBehavior,
+): string {
+  return behavior.approvalInherited
+    ? approvalOverrideForInheritedPolicy(draftApproval, behavior.approval)
+    : normalizedApprovalPolicy(draftApproval);
+}
+
+/** Fallback-model Select options for an account: "Inherit" first, then the
+ *  account's + owner's model profiles, then a stored-but-unknown selection. */
+export function fallbackModelOptionsForAccount(
+  config: readonly ConsoleConfigEntry[],
+  uid: number | null,
+  ownerUid: number | null,
+  selectedValue: string,
+  inheritedLabel: string,
+): ConsoleModelOption[] {
+  const inherited = inheritedLabel.trim();
+  const options: ConsoleModelOption[] = [{
+    value: "",
+    label: inherited ? `Inherit: ${inherited}` : "Inherit fallback",
+    description: inherited ? "Uses the inherited fallback model." : "No fallback override.",
+  }];
+  const seen = new Set([""]);
+
+  const addProfileOptions = (profileUid: number | null) => {
+    if (profileUid === null || !Number.isFinite(profileUid)) {
+      return;
+    }
+    for (const profile of modelProfilesForConfig(config, profileUid)) {
+      const value = modelProfileOptionValue(profile.id);
+      const key = value.trim().toLowerCase();
+      if (!value || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      options.push({
+        value,
+        label: profile.name,
+        description: modelProfileSummary(profile),
+      });
+    }
+  };
+
+  addProfileOptions(uid);
+  if (ownerUid !== uid) {
+    addProfileOptions(ownerUid);
+  }
+
+  const selected = selectedValue.trim();
+  if (selected && !seen.has(selected.toLowerCase())) {
+    options.push({
+      value: selected,
+      label: selected.replace(/^model-profile:/i, ""),
+      description: "Stored fallback model is not currently available.",
+    });
+  }
+
+  return options;
 }
 
 function configValue(config: readonly ConsoleConfigEntry[], key: string): string {

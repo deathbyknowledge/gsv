@@ -1,5 +1,6 @@
 import type {
   ShellAppRoute,
+  ShellFilesRoute,
   ShellLibraryRoute,
   ShellRoute,
   ShellSettingsListKind,
@@ -170,6 +171,22 @@ function libraryRouteFromParts(parts: readonly string[], search: string): ShellL
   return { view: "reader", db, path: [actionOrPath, ...rest].join("/") };
 }
 
+/** Parse /files/<target>/<path…> into a deep-link route. The target is parts[1]
+ *  and the (absolute) directory is the remaining segments. A bare /files, a
+ *  missing target, or an undecodable segment yields null → the caller opens the
+ *  default FILES surface. */
+function filesRouteFromParts(parts: readonly string[]): ShellFilesRoute | null {
+  const decoded = decodedParts(parts.slice(1));
+  if (!decoded) {
+    return null;
+  }
+  const [target, ...rest] = decoded;
+  if (!target) {
+    return null;
+  }
+  return { target, path: `/${rest.join("/")}` };
+}
+
 export function shellRouteFromLocation(location: Pick<Location, "hash" | "pathname" | "search">): ShellRoute {
   if (isWorkerOwnedPath(location.pathname)) {
     return { surface: "desktop" };
@@ -186,6 +203,11 @@ export function shellRouteFromLocation(location: Pick<Location, "hash" | "pathna
 
   if (parts[0] === "library") {
     return { surface: "library", libraryRoute: libraryRouteFromParts(parts, location.search) };
+  }
+
+  if (parts[0] === "files") {
+    const filesRoute = filesRouteFromParts(parts);
+    return filesRoute ? { surface: "files", filesRoute } : { surface: "files" };
   }
 
   if (parts[0] === "open") {
@@ -254,6 +276,16 @@ function formatLibraryRoute(route: ShellLibraryRoute | undefined): string {
   return `/library/${encodeSegment(route.db)}/${path}`;
 }
 
+function formatFilesRoute(route: ShellFilesRoute | undefined): string {
+  if (!route) {
+    return "/files";
+  }
+  const path = route.path.split("/").filter(Boolean).map(encodeSegment).join("/");
+  return path
+    ? `/files/${encodeSegment(route.target)}/${path}`
+    : `/files/${encodeSegment(route.target)}`;
+}
+
 export function shellRouteToPath(route: ShellRoute): string {
   if (route.surface === "desktop") {
     return "/";
@@ -266,6 +298,9 @@ export function shellRouteToPath(route: ShellRoute): string {
   }
   if (route.surface === "library") {
     return formatLibraryRoute(route.libraryRoute);
+  }
+  if (route.surface === "files") {
+    return formatFilesRoute(route.filesRoute);
   }
   if (route.surface === "runtime") {
     return "/tasks";

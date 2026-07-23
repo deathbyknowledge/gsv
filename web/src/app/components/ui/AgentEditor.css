@@ -33,87 +33,6 @@
   box-shadow: 0 14px 22px rgba(4, 3, 16, 0.42);
 }
 
-/* code editor scrollbar (from source <style> .gsv-ed rules) */
-.gsv-ed::-webkit-scrollbar {
-  width: 9px;
-}
-.gsv-ed::-webkit-scrollbar-thumb {
-  background: var(--border);
-}
-.gsv-ed::-webkit-scrollbar-track {
-  background: var(--panel-2);
-}
-
-/* ===== new-file folder ===== */
-.gsv-ae-file-tab {
-  appearance: none;
-  width: 78px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 9px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  text-align: center;
-}
-
-.gsv-ae-file-tab:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 4px;
-}
-
-.gsv-ae-newfile:hover {
-  opacity: 0.8;
-}
-.gsv-ae-newfile:disabled:hover {
-  opacity: 0.45;
-}
-.gsv-ae-newfile.is-disabled {
-  cursor: not-allowed !important;
-  opacity: 0.45;
-}
-
-/* ===== code editor textarea ===== */
-.gsv-ae-editor {
-  width: 100%;
-  height: 300px;
-  resize: vertical;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  outline: none;
-  padding: 16px 17px;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 12.5px;
-  line-height: 1.7;
-  color: #dcd9ff;
-}
-.gsv-ae-editor:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(179, 174, 255, 0.35);
-}
-.gsv-ae-editor:read-only {
-  cursor: default;
-  color: #aaa5d8;
-}
-
-.gsv-ae-empty-context {
-  min-height: 220px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px dashed var(--rule-inner);
-  background: color-mix(in srgb, var(--panel-2) 86%, transparent);
-  color: var(--text-dim);
-  font-family: var(--gsv-font-mono);
-  font-size: 10px;
-  letter-spacing: 0.16em;
-}
-
 .gsv-ae-overrides-heading {
   min-width: 0;
   margin: 0 0 16px;
@@ -134,18 +53,3 @@
   letter-spacing: 0.14em;
 }
 
-/* ===== delete modal ===== */
-.gsv-ae-modal-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(4, 3, 16, 0.66);
-}
-
-.gsv-ae-modal-wrap {
-  width: 440px;
-  max-width: 90vw;
-}

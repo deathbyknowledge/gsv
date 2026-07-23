@@ -1,4 +1,3 @@
-import { createPortal } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import "./AgentEditor.css";
 import { TextInput } from "./TextInput";
@@ -8,7 +7,7 @@ import { Button } from "./Button";
 import { Avatar, type AvatarStatus } from "./Avatar";
 import { Tabs } from "./Tabs";
 import { SectionHeader } from "./SectionHeader";
-import { ConfirmModal } from "./ConfirmModal";
+import { ContextSectionsEditor } from "./ContextSectionsEditor";
 import { approvalTargetFromValue } from "../../domain/agentApproval";
 import {
   AgentToolsPanel,
@@ -114,7 +113,7 @@ const MODELS: AgentEditorModelOption[] = [
 const FALLBACK_MODELS: AgentEditorModelOption[] = [
   { label: "INHERIT FALLBACK", value: "" },
 ];
-const REASONING_VALUES = ["", "off", "minimal", "low", "medium", "high", "xhigh"];
+export const REASONING_VALUES = ["", "off", "minimal", "low", "medium", "high", "xhigh"];
 const DEFAULT_APPROVAL_POLICY: AgentToolApprovalPolicy = {
   default: "auto",
   rules: [
@@ -124,9 +123,9 @@ const DEFAULT_APPROVAL_POLICY: AgentToolApprovalPolicy = {
     { match: "sys.mcp.call", action: "ask" },
   ],
 };
-const MODEL_SETTING_INFO = "Which AI this agent uses to respond. Inherit uses the default model.";
-const FALLBACK_SETTING_INFO = "Backup AI to try if the main one fails. Inherit uses the default backup, if one is set.";
-const REASONING_SETTING_INFO = "How much the AI thinks before replying. Higher can help with hard tasks, but may be slower.";
+export const MODEL_SETTING_INFO = "Which AI this agent uses to respond. Inherit uses the default model.";
+export const FALLBACK_SETTING_INFO = "Backup AI to try if the main one fails. Inherit uses the default backup, if one is set.";
+export const REASONING_SETTING_INFO = "How much the AI thinks before replying. Higher can help with hard tasks, but may be slower.";
 
 function optionValue(option: AgentEditorModelOption): string {
   return typeof option === "string" ? option : option.value ?? option.label;
@@ -142,7 +141,7 @@ function modelIndexForValue(value: string | undefined, options: readonly AgentEd
   return index >= 0 ? index : 0;
 }
 
-function reasoningIndexForValue(value: string | undefined): number {
+export function reasoningIndexForValue(value: string | undefined): number {
   const trimmed = value?.trim().toLowerCase() ?? "";
   if (!trimmed || trimmed === "inherit") {
     return 0;
@@ -157,7 +156,7 @@ function reasoningOptionLabel(value: string): string {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
-function reasoningOptions(inherited: string | undefined): SelectOption[] {
+export function reasoningOptions(inherited: string | undefined): SelectOption[] {
   const inheritedLabel = inherited?.trim();
   return REASONING_VALUES.map((value) => value
     ? { label: reasoningOptionLabel(value), value }
@@ -302,81 +301,6 @@ function defaults(mode: AgentEditorMode, props: AgentEditorProps): Defaults {
   };
 }
 
-function fileLabel(file: AgentEditorFile, index: number): string {
-  return file.label.trim() || file.name?.trim() || `SECTION ${index + 1}`;
-}
-
-function fileName(file: AgentEditorFile, index: number): string {
-  const explicit = file.name?.trim();
-  if (explicit) {
-    return explicit;
-  }
-  const label = file.label.trim();
-  if (label.toUpperCase() === "PERSONA") {
-    return "05-persona.md";
-  }
-  const base = label.toLowerCase().replace(/\.md$/i, "").replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `${base || `file-${index + 1}`}.md`;
-}
-
-function sectionSlug(label: string, index: number): string {
-  const slug = label
-    .trim()
-    .replace(/\.md$/i, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || `section-${index + 1}`;
-}
-
-function contextOrderPrefix(file: AgentEditorFile, index: number): string {
-  const existing = (file.name ?? file.origName ?? "").match(/^(\d+)-/);
-  if (existing) {
-    return `${existing[1]}-`;
-  }
-  if (fileLabel(file, index).toUpperCase() === "PERSONA") {
-    return "05-";
-  }
-  return `${String((index + 1) * 10).padStart(2, "0")}-`;
-}
-
-function contextFileNameForSection(
-  label: string,
-  index: number,
-  file: AgentEditorFile,
-  files: readonly AgentEditorFile[],
-): string {
-  const prefix = contextOrderPrefix(file, index);
-  const baseName = `${prefix}${sectionSlug(label, index)}.md`;
-  const used = new Set(
-    files
-      .filter((candidate) => candidate !== file)
-      .map((candidate, candidateIndex) => fileName(candidate, candidateIndex).toLowerCase()),
-  );
-  if (!used.has(baseName.toLowerCase())) {
-    return baseName;
-  }
-  let suffix = 2;
-  while (used.has(`${prefix}${sectionSlug(label, index)}-${suffix}.md`.toLowerCase())) {
-    suffix += 1;
-  }
-  return `${prefix}${sectionSlug(label, index)}-${suffix}.md`;
-}
-
-function nextUntitledSection(files: readonly AgentEditorFile[]): { label: string; name: string } {
-  const names = new Set(files.map((file, index) => fileName(file, index).toLowerCase()));
-  let index = 1;
-  while (true) {
-    const label = index === 1 ? "Untitled" : `Untitled ${index}`;
-    const file: AgentEditorFile = { label, content: "" };
-    const name = contextFileNameForSection(label, files.length, file, files);
-    if (!names.has(name.toLowerCase())) {
-      return { label, name };
-    }
-    index += 1;
-  }
-}
-
 /** AgentEditor — composite ported from Agent Editor.dc.html. A full agent
  *  authoring surface with GENERAL / CONTEXT / TASKS folder tabs. GENERAL composes
  *  TextInput/TextArea/Select/Segmented/Button atoms; CONTEXT has a markdown
@@ -412,7 +336,6 @@ export function AgentEditor(props: AgentEditorProps) {
   const [flash, setFlash] = useState("");
   const [formError, setFormError] = useState("");
   const [pendingAction, setPendingAction] = useState<"create" | "save" | null>(null);
-  const [deleteOpen, setDeleteOpen] = useState(false);
   const [w, setW] = useState(0);
   const [formNonce, setFormNonce] = useState(0);
 
@@ -467,11 +390,6 @@ export function AgentEditor(props: AgentEditorProps) {
 
   // ---- files ----
   const hasContextSections = files.length > 0;
-  const curFile = files[fileIdx] || files[0] || { label: "", content: "" };
-
-  const setFileContent = (v: string) => {
-    setFiles((s) => s.map((f, i) => (i === fileIdx ? { ...f, content: v } : f)));
-  };
 
   // ---- unsaved-changes guard ----
   // Baseline is the initial values captured once in metaRef (see line ~172).
@@ -505,30 +423,8 @@ export function AgentEditor(props: AgentEditorProps) {
   const roleDisplay = role || "UNASSIGNED ROLE";
 
   // ---- handlers ----
-  const onContent = (e: Event) => {
-    if (!filesReadOnly) {
-      setFileContent((e.target as HTMLTextAreaElement).value);
-    }
-  };
-  const onAddFile = () => {
-    if (filesReadOnly) return;
-    const next = nextUntitledSection(files);
-    setFiles((s) => [...s, { label: next.label, name: next.name, content: "# Untitled\n\n" }]);
-    setFileIdx(files.length);
-    setFlash("");
-    setFormError("");
-  };
-  const setCurrentSectionName = (value: string) => {
-    if (filesReadOnly) return;
-    setFiles((s) => s.map((f, i) => (
-      i === fileIdx
-        ? {
-            ...f,
-            label: value,
-            name: contextFileNameForSection(value, i, f, s),
-          }
-        : f
-    )));
+  const onFilesChange = (next: AgentEditorFile[]) => {
+    setFiles(next);
     setFlash("");
     setFormError("");
   };
@@ -597,23 +493,6 @@ export function AgentEditor(props: AgentEditorProps) {
     setFormNonce((n) => n + 1);
     setFormError("");
     setFlash("");
-  };
-
-  const delName = hasContextSections ? fileLabel(curFile, fileIdx) : "context section";
-  const onDelete = () => {
-    if (!filesReadOnly && hasContextSections) setDeleteOpen(true);
-  };
-  const onCancelDelete = () => setDeleteOpen(false);
-  const onConfirmDelete = () => {
-    if (filesReadOnly) return;
-    setFiles((s) => {
-      const next = s.filter((_, i) => i !== fileIdx);
-      setFileIdx((idx) => Math.max(0, Math.min(idx, next.length - 1)));
-      return next;
-    });
-    setDeleteOpen(false);
-    setFlash("");
-    setFormError("");
   };
 
   // ---- styles ----
@@ -842,86 +721,32 @@ export function AgentEditor(props: AgentEditorProps) {
                   </div>
                 </div>
 
-                {/* context section tabs */}
-                <div style="display:flex;align-items:flex-start;gap:30px;flex-wrap:wrap;padding-bottom:24px;border-bottom:1px solid var(--rule-inner);margin-bottom:22px;">
-                  {files.map((f, i) => (
-                    <button
-                      key={`${f.origName ?? f.name ?? f.label}-${i}`}
-                      type="button"
-                      class="gsv-ae-file-tab"
-                      onClick={() => {
-                        setFileIdx(i);
-                        setFlash("");
-                        setFormError("");
-                      }}
-                    >
-                      <svg width="34" height="30" viewBox="0 0 16 14" shape-rendering="crispEdges" fill={i === fileIdx ? "var(--accent-bright)" : "#4a4585"}>
-                        <rect x="1" y="2" width="6" height="2" />
-                        <rect x="1" y="4" width="14" height="9" />
-                      </svg>
-                      <span class="gsv-sublabel" style={`letter-spacing:.1em;color:${i === fileIdx ? "var(--text)" : "#9a95cf"};line-height:1.35;`}>
-                        {fileLabel(f, i)}
-                      </span>
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    disabled={filesReadOnly}
-                    onClick={filesReadOnly ? undefined : onAddFile}
-                    class={`gsv-ae-file-tab gsv-ae-newfile${filesReadOnly ? " is-disabled" : ""}`}
-                  >
-                    <svg width="34" height="30" viewBox="0 0 16 14" shape-rendering="crispEdges" fill="none" stroke="var(--dashed)" stroke-width="1">
-                      <path d="M1.5 3.5 H6.5 V4.5" />
-                      <rect x="1.5" y="4.5" width="13" height="8" />
-                    </svg>
-                    <span class="gsv-sublabel" style="letter-spacing:.1em;color:var(--accent);border-bottom:1px solid var(--accent);padding-bottom:1px;">NEW SECTION</span>
-                  </button>
-                </div>
-
-                {hasContextSections ? (
-                  <>
-                    <div style="max-width:520px;margin-bottom:16px;">
-                      <TextInput
-                        value={fileLabel(curFile, fileIdx)}
-                        onChange={setCurrentSectionName}
-                        placeholder="Operating notes"
-                        size="medium"
-                        label="SECTION NAME"
-                        readonly={filesReadOnly}
-                      />
-                    </div>
-
-                    {/* editor */}
-                    <textarea
-                      class="gsv-ed gsv-ae-editor"
-                      value={curFile.content}
-                      onInput={onContent}
-                      spellcheck={false}
-                      readOnly={filesReadOnly}
-                    />
-                  </>
-                ) : (
-                  <div class="gsv-ae-empty-context">
-                    <strong>NO CONTEXT SECTIONS</strong>
-                  </div>
-                )}
-
-                {/* actions */}
-                <div style="display:flex;align-items:center;gap:12px;margin-top:16px;">
-                  <Button variant="dangerGhost" label="DELETE" onClick={onDelete} disabled={filesReadOnly || !hasContextSections} />
-                  <span style="flex:1;" />
-                  {filesReadOnly ? (
-                    <span class="gsv-ae-readonly-note gsv-sublabel">READ ONLY</span>
-                  ) : formError ? (
-                    <span class="gsv-sublabel" style="letter-spacing:.12em;color:var(--error);">{formError}</span>
-                  ) : pendingAction === "save" ? (
-                    <span class="gsv-sublabel" style="letter-spacing:.14em;color:var(--accent);">SAVING</span>
-                  ) : flash ? (
-                    <span class="gsv-sublabel" style="letter-spacing:.14em;color:var(--online);">{flash}</span>
-                  ) : null}
-                  <Button variant="secondary" label="RESET" onClick={onReset} disabled={filesReadOnly || !hasContextSections || pendingAction !== null} />
-                  <Button variant="primary" label="SAVE" onClick={onSave} disabled={filesReadOnly || pendingAction !== null} />
-                </div>
+                <ContextSectionsEditor
+                  files={files}
+                  onChange={onFilesChange}
+                  activeIndex={fileIdx}
+                  onActiveIndexChange={(index) => {
+                    setFileIdx(index);
+                    setFlash("");
+                    setFormError("");
+                  }}
+                  readOnly={filesReadOnly}
+                  actions={
+                    <>
+                      {filesReadOnly ? (
+                        <span class="gsv-ae-readonly-note gsv-sublabel">READ ONLY</span>
+                      ) : formError ? (
+                        <span class="gsv-sublabel" style="letter-spacing:.12em;color:var(--error);">{formError}</span>
+                      ) : pendingAction === "save" ? (
+                        <span class="gsv-sublabel" style="letter-spacing:.14em;color:var(--accent);">SAVING</span>
+                      ) : flash ? (
+                        <span class="gsv-sublabel" style="letter-spacing:.14em;color:var(--online);">{flash}</span>
+                      ) : null}
+                      <Button variant="secondary" label="RESET" onClick={onReset} disabled={filesReadOnly || !hasContextSections || pendingAction !== null} />
+                      <Button variant="primary" label="SAVE" onClick={onSave} disabled={filesReadOnly || pendingAction !== null} />
+                    </>
+                  }
+                />
               </div>
             ) : null}
 
@@ -941,23 +766,6 @@ export function AgentEditor(props: AgentEditorProps) {
                   ))}
                 </div>
               </div>
-            ) : null}
-
-            {/* DELETE CONFIRM MODAL — portaled to <body> so the editor's panel
-                container (container-type) doesn't trap its viewport-fixed scrim. */}
-            {deleteOpen ? createPortal(
-              <div class="gsv-ae-modal-scrim" onClick={onCancelDelete}>
-                <div class="gsv-ae-modal-wrap" onClick={(event) => event.stopPropagation()}>
-                  <ConfirmModal
-                    title="CONFIRM DELETE"
-                    message={`Are you sure you want to delete "${delName}"?`}
-                    note="This file is removed from the agent -- it can't be recovered."
-                    onCancel={onCancelDelete}
-                    onConfirm={onConfirmDelete}
-                  />
-                </div>
-              </div>,
-              document.body,
             ) : null}
           </div>
         </div>

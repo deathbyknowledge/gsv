@@ -1729,6 +1729,15 @@
   flex-direction: column;
 }
 
+/* Bounded page (CREW): shrink to the console stage instead of growing past it,
+   so a list template's is-scroll-body child fills the stage and scrolls its own
+   body internally — rather than the whole stage scrolling. Overrides the base
+   `flex: 1 0 auto; min-height: 100%` (grow-to-content, whole-page scroll). */
+.gsv-console-page.is-bounded {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .gsv-console-state {
   min-height: 180px;
   border: 1px solid var(--border);
