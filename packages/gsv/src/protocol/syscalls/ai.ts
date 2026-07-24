@@ -292,18 +292,21 @@ type AiImageReadCommonArgs = {
     mimeType: string;
     filename?: string;
   };
+};
+
+type AiImageReadGenerationArgs = AiImageReadCommonArgs & {
   maxTokens?: number;
   temperature?: number;
   topP?: number;
 };
 
 export type AiImageReadArgs =
-  | (AiImageReadCommonArgs & {
+  | (AiImageReadGenerationArgs & {
     mode?: "caption";
     captionLength?: "short" | "normal" | "long";
     stream?: boolean;
   })
-  | (AiImageReadCommonArgs & {
+  | (AiImageReadGenerationArgs & {
     mode: "query";
     prompt: string;
     reasoning?: boolean;
@@ -311,7 +314,7 @@ export type AiImageReadArgs =
     schema?: Record<string, unknown>;
     stream?: boolean;
   })
-  | (AiImageReadCommonArgs & {
+  | (AiImageReadGenerationArgs & {
     mode: "ocr";
     prompt?: string;
     responseFormat?: AiImageReadResponseFormat;

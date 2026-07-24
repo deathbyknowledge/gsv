@@ -220,6 +220,29 @@ describe("readImage", () => {
     })).rejects.toThrow("structured output");
   });
 
+  it("enforces the Workers AI mode-specific numeric limits", async () => {
+    const run = vi.fn();
+
+    await expect(readImage({ run }, {
+      data: "AQID",
+      mode: "caption",
+      maxTokens: 28_673,
+    })).rejects.toThrow("1 to 28672");
+    await expect(readImage({ run }, {
+      data: "AQID",
+      mode: "point",
+      target: "button",
+      maxObjects: 501,
+    })).rejects.toThrow("1 to 500");
+    await expect(readImage({ run }, {
+      data: "AQID",
+      mode: "detect",
+      target: "button",
+      temperature: 0.5,
+    })).rejects.toThrow("caption, query, or ocr");
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("rejects promptly on cancellation and cancels a late response stream", async () => {
     let resolveRun!: (value: unknown) => void;
     const cancel = vi.fn();
@@ -257,6 +280,18 @@ describe("decodeMoondreamStream", () => {
     await decoded.cancel("done");
 
     expect(cancel).toHaveBeenCalledWith("done");
+  });
+
+  it("releases an upstream reader when constructed with an aborted signal", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled"));
+    const source = new ReadableStream<Uint8Array>({ pull() {} });
+    const decoded = decodeMoondreamStream(source, { signal: controller.signal });
+
+    await expect(decoded.getReader().read()).rejects.toThrow("cancelled");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(source.locked).toBe(false);
   });
 });
 

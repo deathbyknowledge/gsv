@@ -1912,11 +1912,13 @@ describe("handleAiImageRead", () => {
     }));
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
       DEFAULT_IMAGE_READING_MODEL,
-      expect.objectContaining({
+      {
+        image: "data:image/png;base64,AQID",
+        stream: false,
         task: "detect",
-        max_tokens: 77,
+        target: "button",
         max_objects: 12,
-      }),
+      },
     );
   });
 

@@ -528,11 +528,12 @@ export async function handleAiImageRead(
 
   const bytes = await readAiInputBody(body, media.imageReadingMaxBytes, "image", ctx.requestSignal);
   const base64 = encodeBase64Bytes(bytes);
+  const mode = input.mode ?? "caption";
 
   const response = await readImage(ctx.env.AI, {
     data: base64,
     mimeType: image.mimeType,
-    mode: input.mode,
+    mode,
     prompt: "prompt" in input ? normalizeOptionalString(input.prompt) : undefined,
     target: "target" in input ? normalizeOptionalString(input.target) : undefined,
     captionLength: "captionLength" in input ? input.captionLength : undefined,
@@ -540,12 +541,16 @@ export async function handleAiImageRead(
     responseFormat: "responseFormat" in input ? input.responseFormat : undefined,
     schema: "schema" in input ? input.schema : undefined,
     stream: "stream" in input ? input.stream : undefined,
-    maxTokens: normalizePositiveNumber(input.maxTokens) ?? media.imageReadingMaxTokens,
-    maxObjects: input.mode === "point" || input.mode === "detect"
-      ? normalizePositiveNumber(input.maxObjects) ?? media.imageReadingMaxObjects
+    maxTokens: mode === "caption" || mode === "query" || mode === "ocr"
+      ? ("maxTokens" in input && input.maxTokens !== undefined
+        ? input.maxTokens
+        : media.imageReadingMaxTokens)
       : undefined,
-    temperature: normalizeNonNegativeNumber(input.temperature),
-    topP: normalizeNonNegativeNumber(input.topP),
+    maxObjects: input.mode === "point" || input.mode === "detect"
+      ? input.maxObjects ?? media.imageReadingMaxObjects
+      : undefined,
+    temperature: "temperature" in input ? input.temperature : undefined,
+    topP: "topP" in input ? input.topP : undefined,
     timeoutMs: media.imageReadingTimeoutMs,
     signal: ctx.requestSignal,
   });
@@ -1587,10 +1592,6 @@ function normalizeOptionalString(value: unknown): string | undefined {
 
 function normalizePositiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
-function normalizeNonNegativeNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 function listReadyMcpServerNames(ctx: KernelContext, uid: number): string[] {

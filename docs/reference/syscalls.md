@@ -1203,7 +1203,7 @@ type AiSyscalls = {
       | ({ image: { mimeType: string; filename?: string }; maxTokens?: number; temperature?: number; topP?: number } & { mode?: "caption"; captionLength?: "short" | "normal" | "long"; stream?: boolean })
       | ({ image: { mimeType: string; filename?: string }; maxTokens?: number; temperature?: number; topP?: number } & { mode: "query"; prompt: string; reasoning?: boolean; responseFormat?: "text" | "json" | "xml" | "markdown" | "csv"; schema?: Record<string, unknown>; stream?: boolean })
       | ({ image: { mimeType: string; filename?: string }; maxTokens?: number; temperature?: number; topP?: number } & { mode: "ocr"; prompt?: string; responseFormat?: "text" | "json" | "xml" | "markdown" | "csv"; schema?: Record<string, unknown>; stream?: boolean })
-      | ({ image: { mimeType: string; filename?: string }; maxTokens?: number; temperature?: number; topP?: number } & { mode: "point" | "detect"; target: string; maxObjects?: number });
+      | { image: { mimeType: string; filename?: string }; mode: "point" | "detect"; target: string; maxObjects?: number };
     result:
       | { mode: "caption"; text: string; caption: string; captionLength: "short" | "normal" | "long"; provider: string; model: string; finishReason?: string; metrics?: object }
       | { mode: "query" | "ocr"; text: string; answer: string; responseFormat: "text" | "json" | "xml" | "markdown" | "csv"; structured?: unknown; reasoning?: { text: string; grounding: Array<{ startIndex: number; endIndex: number; points: Array<{ x: number; y: number }> }> }; provider: string; model: string; finishReason?: string; metrics?: object }

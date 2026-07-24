@@ -671,7 +671,8 @@ describe("native shell capability discovery", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("IMG2TXT(1)");
     expect(result.stdout).toContain("WHEN TO USE");
-    expect(result.stdout).toContain("img2txt [OPTIONS] IMAGE");
+    expect(result.stdout).toContain("img2txt [caption] [OPTIONS] IMAGE");
+    expect(result.stdout).toContain("img2txt detect --target TEXT [OPTIONS] IMAGE");
   });
 
   it("documents the generic outbound file bridge", async () => {

@@ -82,7 +82,12 @@ export async function readImage(
     timeoutMs,
     request.signal,
   );
-  request.signal?.throwIfAborted();
+  if (request.signal?.aborted) {
+    if (response instanceof ReadableStream) {
+      await response.cancel(request.signal.reason).catch(() => {});
+    }
+    request.signal.throwIfAborted();
+  }
 
   if (request.stream) {
     if (!(response instanceof ReadableStream)) {
@@ -171,6 +176,7 @@ export function decodeMoondreamStream(
   const encoder = new TextEncoder();
   let buffer = "";
   let closed = false;
+  let pumpStarted = false;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let controller: ReadableStreamDefaultController<Uint8Array>;
 
@@ -187,7 +193,10 @@ export function decodeMoondreamStream(
     }
     closed = true;
     cleanup();
-    void reader.cancel(reason).catch(() => {});
+    const cancellation = reader.cancel(reason).catch(() => {});
+    if (!pumpStarted) {
+      void cancellation.finally(() => reader.releaseLock());
+    }
     controller.error(reason);
   };
   const abort = () => fail(
@@ -210,6 +219,7 @@ export function decodeMoondreamStream(
         }, options.timeoutMs);
       }
 
+      pumpStarted = true;
       void (async () => {
         try {
           while (!closed) {
@@ -257,20 +267,17 @@ function buildMoondreamInput(
   base64: string,
   responseFormat: AiImageReadResponseFormat,
 ): Record<string, unknown> {
-  const maxTokens = normalizePositiveNumber(request.maxTokens)
-    ?? DEFAULT_IMAGE_READING_MAX_TOKENS;
   const input: Record<string, unknown> = {
     task: mode === "ocr" ? "query" : mode,
     image: `data:${normalizeImageMimeType(request.mimeType)};base64,${base64}`,
     stream: request.stream === true,
-    max_tokens: maxTokens,
   };
 
-  const temperature = normalizeBoundedNumber(request.temperature, 0, 2);
-  const topP = normalizeBoundedNumber(request.topP, 0, 1);
-  if (temperature !== undefined) input.temperature = temperature;
-  if (topP !== undefined) input.top_p = topP;
-
+  if (mode === "caption" || mode === "query" || mode === "ocr") {
+    input.max_tokens = request.maxTokens ?? DEFAULT_IMAGE_READING_MAX_TOKENS;
+    if (request.temperature !== undefined) input.temperature = request.temperature;
+    if (request.topP !== undefined) input.top_p = request.topP;
+  }
   if (mode === "caption") {
     input.caption_length = request.captionLength ?? "normal";
   } else if (mode === "query" || mode === "ocr") {
@@ -321,6 +328,59 @@ function validateRequest(
     && mode !== "ocr"
   ) {
     throw new Error("responseFormat is supported only for query and ocr modes");
+  }
+  if (request.captionLength !== undefined && (
+    mode !== "caption"
+    || !["short", "normal", "long"].includes(request.captionLength)
+  )) {
+    throw new Error("captionLength must be short, normal, or long and requires caption mode");
+  }
+  if (
+    request.maxTokens !== undefined
+    && (
+      mode === "point"
+      || mode === "detect"
+      || !Number.isSafeInteger(request.maxTokens)
+      || request.maxTokens < 1
+      || request.maxTokens > 28_672
+    )
+  ) {
+    throw new Error("maxTokens must be an integer from 1 to 28672 for caption, query, or ocr");
+  }
+  if (
+    request.maxObjects !== undefined
+    && (
+      (mode !== "point" && mode !== "detect")
+      || !Number.isSafeInteger(request.maxObjects)
+      || request.maxObjects < 1
+      || request.maxObjects > 500
+    )
+  ) {
+    throw new Error("maxObjects must be an integer from 1 to 500 for point or detect");
+  }
+  if (
+    request.temperature !== undefined
+    && (
+      mode === "point"
+      || mode === "detect"
+      || !Number.isFinite(request.temperature)
+      || request.temperature < 0
+      || request.temperature > 2
+    )
+  ) {
+    throw new Error("temperature must be from 0 to 2 for caption, query, or ocr");
+  }
+  if (
+    request.topP !== undefined
+    && (
+      mode === "point"
+      || mode === "detect"
+      || !Number.isFinite(request.topP)
+      || request.topP < 0
+      || request.topP > 1
+    )
+  ) {
+    throw new Error("topP must be from 0 to 1 for caption, query, or ocr");
   }
 }
 
@@ -710,19 +770,6 @@ function normalizeOptionalText(value: unknown): string | undefined {
 
 function normalizePositiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
-function normalizeBoundedNumber(
-  value: unknown,
-  minimum: number,
-  maximum: number,
-): number | undefined {
-  return typeof value === "number"
-      && Number.isFinite(value)
-      && value >= minimum
-      && value <= maximum
-    ? value
-    : undefined;
 }
 
 function finiteNumber(value: unknown): number | undefined {
