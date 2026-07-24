@@ -237,14 +237,6 @@ function deriveNotificationSource(ctx: KernelContext): NotificationSource {
       processId: ctx.processId,
     };
   }
-  if (ctx.appFrame) {
-    return {
-      kind: "app",
-      packageId: ctx.appFrame.packageId,
-      packageName: ctx.appFrame.packageName,
-      entrypointName: ctx.appFrame.entrypointName,
-    };
-  }
   return { kind: "user" };
 }
 

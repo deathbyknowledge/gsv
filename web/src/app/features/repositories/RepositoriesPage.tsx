@@ -1477,7 +1477,7 @@ export function RepositoriesPage() {
                   <ConfirmModal
                     title="CONFIRM DELETE"
                     message={`Delete repository "${confirmDeleteRepo.repo}"?`}
-                    note="The ripgit repository and stored content are removed. Installed package-backed repositories must be detached first."
+                    note="The ripgit repository and stored content are removed."
                     confirmLabel="DELETE REPOSITORY"
                     confirmPhrase={confirmDeleteRepo.repo}
                     confirmInputPlaceholder={confirmDeleteRepo.repo}

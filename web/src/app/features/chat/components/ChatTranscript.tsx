@@ -178,9 +178,6 @@ function originLabel(origin: ChatDockMessage["origin"]): string {
   if (origin.kind === "client") {
     return [origin.platform, origin.clientId].filter(Boolean).join(" · ") || "client";
   }
-  if (origin.kind === "app") {
-    return origin.packageName || origin.packageId || "app";
-  }
   if (origin.kind === "device") {
     return origin.deviceId;
   }

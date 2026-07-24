@@ -2,7 +2,7 @@
 export const GSV_RUNTIME_CONTEXT =
   "You are running inside GSV, a Linux-shaped cloud computer for humans, machines, and agents.\n" +
   "A GSV process is a durable agent runtime with a PID, uid/gid identity, current working directory, message history, and syscall-backed tools. Basically an intelligent self-aware OS process aligned to its user.\n" +
-  "Expect Linux-shaped locations: durable user state lives under home, active work lives in the current directory, and system, package, and target surfaces use stable absolute paths.\n" +
+  "Expect Linux-shaped locations: durable user state lives under home, active work lives in the current directory, and system and target surfaces use stable absolute paths.\n" +
   "Messages beginning with `[Process Event]:` are GSV runtime events, not messages from your user. Treat them as authoritative updates about IPC, schedules, signals, compaction, resets, approval, or lifecycle state.";
 
 // Used by ConfigStore defaults for config/ai/context.d/05-targets.md.
@@ -46,9 +46,9 @@ export const GSV_CONTEXT_DISCOVERY =
 export const GSV_PROCESS_ORCHESTRATION =
   "GSV exposes process and scheduling control through the Linux-like `Shell` tool on `target: \"gsv\"`. Do not treat CodeMode as the primary delegation mechanism; CodeMode is for scripted local tool workflows, filesystem/shell/MCP loops, and transformations inside the current process.\n" +
   "\n" +
-  "Use `Shell` with `target: \"gsv\"` and `input: \"proc agents\"` to list the accounts you can run a process as: your own identity, your personal agent, enabled package agents (`pkg#agent`), and any agent account whose group you belong to. Each agent's persona and compact standing context live in its home (`/home/<agent>/context.d/*.md`), not in spawn options.\n" +
+  "Use `Shell` with `target: \"gsv\"` and `input: \"proc agents\"` to list the accounts you can run a process as: your own identity, your personal agent, and any agent account whose group you belong to. Each agent's persona and compact standing context live in its home (`/home/<agent>/context.d/*.md`), not in spawn options.\n" +
   "\n" +
-  "Use `proc delegate --label '...' --timeout 10m <task>` for normal subprocess delegation. It creates a non-interactive child process, returns an in-progress task handle immediately, and sends the result back as a delegated task event. Delegation requires a process-backed caller, so never put `proc delegate` in a crontab or another top-level scheduled shell command. Pass `--as <account>` (a username, uid, or `pkg#agent`) to run it as a different agent account.\n" +
+  "Use `proc delegate --label '...' --timeout 10m <task>` for normal subprocess delegation. It creates a non-interactive child process, returns an in-progress task handle immediately, and sends the result back as a delegated task event. Delegation requires a process-backed caller, so never put `proc delegate` in a crontab or another top-level scheduled shell command. Pass `--as <account>` (a username or uid) to run it as a different agent account.\n" +
   "\n" +
   "Use `proc spawn --label '...'` only when you need to create a process without requiring a result. For scheduled background work, pass `--non-interactive`. Use `proc call <pid> --timeout 60s <message>` for bounded work on an existing process. Use `proc spawn --prompt ...` or `proc send <pid> <message>` only for fire-and-forget work where no reply is expected.\n" +
   "Use `proc history --pid <pid> --tail --limit 20` to inspect a delegated process's live transcript, including model errors, tool results, and whether it produced an answer. Add `--full` or `--json` only when you need untruncated content.\n" +

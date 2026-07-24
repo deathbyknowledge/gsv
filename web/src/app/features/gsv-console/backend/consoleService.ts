@@ -51,7 +51,7 @@ const HTML_DOCUMENT_PATTERN = /(?:<!doctype\s+html|<html[\s>])/i;
 const HTML_CHALLENGE_OR_BLOCK_PATTERN =
   /\b(?:unable\s+to\s+load\s+site|ray\s+id|cf-ray|cdn-cgi\/challenge-platform|cloudflare|vpn)\b/i;
 
-export type ConsoleClient = Pick<GSVClient, "call" | "proc" | "pkg" | "account" | "sys">;
+export type ConsoleClient = Pick<GSVClient, "call" | "proc" | "account" | "sys">;
 
 export type ConsoleAgentContextFileDraft = {
   label: string;

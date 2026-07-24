@@ -56,21 +56,6 @@ import { handleNetFetch, normalizeNetFetchTimeoutMs } from "./net";
 import { handleSysBootstrap } from "./sys/bootstrap";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import {
-  handlePkgAdd,
-  handlePkgCheckout,
-  handlePkgCreate,
-  handlePkgInstall,
-  handlePkgList,
-  handlePkgPublicList,
-  handlePkgPublicSet,
-  handlePkgRemoteAdd,
-  handlePkgRemoteList,
-  handlePkgRemoteRemove,
-  handlePkgRemove,
-  handlePkgReviewApprove,
-  handlePkgSync,
-} from "./pkg";
-import {
   handleRepoApply,
   handleRepoCompare,
   handleRepoCreate,
@@ -132,14 +117,6 @@ import {
   handleSchedulerRun,
   handleSchedulerUpdate,
 } from "./scheduler";
-import {
-  AppSyscallError,
-  handleAppAttach,
-  handleAppClose,
-  handleAppDetach,
-  handleAppList,
-  handleAppOpen,
-} from "./apps";
 import {
   getVisibleTarget,
   targetCanHandle,
@@ -323,22 +300,6 @@ async function dispatchNative(
           ...await handleNetFetch(frame.args, ctx, frame.body),
         };
 
-      case "app.open":
-        data = await handleAppOpen(frame.args, ctx);
-        break;
-      case "app.attach":
-        data = await handleAppAttach(frame.args, ctx);
-        break;
-      case "app.list":
-        data = handleAppList(frame.args, ctx);
-        break;
-      case "app.detach":
-        data = await handleAppDetach(frame.args, ctx);
-        break;
-      case "app.close":
-        data = await handleAppClose(frame.args, ctx);
-        break;
-
       case "codemode.run":
         return {
           type: "res",
@@ -394,47 +355,6 @@ async function dispatchNative(
         return errFrame(frame.id, 403, "proc.ipc.deliver is kernel-only");
       case "proc.setidentity":
         return errFrame(frame.id, 403, "proc.setidentity is kernel-only");
-
-      // --- pkg.* ---
-      case "pkg.list":
-        data = handlePkgList(frame.args, ctx);
-        break;
-      case "pkg.add":
-        data = await handlePkgAdd(frame.args, ctx);
-        break;
-      case "pkg.create":
-        data = await handlePkgCreate(frame.args, ctx);
-        break;
-      case "pkg.sync":
-        data = await handlePkgSync(frame.args, ctx);
-        break;
-      case "pkg.checkout":
-        data = await handlePkgCheckout(frame.args, ctx);
-        break;
-      case "pkg.install":
-        data = await handlePkgInstall(frame.args, ctx);
-        break;
-      case "pkg.review.approve":
-        data = handlePkgReviewApprove(frame.args, ctx);
-        break;
-      case "pkg.remove":
-        data = await handlePkgRemove(frame.args, ctx);
-        break;
-      case "pkg.remote.list":
-        data = handlePkgRemoteList(frame.args, ctx);
-        break;
-      case "pkg.remote.add":
-        data = handlePkgRemoteAdd(frame.args, ctx);
-        break;
-      case "pkg.remote.remove":
-        data = handlePkgRemoteRemove(frame.args, ctx);
-        break;
-      case "pkg.public.list":
-        data = await handlePkgPublicList(frame.args, ctx);
-        break;
-      case "pkg.public.set":
-        data = handlePkgPublicSet(frame.args, ctx);
-        break;
 
       // --- repo.* ---
       case "repo.list":
@@ -666,9 +586,6 @@ async function dispatchNative(
   } catch (err) {
     if (ctx.requestSignal?.aborted) {
       return errFrame(frame.id, 499, requestCancelMessage(ctx.requestSignal));
-    }
-    if (err instanceof AppSyscallError) {
-      return errFrame(frame.id, err.status, err.message);
     }
     const message = err instanceof Error ? err.message : String(err);
     return errFrame(frame.id, 500, message);

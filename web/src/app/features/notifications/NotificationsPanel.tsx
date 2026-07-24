@@ -95,9 +95,6 @@ function levelTagTone(level: NotificationLevel): TagTone {
 }
 
 function sourceLabel(notification: NotificationRecord): string {
-  if (notification.source.kind === "app") {
-    return notification.source.packageName || notification.source.entrypointName || "APP";
-  }
   if (notification.source.kind === "process") {
     return notification.source.processId.slice(0, 8) || "PROCESS";
   }

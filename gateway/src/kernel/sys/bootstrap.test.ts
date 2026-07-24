@@ -80,19 +80,19 @@ describe("handleSysBootstrap", () => {
       if (repo.owner === "root" && repo.repo === "gsv" && path === "skills") {
         return {
           kind: "tree",
-          entries: [{ name: "gsv-package-development", type: "tree", mode: "040000", hash: "a" }],
+          entries: [{ name: "browser-target", type: "tree", mode: "040000", hash: "a" }],
         };
       }
-      if (repo.owner === "root" && repo.repo === "gsv" && path === "skills/gsv-package-development") {
+      if (repo.owner === "root" && repo.repo === "gsv" && path === "skills/browser-target") {
         return {
           kind: "tree",
           entries: [{ name: "SKILL.md", type: "blob", mode: "100644", hash: "b" }],
         };
       }
-      if (repo.owner === "root" && repo.repo === "gsv" && path === "skills/gsv-package-development/SKILL.md") {
+      if (repo.owner === "root" && repo.repo === "gsv" && path === "skills/browser-target/SKILL.md") {
         return {
           kind: "file",
-          bytes: new TextEncoder().encode("---\nname: gsv-package-development\ndescription: Package work.\n---\n\n# Package Work\n"),
+          bytes: new TextEncoder().encode("---\nname: browser-target\ndescription: Browser work.\n---\n\n# Browser Work\n"),
           size: 80,
         };
       }
@@ -101,7 +101,7 @@ describe("handleSysBootstrap", () => {
     applyMock.mockResolvedValue({ head: "home123" });
   });
 
-  it("bootstraps root/gsv from the default upstream without seeding builtin packages", async () => {
+  it("bootstraps root/gsv from the default upstream and seeds built-in skills", async () => {
     const ctx = makeContext();
 
     const result = await handleSysBootstrap(undefined, ctx);
@@ -135,8 +135,8 @@ describe("handleSysBootstrap", () => {
         },
         {
           type: "put",
-          path: "skills.d/gsv-package-development/SKILL.md",
-          contentBytes: Array.from(new TextEncoder().encode("---\nname: gsv-package-development\ndescription: Package work.\n---\n\n# Package Work\n")),
+          path: "skills.d/browser-target/SKILL.md",
+          contentBytes: Array.from(new TextEncoder().encode("---\nname: browser-target\ndescription: Browser work.\n---\n\n# Browser Work\n")),
         },
       ],
     );

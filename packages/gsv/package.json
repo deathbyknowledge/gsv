@@ -33,38 +33,6 @@
       "types": "./dist/client.d.ts",
       "default": "./dist/client.js"
     },
-    "./sdk": {
-      "types": "./dist/sdk.d.ts",
-      "default": "./dist/sdk.js"
-    },
-    "./sdk/backend": {
-      "types": "./dist/sdk/backend.d.ts",
-      "default": "./dist/sdk/backend.js"
-    },
-    "./sdk/browser": {
-      "types": "./dist/sdk/browser.d.ts",
-      "default": "./dist/sdk/browser.js"
-    },
-    "./sdk/cli": {
-      "types": "./dist/sdk/cli.d.ts",
-      "default": "./dist/sdk/cli.js"
-    },
-    "./sdk/context": {
-      "types": "./dist/sdk/context.d.ts",
-      "default": "./dist/sdk/context.js"
-    },
-    "./sdk/host": {
-      "types": "./dist/sdk/host.d.ts",
-      "default": "./dist/sdk/host.js"
-    },
-    "./sdk/manifest": {
-      "types": "./dist/sdk/manifest.d.ts",
-      "default": "./dist/sdk/manifest.js"
-    },
-    "./host": {
-      "types": "./dist/host.d.ts",
-      "default": "./dist/host.js"
-    },
     "./package.json": "./package.json"
   },
   "publishConfig": {

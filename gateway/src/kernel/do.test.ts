@@ -99,7 +99,7 @@ describe("Kernel frame bodies", () => {
 
   it("cancels an unfinished request body when a device responds early", async () => {
     const kernel = Object.create(Kernel.prototype) as any;
-    kernel.pendingAppResponses = new Map();
+    kernel.pendingKernelResponses = new Map();
     kernel.devices = {
       get: () => ({ online: true }),
       canHandle: () => true,
@@ -116,7 +116,7 @@ describe("Kernel frame bodies", () => {
     kernel.registerRouteWithExpiry = vi.fn(async () => ({ cancel: vi.fn() }));
     const outgoing = { cancel: vi.fn(async () => {}) };
     kernel.sendWebSocketFrame = vi.fn((_connection: unknown, frame: { id: string }) => {
-      queueMicrotask(() => kernel.pendingAppResponses.get(frame.id)?.({
+      queueMicrotask(() => kernel.pendingKernelResponses.get(frame.id)?.({
         type: "res",
         id: frame.id,
         ok: true,
@@ -151,7 +151,7 @@ describe("Kernel frame bodies", () => {
 
   it("cancels the route and upload when a device request is aborted", async () => {
     const kernel = Object.create(Kernel.prototype) as any;
-    kernel.pendingAppResponses = new Map();
+    kernel.pendingKernelResponses = new Map();
     kernel.devices = {
       get: () => ({ online: true }),
       canHandle: () => true,
@@ -639,7 +639,7 @@ describe("Kernel nested dispatch", () => {
     };
     let route: any = null;
     const kernel = Object.create(Kernel.prototype) as any;
-    kernel.pendingAppResponses = new Map();
+    kernel.pendingKernelResponses = new Map();
     kernel.activeRequests = new Map();
     kernel.cancelledProcessRequests = new Map();
     kernel.connections = new Map([[driver.id, driver]]);
@@ -1440,76 +1440,6 @@ describe("Kernel process signal routing", () => {
       payload: expect.objectContaining({ noticeId: "notice:accepted" }),
     }));
     expect(kernel.runRoutes.delete).toHaveBeenCalledWith(route.runId);
-  });
-});
-
-describe("Kernel package invalidations", () => {
-  it("broadcasts package changes only within their package scope", () => {
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.broadcastToRole = vi.fn();
-    kernel.broadcastToUserUid = vi.fn();
-
-    kernel.applyPostDispatchEffects(
-      { call: "pkg.add", args: {} },
-      { ok: true, data: { package: { scope: { kind: "user", uid: 1000 } } } },
-    );
-    expect(kernel.broadcastToUserUid).toHaveBeenCalledWith(1000, "pkg.changed");
-    expect(kernel.broadcastToRole).not.toHaveBeenCalled();
-
-    kernel.broadcastToUserUid.mockClear();
-    kernel.applyPostDispatchEffects(
-      { call: "pkg.sync", args: {} },
-      { ok: true, data: { packages: [{ scope: { kind: "global" } }] } },
-    );
-    expect(kernel.broadcastToRole).toHaveBeenCalledWith("user", "pkg.changed");
-    expect(kernel.broadcastToUserUid).not.toHaveBeenCalled();
-
-    kernel.broadcastToRole.mockClear();
-    kernel.applyPostDispatchEffects(
-      { call: "sys.bootstrap", args: {} },
-      { ok: true, data: { packages: [] } },
-    );
-    expect(kernel.broadcastToRole).toHaveBeenCalledWith("user", "pkg.changed");
-
-    kernel.broadcastToRole.mockClear();
-    kernel.applyPostDispatchEffects(
-      { call: "pkg.remove", args: {} },
-      { ok: true, data: { package: {} } },
-    );
-    expect(kernel.broadcastToRole).not.toHaveBeenCalled();
-  });
-});
-
-describe("Kernel package app authorization", () => {
-  it("uses account capabilities without elevating from the package manifest", () => {
-    const kernel = Object.create(Kernel.prototype) as any;
-    kernel.auth = {
-      getPasswdByUid: vi.fn(() => ({
-        uid: 1000,
-        gid: 1000,
-        username: "alice",
-        home: "/home/alice",
-      })),
-      resolveGids: vi.fn(() => [1000, 100]),
-    };
-    kernel.caps = { resolve: vi.fn(() => ["fs.read"]) };
-
-    const identity = kernel.buildAppBindingIdentity(
-      {
-        uid: 1000,
-        username: "alice",
-        packageId: "pkg-admin",
-        packageName: "admin",
-        entrypointName: "main",
-        routeBase: "/apps/admin",
-        issuedAt: 1,
-        expiresAt: 2,
-      },
-      ["sys.config.set"],
-    );
-
-    expect(identity?.capabilities).toEqual(["fs.read"]);
-    expect(kernel.caps.resolve).toHaveBeenCalledWith([1000, 100]);
   });
 });
 

@@ -56,19 +56,6 @@ function makeConfig(seed: Record<string, string> = {}) {
 function makeContext(
   fetcher: Fetcher,
   configSeed: Record<string, string> = {},
-  packages: Array<{
-    packageId?: string;
-    manifest: {
-      name?: string;
-      source: {
-        repo: string;
-        ref?: string;
-        subdir?: string;
-        resolvedCommit?: string | null;
-      };
-    };
-    updatedAt?: number;
-  }> = [],
 ): KernelContext {
   const config = makeConfig(configSeed);
   return {
@@ -106,9 +93,6 @@ function makeContext(
         return null;
       },
       getGroupByName: () => null,
-    },
-    packages: {
-      list: () => packages,
     },
   } as unknown as KernelContext;
 }
@@ -249,26 +233,6 @@ describe("repo syscalls", () => {
     expect(ctx.config.get("repos/alice/demo/updated_at")).toBeNull();
     expect(ctx.config.get("repos/alice/demo/description")).toBeNull();
     expect(ctx.config.get("repos/alice/demo/visibility")).toBeNull();
-  });
-
-  it("refuses to delete repositories backing installed packages", async () => {
-    const fetcher = makeFetcher(() => {
-      throw new Error("ripgit should not be called");
-    });
-    const ctx = makeContext(fetcher, {}, [{
-      packageId: "pkg-demo",
-      manifest: {
-        name: "Demo Package",
-        source: {
-          repo: "alice/demo",
-        },
-      },
-    }]);
-
-    await expect(handleRepoDelete({ repo: "alice/demo" }, ctx)).rejects.toThrow(
-      "Repository alice/demo backs installed packages: Demo Package",
-    );
-    expect(fetcher.calls).toHaveLength(0);
   });
 
   it("updates repo visibility metadata", () => {
@@ -456,136 +420,6 @@ describe("repo syscalls", () => {
       repo: "root/gsv",
       path: "README.md",
     }, ctx)).rejects.toThrow("Forbidden: cannot read repo root/gsv");
-  });
-
-  it("allows reads from visible package source repos", async () => {
-    const fetcher = makeFetcher((url) => {
-      expect(url.pathname).toBe("/hyperspace/repos/root/gsv/read");
-      expect(url.searchParams.get("path")).toBe("packages/wiki/src/package.ts");
-      return new Response("export default {}\n", {
-        headers: { "Content-Type": "text/plain" },
-      });
-    });
-    const ctx = makeContext(fetcher, {}, [
-      {
-        manifest: {
-          source: {
-            repo: "root/gsv",
-          },
-        },
-      },
-    ]);
-
-    expect(canReadRepo("root/gsv", ctx)).toBe(true);
-
-    await expect(handleRepoRead({
-      repo: "root/gsv",
-      path: "packages/wiki/src/package.ts",
-    }, ctx)).resolves.toMatchObject({
-      repo: "root/gsv",
-      kind: "file",
-      content: "export default {}\n",
-    });
-  });
-
-  it("lists visible package source repos at their installed source ref", () => {
-    const ctx = makeContext(makeFetcher(() => {
-      throw new Error("ripgit should not be called");
-    }), {}, [
-      {
-        manifest: {
-          name: "Wiki",
-          source: {
-            repo: "root/gsv",
-            ref: "feature/wiki",
-            subdir: "packages/wiki",
-            resolvedCommit: "commit123",
-          },
-        },
-        updatedAt: 200,
-      },
-    ]);
-
-    expect(handleRepoList({}, ctx).repos).toContainEqual({
-      repo: "root/gsv",
-      owner: "root",
-      name: "gsv",
-      kind: "package",
-      writable: false,
-      public: false,
-      ref: "feature/wiki",
-      baseRef: "commit123",
-      sources: [{
-        kind: "package",
-        packageId: undefined,
-        name: "Wiki",
-        subdir: "packages/wiki",
-        ref: "feature/wiki",
-        baseRef: "commit123",
-        updatedAt: 200,
-      }],
-      description: "Wiki",
-      updatedAt: 200,
-    });
-  });
-
-  it("keeps same-repo package source refs separate when listing repos", () => {
-    const ctx = makeContext(makeFetcher(() => {
-      throw new Error("ripgit should not be called");
-    }), {}, [
-      {
-        packageId: "pkg-a",
-        manifest: {
-          name: "Package A",
-          source: {
-            repo: "root/gsv",
-            ref: "feature/a",
-            subdir: "packages/a",
-            resolvedCommit: "commit-a",
-          },
-        },
-        updatedAt: 100,
-      },
-      {
-        packageId: "pkg-b",
-        manifest: {
-          name: "Package B",
-          source: {
-            repo: "root/gsv",
-            ref: "feature/b",
-            subdir: "packages/b",
-            resolvedCommit: "commit-b",
-          },
-        },
-        updatedAt: 200,
-      },
-    ]);
-
-    expect(handleRepoList({}, ctx).repos).toContainEqual(expect.objectContaining({
-      repo: "root/gsv",
-      ref: "feature/a",
-      baseRef: "commit-a",
-      sources: [
-        {
-          kind: "package",
-          packageId: "pkg-a",
-          name: "Package A",
-          subdir: "packages/a",
-          ref: "feature/a",
-          baseRef: "commit-a",
-          updatedAt: 100,
-        },
-        {
-          kind: "package",
-          packageId: "pkg-b",
-          name: "Package B",
-          subdir: "packages/b",
-          ref: "feature/b",
-          baseRef: "commit-b",
-          updatedAt: 200,
-        },
-      ],
-    }));
   });
 
   it("allows reads from public repos owned by another user", async () => {

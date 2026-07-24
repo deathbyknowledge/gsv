@@ -563,7 +563,6 @@ describe("handleConnect", () => {
       expect(result.identity.capabilities).not.toContain("fs.*");
       expect(result.identity.capabilities).not.toContain("shell.exec");
       expect(result.identity.capabilities).not.toContain("sys.token.create");
-      expect(result.identity.capabilities).not.toContain("pkg.install");
       expect(result.identity.capabilities).not.toContain("proc.send");
     }
   });
