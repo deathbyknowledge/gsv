@@ -76,10 +76,11 @@ export async function readImage(
     ?? DEFAULT_IMAGE_READING_TIMEOUT_MS;
   const input = buildMoondreamInput(request, mode, base64, responseFormat);
   request.signal?.throwIfAborted();
-  const response = await withTimeout(
+  const startedAt = Date.now();
+  const response = await awaitMoondreamRun(
     ai.run(MOONDREAM_IMAGE_READING_MODEL, input),
     timeoutMs,
-    `Image reading timed out after ${timeoutMs}ms`,
+    request.signal,
   );
   request.signal?.throwIfAborted();
 
@@ -97,7 +98,7 @@ export async function readImage(
       },
       stream: decodeMoondreamStream(response, {
         signal: request.signal,
-        timeoutMs,
+        timeoutMs: Math.max(1, timeoutMs - (Date.now() - startedAt)),
       }),
     };
   }
@@ -109,6 +110,48 @@ export async function readImage(
   return {
     result: normalizeMoondreamResponse(response, mode, responseFormat, request),
   };
+}
+
+async function awaitMoondreamRun(
+  operation: Promise<unknown>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  let accepted = false;
+  const timed = withTimeout(
+    operation,
+    timeoutMs,
+    `Image reading timed out after ${timeoutMs}ms`,
+  );
+  try {
+    const response = await raceWithAbort(timed, signal);
+    accepted = true;
+    return response;
+  } finally {
+    if (!accepted) {
+      void operation.then((lateResponse) => {
+        if (lateResponse instanceof ReadableStream) {
+          return lateResponse.cancel().catch(() => {});
+        }
+      }, () => {});
+    }
+  }
+}
+
+function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) {
+    return promise;
+  }
+  if (signal.aborted) {
+    return Promise.reject(signal.reason ?? new Error("Image reading cancelled"));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new Error("Image reading cancelled"));
+    signal.addEventListener("abort", abort, { once: true });
+    void promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", abort);
+    });
+  });
 }
 
 export function normalizeImageReadingText(value: unknown): string | null {

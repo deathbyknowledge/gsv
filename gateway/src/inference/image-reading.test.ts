@@ -219,6 +219,30 @@ describe("readImage", () => {
       responseFormat: "json",
     })).rejects.toThrow("structured output");
   });
+
+  it("rejects promptly on cancellation and cancels a late response stream", async () => {
+    let resolveRun!: (value: unknown) => void;
+    const cancel = vi.fn();
+    const controller = new AbortController();
+    const reading = readImage({
+      run: vi.fn(() => new Promise((resolve) => {
+        resolveRun = resolve;
+      })),
+    }, {
+      data: "AQID",
+      mode: "caption",
+      stream: true,
+      signal: controller.signal,
+    });
+    const reason = new Error("cancelled");
+
+    controller.abort(reason);
+    await expect(reading).rejects.toBe(reason);
+    resolveRun(new ReadableStream({ cancel }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(cancel).toHaveBeenCalled();
+  });
 });
 
 describe("decodeMoondreamStream", () => {
