@@ -93,14 +93,10 @@ export type AiConfigResult = {
     transcriptionModel: string;
     transcriptionApiKey: string;
     transcriptionMaxBytes: number;
-    imageReadingProvider: string;
-    imageReadingModel: string;
-    imageReadingApiKey: string;
-    imageReadingInputFormat: "auto" | "chat" | "image";
     imageReadingMaxBytes: number;
     imageReadingMaxTokens: number;
+    imageReadingMaxObjects: number;
     imageReadingTimeoutMs: number;
-    imageReadingPrompt: string;
     imageGenerationProvider: string;
     imageGenerationModel: string;
     imageGenerationApiKey: string;
@@ -284,22 +280,119 @@ export type AiTranscriptionCreateResult = {
   model: string;
 };
 
-export type AiImageReadArgs = {
+export type AiImageReadResponseFormat =
+  | "text"
+  | "json"
+  | "xml"
+  | "markdown"
+  | "csv";
+
+type AiImageReadCommonArgs = {
   image: {
     mimeType: string;
     filename?: string;
   };
-  prompt?: string;
-  model?: string;
-  inputFormat?: "auto" | "chat" | "image";
   maxTokens?: number;
+  temperature?: number;
+  topP?: number;
 };
 
-export type AiImageReadResult = {
+export type AiImageReadArgs =
+  | (AiImageReadCommonArgs & {
+    mode?: "caption";
+    captionLength?: "short" | "normal" | "long";
+    stream?: boolean;
+  })
+  | (AiImageReadCommonArgs & {
+    mode: "query";
+    prompt: string;
+    reasoning?: boolean;
+    responseFormat?: AiImageReadResponseFormat;
+    schema?: Record<string, unknown>;
+    stream?: boolean;
+  })
+  | (AiImageReadCommonArgs & {
+    mode: "ocr";
+    prompt?: string;
+    responseFormat?: AiImageReadResponseFormat;
+    schema?: Record<string, unknown>;
+    stream?: boolean;
+  })
+  | (AiImageReadCommonArgs & {
+    mode: "point";
+    target: string;
+    maxObjects?: number;
+  })
+  | (AiImageReadCommonArgs & {
+    mode: "detect";
+    target: string;
+    maxObjects?: number;
+  });
+
+export type AiImagePoint = {
+  x: number;
+  y: number;
+};
+
+export type AiImageObject = {
+  xMin: number;
+  yMin: number;
+  xMax: number;
+  yMax: number;
+};
+
+export type AiImageReadMetrics = {
+  inputTokens: number;
+  outputTokens: number;
+  prefillTimeMs: number;
+  decodeTimeMs: number;
+  timeToFirstTokenMs: number;
+};
+
+export type AiImageReadReasoning = {
   text: string;
+  grounding: Array<{
+    startIndex: number;
+    endIndex: number;
+    points: AiImagePoint[];
+  }>;
+};
+
+type AiImageReadResultMetadata = {
   provider: string;
   model: string;
+  finishReason?: string;
+  metrics?: AiImageReadMetrics;
+  reasoning?: AiImageReadReasoning;
 };
+
+export type AiImageReadResult =
+  | (AiImageReadResultMetadata & {
+    mode: "caption";
+    text: string;
+    caption: string;
+    captionLength: "short" | "normal" | "long";
+  })
+  | (AiImageReadResultMetadata & {
+    mode: "query" | "ocr";
+    text: string;
+    answer: string;
+    responseFormat: AiImageReadResponseFormat;
+    structured?: unknown;
+  })
+  | (AiImageReadResultMetadata & {
+    mode: "point";
+    points: AiImagePoint[];
+  })
+  | (AiImageReadResultMetadata & {
+    mode: "detect";
+    objects: AiImageObject[];
+  })
+  | (AiImageReadResultMetadata & {
+    mode: "caption" | "query" | "ocr";
+    streamed: true;
+    contentType: "text/plain; charset=utf-8";
+  });
 
 export type AiImageGenerateArgs = {
   prompt: string;

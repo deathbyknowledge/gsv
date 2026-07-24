@@ -32,7 +32,16 @@ const origin = { type: "connection", id: "test" } as const;
 describe("media syscall dispatch", () => {
   it("passes transcription and image input bodies to their handlers", async () => {
     transcriptionCreateMock.mockResolvedValueOnce({ text: "hello" });
-    imageReadMock.mockResolvedValueOnce({ text: "a terminal" });
+    imageReadMock.mockResolvedValueOnce({
+      data: {
+        mode: "caption",
+        text: "a terminal",
+        caption: "a terminal",
+        captionLength: "normal",
+        provider: "workers-ai",
+        model: "moondream",
+      },
+    });
     const audioBody = bodyFromBytes(new Uint8Array([1, 2, 3]));
     const imageBody = bodyFromBytes(new Uint8Array([4, 5, 6]));
 

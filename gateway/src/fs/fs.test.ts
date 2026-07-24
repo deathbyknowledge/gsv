@@ -416,8 +416,7 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     ["config/ai/provider", "workers-ai"],
     ["config/ai/model", "@cf/system/model"],
     ["config/ai/api_key", "sk-system"],
-    ["config/ai/image/read/provider", "workers-ai"],
-    ["config/ai/image/read/model", "@cf/system/vision"],
+    ["config/ai/image/read/max_objects", "150"],
     ["config/ai/speech/provider", "workers-ai"],
     ["users/1000/ai/model_profiles", JSON.stringify({
       version: 1,
@@ -428,8 +427,7 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
           values: {
             "config/ai/provider": "openai",
             "config/ai/model": "gpt-4.1-mini",
-            "config/ai/image/read/provider": "openai",
-            "config/ai/image/read/model": "gpt-4o",
+            "config/ai/image/read/max_tokens": "4096",
             "config/ai/speech/provider": "openai",
             "config/ai/speech/model": "gpt-4o-mini-tts",
           },
@@ -439,7 +437,6 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
       ],
     })],
     ["users/1000/ai/model_profiles/fast-stack/api_key", "sk-profile"],
-    ["users/1000/ai/model_profiles/fast-stack/image/read/api_key", "sk-image"],
     ["users/1000/ai/model_profiles/fast-stack/speech/api_key", "sk-speech"],
   ]);
   let processAiConfig: any = null;
@@ -1600,13 +1597,9 @@ describe("GsvFs Linux-like runtime views", () => {
       "transport_target",
     ]);
     await expect(fs.readdir("/proc/task-alpha/ai/image/read")).resolves.toEqual([
-      "api_key",
-      "input_format",
       "max_bytes",
+      "max_objects",
       "max_tokens",
-      "model",
-      "prompt",
-      "provider",
       "timeout_ms",
     ]);
 
@@ -1627,7 +1620,6 @@ describe("GsvFs Linux-like runtime views", () => {
     await expect(fs.readFile("/proc/task-alpha/ai/provider")).resolves.toBe("openai\n");
     await expect(fs.readFile("/proc/task-alpha/ai/model")).resolves.toBe("gpt-4.1-mini\n");
     await expect(fs.readFile("/proc/task-alpha/ai/api_key")).resolves.toBe("redacted\n");
-    await expect(fs.readFile("/proc/task-alpha/ai/image/read/api_key")).resolves.toBe("redacted\n");
 
     const local = JSON.parse(await fs.readFile("/proc/task-alpha/ai/local.json"));
     expect(local).toMatchObject({
@@ -1638,7 +1630,6 @@ describe("GsvFs Linux-like runtime views", () => {
       },
     });
     expect(local.values).not.toHaveProperty("config/ai/api_key");
-    expect(local.values).not.toHaveProperty("config/ai/image/read/api_key");
 
     const effective = JSON.parse(await fs.readFile("/proc/task-alpha/ai/effective.json"));
     expect(effective.values).toMatchObject({

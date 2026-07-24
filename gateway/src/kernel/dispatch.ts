@@ -488,8 +488,12 @@ async function dispatchNative(
         data = await handleAiTranscriptionCreate(frame.args, ctx, frame.body);
         break;
       case "ai.image.read":
-        data = await handleAiImageRead(frame.args, ctx, frame.body);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleAiImageRead(frame.args, ctx, frame.body),
+        };
       case "ai.image.generate":
         return {
           type: "res",
