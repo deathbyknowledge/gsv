@@ -15,7 +15,6 @@ export { KernelMountBackend } from "./backends/kernel";
 export { ProcessMediaMountBackend } from "./backends/process-media";
 export { isProcessMediaPath } from "../shared/process-media-path";
 export { createAccountHomeBackend } from "./backends/account-home";
-export { createPackageBackend, isPackageMountPath } from "./backends/packages";
 export {
   createProcessSourceBackend,
   commitRepoSourceChanges,
@@ -23,9 +22,6 @@ export {
   discardRepoSourceChanges,
   getRepoSourceStatus,
   isProcessSourcePath,
-  packageSourcePathNameMap,
-  packageSourceRepoPath,
-  packageSourcePathName,
 } from "./backends/process-sources";
 export type {
   RepoSourceCommitResult,

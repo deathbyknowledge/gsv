@@ -186,13 +186,7 @@ async function run(
 }
 
 function makeContext(): KernelContext {
-  return {
-    packages: {
-      list() {
-        return [];
-      },
-    },
-  } as unknown as KernelContext;
+  return {} as KernelContext;
 }
 
 function makeSkillFs(entries: Record<string, string[] | string>): GsvFs {

@@ -1314,28 +1314,27 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        process.store.appendMessage("user", "start in the app", {
-          runId: "run-app",
+        process.store.appendMessage("user", "start in the web client", {
+          runId: "run-client",
           origin: JSON.stringify({
-            kind: "app",
-            packageId: "chat",
-            packageName: "Chat",
-            entrypointName: "main",
-            routeBase: "/apps/chat",
+            kind: "client",
+            connectionId: "conn-1",
+            clientId: "gsv-ui",
+            platform: "browser",
           }),
         });
-        const appContext = await process.buildContextMessages("default");
-        expect(appContext[0].content).toContain(
-          "[Reply destination: automatic to this GSV app.]",
+        const clientContext = await process.buildContextMessages("default");
+        expect(clientContext[0].content).toContain(
+          "[Reply destination: automatic to this GSV client.]",
         );
 
-        process.store.appendMessage("assistant", "app response", { runId: "run-app" });
+        process.store.appendMessage("assistant", "client response", { runId: "run-client" });
         process.store.appendMessage("user", "continue from my phone", {
           runId: "run-device",
           origin: JSON.stringify({ kind: "device", deviceId: "phone" }),
         });
         const deviceContext = await process.buildContextMessages("default");
-        expect(deviceContext.slice(0, appContext.length)).toEqual(appContext);
+        expect(deviceContext.slice(0, clientContext.length)).toEqual(clientContext);
         expect(deviceContext[2].content).toContain(
           "[Reply destination: automatic to this GSV device client.]",
         );

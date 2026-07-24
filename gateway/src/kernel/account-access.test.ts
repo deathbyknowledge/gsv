@@ -23,13 +23,10 @@ describe("account-access", () => {
     getPersonalAgentUid: (ownerUid: number) => (ownerUid === 1000 ? 2000 : null),
     getGroupByGid: (gid: number) => {
       if (gid === 100) return { name: "users", gid: 100, members: ["alice", "bob"] };
-      if (gid === 3000) return { name: "wiki-builder", gid: 3000, members: [] as string[] };
+      if (gid === 3000) return { name: "wiki-builder", gid: 3000, members: ["alice"] };
       return null;
     },
-    getGroupByName: (name: string) => {
-      if (name === "wiki-builder-run") return { name: "wiki-builder-run", gid: 3001, members: ["alice"] };
-      return null;
-    },
+    getGroupByName: () => null,
   };
 
   it("parses home paths", () => {
@@ -37,7 +34,7 @@ describe("account-access", () => {
     expect(homeUsernameFromPath("/etc/passwd")).toBeNull();
   });
 
-  it("authorizes package agents via access group for run-as and home overlay", () => {
+  it("authorizes custom agents via their primary group for run-as and home overlay", () => {
     const target = { uid: 3000, gid: 3000, username: "wiki-builder" };
     expect(canOwnerDelegateRunAs(auth as never, 1000, target)).toBe(true);
     expect(canOwnerRunAsAccount(auth as never, 1000, target, false)).toBe(true);

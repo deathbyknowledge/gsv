@@ -1,14 +1,4 @@
-export type RepositoryKind = "home" | "package" | "user" | "workspace" | "unknown";
-
-export type RepositorySourceSummary = {
-  kind: "package" | "unknown";
-  subdir: string;
-  ref?: string;
-  baseRef?: string;
-  packageId?: string;
-  name?: string;
-  updatedAt?: number;
-};
+export type RepositoryKind = "home" | "user" | "workspace" | "unknown";
 
 export type RepositorySummary = {
   repo: string;
@@ -20,7 +10,6 @@ export type RepositorySummary = {
   public: boolean;
   ref?: string;
   baseRef?: string;
-  sources: RepositorySourceSummary[];
   description?: string;
   updatedAt?: number;
 };

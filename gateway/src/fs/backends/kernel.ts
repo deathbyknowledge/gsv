@@ -14,13 +14,6 @@ import type {
   ProcConversationSegment,
   ScheduleRecord,
 } from "@humansandmachines/gsv/protocol";
-import {
-  packageArtifactPublicBase,
-  visiblePackageScopesForActor,
-  type InstalledPackageRecord,
-  type PackageEntrypoint,
-  type PackageInstallScope,
-} from "../../kernel/packages";
 import type { ProcessRecord } from "../../kernel/processes";
 import {
   PROCESS_AI_CONFIG_KEYS,
@@ -36,7 +29,6 @@ import {
   redactProcessAiConfigValues,
   type ProcessAiModelProfile,
 } from "../../process/ai-config";
-import { packageSourceRepoPath } from "./process-sources";
 import type { MountBackend, ExtendedMountStat } from "../mount";
 import { normalizePath } from "../utils";
 
@@ -884,15 +876,6 @@ export class KernelMountBackend implements MountBackend {
       return this.kernel?.cron?.readUserCrontab(username);
     }
 
-    if (path === "/var/lib/gsv/packages/status") {
-      return renderPackageStatus(this.listVisiblePackages());
-    }
-
-    if (path.startsWith("/var/lib/gsv/packages/info/")) {
-      const file = path.slice("/var/lib/gsv/packages/info/".length);
-      return this.readPackageInfoFile(file);
-    }
-
     if (path === "/var/log/gsv/scheduler") {
       const entries = this.listVisibleSchedules()
         .flatMap((schedule) =>
@@ -973,24 +956,6 @@ export class KernelMountBackend implements MountBackend {
     return false;
   }
 
-  private readPackageInfoFile(file: string): string | undefined {
-    const parsed = parsePackageInfoFile(file);
-    if (!parsed) return undefined;
-
-    const packages = this.listVisiblePackages();
-    const record = packages.find((candidate) => candidate.packageId === parsed.packageId);
-    if (!record) return undefined;
-
-    switch (parsed.kind) {
-      case "manifest":
-        return jsonText(record.manifest);
-      case "refs":
-        return jsonText(buildPackageRefs(record, packages));
-      case "list":
-        return renderPackagePathList(record, packages);
-    }
-  }
-
   private listVisibleSchedules(): ScheduleRecord[] {
     const schedules = this.kernel?.schedules;
     if (!schedules) return [];
@@ -1013,14 +978,6 @@ export class KernelMountBackend implements MountBackend {
     return records;
   }
 
-  private listVisiblePackages(): InstalledPackageRecord[] {
-    const packages = this.kernel?.packages;
-    if (!packages) return [];
-    return packages.list({
-      scopes: visiblePackageScopesForActor(this.identity),
-    });
-  }
-
   private async readVirtual(path: string): Promise<string | undefined> {
     if (path.startsWith("/proc/")) return this.readProc(path);
     if (path.startsWith("/dev/")) return this.readDev(path);
@@ -1036,7 +993,7 @@ export class KernelMountBackend implements MountBackend {
       "/proc", "/dev", "/sys",
       "/sys/config", "/sys/users", "/sys/devices", "/sys/capabilities",
       "/var", "/var/spool", "/var/spool/cron", "/var/log", "/var/log/gsv",
-      "/var/lib", "/var/lib/gsv", "/var/lib/gsv/packages", "/var/lib/gsv/packages/info",
+      "/var/lib", "/var/lib/gsv",
       "/etc/cron.d",
     ];
     if (virtualDirs.includes(path)) return true;
@@ -1263,15 +1220,7 @@ export class KernelMountBackend implements MountBackend {
     if (path === "/var/lib") {
       return ["gsv"];
     }
-    if (path === "/var/lib/gsv") {
-      return ["packages"];
-    }
-    if (path === "/var/lib/gsv/packages") {
-      return ["info", "status"];
-    }
-    if (path === "/var/lib/gsv/packages/info") {
-      return this.listVisiblePackages().flatMap(packageInfoFileNames).sort();
-    }
+    if (path === "/var/lib/gsv") return [];
     if (path === "/var/spool") {
       return ["cron"];
     }
@@ -1369,157 +1318,4 @@ function uniquePrefixes(entries: { key: string }[], strip: string): string[] {
     if (first) seen.add(first);
   }
   return [...seen].sort();
-}
-
-type PackageInfoFileKind = "list" | "manifest" | "refs";
-
-function parsePackageInfoFile(file: string): { packageId: string; kind: PackageInfoFileKind } | null {
-  for (const kind of ["manifest", "refs", "list"] as const) {
-    const suffix = `.${kind}`;
-    if (!file.endsWith(suffix)) continue;
-    const packageId = decodePathSegment(file.slice(0, -suffix.length));
-    return packageId ? { packageId, kind } : null;
-  }
-  return null;
-}
-
-function packageInfoFileBase(record: InstalledPackageRecord): string {
-  return encodePathSegment(record.packageId);
-}
-
-function packageInfoFileNames(record: InstalledPackageRecord): string[] {
-  const base = packageInfoFileBase(record);
-  return [`${base}.list`, `${base}.manifest`, `${base}.refs`];
-}
-
-function renderPackageStatus(records: InstalledPackageRecord[]): string {
-  return records.map(renderPackageStatusStanza).join("\n\n") + (records.length > 0 ? "\n" : "");
-}
-
-function renderPackageStatusStanza(record: InstalledPackageRecord): string {
-  const fields: Array<[string, string | number | boolean | null | undefined]> = [
-    ["Package", record.packageId],
-    ["Name", record.manifest.name],
-    ["Version", record.manifest.version],
-    ["Status", "install ok installed"],
-    ["Enabled", record.enabled],
-    ["Scope", renderPackageScope(record.scope)],
-    ["Runtime", record.manifest.runtime],
-    ["Source", record.manifest.source.repo],
-    ["Source-Ref", record.manifest.source.ref],
-    ["Source-Subdir", record.manifest.source.subdir],
-    ["Resolved-Commit", record.manifest.source.resolvedCommit ?? null],
-    ["Artifact", record.artifact.hash],
-    ["Review-Required", record.reviewRequired],
-    ["Review-Approved-At", record.reviewedAt ?? null],
-    ["Installed-At", record.installedAt],
-    ["Updated-At", record.updatedAt],
-    ["Description", record.manifest.description],
-  ];
-
-  return fields.flatMap(([name, value]) => renderStanzaField(name, value) ?? []).join("\n");
-}
-
-function renderStanzaField(
-  name: string,
-  value: string | number | boolean | null | undefined,
-): string | null {
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
-  const text = typeof value === "boolean" ? (value ? "yes" : "no") : String(value);
-  const [first, ...rest] = text.split("\n");
-  return [
-    `${name}: ${first}`,
-    ...rest.map((line) => ` ${line.length > 0 ? line : "."}`),
-  ].join("\n");
-}
-
-function buildPackageRefs(record: InstalledPackageRecord, records: InstalledPackageRecord[]): unknown {
-  return {
-    packageId: record.packageId,
-    scope: record.scope,
-    enabled: record.enabled,
-    source: record.manifest.source,
-    artifact: record.artifact,
-    grants: record.grants ?? null,
-    review: {
-      required: record.reviewRequired,
-      approvedAt: record.reviewedAt ?? null,
-    },
-    installedAt: record.installedAt,
-    updatedAt: record.updatedAt,
-    paths: packagePaths(record, records),
-  };
-}
-
-function renderPackagePathList(record: InstalledPackageRecord, records: InstalledPackageRecord[]): string {
-  const paths = packagePaths(record, records);
-  return [
-    ...paths.info,
-    paths.source,
-    ...paths.commands,
-    ...paths.publicFiles,
-  ].filter(Boolean).join("\n") + "\n";
-}
-
-function packagePaths(record: InstalledPackageRecord, records: InstalledPackageRecord[]): {
-  info: string[];
-  source: string;
-  commands: string[];
-  publicFiles: string[];
-} {
-  const infoBase = `/var/lib/gsv/packages/info/${packageInfoFileBase(record)}`;
-  return {
-    info: [`${infoBase}.list`, `${infoBase}.manifest`, `${infoBase}.refs`],
-    source: packageSourceRepoPath(record),
-    commands: packageCommandPaths(record, records),
-    publicFiles: packagePublicFilePaths(record),
-  };
-}
-
-function packageCommandPaths(record: InstalledPackageRecord, records: InstalledPackageRecord[]): string[] {
-  if (!record.enabled) return [];
-  const owners = packageCommandOwners(records);
-  const key = packageRecordKey(record);
-  return record.manifest.entrypoints
-    .filter(isPackageCommandEntrypoint)
-    .map((entrypoint) => entrypoint.command.trim())
-    .filter((command) => owners.get(command) === key)
-    .map((command) => `/usr/local/bin/${command}`)
-    .sort();
-}
-
-function packageCommandOwners(records: InstalledPackageRecord[]): Map<string, string> {
-  const owners = new Map<string, string>();
-  for (const record of records) {
-    if (!record.enabled) continue;
-    for (const entrypoint of record.manifest.entrypoints) {
-      if (!isPackageCommandEntrypoint(entrypoint)) continue;
-      const command = entrypoint.command.trim();
-      if (!owners.has(command)) {
-        owners.set(command, packageRecordKey(record));
-      }
-    }
-  }
-  return owners;
-}
-
-function packagePublicFilePaths(record: InstalledPackageRecord): string[] {
-  const publicFiles = record.artifact.publicFilePaths ?? [];
-  if (publicFiles.length === 0) return [];
-  const base = packageArtifactPublicBase(record.artifact.hash);
-  return publicFiles.map((path) => `${base}/${path.replace(/^\/+/, "")}`).sort();
-}
-
-function isPackageCommandEntrypoint(entrypoint: PackageEntrypoint): entrypoint is PackageEntrypoint & { command: string } {
-  return entrypoint.kind === "command" && typeof entrypoint.command === "string" && entrypoint.command.trim().length > 0;
-}
-
-function packageRecordKey(record: InstalledPackageRecord): string {
-  return `${record.packageId}\0${renderPackageScope(record.scope)}`;
-}
-
-function renderPackageScope(scope: PackageInstallScope): string {
-  return scope.kind === "user" ? `user:${scope.uid}` : "global";
 }

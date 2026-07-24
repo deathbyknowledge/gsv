@@ -197,7 +197,7 @@ describe("ConfigStore", () => {
     expect(runtimeFacts).toContain("`~` resolves to the current program home");
 
     // Per-agent persona/context now lives in account homes, not in config.
-    for (const profile of ["init", "task", "review", "cron", "mcp", "app"]) {
+    for (const profile of ["init", "task", "review", "cron", "mcp"]) {
       expect(SYSTEM_CONFIG_DEFAULTS[`config/ai/profile/${profile}/context.d/00-role.md`]).toBeUndefined();
     }
   });

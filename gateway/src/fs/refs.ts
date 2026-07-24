@@ -5,7 +5,6 @@ import type { CronFileService } from "../kernel/crontab";
 import type { DeviceRegistry } from "../kernel/devices";
 import type { ProcessRegistry } from "../kernel/processes";
 import type { ConversationRegistry } from "../kernel/conversations";
-import type { PackageStore } from "../kernel/packages";
 import type { RequestFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
 import type { ArgsOf, ResultOf } from "../syscalls";
@@ -67,7 +66,6 @@ export type KernelRefs = {
   devices: DeviceRegistry;
   caps: CapabilityStore;
   config: ConfigStore;
-  packages?: PackageStore;
   cron?: CronFileService;
   schedules?: ScheduleViewStore;
   processRequest?: ProcessViewRequest;

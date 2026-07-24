@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(14);
+    expect(KERNEL_MIGRATIONS).toHaveLength(15);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -87,6 +87,10 @@ describe("kernel schema migrations", () => {
     expect(KERNEL_MIGRATIONS[13]).toMatchObject({
       id: 14,
       name: "add_adapter_ingress_delivery_id",
+    });
+    expect(KERNEL_MIGRATIONS[14]).toMatchObject({
+      id: 15,
+      name: "remove_package_runtime",
     });
   });
 
@@ -251,6 +255,23 @@ describe("kernel schema migrations", () => {
     expect(normalizedStatements()).toContain(
       "ALTER TABLE adapter_ingress_receipts ADD COLUMN provider_delivery_id TEXT",
     );
+  });
+
+  it("removes package runtime state and keeps process signal watches", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain("DROP TABLE app_session_client_keys");
+    expect(statements).toContain("DROP TABLE app_session_clients");
+    expect(statements).toContain("DROP TABLE app_sessions");
+    expect(statements).toContain("DROP TABLE packages");
+    expect(statements).toContain(
+      "DELETE FROM group_capabilities WHERE capability = 'app.*' OR capability = 'pkg.*' OR capability LIKE 'pkg.%'",
+    );
+    expect(statements.some((statement) => (
+      statement.startsWith("CREATE TABLE signal_watches")
+      && statement.includes("target_process_id TEXT NOT NULL")
+      && !statement.includes("package_id")
+      && !statement.includes("app_session_id")
+    ))).toBe(true);
   });
 
   it("includes current indexes owned by the kernel stores", () => {

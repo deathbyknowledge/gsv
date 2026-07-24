@@ -203,12 +203,10 @@ export type GsvClientOptions = GsvConnectOptions & {
 export type GsvAccountNamespace = GsvClientNamespaces["account"];
 export type GsvAdapterNamespace = GsvClientNamespaces["adapter"];
 export type GsvAiNamespace = GsvClientNamespaces["ai"];
-export type GsvAppNamespace = GsvClientNamespaces["app"];
 export type GsvCodeModeNamespace = GsvClientNamespaces["codemode"];
 export type GsvFsNamespace = GsvClientNamespaces["fs"];
 export type GsvNetNamespace = never;
 export type GsvNotificationNamespace = GsvClientNamespaces["notification"];
-export type GsvPkgNamespace = GsvClientNamespaces["pkg"];
 export type GsvProcNamespace = GsvClientNamespaces["proc"];
 export type GsvRepoNamespace = GsvClientNamespaces["repo"];
 export type GsvSchedNamespace = GsvClientNamespaces["sched"];
@@ -258,11 +256,6 @@ const SYSCALL_NAMES = [
   "fs.copy",
   "fs.transfer.stat",
   "shell.exec",
-  "app.open",
-  "app.attach",
-  "app.list",
-  "app.detach",
-  "app.close",
   "codemode.exec",
   "codemode.run",
   "proc.spawn",
@@ -294,19 +287,6 @@ const SYSCALL_NAMES = [
   "proc.conversation.generation.manifest",
   "proc.reset",
   "proc.setidentity",
-  "pkg.list",
-  "pkg.add",
-  "pkg.create",
-  "pkg.sync",
-  "pkg.checkout",
-  "pkg.install",
-  "pkg.review.approve",
-  "pkg.remove",
-  "pkg.remote.list",
-  "pkg.remote.add",
-  "pkg.remote.remove",
-  "pkg.public.list",
-  "pkg.public.set",
   "repo.list",
   "repo.create",
   "repo.refs",

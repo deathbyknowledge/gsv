@@ -8,7 +8,6 @@ import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
 import { seedRepoSkillsToHome } from "./skills-seed";
 import { ensurePersonalAgent } from "../agents";
-import { provisionEnabledPackagesForCaller } from "../package-agents";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -341,13 +340,6 @@ export async function handleSysSetup(
 
     await timeSetupStep(timings, "provision-personal-agent", async () => {
       await ensurePersonalAgent(ctx, processIdentity, agentName);
-    });
-
-    await timeSetupStep(timings, "provision-package-agents", async () => {
-      await provisionEnabledPackagesForCaller(
-        { ...ctx, identity: bootstrapIdentity },
-        ctx.packages.list({ enabled: true }),
-      );
     });
 
     const rootShadow = auth.getShadowByUsername("root");
