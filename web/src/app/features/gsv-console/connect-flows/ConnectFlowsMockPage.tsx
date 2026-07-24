@@ -7,7 +7,6 @@ import type { ConnectFlowDef } from "./connectFlowTypes";
 import { machineConnectFlow } from "./machineConnectMock";
 import { messengerConnectFlow } from "./messengerConnectMock";
 import { integrationConnectFlow } from "./integrationConnectMock";
-import { applicationConnectFlow } from "./applicationConnectMock";
 import "../list-template/ListTemplateMockPage.css";
 import "./ConnectFlowsMockPage.css";
 
@@ -15,7 +14,6 @@ const FLOWS: readonly ConnectFlowDef[] = [
   machineConnectFlow,
   messengerConnectFlow,
   integrationConnectFlow,
-  applicationConnectFlow,
 ];
 
 /** Standalone mock of the CONNECT-NEW flows — reachable at /connect-flows with

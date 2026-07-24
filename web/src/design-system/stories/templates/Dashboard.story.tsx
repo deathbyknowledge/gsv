@@ -33,7 +33,7 @@ const story: Story = {
           <WireCol grow={1} gap={8}>
             <WireBox label="fleet · header" h={24} tone="muted" />
             <WireRepeat count={4} h={30} label="target / integration row" />
-            <WireBox label="applications · header" h={24} tone="muted" />
+            <WireBox label="integrations · header" h={24} tone="muted" />
             <WireRepeat count={2} h={30} label="application row" />
           </WireCol>
         </WireRow>

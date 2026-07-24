@@ -13,7 +13,6 @@ const story: Story = {
           <Tile label="MACHINES" glyph="machines" />
           <Tile label="MESSENGERS" glyph="messengers" />
           <Tile label="INTEGRATIONS" glyph="integrations" />
-          <Tile label="APPLICATIONS" glyph="applications" />
         </div>
       </div>
       <div class="ds-cell">

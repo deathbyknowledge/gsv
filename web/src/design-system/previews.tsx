@@ -12,7 +12,6 @@ import type {
   ConsoleConfigEntry,
   ConsoleMcpServer,
   ConsoleOverviewData,
-  ConsolePackage,
   ConsoleProcess,
   ConsoleTarget,
 } from "../app/features/gsv-console/domain/consoleModels";
@@ -183,7 +182,7 @@ function EditorPreview() {
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
 // SettingsOverviewDashboard is pure/prop-driven. Build a representative
 // ConsoleOverviewData so every panel (Ship / Crew / Models & Tasks / Fleet /
-// Applications) renders populated. No gateway involved.
+// integrations) renders populated. No gateway involved.
 const MOCK_ACCOUNTS: ConsoleAccount[] = [
   { uid: 1000, username: "jessicat", displayName: "Jessica", relation: "self", runnable: false, gecos: "", capabilities: [] },
   { uid: 1001, username: "aria", displayName: "ARIA", relation: "personal-agent", runnable: true, gecos: "", capabilities: [] },
@@ -237,17 +236,6 @@ const MOCK_MCP_SERVERS: ConsoleMcpServer[] = [
   },
 ];
 
-const MOCK_PACKAGES: ConsolePackage[] = [
-  {
-    packageId: "notes", name: "notes", description: "Notebook application", version: "1.0.0",
-    runtime: "web-ui", enabled: true, scopeKind: "user", scopeUid: 1000, sourceRepo: "",
-    sourceRef: "", sourceSubdir: "", sourcePublic: true, reviewRequired: false, reviewApprovedAt: null,
-    reviewPending: false, installedAt: null, updatedAt: null, bindingNames: [], entrypoints: [],
-    uiEntrypoints: [{ name: "main", kind: "web", description: "", route: "/notes", command: "", syscalls: [] }],
-    profiles: [],
-  },
-];
-
 const MOCK_CONFIG: ConsoleConfigEntry[] = [
   { key: "config/server/name", value: "gsv-prime", redacted: false },
   { key: "config/server/timezone", value: "UTC", redacted: false },
@@ -260,7 +248,6 @@ const MOCK_OVERVIEW_DATA: ConsoleOverviewData = {
   loadedAt: 0,
   processes: MOCK_PROCESSES,
   targets: MOCK_TARGETS,
-  packages: MOCK_PACKAGES,
   accounts: MOCK_ACCOUNTS,
   adapterInventory: MOCK_ADAPTER_INVENTORY,
   adapters: [MOCK_ADAPTER_ACCOUNT],

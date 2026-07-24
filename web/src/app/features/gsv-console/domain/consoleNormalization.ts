@@ -11,10 +11,6 @@ import type {
   ConsoleMcpTransport,
   ConsoleOverviewCounts,
   ConsoleOverviewData,
-  ConsolePackage,
-  ConsolePackageEntrypoint,
-  ConsolePackageProfile,
-  ConsolePackageRuntime,
   ConsoleProcess,
   ConsoleProcessState,
   ConsoleTarget,
@@ -45,19 +41,6 @@ export function normalizeTargetsPayload(payload: unknown): ConsoleTarget[] {
         return left.online ? -1 : 1;
       }
       return left.label.localeCompare(right.label);
-    });
-}
-
-export function normalizePackagesPayload(payload: unknown): ConsolePackage[] {
-  const record = asRecord(payload);
-  return asArray(record?.packages)
-    .map(normalizePackage)
-    .filter((entry): entry is ConsolePackage => entry !== null)
-    .sort((left, right) => {
-      if (left.enabled !== right.enabled) {
-        return left.enabled ? -1 : 1;
-      }
-      return left.name.localeCompare(right.name);
     });
 }
 
@@ -130,7 +113,6 @@ export function normalizeIdentityLinksPayload(payload: unknown): ConsoleIdentity
 export function buildConsoleOverviewData(input: {
   processes: unknown;
   targets: unknown;
-  packages: unknown;
   accounts: unknown;
   adapters: unknown[];
   mcpServers: unknown;
@@ -142,7 +124,6 @@ export function buildConsoleOverviewData(input: {
     loadedAt: input.loadedAt ?? Date.now(),
     processes: normalizeProcessesPayload(input.processes),
     targets: normalizeTargetsPayload(input.targets),
-    packages: normalizePackagesPayload(input.packages),
     accounts: normalizeAccountsPayload(input.accounts),
     adapterInventory,
     adapters: adapterInventory.flatMap((adapter) => adapter.accounts),
@@ -158,9 +139,6 @@ export function summarizeConsoleOverview(data: ConsoleOverviewData): ConsoleOver
     queuedProcesses: data.processes.filter((entry) => entry.queuedCount > 0 || entry.state === "queued").length,
     targets: data.targets.length,
     onlineTargets: data.targets.filter((entry) => entry.online).length,
-    packages: data.packages.length,
-    enabledPackages: data.packages.filter((entry) => entry.enabled).length,
-    reviewPendingPackages: data.packages.filter((entry) => entry.reviewPending).length,
     accounts: data.accounts.length,
     runnableAccounts: data.accounts.filter((entry) => entry.runnable).length,
     adapters: data.adapterInventory.length,
@@ -243,86 +221,6 @@ function normalizeTarget(value: unknown): ConsoleTarget | null {
     online: record.online === true,
     lastSeenAt: numberOrNull(record.lastSeenAt),
     implements: asArray(record.implements).map(stringOrEmpty).filter(Boolean).sort(),
-  };
-}
-
-function normalizePackage(value: unknown): ConsolePackage | null {
-  const record = asRecord(value);
-  const packageId = nonEmptyString(record?.packageId);
-  if (!record || !packageId) {
-    return null;
-  }
-
-  const source = asRecord(record.source);
-  const scope = asRecord(record.scope);
-  const review = asRecord(record.review);
-  const entrypoints = asArray(record.entrypoints).map(normalizeEntrypoint).filter((entry): entry is ConsolePackageEntrypoint => entry !== null);
-  const profiles = asArray(record.profiles).map(normalizePackageProfile).filter((entry): entry is ConsolePackageProfile => entry !== null);
-  const runtime = normalizePackageRuntime(record.runtime);
-
-  return {
-    packageId,
-    name: nonEmptyString(record.name) ?? packageId,
-    description: stringOrEmpty(record.description),
-    version: stringOrEmpty(record.version),
-    runtime,
-    enabled: record.enabled === true,
-    scopeKind: scope?.kind === "global" || scope?.kind === "user" ? scope.kind : "unknown",
-    scopeUid: numberOrNull(scope?.uid),
-    sourceRepo: stringOrEmpty(source?.repo),
-    sourceRef: stringOrEmpty(source?.ref),
-    sourceSubdir: stringOrEmpty(source?.subdir),
-    sourcePublic: source?.public === true,
-    reviewRequired: review?.required === true,
-    reviewApprovedAt: numberOrNull(review?.approvedAt),
-    reviewPending: review?.required === true && numberOrNull(review?.approvedAt) === null,
-    installedAt: numberOrNull(record.installedAt),
-    updatedAt: numberOrNull(record.updatedAt),
-    bindingNames: asArray(record.bindingNames).map(stringOrEmpty).filter(Boolean).sort(),
-    entrypoints,
-    uiEntrypoints: entrypoints.filter((entry) => entry.kind === "ui"),
-    profiles,
-  };
-}
-
-function normalizeEntrypoint(value: unknown): ConsolePackageEntrypoint | null {
-  const record = asRecord(value);
-  const name = nonEmptyString(record?.name);
-  const kind = nonEmptyString(record?.kind);
-  if (!record || !name || !kind) {
-    return null;
-  }
-
-  return {
-    name,
-    kind,
-    description: stringOrEmpty(record.description),
-    route: stringOrEmpty(record.route),
-    command: stringOrEmpty(record.command),
-    syscalls: asArray(record.syscalls).map(stringOrEmpty).filter(Boolean).sort(),
-  };
-}
-
-function normalizePackageProfile(value: unknown): ConsolePackageProfile | null {
-  const record = asRecord(value);
-  const name = nonEmptyString(record?.name);
-  if (!record || !name) {
-    return null;
-  }
-
-  const account = asRecord(record.account);
-  return {
-    name,
-    displayName: nonEmptyString(record.displayName) ?? name,
-    description: stringOrEmpty(record.description),
-    icon: stringOrEmpty(record.icon),
-    capabilities: asArray(record.capabilities).map(stringOrEmpty).filter(Boolean).sort(),
-    account: {
-      runAs: stringOrEmpty(account?.runAs),
-      username: stringOrEmpty(account?.username),
-      provisioned: typeof account?.provisioned === "boolean" ? account.provisioned : null,
-      runnable: typeof account?.runnable === "boolean" ? account.runnable : null,
-    },
   };
 }
 
@@ -467,10 +365,6 @@ function normalizeTargetKind(deviceId: string, platform: string): ConsoleTargetK
   }
   if (normalizedPlatform) return "native-device";
   return "unknown";
-}
-
-function normalizePackageRuntime(value: unknown): ConsolePackageRuntime {
-  return value === "dynamic-worker" || value === "node" || value === "web-ui" ? value : "unknown";
 }
 
 function normalizeAccountRelation(value: unknown): ConsoleAccountRelation {

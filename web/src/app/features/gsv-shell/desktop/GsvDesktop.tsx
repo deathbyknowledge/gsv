@@ -79,7 +79,7 @@ function canCreateObject(id: DesktopObjectId): boolean {
   // Messengers are intentionally absent — they always list Telegram + Discord,
   // and connecting one is done from its platform card, not a generic "connect
   // new" card (matches the rail drawer convention).
-  return id === "machines" || id === "integrations" || id === "applications";
+  return id === "machines" || id === "integrations";
 }
 
 function addObjectLabel(id: DesktopObjectId): string {
@@ -89,7 +89,7 @@ function addObjectLabel(id: DesktopObjectId): string {
   if (id === "integrations") {
     return "NEW INTEGRATION";
   }
-  return "NEW APPLICATION";
+  return "NEW INTEGRATION";
 }
 
 function inventoryTitle(state: DesktopInventoryState, totalObjects: number): string {
