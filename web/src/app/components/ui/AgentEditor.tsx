@@ -54,6 +54,9 @@ export interface AgentEditorProps {
   behaviorReadOnly?: boolean;
   filesReadOnly?: boolean;
   initialTab?: AgentEditorTab;
+  /** Names/usernames already in use — a new agent whose name collides is blocked
+   *  (case-insensitive). Exclude the agent being edited when in "manage" mode. */
+  reservedNames?: readonly string[];
   onTabChange?: (tab: AgentEditorTab) => void;
   onCreate?: (draft: AgentEditorDraft) => Promise<void> | void;
   onSave?: (draft: AgentEditorDraft) => Promise<void> | void;
@@ -504,6 +507,14 @@ export function AgentEditor(props: AgentEditorProps) {
   const nameDisplay = name || "NEW AGENT";
   const roleDisplay = role || "UNASSIGNED ROLE";
 
+  // A new agent whose name collides with an existing name/username is blocked
+  // (case-insensitive). Compared inline to keep this shared component free of
+  // feature imports; the caller supplies the reserved list.
+  const nameNeedle = name.trim().toLowerCase();
+  const duplicateName = nameNeedle.length > 0 &&
+    (props.reservedNames ?? []).some((reserved) => reserved.trim().toLowerCase() === nameNeedle);
+  const createReady = name.trim().length > 0 && !duplicateName;
+
   // ---- handlers ----
   const onContent = (e: Event) => {
     if (!filesReadOnly) {
@@ -688,6 +699,8 @@ export function AgentEditor(props: AgentEditorProps) {
                       size="large"
                       label="NAME"
                       requirement="required"
+                      status={duplicateName ? "error" : "none"}
+                      message={duplicateName ? "That name is already in use" : ""}
                       readonly={identityReadOnly}
                     />
                   </div>
@@ -795,7 +808,7 @@ export function AgentEditor(props: AgentEditorProps) {
                         variant="primary"
                         label={pendingAction === "create" ? "CREATING" : "CREATE AGENT"}
                         onClick={onCreate}
-                        disabled={(identityReadOnly && behaviorReadOnly) || pendingAction !== null}
+                        disabled={(identityReadOnly && behaviorReadOnly) || pendingAction !== null || !createReady}
                       />
                     ) : (
                       <div style="display:flex;gap:12px;">

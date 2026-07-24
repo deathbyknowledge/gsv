@@ -102,8 +102,20 @@ export function usePackageImportFlow({ knownPackages }: UsePackageImportFlowOpti
     return await enableMutation.mutateAsync(importedPackage);
   };
 
+  // Block importing the exact same source again (repo + ref + subdir) — that
+  // package already exists. Different subdirs/refs of the same repo are distinct
+  // packages, so compare the full triple. The gateway stays authoritative.
+  const normalizedDraft = normalizePackageImportDraft(draft);
+  const duplicateSource =
+    normalizedDraft.source.length > 0 &&
+    knownPackages.some((pkg) =>
+      pkg.sourceRepo.trim().toLowerCase() === normalizedDraft.source.toLowerCase() &&
+      pkg.sourceRef.trim().toLowerCase() === normalizedDraft.ref.toLowerCase() &&
+      pkg.sourceSubdir.trim().toLowerCase() === normalizedDraft.subdir.toLowerCase());
+
   return {
     draft,
+    duplicateSource,
     enableImportedPackage,
     enableMutation,
     importApplication,

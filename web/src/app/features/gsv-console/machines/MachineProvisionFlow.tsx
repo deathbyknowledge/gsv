@@ -18,6 +18,7 @@ import type { IssuedMachineNodeToken } from "../backend/consoleService";
 import { ConnectFlowShell } from "../connect-flows/ConnectFlowShell";
 import type { ConnectFlowDef } from "../connect-flows/connectFlowTypes";
 import type { ConsoleTarget } from "../domain/consoleModels";
+import { isNameTaken } from "../domain/uniqueName";
 import { useConsoleTargets, useCreateMachineNodeToken } from "../hooks/useConsoleData";
 import {
   MACHINE_PLATFORM_OPTIONS,
@@ -160,8 +161,8 @@ export function MachineProvisionFlow({
   const createToken = useCreateMachineNodeToken();
   const [step, setStep] = useState<MachineProvisionStep>("platform");
   const [platform, setPlatform] = useState<MachineProvisionPlatform>("mac");
-  const [machineName, setMachineName] = useState(defaultMachineName("mac"));
-  const [deviceId, setDeviceId] = useState(machineDeviceIdFromName(defaultMachineName("mac")));
+  const [machineName, setMachineName] = useState("");
+  const [deviceId, setDeviceId] = useState("");
   const [expiresDays, setExpiresDays] = useState("30");
   const [nameTouched, setNameTouched] = useState(false);
   const [deviceIdTouched, setDeviceIdTouched] = useState(false);
@@ -182,7 +183,12 @@ export function MachineProvisionFlow({
   const knownTarget = targets.targets.find((target) => target.deviceId === deviceId.trim()) ?? null;
   const expires = normalizeExpiresDays(expiresDays);
   const validDeviceId = parseDeviceId(deviceId);
-  const detailsReady = machineName.trim().length > 0 && validDeviceId !== null;
+  // Block provisioning a machine whose display name or device-id already exists
+  // (the gateway is authoritative, but pre-check inline so the user sees it).
+  const nameTaken = isNameTaken(targets.targets.map((target) => target.label), machineName);
+  const deviceIdTaken = deviceId.trim().length > 0 && knownTarget !== null;
+  const detailsReady =
+    machineName.trim().length > 0 && validDeviceId !== null && !nameTaken && !deviceIdTaken;
   const release = snapshot.server?.release ?? "dev";
   const installCommand = buildMachineInstallCommand(platform, release);
   const extensionDownloadUrl = browserExtensionDownloadUrl(release);
@@ -244,14 +250,9 @@ export function MachineProvisionFlow({
   };
 
   const selectPlatform = (nextPlatform: MachineProvisionPlatform) => {
+    // Name/device-id are the user's to type (placeholder only) — don't seed a
+    // default when the platform changes.
     setPlatform(nextPlatform);
-    if (!nameTouched) {
-      const nextName = defaultMachineName(nextPlatform);
-      setMachineName(nextName);
-      if (!deviceIdTouched) {
-        setDeviceId(machineDeviceIdFromName(nextName));
-      }
-    }
     resetToken();
   };
 
@@ -386,10 +387,13 @@ export function MachineProvisionFlow({
                 label={isBrowserTarget ? "BROWSER NAME" : "MACHINE NAME"}
                 info="A friendly name so you can spot this machine in your list."
                 value={machineName}
-                placeholder={isBrowserTarget ? "Chrome" : "Studio MacBook"}
+                placeholder={defaultMachineName(platform)}
                 clearable
-                status={machineName.trim() ? "success" : "warning"}
-                message={machineName.trim() ? "Display label ready" : `${isBrowserTarget ? "Browser" : "Machine"} name required`}
+                requirement="required"
+                status={nameTaken ? "error" : machineName.trim() ? "success" : "none"}
+                message={nameTaken
+                  ? `That ${isBrowserTarget ? "browser" : "machine"} name is already in use`
+                  : machineName.trim() ? "Display label ready" : ""}
                 onChange={updateMachineName}
               />
               <TextInput
@@ -397,12 +401,15 @@ export function MachineProvisionFlow({
                 label="DEVICE ID"
                 info="The unique id that identifies this machine. It's filled in from the name — leave it as-is unless you need to change it."
                 value={deviceId}
-                placeholder={isBrowserTarget ? "chrome" : "studio-macbook"}
+                placeholder={machineDeviceIdFromName(defaultMachineName(platform))}
                 clearable
-                status={validDeviceId ? "success" : "warning"}
-                message={validDeviceId
+                requirement="required"
+                status={deviceIdTaken ? "error" : validDeviceId ? "success" : deviceId.trim() ? "error" : "none"}
+                message={deviceIdTaken
+                  ? "That device id is already in use"
+                  : validDeviceId
                   ? (isBrowserTarget ? "Use this exact value in the extension" : "Used by CLI and routing")
-                  : deviceId.trim() ? DEVICE_ID_FORMAT_DESCRIPTION : "Device id required"}
+                  : deviceId.trim() ? DEVICE_ID_FORMAT_DESCRIPTION : ""}
                 onChange={updateDeviceId}
               />
               <TextInput

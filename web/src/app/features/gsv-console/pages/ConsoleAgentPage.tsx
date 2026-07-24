@@ -336,6 +336,7 @@ function NewAgentEditorSurface({
             avatarSrc={draftAvatar}
             avatarCover
             containerWidth={width || undefined}
+            reservedNames={accounts.flatMap((account) => [account.displayName, account.username])}
             initialRole="AGENT"
             initialDescription=""
             initialApprovalPolicy={defaultApprovalPolicy}
