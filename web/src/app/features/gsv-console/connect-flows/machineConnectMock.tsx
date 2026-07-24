@@ -1,5 +1,6 @@
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
+import { CopyGlyph } from "../../../components/ui/lineGlyphs";
 import { ListRow } from "../../../components/ui/ListRow";
 import { Spinner } from "../../../components/ui/Spinner";
 import { Tag } from "../../../components/ui/Tag";
@@ -35,7 +36,7 @@ function CommandBlock({ title, meta, value }: { title: string; meta: string; val
         <span class="gsv-cf-cmd-title gsv-sublabel">{title}</span>
         <span class="gsv-cf-cmd-meta gsv-sublabel">{meta}</span>
         <button type="button" class="gsv-cf-cmd-copy">
-          <Icon name="bookmark" size={12} />
+          <CopyGlyph size={12} />
           <span>COPY</span>
         </button>
       </header>
@@ -91,7 +92,8 @@ export const machineConnectFlow: ConnectFlowDef = {
                     iconSrc={`/icons/doticons/${option.dotIcon}.svg`}
                     iconTitle={option.label}
                     iconSize={36}
-                    status={selected ? "update" : "idle"}
+                    status={selected ? "accent" : "idle"}
+                    statusHint={`Select ${option.label}`}
                     selected={selected}
                   />
                   <span class="gsv-sublabel" style={{ letterSpacing: ".1em", color: "#8c86c8" }}>

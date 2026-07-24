@@ -3,6 +3,7 @@ import {
   SpeakerOffGlyph,
   ArchiveFolderGlyph,
   ArrowLeftGlyph,
+  CopyGlyph,
   FreeContextGlyph,
   ModelChipGlyph,
   MoreVerticalGlyph,
@@ -18,6 +19,7 @@ const GLYPHS: { label: string; node: (size: number) => ComponentChildren }[] = [
   { label: "speaker-off", node: (s) => <SpeakerOffGlyph size={s} /> },
   { label: "archive", node: (s) => <ArchiveFolderGlyph size={s} /> },
   { label: "free-context", node: (s) => <FreeContextGlyph size={s} /> },
+  { label: "copy", node: (s) => <CopyGlyph size={s} /> },
   { label: "plus", node: (s) => <PlusGlyph size={s} /> },
   { label: "task-list", node: (s) => <TaskListGlyph size={s} /> },
   { label: "model-chip", node: (s) => <ModelChipGlyph size={s} /> },
@@ -29,7 +31,7 @@ const GLYPHS: { label: string; node: (size: number) => ComponentChildren }[] = [
 const story: Story = {
   title: "Line glyphs",
   group: "Chrome",
-  blurb: "Inline outline glyphs (crisp at small sizes) · speaker on/off · archive · free-context · plus · task-list · model-chip · more-vertical · arrow-left · reasoning",
+  blurb: "Inline outline glyphs (crisp at small sizes) · speaker on/off · archive · free-context · copy · plus · task-list · model-chip · more-vertical · arrow-left · reasoning",
   render: () => (
     <div class="ds-col">
       <div class="ds-cell">

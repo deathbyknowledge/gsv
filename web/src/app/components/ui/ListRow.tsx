@@ -1,6 +1,8 @@
 import type { ComponentChildren, JSX } from "preact";
 import { Icon } from "./Icon";
+import { IconButton } from "./IconButton";
 import { Tag, type TagTone } from "./Tag";
+import { Hint } from "./Tooltip";
 import "./ListRow.css";
 
 export type ListRowStatus = "online" | "error" | "idle" | "live" | "none" | "update" | "warn";
@@ -10,6 +12,9 @@ export type ListRowDensity = "default" | "compact";
 export interface ListRowProps {
   className?: string;
   label?: string;
+  /** Optional help tooltip (a "?" InfoTip) rendered after the label — use to
+   *  explain what the row's value means. */
+  labelInfo?: string;
   status?: ListRowStatus;
   statusLabel?: string;
   sub?: string;
@@ -52,6 +57,7 @@ const DOT_COLOR: Record<Exclude<ListRowStatus, "none">, string> = {
 export function ListRow({
   className = "",
   label = "Item",
+  labelInfo,
   status = "online",
   statusLabel = "",
   sub = "",
@@ -129,7 +135,16 @@ export function ListRow({
             color: "var(--text)",
           }}
         >
-          {label}
+          {labelInfo ? (
+            // Portaled Hint (not the in-DOM InfoTip bubble) so the tooltip
+            // escapes the row's `overflow: hidden` clipping.
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", maxWidth: "100%" }}>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{label}</span>
+              <Hint text={labelInfo} position="top">
+                <IconButton glyph="help" ghost size={16} ariaLabel={`About ${label}`} />
+              </Hint>
+            </span>
+          ) : label}
         </div>
         {sub ? (
           <div

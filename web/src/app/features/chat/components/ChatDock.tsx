@@ -7,7 +7,7 @@ import { Counter } from "../../../components/ui/Counter";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
-import type { StatusTone } from "../../../components/ui/StatusDot";
+import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Hint, closeAllTooltips } from "../../../components/ui/Tooltip";
 import type { JSX } from "preact";
 import {
@@ -1029,6 +1029,7 @@ export function ChatDock({
         <span class="gsv-chat-min-copy">
           <strong class="gsv-prose-heading">{activeAgent.name}</strong>
           <small class="gsv-label">
+            <span class="gsv-chat-min-dot"><StatusDot tone={effectiveStatus} size={7} /></span>
             {activeAgent.activity}
             <i />
           </small>

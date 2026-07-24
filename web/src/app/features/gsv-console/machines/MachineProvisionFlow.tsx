@@ -2,6 +2,8 @@ import { useEffect, useState } from "preact/hooks";
 import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
+import { InfoTip } from "../../../components/ui/InfoTip";
+import { CopyGlyph } from "../../../components/ui/lineGlyphs";
 import { ListRow } from "../../../components/ui/ListRow";
 import { Spinner } from "../../../components/ui/Spinner";
 import { StatusDot } from "../../../components/ui/StatusDot";
@@ -16,6 +18,7 @@ import type { IssuedMachineNodeToken } from "../backend/consoleService";
 import { ConnectFlowShell } from "../connect-flows/ConnectFlowShell";
 import type { ConnectFlowDef } from "../connect-flows/connectFlowTypes";
 import type { ConsoleTarget } from "../domain/consoleModels";
+import { isNameTaken } from "../domain/uniqueName";
 import { useConsoleTargets, useCreateMachineNodeToken } from "../hooks/useConsoleData";
 import {
   MACHINE_PLATFORM_OPTIONS,
@@ -114,7 +117,7 @@ function CommandBlock({
         <span class="gsv-cf-cmd-title">{title}</span>
         <span class="gsv-cf-cmd-meta">{meta}</span>
         <button type="button" class="gsv-cf-cmd-copy" onClick={onCopy}>
-          <Icon name="bookmark" size={12} />
+          <CopyGlyph size={12} />
           <span>{copied ? "COPIED" : "COPY"}</span>
         </button>
       </header>
@@ -142,7 +145,7 @@ function ExtensionValueRow({
         <code>{value}</code>
       </div>
       <button type="button" class="gsv-cf-cmd-copy" onClick={onCopy}>
-        <Icon name="bookmark" size={12} />
+        <CopyGlyph size={12} />
         <span>{copied ? "COPIED" : "COPY"}</span>
       </button>
     </div>
@@ -158,8 +161,8 @@ export function MachineProvisionFlow({
   const createToken = useCreateMachineNodeToken();
   const [step, setStep] = useState<MachineProvisionStep>("platform");
   const [platform, setPlatform] = useState<MachineProvisionPlatform>("mac");
-  const [machineName, setMachineName] = useState(defaultMachineName("mac"));
-  const [deviceId, setDeviceId] = useState(machineDeviceIdFromName(defaultMachineName("mac")));
+  const [machineName, setMachineName] = useState("");
+  const [deviceId, setDeviceId] = useState("");
   const [expiresDays, setExpiresDays] = useState("30");
   const [nameTouched, setNameTouched] = useState(false);
   const [deviceIdTouched, setDeviceIdTouched] = useState(false);
@@ -170,13 +173,24 @@ export function MachineProvisionFlow({
   const origin = window.location.origin;
   const selectedPlatform = platformOption(platform);
   const isBrowserTarget = platform === "browser";
+  // Icon for the selected target across the flow's action bar, preview rows, and
+  // success screen. Browser → the chrome doticon (matching the step-1 tile);
+  // everything else → the computer glyph. `chrome` exists only as a doticon.
+  const targetIcon = isBrowserTarget ? "doticons/chrome" : "computer";
   const stepLabels = isBrowserTarget
     ? ["TARGET", "DETAILS", "EXTENSION", "PAIR", "SUCCESS"]
     : MACHINE_PROVISION_STEP_LABELS;
   const knownTarget = targets.targets.find((target) => target.deviceId === deviceId.trim()) ?? null;
   const expires = normalizeExpiresDays(expiresDays);
   const validDeviceId = parseDeviceId(deviceId);
-  const detailsReady = machineName.trim().length > 0 && validDeviceId !== null;
+  // Block provisioning a machine whose display name or device-id already exists
+  // (the gateway is authoritative, but pre-check inline so the user sees it).
+  // Only while composing a NEW machine: once a token is issued the just-created
+  // device registers and would otherwise match itself if the user steps back.
+  const nameTaken = !issuedToken && isNameTaken(targets.targets.map((target) => target.label), machineName);
+  const deviceIdTaken = !issuedToken && deviceId.trim().length > 0 && knownTarget !== null;
+  const detailsReady =
+    machineName.trim().length > 0 && validDeviceId !== null && !nameTaken && !deviceIdTaken;
   const release = snapshot.server?.release ?? "dev";
   const installCommand = buildMachineInstallCommand(platform, release);
   const extensionDownloadUrl = browserExtensionDownloadUrl(release);
@@ -238,14 +252,9 @@ export function MachineProvisionFlow({
   };
 
   const selectPlatform = (nextPlatform: MachineProvisionPlatform) => {
+    // Name/device-id are the user's to type (placeholder only) — don't seed a
+    // default when the platform changes.
     setPlatform(nextPlatform);
-    if (!nameTouched) {
-      const nextName = defaultMachineName(nextPlatform);
-      setMachineName(nextName);
-      if (!deviceIdTouched) {
-        setDeviceId(machineDeviceIdFromName(nextName));
-      }
-    }
     resetToken();
   };
 
@@ -319,7 +328,7 @@ export function MachineProvisionFlow({
     key: "machines",
     navLabel: "MACHINES",
     parentLabel: "MACHINES",
-    icon: isBrowserTarget ? "bookmark" : "computer",
+    icon: targetIcon,
     title: isBrowserTarget ? "Connect browser extension" : "Connect machine",
     blurb: isBrowserTarget
       ? "Provision a driver token and attach the GSV browser extension to the fleet · Chrome, Brave, Edge, or another Chromium browser."
@@ -343,7 +352,6 @@ export function MachineProvisionFlow({
                   class={`machine-platform-tile-button${platform === option.id ? " is-selected" : ""}`}
                   key={option.id}
                   aria-pressed={platform === option.id ? "true" : "false"}
-                  title={`${option.label}: ${option.meta}`}
                   onClick={() => selectPlatform(option.id)}
                 >
                   <Tile
@@ -352,7 +360,8 @@ export function MachineProvisionFlow({
                     iconSrc={`/icons/doticons/${option.dotIcon}.svg`}
                     iconTitle={option.label}
                     iconSize={36}
-                    status={platform === option.id ? "update" : "idle"}
+                    status={platform === option.id ? "accent" : "idle"}
+                    statusHint={`Select ${option.label}`}
                     selected={platform === option.id}
                   />
                   <span class="machine-platform-meta gsv-prose-sm">{option.meta}</span>
@@ -378,28 +387,37 @@ export function MachineProvisionFlow({
             <div class="gsv-cf-fields">
               <TextInput
                 label={isBrowserTarget ? "BROWSER NAME" : "MACHINE NAME"}
+                info="A friendly name so you can spot this machine in your list."
                 value={machineName}
-                placeholder={isBrowserTarget ? "Chrome" : "Studio MacBook"}
+                placeholder={defaultMachineName(platform)}
                 clearable
-                status={machineName.trim() ? "success" : "warning"}
-                message={machineName.trim() ? "Display label ready" : `${isBrowserTarget ? "Browser" : "Machine"} name required`}
+                requirement="required"
+                status={nameTaken ? "error" : machineName.trim() ? "success" : "none"}
+                message={nameTaken
+                  ? `That ${isBrowserTarget ? "browser" : "machine"} name is already in use`
+                  : machineName.trim() ? "Display label ready" : ""}
                 onChange={updateMachineName}
               />
               <TextInput
                 key={`device-${deviceId}`}
                 label="DEVICE ID"
+                info="The unique id that identifies this machine. It's filled in from the name — leave it as-is unless you need to change it."
                 value={deviceId}
-                placeholder={isBrowserTarget ? "chrome" : "studio-macbook"}
+                placeholder={machineDeviceIdFromName(defaultMachineName(platform))}
                 clearable
-                status={validDeviceId ? "success" : "warning"}
-                message={validDeviceId
+                requirement="required"
+                status={deviceIdTaken ? "error" : validDeviceId ? "success" : deviceId.trim() ? "error" : "none"}
+                message={deviceIdTaken
+                  ? "That device id is already in use"
+                  : validDeviceId
                   ? (isBrowserTarget ? "Use this exact value in the extension" : "Used by CLI and routing")
-                  : deviceId.trim() ? DEVICE_ID_FORMAT_DESCRIPTION : "Device id required"}
+                  : deviceId.trim() ? DEVICE_ID_FORMAT_DESCRIPTION : ""}
                 onChange={updateDeviceId}
               />
               <TextInput
                 key={`expires-${expiresDays}`}
                 label="TOKEN EXPIRY"
+                info="How many days the machine's access stays valid before it needs to reconnect with a new token."
                 value={expiresDays}
                 suffix="DAYS"
                 status="info"
@@ -412,7 +430,7 @@ export function MachineProvisionFlow({
             </div>
             <div class="gsv-cf-framed">
               <ListRow
-                icon={isBrowserTarget ? "bookmark" : "computer"}
+                icon={targetIcon}
                 label={machineName || "New machine"}
                 sub={`${deviceId || "device-id"} / ${selectedPlatform.commandLabel}`}
                 status={detailsReady ? "online" : "warn"}
@@ -516,6 +534,12 @@ export function MachineProvisionFlow({
         render: () => (
           <>
             {!issuedToken ? (
+              <>
+              <p class="gsv-cf-desc" style={{ margin: 0 }}>
+                {isBrowserTarget
+                  ? "Create a secure key, then paste the connection details into the browser extension to pair it."
+                  : "Create a secure key for this machine, then run the command it generates on the machine to bring it online."}
+              </p>
               <div class="machine-issue-token">
                 <StatusDot tone={createToken.isPending ? "live" : "update"} size={9} />
                 <div>
@@ -523,6 +547,7 @@ export function MachineProvisionFlow({
                     {createToken.isPending
                       ? `ISSUING ${isBrowserTarget ? "DRIVER" : "NODE"} TOKEN`
                       : `ISSUE ${isBrowserTarget ? "DRIVER" : "NODE"} TOKEN`}
+                    <InfoTip text="Creates the secure key this machine uses to connect to GSV." />
                   </strong>
                   <span>
                     The token is scoped to {deviceId || "this device"} and expires in {expires} days.
@@ -530,6 +555,7 @@ export function MachineProvisionFlow({
                   </span>
                 </div>
               </div>
+              </>
             ) : isBrowserTarget && browserConfig ? (
               <>
                 <p class="gsv-cf-desc" style={{ margin: 0 }}>
@@ -570,6 +596,7 @@ export function MachineProvisionFlow({
                 <div class="machine-run-mode">
                   <Toggle
                     label="ONE-SHOT RUN"
+                    info="The machine will not reconnect if the computer turns off or the terminal is closed."
                     size="small"
                     on={oneShotRun}
                     status={oneShotRun ? "info" : "none"}
@@ -630,7 +657,7 @@ export function MachineProvisionFlow({
           <>
             <div class="gsv-cf-cap">
               <span class="gsv-cf-cap-mark">
-                <Icon name={isBrowserTarget ? "bookmark" : "computer"} size={26} />
+                <Icon name={targetIcon} size={26} />
               </span>
               <div class="gsv-cf-cap-text">
                 <span class="gsv-cf-cap-title">{machineName || deviceId} is connected</span>
@@ -644,7 +671,7 @@ export function MachineProvisionFlow({
             <div class="gsv-cf-framed">
               {knownTarget ? (
                 <ListRow
-                  icon={isBrowserTarget ? "bookmark" : "computer"}
+                  icon={targetIcon}
                   label={knownTarget.label}
                   sub={targetSub(knownTarget)}
                   status={knownTarget.online ? "online" : "idle"}
@@ -653,7 +680,7 @@ export function MachineProvisionFlow({
                 />
               ) : (
                 <ListRow
-                  icon={isBrowserTarget ? "bookmark" : "computer"}
+                  icon={targetIcon}
                   label={machineName || deviceId}
                   sub={deviceId}
                   status="online"

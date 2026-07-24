@@ -58,6 +58,7 @@ export function processDetailSections(process: ConsoleProcess): ConsoleDetailSec
     {
       title: "STATE",
       meta: statusForProcess(process),
+      metaTone: toneForProcess(process),
       rows: liveRows([
         detailRow("state", "CURRENT STATE", process.rawState || statusForProcess(process), {
           status: listRowStatusForTone(toneForProcess(process)),

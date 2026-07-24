@@ -1,5 +1,6 @@
 import { Icon } from "../../../components/ui/Icon";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
+import { StatusMeta } from "../../../components/ui/StatusDot";
 import { Stepper } from "../../../components/ui/Stepper";
 import type { ConnectFlowDef, ConnectNav } from "./connectFlowTypes";
 import "./ConnectFlowShell.css";
@@ -40,8 +41,16 @@ export function ConnectFlowShell({ flow, current, onStep }: ConnectFlowShellProp
   return (
     <div class="gsv-cf">
       {/* Page header — title + status. The breadcrumb trail is supplied by the
-          shell's top bar (ConsoleHeader), not duplicated here. */}
-      <SectionHeader divider title={flow.title} meta={step.status} headingLevel={2} />
+          shell's top bar (ConsoleHeader), not duplicated here. The step status
+          carries its tone color + dot (falls back to a plain dim meta if a step
+          declares no tone). */}
+      <SectionHeader
+        divider
+        title={flow.title}
+        headingLevel={2}
+        meta={step.tone || !step.status ? undefined : step.status}
+        actions={step.tone && step.status ? <StatusMeta tone={step.tone} label={step.status} /> : undefined}
+      />
 
       {/* Action bar — icon tile + 2-line description, with the stepper below. */}
       <div class="gsv-cf-bar">

@@ -4,6 +4,7 @@ import { Button } from "../../../components/ui/Button";
 import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { ListRow } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
+import { StatusMeta } from "../../../components/ui/StatusDot";
 import {
   labelForConsoleAccountRelation,
 } from "../domain/agentPresentation";
@@ -72,11 +73,9 @@ export function MessengerIdentityLinks({
 }) {
   const removeLink = useRemoveIdentityLink();
   const [confirmUnlink, setConfirmUnlink] = useState<ConsoleIdentityLink | null>(null);
-  const meta = errorText
-    ? "ERROR"
-    : refreshing
-      ? "SYNCING"
-      : `${links.length} ${links.length === 1 ? "LINK" : "LINKS"}`;
+  const meta = refreshing
+    ? "SYNCING"
+    : `${links.length} ${links.length === 1 ? "LINK" : "LINKS"}`;
 
   const unlink = async (link: ConsoleIdentityLink) => {
     await removeLink.mutateAsync({
@@ -90,7 +89,12 @@ export function MessengerIdentityLinks({
   return (
     <>
       <section class="gsv-console-detail-section gsv-messenger-identity-section">
-        <SectionHeader title="LINKED IDENTITIES" meta={meta} divider />
+        <SectionHeader
+          title="LINKED IDENTITIES"
+          meta={errorText ? undefined : meta}
+          actions={errorText ? <StatusMeta tone="error" label="ERROR" /> : undefined}
+          divider
+        />
         <div class="gsv-messenger-identity-list">
           {errorText ? (
             <div class="gsv-messenger-identity-empty gsv-sublabel">IDENTITY LINKS UNAVAILABLE / {errorText}</div>

@@ -27,6 +27,7 @@ const story: Story = {
       <div class="ds-cell">
         <div class="ds-label">States & extras</div>
         <div class="ds-col">
+          <TextInput label="WITH INFO" info="A short help tooltip shown on the ? after the label." placeholder="hover the ?" />
           <TextInput label="REQUIRED" requirement="required" description="Shown above the field." placeholder="role" />
           <TextInput label="OPTIONAL" requirement="optional" placeholder="nickname" />
           <TextInput label="WITH COUNTER" maxLength={24} value="hello" />

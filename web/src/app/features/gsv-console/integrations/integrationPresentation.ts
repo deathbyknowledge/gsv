@@ -85,6 +85,7 @@ export function mcpServerDetailSections(server: ConsoleMcpServer): ConsoleDetail
     {
       title: "CONNECTION",
       meta: statusForMcpServer(server),
+      metaTone: toneForMcpServer(server),
       rows: liveRows([
         detailRow("server-id", "SERVER ID", server.serverId),
         detailRow("url", "URL", server.url),

@@ -7,6 +7,7 @@ import { Spinner } from "../../../components/ui/Spinner";
 import { Surface } from "../../../components/ui/Surface";
 import { TextInput } from "../../../components/ui/TextInput";
 import type { ConsoleMcpServer } from "../domain/consoleModels";
+import { isNameTaken } from "../domain/uniqueName";
 import { useAddConsoleMcpServer } from "../hooks/useConsoleData";
 import { ConnectFlowShell } from "../connect-flows/ConnectFlowShell";
 import type { ConnectFlowDef } from "../connect-flows/connectFlowTypes";
@@ -128,7 +129,9 @@ export function IntegrationOnboardingFlow({
   const transport = MCP_TRANSPORT_OPTIONS[transportIndex] ?? "auto";
   const urlReady = validUrl(url);
   const headersResult = headersFromDrafts(headers);
-  const canSubmit = name.trim().length > 0 && urlReady && headersResult.ok && !addServer.isPending;
+  const nameTaken = isNameTaken(servers.map((server) => server.name), name);
+  const canSubmit =
+    name.trim().length > 0 && !nameTaken && urlReady && headersResult.ok && !addServer.isPending;
   const ready = created?.state === "ready";
   const failed = !!created && (created.state === "failed" || created.error.length > 0);
   let progressMessage = "";
@@ -229,6 +232,8 @@ export function IntegrationOnboardingFlow({
                 label="NAME"
                 info="Display name agents will see."
                 requirement="required"
+                status={nameTaken ? "error" : "none"}
+                message={nameTaken ? "That name is already in use" : ""}
                 value={name}
                 placeholder="GitHub"
                 clearable

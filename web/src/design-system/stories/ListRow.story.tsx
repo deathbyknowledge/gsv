@@ -25,6 +25,7 @@ const story: Story = {
           <ListRow label="PRIMARY NODE" status="online" sub="192.168.1.42 · 8 CORES" />
           <ListRow label="BUILD NODE" status="online" tag="UPDATE" />
           <ListRow label="EDGE NODE" status="online" statusLabel="ONLINE" chevron onClick={() => {}} />
+          <ListRow label="LAST SEEN" labelInfo="Explains what this field means on hover." status="none" sub="2m ago" />
         </div>
       </div>
       <div class="ds-cell">

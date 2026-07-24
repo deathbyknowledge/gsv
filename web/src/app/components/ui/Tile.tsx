@@ -1,15 +1,20 @@
 import type { JSX } from "preact";
 import { Icon } from "./Icon";
 import { OBJECT_GLYPH_ICON, type ObjectGlyph } from "./objectGlyph";
+import { Hint } from "./Tooltip";
 import "./Tile.css";
 
 export type TileGlyph = ObjectGlyph;
-export type TileStatus = "online" | "error" | "idle" | "warn" | "live" | "update";
+export type TileStatus = "online" | "error" | "idle" | "warn" | "live" | "update" | "accent";
 
 export interface TileProps {
   label?: string;
   glyph?: TileGlyph;
   status?: TileStatus;
+  /** Hover tooltip explaining what the corner dot means. Overrides the tone
+   *  fallback — pass a live status ("3/5 ONLINE") or a selector affordance
+   *  ("Select MAC") so the dot's meaning is legible. */
+  statusHint?: string;
   selected?: boolean;
   anchor?: boolean;
   iconSrc?: string;
@@ -26,6 +31,20 @@ const STATUS_VAR: Record<TileStatus, string> = {
   warn: "var(--warn)",
   live: "var(--live)",
   update: "var(--update)",
+  // Selection accent — matches the Tag "accent" tone so a selected selector
+  // tile's dot reads as chosen, not as a live status.
+  accent: "#b3aeff",
+};
+
+// Fallback tooltip word per tone, used when the caller passes no `statusHint`.
+const STATUS_WORD: Record<TileStatus, string> = {
+  online: "Online",
+  error: "Error",
+  idle: "Idle",
+  warn: "Warning",
+  live: "Live",
+  update: "Update",
+  accent: "Selected",
 };
 
 
@@ -35,6 +54,7 @@ export function Tile({
   label,
   glyph = "machines",
   status = "online",
+  statusHint,
   selected = false,
   anchor = false,
   iconSrc,
@@ -43,6 +63,7 @@ export function Tile({
   onClick,
 }: TileProps) {
   const dc = STATUS_VAR[status] ?? STATUS_VAR.online;
+  const dotHint = statusHint ?? STATUS_WORD[status] ?? STATUS_WORD.online;
   const labelText = label ?? (anchor ? "GSV" : "MACHINES");
   const labelColor = anchor ? "var(--text-hi)" : selected ? "var(--text-hi)" : "#cdd2e0";
 
@@ -128,40 +149,44 @@ export function Tile({
 
   return (
     <div style={wrapperStyle}>
-      <div
-        onClick={onClick}
-        class="gsv-tile"
-        style={{
-          position: "relative",
-          width: "96px",
-          height: "96px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-          transition: "transform .2s,background .2s,border-color .2s,box-shadow .2s",
-          ...tileSkin,
-        }}
-      >
-        <span style={dotStyle} />
-        <span style={{ display: "flex", color: iconColor }}>
-          {iconMaskStyle ? (
-            <span
-              class="gsv-icon"
-              role="img"
-              aria-label={iconTitle ?? labelText}
-              style={iconMaskStyle}
-            />
-          ) : (
-            <Icon
-              name={OBJECT_GLYPH_ICON[glyph] ?? OBJECT_GLYPH_ICON.machines}
-              size={iconSize}
-              dotMatrix={16}
-              title={iconTitle ?? labelText}
-            />
-          )}
-        </span>
-      </div>
+      {/* Hint wraps the whole tile square (not the 8px dot) so the hover target
+          is generous; the dot still positions against .gsv-tile below. */}
+      <Hint text={dotHint} position="top">
+        <div
+          onClick={onClick}
+          class="gsv-tile"
+          style={{
+            position: "relative",
+            width: "96px",
+            height: "96px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            transition: "transform .2s,background .2s,border-color .2s,box-shadow .2s",
+            ...tileSkin,
+          }}
+        >
+          <span style={dotStyle} />
+          <span style={{ display: "flex", color: iconColor }}>
+            {iconMaskStyle ? (
+              <span
+                class="gsv-icon"
+                role="img"
+                aria-label={iconTitle ?? labelText}
+                style={iconMaskStyle}
+              />
+            ) : (
+              <Icon
+                name={OBJECT_GLYPH_ICON[glyph] ?? OBJECT_GLYPH_ICON.machines}
+                size={iconSize}
+                dotMatrix={16}
+                title={iconTitle ?? labelText}
+              />
+            )}
+          </span>
+        </div>
+      </Hint>
       <span class="gsv-label" style={{ letterSpacing: ".16em", color: labelColor }}>{labelText}</span>
     </div>
   );

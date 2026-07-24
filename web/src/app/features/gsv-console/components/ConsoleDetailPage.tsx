@@ -3,13 +3,15 @@ import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
-import type { StatusTone } from "../../../components/ui/StatusDot";
+import { StatusMeta, type StatusTone } from "../../../components/ui/StatusDot";
 import "./ConsoleDetailPage.css";
 
 export type ConsoleDetailRow = {
   id: string;
   icon?: string;
   label: string;
+  /** Optional "?" help tooltip explaining the row's value. */
+  labelInfo?: string;
   status?: ListRowStatus;
   statusLabel?: string;
   sub: string;
@@ -18,13 +20,22 @@ export type ConsoleDetailRow = {
 export type ConsoleDetailSection = {
   title: string;
   meta?: string;
+  /** When set, `meta` is a status word: render it tone-colored with a dot
+   *  (like the page header) instead of the dim default. */
+  metaTone?: StatusTone;
   rows: readonly ConsoleDetailRow[];
 };
 
 type ConsoleDetailPageProps = {
+  /** Regular/secondary actions. Rendered bottom-right in the page footer,
+   *  alongside the primary button and opposite `dangerAction`. */
   actions?: ComponentChildren;
   blurb: string;
   children?: ComponentChildren;
+  /** Destructive action (FORGET / REMOVE / DISCONNECT / KILL). Rendered at the
+   *  bottom-left of the page footer, opposite the regular/primary `actions`
+   *  which sit bottom-right. */
+  dangerAction?: ComponentChildren;
   icon: string;
   /** Back navigation. For surfaces whose detail is reflected in the shell
    *  breadcrumb this is handled there (so `showBack` stays off); non-route-backed
@@ -49,6 +60,7 @@ export function ConsoleDetailPage({
   actions,
   blurb,
   children,
+  dangerAction,
   icon,
   onBack,
   onPrimary,
@@ -59,9 +71,11 @@ export function ConsoleDetailPage({
   showBack = false,
   statusLabel,
   title,
+  tone,
 }: ConsoleDetailPageProps) {
   const hasSections = sections.some((section) => section.rows.length > 0);
   const hasActions = Boolean(primaryLabel) || (actions != null && actions !== false);
+  const hasDanger = dangerAction != null && dangerAction !== false;
   // Break the description into two lines: the trailing " · " segment (e.g.
   // "last seen 2m ago", "connected over sse") drops to a second line.
   const descSep = blurb.lastIndexOf(" · ");
@@ -75,13 +89,14 @@ export function ConsoleDetailPage({
           <span aria-hidden="true">←</span> {parentLabel}
         </button>
       ) : null}
-      {/* Row 2 — full-width page header (title + status), like the list pages. */}
+      {/* Row 2 — full-width page header (title + status), like the list pages.
+          Status carries its tone color + dot, matching the list rows. */}
       <SectionHeader
         className="gsv-console-detail-header"
         title={title}
-        meta={statusLabel}
         divider
         headingLevel={2}
+        actions={statusLabel ? <StatusMeta tone={tone} label={statusLabel} /> : undefined}
       />
 
       {/* Row 3 — action bar: icon tile + description, with the action below.
@@ -101,19 +116,6 @@ export function ConsoleDetailPage({
             ) : null}
           </p>
         </div>
-        {hasActions ? (
-          <div class="gsv-console-detail-bar-actions">
-            {actions}
-            {primaryLabel ? (
-              <Button
-                variant="primary"
-                label={primaryLabel}
-                disabled={!onPrimary}
-                onClick={onPrimary}
-              />
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
       <div class="gsv-console-detail-shell">
@@ -122,13 +124,21 @@ export function ConsoleDetailPage({
             {sections.map((section) => (
               section.rows.length > 0 ? (
                 <section class="gsv-console-detail-section" key={section.title}>
-                  <SectionHeader title={section.title} meta={section.meta} divider />
+                  <SectionHeader
+                    title={section.title}
+                    meta={section.metaTone ? undefined : section.meta}
+                    actions={section.metaTone && section.meta ? (
+                      <StatusMeta tone={section.metaTone} label={section.meta} />
+                    ) : undefined}
+                    divider
+                  />
                   <div>
                     {section.rows.map((row) => (
                       <ListRow
                         icon={row.icon}
                         key={row.id}
                         label={row.label}
+                        labelInfo={row.labelInfo}
                         status={row.status ?? "none"}
                         statusDotPlacement="trailing"
                         statusLabel={row.statusLabel}
@@ -154,6 +164,25 @@ export function ConsoleDetailPage({
           </div>
         ) : null}
       </div>
+
+      {hasDanger || hasActions ? (
+        <footer class="gsv-console-detail-footer">
+          {hasDanger ? dangerAction : null}
+          {hasActions ? (
+            <div class="gsv-console-detail-footer-actions">
+              {actions}
+              {primaryLabel ? (
+                <Button
+                  variant="primary"
+                  label={primaryLabel}
+                  disabled={!onPrimary}
+                  onClick={onPrimary}
+                />
+              ) : null}
+            </div>
+          ) : null}
+        </footer>
+      ) : null}
     </section>
   );
 }

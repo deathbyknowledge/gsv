@@ -4,7 +4,7 @@ import type { Story } from "../story";
 const story: Story = {
   title: "Tile",
   group: "Data Display",
-  blurb: "96px object tile · glyph · corner status dot · selected · anchor",
+  blurb: "96px object tile · glyph · corner status dot (hover for its meaning) · selected · anchor",
   render: () => (
     <div class="ds-col">
       <div class="ds-cell">
@@ -32,6 +32,7 @@ const story: Story = {
         <div class="ds-row">
           <Tile label="MACHINES" glyph="machines" selected />
           <Tile label="INTEGRATIONS" glyph="integrations" selected status="live" />
+          <Tile label="SELECTOR" glyph="machines" selected status="accent" statusHint="Select MAC" />
         </div>
       </div>
       <div class="ds-cell">
