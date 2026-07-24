@@ -20,12 +20,10 @@ const REPO_NAME: &str = "gsv";
 
 const COMPONENT_GATEWAY: &str = "gateway";
 const COMPONENT_RIPGIT: &str = "ripgit";
-const COMPONENT_ASSEMBLER: &str = "assembler";
 const COMPONENT_CHANNEL_WHATSAPP: &str = "channel-whatsapp";
 const COMPONENT_CHANNEL_DISCORD: &str = "channel-discord";
 const COMPONENT_CHANNEL_TELEGRAM: &str = "channel-telegram";
 
-const BUNDLE_ASSEMBLER: &str = "gsv-cloudflare-assembler.tar.gz";
 const BUNDLE_GATEWAY: &str = "gsv-cloudflare-gateway.tar.gz";
 const BUNDLE_RIPGIT: &str = "gsv-cloudflare-ripgit.tar.gz";
 const BUNDLE_CHANNEL_WHATSAPP: &str = "gsv-cloudflare-channel-whatsapp.tar.gz";
@@ -34,7 +32,6 @@ const BUNDLE_CHANNEL_TELEGRAM: &str = "gsv-cloudflare-channel-telegram.tar.gz";
 const BUNDLE_CHECKSUMS: &str = "cloudflare-checksums.txt";
 pub const DEFAULT_DEPLOY_INSTANCE: &str = "gsv";
 const DEFAULT_STORAGE_BUCKET_NAME: &str = "gsv-storage";
-const SCRIPT_ASSEMBLER: &str = "gsv-assembler";
 const SCRIPT_GATEWAY: &str = "gsv";
 const SCRIPT_RIPGIT: &str = "ripgit";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
@@ -42,7 +39,6 @@ const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
 const SCRIPT_CHANNEL_TELEGRAM: &str = "gsv-channel-telegram";
 const RESERVED_NON_DEFAULT_INSTANCE_NAMES: &[&str] = &[SCRIPT_RIPGIT];
 const RESERVED_INSTANCE_NAME_SUFFIXES: &[&str] = &[
-    "-assembler",
     "-ripgit",
     "-channel-whatsapp",
     "-channel-discord",
@@ -81,7 +77,6 @@ impl DeployInstance {
     pub fn script_name(&self, component: &str) -> Option<String> {
         match component {
             COMPONENT_GATEWAY => Some(self.name.clone()),
-            COMPONENT_ASSEMBLER => Some(format!("{}-assembler", self.name)),
             COMPONENT_RIPGIT if self.is_default() => Some(SCRIPT_RIPGIT.to_string()),
             COMPONENT_RIPGIT => Some(format!("{}-ripgit", self.name)),
             COMPONENT_CHANNEL_WHATSAPP => Some(format!("{}-channel-whatsapp", self.name)),
@@ -95,9 +90,6 @@ impl DeployInstance {
         match service {
             SCRIPT_GATEWAY => self
                 .script_name(COMPONENT_GATEWAY)
-                .unwrap_or_else(|| service.to_string()),
-            SCRIPT_ASSEMBLER => self
-                .script_name(COMPONENT_ASSEMBLER)
                 .unwrap_or_else(|| service.to_string()),
             SCRIPT_RIPGIT => self
                 .script_name(COMPONENT_RIPGIT)
@@ -465,7 +457,6 @@ struct R2ObjectsPage {
 
 fn component_to_bundle(component: &str) -> Option<&'static str> {
     match component {
-        COMPONENT_ASSEMBLER => Some(BUNDLE_ASSEMBLER),
         COMPONENT_GATEWAY => Some(BUNDLE_GATEWAY),
         COMPONENT_RIPGIT => Some(BUNDLE_RIPGIT),
         COMPONENT_CHANNEL_WHATSAPP => Some(BUNDLE_CHANNEL_WHATSAPP),
@@ -478,7 +469,6 @@ fn component_to_bundle(component: &str) -> Option<&'static str> {
 pub fn available_components() -> &'static [&'static str] {
     &[
         COMPONENT_RIPGIT,
-        COMPONENT_ASSEMBLER,
         COMPONENT_GATEWAY,
         COMPONENT_CHANNEL_WHATSAPP,
         COMPONENT_CHANNEL_DISCORD,
@@ -1781,10 +1771,9 @@ async fn purge_r2_bucket_objects(
 fn deploy_order(component: &str) -> usize {
     match component {
         COMPONENT_RIPGIT => 0,
-        COMPONENT_ASSEMBLER => 1,
-        COMPONENT_CHANNEL_WHATSAPP => 2,
-        COMPONENT_CHANNEL_DISCORD => 3,
-        COMPONENT_CHANNEL_TELEGRAM => 4,
+        COMPONENT_CHANNEL_WHATSAPP => 1,
+        COMPONENT_CHANNEL_DISCORD => 2,
+        COMPONENT_CHANNEL_TELEGRAM => 3,
         COMPONENT_GATEWAY => 10,
         _ => 100,
     }
@@ -2606,10 +2595,6 @@ pub async fn apply_deploy(
     let ripgit_script_name = instance
         .script_name(COMPONENT_RIPGIT)
         .ok_or("Unsupported ripgit component")?;
-    let assembler_script_name = instance
-        .script_name(COMPONENT_ASSEMBLER)
-        .ok_or("Unsupported assembler component")?;
-
     let client = reqwest::Client::new();
     let existing_scripts_with_migrations =
         list_worker_scripts(&client, account_id, api_token).await?;
@@ -2617,17 +2602,9 @@ pub async fn apply_deploy(
         existing_scripts_with_migrations.keys().cloned().collect();
     let ripgit_available = selected_components.contains(COMPONENT_RIPGIT)
         || existing_scripts.contains(&ripgit_script_name);
-    let assembler_available = selected_components.contains(COMPONENT_ASSEMBLER)
-        || existing_scripts.contains(&assembler_script_name);
     if selected_components.contains(COMPONENT_GATEWAY) && !ripgit_available {
         return Err(
             "Deploying `gateway` requires the `ripgit` worker. Include `--component ripgit` or deploy ripgit first."
-                .into(),
-        );
-    }
-    if selected_components.contains(COMPONENT_GATEWAY) && !assembler_available {
-        return Err(
-            "Deploying `gateway` requires the `assembler` worker. Include `--component assembler` or deploy assembler first."
                 .into(),
         );
     }
@@ -3409,7 +3386,6 @@ mod tests {
         for value in [
             "ripgit",
             "team-ripgit",
-            "team-assembler",
             "gsv-channel-whatsapp",
             "team-channel-discord",
             "team-channel-telegram",
@@ -3590,20 +3566,12 @@ cpu_ms = 300000
             wrangler: WranglerConfig {
                 name: SCRIPT_GATEWAY.to_string(),
                 compatibility_date: Some("2026-01-28".to_string()),
-                services: vec![
-                    WranglerServiceBinding {
-                        binding: "RIPGIT".to_string(),
-                        service: SCRIPT_RIPGIT.to_string(),
-                        environment: None,
-                        entrypoint: None,
-                    },
-                    WranglerServiceBinding {
-                        binding: "ASSEMBLER".to_string(),
-                        service: SCRIPT_ASSEMBLER.to_string(),
-                        environment: None,
-                        entrypoint: None,
-                    },
-                ],
+                services: vec![WranglerServiceBinding {
+                    binding: "RIPGIT".to_string(),
+                    service: SCRIPT_RIPGIT.to_string(),
+                    environment: None,
+                    entrypoint: None,
+                }],
                 ..WranglerConfig::default()
             },
             script_name: SCRIPT_GATEWAY.to_string(),
@@ -3613,10 +3581,7 @@ cpu_ms = 300000
             source_map: None,
         };
 
-        let available_scripts = HashSet::from([
-            "gsv-personal-ripgit".to_string(),
-            "gsv-personal-assembler".to_string(),
-        ]);
+        let available_scripts = HashSet::from(["gsv-personal-ripgit".to_string()]);
         let bindings =
             service_bindings_for_bundle(&bundle, &instance, &HashSet::new(), &available_scripts);
 
@@ -3626,9 +3591,6 @@ cpu_ms = 300000
                 .any(|binding| binding.binding == "RIPGIT"
                     && binding.service == "gsv-personal-ripgit")
         );
-        assert!(bindings.iter().any(|binding| {
-            binding.binding == "ASSEMBLER" && binding.service == "gsv-personal-assembler"
-        }));
     }
 
     #[test]

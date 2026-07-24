@@ -29,9 +29,7 @@ install_workspaces() {
 }
 
 echo "==> Installing dependencies"
-# Keep these root workspaces in one npm ci call; separate workspace installs prune
-# root node_modules and can remove either assembler's wrangler or the SDK deps.
-install_workspaces "assembler" "packages/gsv"
+install_workspaces "packages/gsv"
 npm run build --workspace packages/gsv
 install_dir "${ROOT_DIR}/gateway"
 install_dir "${ROOT_DIR}/web"
@@ -45,17 +43,12 @@ npm run build --prefix "${ROOT_DIR}/web"
 
 echo "==> Bundling workers with wrangler --dry-run"
 rm -rf "${DIST_DIR}"
-mkdir -p "${DIST_DIR}/assembler/worker"
 mkdir -p "${DIST_DIR}/gateway/worker"
 mkdir -p "${DIST_DIR}/ripgit/worker"
 mkdir -p "${DIST_DIR}/channel-whatsapp/worker"
 mkdir -p "${DIST_DIR}/channel-discord/worker"
 mkdir -p "${DIST_DIR}/channel-telegram/worker"
 
-(
-  cd "${ROOT_DIR}"
-  npm exec --workspace assembler -- wrangler deploy --minify --dry-run --config "${ROOT_DIR}/assembler/wrangler.toml" --outdir "${DIST_DIR}/assembler/worker"
-)
 (
   cd "${ROOT_DIR}/gateway"
   npm exec --workspaces=false -- wrangler deploy --minify --dry-run --define "__GSV_RELEASE__:${GSV_RELEASE_DEFINE}" --outdir "${DIST_DIR}/gateway/worker"
@@ -78,17 +71,6 @@ mkdir -p "${DIST_DIR}/channel-telegram/worker"
 )
 
 echo "==> Assembling component metadata"
-cp "${ROOT_DIR}/assembler/wrangler.toml" "${DIST_DIR}/assembler/wrangler.toml"
-cat > "${DIST_DIR}/assembler/manifest.json" <<'EOF'
-{
-  "component": "assembler",
-  "worker": {
-    "entrypoint": "worker/index.js",
-    "wranglerConfig": "wrangler.toml"
-  }
-}
-EOF
-
 cp "${ROOT_DIR}/gateway/wrangler.jsonc" "${DIST_DIR}/gateway/wrangler.jsonc"
 cp -R "${ROOT_DIR}/web/dist" "${DIST_DIR}/gateway/assets"
 cat > "${DIST_DIR}/gateway/manifest.json" <<'EOF'
@@ -159,7 +141,6 @@ echo "==> Creating local tarballs"
 mkdir -p "${OUT_DIR}"
 rm -f "${OUT_DIR}/gsv-cloudflare-"*.tar.gz "${OUT_DIR}/cloudflare-checksums.txt" 2>/dev/null || true
 
-tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-assembler.tar.gz" assembler
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-gateway.tar.gz" gateway
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-ripgit.tar.gz" ripgit
 tar -C "${DIST_DIR}" -czf "${OUT_DIR}/gsv-cloudflare-channel-whatsapp.tar.gz" channel-whatsapp

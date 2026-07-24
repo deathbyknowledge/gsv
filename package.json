@@ -3,7 +3,6 @@
   "version": "0.4.0",
   "private": true,
   "workspaces": [
-    "assembler",
     "extension",
     "gateway",
     "web",

@@ -77,12 +77,6 @@ pub(crate) enum Commands {
         action: ConfigAction,
     },
 
-    /// Package lifecycle and source management
-    Packages {
-        #[command(subcommand)]
-        action: PackagesAction,
-    },
-
     /// Cloudflare infrastructure lifecycle
     Infra {
         #[command(subcommand)]
@@ -263,19 +257,6 @@ pub(crate) enum InfraAction {
         /// Keep local device daemon installed
         #[arg(long = "keep-device", alias = "keep-node")]
         keep_device: bool,
-    },
-}
-
-#[derive(Subcommand, Clone)]
-pub(crate) enum PackagesAction {
-    /// Re-resolve one installed package from its source repo/ref
-    Sync {
-        /// Package id, manifest name, or unique package alias
-        package: String,
-
-        /// Source ref to install. Defaults to the package's recorded source ref.
-        #[arg(long)]
-        r#ref: Option<String>,
     },
 }
 
@@ -540,7 +521,7 @@ pub(crate) enum ProcAction {
 
     /// Spawn a new process
     Spawn {
-        /// Account to run the process as: a username, uid, or `package#agent`
+        /// Account to run the process as a username or uid
         /// (defaults to your personal agent)
         #[arg(long = "as", visible_alias = "run-as")]
         run_as: Option<String>,
