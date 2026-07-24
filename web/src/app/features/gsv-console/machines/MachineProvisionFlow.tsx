@@ -185,8 +185,10 @@ export function MachineProvisionFlow({
   const validDeviceId = parseDeviceId(deviceId);
   // Block provisioning a machine whose display name or device-id already exists
   // (the gateway is authoritative, but pre-check inline so the user sees it).
-  const nameTaken = isNameTaken(targets.targets.map((target) => target.label), machineName);
-  const deviceIdTaken = deviceId.trim().length > 0 && knownTarget !== null;
+  // Only while composing a NEW machine: once a token is issued the just-created
+  // device registers and would otherwise match itself if the user steps back.
+  const nameTaken = !issuedToken && isNameTaken(targets.targets.map((target) => target.label), machineName);
+  const deviceIdTaken = !issuedToken && deviceId.trim().length > 0 && knownTarget !== null;
   const detailsReady =
     machineName.trim().length > 0 && validDeviceId !== null && !nameTaken && !deviceIdTaken;
   const release = snapshot.server?.release ?? "dev";
