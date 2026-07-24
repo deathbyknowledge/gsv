@@ -49,7 +49,9 @@ export function machineDetailSections(target: ConsoleTarget): ConsoleDetailSecti
         detailRow("platform", "PLATFORM", target.platform),
         detailRow("version", "VERSION", target.version),
         detailRow("owner", "OWNER", target.ownerUsername || uidLabel(target.ownerUid)),
-        detailRow("last-seen", "LAST SEEN", target.lastSeenAt === null ? "" : formatAge(target.lastSeenAt)),
+        detailRow("last-seen", "LAST SEEN", target.lastSeenAt === null ? "" : formatAge(target.lastSeenAt), {
+          labelInfo: "When this machine last connected or disconnected. For an online machine it's when the current session began; for an offline one, when it dropped.",
+        }),
       ]),
     },
     {

@@ -149,6 +149,7 @@ function DetailPreview() {
                 { id: "platform", label: "PLATFORM", sub: "linux x86_64" },
                 { id: "version", label: "VERSION", sub: "v0.80.2" },
                 { id: "owner", label: "OWNER", sub: "root" },
+                { id: "last-seen", label: "LAST SEEN", labelInfo: "When this machine last connected or disconnected. For an online machine it's when the current session began; for an offline one, when it dropped.", sub: "2m ago" },
               ],
             },
             {

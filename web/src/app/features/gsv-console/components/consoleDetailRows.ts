@@ -6,7 +6,7 @@ export function detailRow(
   id: string,
   label: string,
   value: string | number | boolean | null | undefined,
-  options: Pick<ConsoleDetailRow, "icon" | "status" | "statusLabel"> = {},
+  options: Pick<ConsoleDetailRow, "icon" | "status" | "statusLabel" | "labelInfo"> = {},
 ): ConsoleDetailRow | null {
   const sub = typeof value === "boolean"
     ? (value ? "YES" : "NO")

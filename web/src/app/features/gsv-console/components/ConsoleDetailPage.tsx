@@ -10,6 +10,8 @@ export type ConsoleDetailRow = {
   id: string;
   icon?: string;
   label: string;
+  /** Optional "?" help tooltip explaining the row's value. */
+  labelInfo?: string;
   status?: ListRowStatus;
   statusLabel?: string;
   sub: string;
@@ -141,6 +143,7 @@ export function ConsoleDetailPage({
                         icon={row.icon}
                         key={row.id}
                         label={row.label}
+                        labelInfo={row.labelInfo}
                         status={row.status ?? "none"}
                         statusDotPlacement="trailing"
                         statusLabel={row.statusLabel}
