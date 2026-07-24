@@ -17,6 +17,9 @@ export interface TextInputProps {
   status?: TextInputStatus;
   message?: string;
   requirement?: TextInputRequirement;
+  /** When true, reveal the required-empty error immediately (e.g. on a submit
+   *  attempt) even if the field hasn't been blurred yet. */
+  forceValidate?: boolean;
   disabled?: boolean;
   readonly?: boolean;
   /** Leading affix — a short string, or any node (e.g. an Icon) for callers
@@ -50,6 +53,7 @@ export function TextInput(props: TextInputProps) {
     status = "none",
     message = "",
     requirement = "none",
+    forceValidate = false,
     disabled = false,
     readonly = false,
     prefix = "",
@@ -64,14 +68,26 @@ export function TextInput(props: TextInputProps) {
   const fieldId = useId();
   const [internalValue, setInternalValue] = useState(props.value ?? "");
   const [revealed, setRevealed] = useState(false);
+  const [blurred, setBlurred] = useState(false);
 
   const controlled = props.value !== undefined;
   const value = controlled ? props.value ?? "" : internalValue;
   const hasValue = String(value).length > 0;
 
-  const rawStatus = status && status !== "none" ? status : "";
+  // Systemic required enforcement: a `requirement="required"` field that's left
+  // empty surfaces a "REQUIRED" error once it's been blurred (or on a forced
+  // submit-time validation). A caller-supplied `status` always wins, so forms
+  // that drive their own validation are unaffected.
+  const requiredEmpty = requirement === "required" && String(value).trim().length === 0;
+  const showRequiredError = requiredEmpty && (blurred || forceValidate);
+  const effectiveStatus: TextInputStatus =
+    status !== "none" ? status : showRequiredError ? "error" : "none";
+  const effectiveMessage =
+    status !== "none" ? message : showRequiredError ? "REQUIRED" : message;
+
+  const rawStatus = effectiveStatus && effectiveStatus !== "none" ? effectiveStatus : "";
   const statusKey = rawStatus === "warning" ? "warn" : rawStatus;
-  const hasStatusMsg = !!rawStatus && message.length > 0;
+  const hasStatusMsg = !!rawStatus && effectiveMessage.length > 0;
 
   const showCounter = maxLength > 0 && !hasStatusMsg;
   const counterText = maxLength > 0 ? `${String(value).length} / ${maxLength}` : "";
@@ -122,8 +138,12 @@ export function TextInput(props: TextInputProps) {
           readOnly={readonly}
           aria-labelledby={hasLabelRow && label.length > 0 ? `${fieldId}-label` : undefined}
           aria-describedby={describedBy}
-          aria-invalid={status === "error" ? true : undefined}
+          aria-invalid={effectiveStatus === "error" ? true : undefined}
           onInput={(e) => emit((e.target as HTMLInputElement).value)}
+          onBlur={(e) => {
+            setBlurred(true);
+            inputProps?.onBlur?.(e);
+          }}
         />
         {showClear ? (
           <button type="button" class="gsv-ti-x" aria-label="Clear input" onClick={() => emit("")}>
@@ -152,7 +172,7 @@ export function TextInput(props: TextInputProps) {
           {hasStatusMsg ? (
             <>
               <span class="gsv-fld-dot" />
-              <span class="gsv-fld-msg gsv-sublabel" id={`${fieldId}-msg`}>{message}</span>
+              <span class="gsv-fld-msg gsv-sublabel" id={`${fieldId}-msg`}>{effectiveMessage}</span>
             </>
           ) : null}
           {showCounter ? <span class="gsv-ti-counter gsv-sublabel">{counterText}</span> : null}
