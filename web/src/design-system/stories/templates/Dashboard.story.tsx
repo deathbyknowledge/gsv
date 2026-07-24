@@ -3,7 +3,7 @@ import { Wire, WireRow, WireCol, WireBox, WireRepeat, PreviewLink } from "../../
 
 /** DASHBOARD archetype — the console overview: a two-column mosaic of panels
  *  summarising every object category (The Ship, Crew, Models & Tasks, Fleet,
- *  Applications). Each panel is an action header over a few preview rows that
+ *  Integrations). Each panel is an action header over a few preview rows that
  *  deep-link into the corresponding List. Use as a system landing / overview. */
 const story: Story = {
   title: "Dashboard",
@@ -13,7 +13,7 @@ const story: Story = {
     <div class="ds-tpl-stack">
       <p class="ds-tpl-blurb">
         The console overview: a two-column mosaic of panels summarising every
-        object category (The Ship, Crew, Models &amp; Tasks, Fleet, Applications).
+        object category (The Ship, Crew, Models &amp; Tasks, Fleet, Integrations).
         Each panel is an action header over a few preview rows that deep-link into
         the matching List. Reach for it as a system landing surface.
       </p>

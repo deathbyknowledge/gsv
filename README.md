@@ -23,7 +23,7 @@ Most personal AI agents run on one host you pick and keep alive — a laptop, VP
 - Keep agents working while your devices sleep — they live on the edge, not on your hardware.
 - Reach it from anywhere — web UI, CLI, or WhatsApp / Discord / Telegram.
 - Spawn durable agents with their own memory and permissions, that can start sub-agents of their own.
-- Host your own packages and share apps between GSV instances through a built-in git remote.
+- Keep your repositories and knowledge source-inspectable through a built-in git remote.
 - Hand your agent the browser. The web extension lets it drive your real browser — your tabs and logged-in sessions — so it works the sites you already use, not just the public web.
 
 Under the hood, GSV is a distributed operating environment: agents are durable processes with identities, history, permissions, and a capability-gated syscall surface. Named after the sentient ships from Iain M. Banks' Culture series, GSV (General Systems Vehicle) is a foundation for personal intelligence that lives across the edge and the machines you already own.
@@ -74,8 +74,8 @@ Now GSV can use the shell and read/write files on that machine. Set up adapters 
 
 GSV uses Linux as a design model (not POSIX, though). Familiar, composable primitives make the system understandable to both people and models.
 
-- **Cloud computer** — a small, globally reachable hub running in your Cloudflare account. It coordinates identity, state, routing, packages, schedules, and agent loops rather than performing heavy local computation.
-- **Kernel and syscalls** — humans, agents, apps, and the CLI use the same capability-gated primitives for processes, files, shells, networking, packages, and configuration. The public SDK exposes those contracts to apps and other clients.
+- **Cloud computer** — a small, globally reachable hub running in your Cloudflare account. It coordinates identity, state, routing, schedules, and agent loops rather than performing heavy local computation.
+- **Kernel and syscalls** — humans, agents, and the CLI use the same capability-gated primitives for processes, files, shells, networking, repositories, and configuration. The public client exposes those contracts to other clients.
 - **Processes** — agents are durable processes with PIDs, histories, permissions, pending work, and subprocesses (`gsv proc list|spawn|send|kill`).
 - **Targets** — the cloud runtime and connected devices implement the same targetable filesystem, shell, and network contracts. The browser extension exposes the browser through the same filesystem and shell shape. Changing the target changes where work runs, not what the syscall means.
 - **Agent tools** — models see a deliberately small surface: Read, Write, Edit, Delete, Search, Shell, and CodeMode. Devices and integrations extend the system underneath those tools instead of making the tool list grow forever.

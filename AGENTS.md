@@ -15,8 +15,8 @@ This document is the root engineering contract for the repository. It explains h
 
 ### Keep the gateway a control plane
 
-- The gateway owns identity, authorization, configuration, routing, process lifecycle, packages, adapters, and inference coordination.
-- Heavy or platform-native computation belongs on the appropriate device, provider, package worker, or specialized service.
+- The gateway owns identity, authorization, configuration, routing, process lifecycle, adapters, and inference coordination.
+- Heavy or platform-native computation belongs on the appropriate device, provider, or specialized service.
 - Do not move adapter quirks, UI rendering, or device-specific behavior into the Kernel.
 
 ### Treat syscalls and protocol frames as the primitive boundary
@@ -29,7 +29,7 @@ This document is the root engineering contract for the repository. It explains h
 
 ### Keep the agent interface small and composable
 
-The fixed model-facing surface is Read, Write, Edit, Delete, Search, Shell, and CodeMode. Add capabilities beneath that surface through syscalls, targets, packages, or CodeMode instead of growing a bespoke tool for every integration.
+The fixed model-facing surface is Read, Write, Edit, Delete, Search, Shell, and CodeMode. Add capabilities beneath that surface through syscalls, targets, or CodeMode instead of growing a bespoke tool for every integration.
 
 GSV is Linux-inspired because familiar, orthogonal semantics reduce instruction burden for models and humans. This is a design model, not a promise of POSIX compatibility.
 
@@ -49,19 +49,18 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 
 ## System ownership
 
-- `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, packages, schedules, adapters, and user connections.
+- `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
 - `gateway/src/process/`: agent loop, conversations, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
 - `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
 - `gateway/src/inference/`: provider integration and model transport.
-- `packages/gsv/`: public SDK, client, host bridge, and protocol types.
-- `web/`: desktop shell, setup/login, system UI, app hosting, and browser-side gateway integration.
+- `packages/gsv/`: public client and protocol types.
+- `web/`: desktop shell, setup/login, system UI, and browser-side gateway integration.
 - `cli/`: user, device, deployment, and administration commands.
 - `adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
-- `assembler/`: package worker assembly.
 - `ripgit/`: git-backed repositories and filesystem storage operations.
 
-Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web shell or package UI. Keep target selection below stable syscall contracts.
+Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web shell. Keep target selection below stable syscall contracts.
 
 ## Runtime invariants
 
@@ -89,7 +88,6 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - Enforce authorization in the Kernel, not only in UI or callers.
 - Never hardcode or log secrets, raw authentication material, QR payloads, prompts, tool arguments, or private file contents.
 - Store live process media once in R2, persist references in history, and scope keys to the owning process. Before live cleanup, promote archived references to immutable media under the run-as agent home. Hydrate bytes only while building model context or serving an explicit media read.
-- Packages remain source-inspectable and capability-gated.
 - Telemetry uses an explicit allowlist and records timings and outcomes rather than user content.
 
 ## Schema migrations
@@ -98,7 +96,6 @@ Durable Object SQLite schemas use versioned migrations in:
 
 - `gateway/src/kernel/schema/`
 - `gateway/src/process/schema/`
-- `gateway/src/app-runner/schema/`
 - `gateway/src/schema/runner.ts`
 - `ripgit/src/schema.rs`
 
@@ -121,12 +118,11 @@ Preserve unrelated user changes in a dirty worktree. Do not broaden a cleanup ba
 ```text
 gsv/
 ├── gateway/       # Kernel, Process, syscalls, inference, filesystem
-├── packages/gsv/  # Public TypeScript SDK and protocol
+├── packages/gsv/  # Public TypeScript client and protocol
 ├── web/           # Desktop shell and embedded app host
 ├── cli/           # Rust CLI and device runtime
 ├── adapters/      # WhatsApp, Discord, Telegram, and test channels
 ├── extension/     # Browser target
-├── assembler/     # Package assembly worker
 ├── ripgit/        # Git-backed repository worker
 ├── engineering/   # Detailed implementation and product guidance
 ├── docs/          # Architecture and user/reference documentation
@@ -154,20 +150,19 @@ Validate only the surfaces affected by the change:
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
 - CLI/device: `cd cli && cargo fmt --check && cargo test`
-- Assembler: `cd assembler && npm test`
 - ripgit: `cd ripgit && npm test`
 - Browser extension: `cd extension && npm run check && npm run test:run && npm run build`
 - WhatsApp: `cd adapters/whatsapp && npx tsc --noEmit`
 - Discord, Telegram, or test adapter: `cd adapters/<name> && npm run typecheck`
 
-Protocol or SDK changes may affect gateway, web, CLI, devices, adapters, and packages even when only one type definition changed. Validate each actual consumer.
+Protocol or client changes may affect gateway, web, CLI, devices, and adapters even when only one type definition changed. Validate each actual consumer.
 
 ## Deployment model
 
 - Gateway code: `cd gateway && npm run deploy`
 - Web code: build `web`, then deploy the gateway that serves the resulting assets.
 - Adapter code: deploy the affected adapter worker.
-- Assembler or ripgit code: deploy that worker separately.
+- ripgit code: deploy that worker separately.
 - CLI or extension code: build and publish through their release path; a gateway deploy does not update them.
 
 Deployment and CLI command reference lives in `docs/reference/cli-commands.md`.
@@ -188,7 +183,6 @@ Commit subjects are short, imperative, lowercase, and scoped to one logical chan
 
 - Architecture: `docs/architecture/`
 - Syscalls and protocol: `docs/reference/syscalls.md` and `docs/reference/websocket-protocol.md`
-- Package frontend structure: `engineering/package-frontend-architecture.md`
 - Web product and app design: `engineering/builtin-app-design.md`
 
 Read the relevant detailed guide before changing that subsystem; do not duplicate its full policy here.

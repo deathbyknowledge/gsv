@@ -19,7 +19,7 @@ const FLOWS: readonly ConnectFlowDef[] = [
 /** Standalone mock of the CONNECT-NEW flows — reachable at /connect-flows with
  *  the full shell chrome (rail + chat). Pick a flow, walk every step with mock
  *  data, to review the redesigned connect UX before applying it to the real
- *  Machines / Messenger / Integrations / Applications pages. */
+ *  Machines / Messenger / Integrations pages. */
 export function ConnectFlowsMockPage(_props: { onOpenChat?: () => void }) {
   const [flowIndex, setFlowIndex] = useState(0);
   const [step, setStep] = useState(0);

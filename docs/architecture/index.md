@@ -8,7 +8,7 @@ reached through syscalls, and external machines appear as devices.
 
 This is a mental model, not POSIX compatibility. The point is to give humans and
 AI processes familiar operating-system affordances: inspectable files, stable
-paths, process IDs, permissions, device targets, packages, and command surfaces.
+paths, process IDs, permissions, device targets, repositories, and command surfaces.
 
 ## When to read this
 
@@ -40,18 +40,17 @@ The Kernel is responsible for:
 
 - Authenticating users, service identities, and device drivers.
 - Maintaining users, groups, tokens, OAuth accounts, capabilities, devices,
-  packages, adapter links, workspaces, routes, notifications, and runtime config
+  adapter links, workspaces, routes, notifications, and runtime config
   in Kernel SQLite.
 - Dispatching syscalls such as `fs.read`, `shell.exec`, `proc.spawn`,
-  `pkg.sync`, `sys.config.get`, `sys.oauth.start`, `sys.mcp.add`, and
+  `repo.apply`, `sys.config.get`, `sys.oauth.start`, `sys.mcp.add`, and
   `adapter.inbound`.
-- Routing requests between browser clients, the CLI, package apps, Process DOs,
+- Routing requests between browser clients, the CLI, Process DOs,
   adapter workers, and connected devices.
 
-The Kernel is deliberately the place where policy lives. Process DOs run agents,
-AppRunner DOs run package code, and devices execute local hardware work, but the
-Kernel decides whether a caller is allowed to do something and where the request
-should go.
+The Kernel is deliberately the place where policy lives. Process DOs run agents
+and devices execute local hardware work, but the Kernel decides whether a caller
+is allowed to do something and where the request should go.
 
 ### Agent Processes
 
@@ -68,12 +67,12 @@ the process metadata needed for routing and permissions.
 The agent loop belongs to the Process DO. It assembles context, calls the model,
 receives tool calls, issues syscalls, waits for results, and emits `proc.run.*`
 and `proc.changed` signals through the Kernel. `gsv chat` is therefore just one
-client for a process; browser apps and adapters can reach the same process
+client for a process; browser clients and adapters can reach the same process
 model.
 
 ### Filesystem and Storage
 
-GSV exposes a virtual filesystem through `GsvFs`. Agents and apps interact with
+GSV exposes a virtual filesystem through `GsvFs`. Agents and clients interact with
 paths such as `/home/alice`, `/workspaces/{workspaceId}`, `/sys`, `/proc`,
 `/var`, `/dev`, `/etc`, `/src/repos`, and `/usr/local/bin` instead of storage
 APIs.
@@ -83,9 +82,8 @@ Different path families are backed by different stores:
 - Kernel SQLite backs control-plane paths such as `/sys`, `/proc`, `/dev`, and
   auth/config overlays in `/etc`.
 - Process SQLite backs active conversation and run state.
-- R2 stores ordinary bytes, process media, archives, and package artifacts.
-- ripgit stores versioned home knowledge, workspace trees, package source, and
-  repository content.
+- R2 stores ordinary bytes, process media, and archives.
+- ripgit stores versioned home knowledge, workspace trees, and repository content.
 
 This split matters operationally, but it should be hidden from agents whenever
 possible. The filesystem is the stable interface. Prompt context follows the
@@ -120,32 +118,11 @@ targets. Agents discover authorized messaging surfaces with
 `message destinations`; users inspect and administer adapter accounts in the
 Messengers console and adapter APIs.
 
-### Packages and Apps
-
-Packages are GSV software. A package declares a manifest, source repository,
-entrypoints, and requested capabilities. Entry points can be browser UI, backend
-HTTP/RPC, CLI commands, or package profiles.
-
-Package source is resolved from ripgit, assembled by the assembler worker, stored
-as an immutable artifact in R2, and executed by AppRunner Durable Objects.
-AppRunner gives package code a scoped runtime with:
-
-- Kernel access through the package SDK.
-- Package-scoped SQLite.
-- Browser boot metadata and backend RPC sessions.
-- Optional public routes for webhooks.
-- CLI command handlers that behave like OS commands.
-
-The result is closer to an OS app model than a plugin folder. Packages can call
-Kernel syscalls with granted capabilities, expose UI in the web shell, store
-their own state, ship commands, and be reviewed or installed from repository
-source.
-
 ### Git and Distribution
 
 ripgit is GSV's built-in Git service and repository API. It supports Git HTTP
 paths for clone/fetch/push and an internal `/hyperspace/repos/...` API used by
-the Kernel for reads, writes, search, package analysis, snapshots, and upstream
+the Kernel for reads, writes, search, and upstream
 imports.
 
 GSV uses repositories for more than source control:
@@ -153,12 +130,8 @@ GSV uses repositories for more than source control:
 - `{username}/home` stores user-global knowledge and context.
 - `{username}/{workspaceId}` stores workspace files and checkpoints.
 - `root/gsv` stores the bootstrapped GSV source at the configured release ref.
-- Package source repositories provide installable apps and CLI commands.
-
-This is how GSV keeps its own source inspectable, installs packages from repos,
-and exposes public package metadata to other GSVs. Distribution is
-repository-based rather than registry-only: a package is source plus manifest
-plus assembled artifact.
+This is how GSV keeps its own source and user-owned knowledge inspectable while
+supporting ordinary repository workflows without an external Git service.
 
 ## How Requests Move
 
@@ -172,20 +145,20 @@ CLI, browser, or adapter
   -> model call
   -> syscall request
   -> Kernel dispatch
-  -> native handler, Process DO, AppRunner, or device driver
+  -> native handler, Process DO, or device driver
   -> response
   -> Process DO continues the run
   -> proc.run.* signals return through Kernel run routing
   -> original client or adapter surface
 ```
 
-The same dispatcher handles non-chat requests. A package app can issue
-`fs.read`; the Kernel checks the package entrypoint grants and either runs the
-native filesystem handler or routes to a device if `target` names one. An adapter
-can call `adapter.inbound`; the Kernel resolves the external actor through
-identity links and delivers the message to a process. A CLI call to `gsv proc
-kill` becomes a `proc.kill` syscall forwarded to the target Process DO after
-ownership checks.
+The same dispatcher handles non-chat requests. A client can issue `fs.read`;
+the Kernel checks its identity and capabilities, then either runs the native
+filesystem handler or routes to a device if `target` names one. An adapter can
+call `adapter.inbound`; the Kernel resolves the external actor through identity
+links and delivers the message to a process. A CLI call to `gsv proc kill`
+becomes a `proc.kill` syscall forwarded to the target Process DO after ownership
+checks.
 
 The key architectural choice is that syscall names do not change based on where
 they run. `fs.read` is still `fs.read` whether it reads from the cloud filesystem
@@ -196,15 +169,13 @@ or a connected laptop.
 GSV needs to be reachable when no personal machine is online. Cloudflare Workers
 provide the always-on edge entrypoint, Durable Objects provide serialized
 stateful actors, R2 provides object storage, and service bindings connect the
-Gateway, ripgit, assembler, adapters, and AppRunner without running a traditional
+Gateway, ripgit, and adapters without running a traditional
 server.
 
 The system uses multiple Durable Object roles instead of one monolith:
 
 - Kernel DO: authoritative control plane and router.
 - Process DOs: durable agent loops and process-local SQLite.
-- AppRunner DOs: package runtime state, RPC sessions, daemon schedules, and
-  package SQL.
 - ripgit objects/workers: repository storage and Git protocol handling.
 
 The tradeoff is that the architecture must be explicit about routing, timeouts,
@@ -222,9 +193,8 @@ GSV favors stable OS-like interfaces over implementation leakage.
   artifacts.
 - Devices are optional hardware. The cloud `gsv` target should remain useful
   even when no device is connected.
-- Package capabilities are explicit grants, not ambient access.
-- Repository history is part of the system model because agents and apps need
-  source, diffs, review context, and distribution.
+- Repository history is part of the system model because agents need source,
+  diffs, review context, and durable collaboration.
 
 These rules are what make GSV feel like a cloud computer instead of a collection
 of chat integrations.

@@ -59,8 +59,7 @@ The process then assembles a system prompt from explicit context providers in
 this order:
 
 1. **System context** from `config/ai/context.d/*.md`.
-2. **Profile context** from `config/ai/profile/{profile}/context.d/*.md`, or
-   from a package profile when the profile is package-provided.
+2. **Profile context** from `config/ai/profile/{profile}/context.d/*.md`.
 3. **Home context** from `~/context.d/*.md`, backed by the user's ripgit home
    repository with R2 fallback.
 4. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`,
@@ -75,15 +74,14 @@ and profile context can template values such as `identity.username`, `identity.c
 `workspace`, `devices`, `mcpServers`, and `known_paths`. Home and workspace context are loaded
 lexically and bounded by `config/ai/max_context_bytes`.
 
-Skill discovery reads the owning user's home `skills.d`, the run-as agent's home
-`skills.d` when that account is distinct from the owner, and visible enabled
-package source repos. Use `pkg source <package>` to locate package-provided skill
-files under `/src/repos/<owner>/<repo>`. Profile and workspace directories supply
-prompt context, but are not skill discovery roots. The prompt uses a configurable
-compact skill index (`summary`, `names`, or `off`) and tells processes to start
-unfamiliar work with `man --search -- '<plain-language goal>'`. That live search
-returns exact next actions such as `skills show`; long source paths and full skill
-bodies are not embedded in standing context.
+Skill discovery reads the owning user's home `skills.d` and the run-as agent's
+home `skills.d` when that account is distinct from the owner. Profile and
+workspace directories supply prompt context, but are not skill discovery roots.
+The prompt uses a configurable compact skill index (`summary`, `names`, or
+`off`) and tells processes to start unfamiliar work with
+`man --search -- '<plain-language goal>'`. That live search returns exact next
+actions such as `skills show`; long source paths and full skill bodies are not
+embedded in standing context.
 
 System-provided skills live in the root GSV source tree under `skills/` and are
 seeded into user home `skills.d` during bootstrap when missing.
@@ -144,8 +142,8 @@ implementation; a device id routes the same syscall to that connected device.
 
 The Process DO does not execute device work itself. It registers the pending
 call, sends the request to the Kernel, and waits for a response frame. The Kernel
-either handles the syscall natively, forwards it to another Process/AppRunner
-surface, or routes it to a device driver.
+either handles the syscall natively, forwards it to another Process, or routes
+it to a device driver.
 
 ## Tool Results and Continuation
 
@@ -233,8 +231,8 @@ enumerate or open it. Media is deleted when the process is reset or killed.
 
 Processes can also wake from watched signals. When a watched signal is delivered,
 the process appends a system message describing the signal, watch state, source
-PID, and payload. If no run is active, it starts a run. This is how package
-daemons, automations, and other system events can feed work into the same agent
+PID, and payload. If no run is active, it starts a run. This is how automations
+and other system events can feed work into the same agent
 loop without pretending to be user chat.
 
 ## Checkpointing and Archives
