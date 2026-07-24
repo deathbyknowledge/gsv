@@ -1177,7 +1177,7 @@ Runtime behavior:
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
 | `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/zai-org/glm-5.2`, fallback profile to `workers-ai-kimi-k2-6`, max tokens to 8192, context window to provider/model metadata or configured fallback, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
 | `ai.transcription.create` | `handleAiTranscriptionCreate` | Requires audio metadata plus an audio request body. An optional `pid` resolves model configuration for an accessible process. On failure or empty text, an explicitly configured transcription stack in the fallback profile is tried once. Returns transcription text and model metadata in JSON. |
-| `ai.image.read` | `handleAiImageRead` | Requires image metadata plus an image request body. Returns the image description and model metadata in JSON. |
+| `ai.image.read` | `handleAiImageRead` | Requires image metadata plus an image request body. Uses Moondream 3.1 exclusively for caption, query, OCR, point, and detect modes. Query reasoning may include normalized grounding coordinates. Query and OCR can request prompt-driven JSON, XML, Markdown, or CSV; JSON is parsed and optionally checked against the supplied schema. Caption, query, and OCR may stream decoded UTF-8 output in the response body. |
 | `ai.image.generate` | `handleAiImageGenerate` | Accepts a text prompt. Inline generated image bytes use a response body; `data.image` contains MIME type and size, and providers may instead return `url`. |
 | `ai.speech.create` | `handleAiSpeechCreate` | Accepts text and voice options. Synthesized audio uses a response body with MIME type and size in `data.audio`; skipped or empty results have no body. |
 
@@ -1199,8 +1199,17 @@ type AiSyscalls = {
   };
 
   "ai.image.read": {
-    args: { image: { mimeType: string; filename?: string }; prompt?: string; model?: string; inputFormat?: "auto" | "chat" | "image"; maxTokens?: number };
-    result: { text: string; provider: string; model: string };
+    args:
+      | ({ image: { mimeType: string; filename?: string }; maxTokens?: number; temperature?: number; topP?: number } & { mode?: "caption"; captionLength?: "short" | "normal" | "long"; stream?: boolean })
+      | ({ image: { mimeType: string; filename?: string }; maxTokens?: number; temperature?: number; topP?: number } & { mode: "query"; prompt: string; reasoning?: boolean; responseFormat?: "text" | "json" | "xml" | "markdown" | "csv"; schema?: Record<string, unknown>; stream?: boolean })
+      | ({ image: { mimeType: string; filename?: string }; maxTokens?: number; temperature?: number; topP?: number } & { mode: "ocr"; prompt?: string; responseFormat?: "text" | "json" | "xml" | "markdown" | "csv"; schema?: Record<string, unknown>; stream?: boolean })
+      | ({ image: { mimeType: string; filename?: string }; maxTokens?: number; temperature?: number; topP?: number } & { mode: "point" | "detect"; target: string; maxObjects?: number });
+    result:
+      | { mode: "caption"; text: string; caption: string; captionLength: "short" | "normal" | "long"; provider: string; model: string; finishReason?: string; metrics?: object }
+      | { mode: "query" | "ocr"; text: string; answer: string; responseFormat: "text" | "json" | "xml" | "markdown" | "csv"; structured?: unknown; reasoning?: { text: string; grounding: Array<{ startIndex: number; endIndex: number; points: Array<{ x: number; y: number }> }> }; provider: string; model: string; finishReason?: string; metrics?: object }
+      | { mode: "point"; points: Array<{ x: number; y: number }>; provider: string; model: string }
+      | { mode: "detect"; objects: Array<{ xMin: number; yMin: number; xMax: number; yMax: number }>; provider: string; model: string }
+      | { mode: "caption" | "query" | "ocr"; streamed: true; contentType: "text/plain; charset=utf-8"; provider: string; model: string };
   };
 
   "ai.image.generate": {

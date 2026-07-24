@@ -1042,8 +1042,8 @@ describe("media native commands", () => {
           "ai.speech.create",
         ],
         aiRun: vi.fn(async (_model, input) => {
-          if (Array.isArray(input.messages)) {
-            return { response: "terminal screenshot" };
+          if (input.task === "caption") {
+            return { caption: "terminal screenshot" };
           }
           if (typeof input.audio === "string") {
             return { text: "hello audio" };
@@ -1086,9 +1086,9 @@ describe("media native commands", () => {
       makeContext({
         capabilities: ["ai.image.read", "ai.image.generate"],
         aiRun: vi.fn(async (_model, input) => {
-          if (Array.isArray(input.messages)) {
+          if (input.task === "caption") {
             imageReadInput = input;
-            return { response: "a green square" };
+            return { caption: "a green square" };
           }
           if (typeof input.prompt === "string") {
             return { image: "/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==" };

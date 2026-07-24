@@ -351,8 +351,8 @@ describe("shell chat agent model", () => {
       chatProcesses: [],
       config: [
         {
-          key: "config/ai/image/read/model",
-          value: "vision-model",
+          key: "config/ai/image/generation/model",
+          value: "image-model",
           redacted: false,
         },
         {
