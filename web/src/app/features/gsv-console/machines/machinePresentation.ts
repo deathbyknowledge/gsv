@@ -9,7 +9,9 @@ import { compactText, formatAge, uidLabel } from "../domain/consoleFormat";
 import type { ConsoleTarget } from "../domain/consoleModels";
 
 export function iconForTarget(target: ConsoleTarget): string {
-  if (target.kind === "browser") return "bookmark";
+  // Browser targets use the chrome doticon (matching the step-1 platform tile);
+  // `chrome` exists only as a doticon, so route through the `doticons/` prefix.
+  if (target.kind === "browser") return "doticons/chrome";
   return "computer";
 }
 

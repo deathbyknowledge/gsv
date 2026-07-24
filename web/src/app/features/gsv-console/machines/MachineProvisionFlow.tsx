@@ -171,6 +171,10 @@ export function MachineProvisionFlow({
   const origin = window.location.origin;
   const selectedPlatform = platformOption(platform);
   const isBrowserTarget = platform === "browser";
+  // Icon for the selected target across the flow's action bar, preview rows, and
+  // success screen. Browser → the chrome doticon (matching the step-1 tile);
+  // everything else → the computer glyph. `chrome` exists only as a doticon.
+  const targetIcon = isBrowserTarget ? "doticons/chrome" : "computer";
   const stepLabels = isBrowserTarget
     ? ["TARGET", "DETAILS", "EXTENSION", "PAIR", "SUCCESS"]
     : MACHINE_PROVISION_STEP_LABELS;
@@ -320,7 +324,7 @@ export function MachineProvisionFlow({
     key: "machines",
     navLabel: "MACHINES",
     parentLabel: "MACHINES",
-    icon: isBrowserTarget ? "bookmark" : "computer",
+    icon: targetIcon,
     title: isBrowserTarget ? "Connect browser extension" : "Connect machine",
     blurb: isBrowserTarget
       ? "Provision a driver token and attach the GSV browser extension to the fleet · Chrome, Brave, Edge, or another Chromium browser."
@@ -413,7 +417,7 @@ export function MachineProvisionFlow({
             </div>
             <div class="gsv-cf-framed">
               <ListRow
-                icon={isBrowserTarget ? "bookmark" : "computer"}
+                icon={targetIcon}
                 label={machineName || "New machine"}
                 sub={`${deviceId || "device-id"} / ${selectedPlatform.commandLabel}`}
                 status={detailsReady ? "online" : "warn"}
@@ -631,7 +635,7 @@ export function MachineProvisionFlow({
           <>
             <div class="gsv-cf-cap">
               <span class="gsv-cf-cap-mark">
-                <Icon name={isBrowserTarget ? "bookmark" : "computer"} size={26} />
+                <Icon name={targetIcon} size={26} />
               </span>
               <div class="gsv-cf-cap-text">
                 <span class="gsv-cf-cap-title">{machineName || deviceId} is connected</span>
@@ -645,7 +649,7 @@ export function MachineProvisionFlow({
             <div class="gsv-cf-framed">
               {knownTarget ? (
                 <ListRow
-                  icon={isBrowserTarget ? "bookmark" : "computer"}
+                  icon={targetIcon}
                   label={knownTarget.label}
                   sub={targetSub(knownTarget)}
                   status={knownTarget.online ? "online" : "idle"}
@@ -654,7 +658,7 @@ export function MachineProvisionFlow({
                 />
               ) : (
                 <ListRow
-                  icon={isBrowserTarget ? "bookmark" : "computer"}
+                  icon={targetIcon}
                   label={machineName || deviceId}
                   sub={deviceId}
                   status="online"
