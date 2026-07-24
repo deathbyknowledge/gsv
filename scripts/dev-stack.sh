@@ -12,7 +12,6 @@ mkdir -p "$STATE_ROOT/do/gsv-channel-telegram-TelegramAccount"
 cd "$ROOT_DIR/ripgit"
 exec npm exec -- wrangler dev \
   -c ../gateway/wrangler.jsonc \
-  -c ../assembler/wrangler.toml \
   -c ../adapters/telegram/wrangler.jsonc \
   -c wrangler.toml \
   --ip 0.0.0.0 \

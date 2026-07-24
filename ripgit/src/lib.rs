@@ -3,7 +3,6 @@ mod diff;
 mod git;
 mod hyperspace;
 mod pack;
-mod packages;
 mod schema;
 mod store;
 
@@ -134,8 +133,6 @@ impl DurableObject for Repository {
         }
 
         let owner = parts[0];
-        let repo_name = parts[1];
-        let repo_slug = format!("{}/{}", owner, repo_name);
         let action = if parts.len() >= 3 { parts[2] } else { "" };
         let actor = actor_from_request(&req);
 
@@ -165,15 +162,6 @@ impl DurableObject for Repository {
                     "import" if req.method() == Method::Post => {
                         hyperspace::handle_import(&self.sql, &mut req).await
                     }
-                    "packages" => match (req.method(), parts.get(4).copied().unwrap_or("")) {
-                        (Method::Get, "analyze") => {
-                            hyperspace::handle_packages_analyze(&self.sql, &req, &repo_slug).await
-                        }
-                        (Method::Get, "snapshot") => {
-                            hyperspace::handle_packages_snapshot(&self.sql, &req, &repo_slug).await
-                        }
-                        _ => Response::error("Not Found", 404),
-                    },
                     _ => Response::error("Not Found", 404),
                 }
             }
