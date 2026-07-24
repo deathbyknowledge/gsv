@@ -1,6 +1,6 @@
 ---
 name: gsv-manual
-description: Use the GSV Manual for questions about GSV's operating model, user workflows, settings, devices, users and agents, packages, automation, integrations, filesystem, desktop, updates, and source/debug orientation.
+description: Use the GSV Manual for questions about GSV's operating model, user workflows, settings, devices, users and agents, packages, automation, integrations, filesystem, desktop, native shell and media commands, updates, and source/debug orientation.
 ---
 
 # GSV Manual
@@ -25,6 +25,13 @@ Search when the page path is not obvious:
 
 ```bash
 wiki search <query> --prefix gsv-manual
+```
+
+For image reading and the native `img2txt` command:
+
+```bash
+wiki read gsv-manual/pages/apps-desktop/image-reading.md
+man img2txt
 ```
 
 Keep answers grounded in the retrieved manual pages.
