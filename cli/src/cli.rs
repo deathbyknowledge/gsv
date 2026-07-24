@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use gsv::deploy::CodeModePreference;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -168,6 +169,10 @@ pub(crate) enum InfraAction {
         #[arg(long, env = "CF_ACCOUNT_ID")]
         account_id: Option<String>,
 
+        /// CodeMode availability: auto-detect Workers Paid, force on, or force off
+        #[arg(long, value_enum, default_value = "auto")]
+        codemode: CodeModePreference,
+
         /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
         #[arg(long, env = "DISCORD_BOT_TOKEN")]
         discord_bot_token: Option<String>,
@@ -210,6 +215,10 @@ pub(crate) enum InfraAction {
         /// Cloudflare account ID override (falls back to config `cloudflare.account_id`)
         #[arg(long, env = "CF_ACCOUNT_ID")]
         account_id: Option<String>,
+
+        /// CodeMode availability: auto-detect Workers Paid, force on, or force off
+        #[arg(long, value_enum, default_value = "auto")]
+        codemode: CodeModePreference,
 
         /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
         #[arg(long, env = "DISCORD_BOT_TOKEN")]

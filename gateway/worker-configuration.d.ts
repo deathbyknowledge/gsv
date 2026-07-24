@@ -8,7 +8,7 @@ declare namespace Cloudflare {
 	}
 	interface Env {
 		STORAGE: R2Bucket;
-		LOADER: WorkerLoader;
+		LOADER?: WorkerLoader;
 		AI: Ai;
 		ASSETS: Fetcher;
 		RIPGIT_INTERNAL_KEY: string;

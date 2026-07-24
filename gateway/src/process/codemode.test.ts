@@ -4,8 +4,18 @@ import {
   buildCodeModeMcpToolBindings,
   executeCodeMode,
 } from "./codemode";
+import { CODE_MODE_UNAVAILABLE_ERROR } from "../codemode/availability";
 
 describe.sequential("CodeMode executor", () => {
+  it("returns a clear error when the Worker Loader binding is unavailable", async () => {
+    const result = await executeCodeMode({}, "return 1;", async () => null);
+
+    expect(result).toEqual({
+      status: "failed",
+      error: CODE_MODE_UNAVAILABLE_ERROR,
+    });
+  });
+
   it("runs with the Worker Loader binding and exposes shell and fs wrappers", async () => {
     const calls: Array<{ call: string; args: Record<string, unknown> }> = [];
     const result = await executeCodeMode(

@@ -58,6 +58,7 @@ import { FS_DELETE_DEFINITION } from "../syscalls/delete";
 import { FS_SEARCH_DEFINITION } from "../syscalls/search";
 import { SHELL_EXEC_DEFINITION } from "../syscalls/shell";
 import { CODEMODE_EXEC_DEFINITION } from "../syscalls/codemode";
+import { isCodeModeAvailable } from "../codemode/availability";
 import {
   DEFAULT_WORKERS_AI_MODEL,
   isWorkersAiProvider,
@@ -174,6 +175,7 @@ export async function handleAiTools(
 
   for (const [syscall, baseDef] of Object.entries(SYSCALL_TOOLS)) {
     if (!hasCapability(capabilities, syscall)) continue;
+    if (syscall === "codemode.exec" && !isCodeModeAvailable(ctx.env)) continue;
 
     if (isRoutableSyscall(syscall as SyscallName)) {
       tools.push(intoSyscallTool(baseDef, deviceIds));
