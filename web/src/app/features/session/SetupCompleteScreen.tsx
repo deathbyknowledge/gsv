@@ -35,7 +35,6 @@ export function SetupCompleteScreen({
   onCopyToken,
 }: SetupCompleteScreenProps) {
   const result = setupResultViewModel(snapshot, adminMode);
-  const sourceIsUrl = /^https?:\/\//i.test(result.sourceLabel);
 
   return (
     <AuthLayout background="galaxy" visible={visible} surfaceClass="gsv-auth-surface-setup">
@@ -125,26 +124,6 @@ export function SetupCompleteScreen({
           <span class="gsv-complete-status-online">
             <StatusDot tone="online" size={7} />
             GSV Online
-          </span>
-          <span class="gsv-complete-status-seg gsv-complete-status-seg-grow">
-            <b>System files</b>
-            {sourceIsUrl ? (
-              <a
-                class="gsv-complete-status-val gsv-complete-status-link"
-                href={result.sourceLabel}
-                target="_blank"
-                rel="noopener noreferrer"
-                data-setup-result-source
-              >
-                {result.sourceLabel.replace(/^https?:\/\//i, "").replace(/^github\.com\//i, "")}
-              </a>
-            ) : (
-              <span class="gsv-complete-status-val" data-setup-result-source>{result.sourceLabel}</span>
-            )}
-          </span>
-          <span class="gsv-complete-status-seg">
-            <b>Version</b>
-            <span class="gsv-complete-status-val" data-setup-result-ref>{result.refLabel}</span>
           </span>
         </footer>
       </div>

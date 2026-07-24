@@ -129,8 +129,8 @@ GSV uses repositories for more than source control:
 
 - `{username}/home` stores user-global knowledge and context.
 - `{username}/{workspaceId}` stores workspace files and checkpoints.
-- `root/gsv` stores the bootstrapped GSV source at the configured release ref.
-This is how GSV keeps its own source and user-owned knowledge inspectable while
+- `root/gsv-manual` stores the imported product manual.
+This keeps system documentation and user-owned knowledge inspectable while
 supporting ordinary repository workflows without an external Git service.
 
 ## How Requests Move

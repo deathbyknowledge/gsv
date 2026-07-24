@@ -29,8 +29,6 @@ export type ValidationResult = {
 export type SetupResultViewModel = {
   username: string;
   rootLabel: string;
-  sourceLabel: string;
-  refLabel: string;
   cliLabel: string;
   cliCommand: string;
   cliMeta: string;
@@ -42,8 +40,6 @@ export type SetupResultViewModel = {
   };
 };
 
-export const DEFAULT_SOURCE_LABEL = "Official system files";
-export const DEFAULT_SOURCE_REF = "Default version";
 export const USERNAME_FORMAT_DESCRIPTION = "Use 1-32 characters: lowercase letters, numbers, underscores, or hyphens. Start with a lowercase letter or underscore.";
 
 const USERNAME_FORMAT_REQUIREMENT = "be 1-32 characters, start with a lowercase letter or underscore, and use only lowercase letters, numbers, underscores, or hyphens";
@@ -53,24 +49,24 @@ export const SETUP_LANE_META: Record<OnboardingLane, SetupLaneMeta> = {
     label: "Quick start",
     kicker: "Quick start",
     title: "Create the first operator",
-    description: "Use the official system files and the default AI path. You only need the account and admin credentials.",
-    reviewCopy: "Fastest path with the official system files and default AI configuration.",
+    description: "Use the default AI path. You only need the account and admin credentials.",
+    reviewCopy: "Fastest path with the default AI configuration.",
     estimate: "expected time to completion: 1 min",
   },
   customize: {
     label: "Custom",
     kicker: "Custom",
     title: "Tune the parts that matter",
-    description: "Adjust AI defaults, system files, and optional device setup without dealing with every low-level detail.",
-    reviewCopy: "Custom setup with optional AI, system files, and device customization.",
+    description: "Adjust AI defaults and optional device setup without dealing with every low-level detail.",
+    reviewCopy: "Custom setup with optional AI and device customization.",
     estimate: "expected time to completion: 3 min",
   },
   advanced: {
     label: "Custom",
     kicker: "Custom",
     title: "Take full control from first boot",
-    description: "Choose the exact system files and version up front, configure AI explicitly, and create a device setup key if needed.",
-    reviewCopy: "Full-control setup with explicit system files and detailed choices.",
+    description: "Configure AI explicitly and create a device setup key if needed.",
+    reviewCopy: "Full-control setup with explicit AI and device choices.",
     estimate: "expected time to completion: 3 min",
   },
 };
@@ -120,10 +116,6 @@ export function timeZoneOptions(): string[] {
   return [...new Set([...preferred, ...supported])]
     .filter((zone) => zone && isValidTimeZone(zone))
     .sort((left, right) => left.localeCompare(right));
-}
-
-export function sourceLooksLikeRemote(value: string): boolean {
-  return value.includes("://") || value.startsWith("git@");
 }
 
 export function detectBrowserInstallPlatform(): InstallPlatform {
@@ -209,7 +201,7 @@ export function detailStepsForLane(lane: OnboardingLane): OnboardingDetailStep[]
 export function currentDetailStep(draft: OnboardingDraft): OnboardingDetailStep {
   const steps = detailStepsForLane(draft.lane);
   const current = draft.detailStep;
-  if ((current === "admin" || current === "ai" || current === "source" || current === "device") && steps.includes("system")) {
+  if ((current === "admin" || current === "ai" || current === "device") && steps.includes("system")) {
     return "system";
   }
   return steps.includes(current) ? current : steps[0] ?? "account";
@@ -276,9 +268,6 @@ export function validateSetupDetails(
           return { message: "AI model is required when customizing AI settings.", step };
         }
       }
-      if (advancedSectionsVisible(draft) && draft.source.enabled && !draft.source.value.trim()) {
-        return { message: "System files location is required when using custom system files.", step };
-      }
       if (advancedSectionsVisible(draft) && draft.device.enabled) {
         if (!draft.device.deviceId.trim()) {
           return { message: "Device ID is required when creating a device setup key.", step };
@@ -295,18 +284,6 @@ export function validateSetupDetails(
   }
 
   return { message: null };
-}
-
-export function buildSourceSummary(draft: OnboardingDraft): string {
-  if (!advancedSectionsVisible(draft) || !draft.source.enabled) {
-    return DEFAULT_SOURCE_LABEL;
-  }
-  const source = draft.source.value.trim();
-  const ref = draft.source.ref.trim();
-  if (!source) {
-    return DEFAULT_SOURCE_LABEL;
-  }
-  return ref ? `${source}#${ref}` : source;
 }
 
 export function buildAiSummary(draft: OnboardingDraft): string {
@@ -348,17 +325,6 @@ export function buildSetupPayload(draft: OnboardingDraft): SessionSetupInput {
       model: draft.ai.model.trim(),
       ...(draft.ai.apiKey.trim() ? { apiKey: draft.ai.apiKey.trim() } : {}),
     };
-  }
-
-  if (advancedSectionsVisible(draft) && draft.source.enabled) {
-    const source = draft.source.value.trim();
-    const ref = draft.source.ref.trim();
-    payload.bootstrap = sourceLooksLikeRemote(source)
-      ? { remoteUrl: source }
-      : { repo: source };
-    if (ref) {
-      payload.bootstrap.ref = ref;
-    }
   }
 
   if (advancedSectionsVisible(draft) && draft.device.enabled) {
@@ -410,7 +376,7 @@ export function provisioningCopy(pendingAction: PendingAction): { title: string;
   return {
     title: "Setting up your workspace",
     copy: pendingAction === "setup"
-      ? "Creating your account, preparing system files, and opening the desktop."
+      ? "Creating your account, preparing your workspace, and opening the desktop."
       : "Preparing the first session.",
   };
 }
@@ -431,8 +397,6 @@ export function setupResultViewModel(
     return {
       username: snapshot.username || "Unknown",
       rootLabel,
-      sourceLabel: DEFAULT_SOURCE_LABEL,
-      refLabel: DEFAULT_SOURCE_REF,
       cliLabel: `Tools for ${installPlatformLabel(platform)}`,
       cliCommand,
       cliMeta,
@@ -449,8 +413,6 @@ export function setupResultViewModel(
     return {
       username: result.user.username,
       rootLabel,
-      sourceLabel: result.bootstrap?.remoteUrl ?? DEFAULT_SOURCE_LABEL,
-      refLabel: result.bootstrap?.ref ?? DEFAULT_SOURCE_REF,
       cliLabel: `Tools for ${installPlatformLabel(platform)}`,
       cliCommand,
       cliMeta,
@@ -471,8 +433,6 @@ export function setupResultViewModel(
   return {
     username: result.user.username,
     rootLabel,
-    sourceLabel: result.bootstrap?.remoteUrl ?? DEFAULT_SOURCE_LABEL,
-    refLabel: result.bootstrap?.ref ?? DEFAULT_SOURCE_REF,
     cliLabel: `Tools for ${installPlatformLabel(platform)}`,
     cliCommand,
     cliMeta,

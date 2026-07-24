@@ -4010,7 +4010,7 @@ cpu_ms = 300000
     }
 
     #[test]
-    fn collect_additional_worker_modules_includes_wasm_sidecars() {
+    fn collect_additional_worker_modules_includes_binary_and_text_sidecars() {
         let temp_root =
             std::env::temp_dir().join(format!("gsv-ripgit-bundle-{}", uuid::Uuid::new_v4()));
         let worker_dir = temp_root.join("worker");
@@ -4021,13 +4021,16 @@ cpu_ms = 300000
         )
         .unwrap();
         fs::write(worker_dir.join("module.wasm"), b"\0asm").unwrap();
+        fs::write(worker_dir.join("skill.md"), "# Built-in skill").unwrap();
         fs::write(worker_dir.join("index.js.map"), "{}").unwrap();
 
         let modules = collect_additional_worker_modules(&temp_root, "worker/index.js").unwrap();
 
-        assert_eq!(modules.len(), 1);
+        assert_eq!(modules.len(), 2);
         assert_eq!(modules[0].part_name, "module.wasm");
         assert_eq!(modules[0].mime_type, "application/wasm");
+        assert_eq!(modules[1].part_name, "skill.md");
+        assert_eq!(modules[1].mime_type, "text/plain");
 
         let _ = fs::remove_dir_all(temp_root);
     }

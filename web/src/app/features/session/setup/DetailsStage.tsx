@@ -19,7 +19,7 @@ export function DetailsStage({
   const description = isSystem
     ? draft.lane === "quick"
       ? "Confirm timezone and decide whether admin actions need a separate password."
-      : "Confirm timezone, admin security, and any custom AI, system files, or device settings."
+      : "Confirm timezone, admin security, and any custom AI or device settings."
     : "Create the first desktop account and secure it with a password.";
 
   return (

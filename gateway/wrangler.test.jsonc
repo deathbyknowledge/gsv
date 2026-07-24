@@ -10,6 +10,13 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2025-09-01",
 	"compatibility_flags": ["nodejs_compat"],
+	"rules": [
+		{
+			"type": "Text",
+			"globs": ["**/*.md"],
+			"fallthrough": true
+		}
+	],
 	"migrations": [
 		{
 			"new_sqlite_classes": ["Kernel"],
