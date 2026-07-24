@@ -147,6 +147,19 @@
   gap: 12px;
 }
 
+/* Destructive action footer — pinned to the bottom-left of the page (margin-top
+   auto pushes it below all content), isolated from the top action bar. */
+.gsv-console-detail-footer {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 26px;
+  padding-inline: max(26px, var(--gsv-gutter));
+  border-top: 1px solid var(--rule-section);
+}
+
 .gsv-console-detail-actions {
   min-width: 0;
   display: contents;

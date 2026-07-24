@@ -30,6 +30,10 @@ type ConsoleDetailPageProps = {
   actions?: ComponentChildren;
   blurb: string;
   children?: ComponentChildren;
+  /** Destructive action (FORGET / REMOVE / DISCONNECT / KILL). Rendered in a
+   *  footer pinned to the bottom-left of the page, isolated from the top action
+   *  bar's regular/primary actions. */
+  dangerAction?: ComponentChildren;
   icon: string;
   /** Back navigation. For surfaces whose detail is reflected in the shell
    *  breadcrumb this is handled there (so `showBack` stays off); non-route-backed
@@ -54,6 +58,7 @@ export function ConsoleDetailPage({
   actions,
   blurb,
   children,
+  dangerAction,
   icon,
   onBack,
   onPrimary,
@@ -68,6 +73,7 @@ export function ConsoleDetailPage({
 }: ConsoleDetailPageProps) {
   const hasSections = sections.some((section) => section.rows.length > 0);
   const hasActions = Boolean(primaryLabel) || (actions != null && actions !== false);
+  const hasDanger = dangerAction != null && dangerAction !== false;
   // Break the description into two lines: the trailing " · " segment (e.g.
   // "last seen 2m ago", "connected over sse") drops to a second line.
   const descSep = blurb.lastIndexOf(" · ");
@@ -169,6 +175,10 @@ export function ConsoleDetailPage({
           </div>
         ) : null}
       </div>
+
+      {hasDanger ? (
+        <footer class="gsv-console-detail-footer">{dangerAction}</footer>
+      ) : null}
     </section>
   );
 }

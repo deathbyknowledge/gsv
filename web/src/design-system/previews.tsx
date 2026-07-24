@@ -4,6 +4,7 @@ import { ListTemplate, type ListTemplateRow } from "../app/features/gsv-console/
 import { CardListTemplate } from "../app/features/gsv-console/card-template/CardListTemplate";
 import { ConsolePage } from "../app/features/gsv-console/components/ConsolePageTemplate";
 import { ConsoleDetailPage } from "../app/features/gsv-console/components/ConsoleDetailPage";
+import { Button } from "../app/components/ui/Button";
 import { SettingsOverviewDashboard } from "../app/features/gsv-console/pages/ConsoleOverviewPanels";
 import type {
   ConsoleAccount,
@@ -138,6 +139,7 @@ function DetailPreview() {
           blurb="linux x86_64 · v0.80.2 · root · last seen 2m ago"
           parentLabel="MACHINES"
           onBack={noop}
+          dangerAction={<Button variant="dangerGhost" label="FORGET MACHINE" onClick={noop} />}
           sections={[
             {
               title: "MACHINE",
