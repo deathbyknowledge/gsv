@@ -83,8 +83,8 @@ The prompt uses a configurable compact skill index (`summary`, `names`, or
 actions such as `skills show`; long source paths and full skill bodies are not
 embedded in standing context.
 
-System-provided skills live in the root GSV source tree under `skills/` and are
-seeded into user home `skills.d` during bootstrap when missing.
+System-provided skills are bundled into the gateway and seeded into user home
+`skills.d` during bootstrap when missing.
 
 The assembled prompt, config, tool list, device list, and approval policy are
 cached in `currentRun` for the duration of that run.

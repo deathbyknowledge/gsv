@@ -11,6 +11,13 @@
 	"define": {
 		"__GSV_RELEASE__": "\"dev\""
 	},
+	"rules": [
+		{
+			"type": "Text",
+			"globs": ["**/*.md"],
+			"fallthrough": true
+		}
+	],
 	"migrations": [
 		{
 			"new_sqlite_classes": ["Kernel"],

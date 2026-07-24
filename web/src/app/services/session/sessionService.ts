@@ -2,8 +2,6 @@ import type { GSVClient, GsvConnectOptions } from "@humansandmachines/gsv/client
 import type {
   ConnectResult,
   ServerBuild,
-  SysBootstrapArgs,
-  SysBootstrapResult,
   SysSetupArgs,
   SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
@@ -56,7 +54,6 @@ export type SessionService = {
   subscribe: (listener: (snapshot: SessionSnapshot) => void) => () => void;
   login: (input: SessionLoginInput) => Promise<ConnectResult>;
   setup: (input: SessionSetupInput) => Promise<SysSetupResult>;
-  initializeFromUpstream: (args?: SysBootstrapArgs) => Promise<SysBootstrapResult>;
   continueFromSetup: () => Promise<ConnectResult>;
   lock: (reason?: string) => void;
   start: () => Promise<void>;
@@ -264,7 +261,6 @@ export function createSessionService(client: GSVClient): SessionService {
   let reconnectInFlight = false;
   let reconnectGeneration = 0;
   let pendingSetupLogin: SessionLoginInput | null = null;
-  let holdReadyUntilBootstrap = false;
 
   const emit = (): void => {
     for (const listener of listeners) {
@@ -564,9 +560,6 @@ export function createSessionService(client: GSVClient): SessionService {
     if (status.state === "connected") {
       reconnectInFlight = false;
       clearReconnectTimer();
-      if (holdReadyUntilBootstrap) {
-        return;
-      }
       if (
         snapshot.phase !== "ready" ||
         snapshot.url !== (status.url ?? snapshot.url) ||
@@ -629,17 +622,15 @@ export function createSessionService(client: GSVClient): SessionService {
       storeValue(STORAGE_USERNAME, username);
       pendingSetupLogin = null;
 
-      if (!holdReadyUntilBootstrap) {
-        setSnapshot({
-          phase: "ready",
-          url,
-          username,
-          connectionId: result.server.connectionId,
-          server: result.server,
-          message: null,
-          setupResult: null,
-        });
-      }
+      setSnapshot({
+        phase: "ready",
+        url,
+        username,
+        connectionId: result.server.connectionId,
+        server: result.server,
+        message: null,
+        setupResult: null,
+      });
 
       await drainPendingRevokes("ui session cleanup");
       await refreshSessionToken("post-login");
@@ -720,61 +711,6 @@ export function createSessionService(client: GSVClient): SessionService {
     }
 
     return await login(pendingSetupLogin);
-  };
-
-  const initializeFromUpstream = async (
-    args: SysBootstrapArgs = {},
-  ): Promise<SysBootstrapResult> => {
-    cancelSilentReconnect();
-    const url = deriveGatewayUrlFromOrigin();
-    const setupResult = snapshot.setupResult;
-    const username = snapshot.username;
-    const wasConnected = client.isConnected();
-
-    if (!wasConnected) {
-      holdReadyUntilBootstrap = true;
-      setSnapshot({
-        phase: "authenticating",
-        url,
-        username,
-        connectionId: null,
-        message: "Initializing system from upstream...",
-        setupResult,
-      });
-    }
-
-    try {
-      if (!wasConnected) {
-        await continueFromSetup();
-      }
-      const result = await client.sys.bootstrap(args);
-      holdReadyUntilBootstrap = false;
-      const status = client.getStatus();
-      setSnapshot({
-        phase: "ready",
-        url: status.url ?? url,
-        username: status.username ?? username,
-        connectionId: status.connectionId,
-        server: setupResult?.server ?? null,
-        message: null,
-        setupResult: null,
-      });
-      return result;
-    } catch (error) {
-      holdReadyUntilBootstrap = false;
-      if (!wasConnected && client.isConnected()) {
-        client.disconnect();
-      }
-      setSnapshot({
-        phase: "setup-complete",
-        url,
-        username,
-        connectionId: null,
-        message: normalizeMessage(error),
-        setupResult,
-      });
-      throw error;
-    }
   };
 
   const lock = (reason = "Session locked"): void => {
@@ -924,7 +860,6 @@ export function createSessionService(client: GSVClient): SessionService {
     },
     login,
     setup,
-    initializeFromUpstream,
     continueFromSetup,
     lock,
     start,

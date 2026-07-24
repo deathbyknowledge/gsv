@@ -9,7 +9,7 @@ import type {
   OnboardingStage,
 } from "@humansandmachines/gsv/protocol";
 
-const STORAGE_ONBOARDING = "gsv.ui.onboarding.v1";
+const STORAGE_ONBOARDING = "gsv.ui.onboarding.v2";
 
 export type OnboardingSnapshot = {
   draft: OnboardingDraft;
@@ -69,11 +69,6 @@ function defaultDraft(username = ""): OnboardingDraft {
       model: "",
       apiKey: "",
     },
-    source: {
-      enabled: false,
-      value: "",
-      ref: "",
-    },
     device: {
       enabled: false,
       deviceId: "",
@@ -123,10 +118,6 @@ function mergeDraft(username: string, draft: Partial<OnboardingDraft> | null | u
     ai: {
       ...base.ai,
       ...draft?.ai,
-    },
-    source: {
-      ...base.source,
-      ...draft?.source,
     },
     device: {
       ...base.device,
@@ -195,7 +186,6 @@ function isDetailStep(value: string | null | undefined): value is OnboardingDeta
     value === "admin" ||
     value === "system" ||
     value === "ai" ||
-    value === "source" ||
     value === "device";
 }
 
@@ -204,7 +194,6 @@ function detailStepFromPatchPath(path: OnboardingAssistPatch["path"]): Onboardin
   if (path.startsWith("admin.")) return "admin";
   if (path.startsWith("system.")) return "system";
   if (path.startsWith("ai.")) return "ai";
-  if (path.startsWith("source.")) return "source";
   return "device";
 }
 
@@ -232,7 +221,7 @@ export function createOnboardingService(
     const [section, key] = patch.path.split(".") as [keyof OnboardingDraft, string];
     if (!(section in next)) return draft;
     if (patch.op === "clear") {
-      if (section === "ai" || section === "source" || section === "device") {
+      if (section === "ai" || section === "device") {
         (next[section] as Record<string, unknown>)[key] = key === "enabled" ? false : "";
       } else if (section === "admin") {
         (next.admin as Record<string, unknown>)[key] = key === "mode" ? "same" : "";

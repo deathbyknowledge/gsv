@@ -3,7 +3,6 @@ import {
   browserTimeZone,
   buildAiSummary,
   buildDeviceSummary,
-  buildSourceSummary,
 } from "../sessionDomain";
 import { Tooltip } from "../../../components/ui/Tooltip";
 import { InfoTip } from "../../../components/ui/InfoTip";
@@ -54,12 +53,6 @@ export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
           </Tooltip>
         </div>
         <div class="review-row">
-          <span class="review-row-k gsv-label">System files</span>
-          <Tooltip text="The system files loaded during setup." position="left">
-            <span class="review-row-v gsv-listitem" data-setup-summary-source>{buildSourceSummary(draft)}</span>
-          </Tooltip>
-        </div>
-        <div class="review-row">
           <span class="review-row-k gsv-label">Device setup</span>
           <Tooltip text="Optional setup key for connecting another machine." position="left">
             <span class="review-row-v gsv-listitem" data-setup-summary-device>{buildDeviceSummary(draft)}</span>
@@ -70,10 +63,6 @@ export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
         <div>
           <strong class="gsv-sublabel">You can change this later</strong>
           <p class="gsv-prose-sm">AI defaults and system settings can be adjusted from the desktop after setup.</p>
-        </div>
-        <div>
-          <strong class="gsv-sublabel">What are system files?</strong>
-          <p class="gsv-prose-sm">They define the built-in apps and settings GSV starts with.</p>
         </div>
       </aside>
     </section>

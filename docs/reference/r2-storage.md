@@ -88,11 +88,11 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 |---|---|---|---|
 | `{username}/home` | `accountHomeRepoRef(username)` | `~/context.d`, `~/skills.d`, `~/knowledge` | Home context, account-local skills, and knowledge databases. |
 | Wiki repos, for example `root/gsv-manual` or `{owner}/{wiki}` | repo manifest `wiki.json` | Wiki app, `/src/repos/{owner}/{wiki}`, `repo.*` | Durable markdown knowledge databases. |
-| Registered source repos, for example `root/gsv` or `{owner}/{repo}` | repository config | `/src/repos/{owner}/{repo}`, `repo.*`, `rgit` | Source inspection and generic repo operations. |
+| Registered source repos, for example `{owner}/{repo}` | repository config | `/src/repos/{owner}/{repo}`, `repo.*`, `rgit` | Source inspection and generic repo operations. |
 | `{username}/{workspaceId}` | `workspaceRepoRef(workspaceId, username)` | `/workspaces/{workspaceId}` | Task workspace files and checkpoints. |
 
-The `root/gsv` repository may contain a top-level `skills/` directory. Bootstrap
-copies those files into user home repos under `skills.d/` when they are missing.
+The gateway bundle contains the built-in skills. Bootstrap copies those files
+into user home repos under `skills.d/` when they are missing.
 
 Workspace repos contain normal versioned task files. Process transcript
 archives live under the run-as agent's home rather than in workspace metadata.

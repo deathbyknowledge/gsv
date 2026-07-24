@@ -56,9 +56,9 @@ For a process running as a distinct agent account, owner skills are considered
 before agent-specific skills. Profile and workspace context directories affect
 prompt context, but they are not skill discovery roots.
 
-The root GSV source repo can ship system skills under `skills/`. During
-`sys.bootstrap`, those files are copied into each bootstrapped user's
-`~/skills.d/` when missing. Existing user skills are preserved.
+The gateway ships built-in skills as text modules. During `sys.bootstrap`, those
+files are copied into each bootstrapped user's `~/skills.d/` when missing.
+Existing user skills are preserved.
 
 Supported forms:
 

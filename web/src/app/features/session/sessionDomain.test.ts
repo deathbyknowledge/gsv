@@ -47,11 +47,6 @@ function setupDraft(account: Partial<OnboardingDraft["account"]> = {}): Onboardi
       model: "",
       apiKey: "",
     },
-    source: {
-      enabled: false,
-      value: "",
-      ref: "",
-    },
     device: {
       enabled: false,
       deviceId: "",

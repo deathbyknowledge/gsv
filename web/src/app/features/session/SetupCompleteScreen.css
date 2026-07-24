@@ -198,65 +198,6 @@
   text-transform: uppercase;
   color: var(--online);
 }
-.gsv-complete-status-seg {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  flex: none;
-}
-/* The system-files segment is the one that shrinks; its value truncates so the
-   version segment stays visible on the same line. */
-.gsv-complete-status-seg-grow {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.gsv-complete-status-seg b {
-  font-weight: 400;
-  flex: none;
-  text-transform: uppercase;
-  color: var(--label);
-}
-.gsv-complete-status-val {
-  color: var(--text);
-}
-.gsv-complete-status-seg-grow .gsv-complete-status-val {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-.gsv-complete-status-link {
-  color: var(--accent-bright);
-  text-decoration: none;
-}
-.gsv-complete-status-link:hover {
-  text-decoration: underline;
-}
-.gsv-complete-status-link:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* Narrow screens: the three-segment readout can't fit on one line without
-   collapsing the system-files link, so let it wrap — system files gets its own
-   full-width row and the link wraps fully instead of truncating to nothing. */
-@media (max-width: 480px) {
-  .gsv-complete-statusbar {
-    flex-wrap: wrap;
-    gap: 6px 16px;
-    white-space: normal;
-  }
-  .gsv-complete-status-seg-grow {
-    flex: 1 1 100%;
-  }
-  .gsv-complete-status-seg-grow .gsv-complete-status-val {
-    overflow: visible;
-    text-overflow: clip;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-}
-
 /* Small phones: tighten the panel padding; the footer's full-bleed margin
    follows --complete-pad-x so it stays flush to the edges. */
 @media (max-width: 380px) {

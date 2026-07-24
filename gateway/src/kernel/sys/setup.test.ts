@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
 
-const { handleSysBootstrapMock, seedRepoSkillsToHomeMock } = vi.hoisted(() => ({
+const { handleSysBootstrapMock, seedBuiltinSkillsToHomeMock } = vi.hoisted(() => ({
   handleSysBootstrapMock: vi.fn(),
-  seedRepoSkillsToHomeMock: vi.fn(),
+  seedBuiltinSkillsToHomeMock: vi.fn(),
 }));
 
 vi.mock("./bootstrap", () => ({
@@ -11,7 +11,7 @@ vi.mock("./bootstrap", () => ({
 }));
 
 vi.mock("./skills-seed", () => ({
-  seedRepoSkillsToHome: seedRepoSkillsToHomeMock,
+  seedBuiltinSkillsToHome: seedBuiltinSkillsToHomeMock,
 }));
 
 import { handleSysSetup } from "./setup";
@@ -146,20 +146,13 @@ describe("handleSysSetup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     handleSysBootstrapMock.mockResolvedValue({
-      repo: "root/gsv",
-      remoteUrl: "https://github.com/deathbyknowledge/gsv",
+      repo: "root/gsv-manual",
+      remoteUrl: "https://github.com/deathbyknowledge/gsv-manual",
       ref: "main",
-      head: "abc123",
+      head: "manual123",
       changed: true,
-      manual: {
-        repo: "root/gsv-manual",
-        remoteUrl: "https://github.com/deathbyknowledge/gsv-manual",
-        ref: "main",
-        head: "manual123",
-        changed: true,
-      },
     });
-    seedRepoSkillsToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
+    seedBuiltinSkillsToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
   });
 
   it("creates first user, ai config, and node token", async () => {
@@ -259,9 +252,8 @@ describe("handleSysSetup", () => {
         }),
       }),
     );
-    expect(seedRepoSkillsToHomeMock).toHaveBeenCalledWith(
+    expect(seedBuiltinSkillsToHomeMock).toHaveBeenCalledWith(
       expect.any(Object),
-      { owner: "root", repo: "gsv", branch: "abc123" },
       expect.objectContaining({ username: "root", home: "/root" }),
     );
   });
