@@ -51,6 +51,13 @@ const CLOUDFLARE_RETRY_BASE_MS: u64 = 400;
 const MAX_SOURCE_MAP_UPLOAD_BYTES: usize = 2 * 1024 * 1024;
 static DEPLOY_NOTIFICATION_MODE: AtomicBool = AtomicBool::new(false);
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, clap::ValueEnum)]
+pub enum CodeModePreference {
+    Auto,
+    On,
+    Off,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DeployInstance {
     name: String,
@@ -386,6 +393,7 @@ struct UploadMetadataOptions<'a> {
     script_exists: bool,
     uploaded_assets: Option<&'a UploadedAssets>,
     keep_assets: bool,
+    include_worker_loaders: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -413,6 +421,23 @@ pub struct GatewayBootstrapConfig {
 struct WorkerScriptSummary {
     id: String,
     migration_tag: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkersAccountSettings {
+    default_usage_model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudflareSubscription {
+    rate_plan: Option<CloudflareRatePlan>,
+    state: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudflareRatePlan {
+    id: Option<String>,
+    scope: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1243,6 +1268,131 @@ async fn list_worker_scripts(
         out.insert(script.id, script.migration_tag);
     }
     Ok(out)
+}
+
+fn workers_paid_from_usage_model(usage_model: Option<&str>) -> Option<bool> {
+    match usage_model.map(|value| value.trim().to_ascii_lowercase()) {
+        Some(value) if value == "standard" || value == "unbound" => Some(true),
+        Some(value) if value == "bundled" => Some(false),
+        _ => None,
+    }
+}
+
+fn subscription_is_active(state: Option<&str>) -> bool {
+    matches!(
+        state
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("trial" | "provisioned" | "paid")
+    )
+}
+
+fn workers_paid_from_subscriptions(subscriptions: &[CloudflareSubscription]) -> bool {
+    subscriptions.iter().any(|subscription| {
+        if !subscription_is_active(subscription.state.as_deref()) {
+            return false;
+        }
+        let Some(rate_plan) = subscription.rate_plan.as_ref() else {
+            return false;
+        };
+        if !rate_plan
+            .scope
+            .as_deref()
+            .is_some_and(|scope| scope.eq_ignore_ascii_case("account"))
+        {
+            return false;
+        }
+        let Some(rate_plan_id) = rate_plan.id.as_deref() else {
+            return false;
+        };
+        let normalized = rate_plan_id.trim().to_ascii_lowercase();
+        normalized == "workers_paid"
+            || (normalized.starts_with("workers_") && !normalized.contains("free"))
+    })
+}
+
+async fn fetch_workers_paid_from_account_settings(
+    client: &reqwest::Client,
+    account_id: &str,
+    api_token: &str,
+) -> Result<Option<bool>, Box<dyn std::error::Error>> {
+    let url = cloudflare_api_url(&format!(
+        "/accounts/{}/workers/account-settings",
+        account_id
+    ));
+    let response = send_cloudflare_request_with_retry(
+        || {
+            client
+                .get(&url)
+                .bearer_auth(api_token)
+                .header("Content-Type", "application/json")
+                .send()
+        },
+        "Fetch Workers account settings",
+    )
+    .await?;
+    let settings: WorkersAccountSettings =
+        parse_cloudflare_response(response, "Fetch Workers account settings").await?;
+    Ok(workers_paid_from_usage_model(
+        settings.default_usage_model.as_deref(),
+    ))
+}
+
+async fn fetch_workers_paid_from_subscriptions(
+    client: &reqwest::Client,
+    account_id: &str,
+    api_token: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let url = cloudflare_api_url(&format!("/accounts/{}/subscriptions", account_id));
+    let response = send_cloudflare_request_with_retry(
+        || {
+            client
+                .get(&url)
+                .bearer_auth(api_token)
+                .header("Content-Type", "application/json")
+                .send()
+        },
+        "List account subscriptions",
+    )
+    .await?;
+    let subscriptions: Vec<CloudflareSubscription> =
+        parse_cloudflare_response(response, "List account subscriptions").await?;
+    Ok(workers_paid_from_subscriptions(&subscriptions))
+}
+
+async fn resolve_codemode_enabled(
+    client: &reqwest::Client,
+    account_id: &str,
+    api_token: &str,
+    preference: CodeModePreference,
+) -> bool {
+    match preference {
+        CodeModePreference::On => return true,
+        CodeModePreference::Off => return false,
+        CodeModePreference::Auto => {}
+    }
+
+    match fetch_workers_paid_from_account_settings(client, account_id, api_token).await {
+        Ok(Some(enabled)) => return enabled,
+        Ok(None) => {}
+        Err(error) => {
+            println!(
+                "Warning: could not determine the Workers plan from account settings ({}). Checking account subscriptions.",
+                error
+            );
+        }
+    }
+
+    match fetch_workers_paid_from_subscriptions(client, account_id, api_token).await {
+        Ok(enabled) => enabled,
+        Err(error) => {
+            println!(
+                "Warning: could not read the Workers plan from account subscriptions ({}). CodeMode availability will be probed during gateway upload.",
+                error
+            );
+            true
+        }
+    }
 }
 
 async fn ensure_r2_bucket_exists(
@@ -2485,11 +2635,13 @@ fn build_upload_metadata(
         metadata_bindings.push(value);
     }
 
-    for loader in &bundle.wrangler.worker_loaders {
-        metadata_bindings.push(json!({
-            "name": loader.binding,
-            "type": "worker_loader"
-        }));
+    if options.include_worker_loaders {
+        for loader in &bundle.wrangler.worker_loaders {
+            metadata_bindings.push(json!({
+                "name": loader.binding,
+                "type": "worker_loader"
+            }));
+        }
     }
 
     if let Some(ai) = &bundle.wrangler.ai {
@@ -2577,6 +2729,7 @@ pub async fn apply_deploy(
     version: &str,
     components: &[String],
     instance: &DeployInstance,
+    codemode_preference: CodeModePreference,
 ) -> Result<DeployApplyResult, Box<dyn std::error::Error>> {
     if components.is_empty() {
         return Err("No components requested for deployment".into());
@@ -2609,6 +2762,21 @@ pub async fn apply_deploy(
         );
     }
     let mut available_scripts = existing_scripts.clone();
+    let mut codemode_enabled = if selected_components.contains(COMPONENT_GATEWAY) {
+        resolve_codemode_enabled(&client, account_id, api_token, codemode_preference).await
+    } else {
+        false
+    };
+    if selected_components.contains(COMPONENT_GATEWAY) {
+        println!(
+            "CodeMode: {}",
+            if codemode_enabled {
+                "enabled (Worker Loader binding included)"
+            } else {
+                "disabled (Worker Loader binding omitted)"
+            }
+        );
+    }
 
     let mut required_buckets = HashSet::new();
 
@@ -2687,6 +2855,7 @@ pub async fn apply_deploy(
                 script_exists: existing_scripts_with_migrations.contains_key(&bundle.script_name),
                 uploaded_assets: uploaded_assets_by_script.get(&bundle.script_name),
                 keep_assets: false,
+                include_worker_loaders: bundle.component != COMPONENT_GATEWAY || codemode_enabled,
             },
         )?;
         let source_map_for_upload = bundle.source_map.as_ref().and_then(|(name, bytes)| {
@@ -2703,7 +2872,7 @@ pub async fn apply_deploy(
             }
         });
 
-        upload_worker_script(
+        let upload_result = upload_worker_script(
             &client,
             account_id,
             api_token,
@@ -2716,7 +2885,67 @@ pub async fn apply_deploy(
                 source_map: source_map_for_upload,
             },
         )
-        .await?;
+        .await;
+        if let Err(error) = upload_result {
+            if bundle.component != COMPONENT_GATEWAY
+                || codemode_preference != CodeModePreference::Auto
+                || !codemode_enabled
+            {
+                return Err(error);
+            }
+
+            println!(
+                "Warning: gateway upload with CodeMode failed ({}). Retrying without the Worker Loader binding.",
+                error
+            );
+            let fallback_metadata = build_upload_metadata(
+                bundle,
+                UploadMetadataOptions {
+                    instance,
+                    selected_components: &selected_components,
+                    available_scripts: &available_scripts,
+                    account_subdomain: account_subdomain.as_deref(),
+                    existing_migration_tag: existing_scripts_with_migrations
+                        .get(&bundle.script_name)
+                        .and_then(|tag| tag.as_deref()),
+                    include_migrations: true,
+                    script_exists: existing_scripts_with_migrations
+                        .contains_key(&bundle.script_name),
+                    uploaded_assets: uploaded_assets_by_script.get(&bundle.script_name),
+                    keep_assets: false,
+                    include_worker_loaders: false,
+                },
+            )?;
+            let fallback_source_map = bundle.source_map.as_ref().and_then(|(name, bytes)| {
+                if bytes.len() <= MAX_SOURCE_MAP_UPLOAD_BYTES {
+                    Some((name.clone(), bytes.clone()))
+                } else {
+                    None
+                }
+            });
+            upload_worker_script(
+                &client,
+                account_id,
+                api_token,
+                WorkerScriptUpload {
+                    script_name: &bundle.script_name,
+                    metadata: fallback_metadata,
+                    entrypoint_part_name: &bundle.entrypoint_part_name,
+                    entrypoint_bytes: bundle.entrypoint_bytes.clone(),
+                    additional_modules: &bundle.additional_modules,
+                    source_map: fallback_source_map,
+                },
+            )
+            .await
+            .map_err(|fallback_error| {
+                format!(
+                    "Gateway upload failed with CodeMode ({}), then failed without CodeMode ({}).",
+                    error, fallback_error
+                )
+            })?;
+            codemode_enabled = false;
+            println!("CodeMode: disabled (Worker Loader binding unsupported by this account)");
+        }
         println!("Uploaded {}", bundle.script_name);
         available_scripts.insert(bundle.script_name.clone());
 
@@ -2764,6 +2993,7 @@ pub async fn apply_deploy(
                 script_exists: true,
                 uploaded_assets: None,
                 keep_assets: bundle.manifest.assets_dir.is_some(),
+                include_worker_loaders: bundle.component != COMPONENT_GATEWAY || codemode_enabled,
             },
         )?;
         let source_map_for_upload = bundle.source_map.as_ref().and_then(|(name, bytes)| {
@@ -3453,6 +3683,41 @@ cpu_ms = 300000
     }
 
     #[test]
+    fn workers_plan_detection_handles_usage_models_and_subscriptions() {
+        assert_eq!(workers_paid_from_usage_model(Some("standard")), Some(true));
+        assert_eq!(workers_paid_from_usage_model(Some("unbound")), Some(true));
+        assert_eq!(workers_paid_from_usage_model(Some("bundled")), Some(false));
+        assert_eq!(workers_paid_from_usage_model(None), None);
+
+        let subscriptions = vec![
+            CloudflareSubscription {
+                rate_plan: Some(CloudflareRatePlan {
+                    id: Some("free".to_string()),
+                    scope: Some("zone".to_string()),
+                }),
+                state: Some("Paid".to_string()),
+            },
+            CloudflareSubscription {
+                rate_plan: Some(CloudflareRatePlan {
+                    id: Some("workers_paid".to_string()),
+                    scope: Some("account".to_string()),
+                }),
+                state: Some("Provisioned".to_string()),
+            },
+        ];
+        assert!(workers_paid_from_subscriptions(&subscriptions));
+
+        let cancelled = vec![CloudflareSubscription {
+            rate_plan: Some(CloudflareRatePlan {
+                id: Some("workers_paid".to_string()),
+                scope: Some("account".to_string()),
+            }),
+            state: Some("Cancelled".to_string()),
+        }];
+        assert!(!workers_paid_from_subscriptions(&cancelled));
+    }
+
+    #[test]
     fn build_upload_metadata_includes_worker_config() {
         let instance = DeployInstance::default();
         let bundle = PreparedBundle {
@@ -3498,6 +3763,7 @@ cpu_ms = 300000
                 script_exists: false,
                 uploaded_assets: None,
                 keep_assets: false,
+                include_worker_loaders: true,
             },
         )
         .unwrap();
@@ -3508,6 +3774,28 @@ cpu_ms = 300000
             .any(|binding| { binding["name"] == "LOADER" && binding["type"] == "worker_loader" }));
         assert_eq!(metadata["limits"]["cpu_ms"], 300_000);
         assert_eq!(metadata["limits"]["subrequests"], 1_000);
+
+        let metadata_without_loader = build_upload_metadata(
+            &bundle,
+            UploadMetadataOptions {
+                instance: &instance,
+                selected_components: &HashSet::new(),
+                available_scripts: &HashSet::new(),
+                account_subdomain: None,
+                existing_migration_tag: None,
+                include_migrations: false,
+                script_exists: false,
+                uploaded_assets: None,
+                keep_assets: false,
+                include_worker_loaders: false,
+            },
+        )
+        .unwrap();
+        assert!(!metadata_without_loader["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|binding| binding["type"] == "worker_loader"));
     }
 
     #[test]
@@ -3708,6 +3996,7 @@ cpu_ms = 300000
                 script_exists: false,
                 uploaded_assets: None,
                 keep_assets: false,
+                include_worker_loaders: true,
             },
         )
         .unwrap();

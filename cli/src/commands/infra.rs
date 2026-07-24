@@ -18,6 +18,7 @@ struct DeployCommandOptions {
     bundle_dir: Option<PathBuf>,
     api_token: Option<String>,
     account_id: Option<String>,
+    codemode: deploy::CodeModePreference,
     discord_bot_token: Option<String>,
     telegram_bot_token: Option<String>,
 }
@@ -59,6 +60,7 @@ pub(crate) async fn run_infra(
             bundle_dir,
             api_token,
             account_id,
+            codemode,
             discord_bot_token,
             telegram_bot_token,
         } => {
@@ -73,6 +75,7 @@ pub(crate) async fn run_infra(
                     bundle_dir,
                     api_token,
                     account_id,
+                    codemode,
                     discord_bot_token,
                     telegram_bot_token,
                 },
@@ -88,6 +91,7 @@ pub(crate) async fn run_infra(
             bundle_dir,
             api_token,
             account_id,
+            codemode,
             discord_bot_token,
             telegram_bot_token,
         } => {
@@ -102,6 +106,7 @@ pub(crate) async fn run_infra(
                     bundle_dir,
                     api_token,
                     account_id,
+                    codemode,
                     discord_bot_token,
                     telegram_bot_token,
                 },
@@ -389,6 +394,7 @@ async fn apply_deploy(
         bundle_dir,
         api_token,
         account_id,
+        codemode,
         discord_bot_token,
         telegram_bot_token,
     } = options;
@@ -448,6 +454,7 @@ async fn apply_deploy(
         &bundle_version,
         &components,
         &instance,
+        codemode,
     )
     .await?;
 
