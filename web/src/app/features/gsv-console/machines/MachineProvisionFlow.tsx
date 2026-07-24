@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
+import { InfoTip } from "../../../components/ui/InfoTip";
 import { CopyGlyph } from "../../../components/ui/lineGlyphs";
 import { ListRow } from "../../../components/ui/ListRow";
 import { Spinner } from "../../../components/ui/Spinner";
@@ -383,6 +384,7 @@ export function MachineProvisionFlow({
             <div class="gsv-cf-fields">
               <TextInput
                 label={isBrowserTarget ? "BROWSER NAME" : "MACHINE NAME"}
+                info="A friendly name so you can spot this machine in your list."
                 value={machineName}
                 placeholder={isBrowserTarget ? "Chrome" : "Studio MacBook"}
                 clearable
@@ -393,6 +395,7 @@ export function MachineProvisionFlow({
               <TextInput
                 key={`device-${deviceId}`}
                 label="DEVICE ID"
+                info="The unique id that identifies this machine. It's filled in from the name — leave it as-is unless you need to change it."
                 value={deviceId}
                 placeholder={isBrowserTarget ? "chrome" : "studio-macbook"}
                 clearable
@@ -405,6 +408,7 @@ export function MachineProvisionFlow({
               <TextInput
                 key={`expires-${expiresDays}`}
                 label="TOKEN EXPIRY"
+                info="How many days the machine's access stays valid before it needs to reconnect with a new token."
                 value={expiresDays}
                 suffix="DAYS"
                 status="info"
@@ -521,6 +525,12 @@ export function MachineProvisionFlow({
         render: () => (
           <>
             {!issuedToken ? (
+              <>
+              <p class="gsv-cf-desc" style={{ margin: 0 }}>
+                {isBrowserTarget
+                  ? "Create a secure key, then paste the connection details into the browser extension to pair it."
+                  : "Create a secure key for this machine, then run the command it generates on the machine to bring it online."}
+              </p>
               <div class="machine-issue-token">
                 <StatusDot tone={createToken.isPending ? "live" : "update"} size={9} />
                 <div>
@@ -528,6 +538,7 @@ export function MachineProvisionFlow({
                     {createToken.isPending
                       ? `ISSUING ${isBrowserTarget ? "DRIVER" : "NODE"} TOKEN`
                       : `ISSUE ${isBrowserTarget ? "DRIVER" : "NODE"} TOKEN`}
+                    <InfoTip text="Creates the secure key this machine uses to connect to GSV." />
                   </strong>
                   <span>
                     The token is scoped to {deviceId || "this device"} and expires in {expires} days.
@@ -535,6 +546,7 @@ export function MachineProvisionFlow({
                   </span>
                 </div>
               </div>
+              </>
             ) : isBrowserTarget && browserConfig ? (
               <>
                 <p class="gsv-cf-desc" style={{ margin: 0 }}>
@@ -575,6 +587,7 @@ export function MachineProvisionFlow({
                 <div class="machine-run-mode">
                   <Toggle
                     label="ONE-SHOT RUN"
+                    info="The machine will not reconnect if the computer turns off or the terminal is closed."
                     size="small"
                     on={oneShotRun}
                     status={oneShotRun ? "info" : "none"}
