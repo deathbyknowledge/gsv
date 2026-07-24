@@ -27,12 +27,14 @@ export type ConsoleDetailSection = {
 };
 
 type ConsoleDetailPageProps = {
+  /** Regular/secondary actions. Rendered bottom-right in the page footer,
+   *  alongside the primary button and opposite `dangerAction`. */
   actions?: ComponentChildren;
   blurb: string;
   children?: ComponentChildren;
-  /** Destructive action (FORGET / REMOVE / DISCONNECT / KILL). Rendered in a
-   *  footer pinned to the bottom-left of the page, isolated from the top action
-   *  bar's regular/primary actions. */
+  /** Destructive action (FORGET / REMOVE / DISCONNECT / KILL). Rendered at the
+   *  bottom-left of the page footer, opposite the regular/primary `actions`
+   *  which sit bottom-right. */
   dangerAction?: ComponentChildren;
   icon: string;
   /** Back navigation. For surfaces whose detail is reflected in the shell
@@ -114,19 +116,6 @@ export function ConsoleDetailPage({
             ) : null}
           </p>
         </div>
-        {hasActions ? (
-          <div class="gsv-console-detail-bar-actions">
-            {actions}
-            {primaryLabel ? (
-              <Button
-                variant="primary"
-                label={primaryLabel}
-                disabled={!onPrimary}
-                onClick={onPrimary}
-              />
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
       <div class="gsv-console-detail-shell">
@@ -176,8 +165,23 @@ export function ConsoleDetailPage({
         ) : null}
       </div>
 
-      {hasDanger ? (
-        <footer class="gsv-console-detail-footer">{dangerAction}</footer>
+      {hasDanger || hasActions ? (
+        <footer class="gsv-console-detail-footer">
+          {hasDanger ? dangerAction : null}
+          {hasActions ? (
+            <div class="gsv-console-detail-footer-actions">
+              {actions}
+              {primaryLabel ? (
+                <Button
+                  variant="primary"
+                  label={primaryLabel}
+                  disabled={!onPrimary}
+                  onClick={onPrimary}
+                />
+              ) : null}
+            </div>
+          ) : null}
+        </footer>
       ) : null}
     </section>
   );

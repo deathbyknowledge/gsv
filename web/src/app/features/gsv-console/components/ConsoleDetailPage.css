@@ -141,14 +141,9 @@
   overflow: hidden;
 }
 
-.gsv-console-detail-bar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-/* Destructive action footer — pinned to the bottom-left of the page (margin-top
-   auto pushes it below all content), isolated from the top action bar. */
+/* Action footer — pinned to the bottom of the page (margin-top auto pushes it
+   below all content). The destructive action sits bottom-left; the regular /
+   primary actions group is pushed bottom-right. */
 .gsv-console-detail-footer {
   margin-top: auto;
   display: flex;
@@ -158,6 +153,15 @@
   padding: 18px 26px;
   padding-inline: max(26px, var(--gsv-gutter));
   border-top: 1px solid var(--rule-section);
+}
+
+/* Regular/primary actions — pushed to the right edge of the footer. When there
+   is no destructive action, margin-left:auto still right-aligns the group. */
+.gsv-console-detail-footer-actions {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .gsv-console-detail-actions {

@@ -139,6 +139,9 @@ function DetailPreview() {
           blurb="linux x86_64 · v0.80.2 · root · last seen 2m ago"
           parentLabel="MACHINES"
           onBack={noop}
+          actions={<Button variant="secondary" label="REFRESH" onClick={noop} />}
+          primaryLabel="OPEN CONSOLE"
+          onPrimary={noop}
           dangerAction={<Button variant="dangerGhost" label="FORGET MACHINE" onClick={noop} />}
           sections={[
             {
