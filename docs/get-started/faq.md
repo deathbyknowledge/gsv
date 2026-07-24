@@ -74,7 +74,7 @@ See [Messengers](/how-to/messengers) for how to connect each one.
 
 ### What can it actually do today?
 
-GSV runs agents as real OS processes and is programmable, so you can write, run, and share your own applications between GSV instances. It's early, so expect a focused set of capabilities now and more arriving in the open.
+GSV runs agents as real OS processes and is programmable through skills, integrations, and connected machines. It's early, so expect a focused set of capabilities now and more arriving in the open.
 
 See [Examples](/examples/) for more.
 

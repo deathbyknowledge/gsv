@@ -1,7 +1,7 @@
 # CLI Command Reference
 
-The `gsv` binary controls a GSV gateway, local device daemon, process tree, adapters,
-packages, and Cloudflare infrastructure. Most commands talk to the Kernel syscall
+The `gsv` binary controls a GSV gateway, local device daemon, process tree,
+adapters, and Cloudflare infrastructure. Most commands talk to the Kernel syscall
 surface over WebSocket; `infra` talks directly to Cloudflare.
 
 ## Global Options
@@ -321,15 +321,6 @@ passed to the adapter implementation, for example:
 gsv adapter connect --adapter whatsapp --config-json '{"pairing":true}'
 ```
 
-## Package Commands
-
-Package source and update workflows are handled in the GSV shell with `rgit`
-and `pkg update <package>`. The CLI also exposes an explicit package sync:
-
-```bash
-gsv packages sync <package> [--ref REF]
-```
-
 ## Infrastructure Commands
 
 ```bash
@@ -338,10 +329,10 @@ gsv infra upgrade [--version REF] [-c COMPONENT ... | --all] [--force-fetch]
 gsv infra destroy [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
 ```
 
-Valid components are `ripgit`, `assembler`, `gateway`, `channel-whatsapp`,
-`channel-discord`, and `channel-telegram`. When no deploy/upgrade component is supplied, all components
-are selected. Deploying `gateway` requires `ripgit` and `assembler` to be
-selected or already deployed.
+Valid components are `ripgit`, `gateway`, `channel-whatsapp`,
+`channel-discord`, and `channel-telegram`. When no deploy/upgrade component is
+supplied, all components are selected. Deploying `gateway` requires `ripgit` to
+be selected or already deployed.
 
 `deploy` fetches release bundles and applies Cloudflare Workers. `upgrade` does
 the same but auto-refreshes mutable refs such as `latest`, `stable`, and `dev`.

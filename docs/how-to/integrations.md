@@ -11,5 +11,4 @@ Integrations give GSV new tools through [MCP](https://modelcontextprotocol.io) s
 >
 ## See also
 
-- [Applications](/how-to/applications) — installable GSV packages
 - [Get Started](/get-started/)

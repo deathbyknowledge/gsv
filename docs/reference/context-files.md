@@ -50,7 +50,6 @@ Skill sources are layered:
 ```text
 the owning user's ~/skills.d/
 the run-as agent's ~/skills.d/, when distinct from the owner
-visible enabled package source repos, resolved with `pkg source <package>`
 ```
 
 For a process running as a distinct agent account, owner skills are considered
@@ -64,15 +63,14 @@ The root GSV source repo can ship system skills under `skills/`. During
 Supported forms:
 
 ```text
-skills.d/package-development.md
-skills.d/package-development/SKILL.md
-skills.d/package-development/references/details.md
+skills.d/device-management.md
+skills.d/device-management/SKILL.md
+skills.d/device-management/references/details.md
 ```
 
 Processes should use `skills show <skill>` before relying on a workflow.
 That command prints the full `SKILL.md`, source path, and whether the source is
-writable. Package skills follow repo source rules: writable package edits are
-staged until `rgit commit`.
+writable.
 
 When a user asks to automate, save, or reuse a proven workflow, draft a concise
 Markdown instruction body and persist it through the existing home filesystem:

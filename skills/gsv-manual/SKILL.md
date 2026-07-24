@@ -1,6 +1,6 @@
 ---
 name: gsv-manual
-description: Use the GSV Manual for questions about GSV's operating model, user workflows, settings, devices, users and agents, packages, automation, integrations, filesystem, desktop, native shell and media commands, updates, and source/debug orientation.
+description: Use the GSV Manual for questions about GSV's operating model, user workflows, settings, devices, users and agents, automation, integrations, filesystem, desktop, native shell and media commands, updates, and source/debug orientation.
 ---
 
 # GSV Manual

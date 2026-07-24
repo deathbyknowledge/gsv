@@ -2,7 +2,7 @@
 
 GSV keeps context and durable knowledge as ordinary files in versioned
 repositories. The kernel provides generic filesystem and repository primitives;
-knowledge-specific behavior lives in the Wiki package app and CLI.
+knowledge-specific behavior lives in the built-in Wiki UI and CLI.
 
 ## Layers
 
@@ -72,7 +72,7 @@ staged notes that should be reviewed before becoming canonical.
 
 ## Wiki Semantics
 
-The Wiki package app and `wiki` CLI command provide semantic operations over
+The built-in Wiki UI and `wiki` CLI command provide semantic operations over
 `~/knowledge/`:
 
 - list and initialize databases
@@ -83,8 +83,8 @@ The Wiki package app and `wiki` CLI command provide semantic operations over
 - merge or annotate existing notes
 
 These are product and CLI behaviors, not kernel syscalls. The implementation
-uses generic repository operations against the home repo, so other apps can build
-their own knowledge workflows without depending on a special kernel domain.
+uses generic repository operations against the home repo, so agent workflows
+can build on the same substrate without depending on a special kernel domain.
 
 ## Source References
 
@@ -117,8 +117,8 @@ This keeps the prompt small and makes retrieval visible:
 ## Design Rule
 
 Do not add a kernel syscall for a knowledge workflow unless it is truly generic
-infrastructure. Most knowledge behavior belongs in an app, package backend, CLI,
-or agent workflow layered on top of `repo.*` and `fs.*`.
+infrastructure. Most knowledge behavior belongs in the UI, CLI, or an agent
+workflow layered on top of `repo.*` and `fs.*`.
 
 ## See also
 

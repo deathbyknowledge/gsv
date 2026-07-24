@@ -24,15 +24,15 @@ features:
     details: "Deploy GSV, finish first-run setup, connect your first device, and reach a working system quickly."
     link: /get-started/
   - title: Examples
-    details: "Real-world setups showing how GSV handles multi-machine work, personal ops, adapters, and package-backed tools."
+    details: "Real-world setups showing how GSV handles multi-machine work, personal ops, adapters, and repository-backed knowledge."
     link: /examples/
   - title: How-to Guides
-    details: "Solve concrete tasks such as deployment, device setup, process management, automation, adapters, and package development."
+    details: "Solve concrete tasks such as deployment, device setup, process management, automation, adapters, and integrations."
     link: /how-to/
   - title: Reference
     details: "Look up the stable technical surface: CLI commands, WebSocket protocol, syscalls, configuration, routing, and storage."
     link: /reference/
   - title: Architecture
-    details: "Understand how the Kernel, processes, devices, packages, adapters, filesystems, and repositories fit together."
+    details: "Understand how the Kernel, processes, devices, adapters, filesystems, and repositories fit together."
     link: /architecture/
 ---

@@ -38,11 +38,6 @@ a command from an older prompt.
 
 In a server channel the bot only responds when mentioned. In a DM it responds to every message.
 
-## Troubleshooting
-
-If the messenger UI is missing, update the relevant installed package from the
-GSV shell with `pkg update <package>`.
-
 ## See also
 
 - [Connect Devices](/how-to/connect-devices) — give GSV access to your machines

@@ -43,7 +43,6 @@ That's it — you have your own GSV.
 - **Machines** — the devices connected to your GSV, and where you add new ones (laptop, phone, server).
 - **Messengers** — your connections to Telegram, Discord, and more to come.
 - **Integrations** — your MCP servers.
-- **Applications** — installable apps. Try the Starfield space-exploration app.
 - Click your **personal agent** (bottom right) to start chatting. Ask it what it can do.
 
 ## Next steps
@@ -55,6 +54,5 @@ Now that GSV is running:
 - [Connect a messenger](/how-to/messengers) — talk to GSV from Telegram or Discord.
 - [Add integrations](/how-to/integrations) — wire in MCP servers.
 - [Web access](/how-to/browse-web) — let your agent browse your web like you can.
-- [Install an application](/how-to/applications)
 - [Examples](/examples/index) — see some examples on how to use GSV.
 - [FAQ](/get-started/faq) — common questions about cost, devices, memory, and more.
