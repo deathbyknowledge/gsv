@@ -131,6 +131,17 @@ function systemLoadLabel(
   return "IDLE";
 }
 
+/** Tone for the system-load readout: only the genuine status states
+ *  (error/offline/loading) take a color; counts and IDLE stay neutral. */
+function systemLoadTone(
+  resource: ConsoleResourceState<ConsoleOverviewData>,
+): "error" | "offline" | "loading" | undefined {
+  if (resource.isError) return "error";
+  if (resource.isUnavailable) return "offline";
+  if (resource.isLoading) return "loading";
+  return undefined;
+}
+
 function CollapsedDesktop() {
   return (
     <div class="gsv-collapsed-desktop" aria-hidden="true">
@@ -181,6 +192,10 @@ export function GsvShell({
   const statusSystemLabel = useMemo(
     () => systemLoadLabel(consoleOverview.counts, consoleOverview.resource),
     [consoleOverview.counts, consoleOverview.resource],
+  );
+  const statusSystemTone = useMemo(
+    () => systemLoadTone(consoleOverview.resource),
+    [consoleOverview.resource],
   );
   const desktopObjects = useMemo(
     () => buildDesktopObjectsFromConsole(consoleOverview.data),
@@ -670,6 +685,7 @@ export function GsvShell({
         context={shell.statusContext}
         clock={clock}
         systemLoadLabel={statusSystemLabel}
+        systemLoadTone={statusSystemTone}
         sessionUsername={sessionUsername}
         mobileHomeDate={mobileHomeDate}
         notificationOpenSurface={notificationOpenSurface}

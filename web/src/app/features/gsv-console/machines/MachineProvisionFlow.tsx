@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { useUnsavedGuard } from "../../gsv-shell/unsaved/unsavedGuard";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
+import { CopyGlyph } from "../../../components/ui/lineGlyphs";
 import { ListRow } from "../../../components/ui/ListRow";
 import { Spinner } from "../../../components/ui/Spinner";
 import { StatusDot } from "../../../components/ui/StatusDot";
@@ -114,7 +115,7 @@ function CommandBlock({
         <span class="gsv-cf-cmd-title">{title}</span>
         <span class="gsv-cf-cmd-meta">{meta}</span>
         <button type="button" class="gsv-cf-cmd-copy" onClick={onCopy}>
-          <Icon name="bookmark" size={12} />
+          <CopyGlyph size={12} />
           <span>{copied ? "COPIED" : "COPY"}</span>
         </button>
       </header>
@@ -142,7 +143,7 @@ function ExtensionValueRow({
         <code>{value}</code>
       </div>
       <button type="button" class="gsv-cf-cmd-copy" onClick={onCopy}>
-        <Icon name="bookmark" size={12} />
+        <CopyGlyph size={12} />
         <span>{copied ? "COPIED" : "COPY"}</span>
       </button>
     </div>
@@ -343,7 +344,6 @@ export function MachineProvisionFlow({
                   class={`machine-platform-tile-button${platform === option.id ? " is-selected" : ""}`}
                   key={option.id}
                   aria-pressed={platform === option.id ? "true" : "false"}
-                  title={`${option.label}: ${option.meta}`}
                   onClick={() => selectPlatform(option.id)}
                 >
                   <Tile
@@ -352,7 +352,8 @@ export function MachineProvisionFlow({
                     iconSrc={`/icons/doticons/${option.dotIcon}.svg`}
                     iconTitle={option.label}
                     iconSize={36}
-                    status={platform === option.id ? "update" : "idle"}
+                    status={platform === option.id ? "accent" : "idle"}
+                    statusHint={`Select ${option.label}`}
                     selected={platform === option.id}
                   />
                   <span class="machine-platform-meta gsv-prose-sm">{option.meta}</span>

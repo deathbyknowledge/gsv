@@ -142,6 +142,7 @@ function DetailPreview() {
             {
               title: "MACHINE",
               meta: "ONLINE",
+              metaTone: "online",
               rows: [
                 { id: "device", label: "DEVICE ID", sub: "rearden-prime" },
                 { id: "status", icon: "computer", label: "STATUS", status: "online", statusLabel: "ONLINE", sub: "reachable" },

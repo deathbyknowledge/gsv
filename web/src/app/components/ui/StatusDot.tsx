@@ -34,3 +34,36 @@ export function StatusDot({ tone = "online", size = 8, glow }: StatusDotProps) {
     />
   );
 }
+
+/** Status-label text color per tone, mirroring ListRow's treatment: idle stays
+ *  dim (var(--meta)) rather than tinted; every other tone takes its own color. */
+export const STATUS_TEXT: Record<StatusTone, string> = {
+  online: "var(--online)",
+  error: "var(--error)",
+  idle: "var(--meta)",
+  update: "var(--update)",
+  live: "var(--live)",
+  warn: "var(--warn)",
+};
+
+export interface StatusMetaProps {
+  tone: StatusTone;
+  label: string;
+  /** Dot diameter in px. */
+  dotSize?: number;
+}
+
+/** StatusMeta — a tone-colored status word with a leading StatusDot. The shared
+ *  header-level status treatment: used in page headers and section-card headers
+ *  so a status reads the same everywhere (and in step with the list rows). */
+export function StatusMeta({ tone, label, dotSize = 7 }: StatusMetaProps) {
+  return (
+    <span
+      class="gsv-status-meta gsv-sublabel"
+      style={{ display: "inline-flex", alignItems: "center", gap: "8px", letterSpacing: ".16em", color: STATUS_TEXT[tone] }}
+    >
+      <StatusDot tone={tone} size={dotSize} />
+      {label}
+    </span>
+  );
+}

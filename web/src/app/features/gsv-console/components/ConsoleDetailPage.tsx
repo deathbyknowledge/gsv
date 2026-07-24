@@ -3,7 +3,7 @@ import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
-import type { StatusTone } from "../../../components/ui/StatusDot";
+import { StatusMeta, type StatusTone } from "../../../components/ui/StatusDot";
 import "./ConsoleDetailPage.css";
 
 export type ConsoleDetailRow = {
@@ -18,6 +18,9 @@ export type ConsoleDetailRow = {
 export type ConsoleDetailSection = {
   title: string;
   meta?: string;
+  /** When set, `meta` is a status word: render it tone-colored with a dot
+   *  (like the page header) instead of the dim default. */
+  metaTone?: StatusTone;
   rows: readonly ConsoleDetailRow[];
 };
 
@@ -59,6 +62,7 @@ export function ConsoleDetailPage({
   showBack = false,
   statusLabel,
   title,
+  tone,
 }: ConsoleDetailPageProps) {
   const hasSections = sections.some((section) => section.rows.length > 0);
   const hasActions = Boolean(primaryLabel) || (actions != null && actions !== false);
@@ -75,13 +79,14 @@ export function ConsoleDetailPage({
           <span aria-hidden="true">←</span> {parentLabel}
         </button>
       ) : null}
-      {/* Row 2 — full-width page header (title + status), like the list pages. */}
+      {/* Row 2 — full-width page header (title + status), like the list pages.
+          Status carries its tone color + dot, matching the list rows. */}
       <SectionHeader
         className="gsv-console-detail-header"
         title={title}
-        meta={statusLabel}
         divider
         headingLevel={2}
+        actions={statusLabel ? <StatusMeta tone={tone} label={statusLabel} /> : undefined}
       />
 
       {/* Row 3 — action bar: icon tile + description, with the action below.
@@ -122,7 +127,14 @@ export function ConsoleDetailPage({
             {sections.map((section) => (
               section.rows.length > 0 ? (
                 <section class="gsv-console-detail-section" key={section.title}>
-                  <SectionHeader title={section.title} meta={section.meta} divider />
+                  <SectionHeader
+                    title={section.title}
+                    meta={section.metaTone ? undefined : section.meta}
+                    actions={section.metaTone && section.meta ? (
+                      <StatusMeta tone={section.metaTone} label={section.meta} />
+                    ) : undefined}
+                    divider
+                  />
                   <div>
                     {section.rows.map((row) => (
                       <ListRow

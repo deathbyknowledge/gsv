@@ -42,6 +42,7 @@ export function machineDetailSections(target: ConsoleTarget): ConsoleDetailSecti
     {
       title: "MACHINE",
       meta: statusForTarget(target),
+      metaTone: toneForTarget(target),
       rows: liveRows([
         detailRow("platform", "PLATFORM", target.platform),
         detailRow("version", "VERSION", target.version),

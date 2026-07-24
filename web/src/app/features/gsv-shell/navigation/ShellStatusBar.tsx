@@ -5,6 +5,7 @@ type ShellStatusBarProps = {
   context: string;
   clock: string;
   systemLoadLabel: string;
+  systemLoadTone?: "error" | "offline" | "loading";
   sessionUsername: string;
   mobileHomeDate: string;
   notificationOpenSurface: NotificationSurface | null;
@@ -35,6 +36,7 @@ export function ShellStatusBar({
   context,
   clock,
   systemLoadLabel,
+  systemLoadTone,
   sessionUsername,
   mobileHomeDate,
   notificationOpenSurface,
@@ -48,6 +50,7 @@ export function ShellStatusBar({
         clock={clock}
         context={context}
         power={systemLoadLabel}
+        powerTone={systemLoadTone}
         showModel={false}
         showStatus={false}
       />
