@@ -34,55 +34,6 @@ export type ConsoleTarget = {
   implements: string[];
 };
 
-export type ConsolePackageRuntime = "dynamic-worker" | "node" | "web-ui" | "unknown";
-
-export type ConsolePackageEntrypoint = {
-  name: string;
-  kind: string;
-  description: string;
-  route: string;
-  command: string;
-  syscalls: string[];
-};
-
-export type ConsolePackageProfile = {
-  name: string;
-  displayName: string;
-  description: string;
-  icon: string;
-  capabilities: string[];
-  account: {
-    runAs: string;
-    username: string;
-    provisioned: boolean | null;
-    runnable: boolean | null;
-  };
-};
-
-export type ConsolePackage = {
-  packageId: string;
-  name: string;
-  description: string;
-  version: string;
-  runtime: ConsolePackageRuntime;
-  enabled: boolean;
-  scopeKind: "global" | "user" | "unknown";
-  scopeUid: number | null;
-  sourceRepo: string;
-  sourceRef: string;
-  sourceSubdir: string;
-  sourcePublic: boolean;
-  reviewRequired: boolean;
-  reviewApprovedAt: number | null;
-  reviewPending: boolean;
-  installedAt: number | null;
-  updatedAt: number | null;
-  bindingNames: string[];
-  entrypoints: ConsolePackageEntrypoint[];
-  uiEntrypoints: ConsolePackageEntrypoint[];
-  profiles: ConsolePackageProfile[];
-};
-
 export type ConsoleAccountRelation = "self" | "personal-agent" | "agent" | "human" | "unknown";
 
 export type ConsoleAccount = {
@@ -173,7 +124,6 @@ export type ConsoleOverviewData = {
   loadedAt: number;
   processes: ConsoleProcess[];
   targets: ConsoleTarget[];
-  packages: ConsolePackage[];
   accounts: ConsoleAccount[];
   adapterInventory: ConsoleAdapter[];
   adapters: ConsoleAdapterAccount[];
@@ -187,9 +137,6 @@ export type ConsoleOverviewCounts = {
   queuedProcesses: number;
   targets: number;
   onlineTargets: number;
-  packages: number;
-  enabledPackages: number;
-  reviewPendingPackages: number;
   accounts: number;
   runnableAccounts: number;
   adapters: number;

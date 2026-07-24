@@ -288,14 +288,6 @@
   flex: none;
 }
 
-.gsv-settings-applications-block {
-  flex: 1;
-}
-
-.gsv-settings-applications-block .gsv-settings-section-rows {
-  min-height: 0;
-}
-
 @container panel (max-width: 760px) {
   .gsv-settings-overview {
     grid-template-columns: minmax(0, 1fr);

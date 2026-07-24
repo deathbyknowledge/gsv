@@ -150,7 +150,6 @@ function deleteDisabledReason({
   if (!connected) return "Gateway offline";
   if (!repo) return "Select a repository";
   if (!repo.writable) return "Repository is read-only";
-  if (repo.sources.length > 0) return "Remove packages using this repository first";
   return "";
 }
 

@@ -18,7 +18,6 @@ import {
   loadConsoleIdentityLinks,
   loadConsoleMcpServers,
   loadConsoleOverview,
-  loadConsolePackages,
   loadConsoleProcesses,
   loadConsoleTargets,
   pollConsoleOpenAiCodexOAuth,
@@ -74,7 +73,6 @@ import type {
   ConsoleMcpServer,
   ConsoleOverviewCounts,
   ConsoleOverviewData,
-  ConsolePackage,
   ConsoleProcess,
   ConsoleResourceState,
   ConsoleTarget,
@@ -83,7 +81,6 @@ import type {
 export const consoleOverviewQueryKey = ["gsv-console", "overview"] as const;
 export const consoleProcessesQueryKey = ["processes", "gsv-console"] as const;
 export const consoleTargetsQueryKey = ["devices", "gsv-console"] as const;
-export const consolePackagesQueryKey = ["packages", "gsv-console"] as const;
 export const consoleAccountsQueryKey = ["accounts", "gsv-console"] as const;
 export const consoleAdaptersQueryKey = ["adapters", "gsv-console"] as const;
 export const consoleAdapterInventoryQueryKey = ["adapter-inventory", "gsv-console"] as const;
@@ -101,7 +98,6 @@ type ConsoleOverviewHookOptions = ConsoleQueryOptions & LoadConsoleOverviewOptio
 const CONSOLE_OVERVIEW_SIGNALS = new Set([
   "proc.changed",
   "device.status",
-  "pkg.changed",
   "adapter.status",
   "mcp.changed",
 ]);
@@ -177,22 +173,6 @@ export function useConsoleTargets(options: ConsoleQueryOptions = {}) {
   return {
     ...query,
     targets: query.data ?? [],
-    resource: toResourceState(query, enabled, isArrayEmpty),
-  };
-}
-
-export function useConsolePackages(options: ConsoleQueryOptions = {}) {
-  const { client, connected } = useGateway();
-  const enabled = connected && (options.enabled ?? true);
-  const query = useQuery<ConsolePackage[]>({
-    queryKey: consolePackagesQueryKey,
-    enabled,
-    queryFn: () => loadConsolePackages(client),
-  });
-
-  return {
-    ...query,
-    packages: query.data ?? [],
     resource: toResourceState(query, enabled, isArrayEmpty),
   };
 }
@@ -593,7 +573,6 @@ function isArrayEmpty(value: readonly unknown[]): boolean {
 function isOverviewEmpty(value: ConsoleOverviewData): boolean {
   return value.processes.length === 0
     && value.targets.length === 0
-    && value.packages.length === 0
     && value.accounts.length === 0
     && value.adapterInventory.length === 0
     && value.adapters.length === 0

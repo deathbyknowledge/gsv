@@ -6,7 +6,6 @@ import "../styles/gsv-tokens.css";
 import "../styles/gsv-type.css";
 import "../styles.css";
 import "../styles/gsv-scrollbar.css";
-import "./features/desktop/commandPalette.css";
 import "../design-system/catalog.css";
 import { render } from "preact";
 import { App } from "./App";

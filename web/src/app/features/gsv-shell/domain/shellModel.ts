@@ -1,13 +1,11 @@
 export type ShellSurfaceId =
   | "desktop"
-  | "app"
   | "settings"
   | "crew"
   | "agent"
   | "machines"
   | "messengers"
   | "integrations"
-  | "applications"
   | "runtime"
   | "files"
   | "repositories"
@@ -17,11 +15,11 @@ export type ShellSurfaceId =
   | "card-template"
   | "connect-flows";
 
-export type DesktopObjectId = "machines" | "messengers" | "integrations" | "applications";
+export type DesktopObjectId = "machines" | "messengers" | "integrations";
 export type ShellStatus = "online" | "error" | "idle" | "warn" | "live" | "update";
-export type DesktopGlyph = "machines" | "messengers" | "integrations" | "applications";
+export type DesktopGlyph = "machines" | "messengers" | "integrations";
 export type ShellPageSurfaceId = Exclude<ShellSurfaceId, "desktop">;
-export type ShellPageTabKind = "settings" | "system" | "inventory" | "object" | "app";
+export type ShellPageTabKind = "settings" | "system" | "inventory" | "object";
 export type ShellSettingsListKind = DesktopObjectId | "library" | "tasks";
 
 export type ShellSettingsRoute =
@@ -38,16 +36,8 @@ export type ShellPageTab = {
   kind: ShellPageTabKind;
   icon: string;
   type: string;
-  appRoute?: ShellAppRoute;
   libraryRoute?: ShellLibraryRoute;
   settingsRoute?: ShellSettingsRoute;
-};
-
-export type ShellAppRoute = {
-  appId: string;
-  suffix: string;
-  search: string;
-  hash: string;
 };
 
 export type ShellLibraryRoute =
@@ -59,9 +49,8 @@ export type ShellLibraryRoute =
 
 export type ShellRoute =
   | { surface: "desktop" }
-  | { surface: "app"; appRoute: ShellAppRoute }
   | { surface: "library"; libraryRoute?: ShellLibraryRoute }
-  | { surface: Exclude<ShellPageSurfaceId, "app" | "library">; settingsRoute?: ShellSettingsRoute };
+  | { surface: Exclude<ShellPageSurfaceId, "library">; settingsRoute?: ShellSettingsRoute };
 
 export type DesktopChildRoute = {
   kind: DesktopObjectId;
@@ -76,7 +65,6 @@ export type DesktopChildObject = {
   status: ShellStatus;
   statusLabel: string;
   glyph: DesktopGlyph;
-  appRoute?: ShellAppRoute;
   route: DesktopChildRoute;
 };
 
@@ -93,7 +81,7 @@ export type DesktopObject = {
 };
 
 export type SystemDockItem = {
-  id: Exclude<ShellSurfaceId, "desktop" | "app" | "agent" | "machines">;
+  id: Exclude<ShellSurfaceId, "desktop" | "agent" | "machines">;
   label: string;
   icon: string;
   description: string;
@@ -149,8 +137,6 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
   switch (surface) {
     case "settings":
       return "SETTINGS";
-    case "app":
-      return "APP";
     case "crew":
       return "CREW";
     case "agent":
@@ -161,8 +147,6 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
       return "MESSENGERS";
     case "integrations":
       return "INTEGRATIONS";
-    case "applications":
-      return "APPLICATIONS";
     case "runtime":
       return "RUNTIME";
     case "files":
@@ -239,22 +223,6 @@ export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
       type: "GSV · CONSOLE",
     };
   }
-  if (surface === "app") {
-    return {
-      key: "app:unknown",
-      surface,
-      title: "APP",
-      kind: "app",
-      icon: "stars",
-      type: "GSV · APP",
-      appRoute: {
-        appId: "unknown",
-        suffix: "/",
-        search: "",
-        hash: "",
-      },
-    };
-  }
   return {
     key: `surface:${surface}`,
     surface,
@@ -266,9 +234,7 @@ export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
         ? "chat"
         : surface === "integrations"
           ? "weblink"
-          : surface === "applications"
-            ? "stars"
-            : "list",
+          : "list",
     type: "GSV · CONTROL",
   };
 }
@@ -294,25 +260,9 @@ export function shellTabForLibraryRoute(route: ShellLibraryRoute): ShellPageTab 
   };
 }
 
-export function shellTabForAppRoute(route: ShellAppRoute, title?: string): ShellPageTab {
-  const normalizedRoute = normalizeShellAppRoute(route);
-  return {
-    key: shellAppRouteKey(normalizedRoute),
-    surface: "app",
-    title: title ?? normalizedRoute.appId,
-    kind: "app",
-    icon: "stars",
-    type: "GSV · APP",
-    appRoute: normalizedRoute,
-  };
-}
-
-export function shellTabForRoute(route: ShellRoute, title?: string): ShellPageTab | null {
+export function shellTabForRoute(route: ShellRoute): ShellPageTab | null {
   if (route.surface === "desktop") {
     return null;
-  }
-  if (route.surface === "app") {
-    return shellTabForAppRoute(route.appRoute, title);
   }
   if (route.surface === "settings" && route.settingsRoute) {
     return shellTabForSettingsRoute(route.settingsRoute);
@@ -324,17 +274,6 @@ export function shellTabForRoute(route: ShellRoute, title?: string): ShellPageTa
 }
 
 export function shellRouteForTab(tab: ShellPageTab): ShellRoute {
-  if (tab.surface === "app") {
-    return {
-      surface: "app",
-      appRoute: normalizeShellAppRoute(tab.appRoute ?? {
-        appId: "unknown",
-        suffix: "/",
-        search: "",
-        hash: "",
-      }),
-    };
-  }
   if (tab.surface === "settings") {
     return {
       surface: "settings",
@@ -348,23 +287,6 @@ export function shellRouteForTab(tab: ShellPageTab): ShellRoute {
     };
   }
   return { surface: tab.surface };
-}
-
-export function shellAppRouteKey(route: ShellAppRoute): string {
-  const normalizedRoute = normalizeShellAppRoute(route);
-  return `app:${normalizedRoute.appId}:${normalizedRoute.suffix}:${normalizedRoute.search}:${normalizedRoute.hash}`;
-}
-
-export function normalizeShellAppRoute(route: ShellAppRoute): ShellAppRoute {
-  const suffix = route.suffix.trim();
-  const search = route.search.trim();
-  const hash = route.hash.trim();
-  return {
-    appId: route.appId.trim(),
-    suffix: suffix.length === 0 ? "/" : suffix.startsWith("/") ? suffix : `/${suffix}`,
-    search: search.length > 0 && !search.startsWith("?") ? `?${search}` : search,
-    hash: hash.length > 0 && !hash.startsWith("#") ? `#${hash}` : hash,
-  };
 }
 
 export function shellTabForDesktopChild(child: DesktopChildObject): ShellPageTab {

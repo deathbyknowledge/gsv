@@ -33,7 +33,7 @@ const BRAND_ASSETS: AssetEntry[] = [
 
 // web/public/icons/*.svg — single-colour mask art, painted via Icon (gsv
 // family). All 16 are referenced by name somewhere in the app; notably
-// satellite via OBJECT_GLYPH_ICON.applications and rss via
+// rss via
 // ApplicationImportFlow's flow icon.
 const APP_ICON_ASSETS: AssetEntry[] = [
   { path: "/icons/bookmark.svg", name: "bookmark", used: true },
