@@ -9,7 +9,7 @@ import {
 
 describe("readImage", () => {
   it("uses caption mode by default and preserves internal whitespace", async () => {
-    const run = vi.fn(async () => ({
+    const run = vi.fn(async () => workersAiResult({
       caption: "  first line\n  second line  ",
       finish_reason: "stop",
       metrics: {
@@ -52,7 +52,7 @@ describe("readImage", () => {
   });
 
   it("requires an agent-supplied query prompt and exposes reasoning grounding", async () => {
-    const run = vi.fn(async () => ({
+    const run = vi.fn(async () => workersAiResult({
       answer: "Four horses.",
       reasoning: {
         text: "I see four horses.",
@@ -96,7 +96,7 @@ describe("readImage", () => {
   });
 
   it("maps OCR to query without imposing a general query prompt", async () => {
-    const run = vi.fn(async () => ({ answer: "Invoice\nTotal: $20" }));
+    const run = vi.fn(async () => workersAiResult({ answer: "Invoice\nTotal: $20" }));
 
     const response = await readImage({ run }, {
       data: "AQID",
@@ -115,8 +115,8 @@ describe("readImage", () => {
   });
 
   it("returns normalized point and detect coordinates", async () => {
-    const pointRun = vi.fn(async () => ({ points: [{ x: 0.2, y: 0.3 }] }));
-    const detectRun = vi.fn(async () => ({
+    const pointRun = vi.fn(async () => workersAiResult({ points: [{ x: 0.2, y: 0.3 }] }));
+    const detectRun = vi.fn(async () => workersAiResult({
       objects: [{ x_min: 0.1, y_min: 0.2, x_max: 0.4, y_max: 0.6 }],
     }));
 
@@ -148,7 +148,7 @@ describe("readImage", () => {
   });
 
   it("prompts for JSON and validates the structured result", async () => {
-    const run = vi.fn(async () => ({ answer: "{\"total\":20}" }));
+    const run = vi.fn(async () => workersAiResult({ answer: "{\"total\":20}" }));
     const schema = {
       type: "object",
       properties: { total: { type: "number" } },
@@ -172,7 +172,7 @@ describe("readImage", () => {
       structured: { total: 20 },
     }));
 
-    run.mockResolvedValueOnce({ answer: "{\"wrong\":20}" });
+    run.mockResolvedValueOnce(workersAiResult({ answer: "{\"wrong\":20}" }));
     await expect(readImage({ run }, {
       data: "AQID",
       mode: "query",
@@ -182,20 +182,23 @@ describe("readImage", () => {
     })).rejects.toThrow("missing total");
   });
 
-  it("decodes Workers AI SSE into a plain UTF-8 response stream", async () => {
+  it("decodes cumulative Workers AI model chunks into a plain UTF-8 response stream", async () => {
     const source = byteStream([
-      "data: {\"text\":\"first \"}\n",
-      "\ndata: {\"chunk\":\"second\"}\n\n",
+      "data: {\"id\":\"prediction\",\"status\":\"processing\"}\n\n",
+      "data: {\"chunk\":{\"answer\":\"first\",\"caption\":null}}\n\n",
+      "data: {\"chunk\":{\"answer\":\"first second\",\"caption\":null}}\n\n",
+      "data: {\"response\":\"\"}\n\n",
       "data: [DONE]\n\n",
     ]);
     const response = await readImage({ run: vi.fn(async () => source) }, {
       data: "AQID",
-      mode: "caption",
+      mode: "query",
+      prompt: "What is visible?",
       stream: true,
     });
 
     expect(response?.result).toEqual(expect.objectContaining({
-      mode: "caption",
+      mode: "query",
       streamed: true,
       contentType: "text/plain; charset=utf-8",
     }));
@@ -311,4 +314,15 @@ function byteStream(chunks: string[]): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
+}
+
+function workersAiResult(result: Record<string, unknown>): Record<string, unknown> {
+  return {
+    result,
+    usage: {
+      prompt_tokens: 10,
+      completion_tokens: 5,
+      total_tokens: 15,
+    },
+  };
 }

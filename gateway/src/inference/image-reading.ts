@@ -174,6 +174,7 @@ export function decodeMoondreamStream(
   const reader = source.getReader();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
+  const streamState = { cumulativeText: "" };
   let buffer = "";
   let closed = false;
   let pumpStarted = false;
@@ -226,7 +227,7 @@ export function decodeMoondreamStream(
             const { done, value } = await reader.read();
             if (done) {
               buffer += decoder.decode();
-              emitSseEvents(buffer, controller, encoder, true);
+              emitSseEvents(buffer, controller, encoder, streamState, true);
               closed = true;
               cleanup();
               controller.close();
@@ -241,7 +242,7 @@ export function decodeMoondreamStream(
               }
               const event = normalized.slice(0, boundary);
               buffer = normalized.slice(boundary + 2);
-              emitSseEvents(event, controller, encoder, true);
+              emitSseEvents(event, controller, encoder, streamState, true);
             }
           }
         } catch (error) {
@@ -390,10 +391,7 @@ function normalizeMoondreamResponse(
   responseFormat: AiImageReadResponseFormat,
   request: ImageReadingRequest,
 ): AiImageReadResult {
-  if (!value || typeof value !== "object") {
-    throw new Error("Moondream returned an invalid response");
-  }
-  const record = value as Record<string, unknown>;
+  const record = moondreamResultRecord(value);
   const metadata = {
     provider: "workers-ai",
     model: MOONDREAM_IMAGE_READING_MODEL,
@@ -443,6 +441,20 @@ function normalizeMoondreamResponse(
     mode,
     objects: normalizeObjects(record.objects),
   };
+}
+
+function moondreamResultRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Moondream returned an invalid response");
+  }
+  const envelope = value as Record<string, unknown>;
+  if (envelope.result === undefined) {
+    return envelope;
+  }
+  if (!envelope.result || typeof envelope.result !== "object" || Array.isArray(envelope.result)) {
+    throw new Error("Moondream returned an invalid response");
+  }
+  return envelope.result as Record<string, unknown>;
 }
 
 function appendResponseFormatInstruction(
@@ -657,6 +669,7 @@ function emitSseEvents(
   input: string,
   controller: ReadableStreamDefaultController<Uint8Array>,
   encoder: TextEncoder,
+  state: { cumulativeText: string },
   flush: boolean,
 ): void {
   const events = input.replace(/\r\n/g, "\n").split("\n\n");
@@ -677,14 +690,17 @@ function emitSseEvents(
     } catch {
       throw new Error("Moondream returned invalid streaming data");
     }
-    const text = streamEventText(parsed);
+    const text = streamEventText(parsed, state);
     if (text) {
       controller.enqueue(encoder.encode(text));
     }
   }
 }
 
-function streamEventText(value: unknown): string {
+function streamEventText(
+  value: unknown,
+  state: { cumulativeText: string },
+): string {
   if (typeof value === "string") {
     return value;
   }
@@ -692,6 +708,21 @@ function streamEventText(value: unknown): string {
     return "";
   }
   const record = value as Record<string, unknown>;
+  if (record.chunk && typeof record.chunk === "object" && !Array.isArray(record.chunk)) {
+    const replacement = firstText(record.chunk);
+    if (replacement !== null) {
+      if (replacement.startsWith(state.cumulativeText)) {
+        const delta = replacement.slice(state.cumulativeText.length);
+        state.cumulativeText = replacement;
+        return delta;
+      }
+      if (state.cumulativeText.startsWith(replacement)) {
+        return "";
+      }
+      state.cumulativeText = replacement;
+      return replacement;
+    }
+  }
   for (const candidate of [
     record.text,
     record.chunk,
