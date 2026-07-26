@@ -111,6 +111,11 @@ optional caller prompt. `point` returns normalized `{x, y}` coordinates and
 `detect` returns normalized bounding boxes. Those two modes print JSON by
 default.
 
+`IMAGE` accepts the same target-qualified source forms as `cp`: a local path,
+`gsv:/path`, `target:/path`, or `[target-with-colons]:/path`. A target image is
+streamed directly through the filesystem transfer boundary into image reading;
+the command does not stage a temporary GSV copy.
+
 Query and OCR structured output accepts `text`, `json`, `xml`, `markdown`, or
 `csv`. A JSON `--schema` is added to the caller's instruction, then the result
 is parsed and checked before being returned. `--reasoning` exposes query
