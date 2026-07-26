@@ -10,6 +10,10 @@ import {
   type PackageListKind,
 } from "../domain/consoleListTypes";
 import type { ConsolePackage, ConsoleResourceState } from "../domain/consoleModels";
+import {
+  NATIVE_APP_ENTRIES,
+  type NativeAppSurfaceId,
+} from "../../gsv-shell/domain/shellModel";
 import { useConsolePackages } from "../hooks/useConsoleData";
 import { useConsoleListSelection } from "../hooks/useConsoleListSelection";
 import { ApplicationImportFlow } from "./ApplicationImportFlow";
@@ -30,6 +34,8 @@ type PackageListPageProps = {
   initialDetailLabel?: string | null;
   kind: PackageListKind;
   onOpenApp?: (appId: string, title?: string) => void;
+  /** Opens a native app surface (FILES, LIBRARY, TERMINAL, REPOS row click). */
+  onOpenSurface?: (surface: NativeAppSurfaceId) => void;
   onSelectionChange?: (selection: ConsoleListSelection | null) => void;
 };
 
@@ -45,12 +51,14 @@ function PackageConsoleSection({
   kind,
   onOpenCreate,
   onOpenDetail,
+  onOpenSurface,
   packages,
   refreshing,
 }: {
   kind: PackageListKind;
   onOpenCreate?: () => void;
   onOpenDetail: (pkg: ConsolePackage) => void;
+  onOpenSurface?: (surface: NativeAppSurfaceId) => void;
   packages: readonly ConsolePackage[];
   refreshing: boolean;
 }) {
@@ -62,19 +70,40 @@ function PackageConsoleSection({
   const noun = packageListNoun(kind);
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return packages
+    // Native GSV apps lead the list, unlabeled; the count in the header stays
+    // a package count (natives are surfaces, not packages).
+    const nativeRows = kind === "applications"
+      ? NATIVE_APP_ENTRIES
+          .filter((entry) => !q || entry.label.toLowerCase().includes(q))
+          .map((entry) => ({
+            id: `native:${entry.surface}`,
+            icon: entry.icon,
+            label: entry.label,
+            sub: entry.blurb,
+            tone: "online" as const,
+            statusLabel: "SYSTEM",
+            onOpen: onOpenSurface ? () => onOpenSurface(entry.surface) : undefined,
+          }))
+      : [];
+    // Imported packages carry the EXTERNAL marker (a pending review keeps the
+    // tag slot — that state is actionable) and PUBLIC/PRIVATE provenance in
+    // the sub line.
+    const packageRows = packages
       .filter((pkg) => !q || pkg.name.toLowerCase().includes(q))
       .map((pkg) => ({
         id: pkg.packageId,
         icon: iconForPackage(pkg, kind),
         label: pkg.name,
-        sub: packageSub(pkg),
+        sub: `${packageSub(pkg)} · ${pkg.sourcePublic ? "PUBLIC" : "PRIVATE"}`,
         tone: toneForPackage(pkg),
         statusLabel: statusForPackage(pkg),
-        tag: pkg.reviewPending ? { label: "UPDATE", tone: "update" as const } : undefined,
+        tag: pkg.reviewPending
+          ? { label: "UPDATE", tone: "update" as const }
+          : { label: "EXTERNAL", tone: "info" as const },
         onOpen: () => onOpenDetail(pkg),
       }));
-  }, [packages, query, kind, onOpenDetail]);
+    return [...nativeRows, ...packageRows];
+  }, [packages, query, kind, onOpenDetail, onOpenSurface]);
 
   return (
     <ListTemplate
@@ -82,7 +111,7 @@ function PackageConsoleSection({
       listMeta={refreshing ? "REFRESHING" : `${packages.length} ${noun}${packages.length === 1 ? "" : "S"}`}
       emptyObject={`${noun}S`}
       rows={rows}
-      connectLabel={`NEW ${noun}`}
+      connectLabel={`+ CONNECT NEW ${noun}`}
       onConnect={onOpenCreate}
       search={{ value: query, placeholder: `Search ${noun.toLowerCase()}s…`, onChange: setQuery }}
     />
@@ -106,6 +135,7 @@ export function PackageListPage({
   initialDetailLabel = null,
   kind,
   onOpenApp,
+  onOpenSurface,
   onSelectionChange,
 }: PackageListPageProps) {
   const packages = useConsolePackages({ enabled: true });
@@ -150,6 +180,7 @@ export function PackageListPage({
                 ? () => selectDetail({ kind, id: NEW_DETAIL_ID, createNew: true })
                 : undefined}
               onOpenDetail={(pkg) => selectDetail({ kind, id: pkg.packageId, label: pkg.name })}
+              onOpenSurface={onOpenSurface}
               packages={scopedPackages}
               refreshing={packages.resource.isRefreshing}
             />

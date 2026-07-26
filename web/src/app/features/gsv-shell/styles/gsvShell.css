@@ -451,45 +451,6 @@
   animation: gsvCtrlLineIn 0.18s ease both;
 }
 
-.gsv-picker-overlay header button {
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  color: var(--text-dim);
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 0;
-  line-height: 0;
-  position: relative;
-}
-
-.gsv-picker-overlay header button::before,
-.gsv-picker-overlay header button::after {
-  content: "";
-  position: absolute;
-  width: 10px;
-  height: 1.5px;
-  background: currentColor;
-}
-
-.gsv-picker-overlay header button::before {
-  transform: rotate(45deg);
-}
-
-.gsv-picker-overlay header button::after {
-  transform: rotate(-45deg);
-}
-
-.gsv-picker-overlay header button:hover,
-.gsv-picker-overlay header button:focus-visible {
-  border-color: var(--accent);
-  color: var(--text-hi);
-}
-
 .gsv-space-connectors {
   position: relative;
   --gsv-branch-count: 4;
@@ -673,9 +634,36 @@
   padding: 2px 6px 2px 2px;
 }
 
+/* Card cell: reserved provenance band + card, so external tags never shift
+   card tops relative to native/plain neighbours in the same grid row. */
+.gsv-object-strip-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gsv-object-strip-prov {
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.gsv-object-strip-prov-repo {
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
 .gsv-object-strip-add {
   width: 236px;
   display: flex;
+  /* Match the provenance band (20px) + gap (6px) above the sibling cards. */
+  margin-top: 26px;
 }
 
 /* Stretch the connect card to the grid row height so it matches the object
@@ -980,10 +968,21 @@
   box-shadow: inset -1px 0 0 rgba(169, 164, 255, 0.05);
 }
 
+/* Collapsed geometry mirrors the expanded rail so toggling doesn't move the
+   icons: menu box tops align (head padding 18), the first disc top matches
+   head(61) + scroll padding(10) + row padding(12) = 83, and the 24px margins
+   reproduce the 64px row pitch (40px disc + 2×12px row padding). */
 .gsv-shell-rail.is-collapsed {
   align-items: center;
-  gap: 6px;
-  padding-top: 14px;
+  padding-top: 18px;
+}
+
+.gsv-shell-rail.is-collapsed .gsv-rail-dot-button {
+  margin-top: 24px;
+}
+
+.gsv-shell-rail.is-collapsed .gsv-rail-rule + .gsv-rail-dot-button {
+  margin-top: 22px;
 }
 
 .gsv-shell-rail.is-collapsed .gsv-rail-menu {
@@ -1463,7 +1462,9 @@
 .gsv-rail-gsv-dot {
   width: 42px;
   height: 42px;
-  margin-top: 4px;
+  /* Same pitch as the dot buttons — keeps the GSV mark at the expanded GSV
+     row's disc position (42px disc shares the 12px row padding). */
+  margin-top: 24px;
   border: 1.4px solid var(--accent-bright);
   box-shadow: 0 0 14px rgba(150, 140, 255, 0.4);
 }
@@ -1550,93 +1551,6 @@
   opacity: 1;
 }
 
-.gsv-picker-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 50;
-  background:
-    linear-gradient(rgba(150, 140, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(150, 140, 255, 0.04) 1px, transparent 1px),
-    var(--panel-2);
-  background-size: 44px 44px, 44px 44px, auto;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--rule-section) #0c0a22;
-}
-
-.gsv-picker-panel {
-  width: min(840px, 100%);
-  margin: 0 auto;
-  padding: clamp(34px, 5vw, 46px) clamp(20px, 5vw, 40px);
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  animation: gsvContentIn 0.22s ease both;
-}
-
-.gsv-picker-overlay.is-control-picker .gsv-picker-panel {
-  width: min(470px, 100%);
-}
-
-.gsv-picker-overlay header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.gsv-picker-overlay header div {
-  min-width: 0;
-  display: grid;
-  gap: 7px;
-}
-
-.gsv-picker-overlay header div > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #8c86c8;
-  font-size: 0.875rem; /* size from .gsv-meta (14px); tracking kept */
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-}
-
-.gsv-picker-overlay header small {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-dim);
-  font-size: 0.75rem; /* size from .gsv-sublabel (12px); tracking kept */
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.gsv-picker-grid {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.gsv-picker-control {
-  display: flex;
-  justify-content: center;
-}
-
-.gsv-picker-empty {
-  min-height: 120px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-dim);
-  font-size: 0.75rem; /* size from .gsv-sublabel (12px); tracking kept */
-  letter-spacing: 0.18em;
-}
 
 .gsv-console-frame {
   position: absolute;

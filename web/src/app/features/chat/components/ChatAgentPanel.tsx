@@ -126,7 +126,7 @@ export function ChatAgentPanel({
             onChange={setQuery}
           />
           <Button
-            label="NEW TASK"
+            label="+ NEW TASK"
             disabled={!canStartNewTask}
             onClick={() => {
               onStartNewTask();

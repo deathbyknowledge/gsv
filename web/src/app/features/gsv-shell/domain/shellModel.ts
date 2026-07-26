@@ -9,6 +9,7 @@ export type ShellSurfaceId =
   | "integrations"
   | "applications"
   | "runtime"
+  | "models"
   | "files"
   | "repositories"
   | "library"
@@ -77,7 +78,17 @@ export type DesktopChildObject = {
   statusLabel: string;
   glyph: DesktopGlyph;
   appRoute?: ShellAppRoute;
-  route: DesktopChildRoute;
+  /** Object-detail route. Absent on native (surface-backed) children. */
+  route?: DesktopChildRoute;
+  /** Set on native children: the system surface this child opens. */
+  surface?: NativeAppSurfaceId;
+  /** Explicit card/row icon for native children (e.g. folder, terminal). */
+  iconName?: string;
+  /** Native children are fixed system apps — excluded from status/count aggregation. */
+  native?: boolean;
+  /** Provenance for external (imported) applications: source repo + visibility. */
+  sourceRepo?: string;
+  sourcePublic?: boolean;
 };
 
 export type DesktopObject = {
@@ -92,49 +103,41 @@ export type DesktopObject = {
   children: DesktopChildObject[];
 };
 
-export type SystemDockItem = {
-  id: Exclude<ShellSurfaceId, "desktop" | "app" | "agent" | "machines">;
+export type NativeAppSurfaceId = "files" | "library" | "terminal" | "repositories";
+
+export type NativeAppEntry = {
+  surface: NativeAppSurfaceId;
   label: string;
   icon: string;
-  description: string;
+  blurb: string;
 };
 
-export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
+/** The built-in GSV apps, listed under APPLICATIONS ahead of imported packages
+ *  (rail subitems, desktop object strip, and the applications list page). */
+export const NATIVE_APP_ENTRIES: NativeAppEntry[] = [
   {
-    id: "files",
+    surface: "files",
     label: "FILES",
     icon: "folder",
-    description: "Ship filesystem, datasets, logs, and build artifacts.",
+    blurb: "Ship filesystem, datasets, logs, and build artifacts.",
   },
   {
-    id: "library",
+    surface: "library",
     label: "LIBRARY",
     icon: "pencil",
-    description: "Repo-backed markdown knowledge, source notes, and durable memory.",
+    blurb: "Repo-backed markdown knowledge, source notes, and durable memory.",
   },
   {
-    id: "terminal",
+    surface: "terminal",
     label: "TERMINAL",
     icon: "terminal",
-    description: "Direct shell access to GSV and connected machines.",
+    blurb: "Direct shell access to GSV and connected machines.",
   },
   {
-    id: "repositories",
+    surface: "repositories",
     label: "REPOS",
     icon: "doticons/branch",
-    description: "Browse ripgit repositories, source history, search, and diffs.",
-  },
-  {
-    id: "settings",
-    label: "SETTINGS",
-    icon: "cog",
-    description: "Crew, machines, integrations, access, and system configuration.",
-  },
-  {
-    id: "crew",
-    label: "CREW",
-    icon: "chat",
-    description: "Agents, models, task ownership, and permissions.",
+    blurb: "Browse ripgit repositories, source history, search, and diffs.",
   },
 ];
 
@@ -148,7 +151,7 @@ export function getDesktopObject(objects: readonly DesktopObject[], id: DesktopO
 export function shellSurfaceLabel(surface: ShellSurfaceId): string {
   switch (surface) {
     case "settings":
-      return "SETTINGS";
+      return "SHIP OVERVIEW";
     case "app":
       return "APP";
     case "crew":
@@ -164,7 +167,9 @@ export function shellSurfaceLabel(surface: ShellSurfaceId): string {
     case "applications":
       return "APPLICATIONS";
     case "runtime":
-      return "RUNTIME";
+      return "TASKS";
+    case "models":
+      return "MODELS";
     case "files":
       return "FILES";
     case "repositories":
@@ -194,7 +199,7 @@ export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
       title,
       kind: "settings",
       icon: "cog",
-      type: "GSV · SETTINGS",
+      type: "GSV · OVERVIEW",
       settingsRoute: { view: "overview" },
     };
   }
@@ -253,6 +258,16 @@ export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
         search: "",
         hash: "",
       },
+    };
+  }
+  if (surface === "models") {
+    return {
+      key: "surface:models",
+      surface,
+      title,
+      kind: "inventory",
+      icon: "stars",
+      type: "GSV · MODELS",
     };
   }
   return {
@@ -368,8 +383,14 @@ export function normalizeShellAppRoute(route: ShellAppRoute): ShellAppRoute {
 }
 
 export function shellTabForDesktopChild(child: DesktopChildObject): ShellPageTab {
+  const route = child.route;
+  if (!route) {
+    // Native children carry a `surface` instead of an object route and are
+    // opened via openSurface before this factory is ever consulted.
+    throw new Error(`shellTabForDesktopChild: child ${child.id} has no object route`);
+  }
   return {
-    key: `obj:${child.route.kind}:${child.route.detailId}`,
+    key: `obj:${route.kind}:${route.detailId}`,
     surface: "settings",
     title: child.label,
     kind: "object",
@@ -377,8 +398,8 @@ export function shellTabForDesktopChild(child: DesktopChildObject): ShellPageTab
     type: child.type,
     settingsRoute: {
       view: "list",
-      kind: child.route.kind,
-      detailId: child.route.detailId,
+      kind: route.kind,
+      detailId: route.detailId,
       detailLabel: child.label,
     },
   };

@@ -65,7 +65,7 @@ function MachinesConsoleSection({
       listMeta={refreshing ? "REFRESHING" : `${onlineCount}/${targets.length} ONLINE`}
       emptyObject="MACHINES"
       rows={rows}
-      connectLabel="CONNECT NEW MACHINE"
+      connectLabel="+ CONNECT NEW MACHINE"
       onConnect={onOpenCreate}
       search={{ value: query, placeholder: "Search machines…", onChange: setQuery }}
     />

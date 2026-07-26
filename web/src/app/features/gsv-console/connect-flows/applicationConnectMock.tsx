@@ -6,7 +6,7 @@ import { Tag } from "../../../components/ui/Tag";
 import { TextInput } from "../../../components/ui/TextInput";
 import type { ConnectFlowDef } from "./connectFlowTypes";
 
-// Static mock of the real 2-step "Add application" import → review → enable
+// Static mock of the real 2-step "Connect application" import → review → enable
 // wizard (see packages/ApplicationImportFlow.tsx). No hooks/mutations — the
 // footer buttons just drive the shared connect-flow stepper. Running example:
 // a "Weather" web-ui package from team/weather.
@@ -15,14 +15,14 @@ export const applicationConnectFlow: ConnectFlowDef = {
   navLabel: "APPLICATIONS",
   parentLabel: "APPLICATIONS",
   icon: "satellite",
-  title: "Add application",
+  title: "Connect application",
   blurb:
     "Import a package from a public repo, review it, then enable it · git-clone, agent review, install.",
   steps: [
     {
       key: "import",
       label: "IMPORT",
-      title: "IMPORT FROM REPO",
+      title: "CONNECT FROM REPO",
       meta: "STEP 1 / 2",
       status: "NOT IMPORTED",
       tone: "idle",
@@ -75,7 +75,7 @@ export const applicationConnectFlow: ConnectFlowDef = {
           <div class="gsv-cf-footer">
             <Button variant="secondary" label="CANCEL" onClick={nav.onBack} />
             <span class="gsv-cf-footer-spacer" />
-            <Button variant="primary" label="IMPORT APPLICATION" onClick={nav.onNext} />
+            <Button variant="primary" label="+ CONNECT APPLICATION" onClick={nav.onNext} />
           </div>
         </>
       ),
@@ -123,7 +123,7 @@ export const applicationConnectFlow: ConnectFlowDef = {
           <div class="gsv-cf-footer">
             <Button variant="secondary" label="BACK" onClick={nav.onBack} />
             <span class="gsv-cf-footer-spacer" />
-            <Button variant="secondary" label="IMPORT WITHOUT ENABLING" />
+            <Button variant="secondary" label="CONNECT WITHOUT ENABLING" />
             <Button variant="primary" label="APPROVE & ENABLE" />
           </div>
         </>

@@ -23,6 +23,28 @@ describe("shellRoutes", () => {
     expect(shellRouteFromLocation(location("/tasks"))).toEqual(route);
   });
 
+  it("round-trips the standalone models surface at /models", () => {
+    const route: ShellRoute = { surface: "models" };
+
+    expect(shellRouteToPath(route)).toBe("/models");
+    expect(shellRouteFromLocation(location("/models"))).toEqual(route);
+  });
+
+  it("keeps parsing the legacy nested settings routes", () => {
+    expect(shellRouteFromLocation(location("/settings/crew"))).toEqual({
+      surface: "settings",
+      settingsRoute: { view: "crew" },
+    });
+    expect(shellRouteFromLocation(location("/settings/models"))).toEqual({
+      surface: "settings",
+      settingsRoute: { view: "config", kind: "models" },
+    });
+    expect(shellRouteFromLocation(location("/settings/tasks"))).toEqual({
+      surface: "settings",
+      settingsRoute: { view: "list", kind: "tasks" },
+    });
+  });
+
   it("uses /repositories for the native repository page", () => {
     const route: ShellRoute = { surface: "repositories" };
 

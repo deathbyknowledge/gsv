@@ -197,7 +197,7 @@ function LibraryCollectionBar({ library }: { library: LibraryRuntime }) {
         <div class="gsv-library-collection-actions">
           <Button
             variant="primary"
-            label={library.createCollectionOpen ? "CLOSE" : "NEW COLLECTION"}
+            label={library.createCollectionOpen ? "CLOSE" : "+ NEW COLLECTION"}
             onClick={() => library.createCollectionOpen
               ? library.closeCreateCollection()
               : library.setCreateCollectionOpen(true)}

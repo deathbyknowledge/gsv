@@ -101,7 +101,7 @@ function HeaderFields({
         </div>
       ))}
       <div class="gsv-integration-header-actions">
-        <Button variant="secondary" label="ADD HEADER" onClick={onAdd} />
+        <Button variant="secondary" label="+ ADD HEADER" onClick={onAdd} />
       </div>
     </div>
   );

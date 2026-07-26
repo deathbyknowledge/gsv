@@ -8,8 +8,8 @@ import { DesktopHint } from "../../app/features/gsv-shell/desktop/DesktopHint";
  * void panel; the live version is absolutely positioned in the desktop.
  */
 
-const LINES = ["> CLICK A NODE TO EXPLORE", "> CLICK GSV FOR CONTROLS"];
-const MIN = "CLICK A NODE TO EXPLORE · CLICK GSV FOR CONTROLS";
+const LINES = ["> CLICK A NODE TO EXPLORE", "> CLICK GSV FOR SHIP OVERVIEW"];
+const MIN = "CLICK A NODE TO EXPLORE · CLICK GSV FOR SHIP OVERVIEW";
 
 function Stage({ played }: { played?: boolean }) {
   return (

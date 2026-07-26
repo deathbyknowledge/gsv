@@ -63,7 +63,7 @@ function RuntimeConsoleSection({
       listMeta={refreshing ? "REFRESHING" : `${processes.filter(isActiveProcess).length}/${processes.length} ACTIVE`}
       emptyObject="TASKS"
       rows={rows}
-      connectLabel="NEW TASK"
+      connectLabel="+ NEW TASK"
       onConnect={onNewTask}
       search={{ value: query, placeholder: "Search tasks…", onChange: setQuery }}
     />

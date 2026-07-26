@@ -12,6 +12,7 @@ import type {
   ShellAppRoute,
   ShellStatus,
 } from "./shellModel";
+import { NATIVE_APP_ENTRIES } from "./shellModel";
 import { isNativeWebPackageName } from "../../packages/nativePackages";
 import {
   messengerFamilies,
@@ -111,26 +112,47 @@ export function buildDesktopObjectsFromConsole(data: ConsoleOverviewData | null 
     },
     applications: {
       id: "applications",
-      children: applicationChildren,
+      children: [...nativeApplicationChildren(), ...applicationChildren],
     },
   };
 
   return BRANCH_ORDER.map((id) => buildObject(branches[id]));
 }
 
+/** The built-in GSV apps, rendered ahead of imported packages under
+ *  APPLICATIONS. They open system surfaces rather than object details. */
+function nativeApplicationChildren(): DesktopChildObject[] {
+  return NATIVE_APP_ENTRIES.map((entry) => ({
+    id: `native:${entry.surface}`,
+    label: entry.label,
+    type: "APPLICATION · GSV",
+    blurb: entry.blurb,
+    status: "online" as ShellStatus,
+    statusLabel: "SYSTEM",
+    glyph: "applications" as DesktopGlyph,
+    iconName: entry.icon,
+    surface: entry.surface,
+    native: true,
+  }));
+}
+
 function buildObject(branch: DesktopObjectBranch): DesktopObject {
   const spec = SPECS[branch.id];
-  const status = statusForChildren(branch.children);
+  // Native children are fixed system apps: they render in the strip/drawer but
+  // stay out of the count and status roll-up so "N web packages" and the
+  // section dot keep describing the imported inventory.
+  const countable = branch.children.filter((child) => !child.native);
+  const status = statusForChildren(countable);
 
   return {
     id: spec.id,
     label: spec.label,
     glyph: spec.glyph,
-    meta: countLabel(branch.children.length, spec.singular, spec.plural),
+    meta: countLabel(countable.length, spec.singular, spec.plural),
     x: spec.x,
     y: spec.y,
     status,
-    statusLabel: statusLabelForChildren(branch.children),
+    statusLabel: statusLabelForChildren(countable),
     children: branch.children,
   };
 }
@@ -199,6 +221,10 @@ function packageToChild(pkg: ConsolePackage, branchId: PackageBranchId): Desktop
     statusLabel: status.label,
     glyph: branchId,
     appRoute: branchId === "applications" ? appRouteForPackage(pkg) : undefined,
+    // External-application provenance (drives the EXTERNAL / PUBLIC·PRIVATE
+    // tags on the desktop strip cards).
+    sourceRepo: branchId === "applications" ? firstNonEmpty(pkg.sourceRepo) ?? undefined : undefined,
+    sourcePublic: branchId === "applications" ? pkg.sourcePublic === true : undefined,
     route: {
       kind: branchId,
       detailId: pkg.packageId,

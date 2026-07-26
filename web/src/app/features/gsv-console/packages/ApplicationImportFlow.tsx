@@ -244,7 +244,7 @@ export function ApplicationImportFlow({
         <span class="gsv-cf-footer-spacer" />
         <Button
           variant="primary"
-          label={flow.importMutation.isPending ? "IMPORTING" : "IMPORT APPLICATION"}
+          label={flow.importMutation.isPending ? "CONNECTING" : "+ CONNECT APPLICATION"}
           disabled={!importReady || flow.importMutation.isPending}
           onClick={handleImport}
         />
@@ -339,7 +339,7 @@ export function ApplicationImportFlow({
           <span class="gsv-cf-footer-spacer" />
           <Button
             variant="secondary"
-            label="IMPORT WITHOUT ENABLING"
+            label="CONNECT WITHOUT ENABLING"
             disabled={!pkg || flow.enableMutation.isPending}
             onClick={() => openImportedPackage(pkg)}
           />
@@ -370,14 +370,14 @@ export function ApplicationImportFlow({
     navLabel: "APPLICATIONS",
     parentLabel: "APPLICATIONS",
     icon: "satellite",
-    title: "Add application",
+    title: "Connect application",
     blurb:
       "Import a package from a public repo, review it, then enable it · git-clone, agent review, install.",
     steps: [
       {
         key: "import",
         label: APPLICATION_IMPORT_STEP_LABELS[0],
-        title: "IMPORT PACKAGE",
+        title: "CONNECT PACKAGE",
         meta: "STEP 1 / 2",
         status: "NOT IMPORTED",
         tone: "idle",

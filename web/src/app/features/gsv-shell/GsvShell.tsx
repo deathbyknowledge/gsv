@@ -1,7 +1,5 @@
 import type { JSX } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { IconMenu } from "../../components/ui/IconMenu";
-import { StatusDot } from "../../components/ui/StatusDot";
 import type { StatusTone } from "../../components/ui/StatusDot";
 import { AppFramePage } from "../apps/components/AppFramePage";
 import { ChatDock, type StartedChatProcess } from "../chat/components/ChatDock";
@@ -18,10 +16,7 @@ import type {
 } from "../gsv-console/domain/consoleModels";
 import { useConsoleConfig, useConsoleOverview } from "../gsv-console/hooks/useConsoleData";
 import type { NotificationSurface } from "../notifications/types";
-import {
-  GsvConsole,
-  type SettingsRouteTarget,
-} from "../gsv-console/components/GsvConsole";
+import { GsvConsole } from "../gsv-console/components/GsvConsole";
 import { GsvDesktop, type DesktopInventoryState } from "./desktop/GsvDesktop";
 import { ShellRail } from "./navigation/ShellRail";
 import { ShellStatusBar } from "./navigation/ShellStatusBar";
@@ -33,6 +28,7 @@ import {
   type ShellSettingsRoute,
   type ShellSurfaceId,
 } from "./domain/shellModel";
+import { isConsoleAgentAccount } from "../gsv-console/domain/agentPresentation";
 import { buildShellChatAgent } from "./domain/chatAgentModel";
 import { buildDesktopObjectsFromConsole } from "./domain/desktopObjects";
 import { useGsvShellState } from "./hooks/useGsvShellState";
@@ -152,19 +148,6 @@ function CollapsedDesktop() {
   );
 }
 
-function shellSettingsRouteForTarget(target: SettingsRouteTarget): ShellSettingsRoute {
-  if (target === "overview") {
-    return { view: "overview" };
-  }
-  if (target === "crew") {
-    return { view: "crew" };
-  }
-  if (target === "tasks") {
-    return { view: "list", kind: "tasks" };
-  }
-  return { view: "config", kind: target };
-}
-
 export function GsvShell({
   notificationOpenSurface,
   notificationUnreadCount,
@@ -184,6 +167,11 @@ export function GsvShell({
   );
   const desktopObjects = useMemo(
     () => buildDesktopObjectsFromConsole(consoleOverview.data),
+    [consoleOverview.data],
+  );
+  // Crew agents (machine accounts) for the desktop HUD count.
+  const agentCount = useMemo(
+    () => (consoleOverview.data?.accounts ?? []).filter(isConsoleAgentAccount).length,
     [consoleOverview.data],
   );
   const inventoryState = desktopInventoryState(consoleOverview.resource);
@@ -351,9 +339,6 @@ export function GsvShell({
   const guardedBackToDesktop = (): void => {
     guard.requestLeave(shell.backToDesktop);
   };
-  const guardedRevealDesktop = (): void => {
-    guard.requestLeave(shell.revealDesktop);
-  };
   const closeActiveScreen = (): void => {
     guard.requestLeave(shell.closeActiveScreen);
   };
@@ -363,9 +348,6 @@ export function GsvShell({
   const createSectionObject = (section: DesktopObjectId): void => {
     guard.requestLeave(() => shell.openSettingsRoute({ view: "list", kind: section, createNew: true }));
   };
-  const openSettingsRoute = (target: SettingsRouteTarget): void => {
-    guard.requestLeave(() => shell.openSettingsRoute(shellSettingsRouteForTarget(target)));
-  };
   const openAppById = (appId: string, title?: string): void => {
     guard.requestLeave(() => shell.openAppRoute({
       appId,
@@ -373,6 +355,38 @@ export function GsvShell({
       search: "",
       hash: "",
     }, title));
+  };
+  // Rail-originated navigation collapses the rail back to its default: the
+  // expanded rail is a transient reveal menu — pick a destination, it closes.
+  // The collapse rides inside the guarded callback so cancelling an unsaved-
+  // changes prompt leaves the rail open.
+  const railOpenSurface = (surface: ShellSurfaceId): void => {
+    guard.requestLeave(() => {
+      shell.openSurface(surface);
+      shell.collapseRail();
+    });
+  };
+  const railOpenObject = (child: Parameters<typeof shell.openObject>[0]): void => {
+    guard.requestLeave(() => {
+      shell.openObject(child);
+      shell.collapseRail();
+    });
+  };
+  const railCreateObject = (section: DesktopObjectId): void => {
+    guard.requestLeave(() => {
+      shell.openSettingsRoute({ view: "list", kind: section, createNew: true });
+      shell.collapseRail();
+    });
+  };
+  const railBackToDesktop = (): void => {
+    guard.requestLeave(() => {
+      if (shell.desktopCollapsed) {
+        shell.revealDesktop();
+      } else {
+        shell.backToDesktop();
+      }
+      shell.collapseRail();
+    });
   };
   const activeSettingsRoute: ShellSettingsRoute = shell.activeSurface === "settings"
     ? shell.activePageTab?.settingsRoute ?? { view: "overview" }
@@ -408,11 +422,11 @@ export function GsvShell({
     // which would be a no-op there. (On the home menu the control is hidden via
     // CSS, since there is nothing to return to behind it.)
     onToggleCollapsed: shell.mobileLayout ? shell.closeMobilePanels : shell.toggleRailCollapsed,
-    onBackToDesktop: shell.desktopCollapsed ? guardedRevealDesktop : guardedBackToDesktop,
-    onOpenControlMenu: shell.openControlMenu,
-    onOpenSurface: openShellSurface,
-    onOpenObject: guardedOpenObject,
-    onCreateObject: createSectionObject,
+    onBackToDesktop: railBackToDesktop,
+    canExpand: !shell.autoRailCollapsed,
+    onOpenSurface: railOpenSurface,
+    onOpenObject: railOpenObject,
+    onCreateObject: railCreateObject,
   };
 
   // Mobile layout: the center panel is the home screen; the menu (rail) and chat
@@ -547,19 +561,13 @@ export function GsvShell({
               <>
                 <GsvDesktop
                   desktopObjects={desktopObjects}
+                  agentCount={agentCount}
                   inventoryMessage={inventoryMessage}
                   inventoryState={inventoryState}
                   selectedObjectId={shell.selectedObjectId}
-                  gsvOpen={shell.gsvOpen}
                   onSelectObject={(id) => {
                     shell.setSelectedObjectId(id);
-                    shell.setGsvOpen(false);
                   }}
-                  onToggleGsv={() => {
-                    shell.setGsvOpen((value) => !value);
-                    shell.setSelectedObjectId(null);
-                  }}
-                  onCloseGsv={() => shell.setGsvOpen(false)}
                   onCreateObject={(id) => {
                     shell.openSettingsRoute({ view: "list", kind: id, createNew: true });
                   }}
@@ -572,44 +580,6 @@ export function GsvShell({
               </>
             )}
 
-            {shell.pickerId ? (
-              <div
-                class={`gsv-picker-overlay${shell.pickerId === "gsv" ? " is-control-picker" : ""}`}
-                role="dialog"
-                aria-modal="true"
-                aria-label={shell.pickerTitle}
-                onClick={() => shell.setPickerId(null)}
-              >
-                <div class="gsv-picker-panel" onClick={(event) => event.stopPropagation()}>
-                  <header>
-                    <div>
-                      <span>{shell.pickerTitle}</span>
-                      <small>
-                        <StatusDot tone="online" size={7} />
-                        {shell.pickerSubtitle}
-                      </small>
-                    </div>
-                    <button type="button" onClick={() => shell.setPickerId(null)} aria-label="Close picker">
-                      x
-                    </button>
-                  </header>
-                  {shell.pickerId === "gsv" ? (
-                    <div class="gsv-picker-control">
-                      <IconMenu
-                        title="GSV // CONTROL"
-                        width={386}
-                        onClose={() => shell.setPickerId(null)}
-                        onFiles={() => openShellSurface("files")}
-                        onRepositories={() => openShellSurface("repositories")}
-                        onLibrary={() => openShellSurface("library")}
-                        onTerminal={() => openShellSurface("terminal")}
-                        onSettings={() => openShellSurface("settings")}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
           </section>
         </main>
 
@@ -624,9 +594,9 @@ export function GsvShell({
           onResizeStart={shell.startChatDrag}
           onToggleOpen={() => shell.setChatOpen((value) => !value)}
           onToggleMax={shell.toggleChatMax}
-          onOpenCrew={() => openSettingsRoute("crew")}
-          onOpenModels={() => openSettingsRoute("models")}
-          onOpenTasks={() => openSettingsRoute("tasks")}
+          onOpenCrew={() => openShellSurface("crew")}
+          onOpenModels={() => openShellSurface("models")}
+          onOpenTasks={() => openShellSurface("runtime")}
           onProcessStarted={selectStartedChatProcess}
           onSelectConversation={setSelectedChatConversationId}
           title={activeChatProcess?.title ?? "Chat"}

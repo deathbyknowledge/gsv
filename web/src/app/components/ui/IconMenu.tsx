@@ -1,6 +1,16 @@
 import { useEffect, useRef } from "preact/hooks";
-import { Icon } from "./Icon";
+import { Icon, type DotIconMatrix } from "./Icon";
 import "./IconMenu.css";
+
+export interface IconMenuCell {
+  /** Icon name (gsv family, or a doticons/… path with `dotMatrix`). */
+  icon: string;
+  label: string;
+  onClick?: () => void;
+  /** Highlighted cell (the brighter purple used by the old SETTINGS cell). */
+  accent?: boolean;
+  dotMatrix?: DotIconMatrix;
+}
 
 export interface IconMenuProps {
   title?: string;
@@ -10,25 +20,17 @@ export interface IconMenuProps {
    *  menu doesn't steal focus from another control just by being shown. */
   autoFocus?: boolean;
   onClose?: () => void;
-  onFiles?: () => void;
-  onRepositories?: () => void;
-  onLibrary?: () => void;
-  onTerminal?: () => void;
-  onSettings?: () => void;
+  cells: IconMenuCell[];
 }
 
 /** IconMenu — ported from IconMenu.dc.html. GSV control popover: a header bar
- *  with a pulsing live dot + title + close affordance, over a grid of GSV controls. */
+ *  with a pulsing live dot + title + close affordance, over a grid of cells. */
 export function IconMenu({
   title = "GSV // CONTROL",
   width = 386,
   autoFocus = true,
   onClose,
-  onFiles,
-  onRepositories,
-  onLibrary,
-  onTerminal,
-  onSettings,
+  cells,
 }: IconMenuProps) {
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -105,32 +107,27 @@ export function IconMenu({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(5,minmax(0,1fr))",
+          gridTemplateColumns: `repeat(${Math.max(cells.length, 1)},minmax(0,1fr))`,
           gap: "1px",
           background: "var(--rule-inner)",
           padding: "1px",
         }}
       >
-        <button type="button" disabled={!onFiles} onClick={onFiles} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
-          <Icon name="folder" size={22} />
-          <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: "#7d78b8" }}>FILES</span>
-        </button>
-        <button type="button" disabled={!onLibrary} onClick={onLibrary} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
-          <Icon name="pencil" size={22} />
-          <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: "#7d78b8" }}>LIBRARY</span>
-        </button>
-        <button type="button" disabled={!onTerminal} onClick={onTerminal} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
-          <Icon name="terminal" size={22} />
-          <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: "#7d78b8" }}>TERMINAL</span>
-        </button>
-        <button type="button" disabled={!onRepositories} onClick={onRepositories} class="gsv-im-cell" style={{ color: "var(--accent-bright)" }}>
-          <Icon name="doticons/branch" size={22} dotMatrix={16} />
-          <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: "#7d78b8" }}>REPOS</span>
-        </button>
-        <button type="button" disabled={!onSettings} onClick={onSettings} class="gsv-im-cell" style={{ color: "#b6b1ff" }}>
-          <Icon name="cog" size={22} />
-          <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: "#b6b1ff" }}>SETTINGS</span>
-        </button>
+        {cells.map((cell) => (
+          <button
+            key={cell.label}
+            type="button"
+            disabled={!cell.onClick}
+            onClick={cell.onClick}
+            class="gsv-im-cell"
+            style={{ color: cell.accent ? "#b6b1ff" : "var(--accent-bright)" }}
+          >
+            <Icon name={cell.icon} size={22} dotMatrix={cell.dotMatrix} />
+            <span class="gsv-sublabel" style={{ letterSpacing: ".16em", color: cell.accent ? "#b6b1ff" : "#7d78b8" }}>
+              {cell.label}
+            </span>
+          </button>
+        ))}
       </div>
     </div>
   );
