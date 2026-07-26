@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>GSV default agent context review</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="title-block">
+          <div class="eyebrow">GSV engineering review</div>
+          <div class="title-row">
+            <h1>Default agent context</h1>
+            <span class="snapshot-chip" id="snapshot-chip"></span>
+          </div>
+          <p>Verbatim <code>systemPrompt</code> for the first Chat turn after <code>sys.setup</code>.</p>
+        </div>
+        <div class="header-actions" aria-label="Review actions">
+          <button type="button" class="button" id="copy-prompt">Copy prompt</button>
+          <button type="button" class="button" id="download-prompt">Download .txt</button>
+          <button type="button" class="button button-primary" id="export-review">Export review</button>
+          <button type="button" class="button button-quiet" id="import-review">Import</button>
+          <input type="file" id="import-file" accept="application/json,.json" hidden>
+        </div>
+      </header>
+
+      <section class="scope-strip" aria-label="Scope and caveat">
+        <div>
+          <strong>Actual first-turn behavior:</strong>
+          finishing the browser wizard leaves <code>00-boot.md</code> in the personal agent's home.
+        </div>
+        <div class="scope-note">Edits save as browser-local review drafts; this page never writes gateway config or source files.</div>
+      </section>
+
+      <section class="metric-strip" aria-label="Prompt metrics">
+        <div class="metric"><span>Included</span><strong id="metric-blocks">—</strong></div>
+        <div class="metric"><span>Characters</span><strong id="metric-characters">—</strong></div>
+        <div class="metric"><span>UTF-8 bytes</span><strong id="metric-bytes">—</strong></div>
+        <div class="metric"><span>Est. tokens</span><strong id="metric-tokens">—</strong></div>
+        <div class="metric"><span>Draft delta</span><strong id="metric-delta">—</strong></div>
+        <div class="metric metric-wide"><span>Largest block</span><strong id="metric-largest">—</strong></div>
+      </section>
+
+      <details class="scenario-panel">
+        <summary>
+          <span>Scenario values</span>
+          <span class="scenario-summary" id="scenario-summary"></span>
+        </summary>
+        <div class="scenario-grid">
+          <label>
+            <span>User account</span>
+            <input id="scenario-user" data-scenario="userUsername" autocomplete="off">
+          </label>
+          <label>
+            <span>Personal agent</span>
+            <input id="scenario-agent" data-scenario="agentUsername" autocomplete="off">
+          </label>
+          <label>
+            <span>Current date</span>
+            <input type="date" id="scenario-date" data-scenario="currentDate">
+          </label>
+          <label>
+            <span>Timezone</span>
+            <input id="scenario-timezone" data-scenario="timezone" autocomplete="off">
+          </label>
+          <label class="scenario-wide">
+            <span>Rendered targets</span>
+            <textarea id="scenario-targets" data-scenario="targets" rows="2" spellcheck="false"></textarea>
+          </label>
+          <label class="scenario-wide">
+            <span>Rendered MCP servers</span>
+            <textarea id="scenario-mcp" data-scenario="mcpServers" rows="2" spellcheck="false"></textarea>
+          </label>
+          <label class="scenario-message">
+            <span>First user message</span>
+            <input id="scenario-message" data-scenario="firstMessage" autocomplete="off">
+          </label>
+          <div class="scenario-actions">
+            <button type="button" class="button button-primary" id="save-scenario">Save scenario</button>
+            <button type="button" class="button button-quiet" id="today-scenario">Use today</button>
+          </div>
+        </div>
+      </details>
+
+      <main class="review-workspace">
+        <nav class="source-pane" aria-label="Prompt sources">
+          <div class="pane-header">
+            <div>
+              <div class="pane-kicker">Source blocks</div>
+              <h2><span id="source-count">—</span> inputs</h2>
+            </div>
+            <button type="button" class="icon-button" id="reset-review" title="Reset all saved review drafts" aria-label="Reset all review drafts">↺</button>
+          </div>
+          <div class="source-list" id="source-list"></div>
+        </nav>
+
+        <section class="editor-pane" aria-labelledby="editor-title">
+          <div class="pane-header editor-heading">
+            <div>
+              <div class="pane-kicker" id="editor-group">—</div>
+              <h2 id="editor-title">—</h2>
+            </div>
+            <span class="state-badge" id="editor-state">—</span>
+          </div>
+          <div class="editor-meta">
+            <div>
+              <span>Runtime path</span>
+              <code id="editor-runtime-path">—</code>
+            </div>
+            <p id="editor-note"></p>
+          </div>
+          <label class="include-control">
+            <input type="checkbox" id="editor-included">
+            <span>Include this block in the review draft</span>
+          </label>
+          <label class="editor-field">
+            <span>Source template <small>placeholders resolve in the verbatim prompt</small></span>
+            <textarea id="block-editor" spellcheck="false"></textarea>
+          </label>
+          <div class="editor-footer">
+            <div class="source-refs" id="source-refs"></div>
+            <div class="editor-actions">
+              <button type="button" class="button button-quiet" id="restore-block">Restore shipped</button>
+              <button type="button" class="button button-primary" id="save-block">Save block</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="output-pane" aria-label="Assembled prompt review">
+          <div class="output-tabs" role="tablist" aria-label="Review views">
+            <button type="button" role="tab" class="output-tab is-active" data-tab="prompt" aria-selected="true">Prompt</button>
+            <button type="button" role="tab" class="output-tab" data-tab="not-included" aria-selected="false">Not included <span>4</span></button>
+            <button type="button" role="tab" class="output-tab" data-tab="trace" aria-selected="false">Trace</button>
+          </div>
+          <div class="output-view is-active" id="view-prompt" data-view="prompt">
+            <div class="prompt-legend" id="prompt-legend"></div>
+            <pre class="prompt-output" id="prompt-output" tabindex="0" aria-label="Verbatim assembled system prompt"></pre>
+            <details class="adjacent-input">
+              <summary>Adjacent first user message <span>not part of systemPrompt</span></summary>
+              <pre id="first-user-message"></pre>
+              <p>Tool definitions are also passed separately. The visible tool names are Read, Write, Edit, Delete, Search, Shell, and CodeMode.</p>
+            </details>
+          </div>
+          <div class="output-view" id="view-not-included" data-view="not-included"></div>
+          <div class="output-view" id="view-trace" data-view="trace"></div>
+        </section>
+      </main>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="snapshot.js"></script>
+    <script src="model.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
