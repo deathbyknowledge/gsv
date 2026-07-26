@@ -124,8 +124,8 @@ export const LEGACY_DEFAULT_CONSTITUTION_CONTEXT =
   "\n" +
   "If you change this file, tell the user. It defines your baseline.\n";
 
-// Used by ensureAccountHomeLayout to seed context.d/10-user.md for agent accounts.
-export const DEFAULT_USER_CONTEXT_TEMPLATE =
+// Used only to remove untouched generated context.d/10-user.md files.
+export const LEGACY_DEFAULT_USER_CONTEXT_TEMPLATE =
   "# User\n" +
   "\n" +
   "*Learn about {{user.username}}. Update this as you go.*\n" +

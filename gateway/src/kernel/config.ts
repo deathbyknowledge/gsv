@@ -86,9 +86,9 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   // System prompt context, assembled in lexical order, applied to every
   // process. Per-agent persona/context lives in each account's home
   // (/home/<account>/context.d), seeded at account creation.
-  "config/ai/context.d/00-gsv.md": GSV_RUNTIME_CONTEXT,
+  "config/ai/context.d/00-runtime.md": GSV_RUNTIME_FACTS,
+  "config/ai/context.d/01-gsv.md": GSV_RUNTIME_CONTEXT,
   "config/ai/context.d/05-targets.md": GSV_TARGET_CONTEXT,
-  "config/ai/context.d/10-runtime.md": GSV_RUNTIME_FACTS,
   "config/ai/context.d/20-discovery.md": GSV_CONTEXT_DISCOVERY,
   "config/ai/context.d/30-process-orchestration.md": GSV_PROCESS_ORCHESTRATION,
   // Prompt-visible skill enumeration. Detailed skill discovery remains available

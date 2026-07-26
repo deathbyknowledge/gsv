@@ -378,12 +378,9 @@ Runtime behavior:
 | `proc.conversation.segments` | Process DO | Lists recorded lifecycle segments for `conversationId` or `default`, including archive paths and summary marker ids. |
 | `proc.reset` | Process DO | Archives every non-empty conversation under the run-as agent's home, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
 | `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers the validated IPC envelope from the kernel into the target conversation. |
-| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, assignment context, and conversation hydration pointers; `assignment.autoStart` can create a run immediately. |
+| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, and conversation hydration pointers. |
 
 ```ts
-type ProcContextFile = { name: string; text: string };
-type ProcSpawnAssignment = { contextFiles: ProcContextFile[]; autoStart?: boolean };
-
 type ProcHilRequest = {
   pid: string;
   requestId: string;
@@ -493,7 +490,7 @@ type ProcessSyscalls = {
   };
 
   "proc.spawn": {
-    args: { runAs?: string; interactive?: boolean; fresh?: boolean; label?: string; prompt?: string; assignment?: ProcSpawnAssignment; parentPid?: string; cwd?: string };
+    args: { runAs?: string; interactive?: boolean; fresh?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string };
     result: { ok: true; pid: string; label?: string; cwd: string } | OperationError;
   };
 
@@ -613,8 +610,8 @@ type ProcessSyscalls = {
   };
 
   "proc.setidentity": {
-    args: { pid: string; identity: ProcessIdentity; interactive?: boolean; assignment?: ProcSpawnAssignment; conversationId?: string; hydrateFrom?: string };
-    result: { ok: true; startedRunId?: string };
+    args: { pid: string; identity: ProcessIdentity; interactive?: boolean; conversationId?: string; hydrateFrom?: string };
+    result: { ok: true };
   };
 };
 ```
@@ -925,7 +922,7 @@ type AiSyscalls = {
 
   "ai.config": {
     args: { profile?: AiContextProfile };
-    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; profileContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; profileApprovalPolicy?: string | null; maxContextBytes: number };
+    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; maxContextBytes: number };
   };
 
   "ai.transcription.create": {
@@ -1223,7 +1220,7 @@ type ScheduleExpression =
 
 type ScheduleTarget =
   | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
-  | { kind: "process.spawn"; runAs?: string; label?: string; prompt: string; parentPid?: string; cwd?: string; assignment?: unknown }
+  | { kind: "process.spawn"; runAs?: string; label?: string; prompt: string; parentPid?: string; cwd?: string }
   | { kind: "process.event"; pid: string; conversationId?: string; message: string; data?: Record<string, unknown>; replyTo?: AdapterMessageDestination }
   | { kind: "adapter.send"; destination: AdapterMessageDestination; text: string };
 

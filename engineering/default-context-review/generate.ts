@@ -7,9 +7,7 @@ import {
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
   DEFAULT_OPEN_LOOPS_CONTEXT,
   DEFAULT_STYLE_CONTEXT,
-  DEFAULT_USER_CONTEXT_TEMPLATE,
 } from "../../gateway/src/prompts/agent-home.ts";
-import { DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../../gateway/src/prompts/persona.ts";
 import {
   GSV_CONTEXT_DISCOVERY,
   GSV_PROCESS_ORCHESTRATION,
@@ -185,17 +183,31 @@ function renderSkillIndex(
 async function buildSnapshot(): Promise<Record<string, unknown>> {
   const systemBlocks: ReviewBlock[] = [
     {
-      id: "system:00-gsv.md",
+      id: "system:00-runtime.md",
       group: "system",
-      filename: "00-gsv.md",
-      runtimePath: "/sys/config/ai/context.d/00-gsv.md",
+      filename: "00-runtime.md",
+      runtimePath: "/sys/config/ai/context.d/00-runtime.md",
+      template: GSV_RUNTIME_FACTS,
+      defaultIncluded: true,
+      kind: "live-config",
+      note: "Rendered at run start with owner, program, date, timezone, targets, and ready MCP servers.",
+      sourceRefs: await refs([
+        ["gateway/src/prompts/system.ts", "export const GSV_RUNTIME_FACTS", "prompt template"],
+        ["gateway/src/process/context/providers/system.ts", "function renderContextTemplate", "runtime rendering"],
+      ]),
+    },
+    {
+      id: "system:01-gsv.md",
+      group: "system",
+      filename: "01-gsv.md",
+      runtimePath: "/sys/config/ai/context.d/01-gsv.md",
       template: GSV_RUNTIME_CONTEXT,
       defaultIncluded: true,
       kind: "live-config",
       note: "A ConfigStore default read on every new run; an explicit system config value can override it.",
       sourceRefs: await refs([
         ["gateway/src/prompts/system.ts", "export const GSV_RUNTIME_CONTEXT", "prompt text"],
-        ["gateway/src/kernel/config.ts", "\"config/ai/context.d/00-gsv.md\"", "default config mapping"],
+        ["gateway/src/kernel/config.ts", "\"config/ai/context.d/01-gsv.md\"", "default config mapping"],
       ]),
     },
     {
@@ -210,20 +222,6 @@ async function buildSnapshot(): Promise<Record<string, unknown>> {
       sourceRefs: await refs([
         ["gateway/src/prompts/system.ts", "export const GSV_TARGET_CONTEXT", "prompt text"],
         ["gateway/src/kernel/config.ts", "\"config/ai/context.d/05-targets.md\"", "default config mapping"],
-      ]),
-    },
-    {
-      id: "system:10-runtime.md",
-      group: "system",
-      filename: "10-runtime.md",
-      runtimePath: "/sys/config/ai/context.d/10-runtime.md",
-      template: GSV_RUNTIME_FACTS,
-      defaultIncluded: true,
-      kind: "live-config",
-      note: "Rendered at run start with owner, program, date, timezone, targets, and ready MCP servers.",
-      sourceRefs: await refs([
-        ["gateway/src/prompts/system.ts", "export const GSV_RUNTIME_FACTS", "prompt template"],
-        ["gateway/src/process/context/providers/system.ts", "function renderContextTemplate", "runtime rendering"],
       ]),
     },
     {
@@ -283,34 +281,6 @@ async function buildSnapshot(): Promise<Record<string, unknown>> {
       sourceRefs: await refs([
         ["gateway/src/prompts/agent-home.ts", "export const DEFAULT_STYLE_CONTEXT", "seed text"],
         ["gateway/src/kernel/account-home.ts", "\"context.d/00-style.md\"", "home seeding"],
-      ]),
-    },
-    {
-      id: "program:05-persona.md",
-      group: "program",
-      filename: "05-persona.md",
-      runtimePath: "{{program.home}}/context.d/05-persona.md",
-      template: DEFAULT_PERSONA_CONTEXT_TEMPLATE,
-      defaultIncluded: true,
-      kind: "seeded-home",
-      note: "Rendered with the chosen agent name and owner username, then copied into the agent home.",
-      sourceRefs: await refs([
-        ["gateway/src/prompts/persona.ts", "export const DEFAULT_PERSONA_CONTEXT_TEMPLATE", "persona template"],
-        ["gateway/src/kernel/agents.ts", "persona: defaultPersonaContext", "personal-agent rendering"],
-      ]),
-    },
-    {
-      id: "program:10-user.md",
-      group: "program",
-      filename: "10-user.md",
-      runtimePath: "{{program.home}}/context.d/10-user.md",
-      template: DEFAULT_USER_CONTEXT_TEMPLATE,
-      defaultIncluded: true,
-      kind: "seeded-home",
-      note: "The personal agent's starter owner profile, rendered with the human account username.",
-      sourceRefs: await refs([
-        ["gateway/src/prompts/agent-home.ts", "export const DEFAULT_USER_CONTEXT_TEMPLATE", "seed template"],
-        ["gateway/src/kernel/account-home.ts", "\"context.d/10-user.md\"", "home seeding"],
       ]),
     },
     {
@@ -425,39 +395,6 @@ async function buildSnapshot(): Promise<Record<string, unknown>> {
           ["gateway/src/kernel/sys/setup.ts", "cleanupGeneratedPromptContext: true", "fresh human cleanup"],
         ]),
       },
-      {
-        id: "profile-context",
-        title: "Profile context",
-        pathTemplate: "/sys/config/ai/profile/{profile}/context.d/*.md",
-        status: "documented, not assembled by current code",
-        explanation: "The docs describe a profile layer, but ai.config currently lists only config/ai/context.d and the provider selection has no profile-context provider.",
-        sourceRefs: await refs([
-          ["gateway/src/kernel/ai.ts", "const systemContextFiles = listConfigContextFiles", "current config lookup"],
-          ["docs/reference/context-files.md", "Profile context", "documented layer"],
-        ]),
-      },
-      {
-        id: "workspace-context",
-        title: "Workspace context",
-        pathTemplate: "/workspaces/{workspaceId}/.gsv/context.d/*.md",
-        status: "documented, no current provider",
-        explanation: "The docs describe workspace context, but resolvePromptProviders currently selects system, home, owner, skills, and process only. The default inbox also starts in the agent home without a workspace assignment.",
-        sourceRefs: await refs([
-          ["gateway/src/process/context/selection.ts", "export function resolvePromptProviders", "current provider list"],
-          ["docs/reference/context-files.md", "Workspace Context", "documented layer"],
-        ]),
-      },
-      {
-        id: "process-context",
-        title: "Process assignment context",
-        pathTemplate: "current process assignment",
-        status: "absent from the default inbox",
-        explanation: "The default conversation is spawned without assignment.contextFiles, so the process provider has no files to render.",
-        sourceRefs: await refs([
-          ["gateway/src/process/context/providers/process.ts", "export function createProcessContextProvider", "process provider"],
-          ["gateway/src/kernel/agents.ts", "return resolveConversationExecutor", "default executor creation"],
-        ]),
-      },
     ],
     trace: [
       {
@@ -471,7 +408,7 @@ async function buildSnapshot(): Promise<Record<string, unknown>> {
       },
       {
         label: "Provider order",
-        detail: "system → personal-agent home → human owner home → skills → process assignment",
+        detail: "system → personal-agent home → human owner home → skills",
         sourceRef: await sourceRef(
           "gateway/src/process/context/selection.ts",
           "export function resolvePromptProviders",

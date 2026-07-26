@@ -111,7 +111,6 @@ function makeContext(
     label: "sam-agent (sam)",
     parentPid: null,
     createdAt: 1,
-    contextFiles: [],
   };
   const helperAgent = {
     uid: 1002,

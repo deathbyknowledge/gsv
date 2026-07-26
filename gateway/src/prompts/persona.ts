@@ -1,5 +1,5 @@
-// Used by agents.ts to seed context.d/05-persona.md for personal and custom agents.
-export const DEFAULT_PERSONA_CONTEXT_TEMPLATE =
+// Used only to remove untouched generated context.d/05-persona.md files.
+export const LEGACY_DEFAULT_PERSONA_CONTEXT_TEMPLATE =
   "# Persona\n" +
   "\n" +
   "*You are **{{program.username}}**, the personal agent for {{user.username}}.*\n" +

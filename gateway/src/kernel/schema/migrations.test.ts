@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(15);
+    expect(KERNEL_MIGRATIONS).toHaveLength(17);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -92,6 +92,14 @@ describe("kernel schema migrations", () => {
       id: 15,
       name: "remove_package_runtime",
     });
+    expect(KERNEL_MIGRATIONS[15]).toMatchObject({
+      id: 16,
+      name: "remove_process_context",
+    });
+    expect(KERNEL_MIGRATIONS[16]).toMatchObject({
+      id: 17,
+      name: "reorder_system_context",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -144,6 +152,24 @@ describe("kernel schema migrations", () => {
 
   it("removes obsolete process mount metadata", () => {
     expect(normalizedStatements()).toContain("ALTER TABLE processes DROP COLUMN mounts");
+  });
+
+  it("removes obsolete process context metadata", () => {
+    expect(normalizedStatements()).toContain("ALTER TABLE processes DROP COLUMN context_files_json");
+  });
+
+  it("moves explicit system context overrides to the new lexical order", () => {
+    const statements = normalizedStatements();
+    expect(statements.some((statement) => (
+      statement.startsWith("INSERT OR IGNORE INTO config_kv (key, value)")
+      && statement.includes("'config/ai/context.d/00-runtime.md'")
+      && statement.includes("'config/ai/context.d/10-runtime.md'")
+    ))).toBe(true);
+    expect(statements.some((statement) => (
+      statement.startsWith("INSERT OR IGNORE INTO config_kv (key, value)")
+      && statement.includes("'config/ai/context.d/01-gsv.md'")
+      && statement.includes("'config/ai/context.d/00-gsv.md'")
+    ))).toBe(true);
   });
 
   it("removes deprecated signal watches", () => {

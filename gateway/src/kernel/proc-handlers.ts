@@ -21,7 +21,6 @@ import type {
   ProcIpcCallResult,
   ProcIpcSendArgs,
   ProcIpcSendResult,
-  ProcSpawnAssignment,
   ProcSpawnArgs,
   ProcSpawnResult,
   ProcSendArgs,
@@ -86,9 +85,7 @@ export async function handleProcSpawn(
   const identity = ctx.identity!;
   const pid = `proc:${crypto.randomUUID()}`;
   const explicitRunAs = typeof args.runAs === "string" && args.runAs.trim().length > 0;
-  const hasCustomSpawnOptions =
-    args.assignment !== undefined ||
-    args.cwd !== undefined;
+  const hasCustomSpawnOptions = args.cwd !== undefined;
 
   // An interactive, top-level spawn with no explicit run-as targets the caller's
   // default ("inbox") conversation with their personal agent — the stable
@@ -204,7 +201,6 @@ export async function handleProcSpawn(
       interactive,
       label: args.label,
       cwd: spawnIdentity.cwd,
-      contextFiles: args.assignment?.contextFiles ?? [],
     });
 
     // Each spawned process gets its own durable conversation so its transcript
@@ -230,7 +226,6 @@ export async function handleProcSpawn(
         pid,
         identity: spawnIdentity,
         interactive,
-        assignment: args.assignment as ProcSpawnAssignment | undefined,
         conversationId,
       },
     });

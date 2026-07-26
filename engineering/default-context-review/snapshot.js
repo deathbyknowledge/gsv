@@ -2,7 +2,7 @@
 // Run generate.ts --check to detect a stale review snapshot.
 window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
   "schemaVersion": 1,
-  "sourceFingerprint": "ef1890c52e8e",
+  "sourceFingerprint": "d9fd852a487a",
   "title": "Default personal-agent context",
   "scope": "First Chat message after the web setup wizard completes",
   "defaultScenario": {
@@ -45,10 +45,32 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
   ],
   "blocks": [
     {
-      "id": "system:00-gsv.md",
+      "id": "system:00-runtime.md",
       "group": "system",
-      "filename": "00-gsv.md",
-      "runtimePath": "/sys/config/ai/context.d/00-gsv.md",
+      "filename": "00-runtime.md",
+      "runtimePath": "/sys/config/ai/context.d/00-runtime.md",
+      "template": "User: {{user.username}}\nUser home: {{user.home}}\n\nCurrent date: {{current.date}}\nCurrent timezone: {{current.timezone}}\n\nCurrent program: {{program.username}}\nProgram home: {{program.home}}\nProgram current working directory: {{program.cwd}}\n\nAvailable targets:\n{{targets}}\n\nReady MCP servers:\n{{mcpServers}}",
+      "defaultIncluded": true,
+      "kind": "live-config",
+      "note": "Rendered at run start with owner, program, date, timezone, targets, and ready MCP servers.",
+      "sourceRefs": [
+        {
+          "path": "gateway/src/prompts/system.ts",
+          "line": 19,
+          "label": "prompt template"
+        },
+        {
+          "path": "gateway/src/process/context/providers/system.ts",
+          "line": 39,
+          "label": "runtime rendering"
+        }
+      ]
+    },
+    {
+      "id": "system:01-gsv.md",
+      "group": "system",
+      "filename": "01-gsv.md",
+      "runtimePath": "/sys/config/ai/context.d/01-gsv.md",
       "template": "You are running inside GSV, a Linux-shaped cloud computer for humans, machines, and agents.\nA GSV process is a durable agent runtime with a PID, uid/gid identity, current working directory, message history, and syscall-backed tools. Basically an intelligent self-aware OS process aligned to its user.\nExpect Linux-shaped locations: durable user state lives under home, active work lives in the current directory, and system, package, and target surfaces use stable absolute paths.\nMessages beginning with `[Process Event]:` are GSV runtime events, not messages from your user. Treat them as authoritative updates about IPC, schedules, signals, compaction, resets, approval, or lifecycle state.",
       "defaultIncluded": true,
       "kind": "live-config",
@@ -61,7 +83,7 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
         },
         {
           "path": "gateway/src/kernel/config.ts",
-          "line": 89,
+          "line": 90,
           "label": "default config mapping"
         }
       ]
@@ -83,30 +105,8 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
         },
         {
           "path": "gateway/src/kernel/config.ts",
-          "line": 90,
+          "line": 91,
           "label": "default config mapping"
-        }
-      ]
-    },
-    {
-      "id": "system:10-runtime.md",
-      "group": "system",
-      "filename": "10-runtime.md",
-      "runtimePath": "/sys/config/ai/context.d/10-runtime.md",
-      "template": "User: {{user.username}}\nUser home: {{user.home}}\n\nCurrent date: {{current.date}}\nCurrent timezone: {{current.timezone}}\n\nCurrent program: {{program.username}}\nProgram home: {{program.home}}\nProgram current working directory: {{program.cwd}}\n\n`~` resolves to the current program home (`{{program.home}}`). Compact standing context for this program lives under `~/context.d/`.\n\nAvailable targets:\n{{targets}}\n\nReady MCP servers:\n{{mcpServers}}",
-      "defaultIncluded": true,
-      "kind": "live-config",
-      "note": "Rendered at run start with owner, program, date, timezone, targets, and ready MCP servers.",
-      "sourceRefs": [
-        {
-          "path": "gateway/src/prompts/system.ts",
-          "line": 19,
-          "label": "prompt template"
-        },
-        {
-          "path": "gateway/src/process/context/providers/system.ts",
-          "line": 39,
-          "label": "runtime rendering"
         }
       ]
     },
@@ -122,7 +122,7 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
       "sourceRefs": [
         {
           "path": "gateway/src/prompts/system.ts",
-          "line": 39,
+          "line": 37,
           "label": "prompt text"
         },
         {
@@ -144,7 +144,7 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
       "sourceRefs": [
         {
           "path": "gateway/src/prompts/system.ts",
-          "line": 45,
+          "line": 43,
           "label": "prompt text"
         },
         {
@@ -193,51 +193,7 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
         },
         {
           "path": "gateway/src/kernel/account-home.ts",
-          "line": 47,
-          "label": "home seeding"
-        }
-      ]
-    },
-    {
-      "id": "program:05-persona.md",
-      "group": "program",
-      "filename": "05-persona.md",
-      "runtimePath": "{{program.home}}/context.d/05-persona.md",
-      "template": "# Persona\n\n*You are **{{program.username}}**, the personal agent for {{user.username}}.*\n\nYour program home is `{{program.home}}`. In Shell and filesystem tools, `~` resolves to `{{program.home}}`.\nYour compact standing context lives in `~/context.d/`. The person you work for owns this process; their own context is layered in alongside yours.\n\nGrow into the role. Keep prompt context short and current.\n",
-      "defaultIncluded": true,
-      "kind": "seeded-home",
-      "note": "Rendered with the chosen agent name and owner username, then copied into the agent home.",
-      "sourceRefs": [
-        {
-          "path": "gateway/src/prompts/persona.ts",
-          "line": 2,
-          "label": "persona template"
-        },
-        {
-          "path": "gateway/src/kernel/agents.ts",
-          "line": 206,
-          "label": "personal-agent rendering"
-        }
-      ]
-    },
-    {
-      "id": "program:10-user.md",
-      "group": "program",
-      "filename": "10-user.md",
-      "runtimePath": "{{program.home}}/context.d/10-user.md",
-      "template": "# User\n\n*Learn about {{user.username}}. Update this as you go.*\n\n- **Username:** {{user.username}}\n- **Name:**\n- **What to call them:**\n- ...\n\n## Context\n\nWhat do they care about? What projects are they working on? What annoys them? What makes them laugh? Build this over time.\n\n---\n\nThe more you know, the better you can help. But remember: you are learning about a person, not building a dossier. Respect the difference.\n",
-      "defaultIncluded": true,
-      "kind": "seeded-home",
-      "note": "The personal agent's starter owner profile, rendered with the human account username.",
-      "sourceRefs": [
-        {
-          "path": "gateway/src/prompts/agent-home.ts",
-          "line": 128,
-          "label": "seed template"
-        },
-        {
-          "path": "gateway/src/kernel/account-home.ts",
-          "line": 50,
+          "line": 49,
           "label": "home seeding"
         }
       ]
@@ -259,7 +215,7 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
         },
         {
           "path": "gateway/src/kernel/account-home.ts",
-          "line": 48,
+          "line": 51,
           "label": "home seeding"
         }
       ]
@@ -281,7 +237,7 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
         },
         {
           "path": "gateway/src/kernel/account-home.ts",
-          "line": 51,
+          "line": 54,
           "label": "home seeding"
         }
       ]
@@ -380,63 +336,6 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
           "label": "fresh human cleanup"
         }
       ]
-    },
-    {
-      "id": "profile-context",
-      "title": "Profile context",
-      "pathTemplate": "/sys/config/ai/profile/{profile}/context.d/*.md",
-      "status": "documented, not assembled by current code",
-      "explanation": "The docs describe a profile layer, but ai.config currently lists only config/ai/context.d and the provider selection has no profile-context provider.",
-      "sourceRefs": [
-        {
-          "path": "gateway/src/kernel/ai.ts",
-          "line": 272,
-          "label": "current config lookup"
-        },
-        {
-          "path": "docs/reference/context-files.md",
-          "line": 10,
-          "label": "documented layer"
-        }
-      ]
-    },
-    {
-      "id": "workspace-context",
-      "title": "Workspace context",
-      "pathTemplate": "/workspaces/{workspaceId}/.gsv/context.d/*.md",
-      "status": "documented, no current provider",
-      "explanation": "The docs describe workspace context, but resolvePromptProviders currently selects system, home, owner, skills, and process only. The default inbox also starts in the agent home without a workspace assignment.",
-      "sourceRefs": [
-        {
-          "path": "gateway/src/process/context/selection.ts",
-          "line": 14,
-          "label": "current provider list"
-        },
-        {
-          "path": "docs/reference/context-files.md",
-          "line": 92,
-          "label": "documented layer"
-        }
-      ]
-    },
-    {
-      "id": "process-context",
-      "title": "Process assignment context",
-      "pathTemplate": "current process assignment",
-      "status": "absent from the default inbox",
-      "explanation": "The default conversation is spawned without assignment.contextFiles, so the process provider has no files to render.",
-      "sourceRefs": [
-        {
-          "path": "gateway/src/process/context/providers/process.ts",
-          "line": 3,
-          "label": "process provider"
-        },
-        {
-          "path": "gateway/src/kernel/agents.ts",
-          "line": 404,
-          "label": "default executor creation"
-        }
-      ]
     }
   ],
   "trace": [
@@ -445,16 +344,16 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
       "detail": "The Process DO resolves ai.config and ai.tools once, then asks the context assembler for systemPrompt.",
       "sourceRef": {
         "path": "gateway/src/process/do.ts",
-        "line": 4189,
+        "line": 4176,
         "label": "first-tick assembly"
       }
     },
     {
       "label": "Provider order",
-      "detail": "system → personal-agent home → human owner home → skills → process assignment",
+      "detail": "system → personal-agent home → human owner home → skills",
       "sourceRef": {
         "path": "gateway/src/process/context/selection.ts",
-        "line": 14,
+        "line": 12,
         "label": "provider selection"
       }
     },
@@ -472,7 +371,7 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
       "detail": "The first user message is separately annotated with its source and reply destination; seven syscall tool schemas are another field, not part of systemPrompt.",
       "sourceRef": {
         "path": "gateway/src/process/do.ts",
-        "line": 5719,
+        "line": 5705,
         "label": "message annotation"
       }
     }

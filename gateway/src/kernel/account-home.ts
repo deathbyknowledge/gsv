@@ -6,10 +6,11 @@ import {
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
   DEFAULT_OPEN_LOOPS_CONTEXT,
   DEFAULT_STYLE_CONTEXT,
-  DEFAULT_USER_CONTEXT_TEMPLATE,
   LEGACY_DEFAULT_CONSTITUTION_CONTEXT,
+  LEGACY_DEFAULT_USER_CONTEXT_TEMPLATE,
   LEGACY_MEMORY_CONTEXT_TEMPLATE,
 } from "../prompts/agent-home";
+import { LEGACY_DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../prompts/persona";
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
@@ -36,6 +37,7 @@ export async function ensureAccountHomeLayout(
     contextDir,
     bootContext,
     styleContext,
+    personaContext,
     memoryContext,
     constitutionContext,
     userContext,
@@ -45,6 +47,7 @@ export async function ensureAccountHomeLayout(
     client.readPath(repo, "context.d"),
     client.readPath(repo, "context.d/00-boot.md"),
     client.readPath(repo, "context.d/00-style.md"),
+    client.readPath(repo, "context.d/05-persona.md"),
     client.readPath(repo, "context.d/15-memory.md"),
     client.readPath(repo, "context.d/00-constitution.md"),
     client.readPath(repo, "context.d/10-user.md"),
@@ -95,12 +98,17 @@ export async function ensureAccountHomeLayout(
       constitutionContext,
       [LEGACY_DEFAULT_CONSTITUTION_CONTEXT],
     );
-    maybePutOrReplaceGeneratedTextFile(
+    maybeDeleteGeneratedTextFile(
+      ops,
+      "context.d/05-persona.md",
+      personaContext,
+      [renderLegacyPersonaContext(identity, userContextUsername)],
+    );
+    maybeDeleteGeneratedTextFile(
       ops,
       "context.d/10-user.md",
       userContext,
-      renderUserContext(userContextUsername),
-      userContextUsername !== identity.username ? renderUserContext(identity.username) : undefined,
+      [renderLegacyUserContext(userContextUsername), renderLegacyUserContext(identity.username)],
     );
   } else if (options.cleanupGeneratedPromptContext === true) {
     maybeDeleteGeneratedTextFile(
@@ -137,7 +145,7 @@ export async function ensureAccountHomeLayout(
       ops,
       "context.d/10-user.md",
       userContext,
-      [renderUserContext(identity.username), renderUserContext(userContextUsername)],
+      [renderLegacyUserContext(identity.username), renderLegacyUserContext(userContextUsername)],
     );
   }
   if (skillsDir.kind === "missing") {
@@ -226,9 +234,20 @@ function renderBootContext(identity: Pick<ProcessIdentity, "home" | "username">)
   });
 }
 
-function renderUserContext(username: string): string {
-  return renderPromptTemplate(DEFAULT_USER_CONTEXT_TEMPLATE, {
+function renderLegacyUserContext(username: string): string {
+  return renderPromptTemplate(LEGACY_DEFAULT_USER_CONTEXT_TEMPLATE, {
     "user.username": username,
+  });
+}
+
+function renderLegacyPersonaContext(
+  identity: Pick<ProcessIdentity, "home" | "username">,
+  ownerUsername: string,
+): string {
+  return renderPromptTemplate(LEGACY_DEFAULT_PERSONA_CONTEXT_TEMPLATE, {
+    "program.home": identity.home,
+    "program.username": identity.username,
+    "user.username": ownerUsername,
   });
 }
 

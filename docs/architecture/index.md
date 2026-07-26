@@ -86,10 +86,7 @@ Different path families are backed by different stores:
 - ripgit stores versioned home knowledge, workspace trees, and repository content.
 
 This split matters operationally, but it should be hidden from agents whenever
-possible. The filesystem is the stable interface. Prompt context follows the
-same rule: profile context, `~/context.d/*.md`, workspace `.gsv/context.d/*.md`,
-and current process context are ordinary inspectable files or explicit runtime
-providers.
+possible. The filesystem is the stable interface.
 
 ### Devices
 

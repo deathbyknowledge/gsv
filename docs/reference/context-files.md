@@ -7,10 +7,7 @@ GSV assembles process prompts from explicit context providers, not from hidden a
 Prompt context is collected in provider order:
 
 1. **System context** from `config/ai/context.d/*.md`.
-2. **Profile context** from `config/ai/profile/{profile}/context.d/*.md`.
-3. **Home context** from `~/context.d/*.md`.
-4. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`, when the process has a workspace.
-5. **Process context** supplied by the current assignment or runtime.
+2. **Home context** from `~/context.d/*.md`.
 
 GSV can also assemble a compact skill index from layered `skills.d`
 directories. `config/ai/skills/index_mode`, or the per-user override
@@ -21,9 +18,7 @@ discovery. Start unfamiliar tasks with
 `man --search -- '<plain-language goal>'`; follow its `NEXT` action to open a
 matching command, skill, target, or connected integration.
 
-System context is operator-managed runtime guidance shared by every profile. Profile files are operator-managed instructions for roles such as `task`, `review`, `cron`, `mcp`, and `app`. They may use template keys such as `identity.home`, `workspace`, `devices`, `mcpServers`, and `known_paths`.
-
-Home and workspace context files are loaded lexically, include only non-empty `.md` files, and are bounded by `config/ai/max_context_bytes`.
+Home context files are loaded lexically, include only non-empty `.md` files, and are bounded by `config/ai/max_context_bytes`.
 
 ## Home Context: `~/context.d/`
 
@@ -33,7 +28,6 @@ Good examples:
 
 ```text
 ~/context.d/00-constitution.md
-~/context.d/10-user.md
 ~/context.d/20-current-priorities.md
 ```
 
@@ -53,8 +47,7 @@ the run-as agent's ~/skills.d/, when distinct from the owner
 ```
 
 For a process running as a distinct agent account, owner skills are considered
-before agent-specific skills. Profile and workspace context directories affect
-prompt context, but they are not skill discovery roots.
+before agent-specific skills.
 
 The gateway ships built-in skills as text modules. During `sys.bootstrap`, those
 files are copied into each bootstrapped user's `~/skills.d/` when missing.
@@ -87,21 +80,6 @@ intentional revision. Do not silently persist one-off workflows, credentials,
 private content, or transient account, message, and target identifiers. The
 seeded `skill-authoring` skill contains the full authoring workflow.
 
-## Workspace Context: `.gsv/context.d/`
-
-Workspace context is task-local continuity. It is loaded only when the process has a `workspaceId`.
-
-Recommended layout:
-
-```text
-/workspaces/{workspaceId}/.gsv/context.d/
-├── 10-summary.md
-├── 20-open-loops.md
-└── 30-decisions.md
-```
-
-Use workspace context for active project state, decisions, next actions, and compacted conversation continuity. Do not use it for user-global preferences or durable knowledge. If `.gsv/context.d/` has no loadable files, GSV falls back to `/workspaces/{workspaceId}/.gsv/summary.md` when present.
-
 ## Editing Guidance
 
 Agents should treat these paths like normal files. Read before editing, preserve user-authored structure, and keep changes narrow.
@@ -111,14 +89,13 @@ Examples:
 ```sh
 mkdir -p ~/context.d
 printf '%s\n' '# Current Priorities' > ~/context.d/20-current-priorities.md
-mkdir -p /workspaces/my-project/.gsv/context.d
 ```
 
 Use the GSV target for GSV filesystem paths. Use a device target only when intentionally editing files on that external hardware.
 
 ## What Belongs Where
 
-Use `~/context.d/` for concise standing context. Use `/workspaces/{id}/.gsv/context.d/` for active workspace continuity. Use `skills.d/` for reusable procedures. Use `~/knowledge/` for durable, searchable reference material. Use process context for the current assignment only.
+Use `~/context.d/` for concise standing context. Use `skills.d/` for reusable procedures. Use `~/knowledge/` for durable, searchable reference material.
 
 ## See also
 

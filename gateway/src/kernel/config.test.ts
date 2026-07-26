@@ -123,7 +123,7 @@ describe("ConfigStore", () => {
     expect(values.get("config/ai/provider")).toBe("anthropic");
     expect(values.get("config/ai/model")).toBe("claude-sonnet-4-6");
     expect(values.get("config/ai/generation/streaming")).toBe("auto");
-    expect(values.get("config/ai/context.d/00-gsv.md")).toContain("[Process Event]:");
+    expect(values.get("config/ai/context.d/01-gsv.md")).toContain("[Process Event]:");
   });
 
   it("ships a Workers AI primary model and root fallback profile", () => {
@@ -149,7 +149,7 @@ describe("ConfigStore", () => {
   });
 
   it("defines common process context once for all profiles", () => {
-    const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/00-gsv.md"];
+    const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/01-gsv.md"];
     expect(context).toContain("You are running inside GSV, a Linux-shaped cloud computer");
     expect(context).toContain("[Process Event]:");
     const targets = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/05-targets.md"];
@@ -189,18 +189,12 @@ describe("ConfigStore", () => {
     expect(orchestration).not.toContain("proc profiles");
     expect(orchestration).not.toContain("~/profiles.d");
     expect(orchestration).not.toContain("SpawnProcess");
-    const runtimeFacts = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-runtime.md"];
+    const runtimeFacts = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/00-runtime.md"];
     expect(runtimeFacts).toContain("User: {{user.username}}");
     expect(runtimeFacts).toContain("User home: {{user.home}}");
     expect(runtimeFacts).toContain("Current program: {{program.username}}");
     expect(runtimeFacts).toContain("Program home: {{program.home}}");
     expect(runtimeFacts).toContain("Program current working directory: {{program.cwd}}");
-    expect(runtimeFacts).toContain("`~` resolves to the current program home");
-
-    // Per-agent persona/context now lives in account homes, not in config.
-    for (const profile of ["init", "task", "review", "cron", "mcp"]) {
-      expect(SYSTEM_CONFIG_DEFAULTS[`config/ai/profile/${profile}/context.d/00-role.md`]).toBeUndefined();
-    }
   });
 
   it("defines a global default tool approval policy with explicit guarded tool kinds", () => {

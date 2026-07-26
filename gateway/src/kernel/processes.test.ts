@@ -30,13 +30,6 @@ function createMockSql() {
       return mockSqlRows<T>();
     }
 
-    if (q.startsWith("UPDATE processes SET context_files_json = '[]'")) {
-      for (const row of table.values()) {
-        if (!row.context_files_json) row.context_files_json = "[]";
-      }
-      return mockSqlRows<T>();
-    }
-
     if (q.startsWith("UPDATE processes SET queued_count = 0")) {
       for (const row of table.values()) {
         if (typeof row.queued_count !== "number" || row.queued_count < 0) row.queued_count = 0;
@@ -63,7 +56,6 @@ function createMockSql() {
         username,
         home,
         cwd,
-        context_files_json,
         label,
         created_at,
       ] = bindings as [
@@ -73,7 +65,6 @@ function createMockSql() {
         number,
         number,
         number,
-        string,
         string,
         string,
         string,
@@ -93,7 +84,6 @@ function createMockSql() {
         username,
         home,
         cwd,
-        context_files_json,
         state: "idle",
         active_run_id: null,
         active_conversation_id: null,
@@ -115,12 +105,6 @@ function createMockSql() {
       const [processId] = bindings as [string];
       const row = table.get(processId);
       return mockSqlRows((row ? [{ owner_uid: row.owner_uid ?? null, uid: row.uid }] : []) as T[]);
-    }
-
-    if (q.startsWith("SELECT context_files_json FROM processes WHERE process_id = ?")) {
-      const [processId] = bindings as [string];
-      const row = table.get(processId);
-      return mockSqlRows((row ? [{ context_files_json: row.context_files_json ?? "[]" }] : []) as T[]);
     }
 
     if (q.startsWith("SELECT * FROM processes WHERE process_id = ?")) {
@@ -315,18 +299,4 @@ describe("ProcessRegistry", () => {
     });
   });
 
-  it("stores and returns process context files on spawn", () => {
-    const sql = createMockSql();
-    const registry = new ProcessRegistry(sql as unknown as SqlStorage);
-
-    registry.spawn("task:4", makeIdentity("/home/sam"), {
-      cwd: "/src/repos/sam/project",
-      contextFiles: [{ name: "brief.md", text: "Investigate the project." }],
-    });
-
-    expect(registry.get("task:4")?.cwd).toBe("/src/repos/sam/project");
-    expect(registry.getContextFiles("task:4")).toEqual([
-      { name: "brief.md", text: "Investigate the project." },
-    ]);
-  });
 });

@@ -2,7 +2,6 @@ import type {
   AiConfigResult,
   AiToolsDevice,
   ProcessIdentity,
-  ProcContextFile,
 } from "@humansandmachines/gsv/protocol";
 import type { RipgitClient } from "../../fs/ripgit/client";
 
@@ -16,7 +15,6 @@ export type PromptAssemblyInput = {
   ownerIdentity?: ProcessIdentity;
   devices: AiToolsDevice[];
   mcpServers: string[];
-  processContextFiles?: ProcContextFile[];
   storage: PromptStorage;
   ripgit: PromptRipgitClient | null;
 };
@@ -25,7 +23,7 @@ export type PromptSection = {
   name: string;
   text: string;
   contextRoot?: {
-    key: "system" | "program" | "user" | "process";
+    key: "system" | "program" | "user";
     label: string;
     access: "read-only" | "editable";
     location: string;

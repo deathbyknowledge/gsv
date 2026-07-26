@@ -18,9 +18,10 @@ test("composes the fresh personal-agent prompt in runtime order", () => {
   };
   const result = model.composePrompt(snapshot, {}, scenario);
 
-  assert.equal(result.activeBlocks, 12);
-  assert.match(result.text, /^<system path="\/sys\/config\/ai\/context\.d\/">\n<00-gsv\.md>/);
-  assert.ok(result.text.indexOf("<00-gsv.md>") < result.text.indexOf("<30-process-orchestration.md>"));
+  assert.equal(result.activeBlocks, 10);
+  assert.match(result.text, /^<system path="\/sys\/config\/ai\/context\.d\/">\n<00-runtime\.md>/);
+  assert.ok(result.text.indexOf("<00-runtime.md>") < result.text.indexOf("<01-gsv.md>"));
+  assert.ok(result.text.indexOf("<01-gsv.md>") < result.text.indexOf("<30-process-orchestration.md>"));
   assert.ok(result.text.indexOf("<program path=\"/home/friday/context.d/\">") > result.text.indexOf("</system>"));
   assert.ok(result.text.indexOf("<00-boot.md>") < result.text.indexOf("<00-style.md>"));
   assert.ok(result.text.indexOf("<available_skills>") > result.text.indexOf("</program>"));
@@ -43,7 +44,7 @@ test("excluding boot removes the file and preserves the surrounding serializatio
     currentDate: "2026-07-26",
   });
 
-  assert.equal(result.activeBlocks, 11);
+  assert.equal(result.activeBlocks, 9);
   assert.doesNotMatch(result.text, /<00-boot.md>/);
   assert.match(result.text, /<program path="\/home\/friday\/context\.d\/">\n<00-style.md>/);
   assert.ok(result.text.endsWith("</available_skills>"));

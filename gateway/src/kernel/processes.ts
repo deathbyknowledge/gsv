@@ -10,7 +10,7 @@
  * the run-as agent's home (conversation transcripts), not in the executor.
  */
 
-import type { ProcessIdentity, ProcContextFile } from "@humansandmachines/gsv/protocol";
+import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 
 export type ProcessState = "idle" | "queued" | "running" | "waiting_tool" | "waiting_hil";
 
@@ -40,7 +40,6 @@ export type ProcessRecord = {
   lastActiveAt: number | null;
   label: string | null;
   createdAt: number;
-  contextFiles: ProcContextFile[];
 };
 
 export class ProcessRegistry {
@@ -55,13 +54,12 @@ export class ProcessRegistry {
       interactive?: boolean;
       label?: string;
       cwd?: string;
-      contextFiles?: ProcContextFile[];
     },
   ): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, owner_uid, interactive, gid, gids, username, home, cwd, context_files_json, state, active_run_id, active_conversation_id, queued_count, last_active_at, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, NULL, 0, NULL, ?, ?)`,
+        (process_id, parent_pid, uid, owner_uid, interactive, gid, gids, username, home, cwd, state, active_run_id, active_conversation_id, queued_count, last_active_at, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, NULL, 0, NULL, ?, ?)`,
       processId,
       opts.parentPid ?? null,
       identity.uid,
@@ -72,7 +70,6 @@ export class ProcessRegistry {
       identity.username,
       identity.home,
       opts.cwd ?? identity.cwd,
-      JSON.stringify(opts.contextFiles ?? []),
       opts.label ?? null,
       Date.now(),
     );
@@ -122,14 +119,6 @@ export class ProcessRegistry {
 
     if (rows.length === 0) return null;
     return toRecord(rows[0]);
-  }
-
-  getContextFiles(processId: string): ProcContextFile[] {
-    const rows = [...this.sql.exec<{ context_files_json: string | null }>(
-      "SELECT context_files_json FROM processes WHERE process_id = ?",
-      processId,
-    )];
-    return parseContextFiles(rows[0]?.context_files_json ?? null);
   }
 
   updateIdentity(processId: string, identity: ProcessIdentity): void {
@@ -239,7 +228,6 @@ type RowShape = {
   username: string;
   home: string;
   cwd: string | null;
-  context_files_json: string | null;
   state: string;
   active_run_id: string | null;
   active_conversation_id: string | null;
@@ -268,7 +256,6 @@ function toRecord(row: RowShape): ProcessRecord {
     lastActiveAt: row.last_active_at,
     label: row.label,
     createdAt: row.created_at,
-    contextFiles: parseContextFiles(row.context_files_json),
   };
 }
 
@@ -282,30 +269,6 @@ function normalizeProcessState(value: string): ProcessState {
       return value;
     default:
       return "idle";
-  }
-}
-
-function parseContextFiles(value: string | null): ProcContextFile[] {
-  if (!value) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.flatMap((entry) => {
-      if (!entry || typeof entry !== "object") {
-        return [];
-      }
-      const file = entry as { name?: unknown; text?: unknown };
-      if (typeof file.name !== "string" || typeof file.text !== "string") {
-        return [];
-      }
-      return [{ name: file.name, text: file.text }];
-    });
-  } catch {
-    return [];
   }
 }
 

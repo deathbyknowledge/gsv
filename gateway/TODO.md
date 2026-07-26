@@ -33,7 +33,7 @@ no separate workspace primitive.
 - [x] Let `proc.spawn` accept an explicit `cwd`
 - [x] Keep active conversation state in Process SQLite
 - [x] Archive reset/kill/compaction history under the run-as agent's home in R2
-- [x] Keep prompt context in system/profile/home/process providers
+- [x] Keep prompt context in system and home providers
 - [x] Keep skills in owner and run-as agent home `skills.d` sources
 - [ ] Surface richer archive/segment history in Files, Chat, or a process
   inspector
@@ -252,7 +252,6 @@ types need different awareness, tools, and retrieval behavior.
 
 - [x] Introduce the first provider-based prompt assembly pipeline
   - base system prompt provider
-  - profile instructions provider
   - home repo provider (`CONSTITUTION`, `context.d`)
 - [ ] Add retrieval/live-state providers to the pipeline
   - live process history provider

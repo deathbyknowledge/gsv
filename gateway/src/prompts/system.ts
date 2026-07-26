@@ -1,4 +1,4 @@
-// Used by ConfigStore defaults for config/ai/context.d/00-gsv.md.
+// Used by ConfigStore defaults for config/ai/context.d/01-gsv.md.
 export const GSV_RUNTIME_CONTEXT =
   "You are running inside GSV, a Linux-shaped cloud computer for humans, machines, and agents.\n" +
   "A GSV process is a durable agent runtime with a PID, uid/gid identity, current working directory, message history, and syscall-backed tools. Basically an intelligent self-aware OS process aligned to its user.\n" +
@@ -16,7 +16,7 @@ export const GSV_TARGET_CONTEXT =
   "Use `Shell` with `target: \"gsv\"` and `input: \"targets list\"` to discover target ids beyond the compact prompt list.\n" +
   "Use `targets show <target-id>` on `gsv`, then `cat /README.txt` and `help` on the browser target before nontrivial browser work. Use `skills show browser-target` for the detailed browser extension workflow.";
 
-// Used by ConfigStore defaults for config/ai/context.d/10-runtime.md.
+// Used by ConfigStore defaults for config/ai/context.d/00-runtime.md.
 export const GSV_RUNTIME_FACTS =
   "User: {{user.username}}\n" +
   "User home: {{user.home}}\n" +
@@ -27,8 +27,6 @@ export const GSV_RUNTIME_FACTS =
   "Current program: {{program.username}}\n" +
   "Program home: {{program.home}}\n" +
   "Program current working directory: {{program.cwd}}\n" +
-  "\n" +
-  "`~` resolves to the current program home (`{{program.home}}`). Compact standing context for this program lives under `~/context.d/`.\n" +
   "\n" +
   "Available targets:\n" +
   "{{targets}}\n" +

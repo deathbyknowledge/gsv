@@ -40,7 +40,6 @@ import {
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
-import { DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../prompts/persona";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -203,7 +202,6 @@ export async function ensurePersonalAgent(
     shared: true,
     crossMemberOwner: true,
     personalAgentOf: human.uid,
-    persona: defaultPersonaContext(agentName, human.username),
   });
 }
 
@@ -250,9 +248,7 @@ export async function handleAccountCreate(
   const explicitPersona = typeof args.persona === "string" && args.persona.trim()
     ? args.persona
     : undefined;
-  const persona = explicitPersona ?? (personaFile?.text.trim()
-    ? personaFile.text
-    : defaultPersonaContext(name, ownerName));
+  const persona = explicitPersona ?? (personaFile?.text.trim() ? personaFile.text : undefined);
   const extraContextFiles = contextFiles.filter((file) => file.name !== "05-persona.md");
   const { identity } = await createAccount(ctx, {
     kind: "agent",
@@ -261,7 +257,7 @@ export async function handleAccountCreate(
     ownerUid,
     shared: true,
     crossMemberOwner: true,
-    persona,
+    ...(persona ? { persona } : {}),
     contextFiles: extraContextFiles,
   });
   return { account: identity, kind };
@@ -330,14 +326,6 @@ export function handleAccountList(
 
 function resolveAccountCapabilities(ctx: KernelContext, username: string, primaryGid: number): string[] {
   return ctx.caps.resolve(ctx.auth.resolveGids(username, primaryGid)).sort();
-}
-
-function defaultPersonaContext(agentName: string, ownerUsername: string): string {
-  const home = `/home/${agentName}`;
-  return DEFAULT_PERSONA_CONTEXT_TEMPLATE
-    .replaceAll("{{program.username}}", agentName)
-    .replaceAll("{{program.home}}", home)
-    .replaceAll("{{user.username}}", ownerUsername);
 }
 
 /**

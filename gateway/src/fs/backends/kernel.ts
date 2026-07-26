@@ -271,17 +271,7 @@ export class KernelMountBackend implements MountBackend {
           home: proc.home,
           cwd: proc.cwd,
         }, null, 2) + "\n";
-      case "context.d":
-        return undefined;
       default:
-        if (attr.startsWith("context.d/")) {
-          const name = attr.slice("context.d/".length);
-          const file = proc.contextFiles.find((entry) => entry.name === name);
-          if (!file) {
-            return undefined;
-          }
-          return file.text.endsWith("\n") ? file.text : `${file.text}\n`;
-        }
         return undefined;
     }
   }
@@ -1014,9 +1004,6 @@ export class KernelMountBackend implements MountBackend {
         if (parts.length === 2) return true;
         return processAiConfigDirEntries(parts.slice(2)).length > 0;
       }
-      if (parts.length === 2 && parts[1] === "context.d") {
-        return this.resolveVisibleProcess(parts[0]) !== null;
-      }
       if (parts.length === 2 && parts[1] === "conversations") {
         const proc = this.resolveVisibleProcess(parts[0]);
         return proc !== null;
@@ -1165,17 +1152,13 @@ export class KernelMountBackend implements MountBackend {
       const parts = path.slice("/proc/".length).split("/");
       if (parts.length === 1) {
         const proc = this.resolveVisibleProcess(parts[0]);
-        if (proc) return ["ai", "context.d", "conversations", "identity", "status"];
+        if (proc) return ["ai", "conversations", "identity", "status"];
       }
       if (parts.length >= 2 && parts[1] === "ai") {
         const proc = this.resolveVisibleProcess(parts[0]);
         if (!proc) return undefined;
         const entries = processAiConfigDirEntries(parts.slice(2));
         return entries.length > 0 ? entries : undefined;
-      }
-      if (parts.length === 2 && parts[1] === "context.d") {
-        const proc = this.resolveVisibleProcess(parts[0]);
-        if (proc) return proc.contextFiles.map((entry) => entry.name).sort();
       }
       if (parts.length === 2 && parts[1] === "conversations") {
         const proc = this.resolveVisibleProcess(parts[0]);

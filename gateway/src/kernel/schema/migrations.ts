@@ -28,6 +28,8 @@ import {
 import {
   KERNEL_V015_REMOVE_PACKAGE_RUNTIME,
 } from "./v015_remove_package_runtime";
+import { KERNEL_V016_REMOVE_PROCESS_CONTEXT } from "./v016_remove_process_context";
+import { KERNEL_V017_REORDER_SYSTEM_CONTEXT } from "./v017_reorder_system_context";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -48,6 +50,8 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V013_ADD_ADAPTER_INGRESS_RECEIPTS,
   KERNEL_V014_ADD_ADAPTER_INGRESS_DELIVERY_ID,
   KERNEL_V015_REMOVE_PACKAGE_RUNTIME,
+  KERNEL_V016_REMOVE_PROCESS_CONTEXT,
+  KERNEL_V017_REORDER_SYSTEM_CONTEXT,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

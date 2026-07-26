@@ -5,6 +5,7 @@ import { PROCESS_V003_MESSAGE_METADATA } from "./v003_message_metadata";
 import { PROCESS_V004_PENDING_TOOL_DISPATCH_ID } from "./v004_pending_tool_dispatch_id";
 import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./v005_tool_result_outcome";
 import { PROCESS_V006_PENDING_HIL_OWNER } from "./v006_pending_hil_owner";
+import { PROCESS_V007_REMOVE_PROCESS_CONTEXT } from "./v007_remove_process_context";
 
 // Used by Process DO startup before ProcessStore reads or writes rows.
 export const PROCESS_SCHEMA_COMPONENT = "process";
@@ -16,6 +17,7 @@ export const PROCESS_MIGRATIONS: readonly SqlMigration[] = [
   PROCESS_V004_PENDING_TOOL_DISPATCH_ID,
   PROCESS_V005_TOOL_RESULT_OUTCOME,
   PROCESS_V006_PENDING_HIL_OWNER,
+  PROCESS_V007_REMOVE_PROCESS_CONTEXT,
 ];
 
 export function runProcessSqlMigrations(storage: DurableObjectStorage): void {
