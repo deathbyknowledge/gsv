@@ -12,7 +12,9 @@ import {
   handleAiTranscriptionCreate,
 } from "../../../kernel/ai";
 import type { KernelContext } from "../../../kernel/context";
+import { openFsSource, type FsDeviceTransport } from "../fs";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
+import { parseShellFsEndpoint } from "./fs-path";
 
 type ParsedArgs = {
   options: Map<string, string | true>;
@@ -25,9 +27,15 @@ type ParseSpec = {
   aliases?: Record<string, string>;
 };
 
-export function buildMediaCommands(fs: GsvFs, ctx: KernelContext): Command[] {
+export function buildMediaCommands(
+  fs: GsvFs,
+  ctx: KernelContext,
+  fsTransport?: FsDeviceTransport,
+): Command[] {
   return [
-    defineMediaCommand("img2txt", (args, shellCtx) => runImg2Txt(args, shellCtx, fs, ctx)),
+    defineMediaCommand("img2txt", (args, shellCtx) => (
+      runImg2Txt(args, shellCtx, fs, ctx, fsTransport)
+    )),
     defineMediaCommand("txt2img", (args, shellCtx) => runTxt2Img(args, shellCtx, fs, ctx)),
     defineMediaCommand("stt", (args, shellCtx) => runStt(args, shellCtx, fs, ctx)),
     defineMediaCommand("tts", (args, shellCtx) => runTts(args, shellCtx, fs, ctx)),
@@ -53,6 +61,7 @@ async function runImg2Txt(
   shellCtx: CommandContext,
   fs: GsvFs,
   ctx: KernelContext,
+  fsTransport?: FsDeviceTransport,
 ): Promise<ExecResult> {
   const mode = parseImg2TxtMode(args[0]);
   const parsed = parseArgs(mode.explicit ? args.slice(1) : args, {
@@ -79,7 +88,7 @@ async function runImg2Txt(
     throw new Error("expected exactly one image path");
   }
 
-  const path = resolvePath(shellCtx, parsed.positionals[0]);
+  const source = parseShellFsEndpoint(parsed.positionals[0], shellCtx, ctx);
   const maxTokens = parsePositiveIntOption(optionValue(parsed, "max-tokens"), "--max-tokens");
   const maxObjects = parsePositiveIntOption(optionValue(parsed, "max-objects"), "--max-objects");
   const temperature = parseNumberOption(optionValue(parsed, "temperature"), "--temperature", 0, 2);
@@ -89,22 +98,22 @@ async function runImg2Txt(
     throw new Error("--stream cannot be combined with --json");
   }
   const requestCtx = withShellSignal(ctx, shellCtx);
-  const opened = await fs.openFile(path);
-  const stream = opened.body;
-  if (!stream) {
-    throw new Error(`cannot read image data for ${path}`);
-  }
+  const opened = await openFsSource(source, requestCtx, {
+    fs,
+    transport: fsTransport,
+  });
+  const stream = opened.body.stream;
   const response = await usingStream(stream, async () => {
     const mimeType = optionValue(parsed, "mime")
       ?? storedMediaMimeType(opened.contentType, "image")
-      ?? inferImageMimeType(path);
+      ?? inferImageMimeType(source.path);
     if (!mimeType) {
-      throw new Error(`cannot infer image MIME type for ${path}; pass --mime image/...`);
+      throw new Error(`cannot infer image MIME type for ${source.path}; pass --mime image/...`);
     }
     const common = {
       image: {
         mimeType,
-        filename: pathName(path),
+        filename: pathName(source.path),
       },
       ...(maxTokens !== undefined ? { maxTokens } : {}),
       ...(temperature !== undefined ? { temperature } : {}),
@@ -114,7 +123,7 @@ async function runImg2Txt(
       maxObjects,
       stream: streamOutput,
     });
-    return handleAiImageRead(request, requestCtx, { stream, length: opened.size });
+    return handleAiImageRead(request, requestCtx, opened.body);
   });
 
   const result = response.data;
@@ -648,6 +657,7 @@ function img2txtUsage(): string {
     "img2txt detect --target TEXT [OPTIONS] IMAGE",
     "",
     "Read an image with Moondream. Caption mode is the default.",
+    "IMAGE may be local, gsv:/path, target:/path, or [target-with-colons]:/path.",
     "",
     "Options:",
     "  --prompt TEXT                  Query or OCR instructions",

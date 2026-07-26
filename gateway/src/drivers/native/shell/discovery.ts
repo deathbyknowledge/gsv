@@ -79,7 +79,7 @@ const NATIVE_COMMAND_DESCRIPTORS: Record<string, NativeCommandDescriptor> = {
   "gsv-fetch": command("Compatibility form of the native streamed HTTP client.", "Fetch a URL or call an HTTP API from GSV.", ["http", "network", "url", "download", "api", "fetch"], ["net"]),
   oauth: command("Inspect and manage OAuth connections.", "Connect, inspect, or forget a provider account used by GSV.", ["login", "account", "provider", "authentication", "oauth"]),
   llm: command("Generate one text response without running an agent loop.", "Perform a one-shot text generation, rewrite, classification, or summarization.", ["ai", "text", "generate", "summarize", "rewrite", "classify"], [], ["llm [OPTIONS] PROMPT..."], ["ai.text.generate"]),
-  img2txt: command("Caption, query, OCR, point at, or detect objects in an image with Moondream.", "Understand, inspect, OCR, locate, detect, or describe a photo, picture, screenshot, or image file.", ["image", "photo", "picture", "screenshot", "vision", "ocr", "caption", "query", "point", "detect", "locate", "describe", "read"], [], [
+  img2txt: command("Caption, query, OCR, point at, or detect objects in a local or target image with Moondream.", "Understand, inspect, OCR, locate, detect, or describe a photo, picture, screenshot, or image file on GSV or a connected target.", ["image", "photo", "picture", "screenshot", "vision", "ocr", "caption", "query", "point", "detect", "locate", "describe", "read", "device", "target"], [], [
     "img2txt [caption] [OPTIONS] IMAGE",
     "img2txt query --prompt TEXT [OPTIONS] IMAGE",
     "img2txt ocr [OPTIONS] IMAGE",

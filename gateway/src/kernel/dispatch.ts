@@ -309,7 +309,7 @@ async function dispatchNative(
 
       case "shell.exec":
         data = await handleShellExec(frame.args, ctx, {
-          fsCopyTransport: deps,
+          fsTransport: deps,
           netFetchTransport: deps,
           request: (request, signal) => deps.request(request, ctx, signal),
         });
