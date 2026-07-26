@@ -5,7 +5,7 @@ import type { KernelContext } from "../../../kernel/context";
 import type { NetFetchDeviceTransport } from "../../../kernel/net";
 import type { RequestFrame, ResponseFrame } from "../../../protocol/frames";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import type { FsCopyDeviceTransport } from "../fs";
+import type { FsDeviceTransport } from "../fs";
 import { buildNotifyCommands } from "../notify-shell";
 import { buildCodeModeCommand } from "./codemode";
 import { buildCoreCommands } from "./core";
@@ -29,7 +29,7 @@ import { buildWikiCommand } from "./wiki";
 import { ShellDiscoveryCatalog } from "./discovery";
 
 export type NativeShellCommandOptions = {
-  fsCopyTransport?: FsCopyDeviceTransport;
+  fsTransport?: FsDeviceTransport;
   netFetchTransport?: NetFetchDeviceTransport;
   request?: (
     frame: RequestFrame,
@@ -48,7 +48,7 @@ export function buildCustomCommands(
   const ls = buildLsCommand(fs, identity, ctx);
   const llm = buildLlmCommand(ctx, options?.netFetchTransport);
   const stat = buildStatCommand(fs, identity, ctx);
-  const cp = buildCpCommand(ctx, options?.fsCopyTransport);
+  const cp = buildCpCommand(ctx, options?.fsTransport);
   const crontab = buildCrontabCommand(fs, ctx);
   const codemode = buildCodeModeCommand(fs, identity, ctx, options?.request);
   const mcp = buildMcpCommand(ctx);
@@ -59,7 +59,7 @@ export function buildCustomCommands(
   const rgitCommands = buildRgitCommands(ctx);
   const sched = buildSchedCommand(ctx);
   const targets = buildTargetsCommands(ctx);
-  const mediaCommands = buildMediaCommands(fs, ctx);
+  const mediaCommands = buildMediaCommands(fs, ctx, options?.fsTransport);
   const message = buildMessageCommand(fs, ctx);
   const netCommands = buildNetCommands(ctx, options?.netFetchTransport);
   const oauth = buildOAuthCommand(ctx);

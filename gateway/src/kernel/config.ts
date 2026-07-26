@@ -104,15 +104,11 @@ export const SYSTEM_CONFIG_DEFAULTS: Record<string, string> = {
   "config/ai/fallback_model_profile": DEFAULT_WORKERS_AI_FALLBACK_PROFILE_ID,
   // Root-owned shipped model profiles referenced by global defaults.
   "users/0/ai/model_profiles": DEFAULT_ROOT_MODEL_PROFILES,
-  // Default media model stack used by process attachments and AI syscalls.
-  "config/ai/image/read/provider": "workers-ai",
-  "config/ai/image/read/model": "@cf/google/gemma-4-26b-a4b-it",
-  "config/ai/image/read/api_key": "",
-  "config/ai/image/read/input_format": "auto",
+  // Moondream image-reading resource limits used by process attachments and AI syscalls.
   "config/ai/image/read/max_bytes": "10485760",
   "config/ai/image/read/max_tokens": "8192",
+  "config/ai/image/read/max_objects": "150",
   "config/ai/image/read/timeout_ms": "30000",
-  "config/ai/image/read/prompt": "Describe this image for an AI assistant that cannot see it. Include visible text, UI details, objects, people, layout, and any information needed to answer follow-up questions.",
   "config/ai/image/generation/provider": "workers-ai",
   "config/ai/image/generation/model": "@cf/black-forest-labs/flux-1-schnell",
   "config/ai/image/generation/api_key": "",

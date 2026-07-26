@@ -60,6 +60,11 @@ message current [--json]
 message destinations [--all] [--json]
 message attach PATH... [--mime TYPE]
 message send --to DESTINATION [--message TEXT] [--attach PATH [--mime TYPE]] [--delivery-id ID] [--also]
+img2txt [caption] [--length short|normal|long] [--stream] IMAGE
+img2txt query --prompt TEXT [--reasoning] [--response-format FORMAT] [--schema JSON] [--stream] IMAGE
+img2txt ocr [--prompt TEXT] [--response-format FORMAT] [--schema JSON] [--stream] IMAGE
+img2txt point --target TEXT [--max-objects N] IMAGE
+img2txt detect --target TEXT [--max-objects N] IMAGE
 crontab -l
 crontab FILE
 crontab -r
@@ -98,6 +103,27 @@ also includes known authorized destinations whose adapter account is offline.
 Group, channel, and thread entries appear only after the linked actor addresses
 GSV on that exact surface. Entries use opaque GSV ids and generic labels;
 provider account, actor, surface, and message ids are not printed.
+
+`img2txt` uses Moondream 3.1 as its only image reader. With no subcommand it
+returns a normal caption. `query` requires the caller's prompt; there is no
+system query prompt. `ocr` has an extraction-specific default and accepts an
+optional caller prompt. `point` returns normalized `{x, y}` coordinates and
+`detect` returns normalized bounding boxes. Those two modes print JSON by
+default.
+
+`IMAGE` accepts the same target-qualified source forms as `cp`: a local path,
+`gsv:/path`, `target:/path`, or `[target-with-colons]:/path`. A target image is
+streamed directly through the filesystem transfer boundary into image reading;
+the command does not stage a temporary GSV copy.
+
+Query and OCR structured output accepts `text`, `json`, `xml`, `markdown`, or
+`csv`. A JSON `--schema` is added to the caller's instruction, then the result
+is parsed and checked before being returned. `--reasoning` exposes query
+reasoning and grounding in the `--json` result envelope. `--stream` is
+available for caption, query, and OCR, and cannot be combined with `--json`,
+reasoning, or structured output. The underlying `ai.image.read` response body
+streams decoded UTF-8 chunks; the gateway shell collects those chunks into its
+final `shell.exec` stdout.
 
 `--to here` selects the current adapter reply surface. An explicit send to that
 same destination requires `--also`, acknowledging that it is intentionally in

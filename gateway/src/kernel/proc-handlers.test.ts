@@ -532,7 +532,6 @@ describe("proc handlers", () => {
             "config/ai/provider": "openai",
             "config/ai/model": "gpt-4.1-mini",
             "config/ai/api_key": "redacted",
-            "config/ai/image/read/api_key": "redacted",
           },
           updatedAt: 1,
         },
@@ -547,15 +546,13 @@ describe("proc handlers", () => {
           values: {
             "config/ai/provider": "openai",
             "config/ai/model": "gpt-4.1-mini",
-            "config/ai/image/read/provider": "openai",
-            "config/ai/image/read/model": "gpt-4o",
+            "config/ai/image/read/max_tokens": "4096",
           },
           createdAt: 10,
           updatedAt: 20,
         }],
       })],
       ["users/1000/ai/model_profiles/fast-stack/api_key", "sk-chat"],
-      ["users/1000/ai/model_profiles/fast-stack/image/read/api_key", "sk-image"],
     ]);
     const ctx = {
       identity: {
@@ -590,8 +587,7 @@ describe("proc handlers", () => {
           values: {
             "config/ai/provider": "openai",
             "config/ai/model": "gpt-4.1-mini",
-            "config/ai/image/read/provider": "openai",
-            "config/ai/image/read/model": "gpt-4o",
+            "config/ai/image/read/max_tokens": "4096",
           },
           profile: {
             id: "fast-stack",

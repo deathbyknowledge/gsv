@@ -1,15 +1,11 @@
-import { defineCommand, type CommandContext, type ExecResult } from "just-bash";
+import { defineCommand, type ExecResult } from "just-bash";
 import type { KernelContext } from "../../../kernel/context";
-import { handleFsCopy, type FsCopyDeviceTransport } from "../fs";
-
-type ShellCopyEndpoint = {
-  target: string;
-  path: string;
-};
+import { handleFsCopy, type FsDeviceTransport } from "../fs";
+import { parseShellFsEndpoint } from "./fs-path";
 
 export function buildCpCommand(
   kernelCtx: KernelContext,
-  transport?: FsCopyDeviceTransport,
+  transport?: FsDeviceTransport,
 ) {
   return defineCommand("cp", async (args, ctx): Promise<ExecResult> => {
     if (args.includes("--help")) {
@@ -54,8 +50,8 @@ export function buildCpCommand(
       };
     }
 
-    const source = parseShellCopyEndpoint(operands[0], ctx, kernelCtx);
-    const destination = parseShellCopyEndpoint(operands[1], ctx, kernelCtx);
+    const source = parseShellFsEndpoint(operands[0], ctx, kernelCtx);
+    const destination = parseShellFsEndpoint(operands[1], ctx, kernelCtx);
 
     try {
       const result = await handleFsCopy(
@@ -75,64 +71,4 @@ export function buildCpCommand(
       return { stdout: "", stderr: `cp: ${msg}\n`, exitCode: 1 };
     }
   });
-}
-
-function parseShellCopyEndpoint(
-  spec: string,
-  ctx: CommandContext,
-  kernelCtx: KernelContext,
-): ShellCopyEndpoint {
-  const bracket = spec.match(/^\[([^\]]+)]:(.*)$/);
-  if (bracket) {
-    const target = bracket[1] || "gsv";
-    const path = bracket[2] || ".";
-    return {
-      target,
-      path: target === "gsv" ? ctx.fs.resolvePath(ctx.cwd, path) : path,
-    };
-  }
-
-  for (const target of knownCopyTargets(kernelCtx)) {
-    const prefix = `${target}:`;
-    if (!spec.startsWith(prefix)) {
-      continue;
-    }
-    const path = spec.slice(prefix.length) || ".";
-    return {
-      target,
-      path: target === "gsv" ? ctx.fs.resolvePath(ctx.cwd, path) : path,
-    };
-  }
-
-  const match = spec.match(/^([A-Za-z0-9_.-]+):(.*)$/);
-  if (match) {
-    const target = match[1] || "gsv";
-    const path = match[2] || ".";
-    return {
-      target,
-      path: target === "gsv" ? ctx.fs.resolvePath(ctx.cwd, path) : path,
-    };
-  }
-  return {
-    target: "gsv",
-    path: ctx.fs.resolvePath(ctx.cwd, spec),
-  };
-}
-
-function knownCopyTargets(kernelCtx: KernelContext): string[] {
-  const identity = kernelCtx.identity?.process;
-  const targets = new Set(["gsv"]);
-  if (!identity) {
-    return [...targets];
-  }
-
-  try {
-    for (const device of kernelCtx.devices.listForUser(identity.uid, identity.gids)) {
-      targets.add(device.device_id);
-    }
-  } catch {
-    // Some tests and process contexts only need local GSV paths.
-  }
-
-  return [...targets].sort((left, right) => right.length - left.length);
 }

@@ -35,7 +35,7 @@ import type {
 import { bodyFromText, bodyToBytes } from "@humansandmachines/gsv/protocol";
 import { createNativeFileSystem } from "./filesystem";
 
-export type FsCopyDeviceTransport = {
+export type FsDeviceTransport = {
   requestDevice(
     deviceId: string,
     call: string,
@@ -43,6 +43,60 @@ export type FsCopyDeviceTransport = {
     options?: { ttlMs?: number; body?: FrameBody; signal?: AbortSignal },
   ): Promise<ResponseOkFrame>;
 };
+
+export type FsOpenedSource = {
+  body: FrameBody;
+  size: number;
+  contentType?: string;
+};
+
+export async function openFsSource(
+  source: Required<FsCopyEndpoint>,
+  ctx: KernelContext,
+  options?: {
+    fs?: GsvFs;
+    transport?: FsDeviceTransport;
+  },
+): Promise<FsOpenedSource> {
+  ctx.requestSignal?.throwIfAborted();
+  assertCanAccessCopyEndpoint(source, ctx);
+
+  if (source.target === "gsv") {
+    const opened = await (options?.fs ?? createNativeFileSystem(ctx)).openFile(source.path);
+    if (opened.status !== 200 || !opened.body) {
+      throw new Error(`Unable to open source file: ${source.path}`);
+    }
+    try {
+      ctx.requestSignal?.throwIfAborted();
+    } catch (error) {
+      await opened.body.cancel(error).catch(() => {});
+      throw error;
+    }
+    return {
+      body: { stream: opened.body, length: opened.size },
+      size: opened.size,
+      contentType: opened.contentType,
+    };
+  }
+
+  if (!options?.transport) {
+    throw new Error("Reading a non-gsv source requires device transfer support");
+  }
+  assertCanUseDeviceCapabilities(source, ctx, [
+    "fs.transfer.stat",
+    "fs.transfer.send",
+  ]);
+  const { stat, body } = await openDeviceSource(
+    options.transport,
+    source,
+    ctx.requestSignal,
+  );
+  return {
+    body,
+    size: stat.size,
+    contentType: stat.contentType,
+  };
+}
 
 function resolve(path: string, ctx: KernelContext): string {
   const identity = ctx.identity!.process;
@@ -319,7 +373,7 @@ export async function handleFsWrite(
 export async function handleFsCopy(
   args: FsCopyArgs,
   ctx: KernelContext,
-  transport?: FsCopyDeviceTransport,
+  transport?: FsDeviceTransport,
 ): Promise<FsCopyResult> {
   try {
     ctx.requestSignal?.throwIfAborted();
@@ -382,17 +436,9 @@ export async function handleFsCopy(
     }
 
     if (destination.target === "gsv") {
-      assertCanUseDeviceCapabilities(source, ctx, [
-        "fs.transfer.stat",
-        "fs.transfer.send",
-      ]);
       return await copyDeviceToGsv(source, destination, ctx, transport);
     }
 
-    assertCanUseDeviceCapabilities(source, ctx, [
-      "fs.transfer.stat",
-      "fs.transfer.send",
-    ]);
     assertCanUseDeviceCapabilities(destination, ctx, [
       "fs.transfer.stat",
       "fs.transfer.receive",
@@ -401,7 +447,7 @@ export async function handleFsCopy(
       source,
       destination,
       transport,
-      ctx.requestSignal,
+      ctx,
     );
   } catch (err) {
     return {
@@ -417,17 +463,9 @@ async function copyGsvToGsv(
   ctx: KernelContext,
 ): Promise<FsCopyResult> {
   const fs = createNativeFileSystem(ctx);
-  const opened = await fs.openFile(source.path);
-  ctx.requestSignal?.throwIfAborted();
-  if (opened.status !== 200 || !opened.body) {
-    return {
-      ok: false,
-      error: `Unable to open source for copy: ${source.path}`,
-    };
-  }
-
+  const opened = await openFsSource(source, ctx, { fs });
   const contentType = opened.contentType ?? inferContentType(source.path);
-  await fs.writeFileStream(destination.path, opened.body, {
+  await fs.writeFileStream(destination.path, opened.body.stream, {
     expectedSize: opened.size,
     contentType,
     signal: ctx.requestSignal,
@@ -445,7 +483,7 @@ async function copyGsvToGsv(
 async function copyOnDevice(
   source: Required<FsCopyEndpoint>,
   destination: Required<FsCopyEndpoint>,
-  transport: FsCopyDeviceTransport,
+  transport: FsDeviceTransport,
   signal?: AbortSignal,
 ): Promise<FsCopyResult> {
   const result = await requestDeviceResult<FsCopyResult>(
@@ -472,18 +510,10 @@ async function copyGsvToDevice(
   source: Required<FsCopyEndpoint>,
   destination: Required<FsCopyEndpoint>,
   ctx: KernelContext,
-  transport: FsCopyDeviceTransport,
+  transport: FsDeviceTransport,
 ): Promise<FsCopyResult> {
   const fs = createNativeFileSystem(ctx);
-  const opened = await fs.openFile(source.path);
-  ctx.requestSignal?.throwIfAborted();
-  if (opened.status !== 200 || !opened.body) {
-    return {
-      ok: false,
-      error: `Unable to open source for copy: ${source.path}`,
-    };
-  }
-
+  const opened = await openFsSource(source, ctx, { fs });
   const contentType = opened.contentType ?? inferContentType(source.path);
   const result = await requestDeviceResult<FsTransferReceiveResult>(
     transport,
@@ -495,7 +525,7 @@ async function copyGsvToDevice(
     },
     {
       ttlMs: 120_000,
-      body: { stream: opened.body, length: opened.size },
+      body: opened.body,
       signal: ctx.requestSignal,
     },
   );
@@ -521,24 +551,20 @@ async function copyDeviceToGsv(
   source: Required<FsCopyEndpoint>,
   destination: Required<FsCopyEndpoint>,
   ctx: KernelContext,
-  transport: FsCopyDeviceTransport,
+  transport: FsDeviceTransport,
 ): Promise<FsCopyResult> {
-  const { stat: sourceStat, body } = await openDeviceSource(
-    transport,
-    source,
-    ctx.requestSignal,
-  );
-  const contentType = sourceStat.contentType ?? inferContentType(source.path);
+  const opened = await openFsSource(source, ctx, { transport });
+  const contentType = opened.contentType ?? inferContentType(source.path);
 
   const fs = createNativeFileSystem(ctx);
-  const writeResult = await fs.writeFileStream(destination.path, body.stream, {
-    expectedSize: sourceStat.size,
+  const writeResult = await fs.writeFileStream(destination.path, opened.body.stream, {
+    expectedSize: opened.size,
     contentType,
     signal: ctx.requestSignal,
   });
-  if (writeResult.size !== sourceStat.size) {
+  if (writeResult.size !== opened.size) {
     throw new Error(
-      `Transfer size mismatch for ${destination.path}: expected ${sourceStat.size}, got ${writeResult.size}`,
+      `Transfer size mismatch for ${destination.path}: expected ${opened.size}, got ${writeResult.size}`,
     );
   }
 
@@ -546,7 +572,7 @@ async function copyDeviceToGsv(
     ok: true,
     source,
     destination,
-    size: sourceStat.size,
+    size: opened.size,
     contentType,
   };
 }
@@ -554,25 +580,25 @@ async function copyDeviceToGsv(
 async function copyDeviceToDevice(
   source: Required<FsCopyEndpoint>,
   destination: Required<FsCopyEndpoint>,
-  transport: FsCopyDeviceTransport,
-  signal?: AbortSignal,
+  transport: FsDeviceTransport,
+  ctx: KernelContext,
 ): Promise<FsCopyResult> {
-  const { stat: sourceStat, body } = await openDeviceSource(transport, source, signal);
-  const contentType = sourceStat.contentType ?? inferContentType(source.path);
+  const opened = await openFsSource(source, ctx, { transport });
+  const contentType = opened.contentType ?? inferContentType(source.path);
 
   const received = await requestDeviceResult<FsTransferReceiveResult>(
     transport,
     destination.target,
     "fs.transfer.receive",
     { path: destination.path, contentType },
-    { ttlMs: 120_000, body, signal },
+    { ttlMs: 120_000, body: opened.body, signal: ctx.requestSignal },
   );
   if (!received.ok) {
     throw new Error(received.error);
   }
-  if (received.bytesWritten !== sourceStat.size) {
+  if (received.bytesWritten !== opened.size) {
     throw new Error(
-      `Transfer size mismatch for ${destination.path}: expected ${sourceStat.size}, got ${received.bytesWritten}`,
+      `Transfer size mismatch for ${destination.path}: expected ${opened.size}, got ${received.bytesWritten}`,
     );
   }
 
@@ -580,7 +606,7 @@ async function copyDeviceToDevice(
     ok: true,
     source,
     destination,
-    size: sourceStat.size,
+    size: opened.size,
     contentType,
   };
 }
@@ -611,7 +637,7 @@ async function resolveGsvDestinationDirectory(
 async function resolveDeviceDestinationDirectory(
   source: Required<FsCopyEndpoint>,
   destination: Required<FsCopyEndpoint>,
-  transport: FsCopyDeviceTransport,
+  transport: FsDeviceTransport,
   signal?: AbortSignal,
 ): Promise<Required<FsCopyEndpoint>> {
   let stat: FsTransferStatResult;
@@ -639,7 +665,7 @@ async function resolveDeviceDestinationDirectory(
 }
 
 async function openDeviceSource(
-  transport: FsCopyDeviceTransport,
+  transport: FsDeviceTransport,
   source: Required<FsCopyEndpoint>,
   signal?: AbortSignal,
 ): Promise<{
@@ -660,7 +686,7 @@ async function openDeviceSource(
   }
   if (!stat.isFile) {
     throw new Error(
-      `fs.copy source is not a file: ${source.target}:${source.path}`,
+      `Source is not a file: ${source.target}:${source.path}`,
     );
   }
   const response = await transport.requestDevice(
@@ -686,7 +712,7 @@ async function openDeviceSource(
 }
 
 async function requestDeviceResult<T>(
-  transport: FsCopyDeviceTransport,
+  transport: FsDeviceTransport,
   deviceId: string,
   call: string,
   args: unknown,

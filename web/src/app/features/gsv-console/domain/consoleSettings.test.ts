@@ -39,7 +39,7 @@ describe("console settings domain", () => {
     expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "openai-codex")?.label).toBe("OpenAI Codex (ChatGPT)");
     expect(agentProviderField?.kind).toBe("select");
     expect(agentProviderField?.options).toBe(AI_PROVIDER_OPTIONS);
-    expect(toolProviderField("image-read")?.options).toBe(AI_PROVIDER_OPTIONS);
+    expect(toolProviderField("image-read")).toBeUndefined();
     expect(toolProviderField("image-generation")?.options).toBe(AI_OPENAI_WORKERS_PROVIDER_OPTIONS);
     expect(toolProviderField("transcription")?.options).toBe(AI_OPENAI_WORKERS_PROVIDER_OPTIONS);
     expect(toolProviderField("speech")?.options).toBe(AI_OPENAI_WORKERS_PROVIDER_OPTIONS);
@@ -117,7 +117,7 @@ describe("console settings domain", () => {
         values: {
           "config/ai/provider": "openai",
           "config/ai/api_key": "sk-secret",
-          "config/ai/image/read/api_key": "sk-image",
+          "config/ai/speech/api_key": "sk-speech",
         },
       }],
     }))) as { profiles: Array<{ values: Record<string, string> }> };
@@ -125,7 +125,7 @@ describe("console settings domain", () => {
     expect(redacted.profiles[0].values).toEqual({
       "config/ai/provider": "openai",
       "config/ai/api_key": "",
-      "config/ai/image/read/api_key": "",
+      "config/ai/speech/api_key": "",
     });
   });
 
@@ -215,7 +215,7 @@ describe("console settings domain", () => {
   });
 
   it("formats raw provider model ids for list labels", () => {
-    expect(modelDisplayName("@cf/google/gemma-4-26b-a4b-it")).toBe("Gemma 4 26B A4B IT");
+    expect(modelDisplayName("@cf/moondream/moondream3.1-9B-A2B")).toBe("Moondream3 1 9B A2B");
     expect(modelDisplayName("anthropic/claude-sonnet-4.5")).toBe("Claude Sonnet 4 5");
   });
 });

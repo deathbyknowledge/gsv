@@ -12,6 +12,7 @@ export const GSV_TARGET_CONTEXT =
   "Browser targets are active browser profiles connected by the GSV browser extension. They expose targetable `shell.exec` and `fs.*` for browser profile work such as tabs, pages, screenshots, JavaScript, downloads, cookies, storage, history, bookmarks, network capture, and browser-local artifacts, depending on extension permissions.\n" +
   "External messaging surfaces such as WhatsApp, Telegram, and Discord are discovered with `message destinations`. A run's final response returns to its origin automatically; use `message attach PATH...` to include files in that same final response. `message send` is only for an additional or cross-channel text/file delivery, and an intentional extra send to the current destination requires `--also`.\n" +
   "All targets are connected, and files can be moved between them with target-aware copy, `cp source-target:/path destination-target:/path` from the shell.\n" +
+  "Read an image on any accessible target directly with `img2txt target:/path`; use `[target-with-colons]:/path` when the target id contains colons.\n" +
   "Use `Shell` with `target: \"gsv\"` and `input: \"targets list\"` to discover target ids beyond the compact prompt list.\n" +
   "Use `targets show <target-id>` on `gsv`, then `cat /README.txt` and `help` on the browser target before nontrivial browser work. Use `skills show browser-target` for the detailed browser extension workflow.";
 

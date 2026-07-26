@@ -671,7 +671,8 @@ describe("native shell capability discovery", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("IMG2TXT(1)");
     expect(result.stdout).toContain("WHEN TO USE");
-    expect(result.stdout).toContain("img2txt [OPTIONS] IMAGE");
+    expect(result.stdout).toContain("img2txt [caption] [OPTIONS] IMAGE");
+    expect(result.stdout).toContain("img2txt detect --target TEXT [OPTIONS] IMAGE");
   });
 
   it("documents the generic outbound file bridge", async () => {
@@ -1042,8 +1043,8 @@ describe("media native commands", () => {
           "ai.speech.create",
         ],
         aiRun: vi.fn(async (_model, input) => {
-          if (Array.isArray(input.messages)) {
-            return { response: "terminal screenshot" };
+          if (input.task === "caption") {
+            return { caption: "terminal screenshot" };
           }
           if (typeof input.audio === "string") {
             return { text: "hello audio" };
@@ -1086,9 +1087,9 @@ describe("media native commands", () => {
       makeContext({
         capabilities: ["ai.image.read", "ai.image.generate"],
         aiRun: vi.fn(async (_model, input) => {
-          if (Array.isArray(input.messages)) {
+          if (input.task === "caption") {
             imageReadInput = input;
-            return { response: "a green square" };
+            return { caption: "a green square" };
           }
           if (typeof input.prompt === "string") {
             return { image: "/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==" };

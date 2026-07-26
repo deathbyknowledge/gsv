@@ -35,10 +35,9 @@ import {
   DEFAULT_AUDIO_SPEECH_SPEAKER,
 } from "../inference/speech";
 import {
-  DEFAULT_IMAGE_READING_INPUT_FORMAT,
+  DEFAULT_IMAGE_READING_MAX_OBJECTS,
   DEFAULT_IMAGE_READING_MAX_TOKENS,
   DEFAULT_IMAGE_READING_MODEL,
-  DEFAULT_IMAGE_READING_PROMPT,
 } from "../inference/image-reading";
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "../inference/capabilities";
 
@@ -1294,11 +1293,8 @@ describe("handleAiConfig", () => {
         "config/ai/context_window_tokens": "64000",
         "config/ai/max_context_bytes": "12000",
         "config/ai/generation/timeout_ms": "45000",
-        "config/ai/image/read/provider": "openai",
-        "config/ai/image/read/model": "gpt-4o-mini",
-        "config/ai/image/read/api_key": "process-image-key",
-        "config/ai/image/read/input_format": "chat",
         "config/ai/image/read/max_tokens": "777",
+        "config/ai/image/read/max_objects": "55",
         "config/ai/image/generation/provider": "openai",
         "config/ai/image/generation/model": "gpt-image-1",
         "config/ai/transcription/provider": "openai",
@@ -1326,11 +1322,8 @@ describe("handleAiConfig", () => {
     expect(result.maxContextBytes).toBe(12000);
     expect(result.generationTimeoutMs).toBe(45000);
     expect(result.media).toMatchObject({
-      imageReadingProvider: "openai",
-      imageReadingModel: "gpt-4o-mini",
-      imageReadingApiKey: "process-image-key",
-      imageReadingInputFormat: "chat",
       imageReadingMaxTokens: 777,
+      imageReadingMaxObjects: 55,
       imageGenerationProvider: "openai",
       imageGenerationModel: "gpt-image-1",
       imageGenerationApiKey: "process-chat-key",
@@ -1348,21 +1341,15 @@ describe("handleAiConfig", () => {
     const result = await handleAiConfig({
       processOverrides: {
         "config/ai/generation/timeout_ms": "invalid",
-        "config/ai/image/read/provider": " ",
-        "config/ai/image/read/input_format": "invalid",
         "config/ai/image/read/max_tokens": "invalid",
       },
     }, makeAiConfigContext({
       "users/1000/ai/generation/timeout_ms": "90000",
-      "users/1000/ai/image/read/provider": "openai",
-      "users/1000/ai/image/read/input_format": "chat",
       "users/1000/ai/image/read/max_tokens": "321",
     }));
 
     expect(result.generationTimeoutMs).toBe(90000);
     expect(result.media).toMatchObject({
-      imageReadingProvider: "openai",
-      imageReadingInputFormat: "chat",
       imageReadingMaxTokens: 321,
     });
   });
@@ -1372,8 +1359,6 @@ describe("handleAiConfig", () => {
       processOverrides: {
         "config/ai/provider": "openai",
         "config/ai/model": "gpt-4.1-mini",
-        "config/ai/image/read/provider": "openai",
-        "config/ai/image/read/model": "gpt-4o-mini",
       },
       processProfile: {
         id: "fast-stack",
@@ -1383,12 +1368,10 @@ describe("handleAiConfig", () => {
     }, makeAiConfigContext({
       "users/1000/ai/api_key": "owner-key",
       "users/1000/ai/model_profiles/fast-stack/api_key": "sk-profile-chat",
-      "users/1000/ai/model_profiles/fast-stack/image/read/api_key": "sk-profile-image",
       "config/ai/api_key": "system-key",
     }));
 
     expect(result.apiKey).toBe("sk-profile-chat");
-    expect(result.media?.imageReadingApiKey).toBe("sk-profile-image");
   });
 
   it("resolves the media model stack with owner fallback", async () => {
@@ -1396,20 +1379,16 @@ describe("handleAiConfig", () => {
       "users/1000/ai/transcription/model": "@cf/openai/whisper-tiny-en",
       "users/1000/ai/transcription/api_key": "owner-transcription-key",
       "users/1000/ai/api_key": "owner-chat-key",
-      "users/1000/ai/image/read/model": "@cf/owner/vision",
-      "users/1000/ai/image/read/api_key": "owner-reader-key",
-      "users/1000/ai/image/read/input_format": "chat",
       "users/1000/ai/image/read/max_bytes": "12345",
       "users/1000/ai/image/read/max_tokens": "321",
+      "users/1000/ai/image/read/max_objects": "22",
       "users/1000/ai/image/read/timeout_ms": "9876",
-      "users/1000/ai/image/read/prompt": "Read the screenshot.",
       "users/1000/ai/image/generation/provider": "openai",
       "users/1000/ai/image/generation/model": "@cf/owner/image",
       "users/1000/ai/image/generation/api_key": "owner-image-key",
       "users/1000/ai/speech/provider": "openai",
       "users/1000/ai/speech/model": "@cf/owner/speech",
       "users/1000/ai/speech/api_key": "owner-speech-key",
-      "users/2000/ai/image/read/model": "@cf/agent/vision",
     }, {
       uid: 2000,
       ownerUid: 1000,
@@ -1420,14 +1399,10 @@ describe("handleAiConfig", () => {
       transcriptionProvider: "workers-ai",
       transcriptionModel: "@cf/openai/whisper-tiny-en",
       transcriptionApiKey: "owner-transcription-key",
-      imageReadingProvider: "workers-ai",
-      imageReadingModel: "@cf/agent/vision",
-      imageReadingApiKey: "owner-reader-key",
-      imageReadingInputFormat: "chat",
       imageReadingMaxBytes: 12345,
       imageReadingMaxTokens: 321,
+      imageReadingMaxObjects: 22,
       imageReadingTimeoutMs: 9876,
-      imageReadingPrompt: "Read the screenshot.",
       imageGenerationProvider: "openai",
       imageGenerationModel: "@cf/owner/image",
       imageGenerationApiKey: "owner-image-key",
@@ -1437,29 +1412,13 @@ describe("handleAiConfig", () => {
     });
   });
 
-  it("falls back the image reader API key to the resolved chat API key", async () => {
-    const result = await handleAiConfig({}, makeAiConfigContext({
-      "users/1000/ai/api_key": "owner-chat-key",
-      "users/1000/ai/image/read/provider": "openai",
-      "users/1000/ai/image/read/model": "gpt-4o",
-    }, {
-      uid: 2000,
-      ownerUid: 1000,
-      processId: "task-1",
-    }));
-
-    expect(result.apiKey).toBe("owner-chat-key");
-    expect(result.media?.imageReadingApiKey).toBe("owner-chat-key");
-  });
-
   it("includes default media stack values", async () => {
     const result = await handleAiConfig({}, makeAiConfigContext());
 
-    expect(result.media?.imageReadingProvider).toBe("workers-ai");
-    expect(result.media?.imageReadingModel).toBe(DEFAULT_IMAGE_READING_MODEL);
-    expect(result.media?.imageReadingApiKey).toBe("");
-    expect(result.media?.imageReadingInputFormat).toBe(DEFAULT_IMAGE_READING_INPUT_FORMAT);
-    expect(result.media?.imageReadingPrompt).toBe(DEFAULT_IMAGE_READING_PROMPT);
+    expect(result.media?.imageReadingMaxBytes).toBe(10 * 1024 * 1024);
+    expect(result.media?.imageReadingMaxTokens).toBe(DEFAULT_IMAGE_READING_MAX_TOKENS);
+    expect(result.media?.imageReadingMaxObjects).toBe(DEFAULT_IMAGE_READING_MAX_OBJECTS);
+    expect(result.media?.imageReadingTimeoutMs).toBe(30_000);
     expect(result.media?.speechProvider).toBe("workers-ai");
     expect(result.media?.speechModel).toBe(DEFAULT_AUDIO_SPEECH_MODEL);
     expect(result.media?.speechApiKey).toBe("");
@@ -1473,7 +1432,6 @@ describe("handleAiConfig", () => {
       "config/ai/api_key": "system-chat-key",
       "config/ai/transcription/provider": "openai",
       "config/ai/speech/provider": "openai",
-      "config/ai/image/read/provider": "openai",
       "config/ai/image/generation/provider": "openai",
     }));
 
@@ -1481,9 +1439,6 @@ describe("handleAiConfig", () => {
       transcriptionProvider: "openai",
       transcriptionModel: "gpt-4o-transcribe",
       transcriptionApiKey: "system-chat-key",
-      imageReadingProvider: "openai",
-      imageReadingModel: "gpt-4o",
-      imageReadingApiKey: "system-chat-key",
       imageGenerationProvider: "openai",
       imageGenerationModel: "gpt-image-1.5",
       imageGenerationApiKey: "system-chat-key",
@@ -1899,57 +1854,94 @@ describe("handleAiImageRead", () => {
       env: {
         AI: {
           run: vi.fn(async () => options.response ?? ({
-            choices: [{
-              message: {
-                content: "A small terminal window with green text.",
-              },
-            }],
+            caption: "A small terminal window with green text.",
           })),
         },
       },
     } as unknown as KernelContext;
   }
 
-  it("reads images through the configured Workers AI vision path", async () => {
+  it("reads images through the fixed Moondream caption path", async () => {
     const ctx = makeImageReadContext();
 
-    const result = await handleAiImageRead({
+    const response = await handleAiImageRead({
       image: {
         mimeType: "image/png",
       },
-      prompt: "read this screenshot",
     }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
 
-    expect(result.text).toBe("A small terminal window with green text.");
-    expect(result.model).toBe(DEFAULT_IMAGE_READING_MODEL);
+    expect(response.data).toEqual(expect.objectContaining({
+      mode: "caption",
+      text: "A small terminal window with green text.",
+      model: DEFAULT_IMAGE_READING_MODEL,
+    }));
+    expect(ctx.env.AI.run).toHaveBeenCalledWith(
+      DEFAULT_IMAGE_READING_MODEL,
+      expect.objectContaining({
+        task: "caption",
+        caption_length: "normal",
+        max_tokens: DEFAULT_IMAGE_READING_MAX_TOKENS,
+        image: "data:image/png;base64,AQID",
+      }),
+    );
+  });
+
+  it("honors resource limits but ignores obsolete image-reader dialect config", async () => {
+    const ctx = attachProcessAiSnapshot(makeImageReadContext({
+      response: {
+        objects: [{ x_min: 0.1, y_min: 0.2, x_max: 0.3, y_max: 0.4 }],
+      },
+    }), {
+      "config/ai/image/read/model": "@cf/obsolete/vision",
+      "config/ai/image/read/max_tokens": "77",
+      "config/ai/image/read/max_objects": "12",
+    });
+
+    const response = await handleAiImageRead({
+      image: {
+        mimeType: "image/png",
+      },
+      mode: "detect",
+      target: "button",
+    }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
+
+    expect(response.data).toEqual(expect.objectContaining({
+      mode: "detect",
+      model: DEFAULT_IMAGE_READING_MODEL,
+      objects: [{ xMin: 0.1, yMin: 0.2, xMax: 0.3, yMax: 0.4 }],
+    }));
     expect(ctx.env.AI.run).toHaveBeenCalledWith(
       DEFAULT_IMAGE_READING_MODEL,
       {
-        max_completion_tokens: DEFAULT_IMAGE_READING_MAX_TOKENS,
-        messages: expect.any(Array),
+        image: "data:image/png;base64,AQID",
+        stream: false,
+        task: "detect",
+        target: "button",
+        max_objects: 12,
       },
     );
   });
 
-  it("honors process-local image reading media overrides", async () => {
-    const ctx = attachProcessAiSnapshot(makeImageReadContext(), {
-      "config/ai/image/read/model": "@cf/llava-hf/llava-1.5-7b-hf",
-      "config/ai/image/read/max_tokens": "77",
+  it("returns decoded streaming output as a response body", async () => {
+    const encoded = new TextEncoder().encode("data: {\"text\":\"hello\"}\n\n");
+    const ctx = makeImageReadContext({
+      response: new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoded);
+          controller.close();
+        },
+      }),
     });
 
-    const result = await handleAiImageRead({
-      image: {
-        mimeType: "image/png",
-      },
+    const response = await handleAiImageRead({
+      image: { mimeType: "image/png" },
+      mode: "caption",
+      stream: true,
     }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
 
-    expect(result.model).toBe("@cf/llava-hf/llava-1.5-7b-hf");
-    expect(ctx.env.AI.run).toHaveBeenCalledWith(
-      "@cf/llava-hf/llava-1.5-7b-hf",
-      expect.objectContaining({
-        max_tokens: 77,
-      }),
-    );
+    expect(response.data).toEqual(expect.objectContaining({ streamed: true }));
+    expect(response.body).toBeDefined();
+    expect(new TextDecoder().decode(await bodyToBytes(response.body!))).toBe("hello");
   });
 
   it("uses image read byte limits and rejects non-image payloads", async () => {
