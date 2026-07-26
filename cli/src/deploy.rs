@@ -23,6 +23,7 @@ const COMPONENT_RIPGIT: &str = "ripgit";
 const COMPONENT_CHANNEL_WHATSAPP: &str = "channel-whatsapp";
 const COMPONENT_CHANNEL_DISCORD: &str = "channel-discord";
 const COMPONENT_CHANNEL_TELEGRAM: &str = "channel-telegram";
+const LEGACY_COMPONENT_ASSEMBLER: &str = "assembler";
 
 const BUNDLE_GATEWAY: &str = "gsv-cloudflare-gateway.tar.gz";
 const BUNDLE_RIPGIT: &str = "gsv-cloudflare-ripgit.tar.gz";
@@ -91,6 +92,10 @@ impl DeployInstance {
             COMPONENT_CHANNEL_TELEGRAM => Some(format!("{}-channel-telegram", self.name)),
             _ => None,
         }
+    }
+
+    fn legacy_assembler_script_name(&self) -> String {
+        format!("{}-assembler", self.name)
     }
 
     fn script_name_for_config_service(&self, service: &str) -> String {
@@ -1924,9 +1929,40 @@ fn deploy_order(component: &str) -> usize {
         COMPONENT_CHANNEL_WHATSAPP => 1,
         COMPONENT_CHANNEL_DISCORD => 2,
         COMPONENT_CHANNEL_TELEGRAM => 3,
+        LEGACY_COMPONENT_ASSEMBLER => 9,
         COMPONENT_GATEWAY => 10,
         _ => 100,
     }
+}
+
+fn teardown_worker_scripts(
+    components: &[String],
+    instance: &DeployInstance,
+) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
+    let mut component_order = components.to_vec();
+    let full_teardown = available_components()
+        .iter()
+        .all(|candidate| components.iter().any(|component| component == candidate));
+    if full_teardown {
+        component_order.push(LEGACY_COMPONENT_ASSEMBLER.to_string());
+    }
+    component_order.sort_by_key(|component| deploy_order(component));
+
+    component_order
+        .into_iter()
+        .map(|component| {
+            if component == LEGACY_COMPONENT_ASSEMBLER {
+                return Ok((
+                    "legacy assembler".to_string(),
+                    instance.legacy_assembler_script_name(),
+                ));
+            }
+            let script_name = instance
+                .script_name(&component)
+                .ok_or_else(|| format!("Unsupported component '{}'", component))?;
+            Ok((component, script_name))
+        })
+        .collect()
 }
 
 fn parse_wrangler_config(
@@ -3051,16 +3087,7 @@ pub async fn destroy_deploy(
         return Err("No components requested for teardown".into());
     }
 
-    let mut component_order = components.to_vec();
-    component_order.sort_by_key(|component| deploy_order(component));
-
-    let mut scripts_to_delete = Vec::new();
-    for component in &component_order {
-        let script_name = instance
-            .script_name(component)
-            .ok_or_else(|| format!("Unsupported component '{}'", component))?;
-        scripts_to_delete.push((component.clone(), script_name));
-    }
+    let scripts_to_delete = teardown_worker_scripts(components, instance)?;
 
     let selected_components: HashSet<String> = components.iter().cloned().collect();
     let client = reqwest::Client::new();
@@ -3546,14 +3573,16 @@ mod tests {
     }
 
     #[test]
-    fn normalize_components_rejects_removed_channel_test_component() {
-        let error = normalize_components(&["channel-test".to_string()]).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("Unknown component 'channel-test'"),
-            "unexpected error: {error}"
-        );
+    fn normalize_components_rejects_removed_components() {
+        for component in ["assembler", "channel-test"] {
+            let error = normalize_components(&[component.to_string()]).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("Unknown component '{}'", component)),
+                "unexpected error: {error}"
+            );
+        }
     }
 
     #[test]
@@ -3599,6 +3628,38 @@ mod tests {
             Some("gsv-personal-channel-telegram")
         );
         assert_eq!(instance.storage_bucket_name(), "gsv-personal-storage");
+    }
+
+    #[test]
+    fn full_teardown_includes_legacy_assembler_worker() {
+        let components = available_components()
+            .iter()
+            .map(|component| (*component).to_string())
+            .collect::<Vec<_>>();
+
+        let default_scripts =
+            teardown_worker_scripts(&components, &DeployInstance::default()).unwrap();
+        assert!(default_scripts
+            .contains(&("legacy assembler".to_string(), "gsv-assembler".to_string(),)));
+
+        let named_instance = DeployInstance::parse("gsv-personal").unwrap();
+        let named_scripts = teardown_worker_scripts(&components, &named_instance).unwrap();
+        assert!(named_scripts.contains(&(
+            "legacy assembler".to_string(),
+            "gsv-personal-assembler".to_string(),
+        )));
+    }
+
+    #[test]
+    fn partial_teardown_excludes_legacy_assembler_worker() {
+        let scripts =
+            teardown_worker_scripts(&[COMPONENT_GATEWAY.to_string()], &DeployInstance::default())
+                .unwrap();
+
+        assert_eq!(
+            scripts,
+            vec![(COMPONENT_GATEWAY.to_string(), SCRIPT_GATEWAY.to_string())]
+        );
     }
 
     #[test]
