@@ -157,6 +157,7 @@ describe("ConfigStore", () => {
     expect(targets).toContain("Browser targets are active browser profiles connected by the GSV browser extension");
     expect(targets).toContain("cat /README.txt");
     expect(targets).toContain("target-aware copy");
+    expect(targets).toContain("img2txt target:/path");
     expect(targets).toContain("cp source-target:/path destination-target:/path");
     expect(targets).toContain("skills show browser-target");
     expect(targets).toContain("message destinations");

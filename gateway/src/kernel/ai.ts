@@ -78,15 +78,11 @@ import {
 } from "../inference/transcription";
 import { encodeBase64Bytes } from "../shared/base64";
 import {
+  DEFAULT_IMAGE_READING_MAX_OBJECTS,
   DEFAULT_IMAGE_READING_MAX_TOKENS,
-  DEFAULT_IMAGE_READING_INPUT_FORMAT,
-  DEFAULT_IMAGE_READING_MODEL,
-  DEFAULT_IMAGE_READING_PROMPT,
   DEFAULT_IMAGE_READING_TIMEOUT_MS,
   DEFAULT_MAX_IMAGE_READING_BYTES,
-  normalizeImageReadingInputFormat,
-  readImageWithPiAi,
-  readImageWithWorkersAi,
+  readImage,
 } from "../inference/image-reading";
 import {
   DEFAULT_AUDIO_SPEECH_ENCODING,
@@ -518,7 +514,7 @@ export async function handleAiImageRead(
   args: AiImageReadArgs,
   ctx: KernelContext,
   body?: FrameBody,
-): Promise<AiImageReadResult> {
+): Promise<{ data: AiImageReadResult; body?: FrameBody }> {
   const input = args && typeof args === "object" ? args : ({} as AiImageReadArgs);
   const media = await resolveAiMediaConfigForContext(ctx);
   const image = input.image;
@@ -534,27 +530,40 @@ export async function handleAiImageRead(
 
   const bytes = await readAiInputBody(body, media.imageReadingMaxBytes, "image", ctx.requestSignal);
   const base64 = encodeBase64Bytes(bytes);
+  const mode = input.mode ?? "caption";
 
-  const model = normalizeOptionalString(input.model) ?? media.imageReadingModel;
-  const request = {
+  const response = await readImage(ctx.env.AI, {
     data: base64,
-    provider: media.imageReadingProvider,
-    apiKey: media.imageReadingApiKey,
-    model,
     mimeType: image.mimeType,
-    prompt: normalizeOptionalString(input.prompt) ?? media.imageReadingPrompt,
-    inputFormat: normalizeImageReadingInputFormat(input.inputFormat) ?? media.imageReadingInputFormat,
-    maxTokens: normalizePositiveNumber(input.maxTokens) ?? media.imageReadingMaxTokens,
+    mode,
+    prompt: "prompt" in input ? normalizeOptionalString(input.prompt) : undefined,
+    target: "target" in input ? normalizeOptionalString(input.target) : undefined,
+    captionLength: "captionLength" in input ? input.captionLength : undefined,
+    reasoning: "reasoning" in input ? input.reasoning : undefined,
+    responseFormat: "responseFormat" in input ? input.responseFormat : undefined,
+    schema: "schema" in input ? input.schema : undefined,
+    stream: "stream" in input ? input.stream : undefined,
+    maxTokens: mode === "caption" || mode === "query" || mode === "ocr"
+      ? ("maxTokens" in input && input.maxTokens !== undefined
+        ? input.maxTokens
+        : media.imageReadingMaxTokens)
+      : undefined,
+    maxObjects: input.mode === "point" || input.mode === "detect"
+      ? input.maxObjects ?? media.imageReadingMaxObjects
+      : undefined,
+    temperature: "temperature" in input ? input.temperature : undefined,
+    topP: "topP" in input ? input.topP : undefined,
     timeoutMs: media.imageReadingTimeoutMs,
-  };
-  const result = isWorkersAiProvider(media.imageReadingProvider)
-    ? await readImageWithWorkersAi(ctx.env.AI, request)
-    : await readImageWithPiAi(request);
-  if (!result) {
+    signal: ctx.requestSignal,
+  });
+  if (!response) {
     throw new Error("Image reading unavailable");
   }
 
-  return result;
+  return {
+    data: response.result,
+    ...(response.stream ? { body: { stream: response.stream } } : {}),
+  };
 }
 
 export async function handleAiImageGenerate(
@@ -1433,21 +1442,14 @@ function resolveAiMediaConfig(
     ?? defaultApiKey;
   const transcriptionMaxBytes = resolveConfig("transcription/max_bytes", parsePositiveInt)
     ?? DEFAULT_MAX_AUDIO_TRANSCRIPTION_BYTES;
-  const imageReadingProvider = resolveExplicitConfig("image/read/provider", normalizeProviderName)
-    ?? "workers-ai";
-  const imageReadingModel = resolveExplicitConfig("image/read/model")
-    ?? defaultImageReadingModelForProvider(imageReadingProvider);
-  const imageReadingApiKey = resolveExplicitConfig("image/read/api_key", normalizeOptionalString)
-    ?? defaultApiKey;
-  const imageReadingInputFormat = resolveConfig("image/read/input_format", normalizeImageReadingInputFormat)
-    ?? DEFAULT_IMAGE_READING_INPUT_FORMAT;
   const imageReadingMaxBytes = resolveConfig("image/read/max_bytes", parsePositiveInt)
     ?? DEFAULT_MAX_IMAGE_READING_BYTES;
   const imageReadingMaxTokens = resolveConfig("image/read/max_tokens", parsePositiveInt)
     ?? DEFAULT_IMAGE_READING_MAX_TOKENS;
+  const imageReadingMaxObjects = resolveConfig("image/read/max_objects", parsePositiveInt)
+    ?? DEFAULT_IMAGE_READING_MAX_OBJECTS;
   const imageReadingTimeoutMs = resolveConfig("image/read/timeout_ms", parsePositiveInt)
     ?? DEFAULT_IMAGE_READING_TIMEOUT_MS;
-  const imageReadingPrompt = resolveConfig("image/read/prompt") ?? DEFAULT_IMAGE_READING_PROMPT;
   const imageGenerationProvider = resolveExplicitConfig("image/generation/provider", normalizeProviderName)
     ?? "workers-ai";
   const imageGenerationModel = resolveExplicitConfig("image/generation/model")
@@ -1473,14 +1475,10 @@ function resolveAiMediaConfig(
     transcriptionModel,
     transcriptionApiKey,
     transcriptionMaxBytes,
-    imageReadingProvider,
-    imageReadingModel,
-    imageReadingApiKey,
-    imageReadingInputFormat,
     imageReadingMaxBytes,
     imageReadingMaxTokens,
+    imageReadingMaxObjects,
     imageReadingTimeoutMs,
-    imageReadingPrompt,
     imageGenerationProvider,
     imageGenerationModel,
     imageGenerationApiKey,
@@ -1497,16 +1495,6 @@ function resolveAiMediaConfig(
 function normalizeProviderName(value: string | null | undefined): string | null {
   const normalized = normalizeOptionalString(value)?.toLowerCase();
   return normalized ?? null;
-}
-
-function defaultImageReadingModelForProvider(provider: string): string {
-  if (isWorkersAiProvider(provider)) {
-    return DEFAULT_IMAGE_READING_MODEL;
-  }
-  if (isOpenAiConfigProvider(provider)) {
-    return "gpt-4o";
-  }
-  return "";
 }
 
 function defaultImageGenerationModelForProvider(provider: string): string {

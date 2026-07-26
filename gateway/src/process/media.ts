@@ -8,14 +8,10 @@ import {
 import { transcribeAudio } from "../inference/capabilities";
 import {
   DEFAULT_IMAGE_READING_MAX_TOKENS,
-  DEFAULT_IMAGE_READING_INPUT_FORMAT,
   DEFAULT_IMAGE_READING_MODEL,
-  DEFAULT_IMAGE_READING_PROMPT,
   DEFAULT_IMAGE_READING_TIMEOUT_MS,
   DEFAULT_MAX_IMAGE_READING_BYTES,
-  readImageWithWorkersAi,
-  readImageWithPiAi,
-  type ImageReadingInputFormat,
+  readImage,
   type ImageReadingBinding,
 } from "../inference/image-reading";
 import { isVectorImageMimeType } from "../inference/image-mime";
@@ -36,9 +32,7 @@ export {
 
 export {
   DEFAULT_IMAGE_READING_MODEL,
-  DEFAULT_IMAGE_READING_PROMPT,
   DEFAULT_MAX_IMAGE_READING_BYTES,
-  type ImageReadingInputFormat,
   type ImageReadingBinding,
 } from "../inference/image-reading";
 
@@ -69,11 +63,6 @@ export type StoreIncomingProcessMediaOptions = {
   audioTranscriptionModel?: string;
   audioTranscriptionApiKey?: string;
   maxTranscriptionBytes?: number;
-  imageReadingProvider?: string;
-  imageReadingModel?: string;
-  imageReadingApiKey?: string;
-  imageReadingPrompt?: string;
-  imageReadingInputFormat?: ImageReadingInputFormat | string;
   imageReadingMaxBytes?: number;
   imageReadingMaxTokens?: number;
   imageReadingTimeoutMs?: number;
@@ -157,17 +146,12 @@ export async function storeIncomingProcessMedia(
 
     if (shouldReadImage(item, next, bytes, options)) {
       const result = await describeIncomingImage(options.ai, base64!, item.mimeType, {
-        provider: options.imageReadingProvider,
-        model: options.imageReadingModel,
-        apiKey: options.imageReadingApiKey,
-        prompt: options.imageReadingPrompt,
-        inputFormat: options.imageReadingInputFormat,
         maxTokens: options.imageReadingMaxTokens,
         timeoutMs: options.imageReadingTimeoutMs,
         signal: options.signal,
       });
       if (result) {
-        next.description = result.text;
+        next.description = result;
       }
     }
 
@@ -345,15 +329,10 @@ function shouldReadImage(
   if (typeof stored.description === "string" && stored.description.trim().length > 0) {
     return false;
   }
-  const provider = options.imageReadingProvider?.trim() || "workers-ai";
-  if (isWorkersAiProvider(provider) && (!options.ai || typeof options.ai.run !== "function")) {
+  if (!options.ai || typeof options.ai.run !== "function") {
     return false;
   }
   if (!bytes || bytes.byteLength === 0) {
-    return false;
-  }
-  const model = options.imageReadingModel ?? DEFAULT_IMAGE_READING_MODEL;
-  if (!model.trim()) {
     return false;
   }
   const maxBytes = options.imageReadingMaxBytes ?? DEFAULT_MAX_IMAGE_READING_BYTES;
@@ -399,41 +378,24 @@ async function describeIncomingImage(
   base64: string,
   mimeType: string,
   options: {
-    provider?: string;
-    model?: string;
-    apiKey?: string;
-    prompt?: string;
-    inputFormat?: ImageReadingInputFormat | string;
     maxTokens?: number;
     timeoutMs?: number;
     signal?: AbortSignal;
   },
-): Promise<{ text: string } | null> {
-  const provider = options.provider?.trim() || "workers-ai";
-
+): Promise<string | null> {
   try {
-    if (!isWorkersAiProvider(provider)) {
-      return await readImageWithPiAi({
-        provider,
-        apiKey: options.apiKey,
-        data: base64,
-        mimeType,
-        model: options.model,
-        prompt: options.prompt || DEFAULT_IMAGE_READING_PROMPT,
-        maxTokens: options.maxTokens ?? DEFAULT_IMAGE_READING_MAX_TOKENS,
-        timeoutMs: options.timeoutMs ?? DEFAULT_IMAGE_READING_TIMEOUT_MS,
-      });
-    }
-
-    return await readImageWithWorkersAi(ai, {
+    const response = await readImage(ai, {
       data: base64,
       mimeType,
-      model: options.model,
-      prompt: options.prompt || DEFAULT_IMAGE_READING_PROMPT,
-      inputFormat: options.inputFormat || DEFAULT_IMAGE_READING_INPUT_FORMAT,
+      mode: "caption",
+      captionLength: "normal",
       maxTokens: options.maxTokens ?? DEFAULT_IMAGE_READING_MAX_TOKENS,
       timeoutMs: options.timeoutMs ?? DEFAULT_IMAGE_READING_TIMEOUT_MS,
+      signal: options.signal,
     });
+    return response?.result.mode === "caption" && "text" in response.result
+      ? response.result.text
+      : null;
   } catch (error) {
     if (options.signal?.aborted) {
       throw options.signal.reason ?? error;

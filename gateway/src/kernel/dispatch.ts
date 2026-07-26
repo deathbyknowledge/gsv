@@ -286,7 +286,7 @@ async function dispatchNative(
 
       case "shell.exec":
         data = await handleShellExec(frame.args, ctx, {
-          fsCopyTransport: deps,
+          fsTransport: deps,
           netFetchTransport: deps,
           request: (request, signal) => deps.request(request, ctx, signal),
         });
@@ -408,8 +408,12 @@ async function dispatchNative(
         data = await handleAiTranscriptionCreate(frame.args, ctx, frame.body);
         break;
       case "ai.image.read":
-        data = await handleAiImageRead(frame.args, ctx, frame.body);
-        break;
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          ...await handleAiImageRead(frame.args, ctx, frame.body),
+        };
       case "ai.image.generate":
         return {
           type: "res",

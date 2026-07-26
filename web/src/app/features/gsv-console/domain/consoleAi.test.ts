@@ -54,7 +54,7 @@ describe("console AI config classification", () => {
   it("lists only chat model overrides and profile models as LLM options", () => {
     const labels = modelLabelsForConfig([
       { key: "config/ai/model", value: "system-llm", redacted: false },
-      { key: "config/ai/image/read/model", value: "vision-model", redacted: false },
+      { key: "config/ai/image/generation/model", value: "image-model", redacted: false },
       { key: "config/ai/speech/model", value: "voice-model", redacted: false },
       { key: "users/1/ai/model", value: "agent-llm", redacted: false },
       {
@@ -65,7 +65,7 @@ describe("console AI config classification", () => {
             name: "Profile Fast",
             values: {
               "config/ai/model": "profile-llm",
-              "config/ai/image/read/model": "profile-vision",
+              "config/ai/image/generation/model": "profile-image",
             },
           }],
         }),

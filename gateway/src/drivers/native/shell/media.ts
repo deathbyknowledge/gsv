@@ -1,4 +1,9 @@
 import { defineCommand, type Command, type CommandContext, type ExecResult } from "just-bash";
+import {
+  bodyToText,
+  type AiImageReadArgs,
+  type AiImageReadResponseFormat,
+} from "@humansandmachines/gsv/protocol";
 import type { GsvFs } from "../../../fs/gsv-fs";
 import {
   handleAiImageGenerate,
@@ -7,7 +12,9 @@ import {
   handleAiTranscriptionCreate,
 } from "../../../kernel/ai";
 import type { KernelContext } from "../../../kernel/context";
+import { openFsSource, type FsDeviceTransport } from "../fs";
 import { requireCommandCapability, requireShellOptionValue } from "./common";
+import { parseShellFsEndpoint } from "./fs-path";
 
 type ParsedArgs = {
   options: Map<string, string | true>;
@@ -20,9 +27,15 @@ type ParseSpec = {
   aliases?: Record<string, string>;
 };
 
-export function buildMediaCommands(fs: GsvFs, ctx: KernelContext): Command[] {
+export function buildMediaCommands(
+  fs: GsvFs,
+  ctx: KernelContext,
+  fsTransport?: FsDeviceTransport,
+): Command[] {
   return [
-    defineMediaCommand("img2txt", (args, shellCtx) => runImg2Txt(args, shellCtx, fs, ctx)),
+    defineMediaCommand("img2txt", (args, shellCtx) => (
+      runImg2Txt(args, shellCtx, fs, ctx, fsTransport)
+    )),
     defineMediaCommand("txt2img", (args, shellCtx) => runTxt2Img(args, shellCtx, fs, ctx)),
     defineMediaCommand("stt", (args, shellCtx) => runStt(args, shellCtx, fs, ctx)),
     defineMediaCommand("tts", (args, shellCtx) => runTts(args, shellCtx, fs, ctx)),
@@ -48,10 +61,23 @@ async function runImg2Txt(
   shellCtx: CommandContext,
   fs: GsvFs,
   ctx: KernelContext,
+  fsTransport?: FsDeviceTransport,
 ): Promise<ExecResult> {
-  const parsed = parseArgs(args, {
-    boolean: ["help", "json"],
-    value: ["mime", "prompt", "model", "input-format", "max-tokens"],
+  const mode = parseImg2TxtMode(args[0]);
+  const parsed = parseArgs(mode.explicit ? args.slice(1) : args, {
+    boolean: ["help", "json", "stream", "reasoning"],
+    value: [
+      "mime",
+      "prompt",
+      "target",
+      "length",
+      "response-format",
+      "schema",
+      "max-tokens",
+      "max-objects",
+      "temperature",
+      "top-p",
+    ],
     aliases: { h: "help" },
   });
   if (hasOption(parsed, "help")) {
@@ -62,37 +88,59 @@ async function runImg2Txt(
     throw new Error("expected exactly one image path");
   }
 
-  const path = resolvePath(shellCtx, parsed.positionals[0]);
+  const source = parseShellFsEndpoint(parsed.positionals[0], shellCtx, ctx);
   const maxTokens = parsePositiveIntOption(optionValue(parsed, "max-tokens"), "--max-tokens");
-  const requestCtx = withShellSignal(ctx, shellCtx);
-  const opened = await fs.openFile(path);
-  const stream = opened.body;
-  if (!stream) {
-    throw new Error(`cannot read image data for ${path}`);
+  const maxObjects = parsePositiveIntOption(optionValue(parsed, "max-objects"), "--max-objects");
+  const temperature = parseNumberOption(optionValue(parsed, "temperature"), "--temperature", 0, 2);
+  const topP = parseNumberOption(optionValue(parsed, "top-p"), "--top-p", 0, 1);
+  const streamOutput = hasOption(parsed, "stream");
+  if (streamOutput && hasOption(parsed, "json")) {
+    throw new Error("--stream cannot be combined with --json");
   }
-  const result = await usingStream(stream, async () => {
+  const requestCtx = withShellSignal(ctx, shellCtx);
+  const opened = await openFsSource(source, requestCtx, {
+    fs,
+    transport: fsTransport,
+  });
+  const stream = opened.body.stream;
+  const response = await usingStream(stream, async () => {
     const mimeType = optionValue(parsed, "mime")
       ?? storedMediaMimeType(opened.contentType, "image")
-      ?? inferImageMimeType(path);
+      ?? inferImageMimeType(source.path);
     if (!mimeType) {
-      throw new Error(`cannot infer image MIME type for ${path}; pass --mime image/...`);
+      throw new Error(`cannot infer image MIME type for ${source.path}; pass --mime image/...`);
     }
-    return handleAiImageRead({
+    const common = {
       image: {
         mimeType,
-        filename: pathName(path),
+        filename: pathName(source.path),
       },
-      prompt: optionValue(parsed, "prompt"),
-      model: optionValue(parsed, "model"),
-      inputFormat: normalizeInputFormatOption(optionValue(parsed, "input-format")),
       ...(maxTokens !== undefined ? { maxTokens } : {}),
-    }, requestCtx, { stream, length: opened.size });
+      ...(temperature !== undefined ? { temperature } : {}),
+      ...(topP !== undefined ? { topP } : {}),
+    };
+    const request = buildImg2TxtRequest(mode.value, parsed, common, {
+      maxObjects,
+      stream: streamOutput,
+    });
+    return handleAiImageRead(request, requestCtx, opened.body);
   });
 
+  const result = response.data;
+  if (response.body) {
+    const text = await bodyToText(response.body, Infinity, requestCtx.requestSignal);
+    return ok(text.endsWith("\n") ? text : `${text}\n`);
+  }
   if (hasOption(parsed, "json")) {
     return okJson(result);
   }
-  return ok(`${result.text}\n`);
+  if (result.mode === "caption" || result.mode === "query" || result.mode === "ocr") {
+    if ("text" in result) {
+      return ok(`${result.text}\n`);
+    }
+    throw new Error("streaming returned no response body");
+  }
+  return okJson(result);
 }
 
 async function runTxt2Img(
@@ -353,14 +401,183 @@ function parsePositiveIntOption(value: string | undefined, label: string): numbe
   return parsed;
 }
 
-function normalizeInputFormatOption(value: string | undefined): "auto" | "chat" | "image" | undefined {
+function parseNumberOption(
+  value: string | undefined,
+  label: string,
+  minimum: number,
+  maximum: number,
+): number | undefined {
   if (value === undefined) {
     return undefined;
   }
-  if (value === "auto" || value === "chat" || value === "image") {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${label} must be between ${minimum} and ${maximum}`);
+  }
+  return parsed;
+}
+
+function parseImg2TxtMode(value: string | undefined): {
+  value: "caption" | "query" | "ocr" | "point" | "detect";
+  explicit: boolean;
+} {
+  if (
+    value === "caption"
+    || value === "query"
+    || value === "ocr"
+    || value === "point"
+    || value === "detect"
+  ) {
+    return { value, explicit: true };
+  }
+  return { value: "caption", explicit: false };
+}
+
+function buildImg2TxtRequest(
+  mode: "caption" | "query" | "ocr" | "point" | "detect",
+  parsed: ParsedArgs,
+  common: {
+    image: { mimeType: string; filename?: string };
+    maxTokens?: number;
+    temperature?: number;
+    topP?: number;
+  },
+  options: {
+    maxObjects?: number;
+    stream: boolean;
+  },
+): AiImageReadArgs {
+  const prompt = optionValue(parsed, "prompt");
+  const target = optionValue(parsed, "target");
+  const responseFormat = normalizeResponseFormatOption(optionValue(parsed, "response-format"));
+  const schema = parseSchemaOption(optionValue(parsed, "schema"));
+  const captionLength = normalizeCaptionLengthOption(optionValue(parsed, "length"));
+  const reasoning = hasOption(parsed, "reasoning");
+
+  if (mode === "caption") {
+    rejectModeOptions(mode, {
+      "--prompt": prompt,
+      "--target": target,
+      "--response-format": responseFormat,
+      "--schema": schema,
+      "--reasoning": reasoning,
+      "--max-objects": options.maxObjects,
+    });
+    return {
+      ...common,
+      mode,
+      ...(captionLength ? { captionLength } : {}),
+      ...(options.stream ? { stream: true } : {}),
+    };
+  }
+  if (captionLength) {
+    throw new Error("--length is supported only for caption mode");
+  }
+  if (mode === "query") {
+    if (!prompt) {
+      throw new Error("--prompt is required for query mode");
+    }
+    rejectModeOptions(mode, {
+      "--target": target,
+      "--max-objects": options.maxObjects,
+    });
+    return {
+      ...common,
+      mode,
+      prompt,
+      ...(reasoning ? { reasoning: true } : {}),
+      ...(responseFormat ? { responseFormat } : {}),
+      ...(schema ? { schema } : {}),
+      ...(options.stream ? { stream: true } : {}),
+    };
+  }
+  if (mode === "ocr") {
+    rejectModeOptions(mode, {
+      "--target": target,
+      "--reasoning": reasoning,
+      "--max-objects": options.maxObjects,
+    });
+    return {
+      ...common,
+      mode,
+      ...(prompt ? { prompt } : {}),
+      ...(responseFormat ? { responseFormat } : {}),
+      ...(schema ? { schema } : {}),
+      ...(options.stream ? { stream: true } : {}),
+    };
+  }
+
+  if (!target) {
+    throw new Error(`--target is required for ${mode} mode`);
+  }
+  rejectModeOptions(mode, {
+    "--prompt": prompt,
+    "--response-format": responseFormat,
+    "--schema": schema,
+    "--reasoning": reasoning,
+    "--stream": options.stream,
+    "--max-tokens": common.maxTokens,
+    "--temperature": common.temperature,
+    "--top-p": common.topP,
+  });
+  return {
+    image: common.image,
+    mode,
+    target,
+    ...(options.maxObjects ? { maxObjects: options.maxObjects } : {}),
+  };
+}
+
+function rejectModeOptions(
+  mode: string,
+  options: Record<string, unknown>,
+): void {
+  const unsupported = Object.entries(options)
+    .find(([, value]) => value !== undefined && value !== false);
+  if (unsupported) {
+    throw new Error(`${unsupported[0]} is not supported for ${mode} mode`);
+  }
+}
+
+function normalizeCaptionLengthOption(
+  value: string | undefined,
+): "short" | "normal" | "long" | undefined {
+  if (value === undefined || value === "short" || value === "normal" || value === "long") {
     return value;
   }
-  throw new Error("--input-format must be auto, chat, or image");
+  throw new Error("--length must be short, normal, or long");
+}
+
+function normalizeResponseFormatOption(
+  value: string | undefined,
+): AiImageReadResponseFormat | undefined {
+  if (
+    value === undefined
+    || value === "text"
+    || value === "json"
+    || value === "xml"
+    || value === "markdown"
+    || value === "csv"
+  ) {
+    return value;
+  }
+  throw new Error("--response-format must be text, json, xml, markdown, or csv");
+}
+
+function parseSchemaOption(value: string | undefined): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("--schema must be a JSON object");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("--schema must be a JSON object");
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function readTextArgument(positionals: string[], ctx: CommandContext, label: string): string {
@@ -433,17 +650,29 @@ function okJson(value: unknown): ExecResult {
 
 function img2txtUsage(): string {
   return [
-    "img2txt [OPTIONS] IMAGE",
+    "img2txt [caption] [OPTIONS] IMAGE",
+    "img2txt query --prompt TEXT [OPTIONS] IMAGE",
+    "img2txt ocr [OPTIONS] IMAGE",
+    "img2txt point --target TEXT [OPTIONS] IMAGE",
+    "img2txt detect --target TEXT [OPTIONS] IMAGE",
     "",
-    "Describe an image with the configured image-reading model.",
+    "Read an image with Moondream. Caption mode is the default.",
+    "IMAGE may be local, gsv:/path, target:/path, or [target-with-colons]:/path.",
     "",
     "Options:",
-    "  --prompt TEXT",
-    "  --model MODEL",
-    "  --input-format auto|chat|image",
-    "  --max-tokens N",
+    "  --prompt TEXT                  Query or OCR instructions",
+    "  --target TEXT                  Object phrase for point or detect",
+    "  --length short|normal|long     Caption length",
+    "  --reasoning                    Include query reasoning and grounding",
+    "  --response-format FORMAT       text|json|xml|markdown|csv",
+    "  --schema JSON                  JSON Schema for structured JSON output",
+    "  --stream                       Stream caption/query/OCR model output",
+    "  --max-tokens N                 Caption/query/OCR token limit",
+    "  --max-objects N                Point/detect result limit",
+    "  --temperature N                Caption/query/OCR sampling, 0..2",
+    "  --top-p N                      Caption/query/OCR sampling, 0..1",
     "  --mime MIME",
-    "  --json",
+    "  --json                         Print the complete result envelope",
     "",
   ].join("\n");
 }

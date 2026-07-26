@@ -377,7 +377,7 @@ The current body-bearing syscalls are:
 | `proc.media.read` | No | Successful stored media bytes |
 | `proc.media.write` | Required media bytes with an exact descriptor length | No |
 | `ai.transcription.create` | Required audio bytes | No |
-| `ai.image.read` | Required image bytes | No |
+| `ai.image.read` | Required image bytes | Decoded UTF-8 text when caption, query, or OCR requests set `stream: true` |
 | `ai.image.generate` | No | Generated image bytes when returned inline |
 | `ai.speech.create` | No | Synthesized audio bytes unless the result is skipped or empty |
 | `adapter.inbound` | Optional concatenated media bytes referenced by metadata ranges | No |

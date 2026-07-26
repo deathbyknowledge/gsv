@@ -2745,7 +2745,7 @@ export class Kernel extends Host<Env> {
         },
         ctx,
         {
-          fsCopyTransport: deps,
+          fsTransport: deps,
           netFetchTransport: deps,
           request: (frame, signal) => deps.request(frame, ctx, signal),
         },
