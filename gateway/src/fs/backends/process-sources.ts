@@ -77,6 +77,16 @@ type SourceOverlayManifest = {
   changes: Record<string, SourceOverlayChange>;
 };
 
+type LegacySourceOverlayManifest = {
+  version: 1;
+  packageId: string;
+  packageKey: string;
+  baseRef: string;
+  createdAt: number;
+  updatedAt: number;
+  changes: Record<string, SourceOverlayChange>;
+};
+
 export type SourceChangeSummary = {
   path: string;
   type: "put" | "delete";
@@ -1172,11 +1182,17 @@ async function readOverlayManifest(
     return empty;
   }
   try {
-    const parsed = JSON.parse(await obj.text()) as Partial<SourceOverlayManifest>;
+    const parsed = JSON.parse(await obj.text()) as
+      | Partial<SourceOverlayManifest>
+      | Partial<LegacySourceOverlayManifest>;
+    const matchesRepo = parsed.version === 2
+      ? parsed.sourceId === repo.sourceKey
+        && parsed.sourceKey === sourceRepoStorageKey(repo)
+      : parsed.version === 1
+        && parsed.packageId === repo.sourceKey
+        && parsed.packageKey === sourceRepoStorageKey(repo);
     if (
-      parsed.version !== 2 ||
-      parsed.sourceId !== repo.sourceKey ||
-      parsed.sourceKey !== sourceRepoStorageKey(repo) ||
+      !matchesRepo ||
       !parsed.changes
     ) {
       return empty;
