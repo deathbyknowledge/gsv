@@ -249,6 +249,77 @@ struct CloudflareApiMessage {
 }
 
 #[derive(Debug, Deserialize)]
+struct CloudflareApiErrorEnvelope {
+    errors: Option<Vec<CloudflareApiMessage>>,
+    messages: Option<Vec<CloudflareApiMessage>>,
+}
+
+#[derive(Debug)]
+struct CloudflareApiError {
+    display: String,
+    response_messages: Vec<CloudflareApiMessage>,
+}
+
+impl CloudflareApiError {
+    fn from_response(
+        context: &str,
+        status: Option<StatusCode>,
+        errors: Option<Vec<CloudflareApiMessage>>,
+        messages: Option<Vec<CloudflareApiMessage>>,
+    ) -> Self {
+        let summary = summarize_cloudflare_messages(errors.as_deref(), messages.as_deref());
+        let display = match status {
+            Some(status) => format!("{} failed ({}): {}", context, status, summary),
+            None => format!("{} failed: {}", context, summary),
+        };
+        let mut response_messages = errors.unwrap_or_default();
+        response_messages.extend(messages.unwrap_or_default());
+        Self {
+            display,
+            response_messages,
+        }
+    }
+
+    fn mentions_worker_loader(&self) -> bool {
+        self.response_messages.iter().any(|message| {
+            let normalized = message.message.to_ascii_lowercase();
+            let names_loader = normalized.contains("worker loader")
+                || normalized.contains("worker_loader")
+                || normalized.contains("worker-loader")
+                || normalized.contains("dynamic worker")
+                || message
+                    .message
+                    .split(|character: char| !character.is_ascii_alphanumeric())
+                    .any(|token| token == "LOADER");
+            let rejects_capability = normalized.contains("not support")
+                || normalized.contains("unsupported")
+                || normalized.contains("not available")
+                || normalized.contains("unavailable for this account")
+                || normalized.contains("not enabled")
+                || normalized.contains("not allowed")
+                || normalized.contains("not authorized")
+                || normalized.contains("not permitted")
+                || normalized.contains("require")
+                || normalized.contains("only available")
+                || normalized.contains("only supported")
+                || normalized.contains("paid plan")
+                || normalized.contains("free plan")
+                || normalized.contains("unknown binding")
+                || normalized.contains("invalid binding");
+            names_loader && rejects_capability
+        })
+    }
+}
+
+impl std::fmt::Display for CloudflareApiError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.display)
+    }
+}
+
+impl std::error::Error for CloudflareApiError {}
+
+#[derive(Debug, Deserialize)]
 struct CloudflareApiResponse<T> {
     success: bool,
     result: T,
@@ -1213,17 +1284,24 @@ async fn parse_cloudflare_response<T: DeserializeOwned>(
     let body = response.text().await?;
 
     if !status.is_success() {
-        if let Ok(envelope) = serde_json::from_str::<CloudflareApiResponse<Value>>(&body) {
-            return Err(format!(
-                "{} failed ({}): {}",
-                context,
-                status,
-                summarize_cloudflare_messages(
-                    envelope.errors.as_deref(),
-                    envelope.messages.as_deref(),
+        if let Ok(envelope) = serde_json::from_str::<CloudflareApiErrorEnvelope>(&body) {
+            let has_response_messages = envelope
+                .errors
+                .as_ref()
+                .is_some_and(|messages| !messages.is_empty())
+                || envelope
+                    .messages
+                    .as_ref()
+                    .is_some_and(|messages| !messages.is_empty());
+            if has_response_messages {
+                return Err(CloudflareApiError::from_response(
+                    context,
+                    Some(status),
+                    envelope.errors,
+                    envelope.messages,
                 )
-            )
-            .into());
+                .into());
+            }
         }
 
         return Err(format!("{} failed ({}): {}", context, status, body).into());
@@ -1237,15 +1315,22 @@ async fn parse_cloudflare_response<T: DeserializeOwned>(
     })?;
 
     if !envelope.success {
-        return Err(format!(
-            "{} failed: {}",
+        return Err(CloudflareApiError::from_response(
             context,
-            summarize_cloudflare_messages(envelope.errors.as_deref(), envelope.messages.as_deref(),)
+            None,
+            envelope.errors,
+            envelope.messages,
         )
         .into());
     }
 
     Ok(envelope.result)
+}
+
+fn is_worker_loader_binding_rejection(error: &(dyn std::error::Error + 'static)) -> bool {
+    error
+        .downcast_ref::<CloudflareApiError>()
+        .is_some_and(CloudflareApiError::mentions_worker_loader)
 }
 
 async fn list_worker_scripts(
@@ -2926,12 +3011,13 @@ pub async fn apply_deploy(
             if bundle.component != COMPONENT_GATEWAY
                 || codemode_preference != CodeModePreference::Auto
                 || !codemode_enabled
+                || !is_worker_loader_binding_rejection(error.as_ref())
             {
                 return Err(error);
             }
 
             println!(
-                "Warning: gateway upload with CodeMode failed ({}). Retrying without the Worker Loader binding.",
+                "Warning: Cloudflare rejected the Worker Loader binding ({}). Retrying without CodeMode.",
                 error
             );
             let fallback_metadata = build_upload_metadata(
@@ -3776,6 +3862,55 @@ cpu_ms = 300000
             state: Some("Cancelled".to_string()),
         }];
         assert!(!workers_paid_from_subscriptions(&cancelled));
+    }
+
+    #[test]
+    fn codemode_fallback_requires_a_loader_specific_api_error() {
+        for message in [
+            "Worker Loader bindings require a Workers Paid plan",
+            "The worker_loader binding is unavailable for this account",
+            "Binding LOADER is not enabled on this account",
+            "Dynamic Workers are currently only available on Workers Paid",
+        ] {
+            let error = CloudflareApiError::from_response(
+                "Upload script gsv",
+                Some(StatusCode::BAD_REQUEST),
+                Some(vec![CloudflareApiMessage {
+                    code: Some(10021),
+                    message: message.to_string(),
+                }]),
+                None,
+            );
+            assert!(
+                is_worker_loader_binding_rejection(&error),
+                "expected loader rejection: {message}"
+            );
+        }
+
+        for message in [
+            "Validation failures: invalid migration tag",
+            "The uploaded Worker exceeded the Worker size limit",
+            "Account is not entitled to use Workers",
+            "Worker Loader connection failed temporarily",
+            "Worker Loader binding metadata is malformed",
+        ] {
+            let error = CloudflareApiError::from_response(
+                "Upload script gsv",
+                Some(StatusCode::BAD_REQUEST),
+                Some(vec![CloudflareApiMessage {
+                    code: Some(10021),
+                    message: message.to_string(),
+                }]),
+                None,
+            );
+            assert!(
+                !is_worker_loader_binding_rejection(&error),
+                "unexpected loader rejection: {message}"
+            );
+        }
+
+        let transport_error = std::io::Error::other("Worker Loader connection failed");
+        assert!(!is_worker_loader_binding_rejection(&transport_error));
     }
 
     #[test]

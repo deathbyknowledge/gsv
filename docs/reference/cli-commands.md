@@ -332,8 +332,9 @@ gsv infra destroy [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
 `--codemode` defaults to `auto`. Auto mode enables the gateway's Worker Loader
 binding on Workers Paid accounts and omits it on Workers Free accounts. If plan
 detection is unavailable to the API token, deploy probes the binding during the
-gateway upload and retries without it when unsupported. Use `on` to require
-CodeMode or `off` to omit the binding explicitly.
+gateway upload and retries without it only when Cloudflare identifies the Worker
+Loader or Dynamic Workers capability as unsupported. Use `on` to require CodeMode
+or `off` to omit the binding explicitly.
 
 Valid components are `ripgit`, `gateway`, `channel-whatsapp`,
 `channel-discord`, and `channel-telegram`. When no deploy/upgrade component is
