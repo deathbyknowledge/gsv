@@ -349,7 +349,9 @@ Both accept `--bundle-dir PATH` for local bundles, `--api-token` or
 `destroy` tears down Workers. If no component or `--all` is supplied, it targets
 all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`
 must be combined with it. Unless `--keep-device` is passed, `destroy` also
-attempts to uninstall the local device service.
+attempts to uninstall the local device service. A full teardown also removes the
+legacy assembler Worker when it exists; assembler remains unavailable as a
+deployable component.
 
 ## Version
 
