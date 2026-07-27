@@ -1085,7 +1085,6 @@ describe("proc native command", () => {
               cwd: IDENTITY.cwd,
               profile: "init",
               state: "running",
-              contextFiles: [],
               createdAt: 1,
             };
           },
@@ -1191,7 +1190,6 @@ describe("proc native command", () => {
       interactive: true,
       parentPid: null,
       label: null,
-      contextFiles: [],
       createdAt: 1,
     };
     const spawn = vi.fn();
@@ -1309,7 +1307,6 @@ describe("proc native command", () => {
       profile: "task",
       state: "running",
       activeRunId: "parent-run",
-      contextFiles: [],
       createdAt: 1,
     };
     const spawn = vi.fn((pid: string) => {
@@ -1477,7 +1474,6 @@ describe("proc native command", () => {
       interactive: true,
       parentPid: null,
       label: "parent",
-      contextFiles: [],
       createdAt: 1,
     };
     const spawn = vi.fn((pid: string) => children.push(pid));
@@ -1619,7 +1615,6 @@ describe("proc native command", () => {
                 home: "/home/shared-agent",
                 cwd: "/home/shared-agent",
                 state: "idle",
-                contextFiles: [],
                 createdAt: 1,
               };
             }
@@ -1693,7 +1688,6 @@ describe("proc native command", () => {
                 home: IDENTITY.home,
                 cwd: IDENTITY.cwd,
                 state: "idle",
-                contextFiles: [],
                 createdAt: 1,
               };
             }

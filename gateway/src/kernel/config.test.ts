@@ -123,7 +123,7 @@ describe("ConfigStore", () => {
     expect(values.get("config/ai/provider")).toBe("anthropic");
     expect(values.get("config/ai/model")).toBe("claude-sonnet-4-6");
     expect(values.get("config/ai/generation/streaming")).toBe("auto");
-    expect(values.get("config/ai/context.d/00-gsv.md")).toContain("[Process Event]:");
+    expect(values.get("config/ai/context.d/01-gsv.md")).toContain("[Process Event]:");
   });
 
   it("ships a Workers AI primary model and root fallback profile", () => {
@@ -148,59 +148,42 @@ describe("ConfigStore", () => {
     expect(store.list("config/ai/")).toEqual(store.list("config/ai"));
   });
 
-  it("defines common process context once for all profiles", () => {
-    const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/00-gsv.md"];
-    expect(context).toContain("You are running inside GSV, a Linux-shaped cloud computer");
+  it("defines lean common process context once for all profiles", () => {
+    const context = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/01-gsv.md"];
+    expect(context).toContain("GSV is a personal intelligence OS");
+    expect(context).toContain("its own lightweight Linux virtual computer");
+    expect(context).toContain("skills show browser-target");
     expect(context).toContain("[Process Event]:");
+    expect(context).toContain("Treat them as system notifications");
     const targets = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/05-targets.md"];
-    expect(targets).toContain("GSV tools are targetable");
-    expect(targets).toContain("Browser targets are active browser profiles connected by the GSV browser extension");
-    expect(targets).toContain("cat /README.txt");
-    expect(targets).toContain("target-aware copy");
-    expect(targets).toContain("img2txt target:/path");
-    expect(targets).toContain("cp source-target:/path destination-target:/path");
-    expect(targets).toContain("skills show browser-target");
     expect(targets).toContain("message destinations");
-    expect(targets).toContain("requires `--also`");
+    expect(targets).toContain("message attach PATH...");
+    expect(targets).toContain("message send");
+    expect(targets).toContain("cp source-target:/path destination-target:/path");
+    expect(targets).toContain("targets list");
+    expect(targets).toContain("must be run from the `gsv` target");
     const discovery = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/20-discovery.md"];
     expect(discovery).toContain("man --search -- '<plain-language goal>'");
-    expect(discovery).toContain("skills show skill-authoring");
-    expect(discovery).toContain("skills validate");
-    expect(discovery).toContain("Do not silently persist one-off work");
+    expect(discovery).toContain("the `mcp` command");
+    expect(discovery).toContain("CodeMode as `mcpTools`");
+    expect(discovery).toContain("Load the relevant skill");
     expect(SYSTEM_CONFIG_DEFAULTS["config/ai/skills/index_mode"]).toBe("summary");
     const orchestration = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/30-process-orchestration.md"];
-    expect(orchestration).toContain("target: \"gsv\"");
-    expect(orchestration).toContain("proc agents");
+    expect(orchestration).toContain("target `gsv`");
+    expect(orchestration).toContain("proc delegate");
     expect(orchestration).toContain("proc spawn");
-    expect(orchestration).toContain("For scheduled background work, pass `--non-interactive`");
-    expect(orchestration).toContain("--as <account>");
-    expect(orchestration).toContain("Choose the scheduling mechanism by its delivery contract");
-    expect(orchestration).toContain("sched add --here");
-    expect(orchestration).toContain("must re-enter the current process conversation");
-    expect(orchestration).toContain("event admission, not completion");
-    expect(orchestration).toContain("captures the current automatic reply destination");
-    expect(orchestration).toContain("sched add --to <destination>");
-    expect(orchestration).toContain("Delegation requires a process-backed caller");
-    expect(orchestration).toContain("never put `proc delegate` in a crontab");
-    expect(orchestration).toContain("dispatch and spawn acceptance");
-    expect(orchestration).toContain("crontab FILE");
-    expect(orchestration).toContain("/var/spool/cron/<username>");
-    expect(orchestration).toContain("sched list");
-    expect(orchestration).not.toContain("proc profiles");
-    expect(orchestration).not.toContain("~/profiles.d");
-    expect(orchestration).not.toContain("SpawnProcess");
-    const runtimeFacts = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/10-runtime.md"];
-    expect(runtimeFacts).toContain("User: {{user.username}}");
-    expect(runtimeFacts).toContain("User home: {{user.home}}");
-    expect(runtimeFacts).toContain("Current program: {{program.username}}");
-    expect(runtimeFacts).toContain("Program home: {{program.home}}");
-    expect(runtimeFacts).toContain("Program current working directory: {{program.cwd}}");
-    expect(runtimeFacts).toContain("`~` resolves to the current program home");
-
-    // Per-agent persona/context now lives in account homes, not in config.
-    for (const profile of ["init", "task", "review", "cron", "mcp"]) {
-      expect(SYSTEM_CONFIG_DEFAULTS[`config/ai/profile/${profile}/context.d/00-role.md`]).toBeUndefined();
-    }
+    expect(orchestration).toContain("sched");
+    expect(orchestration).toContain("crontab");
+    expect(orchestration).toContain("skills show process-orchestration");
+    expect(orchestration).not.toContain("proc agents");
+    expect(orchestration).not.toContain("sched add --here");
+    const runtimeFacts = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/00-runtime.md"];
+    expect(runtimeFacts).toContain("as agent `{{program.username}}` for owner `{{user.username}}`");
+    expect(runtimeFacts).toContain("Agent home: {{program.home}}");
+    expect(runtimeFacts).toContain("Owner home: {{user.home}}");
+    expect(runtimeFacts).toContain("Current working directory: {{program.cwd}}");
+    expect(runtimeFacts).toContain("Date: {{current.date}}");
+    expect(runtimeFacts).toContain("Timezone: {{current.timezone}}");
   });
 
   it("defines a global default tool approval policy with explicit guarded tool kinds", () => {

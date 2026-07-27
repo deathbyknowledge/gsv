@@ -55,31 +55,20 @@ The AI runtime resolves per-user values first, then falls back to system default
 | `config/ai/max_context_bytes` | `users/{uid}/ai/max_context_bytes` | `32768` | Prompt context budget before messages. |
 | `config/ai/skills/index_mode` | `users/{uid}/ai/skills/index_mode` | `summary` | Skill index included in standing context: ids and descriptions with `summary`, ids only with `names`, or omitted with `off`. Live discovery remains available in every mode. |
 
-## System and Profile Context
-
-All AI profiles load shared system context first:
+## System Context
 
 ```text
 config/ai/context.d/*.md
 ```
 
-Built-in AI profiles then load role-specific context from:
-
-```text
-config/ai/profile/{profile}/context.d/*.md
-```
-
-Supported built-in profiles are `init`, `task`, `review`, `cron`, `mcp`, and `app`. Files are sorted lexically, empty files are skipped, and Markdown content is concatenated into the corresponding context section.
+Files are sorted lexically, empty files are skipped, and Markdown content is concatenated into the corresponding context section.
 
 Use numeric prefixes to make ordering explicit:
 
 ```text
-config/ai/context.d/00-gsv.md
-config/ai/context.d/10-runtime.md
-config/ai/profile/task/context.d/00-role.md
+config/ai/context.d/00-runtime.md
+config/ai/context.d/01-gsv.md
 ```
-
-System and profile context support runtime template variables such as `profile`, `identity.uid`, `identity.username`, `identity.home`, `identity.cwd`, `identity.workspaceId`, `workspace`, `devices`, `mcpServers`, and `known_paths`.
 
 ## Tool Approval Policy
 

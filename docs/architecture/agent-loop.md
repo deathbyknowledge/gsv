@@ -9,8 +9,8 @@ Process DO model.
 ## Process, Not Session
 
 Each agent process is a Durable Object with a SQLite-backed `ProcessStore`.
-Kernel SQLite stores process registry data such as PID, uid/gid, profile, cwd,
-workspace id, parent, and state. Process SQLite stores the mutable run state:
+Kernel SQLite stores process registry data such as PID, uid/gid, cwd,
+parent, and state. Process SQLite stores the mutable run state:
 
 - `messages`: active conversation history.
 - `pending_tool_calls`: durable tool dispatches from registration through
@@ -18,8 +18,7 @@ workspace id, parent, and state. Process SQLite stores the mutable run state:
 - `message_queue`: FIFO process- and scheduler-origin work received while a run
   is active.
 - `pending_hil`: human-in-the-loop tool approval state.
-- `process_kv`: process metadata such as identity, profile, current run, and
-  process-local context files.
+- `process_kv`: process metadata.
 
 The Kernel delivers frames to the Process DO through `recvFrame`. `proc.send`
 starts or supersedes a user run and queues background-origin work, `proc.history` reads stored messages, `proc.reset`
@@ -50,7 +49,7 @@ cleanly.
 
 On the first tick for a run, the process asks the Kernel for runtime inputs:
 
-- `ai.config` resolves provider, model, reasoning, output limit, system/profile context
+- `ai.config` resolves provider, model, reasoning, output limit, system context
   files, approval policy, and context byte budget.
 - `ai.tools` returns the syscall tool schemas visible to this process and the
   accessible online devices, including owner-authored device descriptions.
@@ -59,24 +58,14 @@ The process then assembles a system prompt from explicit context providers in
 this order:
 
 1. **System context** from `config/ai/context.d/*.md`.
-2. **Profile context** from `config/ai/profile/{profile}/context.d/*.md`.
-3. **Home context** from `~/context.d/*.md`, backed by the user's ripgit home
+2. **Home context** from `~/context.d/*.md`, backed by the user's ripgit home
    repository with R2 fallback.
-4. **Workspace context** from `/workspaces/{workspaceId}/.gsv/context.d/*.md`,
-   or `.gsv/summary.md` when no context files exist.
-5. **Available skills** from layered `skills.d` directories. This is a compact
+3. **Available skills** from layered `skills.d` directories. This is a compact
    command-oriented index only; full `SKILL.md` bodies are read explicitly with
    `skills show <skill>`.
-6. **Process context** supplied with the assignment or runtime.
-
-Each section is rendered as `[section.name]` and separated with `---`. System
-and profile context can template values such as `identity.username`, `identity.cwd`,
-`workspace`, `devices`, `mcpServers`, and `known_paths`. Home and workspace context are loaded
-lexically and bounded by `config/ai/max_context_bytes`.
 
 Skill discovery reads the owning user's home `skills.d` and the run-as agent's
-home `skills.d` when that account is distinct from the owner. Profile and
-workspace directories supply prompt context, but are not skill discovery roots.
+home `skills.d` when that account is distinct from the owner.
 The prompt uses a configurable compact skill index (`summary`, `names`, or
 `off`) and tells processes to start unfamiliar work with
 `man --search -- '<plain-language goal>'`. That live search returns exact next
@@ -84,7 +73,8 @@ actions such as `skills show`; long source paths and full skill bodies are not
 embedded in standing context.
 
 System-provided skills are bundled into the gateway and seeded into user home
-`skills.d` during bootstrap when missing.
+`skills.d` during bootstrap. Before prompt skill discovery, the gateway restores
+any missing built-in paths while preserving existing files.
 
 The assembled prompt, config, tool list, device list, and approval policy are
 cached in `currentRun` for the duration of that run.

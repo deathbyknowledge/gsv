@@ -9,7 +9,6 @@ knowledge-specific behavior lives in the built-in Wiki UI and CLI.
 | Layer | Location | Purpose |
 |---|---|---|
 | Home context | `~/context.d/` | Always-relevant user and system context loaded into agent prompts. |
-| Workspace context | `/workspaces/{id}/.gsv/context.d/`, `/workspaces/{id}/.gsv/summary.md` | Project-local continuity, task state, and handoff notes. |
 | Durable knowledge | `~/knowledge/` | User-controlled markdown databases, pages, inbox notes, and source references. |
 | Repository substrate | `repo.*` | Versioned reads, writes, diffs, imports, and history over ripgit repositories. |
 | Filesystem substrate | `fs.*` | Linux-like file access across native GSV storage and routed devices. |
@@ -23,26 +22,8 @@ Home context is for information that should shape most agent sessions:
 - durable identity or operating constraints
 - small files that should always be prompt-visible
 
-New homes are seeded with `~/context.d/00-constitution.md` and
-`~/context.d/10-user.md` when those files are missing.
-
 Use `~/context.d/` for scoped snippets. Keep files short and specific. Large
 knowledge collections belong in `~/knowledge/`, not always-loaded context.
-
-## Workspace Context
-
-Workspace context is task-local. It records what matters for the current
-workspace without polluting user-global memory.
-
-Typical files:
-
-```text
-/workspaces/{workspaceId}/.gsv/context.d/*.md
-/workspaces/{workspaceId}/.gsv/summary.md
-```
-
-Use workspace context for active decisions, current project assumptions,
-handoff state, and compacted task continuity.
 
 ## Durable Knowledge
 

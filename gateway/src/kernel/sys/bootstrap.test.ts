@@ -81,7 +81,7 @@ describe("handleSysBootstrap", () => {
     applyMock.mockResolvedValue({ head: "home123" });
   });
 
-  it("imports only root/gsv-manual and seeds the three bundled skills", async () => {
+  it("imports only root/gsv-manual and seeds the bundled skills", async () => {
     const ctx = makeContext();
 
     const result = await handleSysBootstrap(undefined, ctx);
@@ -98,6 +98,9 @@ describe("handleSysBootstrap", () => {
     expect(BUILTIN_SKILL_FILES.map((skill) => skill.path)).toEqual([
       "browser-target/SKILL.md",
       "gsv-manual/SKILL.md",
+      "image-reading/SKILL.md",
+      "memory/SKILL.md",
+      "process-orchestration/SKILL.md",
       "skill-authoring/SKILL.md",
     ]);
     expect(BUILTIN_SKILL_FILES.every((skill) => skill.content.startsWith("---\n"))).toBe(true);
@@ -148,6 +151,9 @@ describe("handleSysBootstrap", () => {
     expect(operations.map((operation) => operation.path)).toEqual([
       "skills.d/.dir",
       "skills.d/gsv-manual/SKILL.md",
+      "skills.d/image-reading/SKILL.md",
+      "skills.d/memory/SKILL.md",
+      "skills.d/process-orchestration/SKILL.md",
       "skills.d/skill-authoring/SKILL.md",
     ]);
   });

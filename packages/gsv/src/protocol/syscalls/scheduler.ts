@@ -1,4 +1,3 @@
-import type { ProcSpawnAssignment } from "./proc";
 import type { AdapterMessageDestination, EventReplyTarget } from "./interaction-origin";
 
 export type ScheduleExpression =
@@ -22,7 +21,6 @@ export type ScheduleTarget =
       prompt: string;
       parentPid?: string;
       cwd?: string;
-      assignment?: ProcSpawnAssignment;
     }
   | {
       kind: "process.event";

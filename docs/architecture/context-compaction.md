@@ -82,13 +82,6 @@ Reset and process teardown use the same archive substrate for the live working
 window, but are separate lifecycle operations. Reset does not extract memories
 or schedule daily or idle resets.
 
-## Durable context
-
-Durable information belongs in inspectable `~/context.d/`, workspace
-`.gsv/context.d/`, or `~/knowledge/` files. Compaction summaries remain
-conversation records. Agents or users may write conclusions to those files with
-normal filesystem operations; the runtime does not do so automatically.
-
 ## See also
 
 - [Context and Knowledge](./context-and-knowledge.md)

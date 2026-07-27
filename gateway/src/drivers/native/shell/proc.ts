@@ -439,7 +439,6 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   let parentPid: string | undefined;
   let cwd: string | undefined;
   let interactive: boolean | undefined;
-  let assignment: ProcSpawnArgs["assignment"];
   const positional: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -489,11 +488,6 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
       cwd = requireShellOptionValue(args[index], current);
       continue;
     }
-    if (current === "--assignment-json") {
-      index += 1;
-      assignment = JSON.parse(requireShellOptionValue(args[index], current)) as ProcSpawnArgs["assignment"];
-      continue;
-    }
     if (current.startsWith("-")) {
       throw new Error(`unexpected option: ${current}`);
     }
@@ -510,7 +504,6 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
     ...(parentPid ? { parentPid } : {}),
     ...(cwd ? { cwd } : {}),
     ...(interactive !== undefined ? { interactive } : {}),
-    ...(assignment ? { assignment } : {}),
   };
 }
 

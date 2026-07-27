@@ -135,9 +135,7 @@ thing is a user message.
 
 When a runtime event is rendered into model context, it should be visibly marked
 as such. The current convention is a conversation message that starts with
-`[Process Event]:`. Profile context teaches agents that these entries are GSV
-runtime events such as IPC replies, IPC timeouts, watched signals, compaction
-summaries, resets, or other process lifecycle changes.
+`[Process Event]:`.
 
 ## IPC Primitives
 
@@ -410,7 +408,6 @@ type ScheduleTarget =
       prompt: string;
       parentPid?: string;
       cwd?: string;
-      assignment?: ProcSpawnAssignment;
     }
   | {
       kind: "process.event";

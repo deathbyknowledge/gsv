@@ -23,7 +23,12 @@ export async function seedBuiltinSkillsToHome(
   const ops: RipgitApplyOp[] = [];
   let skipped = 0;
 
-  const skillsDir = await ripgit.readPath(homeRepo, TARGET_SKILLS_ROOT);
+  const [skillsDir, ...existingSkills] = await Promise.all([
+    ripgit.readPath(homeRepo, TARGET_SKILLS_ROOT),
+    ...BUILTIN_SKILL_FILES.map((skill) =>
+      ripgit.readPath(homeRepo, `${TARGET_SKILLS_ROOT}/${skill.path}`)
+    ),
+  ]);
   if (skillsDir.kind === "missing") {
     ops.push({
       type: "put",
@@ -32,9 +37,9 @@ export async function seedBuiltinSkillsToHome(
     });
   }
 
-  for (const skill of BUILTIN_SKILL_FILES) {
+  for (const [index, skill] of BUILTIN_SKILL_FILES.entries()) {
     const targetPath = `${TARGET_SKILLS_ROOT}/${skill.path}`;
-    const existing = await ripgit.readPath(homeRepo, targetPath);
+    const existing = existingSkills[index];
     if (existing.kind !== "missing") {
       skipped += 1;
       continue;

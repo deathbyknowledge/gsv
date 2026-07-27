@@ -104,7 +104,7 @@ Use for:
 
 ### `proc.delegate`
 
-- Convenience operation over spawn + assignment + wait.
+- Convenience operation over spawn + wait.
 - Returns a bounded result to the caller.
 
 Use for:
@@ -160,21 +160,6 @@ Rules:
 
 This keeps provider history valid and avoids inventing misleading chat turns.
 
-## Child bootstrap
-
-Child processes should receive assignment context as process state, not as a fake user message.
-
-Recommended shape:
-
-- Store a bounded `assignment` object in child process state.
-- Expose it during prompt assembly as a dedicated context section.
-
-Why:
-
-- It is honest.
-- It avoids polluting user-visible transcript history.
-- It makes delegation and spawned work easier to reason about.
-
 ## Default interaction model
 
 ### `init` handles directly
@@ -222,9 +207,8 @@ This model keeps:
 
 1. Add typed process history events.
 2. Add `proc.delegate`.
-3. Add child assignment context.
-4. Add `proc.handoff`.
-5. Add `proc.message`.
+3. Add `proc.handoff`.
+4. Add `proc.message`.
 
 This gives a clean `init -> task` story first, without forcing all process coordination through fake chat-message semantics.
 

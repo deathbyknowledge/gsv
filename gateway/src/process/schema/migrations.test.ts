@@ -36,7 +36,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(6);
+    expect(PROCESS_MIGRATIONS).toHaveLength(7);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -60,6 +60,10 @@ describe("process schema migrations", () => {
     expect(PROCESS_MIGRATIONS[5]).toMatchObject({
       id: 6,
       name: "add_pending_hil_owner",
+    });
+    expect(PROCESS_MIGRATIONS[6]).toMatchObject({
+      id: 7,
+      name: "remove_process_context",
     });
   });
 
@@ -140,4 +144,7 @@ describe("process schema migrations", () => {
       .toBe(true);
   });
 
+  it("removes persisted process context in v7", () => {
+    expect(normalizedStatements()).toContain("DELETE FROM process_kv WHERE key = 'processContextFiles'");
+  });
 });

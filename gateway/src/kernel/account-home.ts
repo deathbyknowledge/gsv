@@ -4,16 +4,21 @@ import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import {
   DEFAULT_BOOT_CONTEXT_TEMPLATE,
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
-  DEFAULT_OPEN_LOOPS_CONTEXT,
   DEFAULT_STYLE_CONTEXT,
-  DEFAULT_USER_CONTEXT_TEMPLATE,
+  LEGACY_BOOT_CONTEXT_TEMPLATE,
   LEGACY_DEFAULT_CONSTITUTION_CONTEXT,
-  LEGACY_MEMORY_CONTEXT_TEMPLATE,
+  LEGACY_DEFAULT_USER_CONTEXT_TEMPLATE,
+  LEGACY_MEMORY_CONTEXT_TEMPLATE_V1,
+  LEGACY_MEMORY_CONTEXT_TEMPLATE_V2,
+  LEGACY_OPEN_LOOPS_CONTEXT,
+  LEGACY_STYLE_CONTEXT,
 } from "../prompts/agent-home";
+import { LEGACY_DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../prompts/persona";
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
+// TODO: Remove legacy generated-context reconciliation and its templates once all existing agent homes have migrated.
 export async function ensureAccountHomeLayout(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
   identity: ProcessIdentity,
@@ -36,6 +41,7 @@ export async function ensureAccountHomeLayout(
     contextDir,
     bootContext,
     styleContext,
+    personaContext,
     memoryContext,
     constitutionContext,
     userContext,
@@ -45,6 +51,7 @@ export async function ensureAccountHomeLayout(
     client.readPath(repo, "context.d"),
     client.readPath(repo, "context.d/00-boot.md"),
     client.readPath(repo, "context.d/00-style.md"),
+    client.readPath(repo, "context.d/05-persona.md"),
     client.readPath(repo, "context.d/15-memory.md"),
     client.readPath(repo, "context.d/00-constitution.md"),
     client.readPath(repo, "context.d/10-user.md"),
@@ -62,32 +69,37 @@ export async function ensureAccountHomeLayout(
     });
   }
   if (options.seedPromptContext === true) {
-    if (options.seedBootContext === true) {
-      maybePutTextFile(
+    if (options.seedBootContext === true || bootContext.kind !== "missing") {
+      maybePutOrReplaceGeneratedTextFile(
         ops,
         "context.d/00-boot.md",
         bootContext,
         renderBootContext(identity),
+        [renderLegacyBootContext(identity)],
       );
     }
-    maybePutTextFile(
+    maybePutOrReplaceGeneratedTextFile(
       ops,
       "context.d/00-style.md",
       styleContext,
       DEFAULT_STYLE_CONTEXT,
+      [LEGACY_STYLE_CONTEXT],
     );
     maybePutOrReplaceGeneratedTextFile(
       ops,
       "context.d/15-memory.md",
       memoryContext,
       renderMemoryContext(identity.username),
-      renderLegacyMemoryContext(identity.username),
+      [
+        renderLegacyMemoryContextV1(identity.username),
+        renderLegacyMemoryContextV2(identity.username),
+      ],
     );
-    maybePutTextFile(
+    maybeDeleteGeneratedTextFile(
       ops,
       "context.d/20-open-loops.md",
       openLoopsContext,
-      DEFAULT_OPEN_LOOPS_CONTEXT,
+      [LEGACY_OPEN_LOOPS_CONTEXT],
     );
     maybeDeleteGeneratedTextFile(
       ops,
@@ -95,31 +107,40 @@ export async function ensureAccountHomeLayout(
       constitutionContext,
       [LEGACY_DEFAULT_CONSTITUTION_CONTEXT],
     );
-    maybePutOrReplaceGeneratedTextFile(
+    maybeDeleteGeneratedTextFile(
+      ops,
+      "context.d/05-persona.md",
+      personaContext,
+      [renderLegacyPersonaContext(identity, userContextUsername)],
+    );
+    maybeDeleteGeneratedTextFile(
       ops,
       "context.d/10-user.md",
       userContext,
-      renderUserContext(userContextUsername),
-      userContextUsername !== identity.username ? renderUserContext(identity.username) : undefined,
+      [renderLegacyUserContext(userContextUsername), renderLegacyUserContext(identity.username)],
     );
   } else if (options.cleanupGeneratedPromptContext === true) {
     maybeDeleteGeneratedTextFile(
       ops,
       "context.d/00-boot.md",
       bootContext,
-      [renderBootContext(identity)],
+      [renderBootContext(identity), renderLegacyBootContext(identity)],
     );
     maybeDeleteGeneratedTextFile(
       ops,
       "context.d/00-style.md",
       styleContext,
-      [DEFAULT_STYLE_CONTEXT],
+      [DEFAULT_STYLE_CONTEXT, LEGACY_STYLE_CONTEXT],
     );
     maybeDeleteGeneratedTextFile(
       ops,
       "context.d/15-memory.md",
       memoryContext,
-      [renderMemoryContext(identity.username), renderLegacyMemoryContext(identity.username)],
+      [
+        renderMemoryContext(identity.username),
+        renderLegacyMemoryContextV1(identity.username),
+        renderLegacyMemoryContextV2(identity.username),
+      ],
     );
     maybeDeleteGeneratedTextFile(
       ops,
@@ -131,13 +152,13 @@ export async function ensureAccountHomeLayout(
       ops,
       "context.d/20-open-loops.md",
       openLoopsContext,
-      [DEFAULT_OPEN_LOOPS_CONTEXT],
+      [LEGACY_OPEN_LOOPS_CONTEXT],
     );
     maybeDeleteGeneratedTextFile(
       ops,
       "context.d/10-user.md",
       userContext,
-      [renderUserContext(identity.username), renderUserContext(userContextUsername)],
+      [renderLegacyUserContext(identity.username), renderLegacyUserContext(userContextUsername)],
     );
   }
   if (skillsDir.kind === "missing") {
@@ -181,23 +202,24 @@ function maybePutOrReplaceGeneratedTextFile(
   path: string,
   existing: Awaited<ReturnType<RipgitClient["readPath"]>>,
   content: string,
-  generatedPreviousContent?: string,
+  generatedPreviousContents: string[] = [],
 ): void {
   if (existing.kind === "missing") {
     maybePutTextFile(ops, path, existing, content);
     return;
   }
-  if (
-    generatedPreviousContent &&
-    existing.kind === "file" &&
-    TEXT_DECODER.decode(existing.bytes) === generatedPreviousContent
-  ) {
-    ops.push({
-      type: "put",
-      path,
-      contentBytes: Array.from(TEXT_ENCODER.encode(content)),
-    });
+  if (existing.kind !== "file") {
+    return;
   }
+  const existingText = TEXT_DECODER.decode(existing.bytes);
+  if (!generatedPreviousContents.includes(existingText)) {
+    return;
+  }
+  ops.push({
+    type: "put",
+    path,
+    contentBytes: Array.from(TEXT_ENCODER.encode(content)),
+  });
 }
 
 function maybeDeleteGeneratedTextFile(
@@ -226,9 +248,27 @@ function renderBootContext(identity: Pick<ProcessIdentity, "home" | "username">)
   });
 }
 
-function renderUserContext(username: string): string {
-  return renderPromptTemplate(DEFAULT_USER_CONTEXT_TEMPLATE, {
+function renderLegacyBootContext(identity: Pick<ProcessIdentity, "home" | "username">): string {
+  return renderPromptTemplate(LEGACY_BOOT_CONTEXT_TEMPLATE, {
+    "program.home": identity.home,
+    "program.username": identity.username,
+  });
+}
+
+function renderLegacyUserContext(username: string): string {
+  return renderPromptTemplate(LEGACY_DEFAULT_USER_CONTEXT_TEMPLATE, {
     "user.username": username,
+  });
+}
+
+function renderLegacyPersonaContext(
+  identity: Pick<ProcessIdentity, "home" | "username">,
+  ownerUsername: string,
+): string {
+  return renderPromptTemplate(LEGACY_DEFAULT_PERSONA_CONTEXT_TEMPLATE, {
+    "program.home": identity.home,
+    "program.username": identity.username,
+    "user.username": ownerUsername,
   });
 }
 
@@ -238,8 +278,14 @@ function renderMemoryContext(username: string): string {
   });
 }
 
-function renderLegacyMemoryContext(username: string): string {
-  return renderPromptTemplate(LEGACY_MEMORY_CONTEXT_TEMPLATE, {
+function renderLegacyMemoryContextV1(username: string): string {
+  return renderPromptTemplate(LEGACY_MEMORY_CONTEXT_TEMPLATE_V1, {
+    "program.username": username,
+  });
+}
+
+function renderLegacyMemoryContextV2(username: string): string {
+  return renderPromptTemplate(LEGACY_MEMORY_CONTEXT_TEMPLATE_V2, {
     "program.username": username,
   });
 }

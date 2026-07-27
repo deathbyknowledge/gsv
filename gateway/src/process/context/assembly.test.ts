@@ -21,12 +21,12 @@ const CONFIG: AiConfigResult = {
   },
   systemContextFiles: [
     {
-      name: "00-gsv.md",
-      text: "Running in GSV for {{identity.username}} at {{identity.cwd}}",
+      name: "00-runtime.md",
+      text: "Task for {{identity.username}} in {{identity.cwd}}\nToday is {{current.date}} in {{current.timezone}}\nUser {{user.username}} at {{user.home}}\nProgram {{program.username}} at {{program.home}} cwd {{program.cwd}}\nOwner {{owner.username}} at {{owner.home}}\n\nTargets:\n{{devices}}\n\nMCP:\n{{mcpServers}}",
     },
     {
-      name: "10-runtime.md",
-      text: "Task for {{identity.username}} in {{identity.cwd}}\nToday is {{current.date}} in {{current.timezone}}\nUser {{user.username}} at {{user.home}}\nProgram {{program.username}} at {{program.home}} cwd {{program.cwd}}\nOwner {{owner.username}} at {{owner.home}}\n\nTargets:\n{{devices}}\n\nMCP:\n{{mcpServers}}",
+      name: "01-gsv.md",
+      text: "Running in GSV for {{identity.username}} at {{identity.cwd}}",
     },
   ],
   skillIndex: [
@@ -96,7 +96,7 @@ describe("assembleSystemPrompt", () => {
         async collect() {
           return [
             {
-              name: "00-gsv.md",
+              name: "00-runtime.md",
               text: "system context",
               contextRoot: {
                 key: "system",
@@ -126,23 +126,6 @@ describe("assembleSystemPrompt", () => {
         },
       },
       {
-        name: "process.context",
-        async collect() {
-          return [
-            {
-              name: "20-empty.md",
-              text: "   ",
-              contextRoot: {
-                key: "process",
-                label: "PROCESS",
-                access: "read-only",
-                location: "current process assignment",
-              },
-            },
-          ];
-        },
-      },
-      {
         name: "available.skills",
         async collect() {
           return [{ name: "available.skills", text: "skill index" }];
@@ -153,9 +136,9 @@ describe("assembleSystemPrompt", () => {
     const prompt = await assembleSystemPrompt(makeInput(), providers);
     expect(prompt).toBe([
       "<system path=\"/sys/config/ai/context.d/\">",
-      "<00-gsv.md>",
+      "<00-runtime.md>",
       "system context",
-      "</00-gsv.md>",
+      "</00-runtime.md>",
       "</system>",
       "",
       "<program path=\"/home/friday/context.d/\">",
@@ -168,8 +151,6 @@ describe("assembleSystemPrompt", () => {
       "skill index",
       "</available_skills>",
     ].join("\n"));
-    expect(prompt).not.toContain("<process");
-    expect(prompt).not.toContain("20-empty.md");
   });
 });
 
@@ -193,7 +174,7 @@ describe("createSystemContextProvider", () => {
     );
     expect(sections).toEqual([
       expect.objectContaining({
-        name: "00-gsv.md",
+        name: "00-runtime.md",
         contextRoot: expect.objectContaining({
           key: "system",
           label: "SYSTEM",
@@ -201,7 +182,7 @@ describe("createSystemContextProvider", () => {
         }),
       }),
       expect.objectContaining({
-        name: "10-runtime.md",
+        name: "01-gsv.md",
         contextRoot: expect.objectContaining({
           key: "system",
           label: "SYSTEM",
@@ -247,25 +228,23 @@ describe("createSystemContextProvider", () => {
 
 describe("selection", () => {
   it("includes context providers in the default task plan", () => {
-    const providers = resolvePromptProviders("task");
+    const providers = resolvePromptProviders();
     expect(providers.map((provider) => provider.name)).toEqual([
       "system.context",
       "home.context",
       "owner.context",
       "available.skills",
-      "process.context",
     ]);
   });
 });
 
 describe("createSkillIndexProvider", () => {
   it("renders command-oriented skill discovery without source paths", async () => {
-    const providers = resolvePromptProviders("task");
+    const providers = resolvePromptProviders();
     const prompt = await assembleSystemPrompt(makeInput(), providers);
 
     expect(prompt).toContain("<available_skills>");
     expect(prompt).toContain("<system path=\"/sys/config/ai/context.d/\">");
-    expect(prompt).not.toContain("<process");
     expect(prompt).toContain("Use `skills list <skill>`");
     expect(prompt).toContain("<skill>");
     expect(prompt).toContain("<name>device-management</name>");
@@ -276,7 +255,7 @@ describe("createSkillIndexProvider", () => {
   it("renders names-only skill context when configured", async () => {
     const prompt = await assembleSystemPrompt(makeInput({
       config: { ...CONFIG, skillIndexMode: "names" },
-    }), resolvePromptProviders("task"));
+    }), resolvePromptProviders());
 
     expect(prompt).toContain("<name>device-management</name>");
     expect(prompt).not.toContain("<description>Manage connected devices.</description>");
@@ -285,7 +264,7 @@ describe("createSkillIndexProvider", () => {
   it("omits prompt skill enumeration without disabling live discovery", async () => {
     const prompt = await assembleSystemPrompt(makeInput({
       config: { ...CONFIG, skillIndexMode: "off" },
-    }), resolvePromptProviders("task"));
+    }), resolvePromptProviders());
 
     expect(prompt).not.toContain("<available_skills>");
     expect(prompt).not.toContain("device-management");

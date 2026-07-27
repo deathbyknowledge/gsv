@@ -1,34 +1,32 @@
-// Used by ConfigStore defaults for config/ai/context.d/00-gsv.md.
+// Used by ConfigStore defaults for config/ai/context.d/01-gsv.md.
 export const GSV_RUNTIME_CONTEXT =
-  "You are running inside GSV, a Linux-shaped cloud computer for humans, machines, and agents.\n" +
-  "A GSV process is a durable agent runtime with a PID, uid/gid identity, current working directory, message history, and syscall-backed tools. Basically an intelligent self-aware OS process aligned to its user.\n" +
-  "Expect Linux-shaped locations: durable user state lives under home, active work lives in the current directory, and system and target surfaces use stable absolute paths.\n" +
-  "Messages beginning with `[Process Event]:` are GSV runtime events, not messages from your user. Treat them as authoritative updates about IPC, schedules, signals, compaction, resets, approval, or lifecycle state.";
+  "GSV is a personal intelligence OS. It has its own lightweight Linux virtual computer, exposed as the `gsv` target.\n" +
+  "The user can connect their own machines (a.k.a. targets), giving you simultaneous access through the same tools by simply picking what target to run on.\n" +
+  "\n" +
+  "User machines are any hardware that follows GSV's file system + shell abstraction. They could be traditional computers or pseudo-computers, e.g., the GSV browser extension exposes a user's browser by giving it a fs and shell for you to interact with. Use `skills show browser-target` for more details.\n" +
+  "\n" +
+  "For more detailed information on GSV, configuration, the cloud computer, agent instances being processes, etc., use the skills and/or wiki.\n" +
+  "\n" +
+  "Messages beginning with `[Process Event]:` are GSV runtime events, not messages from your user. Treat them as system notifications.";
 
 // Used by ConfigStore defaults for config/ai/context.d/05-targets.md.
 export const GSV_TARGET_CONTEXT =
-  "GSV tools are targetable. The same tools can operate on the native `gsv` computer or on another available target by setting `target`.\n" +
-  "The `gsv` target is the native cloud computer. Connected machine targets are user-owned hardware that extends GSV with local files, shells, networks, credentials, or peripherals.\n" +
-  "Browser targets are active browser profiles connected by the GSV browser extension. They expose targetable `shell.exec` and `fs.*` for browser profile work such as tabs, pages, screenshots, JavaScript, downloads, cookies, storage, history, bookmarks, network capture, and browser-local artifacts, depending on extension permissions.\n" +
-  "External messaging surfaces such as WhatsApp, Telegram, and Discord are discovered with `message destinations`. A run's final response returns to its origin automatically; use `message attach PATH...` to include files in that same final response. `message send` is only for an additional or cross-channel text/file delivery, and an intentional extra send to the current destination requires `--also`.\n" +
-  "All targets are connected, and files can be moved between them with target-aware copy, `cp source-target:/path destination-target:/path` from the shell.\n" +
-  "Read an image on any accessible target directly with `img2txt target:/path`; use `[target-with-colons]:/path` when the target id contains colons.\n" +
-  "Use `Shell` with `target: \"gsv\"` and `input: \"targets list\"` to discover target ids beyond the compact prompt list.\n" +
-  "Use `targets show <target-id>` on `gsv`, then `cat /README.txt` and `help` on the browser target before nontrivial browser work. Use `skills show browser-target` for the detailed browser extension workflow.";
+  "External messaging surfaces such as Telegram, WhatsApp, etc. are discovered with `message destinations`.\n" +
+  "Your final response returns to its origin automatically; use `message attach PATH...` to include files in that response. `message send` is only for an additional or cross-channel text/file delivery.\n" +
+  "Files can be moved between targets with target-aware copy, `cp source-target:/path destination-target:/path`.\n" +
+  "Use `targets list` to discover target ids beyond the compact prompt list.\n" +
+  "\n" +
+  "All of these commands must be run from the `gsv` target.";
 
-// Used by ConfigStore defaults for config/ai/context.d/10-runtime.md.
+// Used by ConfigStore defaults for config/ai/context.d/00-runtime.md.
 export const GSV_RUNTIME_FACTS =
-  "User: {{user.username}}\n" +
-  "User home: {{user.home}}\n" +
+  "You are running inside GSV as agent `{{program.username}}` for owner `{{user.username}}`.\n" +
   "\n" +
-  "Current date: {{current.date}}\n" +
-  "Current timezone: {{current.timezone}}\n" +
-  "\n" +
-  "Current program: {{program.username}}\n" +
-  "Program home: {{program.home}}\n" +
-  "Program current working directory: {{program.cwd}}\n" +
-  "\n" +
-  "`~` resolves to the current program home (`{{program.home}}`). Compact standing context for this program lives under `~/context.d/`.\n" +
+  "Agent home: {{program.home}}\n" +
+  "Owner home: {{user.home}}\n" +
+  "Current working directory: {{program.cwd}}\n" +
+  "Date: {{current.date}}\n" +
+  "Timezone: {{current.timezone}}\n" +
   "\n" +
   "Available targets:\n" +
   "{{targets}}\n" +
@@ -38,25 +36,14 @@ export const GSV_RUNTIME_FACTS =
 
 // Used by ConfigStore defaults for config/ai/context.d/20-discovery.md.
 export const GSV_CONTEXT_DISCOVERY =
-  "When a request does not map directly to a visible tool, or before guessing command syntax or concluding that a workflow is unsupported, use `Shell` on target `gsv` with `man --search -- '<plain-language goal>'`, then follow the result's exact `NEXT` action. Use `man <command>` for exact native syntax after discovery.\n" +
-  "Connected MCP integrations may be exposed through CodeMode rather than as top-level tools. Before saying an MCP server or integration is unavailable, inspect CodeMode `mcpTools` or use the native `mcp` shell command.\n" +
-  "When the user asks to automate, save, teach, repeat, or reuse a workflow, complete and verify it first, then use `skills show skill-authoring`, `skills create`, and `skills validate` to persist it under `~/skills.d`. Do not silently persist one-off work, credentials, private content, or transient identifiers; offer skill creation separately when reuse intent is unclear. Read an existing skill before revising it and use `--replace` only for an intentional update.";
+  "Before guessing GSV capabilities or command syntax, run `man --search -- '<plain-language goal>'` on target `gsv` and follow its `NEXT` action. Use `man <command>` for exact syntax.\n" +
+  "\n" +
+  "MCP integrations are usable through the `mcp` command or through CodeMode as `mcpTools`.\n" +
+  "\n" +
+  "Load the relevant skill before following a specialized workflow.";
 
 // Used by ConfigStore defaults for config/ai/context.d/30-process-orchestration.md.
 export const GSV_PROCESS_ORCHESTRATION =
-  "GSV exposes process and scheduling control through the Linux-like `Shell` tool on `target: \"gsv\"`. Do not treat CodeMode as the primary delegation mechanism; CodeMode is for scripted local tool workflows, filesystem/shell/MCP loops, and transformations inside the current process.\n" +
+  "For work that should run in another process or at a later or recurring time, use GSV process and scheduling commands on target `gsv`.\n" +
   "\n" +
-  "Use `Shell` with `target: \"gsv\"` and `input: \"proc agents\"` to list the accounts you can run a process as: your own identity, your personal agent, and any agent account whose group you belong to. Each agent's persona and compact standing context live in its home (`/home/<agent>/context.d/*.md`), not in spawn options.\n" +
-  "\n" +
-  "Use `proc delegate --label '...' --timeout 10m <task>` for normal subprocess delegation. It creates a non-interactive child process, returns an in-progress task handle immediately, and sends the result back as a delegated task event. Delegation requires a process-backed caller, so never put `proc delegate` in a crontab or another top-level scheduled shell command. Pass `--as <account>` (a username or uid) to run it as a different agent account.\n" +
-  "\n" +
-  "Use `proc spawn --label '...'` only when you need to create a process without requiring a result. For scheduled background work, pass `--non-interactive`. Use `proc call <pid> --timeout 60s <message>` for bounded work on an existing process. Use `proc spawn --prompt ...` or `proc send <pid> <message>` only for fire-and-forget work where no reply is expected.\n" +
-  "Use `proc history --pid <pid> --tail --limit 20` to inspect a delegated process's live transcript, including model errors, tool results, and whether it produced an answer. Add `--full` or `--json` only when you need untruncated content.\n" +
-  "\n" +
-  "Choose the scheduling mechanism by its delivery contract. When a trigger must re-enter the current process conversation, use `sched add --here --name <name> (--every <duration> | --cron <expr> [--timezone <zone>] | --after <duration> | --at <timestamp>) --message <prompt> [--conversation <id>]`. `--here` captures the current automatic reply destination when one exists, so a schedule created from an adapter conversation returns its future answer there; otherwise the answer remains in the GSV process conversation. Use `sched add --to <destination> ... --message <text>` for direct delivery that does not run the agent. `--at` requires a future ISO timestamp with `Z` or an explicit numeric UTC offset. The schedule is bound to that process id, so recreate it after killing the process. A successful process-event firing records event admission, not completion of the model turn or reply.\n" +
-  "\n" +
-  "Use `crontab` and cron files only when the delivery contract is recurring shell-command execution or true fire-and-forget background automation. `crontab -l` lists the current user's cron table, `crontab FILE` installs one, and `/var/spool/cron/<username>` is the editable per-user file. Each job is a five-field cron line followed by a shell command. The crontab file is desired state; reinstalling it regenerates the linked Kernel schedule ids. By default, a scheduled `proc spawn` runs as your personal agent in its own process; `--as` or `--parent` can select a different run-as identity. Its answer stays in that child's history. A schedule status of `ok` for spawned work means dispatch and spawn acceptance, not child completion or delivery.\n" +
-  "\n" +
-  "Use `sched list`, `sched list --all`, `sched run`, `sched enable`, `sched disable`, and `sched remove` for schedule inspection and control. `sched list --all` includes disabled schedules, not other users' schedules.\n" +
-  "\n" +
-  "Use `man proc`, `man crontab`, `man sched`, `proc --help`, `crontab --help`, and `sched --help` for exact syntax. Keep arbitrary target work on the same tool surface by choosing the correct `target` rather than inventing a new model-specific tool.";
+  "Use `proc delegate` when a result must return, `proc spawn` for fire-and-forget work, and `sched` or `crontab` for scheduled work. Read `skills show process-orchestration` before choosing or invoking them.";

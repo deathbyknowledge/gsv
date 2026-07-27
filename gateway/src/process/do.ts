@@ -98,7 +98,6 @@ import type {
   ProcToolResultOutcome,
   ProcResetResult,
   ProcKillResult,
-  ProcSpawnAssignment,
 } from "@humansandmachines/gsv/protocol";
 import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { AdapterSurface } from "../adapter-interface";
@@ -1082,7 +1081,6 @@ export class Process extends Host<Env> {
             pid: string;
             identity: ProcessIdentity;
             interactive?: boolean;
-            assignment?: ProcSpawnAssignment;
             conversationId?: string;
             hydrateFrom?: string;
           };
@@ -1094,21 +1092,10 @@ export class Process extends Host<Env> {
           if (idArgs.conversationId) {
             this.store.setValue("primaryConversationId", idArgs.conversationId);
           }
-          this.store.setProcessContextFiles(idArgs.assignment?.contextFiles ?? []);
           if (idArgs.hydrateFrom) {
             await this.hydratePrimaryConversation(idArgs.hydrateFrom);
           }
-          let startedRunId: string | undefined;
-          if (idArgs.assignment?.autoStart && !this.currentRun) {
-            startedRunId = crypto.randomUUID();
-            this.currentRun = {
-              runId: startedRunId,
-              conversationId: DEFAULT_CONVERSATION_ID,
-            };
-            await this.scheduleTick(startedRunId);
-            await this.announceRun(startedRunId, DEFAULT_CONVERSATION_ID, "assignment.autostart");
-          }
-          data = { ok: true, startedRunId };
+          data = { ok: true };
           break;
         }
         case "proc.send":
@@ -4187,7 +4174,6 @@ export class Process extends Host<Env> {
         ownerIdentity: run.config?.owner ?? undefined,
         devices: run.devices ?? [],
         mcpServers: run.mcpServers ?? [],
-        processContextFiles: this.store.getProcessContextFiles(),
         storage: this.env.STORAGE,
         ripgit: this.ripgit,
       });

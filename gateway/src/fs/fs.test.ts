@@ -151,7 +151,6 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     lastActiveAt: null,
     label: "Alpha",
     createdAt: 100,
-    contextFiles: [{ name: "brief.md", text: "Brief" }],
   };
   const otherProcessRecord = {
     ...processRecord,
@@ -1311,7 +1310,6 @@ describe("GsvFs Linux-like runtime views", () => {
 
     await expect(fs.readdir("/proc/task-alpha")).resolves.toEqual([
       "ai",
-      "context.d",
       "conversations",
       "identity",
       "status",
@@ -1384,7 +1382,6 @@ describe("GsvFs Linux-like runtime views", () => {
     ]);
     await expect(fs.readdir("/proc/self")).resolves.toEqual([
       "ai",
-      "context.d",
       "conversations",
       "identity",
       "status",
@@ -1408,7 +1405,6 @@ describe("GsvFs Linux-like runtime views", () => {
     ]);
     await expect(fs.readdir("/proc/self")).resolves.toEqual([
       "ai",
-      "context.d",
       "conversations",
       "identity",
       "status",

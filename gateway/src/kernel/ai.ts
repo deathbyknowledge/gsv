@@ -101,7 +101,9 @@ import {
   transcribeAudio,
 } from "../inference/capabilities";
 import { isVectorImageMimeType } from "../inference/image-mime";
+import { RipgitClient } from "../fs";
 import { collectPromptSkillIndex } from "./skills";
+import { seedBuiltinSkillsToHome } from "./sys/skills-seed";
 import { listVisibleTargets, targetToAiDevice } from "./targets";
 import {
   findProcessAiModelProfile,
@@ -198,6 +200,7 @@ export async function handleAiConfig(
   const config = ctx.config;
   const uid = ctx.identity?.process.uid ?? 0;
   const owner = resolveOwnerIdentity(ctx);
+  const builtinSkillsReady = ensureBuiltinSkillsForPrompt(ctx, owner);
   const accountConfigUids = resolveAiConfigAccountUids(uid, owner);
   const input = args && typeof args === "object" ? args : ({} as AiConfigArgs);
   const processOverrides = resolveEffectiveAiProcessOverrides(
@@ -320,6 +323,7 @@ export async function handleAiConfig(
     processOverrides,
   );
   const timezone = config.get("config/server/timezone") ?? "UTC";
+  await builtinSkillsReady;
   const skillIndexMode = normalizeSkillIndexMode(resolveConfig("skills/index_mode"));
   const skillIndex = skillIndexMode === "off"
     ? []
@@ -360,6 +364,24 @@ export async function handleAiConfig(
     ...(fallbacks.length > 0 ? { fallbacks } : {}),
     media,
   };
+}
+
+async function ensureBuiltinSkillsForPrompt(
+  ctx: KernelContext,
+  owner: ProcessIdentity | null,
+): Promise<void> {
+  const identity = owner ?? ctx.identity?.process;
+  if (!ctx.env.RIPGIT || !identity) {
+    return;
+  }
+
+  try {
+    await seedBuiltinSkillsToHome(new RipgitClient(ctx.env.RIPGIT), identity);
+  } catch (error) {
+    console.warn(
+      `[Prompt] failed to reconcile built-in skills: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 export async function handleAiTextGenerate(

@@ -22,16 +22,6 @@ export type ProcMediaInput = {
   transcription?: string;
 };
 
-export type ProcContextFile = {
-  name: string;
-  text: string;
-};
-
-export type ProcSpawnAssignment = {
-  contextFiles: ProcContextFile[];
-  autoStart?: boolean;
-};
-
 export type ProcSpawnArgs = {
   /**
    * Account to run the process as a username or uid string. Defaults to the
@@ -45,7 +35,6 @@ export type ProcSpawnArgs = {
   fresh?: boolean;
   label?: string;
   prompt?: string;
-  assignment?: ProcSpawnAssignment;
   parentPid?: string;
   cwd?: string;
   // NOTE: consider allowing explicit identity override (root only or subset of current identity)
@@ -797,7 +786,6 @@ export type ProcSetIdentityArgs = {
   pid: string;
   identity: ProcessIdentity;
   interactive?: boolean;
-  assignment?: ProcSpawnAssignment;
   /**
    * Kernel conversation id this executor's primary thread belongs to. The
    * executor archives/reads its primary thread under
@@ -813,7 +801,4 @@ export type ProcSetIdentityArgs = {
   hydrateFrom?: string;
 };
 
-export type ProcSetIdentityResult = {
-  ok: true;
-  startedRunId?: string;
-};
+export type ProcSetIdentityResult = { ok: true };
