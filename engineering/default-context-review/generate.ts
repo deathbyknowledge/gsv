@@ -190,7 +190,7 @@ async function buildSnapshot(): Promise<Record<string, unknown>> {
       template: GSV_RUNTIME_FACTS,
       defaultIncluded: true,
       kind: "live-config",
-      note: "Rendered at run start with owner, program, date, timezone, targets, and ready MCP servers.",
+      note: "Rendered at run start with owner, agent, date, timezone, targets, and ready MCP servers.",
       sourceRefs: await refs([
         ["gateway/src/prompts/system.ts", "export const GSV_RUNTIME_FACTS", "prompt template"],
         ["gateway/src/process/context/providers/system.ts", "function renderContextTemplate", "runtime rendering"],
@@ -232,7 +232,7 @@ async function buildSnapshot(): Promise<Record<string, unknown>> {
       template: GSV_CONTEXT_DISCOVERY,
       defaultIncluded: true,
       kind: "live-config",
-      note: "Shared discovery and reusable-skill policy.",
+      note: "Shared GSV command, MCP, and skill discovery guidance.",
       sourceRefs: await refs([
         ["gateway/src/prompts/system.ts", "export const GSV_CONTEXT_DISCOVERY", "prompt text"],
         ["gateway/src/kernel/config.ts", "\"config/ai/context.d/20-discovery.md\"", "default config mapping"],
@@ -246,7 +246,7 @@ async function buildSnapshot(): Promise<Record<string, unknown>> {
       template: GSV_PROCESS_ORCHESTRATION,
       defaultIncluded: true,
       kind: "live-config",
-      note: "Shared process delegation and scheduling guidance; currently the largest system block.",
+      note: "A compact pointer to the process-orchestration skill for delegation and scheduling.",
       sourceRefs: await refs([
         ["gateway/src/prompts/system.ts", "export const GSV_PROCESS_ORCHESTRATION", "prompt text"],
         ["gateway/src/kernel/config.ts", "\"config/ai/context.d/30-process-orchestration.md\"", "default config mapping"],

@@ -25,9 +25,10 @@ test("composes the fresh personal-agent prompt in runtime order", () => {
   assert.ok(result.text.indexOf("<program path=\"/home/friday/context.d/\">") > result.text.indexOf("</system>"));
   assert.ok(result.text.indexOf("<00-boot.md>") < result.text.indexOf("<00-style.md>"));
   assert.ok(result.text.indexOf("<available_skills>") > result.text.indexOf("</program>"));
-  assert.match(result.text, /User: alex\nUser home: \/home\/alex/);
-  assert.match(result.text, /Current program: friday\nProgram home: \/home\/friday/);
-  assert.match(result.text, /Current date: 2026-07-26\nCurrent timezone: Europe\/Amsterdam/);
+  assert.match(result.text, /as agent `friday` for owner `alex`/);
+  assert.match(result.text, /Agent home: \/home\/friday\nOwner home: \/home\/alex/);
+  assert.match(result.text, /Date: 2026-07-26\nTimezone: Europe\/Amsterdam/);
+  assert.match(result.text, /<name>process-orchestration<\/name>/);
   assert.doesNotMatch(result.text, /<user path=/);
   assert.doesNotMatch(result.text, /<process path=/);
 });
