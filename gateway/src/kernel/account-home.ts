@@ -18,6 +18,7 @@ import { LEGACY_DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../prompts/persona";
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
+// TODO: Remove legacy generated-context reconciliation and its templates once all existing agent homes have migrated.
 export async function ensureAccountHomeLayout(
   env: Pick<Env, "STORAGE" | "RIPGIT">,
   identity: ProcessIdentity,
