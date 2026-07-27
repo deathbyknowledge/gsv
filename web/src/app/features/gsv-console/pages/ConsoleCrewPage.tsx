@@ -149,7 +149,7 @@ function CrewRoster({
             config={config}
             compact={compact}
             onEditDefaults={() => setEditorSection("defaults")}
-            onConfigureOverrides={() => setEditorSection("overrides")}
+            onConfigureOverrides={() => setEditorSection("permissions")}
             onManageContext={() => setEditorSection("context")}
           />
         ) : undefined}

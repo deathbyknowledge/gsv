@@ -34,7 +34,22 @@ import type { ConsoleAccount, ConsoleConfigEntry } from "../domain/consoleModels
 import { useConsoleAgentContext, useSaveConsoleAgentBehavior, useSaveConsoleAgentContext } from "../hooks/useConsoleData";
 import "./EditDefaultsPanel.css";
 
-export type EditDefaultsSection = "defaults" | "overrides" | "context";
+export type EditDefaultsSection = "defaults" | "permissions" | "context";
+
+/** Per-section surface copy. Each CREW default now opens its own titled
+ *  surface (model defaults / permissions / global instructions). */
+const SECTION_TITLE: Record<EditDefaultsSection, string> = {
+  defaults: "MODEL DEFAULTS",
+  permissions: "DEFAULT PERMISSIONS",
+  context: "GLOBAL INSTRUCTIONS",
+};
+
+const SECTION_DESC: Record<EditDefaultsSection, string> = {
+  defaults: "These are your preferences, applied to all your agents.",
+  permissions:
+    "When there are no overrides configured, all your agents will follow the default permission when using any tool. Overrides are machine or tool specific rules that take priority over the default action.",
+  context: "Instructions all your agents follow. These do not take precedence over agent definitions.",
+};
 
 /** Draft seed from the loaded context files (mirrors editorFilesForAccount). */
 function contextSectionsFromFiles(files: readonly { label: string; name: string; content: string; orig: string }[]): ContextSection[] {
@@ -47,8 +62,8 @@ function contextSignature(files: readonly ContextSection[]): string {
 }
 
 export interface EditDefaultsPanelProps {
-  /** Which part to reveal on open — "overrides" scrolls the overrides section
-   *  into view (both CTAs share this one surface). */
+  /** Which surface to reveal on open — model defaults, permissions, or the
+   *  context/files editor. Each is its own titled surface. */
   section?: EditDefaultsSection;
   onClose: () => void;
   /** The account whose defaults are edited (the viewer for CREW). */
@@ -133,7 +148,6 @@ export function EditDefaultsPanel({
   const [formError, setFormError] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const rootRef = useRef<HTMLElement>(null);
-  const overridesRef = useRef<HTMLDivElement>(null);
   const flashTimerRef = useRef<number | null>(null);
 
   // Re-baseline whenever the saved values change (external edit, or our own
@@ -160,16 +174,13 @@ export function EditDefaultsPanel({
     };
   }, []);
 
-  // "context" is its own surface; "defaults"/"overrides" share the behavior
-  // form (overrides scrolls to the tools panel). Switching sections doesn't
-  // remount, so unsaved drafts survive.
+  // Each section ("defaults" / "permissions" / "context") is its own surface.
+  // Switching sections doesn't remount, so unsaved drafts survive — scroll the
+  // surface back to the top on switch.
   const isContext = section === "context";
+  const isPermissions = section === "permissions";
   useEffect(() => {
-    if (section === "overrides") {
-      overridesRef.current?.scrollIntoView({ block: "start" });
-    } else {
-      rootRef.current?.scrollIntoView({ block: "start" });
-    }
+    rootRef.current?.scrollIntoView({ block: "start" });
   }, [section]);
 
   const draftPolicySignature = serializeApprovalPolicy(approvalPolicy);
@@ -277,7 +288,7 @@ export function EditDefaultsPanel({
   );
 
   return (
-    <section class="gsv-edit-defaults" aria-label="Edit defaults" ref={rootRef} tabIndex={-1}>
+    <section class="gsv-edit-defaults" aria-label={SECTION_TITLE[section]} ref={rootRef} tabIndex={-1}>
       <div class="gsv-edit-defaults-head">
         <button
           type="button"
@@ -290,13 +301,11 @@ export function EditDefaultsPanel({
       </div>
 
       <h3 class="gsv-edit-defaults-title gsv-section">
-        {isContext ? "GLOBAL INSTRUCTIONS" : "EDIT DEFAULTS"}
+        {SECTION_TITLE[section]}
       </h3>
 
       <p class="gsv-edit-defaults-desc gsv-paragraph-small">
-        {isContext
-          ? "Instructions all your agents follow. These do not take precedence over agent definitions."
-          : "These are your preferences, applied to all your agents."}
+        {SECTION_DESC[section]}
       </p>
 
       {isContext ? (
@@ -319,6 +328,19 @@ export function EditDefaultsPanel({
             </>
           )}
         />
+      ) : isPermissions ? (
+        <div class="gsv-edit-defaults-tools">
+          <AgentToolsPanel
+            policy={approvalPolicy}
+            targets={[...targets]}
+            disabled={disabled}
+            hideHeading
+            onChange={(next) => {
+              touch();
+              setApprovalPolicy(next);
+            }}
+          />
+        </div>
       ) : (
         <>
           {/* Behavior fields — the create-agent form template verbatim
@@ -368,19 +390,6 @@ export function EditDefaultsPanel({
               }}
               width={300}
               disabled={disabled}
-            />
-          </div>
-
-          <div ref={overridesRef} class="gsv-edit-defaults-tools">
-            <AgentToolsPanel
-              policy={approvalPolicy}
-              targets={[...targets]}
-              disabled={disabled}
-              defaultDescription="When there are no overrides configured, all your agents will follow the default permission when using any tool. Overrides are machine or tool specific rules that take priority over the default action."
-              onChange={(next) => {
-                touch();
-                setApprovalPolicy(next);
-              }}
             />
           </div>
         </>

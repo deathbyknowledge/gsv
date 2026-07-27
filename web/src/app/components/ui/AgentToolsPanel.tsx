@@ -41,6 +41,10 @@ export interface AgentToolsPanelProps {
   /** Copy under the DEFAULT PERMISSIONS title. Defaults to single-agent wording;
    *  crew defaults / system overrides pass the "all your agents" framing. */
   defaultDescription?: string;
+  /** Suppress the internal DEFAULT PERMISSIONS heading + description when the
+   *  host already supplies its own section title (e.g. the CREW permissions
+   *  surface). Defaults to false — the heading shows. */
+  hideHeading?: boolean;
   onChange: (policy: AgentToolApprovalPolicy) => void;
 }
 
@@ -69,6 +73,7 @@ export function AgentToolsPanel({
   targets = [],
   disabled = false,
   defaultDescription = DEFAULT_PERMISSION_DESC,
+  hideHeading = false,
   onChange,
 }: AgentToolsPanelProps) {
   const normalizedSource = sourceLabel?.trim();
@@ -134,10 +139,12 @@ export function AgentToolsPanel({
 
   return (
     <section class="gsv-tools-panel" aria-label="Agent tools">
-      <div class="gsv-tools-heading">
-        <h4 class="gsv-tools-title gsv-section">DEFAULT PERMISSIONS</h4>
-        <p class="gsv-tools-desc gsv-paragraph-small">{defaultDescription}</p>
-      </div>
+      {hideHeading ? null : (
+        <div class="gsv-tools-heading">
+          <h4 class="gsv-tools-title gsv-section">DEFAULT PERMISSIONS</h4>
+          <p class="gsv-tools-desc gsv-paragraph-small">{defaultDescription}</p>
+        </div>
+      )}
 
       <div class="gsv-tools-field">
         <div class="gsv-tools-field-lab">
