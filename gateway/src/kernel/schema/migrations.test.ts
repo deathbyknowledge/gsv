@@ -264,8 +264,13 @@ describe("kernel schema migrations", () => {
     expect(statements).toContain("DROP TABLE app_sessions");
     expect(statements).toContain("DROP TABLE packages");
     expect(statements).toContain(
-      "DELETE FROM group_capabilities WHERE capability = 'app.*' OR capability = 'pkg.*' OR capability LIKE 'pkg.%'",
+      "DELETE FROM group_capabilities WHERE capability = 'app.*' OR capability LIKE 'pkg.%' OR gid IN (SELECT passwd.gid FROM passwd JOIN config_kv ON config_kv.key = 'users/' || passwd.uid || '/pkg/owner')",
     );
+    expect(statements).toContain(
+      "DELETE FROM processes WHERE uid IN (SELECT passwd.uid FROM passwd JOIN config_kv ON config_kv.key = 'users/' || passwd.uid || '/pkg/owner')",
+    );
+    expect(statements.some((statement) => /^DELETE FROM (?:passwd|conversations)\b/.test(statement)))
+      .toBe(false);
     expect(statements.some((statement) => (
       statement.startsWith("CREATE TABLE signal_watches")
       && statement.includes("target_process_id TEXT NOT NULL")
