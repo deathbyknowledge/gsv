@@ -153,14 +153,16 @@ export function EditDefaultsPanel({
   const flashTimerRef = useRef<number | null>(null);
 
   // Re-baseline behavior fields when the saved behavior changes (external edit,
-  // or our own save round-tripping through the config query).
+  // or our own save round-tripping through the config query). `pending` is owned
+  // solely by save()'s try/finally — this effect must not clear it, or a
+  // behavior save that lands mid-combined-save (before the awaited context
+  // write) would re-enable the controls while that write is still in flight.
   useEffect(() => {
     setModelIndex(initialModelIndex);
     setFallbackIndex(initialFallbackIndex);
     setReasoningIndex(initialReasoningIndex);
     setApprovalPolicy(savedPolicy);
     setConfirmDiscard(false);
-    setPending(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [behaviorBaselineKey]);
 
@@ -257,6 +259,52 @@ export function EditDefaultsPanel({
     }
   };
 
+  // DELETE on the context surface commits immediately (per product decision):
+  // persist the file removal to disk on confirm rather than staging it for the
+  // next SAVE. Passes the saved baseline (minus the target) so ONLY the delete
+  // runs — other unsaved section edits are left untouched, not written. A
+  // brand-new section that was never saved just drops from the draft.
+  const deleteSection = async (index: number) => {
+    if (!editable || pending) {
+      return;
+    }
+    const target = filesDraft[index];
+    if (!target) {
+      return;
+    }
+    const remaining = filesDraft.filter((_, candidate) => candidate !== index);
+    const nextIndex = Math.max(0, Math.min(index, remaining.length - 1));
+    const diskName = target.origName ?? target.name;
+    const onDisk = Boolean(diskName) && context.files.some((file) => file.name === diskName);
+
+    const prevDraft = filesDraft;
+    const prevIndex = contextIndex;
+    touch();
+    setFilesDraft(remaining);
+    setContextIndex(nextIndex);
+
+    if (!onDisk) {
+      return;
+    }
+
+    setPending(true);
+    setFormError("");
+    try {
+      await saveContext.mutateAsync({
+        username: viewer.username,
+        files: context.files.filter((file) => file.name !== diskName),
+        baseNames: context.files.map((file) => file.name),
+      });
+    } catch (error) {
+      // Persist failed — restore the section so the UI matches disk.
+      setFilesDraft(prevDraft);
+      setContextIndex(prevIndex);
+      setFormError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPending(false);
+    }
+  };
+
   const requestClose = () => {
     if (pending) {
       return;
@@ -330,6 +378,7 @@ export function EditDefaultsPanel({
             setContextIndex(index);
           }}
           readOnly={!editable || !contextEditable || pending}
+          onDeleteSection={(index) => void deleteSection(index)}
           actions={confirmDiscard ? undefined : (
             <>
               {statusNode}

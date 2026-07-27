@@ -22,6 +22,11 @@ export interface ContextSectionsEditorProps {
   activeIndex: number;
   onActiveIndexChange: (index: number) => void;
   readOnly?: boolean;
+  /** When provided, DELETE commits immediately through the host (removing the
+   *  section from disk right away) rather than only staging a draft removal.
+   *  The host owns updating `files`/`activeIndex` afterwards. Omit to keep the
+   *  staged draft-until-SAVE behavior. */
+  onDeleteSection?: (index: number) => void;
   /** Right-aligned controls in the action row (e.g. host SAVE / RESET / status).
    *  Rendered next to the section's own DELETE affordance. */
   actions?: ComponentChildren;
@@ -113,6 +118,7 @@ export function ContextSectionsEditor({
   activeIndex,
   onActiveIndexChange,
   readOnly = false,
+  onDeleteSection,
   actions,
 }: ContextSectionsEditorProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -144,13 +150,25 @@ export function ContextSectionsEditor({
 
   const confirmDelete = () => {
     if (readOnly) return;
+    setDeleteOpen(false);
+    // Immediate-delete host: it persists the removal and owns the resulting
+    // files/activeIndex update.
+    if (onDeleteSection) {
+      onDeleteSection(fileIdx);
+      return;
+    }
+    // Staged host: draft removal, committed on the host's own SAVE.
     const next = files.filter((_, i) => i !== fileIdx);
     onChange(next);
     onActiveIndexChange(Math.max(0, Math.min(fileIdx, next.length - 1)));
-    setDeleteOpen(false);
   };
 
   const delName = hasSections ? fileLabel(curFile, fileIdx) : "context section";
+  // Immediate-delete hosts commit on confirm; staged hosts remove from the draft
+  // and only apply on the host's SAVE — the note reflects which.
+  const deleteNote = onDeleteSection
+    ? "This file is removed from the agent -- it can't be recovered."
+    : "You must save for this and any other unsaved changes to take effect.";
 
   return (
     <div class="gsv-cse">
@@ -167,7 +185,11 @@ export function ContextSectionsEditor({
               <rect x="1" y="2" width="6" height="2" />
               <rect x="1" y="4" width="14" height="9" />
             </svg>
-            <span class="gsv-sublabel" style={`letter-spacing:.1em;color:${i === fileIdx ? "var(--text)" : "var(--text-muted)"};line-height:1.35;`}>
+            <span
+              class="gsv-sublabel gsv-cse-file-label"
+              title={fileLabel(f, i)}
+              style={`letter-spacing:.1em;color:${i === fileIdx ? "var(--text)" : "var(--text-muted)"};line-height:1.35;`}
+            >
               {fileLabel(f, i)}
             </span>
           </button>
@@ -227,7 +249,7 @@ export function ContextSectionsEditor({
             <ConfirmModal
               title="CONFIRM DELETE"
               message={`Are you sure you want to delete "${delName}"?`}
-              note="This file is removed from the agent -- it can't be recovered."
+              note={deleteNote}
               onCancel={() => setDeleteOpen(false)}
               onConfirm={confirmDelete}
             />

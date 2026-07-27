@@ -54,6 +54,21 @@
   outline-offset: 4px;
 }
 
+/* Keep long section names inside the fixed-width tab: wrap to at most two
+   centered lines, break over-long single words, and ellipsize the rest so
+   labels never overflow and collide with neighbouring tabs (full name in the
+   native title tooltip). */
+.gsv-cse-file-label {
+  width: 100%;
+  text-align: center;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .gsv-cse-newfile:hover {
   opacity: 0.8;
 }
