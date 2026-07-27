@@ -151,6 +151,11 @@ export function EditDefaultsPanel({
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const rootRef = useRef<HTMLElement>(null);
   const flashTimerRef = useRef<number | null>(null);
+  // Set when an immediate delete has already reconciled the draft optimistically
+  // (dropping the deleted file, keeping every other unsaved edit). Skips the one
+  // context re-baseline that delete's own refetch triggers so those edits aren't
+  // clobbered. Reset on a failed delete so a genuine refetch still re-baselines.
+  const skipContextRebaselineRef = useRef(false);
 
   // Re-baseline behavior fields when the saved behavior changes (external edit,
   // or our own save round-tripping through the config query). `pending` is owned
@@ -168,8 +173,13 @@ export function EditDefaultsPanel({
 
   // Re-baseline the context draft only when the saved context itself changes —
   // keyed off the context query alone so a behavior save (or failed partial
-  // save) leaves an unsaved context draft intact.
+  // save) leaves an unsaved context draft intact. Skipped once after an
+  // immediate delete, which has already reconciled the draft (see deleteSection).
   useEffect(() => {
+    if (skipContextRebaselineRef.current) {
+      skipContextRebaselineRef.current = false;
+      return;
+    }
     setFilesDraft(contextSectionsFromFiles(context.files));
     setContextIndex(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -289,6 +299,11 @@ export function EditDefaultsPanel({
 
     setPending(true);
     setFormError("");
+    // The draft above is already the post-delete state (deleted file dropped,
+    // every other unsaved edit kept); suppress the re-baseline that this delete's
+    // own refetch will fire so it doesn't overwrite those edits with the server
+    // baseline. Cleared on failure so a real refetch still re-baselines.
+    skipContextRebaselineRef.current = true;
     try {
       await saveContext.mutateAsync({
         username: viewer.username,
@@ -297,6 +312,7 @@ export function EditDefaultsPanel({
       });
     } catch (error) {
       // Persist failed — restore the section so the UI matches disk.
+      skipContextRebaselineRef.current = false;
       setFilesDraft(prevDraft);
       setContextIndex(prevIndex);
       setFormError(error instanceof Error ? error.message : String(error));
