@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import type { InstalledPackageRecord } from "./packages";
 import type { KernelContext } from "./context";
 import {
   collectFilesystemSkillDocuments,
@@ -33,109 +32,14 @@ const AGENT_IDENTITY: ProcessIdentity = {
 };
 
 describe("collectFilesystemSkillDocuments", () => {
-  it("marks package skills writable only when source repo is owned by the identity", async () => {
-    const foreign = makePackage("pkg-foreign", "foreign-tools", "alice/tools");
-    const owned = makePackage("pkg-owned", "owned-tools", "sam/tools");
-    const ctx = {
-      packages: {
-        list: () => [foreign, owned],
-      },
-    } as unknown as KernelContext;
-    const fs = makeSkillFs({
-      "/src/repos/alice/tools/skills.d": ["guide.md"],
-      "/src/repos/alice/tools/skills.d/guide.md": [
-        "---",
-        "name: foreign-guide",
-        "description: Foreign package guide.",
-        "---",
-        "",
-        "# Foreign",
-        "",
-      ].join("\n"),
-      "/src/repos/sam/tools/skills.d": ["guide.md"],
-      "/src/repos/sam/tools/skills.d/guide.md": [
-        "---",
-        "name: owned-guide",
-        "description: Owned package guide.",
-        "---",
-        "",
-        "# Owned",
-        "",
-      ].join("\n"),
-    });
-
-    const docs = await collectFilesystemSkillDocuments(fs, ctx, IDENTITY);
-
-    expect(docs.find((doc) => doc.name === "foreign-guide")?.source).toMatchObject({
-      kind: "package",
-      label: "pkg:foreign-tools",
-      writable: false,
-    });
-    expect(docs.find((doc) => doc.name === "owned-guide")?.source).toMatchObject({
-      kind: "package",
-      label: "pkg:owned-tools",
-      writable: true,
-    });
-  });
-
-  it("generates unique package skill ids for duplicate package names", async () => {
-    const packageId = "pkg-tools";
-    const globalPackage = makePackage(packageId, "tools", "sam/tools", { kind: "global" });
-    const userPackage = makePackage(packageId, "tools", "sam/tools", { kind: "user", uid: IDENTITY.uid });
-    const ctx = {
-      packages: {
-        list: () => [userPackage, globalPackage],
-      },
-    } as unknown as KernelContext;
-    const fs = makeSkillFs({
-      "/src/repos/sam/tools/skills.d": ["workflow.md"],
-      "/src/repos/sam/tools/skills.d/workflow.md": [
-        "---",
-        "name: workflow",
-        "description: Package workflow.",
-        "---",
-        "",
-        "# Workflow",
-        "",
-      ].join("\n"),
-    });
-
-    const docs = await collectFilesystemSkillDocuments(fs, ctx, IDENTITY);
-
-    expect(docs.map((doc) => doc.id).sort()).toEqual([
-      "tools--sam-tools-2:workflow",
-      "tools--sam-tools:workflow",
-    ]);
-    expect(resolveSkillDocument(docs, "tools--sam-tools:workflow")).toMatchObject({
-      ok: true,
-      doc: {
-        path: "/src/repos/sam/tools/skills.d/workflow.md",
-      },
-    });
-    expect(resolveSkillDocument(docs, "tools--sam-tools-2:workflow")).toMatchObject({
-      ok: true,
-      doc: {
-        path: "/src/repos/sam/tools/skills.d/workflow.md",
-      },
-    });
-  });
-
   it("uses both owning human and agent skills.d for agent processes", async () => {
-    const ownerPackage = makePackage("pkg-owner-tools", "owner-tools", "sam/tools", { kind: "user", uid: IDENTITY.uid });
-    const agentPackage = makePackage("pkg-agent-tools", "agent-tools", "friday/tools", { kind: "user", uid: AGENT_IDENTITY.uid });
-    const listCalls: Array<{ scopes?: unknown }> = [];
-    const ctx = makeAgentOwnedContext({
-      packages: [ownerPackage, agentPackage],
-      listCalls,
-    });
+    const ctx = makeAgentOwnedContext();
     const fs = makeSkillFs({
       "/home/sam/skills.d": ["shared.md"],
       "/home/sam/skills.d/shared.md": skillMarkdown("shared", "User-wide skill."),
       "/home/friday/skills.d": ["shared.md", "specialized.md"],
       "/home/friday/skills.d/shared.md": skillMarkdown("shared", "Agent-specific override skill."),
       "/home/friday/skills.d/specialized.md": skillMarkdown("specialized", "Agent-only skill."),
-      "/src/repos/sam/tools/skills.d": ["workflow.md"],
-      "/src/repos/sam/tools/skills.d/workflow.md": skillMarkdown("owner-workflow", "Owner package workflow."),
     });
 
     const docs = await collectFilesystemSkillDocuments(fs, ctx, AGENT_IDENTITY);
@@ -144,7 +48,6 @@ describe("collectFilesystemSkillDocuments", () => {
       "user:shared",
       "agent:shared",
       "specialized",
-      "owner-workflow",
     ]);
     expect(resolveSkillDocument(docs, "user:shared")).toMatchObject({
       ok: true,
@@ -160,21 +63,10 @@ describe("collectFilesystemSkillDocuments", () => {
         source: { label: "agent" },
       },
     });
-    expect(docs.find((doc) => doc.name === "owner-workflow")?.source.writable).toBe(false);
-    expect(listCalls[0]).toMatchObject({
-      scopes: [
-        { kind: "user", uid: IDENTITY.uid },
-        { kind: "global" },
-      ],
-    });
   });
 
   it("discovers nested skills.d children without exposing them in top-level-only collection", async () => {
-    const ctx = {
-      packages: {
-        list: () => [],
-      },
-    } as unknown as KernelContext;
+    const ctx = {} as KernelContext;
     const fs = makeSkillFs({
       "/home/sam/skills.d": ["device-management"],
       "/home/sam/skills.d/device-management": ["SKILL.md", "notes.md", "skills.d"],
@@ -259,9 +151,9 @@ describe("collectFilesystemSkillDocuments", () => {
 
 describe("parseSkillMarkdown", () => {
   it("parses the prompt-visible metadata without hierarchy frontmatter", () => {
-    expect(parseSkillMarkdown("# Package Development\n\nBuild packages.", "package-development")).toEqual({
-      name: "package-development",
-      description: "Build packages.",
+    expect(parseSkillMarkdown("# Device Management\n\nManage devices.", "device-management")).toEqual({
+      name: "device-management",
+      description: "Manage devices.",
       aliases: [],
     });
   });
@@ -366,9 +258,6 @@ describe("collectKernelSkillDocuments", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
-      packages: {
-        list: () => [],
-      },
       env: {
         RIPGIT: makeRipgitFetcher({
           "sam/home:skills.d": [
@@ -420,44 +309,10 @@ describe("collectKernelSkillDocuments", () => {
   });
 });
 
-function makePackage(
-  packageId: string,
-  name: string,
-  repo: string,
-  scope: InstalledPackageRecord["scope"] = { kind: "user", uid: IDENTITY.uid },
-): InstalledPackageRecord {
-  return {
-    packageId,
-    scope,
-    manifest: {
-      name,
-      description: name,
-      version: "0.1.0",
-      runtime: "web-ui",
-      source: {
-        repo,
-        ref: "main",
-        subdir: ".",
-        resolvedCommit: "base123",
-      },
-      entrypoints: [],
-    },
-    artifact: { hash: "hash", mainModule: "main.js", modulePaths: ["main.js"] },
-    enabled: true,
-    reviewRequired: false,
-    reviewedAt: 1,
-    installedAt: 1,
-    updatedAt: 1,
-  } as InstalledPackageRecord;
-}
-
 function makeAgentOwnedContext(options: {
-  packages?: InstalledPackageRecord[];
-  listCalls?: Array<{ scopes?: unknown }>;
   ripgitEntries?: Record<string, string | Array<{ name: string; mode: string; hash: string; type: "tree" | "blob" | "symlink" }>>;
   readKeys?: string[];
 } = {}): KernelContext {
-  const packages = options.packages ?? [];
   return {
     identity: {
       role: "user",
@@ -498,18 +353,6 @@ function makeAgentOwnedContext(options: {
       },
     },
     processId: "task-1",
-    packages: {
-      list(args: { scopes?: Array<{ kind: string; uid?: number }> }) {
-        options.listCalls?.push(args);
-        const scopeKeys = new Set((args.scopes ?? []).map((scope) =>
-          scope.kind === "user" ? `user:${scope.uid}` : scope.kind
-        ));
-        return packages.filter((pkg) => {
-          const scope = pkg.scope.kind === "user" ? `user:${pkg.scope.uid}` : pkg.scope.kind;
-          return scopeKeys.has(scope);
-        });
-      },
-    },
     env: {
       RIPGIT: options.ripgitEntries ? makeRipgitFetcher(options.ripgitEntries, options.readKeys) : undefined,
     },

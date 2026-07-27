@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import {
   getDesktopObject,
   shellRouteForTab,
-  shellTabForAppRoute,
   shellSurfaceLabel,
   shellTabForDesktopChild,
   shellTabForLibraryRoute,
@@ -12,7 +11,6 @@ import {
   type DesktopChildObject,
   type DesktopObject,
   type DesktopObjectId,
-  type ShellAppRoute,
   type ShellLibraryRoute,
   type ShellPageTab,
   type ShellRoute,
@@ -43,7 +41,7 @@ const MIN_DESKTOP_RAIL_CANVAS_WIDTH = 40;
 // panel is the home screen, and the menu (rail) and chat become full-height
 // drawers revealed by swiping left/right (see GsvShell mobile pane handling).
 const MOBILE_LAYOUT_WIDTH = 760;
-const SHELL_TABS_STORAGE_KEY = "gsv.shell.tabs.v1";
+const SHELL_TABS_STORAGE_KEY = "gsv.shell.tabs.v2";
 
 type UseGsvShellStateArgs = {
   rootRef: RefObject<HTMLDivElement>;
@@ -248,28 +246,11 @@ export function useGsvShellState({
       return;
     }
 
-    if (surface === "app") {
-      return;
-    }
-
     activateRoute({ surface });
   };
 
   const openSettingsRoute = (route: ShellSettingsRoute): void => {
     activateRoute({ surface: "settings", settingsRoute: route });
-  };
-
-  const openAppRoute = (route: ShellAppRoute, title?: string): string => {
-    const tab = shellTabForAppRoute(route, title);
-    const shellRoute: ShellRoute = { surface: "app", appRoute: tab.appRoute ?? route };
-    pushShellRoute(shellRoute);
-    setOpenTabs((current) => upsertTab(current, tab));
-    setActiveTabKey(tab.key);
-    setActiveSurface("app");
-    setSelectedObjectId(null);
-    setPickerId(null);
-    setGsvOpen(false);
-    return tab.key;
   };
 
   const syncActiveSettingsRoute = (route: ShellSettingsRoute): void => {
@@ -324,11 +305,6 @@ export function useGsvShellState({
   };
 
   const openObject = (child: DesktopChildObject): void => {
-    if (child.appRoute) {
-      openAppRoute(child.appRoute, child.label);
-      return;
-    }
-
     const tab = shellTabForDesktopChild(child);
     pushShellRoute(shellRouteForTab(tab));
     setOpenTabs((current) => upsertTab(current, tab));
@@ -486,7 +462,6 @@ export function useGsvShellState({
     openControlMenu,
     openMobileMenu,
     openObject,
-    openAppRoute,
     openSettingsRoute,
     openSurface,
     openTabs,

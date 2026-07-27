@@ -13,7 +13,6 @@ import {
   normalizeConfigPayload,
   normalizeIdentityLinksPayload,
   normalizeMcpServersPayload,
-  normalizePackagesPayload,
   normalizeProcessesPayload,
   normalizeTargetsPayload,
 } from "../domain/consoleNormalization";
@@ -27,7 +26,6 @@ import type {
   ConsoleMcpServer,
   ConsoleMcpTransport,
   ConsoleOverviewData,
-  ConsolePackage,
   ConsoleProcess,
   ConsoleTarget,
 } from "../domain/consoleModels";
@@ -53,7 +51,7 @@ const HTML_DOCUMENT_PATTERN = /(?:<!doctype\s+html|<html[\s>])/i;
 const HTML_CHALLENGE_OR_BLOCK_PATTERN =
   /\b(?:unable\s+to\s+load\s+site|ray\s+id|cf-ray|cdn-cgi\/challenge-platform|cloudflare|vpn)\b/i;
 
-export type ConsoleClient = Pick<GSVClient, "call" | "proc" | "pkg" | "account" | "sys">;
+export type ConsoleClient = Pick<GSVClient, "call" | "proc" | "account" | "sys">;
 
 export type ConsoleAgentContextFileDraft = {
   label: string;
@@ -253,10 +251,6 @@ export async function loadConsoleProcesses(client: Pick<GSVClient, "proc">): Pro
 
 export async function loadConsoleTargets(client: ConsoleClient): Promise<ConsoleTarget[]> {
   return normalizeTargetsPayload(await client.call("sys.device.list", { includeOffline: true }));
-}
-
-export async function loadConsolePackages(client: Pick<GSVClient, "pkg">): Promise<ConsolePackage[]> {
-  return normalizePackagesPayload(await client.pkg.list({}));
 }
 
 export async function loadConsoleAccounts(client: Pick<GSVClient, "account">): Promise<ConsoleAccount[]> {
@@ -773,7 +767,6 @@ export async function loadConsoleOverview(
   const [
     processes,
     targets,
-    packagesResult,
     accounts,
     adapterResults,
     mcpServers,
@@ -781,7 +774,6 @@ export async function loadConsoleOverview(
   ] = await Promise.all([
     client.proc.list({}),
     client.call("sys.device.list", { includeOffline: true }),
-    client.pkg.list({}),
     client.account.list({}),
     loadAdapterPayloads(client, options.adapters),
     loadOptionalPayload(() => client.call("sys.mcp.list", {})),
@@ -792,7 +784,6 @@ export async function loadConsoleOverview(
     loadedAt: Date.now(),
     processes,
     targets,
-    packages: packagesResult,
     accounts,
     adapters: adapterResults,
     mcpServers,

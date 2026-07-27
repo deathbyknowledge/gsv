@@ -14,12 +14,6 @@ export type NotificationSource =
   | {
       kind: "process";
       processId: string;
-    }
-  | {
-      kind: "app";
-      packageId: string;
-      packageName: string;
-      entrypointName: string;
     };
 
 export type NotificationRecord = {

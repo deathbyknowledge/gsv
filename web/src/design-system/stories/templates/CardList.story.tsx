@@ -4,7 +4,7 @@ import { Wire, WireRow, WireBox, WireGrid, PreviewLink } from "../../wireframe";
 /** CARD LIST archetype — a full-width page header, a horizontal action bar on
  *  top (search / filters / connect), then a responsive full-width card grid (or
  *  the shared empty state). Use when each object needs a richer visual cell than
- *  a row: Crew, Messengers, Applications. */
+ *  a row: Crew, Messengers, Integrations. */
 const story: Story = {
   title: "Card list",
   group: "Templates",

@@ -27,7 +27,7 @@ export function WelcomeStage({
         >
           <span class="gsv-setup-mode-kicker gsv-sublabel">Recommended</span>
           <strong class="gsv-section">Quick start</strong>
-          <p class="gsv-prose-sm">Create the first account, keep the default AI path, and use the official system files.</p>
+          <p class="gsv-prose-sm">Create the first account and keep the default AI path.</p>
         </Surface>
         <Surface
           as="button"
@@ -39,7 +39,7 @@ export function WelcomeStage({
         >
           <span class="gsv-setup-mode-kicker gsv-sublabel">More control</span>
           <strong class="gsv-section">Custom</strong>
-          <p class="gsv-prose-sm">Choose AI defaults, system files, and optional device setup before first start.</p>
+          <p class="gsv-prose-sm">Choose AI defaults and optional device setup before first start.</p>
         </Surface>
       </div>
     </section>

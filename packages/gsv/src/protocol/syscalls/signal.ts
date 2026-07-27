@@ -1,14 +1,8 @@
-export type SignalWatchOwner = {
-  appSessionId: string;
-  clientId: string;
-};
-
 export type SignalWatchArgs = {
   signal: string;
   processId?: string;
   key?: string;
   state?: unknown;
-  owner?: SignalWatchOwner;
   once?: boolean;
   ttlMs?: number;
 };
@@ -21,8 +15,8 @@ export type SignalWatchResult = {
 };
 
 export type SignalUnwatchArgs =
-  | { watchId: string; key?: never; owner?: SignalWatchOwner }
-  | { watchId?: never; key: string; owner?: SignalWatchOwner };
+  | { watchId: string; key?: never }
+  | { watchId?: never; key: string };
 
 export type SignalUnwatchResult = {
   removed: number;

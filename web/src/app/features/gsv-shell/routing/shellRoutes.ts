@@ -1,16 +1,13 @@
 import type {
-  ShellAppRoute,
   ShellLibraryRoute,
   ShellRoute,
   ShellSettingsListKind,
   ShellSettingsRoute,
   ShellSurfaceId,
 } from "../domain/shellModel";
-import { normalizeShellAppRoute } from "../domain/shellModel";
 
-const TOP_LEVEL_SURFACES: Record<string, Exclude<ShellSurfaceId, "desktop" | "app" | "settings">> = {
+const TOP_LEVEL_SURFACES: Record<string, Exclude<ShellSurfaceId, "desktop" | "settings">> = {
   agent: "agent",
-  applications: "applications",
   crew: "crew",
   files: "files",
   integrations: "integrations",
@@ -27,7 +24,6 @@ const TOP_LEVEL_SURFACES: Record<string, Exclude<ShellSurfaceId, "desktop" | "ap
 };
 
 const SETTINGS_LIST_KINDS = new Set<ShellSettingsListKind>([
-  "applications",
   "integrations",
   "library",
   "machines",
@@ -36,7 +32,6 @@ const SETTINGS_LIST_KINDS = new Set<ShellSettingsListKind>([
 ]);
 
 const WORKER_OWNED_PREFIXES = [
-  "/apps",
   "/downloads",
   "/git",
   "/oauth",
@@ -110,25 +105,6 @@ function settingsRouteFromParts(parts: readonly string[]): ShellSettingsRoute {
     : { view: "list", kind: kind as ShellSettingsListKind };
 }
 
-function appRouteFromParts(parts: readonly string[], search: string, hash: string): ShellAppRoute | null {
-  const appId = parts[1] ? decodeSegment(parts[1]) : null;
-  if (!appId?.trim()) {
-    return null;
-  }
-
-  const suffixParts = parts.slice(2).map(decodeSegment);
-  if (suffixParts.some((part) => part === null)) {
-    return null;
-  }
-
-  return normalizeShellAppRoute({
-    appId,
-    suffix: suffixParts.length > 0 ? `/${suffixParts.join("/")}` : "/",
-    search,
-    hash,
-  });
-}
-
 function decodedParts(parts: readonly string[]): string[] | null {
   const decoded = parts.map(decodeSegment);
   return decoded.some((part) => part === null) ? null : decoded as string[];
@@ -188,11 +164,6 @@ export function shellRouteFromLocation(location: Pick<Location, "hash" | "pathna
     return { surface: "library", libraryRoute: libraryRouteFromParts(parts, location.search) };
   }
 
-  if (parts[0] === "open") {
-    const appRoute = appRouteFromParts(parts, location.search, location.hash);
-    return appRoute ? { surface: "app", appRoute } : { surface: "desktop" };
-  }
-
   const surface = TOP_LEVEL_SURFACES[parts[0]];
   return surface ? { surface } : { surface: "desktop" };
 }
@@ -220,15 +191,6 @@ function formatSettingsRoute(route: ShellSettingsRoute | undefined): string {
     return `${base}/new`;
   }
   return route.detailId ? `${base}/${encodeSegment(route.detailId)}` : base;
-}
-
-function formatAppRoute(route: ShellAppRoute): string {
-  const appRoute = normalizeShellAppRoute(route);
-  const suffix = appRoute.suffix === "/" ? "" : appRoute.suffix.split("/").filter(Boolean).map(encodeSegment).join("/");
-  const path = suffix
-    ? `/open/${encodeSegment(appRoute.appId)}/${suffix}`
-    : `/open/${encodeSegment(appRoute.appId)}`;
-  return `${path}${appRoute.search}${appRoute.hash}`;
 }
 
 function formatLibraryRoute(route: ShellLibraryRoute | undefined): string {
@@ -260,9 +222,6 @@ export function shellRouteToPath(route: ShellRoute): string {
   }
   if (route.surface === "settings") {
     return formatSettingsRoute(route.settingsRoute);
-  }
-  if (route.surface === "app") {
-    return formatAppRoute(route.appRoute);
   }
   if (route.surface === "library") {
     return formatLibraryRoute(route.libraryRoute);

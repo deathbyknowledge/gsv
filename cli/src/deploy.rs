@@ -20,12 +20,11 @@ const REPO_NAME: &str = "gsv";
 
 const COMPONENT_GATEWAY: &str = "gateway";
 const COMPONENT_RIPGIT: &str = "ripgit";
-const COMPONENT_ASSEMBLER: &str = "assembler";
 const COMPONENT_CHANNEL_WHATSAPP: &str = "channel-whatsapp";
 const COMPONENT_CHANNEL_DISCORD: &str = "channel-discord";
 const COMPONENT_CHANNEL_TELEGRAM: &str = "channel-telegram";
+const LEGACY_COMPONENT_ASSEMBLER: &str = "assembler";
 
-const BUNDLE_ASSEMBLER: &str = "gsv-cloudflare-assembler.tar.gz";
 const BUNDLE_GATEWAY: &str = "gsv-cloudflare-gateway.tar.gz";
 const BUNDLE_RIPGIT: &str = "gsv-cloudflare-ripgit.tar.gz";
 const BUNDLE_CHANNEL_WHATSAPP: &str = "gsv-cloudflare-channel-whatsapp.tar.gz";
@@ -34,7 +33,6 @@ const BUNDLE_CHANNEL_TELEGRAM: &str = "gsv-cloudflare-channel-telegram.tar.gz";
 const BUNDLE_CHECKSUMS: &str = "cloudflare-checksums.txt";
 pub const DEFAULT_DEPLOY_INSTANCE: &str = "gsv";
 const DEFAULT_STORAGE_BUCKET_NAME: &str = "gsv-storage";
-const SCRIPT_ASSEMBLER: &str = "gsv-assembler";
 const SCRIPT_GATEWAY: &str = "gsv";
 const SCRIPT_RIPGIT: &str = "ripgit";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
@@ -42,7 +40,6 @@ const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
 const SCRIPT_CHANNEL_TELEGRAM: &str = "gsv-channel-telegram";
 const RESERVED_NON_DEFAULT_INSTANCE_NAMES: &[&str] = &[SCRIPT_RIPGIT];
 const RESERVED_INSTANCE_NAME_SUFFIXES: &[&str] = &[
-    "-assembler",
     "-ripgit",
     "-channel-whatsapp",
     "-channel-discord",
@@ -54,6 +51,13 @@ const CLOUDFLARE_MAX_ATTEMPTS: usize = 5;
 const CLOUDFLARE_RETRY_BASE_MS: u64 = 400;
 const MAX_SOURCE_MAP_UPLOAD_BYTES: usize = 2 * 1024 * 1024;
 static DEPLOY_NOTIFICATION_MODE: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, clap::ValueEnum)]
+pub enum CodeModePreference {
+    Auto,
+    On,
+    Off,
+}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DeployInstance {
@@ -81,7 +85,6 @@ impl DeployInstance {
     pub fn script_name(&self, component: &str) -> Option<String> {
         match component {
             COMPONENT_GATEWAY => Some(self.name.clone()),
-            COMPONENT_ASSEMBLER => Some(format!("{}-assembler", self.name)),
             COMPONENT_RIPGIT if self.is_default() => Some(SCRIPT_RIPGIT.to_string()),
             COMPONENT_RIPGIT => Some(format!("{}-ripgit", self.name)),
             COMPONENT_CHANNEL_WHATSAPP => Some(format!("{}-channel-whatsapp", self.name)),
@@ -91,13 +94,14 @@ impl DeployInstance {
         }
     }
 
+    fn legacy_assembler_script_name(&self) -> String {
+        format!("{}-assembler", self.name)
+    }
+
     fn script_name_for_config_service(&self, service: &str) -> String {
         match service {
             SCRIPT_GATEWAY => self
                 .script_name(COMPONENT_GATEWAY)
-                .unwrap_or_else(|| service.to_string()),
-            SCRIPT_ASSEMBLER => self
-                .script_name(COMPONENT_ASSEMBLER)
                 .unwrap_or_else(|| service.to_string()),
             SCRIPT_RIPGIT => self
                 .script_name(COMPONENT_RIPGIT)
@@ -243,6 +247,77 @@ struct CloudflareApiMessage {
     code: Option<i64>,
     message: String,
 }
+
+#[derive(Debug, Deserialize)]
+struct CloudflareApiErrorEnvelope {
+    errors: Option<Vec<CloudflareApiMessage>>,
+    messages: Option<Vec<CloudflareApiMessage>>,
+}
+
+#[derive(Debug)]
+struct CloudflareApiError {
+    display: String,
+    response_messages: Vec<CloudflareApiMessage>,
+}
+
+impl CloudflareApiError {
+    fn from_response(
+        context: &str,
+        status: Option<StatusCode>,
+        errors: Option<Vec<CloudflareApiMessage>>,
+        messages: Option<Vec<CloudflareApiMessage>>,
+    ) -> Self {
+        let summary = summarize_cloudflare_messages(errors.as_deref(), messages.as_deref());
+        let display = match status {
+            Some(status) => format!("{} failed ({}): {}", context, status, summary),
+            None => format!("{} failed: {}", context, summary),
+        };
+        let mut response_messages = errors.unwrap_or_default();
+        response_messages.extend(messages.unwrap_or_default());
+        Self {
+            display,
+            response_messages,
+        }
+    }
+
+    fn mentions_worker_loader(&self) -> bool {
+        self.response_messages.iter().any(|message| {
+            let normalized = message.message.to_ascii_lowercase();
+            let names_loader = normalized.contains("worker loader")
+                || normalized.contains("worker_loader")
+                || normalized.contains("worker-loader")
+                || normalized.contains("dynamic worker")
+                || message
+                    .message
+                    .split(|character: char| !character.is_ascii_alphanumeric())
+                    .any(|token| token == "LOADER");
+            let rejects_capability = normalized.contains("not support")
+                || normalized.contains("unsupported")
+                || normalized.contains("not available")
+                || normalized.contains("unavailable for this account")
+                || normalized.contains("not enabled")
+                || normalized.contains("not allowed")
+                || normalized.contains("not authorized")
+                || normalized.contains("not permitted")
+                || normalized.contains("require")
+                || normalized.contains("only available")
+                || normalized.contains("only supported")
+                || normalized.contains("paid plan")
+                || normalized.contains("free plan")
+                || normalized.contains("unknown binding")
+                || normalized.contains("invalid binding");
+            names_loader && rejects_capability
+        })
+    }
+}
+
+impl std::fmt::Display for CloudflareApiError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.display)
+    }
+}
+
+impl std::error::Error for CloudflareApiError {}
 
 #[derive(Debug, Deserialize)]
 struct CloudflareApiResponse<T> {
@@ -394,6 +469,7 @@ struct UploadMetadataOptions<'a> {
     script_exists: bool,
     uploaded_assets: Option<&'a UploadedAssets>,
     keep_assets: bool,
+    include_worker_loaders: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -421,6 +497,23 @@ pub struct GatewayBootstrapConfig {
 struct WorkerScriptSummary {
     id: String,
     migration_tag: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkersAccountSettings {
+    default_usage_model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudflareSubscription {
+    rate_plan: Option<CloudflareRatePlan>,
+    state: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudflareRatePlan {
+    id: Option<String>,
+    scope: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -465,7 +558,6 @@ struct R2ObjectsPage {
 
 fn component_to_bundle(component: &str) -> Option<&'static str> {
     match component {
-        COMPONENT_ASSEMBLER => Some(BUNDLE_ASSEMBLER),
         COMPONENT_GATEWAY => Some(BUNDLE_GATEWAY),
         COMPONENT_RIPGIT => Some(BUNDLE_RIPGIT),
         COMPONENT_CHANNEL_WHATSAPP => Some(BUNDLE_CHANNEL_WHATSAPP),
@@ -478,7 +570,6 @@ fn component_to_bundle(component: &str) -> Option<&'static str> {
 pub fn available_components() -> &'static [&'static str] {
     &[
         COMPONENT_RIPGIT,
-        COMPONENT_ASSEMBLER,
         COMPONENT_GATEWAY,
         COMPONENT_CHANNEL_WHATSAPP,
         COMPONENT_CHANNEL_DISCORD,
@@ -1193,17 +1284,24 @@ async fn parse_cloudflare_response<T: DeserializeOwned>(
     let body = response.text().await?;
 
     if !status.is_success() {
-        if let Ok(envelope) = serde_json::from_str::<CloudflareApiResponse<Value>>(&body) {
-            return Err(format!(
-                "{} failed ({}): {}",
-                context,
-                status,
-                summarize_cloudflare_messages(
-                    envelope.errors.as_deref(),
-                    envelope.messages.as_deref(),
+        if let Ok(envelope) = serde_json::from_str::<CloudflareApiErrorEnvelope>(&body) {
+            let has_response_messages = envelope
+                .errors
+                .as_ref()
+                .is_some_and(|messages| !messages.is_empty())
+                || envelope
+                    .messages
+                    .as_ref()
+                    .is_some_and(|messages| !messages.is_empty());
+            if has_response_messages {
+                return Err(CloudflareApiError::from_response(
+                    context,
+                    Some(status),
+                    envelope.errors,
+                    envelope.messages,
                 )
-            )
-            .into());
+                .into());
+            }
         }
 
         return Err(format!("{} failed ({}): {}", context, status, body).into());
@@ -1217,15 +1315,22 @@ async fn parse_cloudflare_response<T: DeserializeOwned>(
     })?;
 
     if !envelope.success {
-        return Err(format!(
-            "{} failed: {}",
+        return Err(CloudflareApiError::from_response(
             context,
-            summarize_cloudflare_messages(envelope.errors.as_deref(), envelope.messages.as_deref(),)
+            None,
+            envelope.errors,
+            envelope.messages,
         )
         .into());
     }
 
     Ok(envelope.result)
+}
+
+fn is_worker_loader_binding_rejection(error: &(dyn std::error::Error + 'static)) -> bool {
+    error
+        .downcast_ref::<CloudflareApiError>()
+        .is_some_and(CloudflareApiError::mentions_worker_loader)
 }
 
 async fn list_worker_scripts(
@@ -1253,6 +1358,131 @@ async fn list_worker_scripts(
         out.insert(script.id, script.migration_tag);
     }
     Ok(out)
+}
+
+fn workers_paid_from_usage_model(usage_model: Option<&str>) -> Option<bool> {
+    match usage_model.map(|value| value.trim().to_ascii_lowercase()) {
+        Some(value) if value == "standard" || value == "unbound" => Some(true),
+        Some(value) if value == "bundled" => Some(false),
+        _ => None,
+    }
+}
+
+fn subscription_is_active(state: Option<&str>) -> bool {
+    matches!(
+        state
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("trial" | "provisioned" | "paid")
+    )
+}
+
+fn workers_paid_from_subscriptions(subscriptions: &[CloudflareSubscription]) -> bool {
+    subscriptions.iter().any(|subscription| {
+        if !subscription_is_active(subscription.state.as_deref()) {
+            return false;
+        }
+        let Some(rate_plan) = subscription.rate_plan.as_ref() else {
+            return false;
+        };
+        if !rate_plan
+            .scope
+            .as_deref()
+            .is_some_and(|scope| scope.eq_ignore_ascii_case("account"))
+        {
+            return false;
+        }
+        let Some(rate_plan_id) = rate_plan.id.as_deref() else {
+            return false;
+        };
+        let normalized = rate_plan_id.trim().to_ascii_lowercase();
+        normalized == "workers_paid"
+            || (normalized.starts_with("workers_") && !normalized.contains("free"))
+    })
+}
+
+async fn fetch_workers_paid_from_account_settings(
+    client: &reqwest::Client,
+    account_id: &str,
+    api_token: &str,
+) -> Result<Option<bool>, Box<dyn std::error::Error>> {
+    let url = cloudflare_api_url(&format!(
+        "/accounts/{}/workers/account-settings",
+        account_id
+    ));
+    let response = send_cloudflare_request_with_retry(
+        || {
+            client
+                .get(&url)
+                .bearer_auth(api_token)
+                .header("Content-Type", "application/json")
+                .send()
+        },
+        "Fetch Workers account settings",
+    )
+    .await?;
+    let settings: WorkersAccountSettings =
+        parse_cloudflare_response(response, "Fetch Workers account settings").await?;
+    Ok(workers_paid_from_usage_model(
+        settings.default_usage_model.as_deref(),
+    ))
+}
+
+async fn fetch_workers_paid_from_subscriptions(
+    client: &reqwest::Client,
+    account_id: &str,
+    api_token: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let url = cloudflare_api_url(&format!("/accounts/{}/subscriptions", account_id));
+    let response = send_cloudflare_request_with_retry(
+        || {
+            client
+                .get(&url)
+                .bearer_auth(api_token)
+                .header("Content-Type", "application/json")
+                .send()
+        },
+        "List account subscriptions",
+    )
+    .await?;
+    let subscriptions: Vec<CloudflareSubscription> =
+        parse_cloudflare_response(response, "List account subscriptions").await?;
+    Ok(workers_paid_from_subscriptions(&subscriptions))
+}
+
+async fn resolve_codemode_enabled(
+    client: &reqwest::Client,
+    account_id: &str,
+    api_token: &str,
+    preference: CodeModePreference,
+) -> bool {
+    match preference {
+        CodeModePreference::On => return true,
+        CodeModePreference::Off => return false,
+        CodeModePreference::Auto => {}
+    }
+
+    match fetch_workers_paid_from_account_settings(client, account_id, api_token).await {
+        Ok(Some(enabled)) => return enabled,
+        Ok(None) => {}
+        Err(error) => {
+            println!(
+                "Warning: could not determine the Workers plan from account settings ({}). Checking account subscriptions.",
+                error
+            );
+        }
+    }
+
+    match fetch_workers_paid_from_subscriptions(client, account_id, api_token).await {
+        Ok(enabled) => enabled,
+        Err(error) => {
+            println!(
+                "Warning: could not read the Workers plan from account subscriptions ({}). CodeMode availability will be probed during gateway upload.",
+                error
+            );
+            true
+        }
+    }
 }
 
 async fn ensure_r2_bucket_exists(
@@ -1781,13 +2011,43 @@ async fn purge_r2_bucket_objects(
 fn deploy_order(component: &str) -> usize {
     match component {
         COMPONENT_RIPGIT => 0,
-        COMPONENT_ASSEMBLER => 1,
-        COMPONENT_CHANNEL_WHATSAPP => 2,
-        COMPONENT_CHANNEL_DISCORD => 3,
-        COMPONENT_CHANNEL_TELEGRAM => 4,
+        COMPONENT_CHANNEL_WHATSAPP => 1,
+        COMPONENT_CHANNEL_DISCORD => 2,
+        COMPONENT_CHANNEL_TELEGRAM => 3,
+        LEGACY_COMPONENT_ASSEMBLER => 9,
         COMPONENT_GATEWAY => 10,
         _ => 100,
     }
+}
+
+fn teardown_worker_scripts(
+    components: &[String],
+    instance: &DeployInstance,
+) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
+    let mut component_order = components.to_vec();
+    let full_teardown = available_components()
+        .iter()
+        .all(|candidate| components.iter().any(|component| component == candidate));
+    if full_teardown {
+        component_order.push(LEGACY_COMPONENT_ASSEMBLER.to_string());
+    }
+    component_order.sort_by_key(|component| deploy_order(component));
+
+    component_order
+        .into_iter()
+        .map(|component| {
+            if component == LEGACY_COMPONENT_ASSEMBLER {
+                return Ok((
+                    "legacy assembler".to_string(),
+                    instance.legacy_assembler_script_name(),
+                ));
+            }
+            let script_name = instance
+                .script_name(&component)
+                .ok_or_else(|| format!("Unsupported component '{}'", component))?;
+            Ok((component, script_name))
+        })
+        .collect()
 }
 
 fn parse_wrangler_config(
@@ -2496,11 +2756,13 @@ fn build_upload_metadata(
         metadata_bindings.push(value);
     }
 
-    for loader in &bundle.wrangler.worker_loaders {
-        metadata_bindings.push(json!({
-            "name": loader.binding,
-            "type": "worker_loader"
-        }));
+    if options.include_worker_loaders {
+        for loader in &bundle.wrangler.worker_loaders {
+            metadata_bindings.push(json!({
+                "name": loader.binding,
+                "type": "worker_loader"
+            }));
+        }
     }
 
     if let Some(ai) = &bundle.wrangler.ai {
@@ -2588,6 +2850,7 @@ pub async fn apply_deploy(
     version: &str,
     components: &[String],
     instance: &DeployInstance,
+    codemode_preference: CodeModePreference,
 ) -> Result<DeployApplyResult, Box<dyn std::error::Error>> {
     if components.is_empty() {
         return Err("No components requested for deployment".into());
@@ -2606,10 +2869,6 @@ pub async fn apply_deploy(
     let ripgit_script_name = instance
         .script_name(COMPONENT_RIPGIT)
         .ok_or("Unsupported ripgit component")?;
-    let assembler_script_name = instance
-        .script_name(COMPONENT_ASSEMBLER)
-        .ok_or("Unsupported assembler component")?;
-
     let client = reqwest::Client::new();
     let existing_scripts_with_migrations =
         list_worker_scripts(&client, account_id, api_token).await?;
@@ -2617,21 +2876,28 @@ pub async fn apply_deploy(
         existing_scripts_with_migrations.keys().cloned().collect();
     let ripgit_available = selected_components.contains(COMPONENT_RIPGIT)
         || existing_scripts.contains(&ripgit_script_name);
-    let assembler_available = selected_components.contains(COMPONENT_ASSEMBLER)
-        || existing_scripts.contains(&assembler_script_name);
     if selected_components.contains(COMPONENT_GATEWAY) && !ripgit_available {
         return Err(
             "Deploying `gateway` requires the `ripgit` worker. Include `--component ripgit` or deploy ripgit first."
                 .into(),
         );
     }
-    if selected_components.contains(COMPONENT_GATEWAY) && !assembler_available {
-        return Err(
-            "Deploying `gateway` requires the `assembler` worker. Include `--component assembler` or deploy assembler first."
-                .into(),
+    let mut available_scripts = existing_scripts.clone();
+    let mut codemode_enabled = if selected_components.contains(COMPONENT_GATEWAY) {
+        resolve_codemode_enabled(&client, account_id, api_token, codemode_preference).await
+    } else {
+        false
+    };
+    if selected_components.contains(COMPONENT_GATEWAY) {
+        println!(
+            "CodeMode: {}",
+            if codemode_enabled {
+                "enabled (Worker Loader binding included)"
+            } else {
+                "disabled (Worker Loader binding omitted)"
+            }
         );
     }
-    let mut available_scripts = existing_scripts.clone();
 
     let mut required_buckets = HashSet::new();
 
@@ -2710,6 +2976,7 @@ pub async fn apply_deploy(
                 script_exists: existing_scripts_with_migrations.contains_key(&bundle.script_name),
                 uploaded_assets: uploaded_assets_by_script.get(&bundle.script_name),
                 keep_assets: false,
+                include_worker_loaders: bundle.component != COMPONENT_GATEWAY || codemode_enabled,
             },
         )?;
         let source_map_for_upload = bundle.source_map.as_ref().and_then(|(name, bytes)| {
@@ -2726,7 +2993,7 @@ pub async fn apply_deploy(
             }
         });
 
-        upload_worker_script(
+        let upload_result = upload_worker_script(
             &client,
             account_id,
             api_token,
@@ -2739,7 +3006,68 @@ pub async fn apply_deploy(
                 source_map: source_map_for_upload,
             },
         )
-        .await?;
+        .await;
+        if let Err(error) = upload_result {
+            if bundle.component != COMPONENT_GATEWAY
+                || codemode_preference != CodeModePreference::Auto
+                || !codemode_enabled
+                || !is_worker_loader_binding_rejection(error.as_ref())
+            {
+                return Err(error);
+            }
+
+            println!(
+                "Warning: Cloudflare rejected the Worker Loader binding ({}). Retrying without CodeMode.",
+                error
+            );
+            let fallback_metadata = build_upload_metadata(
+                bundle,
+                UploadMetadataOptions {
+                    instance,
+                    selected_components: &selected_components,
+                    available_scripts: &available_scripts,
+                    account_subdomain: account_subdomain.as_deref(),
+                    existing_migration_tag: existing_scripts_with_migrations
+                        .get(&bundle.script_name)
+                        .and_then(|tag| tag.as_deref()),
+                    include_migrations: true,
+                    script_exists: existing_scripts_with_migrations
+                        .contains_key(&bundle.script_name),
+                    uploaded_assets: uploaded_assets_by_script.get(&bundle.script_name),
+                    keep_assets: false,
+                    include_worker_loaders: false,
+                },
+            )?;
+            let fallback_source_map = bundle.source_map.as_ref().and_then(|(name, bytes)| {
+                if bytes.len() <= MAX_SOURCE_MAP_UPLOAD_BYTES {
+                    Some((name.clone(), bytes.clone()))
+                } else {
+                    None
+                }
+            });
+            upload_worker_script(
+                &client,
+                account_id,
+                api_token,
+                WorkerScriptUpload {
+                    script_name: &bundle.script_name,
+                    metadata: fallback_metadata,
+                    entrypoint_part_name: &bundle.entrypoint_part_name,
+                    entrypoint_bytes: bundle.entrypoint_bytes.clone(),
+                    additional_modules: &bundle.additional_modules,
+                    source_map: fallback_source_map,
+                },
+            )
+            .await
+            .map_err(|fallback_error| {
+                format!(
+                    "Gateway upload failed with CodeMode ({}), then failed without CodeMode ({}).",
+                    error, fallback_error
+                )
+            })?;
+            codemode_enabled = false;
+            println!("CodeMode: disabled (Worker Loader binding unsupported by this account)");
+        }
         println!("Uploaded {}", bundle.script_name);
         available_scripts.insert(bundle.script_name.clone());
 
@@ -2787,6 +3115,7 @@ pub async fn apply_deploy(
                 script_exists: true,
                 uploaded_assets: None,
                 keep_assets: bundle.manifest.assets_dir.is_some(),
+                include_worker_loaders: bundle.component != COMPONENT_GATEWAY || codemode_enabled,
             },
         )?;
         let source_map_for_upload = bundle.source_map.as_ref().and_then(|(name, bytes)| {
@@ -2844,16 +3173,7 @@ pub async fn destroy_deploy(
         return Err("No components requested for teardown".into());
     }
 
-    let mut component_order = components.to_vec();
-    component_order.sort_by_key(|component| deploy_order(component));
-
-    let mut scripts_to_delete = Vec::new();
-    for component in &component_order {
-        let script_name = instance
-            .script_name(component)
-            .ok_or_else(|| format!("Unsupported component '{}'", component))?;
-        scripts_to_delete.push((component.clone(), script_name));
-    }
+    let scripts_to_delete = teardown_worker_scripts(components, instance)?;
 
     let selected_components: HashSet<String> = components.iter().cloned().collect();
     let client = reqwest::Client::new();
@@ -3339,14 +3659,16 @@ mod tests {
     }
 
     #[test]
-    fn normalize_components_rejects_removed_channel_test_component() {
-        let error = normalize_components(&["channel-test".to_string()]).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("Unknown component 'channel-test'"),
-            "unexpected error: {error}"
-        );
+    fn normalize_components_rejects_removed_components() {
+        for component in ["assembler", "channel-test"] {
+            let error = normalize_components(&[component.to_string()]).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("Unknown component '{}'", component)),
+                "unexpected error: {error}"
+            );
+        }
     }
 
     #[test]
@@ -3395,6 +3717,38 @@ mod tests {
     }
 
     #[test]
+    fn full_teardown_includes_legacy_assembler_worker() {
+        let components = available_components()
+            .iter()
+            .map(|component| (*component).to_string())
+            .collect::<Vec<_>>();
+
+        let default_scripts =
+            teardown_worker_scripts(&components, &DeployInstance::default()).unwrap();
+        assert!(default_scripts
+            .contains(&("legacy assembler".to_string(), "gsv-assembler".to_string(),)));
+
+        let named_instance = DeployInstance::parse("gsv-personal").unwrap();
+        let named_scripts = teardown_worker_scripts(&components, &named_instance).unwrap();
+        assert!(named_scripts.contains(&(
+            "legacy assembler".to_string(),
+            "gsv-personal-assembler".to_string(),
+        )));
+    }
+
+    #[test]
+    fn partial_teardown_excludes_legacy_assembler_worker() {
+        let scripts =
+            teardown_worker_scripts(&[COMPONENT_GATEWAY.to_string()], &DeployInstance::default())
+                .unwrap();
+
+        assert_eq!(
+            scripts,
+            vec![(COMPONENT_GATEWAY.to_string(), SCRIPT_GATEWAY.to_string())]
+        );
+    }
+
+    #[test]
     fn deploy_instance_rejects_invalid_names() {
         for value in ["", "-gsv", "gsv-", "gsv_test", "GSV!"] {
             assert!(
@@ -3409,7 +3763,6 @@ mod tests {
         for value in [
             "ripgit",
             "team-ripgit",
-            "team-assembler",
             "gsv-channel-whatsapp",
             "team-channel-discord",
             "team-channel-telegram",
@@ -3477,6 +3830,90 @@ cpu_ms = 300000
     }
 
     #[test]
+    fn workers_plan_detection_handles_usage_models_and_subscriptions() {
+        assert_eq!(workers_paid_from_usage_model(Some("standard")), Some(true));
+        assert_eq!(workers_paid_from_usage_model(Some("unbound")), Some(true));
+        assert_eq!(workers_paid_from_usage_model(Some("bundled")), Some(false));
+        assert_eq!(workers_paid_from_usage_model(None), None);
+
+        let subscriptions = vec![
+            CloudflareSubscription {
+                rate_plan: Some(CloudflareRatePlan {
+                    id: Some("free".to_string()),
+                    scope: Some("zone".to_string()),
+                }),
+                state: Some("Paid".to_string()),
+            },
+            CloudflareSubscription {
+                rate_plan: Some(CloudflareRatePlan {
+                    id: Some("workers_paid".to_string()),
+                    scope: Some("account".to_string()),
+                }),
+                state: Some("Provisioned".to_string()),
+            },
+        ];
+        assert!(workers_paid_from_subscriptions(&subscriptions));
+
+        let cancelled = vec![CloudflareSubscription {
+            rate_plan: Some(CloudflareRatePlan {
+                id: Some("workers_paid".to_string()),
+                scope: Some("account".to_string()),
+            }),
+            state: Some("Cancelled".to_string()),
+        }];
+        assert!(!workers_paid_from_subscriptions(&cancelled));
+    }
+
+    #[test]
+    fn codemode_fallback_requires_a_loader_specific_api_error() {
+        for message in [
+            "Worker Loader bindings require a Workers Paid plan",
+            "The worker_loader binding is unavailable for this account",
+            "Binding LOADER is not enabled on this account",
+            "Dynamic Workers are currently only available on Workers Paid",
+        ] {
+            let error = CloudflareApiError::from_response(
+                "Upload script gsv",
+                Some(StatusCode::BAD_REQUEST),
+                Some(vec![CloudflareApiMessage {
+                    code: Some(10021),
+                    message: message.to_string(),
+                }]),
+                None,
+            );
+            assert!(
+                is_worker_loader_binding_rejection(&error),
+                "expected loader rejection: {message}"
+            );
+        }
+
+        for message in [
+            "Validation failures: invalid migration tag",
+            "The uploaded Worker exceeded the Worker size limit",
+            "Account is not entitled to use Workers",
+            "Worker Loader connection failed temporarily",
+            "Worker Loader binding metadata is malformed",
+        ] {
+            let error = CloudflareApiError::from_response(
+                "Upload script gsv",
+                Some(StatusCode::BAD_REQUEST),
+                Some(vec![CloudflareApiMessage {
+                    code: Some(10021),
+                    message: message.to_string(),
+                }]),
+                None,
+            );
+            assert!(
+                !is_worker_loader_binding_rejection(&error),
+                "unexpected loader rejection: {message}"
+            );
+        }
+
+        let transport_error = std::io::Error::other("Worker Loader connection failed");
+        assert!(!is_worker_loader_binding_rejection(&transport_error));
+    }
+
+    #[test]
     fn build_upload_metadata_includes_worker_config() {
         let instance = DeployInstance::default();
         let bundle = PreparedBundle {
@@ -3522,6 +3959,7 @@ cpu_ms = 300000
                 script_exists: false,
                 uploaded_assets: None,
                 keep_assets: false,
+                include_worker_loaders: true,
             },
         )
         .unwrap();
@@ -3532,6 +3970,28 @@ cpu_ms = 300000
             .any(|binding| { binding["name"] == "LOADER" && binding["type"] == "worker_loader" }));
         assert_eq!(metadata["limits"]["cpu_ms"], 300_000);
         assert_eq!(metadata["limits"]["subrequests"], 1_000);
+
+        let metadata_without_loader = build_upload_metadata(
+            &bundle,
+            UploadMetadataOptions {
+                instance: &instance,
+                selected_components: &HashSet::new(),
+                available_scripts: &HashSet::new(),
+                account_subdomain: None,
+                existing_migration_tag: None,
+                include_migrations: false,
+                script_exists: false,
+                uploaded_assets: None,
+                keep_assets: false,
+                include_worker_loaders: false,
+            },
+        )
+        .unwrap();
+        assert!(!metadata_without_loader["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|binding| binding["type"] == "worker_loader"));
     }
 
     #[test]
@@ -3590,20 +4050,12 @@ cpu_ms = 300000
             wrangler: WranglerConfig {
                 name: SCRIPT_GATEWAY.to_string(),
                 compatibility_date: Some("2026-01-28".to_string()),
-                services: vec![
-                    WranglerServiceBinding {
-                        binding: "RIPGIT".to_string(),
-                        service: SCRIPT_RIPGIT.to_string(),
-                        environment: None,
-                        entrypoint: None,
-                    },
-                    WranglerServiceBinding {
-                        binding: "ASSEMBLER".to_string(),
-                        service: SCRIPT_ASSEMBLER.to_string(),
-                        environment: None,
-                        entrypoint: None,
-                    },
-                ],
+                services: vec![WranglerServiceBinding {
+                    binding: "RIPGIT".to_string(),
+                    service: SCRIPT_RIPGIT.to_string(),
+                    environment: None,
+                    entrypoint: None,
+                }],
                 ..WranglerConfig::default()
             },
             script_name: SCRIPT_GATEWAY.to_string(),
@@ -3613,10 +4065,7 @@ cpu_ms = 300000
             source_map: None,
         };
 
-        let available_scripts = HashSet::from([
-            "gsv-personal-ripgit".to_string(),
-            "gsv-personal-assembler".to_string(),
-        ]);
+        let available_scripts = HashSet::from(["gsv-personal-ripgit".to_string()]);
         let bindings =
             service_bindings_for_bundle(&bundle, &instance, &HashSet::new(), &available_scripts);
 
@@ -3626,9 +4075,6 @@ cpu_ms = 300000
                 .any(|binding| binding.binding == "RIPGIT"
                     && binding.service == "gsv-personal-ripgit")
         );
-        assert!(bindings.iter().any(|binding| {
-            binding.binding == "ASSEMBLER" && binding.service == "gsv-personal-assembler"
-        }));
     }
 
     #[test]
@@ -3746,6 +4192,7 @@ cpu_ms = 300000
                 script_exists: false,
                 uploaded_assets: None,
                 keep_assets: false,
+                include_worker_loaders: true,
             },
         )
         .unwrap();
@@ -3759,7 +4206,7 @@ cpu_ms = 300000
     }
 
     #[test]
-    fn collect_additional_worker_modules_includes_wasm_sidecars() {
+    fn collect_additional_worker_modules_includes_binary_and_text_sidecars() {
         let temp_root =
             std::env::temp_dir().join(format!("gsv-ripgit-bundle-{}", uuid::Uuid::new_v4()));
         let worker_dir = temp_root.join("worker");
@@ -3770,13 +4217,16 @@ cpu_ms = 300000
         )
         .unwrap();
         fs::write(worker_dir.join("module.wasm"), b"\0asm").unwrap();
+        fs::write(worker_dir.join("skill.md"), "# Built-in skill").unwrap();
         fs::write(worker_dir.join("index.js.map"), "{}").unwrap();
 
         let modules = collect_additional_worker_modules(&temp_root, "worker/index.js").unwrap();
 
-        assert_eq!(modules.len(), 1);
+        assert_eq!(modules.len(), 2);
         assert_eq!(modules[0].part_name, "module.wasm");
         assert_eq!(modules[0].mime_type, "application/wasm");
+        assert_eq!(modules[1].part_name, "skill.md");
+        assert_eq!(modules[1].mime_type, "text/plain");
 
         let _ = fs::remove_dir_all(temp_root);
     }

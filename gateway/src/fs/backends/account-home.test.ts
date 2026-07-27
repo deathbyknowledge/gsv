@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import { packageAgentAccessGroup } from "../../kernel/package-agents";
 import { GsvFs } from "../gsv-fs";
 import { createAccountHomeBackend } from "./account-home";
 
@@ -23,7 +22,7 @@ const ALICE: ProcessIdentity = {
   cwd: "/home/alice",
 };
 
-const PACKAGE_AGENT: ProcessIdentity = {
+const CUSTOM_AGENT: ProcessIdentity = {
   uid: 3000,
   gid: 3000,
   gids: [3000],
@@ -76,13 +75,13 @@ function getPasswdByUid(uid: number) {
       shell: "/bin/init",
     };
   }
-  if (uid === PACKAGE_AGENT.uid) {
+  if (uid === CUSTOM_AGENT.uid) {
     return {
-      username: PACKAGE_AGENT.username,
-      uid: PACKAGE_AGENT.uid,
-      gid: PACKAGE_AGENT.gid,
-      gecos: PACKAGE_AGENT.username,
-      home: PACKAGE_AGENT.home,
+      username: CUSTOM_AGENT.username,
+      uid: CUSTOM_AGENT.uid,
+      gid: CUSTOM_AGENT.gid,
+      gecos: CUSTOM_AGENT.username,
+      home: CUSTOM_AGENT.home,
       shell: "/bin/init",
     };
   }
@@ -101,14 +100,14 @@ function getPasswdByUid(uid: number) {
 
 const auth = {
   getPasswdEntries() {
-    return [ALICE, PERSONAL_AGENT, PACKAGE_AGENT, BOB]
+    return [ALICE, PERSONAL_AGENT, CUSTOM_AGENT, BOB]
       .map((identity) => getPasswdByUid(identity.uid)!);
   },
   getPasswdByUid,
   getPasswdByUsername(username: string) {
     if (username === ALICE.username) return getPasswdByUid(ALICE.uid);
     if (username === PERSONAL_AGENT.username) return getPasswdByUid(PERSONAL_AGENT.uid);
-    if (username === PACKAGE_AGENT.username) return getPasswdByUid(PACKAGE_AGENT.uid);
+    if (username === CUSTOM_AGENT.username) return getPasswdByUid(CUSTOM_AGENT.uid);
     if (username === BOB.username) return getPasswdByUid(BOB.uid);
     return null;
   },
@@ -130,11 +129,11 @@ const auth = {
         members: [],
       };
     }
-    if (gid === PACKAGE_AGENT.gid) {
+    if (gid === CUSTOM_AGENT.gid) {
       return {
-        name: PACKAGE_AGENT.username,
-        gid: PACKAGE_AGENT.gid,
-        members: [],
+        name: CUSTOM_AGENT.username,
+        gid: CUSTOM_AGENT.gid,
+        members: [ALICE.username],
       };
     }
     if (gid === BOB.gid) {
@@ -146,10 +145,7 @@ const auth = {
     }
     return null;
   },
-  getGroupByName(name: string) {
-    if (name === packageAgentAccessGroup(PACKAGE_AGENT.username)) {
-      return { name, gid: 3001, members: [ALICE.username] };
-    }
+  getGroupByName() {
     return null;
   },
   resolveGids(username: string, primaryGid: number) {
@@ -472,8 +468,8 @@ describe("AccountHomeMountBackend delegated routing", () => {
   it("lists virtual overlay roots from an authorized agent home", async () => {
     await env.STORAGE.put("home/wiki-builder/conversations/.dir", "", {
       customMetadata: {
-        uid: String(PACKAGE_AGENT.uid),
-        gid: String(PACKAGE_AGENT.gid),
+        uid: String(CUSTOM_AGENT.uid),
+        gid: String(CUSTOM_AGENT.gid),
         mode: "750",
         dirmarker: "1",
       },
@@ -497,8 +493,8 @@ describe("AccountHomeMountBackend delegated routing", () => {
   it("denies delegated reads, lists, searches, and writes for target R2-backed files", async () => {
     await env.STORAGE.put("home/wiki-builder/conversations/default/history", "secret transcript", {
       customMetadata: {
-        uid: String(PACKAGE_AGENT.uid),
-        gid: String(PACKAGE_AGENT.gid),
+        uid: String(CUSTOM_AGENT.uid),
+        gid: String(CUSTOM_AGENT.gid),
         mode: "644",
       },
     });

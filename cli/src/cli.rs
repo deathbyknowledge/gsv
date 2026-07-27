@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use gsv::deploy::CodeModePreference;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -75,12 +76,6 @@ pub(crate) enum Commands {
 
         #[command(subcommand)]
         action: ConfigAction,
-    },
-
-    /// Package lifecycle and source management
-    Packages {
-        #[command(subcommand)]
-        action: PackagesAction,
     },
 
     /// Cloudflare infrastructure lifecycle
@@ -174,6 +169,10 @@ pub(crate) enum InfraAction {
         #[arg(long, env = "CF_ACCOUNT_ID")]
         account_id: Option<String>,
 
+        /// CodeMode availability: auto-detect Workers Paid, force on, or force off
+        #[arg(long, value_enum, default_value = "auto")]
+        codemode: CodeModePreference,
+
         /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
         #[arg(long, env = "DISCORD_BOT_TOKEN")]
         discord_bot_token: Option<String>,
@@ -216,6 +215,10 @@ pub(crate) enum InfraAction {
         /// Cloudflare account ID override (falls back to config `cloudflare.account_id`)
         #[arg(long, env = "CF_ACCOUNT_ID")]
         account_id: Option<String>,
+
+        /// CodeMode availability: auto-detect Workers Paid, force on, or force off
+        #[arg(long, value_enum, default_value = "auto")]
+        codemode: CodeModePreference,
 
         /// Discord bot token to upload as worker secret (`DISCORD_BOT_TOKEN`)
         #[arg(long, env = "DISCORD_BOT_TOKEN")]
@@ -263,19 +266,6 @@ pub(crate) enum InfraAction {
         /// Keep local device daemon installed
         #[arg(long = "keep-device", alias = "keep-node")]
         keep_device: bool,
-    },
-}
-
-#[derive(Subcommand, Clone)]
-pub(crate) enum PackagesAction {
-    /// Re-resolve one installed package from its source repo/ref
-    Sync {
-        /// Package id, manifest name, or unique package alias
-        package: String,
-
-        /// Source ref to install. Defaults to the package's recorded source ref.
-        #[arg(long)]
-        r#ref: Option<String>,
     },
 }
 
@@ -540,7 +530,7 @@ pub(crate) enum ProcAction {
 
     /// Spawn a new process
     Spawn {
-        /// Account to run the process as: a username, uid, or `package#agent`
+        /// Account to run the process as a username or uid
         /// (defaults to your personal agent)
         #[arg(long = "as", visible_alias = "run-as")]
         run_as: Option<String>,

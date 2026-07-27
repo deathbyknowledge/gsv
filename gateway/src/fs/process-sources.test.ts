@@ -116,7 +116,7 @@ describe("createProcessSourceBackend", () => {
     });
   });
 
-  it("reads and searches non-package repo content through /src/repos/owner/repo", async () => {
+  it("reads and searches repo content through /src/repos/owner/repo", async () => {
     const calls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
     const searchCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; query: string; prefix?: string }> = [];
     const backend = createProcessSourceBackend({
@@ -180,7 +180,7 @@ describe("createProcessSourceBackend", () => {
     }]);
   });
 
-  it("stages owned non-package repo writes before committing through ripgit", async () => {
+  it("stages owned repo writes before committing through ripgit", async () => {
     const files = new Map<string, string>([
       ["notes.md", "old\n"],
       ["old.md", "remove me\n"],
@@ -230,6 +230,7 @@ describe("createProcessSourceBackend", () => {
       "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json",
     );
     expect(JSON.parse(await manifest!.text())).toMatchObject({
+      version: 1,
       packageId: "repo:sam/docs",
       packageKey: "global:repo:sam/docs",
     });
@@ -370,12 +371,12 @@ describe("createProcessSourceBackend", () => {
     await expect(backend!.readFile("/src/repos/bob/private/README.md")).rejects.toThrow("no such source repo");
   });
 
-  it("keeps package source repos visible under /src/repos from repo visibility", async () => {
+  it("keeps listed repos visible under /src/repos", async () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
       repos: [
-        makeRepo("root/gsv", { kind: "package", public: false, writable: false }),
+        makeRepo("root/gsv", { kind: "user", public: false, writable: false }),
         makeRepo("root/gsv-manual", { kind: "user", public: true, writable: false }),
       ],
       processId: "task:source",
@@ -406,12 +407,12 @@ describe("createProcessSourceBackend", () => {
     await expect(backend!.readFile("/src/repos/root/gsv/packages/chat/package.json")).resolves.toContain("chat");
   });
 
-  it("reads package source repos at the package source ref", async () => {
+  it("reads repos at their configured base ref", async () => {
     const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [makeRepo("root/gsv", { kind: "package", writable: false, ref: "feature/review", baseRef: "commit123" })],
+      repos: [makeRepo("root/gsv", { kind: "user", writable: false, ref: "feature/review", baseRef: "commit123" })],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {
@@ -436,60 +437,7 @@ describe("createProcessSourceBackend", () => {
     }]);
   });
 
-  it("selects package source refs by source subdirectory", async () => {
-    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage: makeBucket(),
-      repos: [makeRepo("root/gsv", {
-        kind: "package",
-        writable: false,
-        ref: "feature/a",
-        baseRef: "commit-a",
-        sources: [
-          {
-            kind: "package",
-            packageId: "pkg-a",
-            name: "Package A",
-            subdir: "packages/a",
-            ref: "feature/a",
-            baseRef: "commit-a",
-          },
-          {
-            kind: "package",
-            packageId: "pkg-b",
-            name: "Package B",
-            subdir: "packages/b",
-            ref: "feature/b",
-            baseRef: "commit-b",
-          },
-        ],
-      })],
-      processId: "task:source",
-      config: makeConfig(),
-      ripgit: {
-        readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
-          readCalls.push({ repo, path });
-          if (repo.branch === "commit-b" && path === "packages/b/src/index.ts") {
-            return {
-              kind: "file",
-              bytes: new TextEncoder().encode("export const b = true;\n"),
-              size: 23,
-            };
-          }
-          return { kind: "missing" };
-        },
-      } as any,
-    });
-
-    await expect(backend!.readFile("/src/repos/root/gsv/packages/b/src/index.ts")).resolves.toContain("b = true");
-    expect(readCalls).toEqual([{
-      repo: { owner: "root", repo: "gsv", branch: "commit-b" },
-      path: "packages/b/src/index.ts",
-    }]);
-  });
-
-  it("commits package source repos to the package source ref by default", async () => {
+  it("commits repos to their configured source ref by default", async () => {
     const config = makeConfig();
     const storage = makeBucket();
     const applyCalls: any[] = [];
@@ -506,7 +454,7 @@ describe("createProcessSourceBackend", () => {
       },
     } as any;
     const repos = [makeRepo("sam/pkg-test", {
-      kind: "package",
+      kind: "user",
       writable: true,
       ref: "feature/review",
       baseRef: "commit123",
@@ -528,7 +476,7 @@ describe("createProcessSourceBackend", () => {
       processId: "task:source",
       config,
       ripgit,
-    }, "sam/pkg-test", { message: "repo: update package" });
+    }, "sam/pkg-test", { message: "repo: update source" });
 
     expect(result).toMatchObject({
       sourceRef: "feature/review",
@@ -549,7 +497,7 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[0][5]).toEqual({ baseRef: "commit123" });
   });
 
-  it("locks default package source commits to the installed branch head", async () => {
+  it("locks default repo commits to the configured branch head", async () => {
     const config = makeConfig();
     const storage = makeBucket();
     const applyCalls: any[] = [];
@@ -566,7 +514,7 @@ describe("createProcessSourceBackend", () => {
       },
     } as any;
     const repos = [makeRepo("sam/pkg-test", {
-      kind: "package",
+      kind: "user",
       writable: true,
       ref: "feature/review",
       baseRef: "commit123",
@@ -588,7 +536,7 @@ describe("createProcessSourceBackend", () => {
       processId: "task:source",
       config,
       ripgit,
-    }, "sam/pkg-test", { message: "repo: update package" });
+    }, "sam/pkg-test", { message: "repo: update source" });
 
     expect(readCalls).toEqual([{
       repo: { owner: "sam", repo: "pkg-test", branch: "commit123" },
@@ -603,88 +551,7 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[0][5]).toEqual({ baseRef: "commit123", expectedHead: "commit123" });
   });
 
-  it("commits the matching same-repo package source from --here paths", async () => {
-    const config = makeConfig();
-    const storage = makeBucket();
-    const applyCalls: any[] = [];
-    const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
-    const ripgit = {
-      readPath: async (repo: { owner: string; repo: string; branch?: string }, path: string) => {
-        readCalls.push({ repo, path });
-        return { kind: "missing" };
-      },
-      refs: async () => ({ heads: {}, tags: {} }),
-      apply: async (...args: any[]) => {
-        applyCalls.push(args);
-        return { head: "feature-b-head" };
-      },
-    } as any;
-    const repos = [makeRepo("sam/mono", {
-      kind: "package",
-      writable: true,
-      ref: "feature/a",
-      baseRef: "commit-a",
-      sources: [
-        {
-          kind: "package",
-          packageId: "pkg-a",
-          name: "Package A",
-          subdir: "packages/a",
-          ref: "feature/a",
-          baseRef: "commit-a",
-        },
-        {
-          kind: "package",
-          packageId: "pkg-b",
-          name: "Package B",
-          subdir: "packages/b",
-          ref: "feature/b",
-          baseRef: "commit-b",
-        },
-      ],
-    })];
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage,
-      repos,
-      processId: "task:source",
-      config,
-      ripgit,
-    });
-
-    await backend!.writeFile("/src/repos/sam/mono/packages/b/src/index.ts", "export const b = true;\n");
-    const result = await commitRepoSourceChanges({
-      identity: IDENTITY,
-      storage,
-      repos,
-      processId: "task:source",
-      config,
-      ripgit,
-    }, "sam/mono", {
-      message: "repo: update package b",
-      sourcePath: "/src/repos/sam/mono/packages/b",
-    });
-
-    expect(result).toMatchObject({
-      sourceRef: "feature/b",
-      baseRef: "commit-b",
-      branch: "feature/b",
-      head: "feature-b-head",
-    });
-    expect(readCalls).toEqual([{
-      repo: { owner: "sam", repo: "mono", branch: "commit-b" },
-      path: "packages/b/src/index.ts",
-    }]);
-    expect(applyCalls).toHaveLength(1);
-    expect(applyCalls[0][0]).toEqual({
-      owner: "sam",
-      repo: "mono",
-      branch: "feature/b",
-    });
-    expect(applyCalls[0][5]).toEqual({ baseRef: "commit-b" });
-  });
-
-  it("reads package subdirectories through the canonical repo path", async () => {
+  it("reads nested subdirectories through the canonical repo path", async () => {
     const readCalls: Array<{ repo: { owner: string; repo: string; branch?: string }; path: string }> = [];
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
@@ -1134,11 +1001,11 @@ describe("createProcessSourceBackend", () => {
     expect(storage.objects.size).toBe(0);
   });
 
-  it("keeps package sources from other owners read-only", async () => {
+  it("keeps repos from other owners read-only", async () => {
     const backend = createProcessSourceBackend({
       identity: IDENTITY,
       storage: makeBucket(),
-      repos: [makeRepo("root/gsv", { kind: "package", writable: false })],
+      repos: [makeRepo("root/gsv", { kind: "user", writable: false })],
       processId: "task:source",
       config: makeConfig(),
       ripgit: {

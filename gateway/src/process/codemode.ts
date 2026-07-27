@@ -16,6 +16,10 @@ import {
   SHELL_EXEC,
   SYS_MCP_CALL,
 } from "../syscalls/constants";
+import {
+  CODE_MODE_UNAVAILABLE_ERROR,
+  type CodeModeEnvironment,
+} from "../codemode/availability";
 
 export { buildCodeModeMcpToolBindings } from "../codemode/mcp";
 export type { CodeModeMcpToolBinding } from "../codemode/mcp";
@@ -262,11 +266,17 @@ function looksLikeFunctionExpression(source: string): boolean {
 }
 
 export async function executeCodeMode(
-  env: Env,
+  env: CodeModeEnvironment,
   code: string,
   requestTool: CodeModeToolRequest,
   options?: CodeModeExecutionOptions,
 ): Promise<CodeModeExecResult> {
+  if (!env.LOADER) {
+    return {
+      status: "failed",
+      error: CODE_MODE_UNAVAILABLE_ERROR,
+    };
+  }
   const executor = new DynamicWorkerExecutor({
     loader: env.LOADER,
     timeout: CODE_MODE_EXECUTION_TIMEOUT_MS,

@@ -25,7 +25,6 @@ import type {
   BinaryBody,
   ConnectionIdentity,
   NetFetchArgs,
-  PkgPublicListResult,
   ProcessIdentity,
   ScheduleRecord,
   ScheduleRunResult,
@@ -67,7 +66,6 @@ import {
   ScheduleStore,
   skippedScheduleResult,
 } from "./scheduler";
-import { APP_CLIENT_SESSION_TTL_MS, AppSessionStore } from "./app-sessions";
 import {
   ensureKernelBootstrapped,
   handleConnect,
@@ -92,7 +90,6 @@ import {
   processMediaPrefix,
 } from "../shared/process-media-path";
 import { handleSysSetup as handleKernelSetup } from "./sys/setup";
-import { buildAppRunnerName } from "../protocol/app-session";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import { completeOAuthCallback as completeOAuthCallbackFlow } from "./sys/oauth";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
@@ -107,23 +104,10 @@ import {
   setAdapterActivityForKernel,
 } from "./adapter-handlers";
 import { assertAdapterMessageDestinationAccess } from "./adapter-destinations";
-import {
-  PackageStore,
-  type PackageEntrypoint,
-  type PackageArtifactMetadata,
-  visiblePackageScopesForActor,
-} from "./packages";
-import {
-  DEFAULT_APP_FRAME_TTL_MS,
-  isAppFrameContextExpired,
-  type AppFrameContext,
-} from "../protocol/app-frame";
-import type { AppClientSessionContext } from "../protocol/app-session";
 import type {
   ProcessScheduleDeliverRequestFrame,
   ProcessScheduleDeliverResponseFrame,
 } from "../protocol/process-frames";
-import { listLocalPublicPackages } from "./pkg";
 import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
 import { handleProcSpawn } from "./proc-handlers";
@@ -200,34 +184,6 @@ type ProcessNetFetchOptions = {
   requestId?: string;
 };
 
-type ResolvePackageAppRpcInput = {
-  packageName?: string;
-  sessionId: string;
-  secret: string;
-};
-
-type ResolvePackageAppRpcResult =
-  | {
-      ok: true;
-      packageId: string;
-      packageName: string;
-      routeBase: string;
-      artifact: PackageArtifactMetadata;
-      appFrame: AppFrameContext;
-      clientSession: AppClientSessionContext;
-      auth: {
-        uid: number;
-        username: string;
-        capabilities: string[];
-      };
-      hasRpc: boolean;
-    }
-  | {
-      ok: false;
-      status: number;
-      message: string;
-    };
-
 type AuthorizeGitHttpInput = {
   owner: string;
   repo: string;
@@ -264,12 +220,10 @@ export class Kernel extends Host<Env> {
   private readonly ipcCalls: IpcCallStore;
   private readonly notifications: NotificationStore;
   private readonly schedules: ScheduleStore;
-  private readonly appSessions: AppSessionStore;
-  private readonly packages: PackageStore;
   private readonly oauth: OAuthStore;
   private readonly mcpServers: McpServerStore;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
-  private readonly pendingAppResponses = new Map<string, (frame: ResponseFrame) => void>();
+  private readonly pendingKernelResponses = new Map<string, (frame: ResponseFrame) => void>();
   private readonly pendingProcessSignals = new Map<string, Promise<void>>();
   private readonly frameBodyChannels = new Map<string, BinaryBodyChannel>();
   private readonly routedBodies = new Map<
@@ -318,10 +272,6 @@ export class Kernel extends Host<Env> {
     this.notifications = new NotificationStore(sql);
 
     this.schedules = new ScheduleStore(sql);
-
-    this.appSessions = new AppSessionStore(sql);
-
-    this.packages = new PackageStore(sql, env.STORAGE);
 
     this.oauth = new OAuthStore(sql);
 
@@ -693,139 +643,6 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  async appRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame> {
-    try {
-      return await this.handleAppRequest(appFrame, frame);
-    } finally {
-      await cancelUnlockedBody(frame.body, "App request completed");
-    }
-  }
-
-  private async handleAppRequest(appFrame: AppFrameContext, frame: RequestFrame): Promise<ResponseFrame> {
-    if (isAppFrameContextExpired(appFrame)) {
-      return errFrame(frame.id, 401, "App frame expired");
-    }
-
-    if (isInternalOnlySyscall(frame.call)) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
-    }
-
-    const record = this.packages.resolve(
-      appFrame.packageId,
-      visiblePackageScopesForActor({ uid: appFrame.uid }),
-    );
-    if (!record || !record.enabled || record.manifest.name !== appFrame.packageName) {
-      return errFrame(frame.id, 404, "Package app not found");
-    }
-
-    const entrypoint = findAppFrameEntrypoint(record.manifest.entrypoints, appFrame.entrypointName, appFrame.routeBase);
-    if (!entrypoint) {
-      return errFrame(frame.id, 404, "Package app entrypoint not found");
-    }
-
-    if (!entrypoint.syscalls?.includes(frame.call)) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
-    }
-
-    const identity = this.buildAppBindingIdentity(appFrame);
-    if (!identity) {
-      return errFrame(frame.id, 401, "Authentication failed");
-    }
-
-    if (!hasCapability(identity.capabilities, frame.call)) {
-      return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
-    }
-
-    const ctx = this.buildKernelContext({ identity, appFrame });
-    const origin: RouteOrigin = { type: "app", id: frame.id };
-    const pending = this.createPendingAppResponse(frame.id);
-    try {
-      const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
-      if (!result.handled) {
-        return await pending.promise;
-      }
-
-      this.applyPostDispatchEffects(frame, result.response);
-      return result.response;
-    } finally {
-      pending.cleanup();
-    }
-  }
-
-  async resolvePackageAppRpcSession(input: ResolvePackageAppRpcInput): Promise<ResolvePackageAppRpcResult> {
-    return this.resolvePackageAppRpcSessionByMode(input, "resolve");
-  }
-
-  async refreshPackageAppRpcSession(input: ResolvePackageAppRpcInput): Promise<ResolvePackageAppRpcResult> {
-    return this.resolvePackageAppRpcSessionByMode(input, "refresh");
-  }
-
-  private async resolvePackageAppRpcSessionByMode(
-    input: ResolvePackageAppRpcInput,
-    mode: "resolve" | "refresh",
-  ): Promise<ResolvePackageAppRpcResult> {
-    const packageName = input.packageName?.trim() ?? "";
-    const sessionId = input.sessionId.trim();
-    const secret = input.secret.trim();
-
-    if (!sessionId || !secret) {
-      return { ok: false, status: 401, message: "Authentication required" };
-    }
-
-    const clientSession = mode === "refresh"
-      ? await this.appSessions.refresh(sessionId, secret, APP_CLIENT_SESSION_TTL_MS)
-      : await this.appSessions.resolve(sessionId, secret);
-    if (!clientSession) {
-      return { ok: false, status: 401, message: "Authentication failed" };
-    }
-    if (packageName && clientSession.packageName !== packageName) {
-      return { ok: false, status: 404, message: "Package app session not found" };
-    }
-
-    return this.resolvePackageAppSessionContext(clientSession);
-  }
-
-  private resolvePackageAppSessionContext(clientSession: AppClientSessionContext): ResolvePackageAppRpcResult {
-    const authUser = this.auth.getPasswdByUid(clientSession.uid);
-    if (!authUser || authUser.username !== clientSession.username) {
-      return { ok: false, status: 401, message: "Authentication failed" };
-    }
-
-    const capabilities = this.caps.resolve(this.auth.resolveGids(authUser.username, authUser.gid));
-    const record = this.packages.resolve(
-      clientSession.packageId,
-      visiblePackageScopesForActor({ uid: clientSession.uid }),
-    );
-    if (!record || !record.enabled || record.manifest.name !== clientSession.packageName) {
-      return { ok: false, status: 404, message: "Package app not found" };
-    }
-
-    return {
-      ok: true,
-      packageId: record.packageId,
-      packageName: record.manifest.name,
-      routeBase: clientSession.routeBase,
-      artifact: record.artifact,
-      appFrame: {
-        uid: clientSession.uid,
-        username: clientSession.username,
-        packageId: record.packageId,
-        packageName: record.manifest.name,
-        entrypointName: clientSession.entrypointName,
-        routeBase: clientSession.routeBase,
-        issuedAt: clientSession.createdAt,
-        expiresAt: clientSession.expiresAt,
-      },
-      clientSession,
-      auth: {
-        uid: clientSession.uid,
-        username: clientSession.username,
-        capabilities,
-      },
-      hasRpc: record.manifest.entrypoints.some((candidateEntrypoint) => candidateEntrypoint.kind === "rpc"),
-    };
-  }
-
   async authorizeGitHttp(input: AuthorizeGitHttpInput): Promise<AuthorizeGitHttpResult> {
     const owner = input.owner.trim();
     const repo = input.repo.trim();
@@ -888,15 +705,6 @@ export class Kernel extends Host<Env> {
     };
   }
 
-  async listPublicPackages(): Promise<PkgPublicListResult> {
-    const serverName = this.config.get("config/server/name")?.trim() || "gsv";
-    return {
-      serverName,
-      source: { kind: "local", name: serverName },
-      packages: listLocalPublicPackages(this.config, this.packages),
-    };
-  }
-
   /**
    * Relay process signals using deterministic run route lookups.
    */
@@ -910,8 +718,6 @@ export class Kernel extends Host<Env> {
     const runId = this.extractRunId(frame.payload);
 
     // Signal watches are scoped to the process owner, not the run-as account.
-    // App runtimes register watches under the owning human uid, while the
-    // emitting process may run as a personal/package agent.
     await this.dispatchSignalWatches(ownerUid, processId, frame);
 
     if (!isUserProcessSignal(frame.signal)) return;
@@ -1755,7 +1561,6 @@ export class Kernel extends Host<Env> {
     processRunId?: string;
     requestSignal?: AbortSignal;
     callerOwnerUid?: number;
-    appFrame?: AppFrameContext;
   }): KernelContext {
     return {
       env: this.env,
@@ -1765,14 +1570,12 @@ export class Kernel extends Host<Env> {
       devices: this.devices,
       procs: this.procs,
       conversations: this.conversations,
-      packages: this.packages,
       oauth: this.oauth,
       mcp: this.mcp,
       mcpServers: this.mcpServers,
       adapters: this.adapters,
       runRoutes: this.runRoutes,
       shellSessions: this.shellSessions,
-      appSessions: this.appSessions,
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,
       notifications: this.notifications,
@@ -1783,10 +1586,8 @@ export class Kernel extends Host<Env> {
       processRunId: options.processRunId,
       requestSignal: options.requestSignal,
       callerOwnerUid: options.callerOwnerUid,
-      appFrame: options.appFrame,
       serverVersion: SERVER_VERSION,
       broadcastToUserUid: this.broadcastToUserUid.bind(this),
-      getAppRunner: this.getAppRunner.bind(this),
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
       failIpcCallsByTarget: this.failIpcCallsByTarget.bind(this),
       scheduleScheduleWake: this.scheduleScheduleWake.bind(this),
@@ -1807,10 +1608,6 @@ export class Kernel extends Host<Env> {
         signal ? { signal } : undefined,
       ),
     };
-  }
-
-  private getAppRunner(uid: number, packageId: string): unknown {
-    return this.ctx.exports.AppRunner.getByName(buildAppRunnerName(uid, packageId));
   }
 
   private buildDispatchDeps(): DispatchDeps {
@@ -1846,8 +1643,8 @@ export class Kernel extends Host<Env> {
       throw requestAbortError(requestSignal.reason);
     }
 
-    const origin: RouteOrigin = { type: "app", id: frame.id };
-    const pending = this.createPendingAppResponse(frame.id);
+    const origin: RouteOrigin = { type: "kernel", id: frame.id };
+    const pending = this.createPendingKernelResponse(frame.id);
     const cancel = () => {
       this.cancelRequest(
         origin,
@@ -1997,13 +1794,13 @@ export class Kernel extends Host<Env> {
     }
 
     const route = this.routes.get(requestId);
-    const internalAppRoute = route !== null
+    const internalKernelRoute = route !== null
       && ownsActive
-      && route.origin.type === "app"
+      && route.origin.type === "kernel"
       && route.origin.id === requestId;
     const ownsRoute = route !== null && (
       sameRouteOrigin(route.origin, origin)
-      || internalAppRoute
+      || internalKernelRoute
     );
     if (route && !ownsRoute) {
       return false;
@@ -2014,7 +1811,7 @@ export class Kernel extends Host<Env> {
       active.controller.abort(new Error(message));
     }
     if (route && ownsRoute) {
-      if (!internalAppRoute) {
+      if (!internalKernelRoute) {
         this.sendDeviceRequestCancel(
           route.deviceId,
           route.driverConnectionId,
@@ -2187,12 +1984,12 @@ export class Kernel extends Host<Env> {
         throw new Error(`No active connection for device: ${deviceId}`);
       }
 
-      const pending = this.createPendingAppResponse(id);
+      const pending = this.createPendingKernelResponse(id);
       cleanupPending = pending.cleanup;
       route = await this.registerRouteWithExpiry({
         id,
         call: call as SyscallName,
-        origin: { type: "app", id },
+        origin: { type: "kernel", id },
         deviceId,
         driverConnectionId: deviceConn.id,
         ttlMs: options.ttlMs ?? 60_000,
@@ -2438,29 +2235,6 @@ export class Kernel extends Host<Env> {
     };
   }
 
-  private buildAppBindingIdentity(
-    appFrame: AppFrameContext,
-  ): ConnectionIdentity | null {
-    const user = this.auth.getPasswdByUid(appFrame.uid);
-    if (!user || user.username !== appFrame.username) {
-      return null;
-    }
-
-    const gids = this.auth.resolveGids(user.username, user.gid);
-    return {
-      role: "user",
-      process: {
-        uid: user.uid,
-        gid: user.gid,
-        gids,
-        username: user.username,
-        home: user.home,
-        cwd: user.home,
-      },
-      capabilities: this.caps.resolve(gids),
-    };
-  }
-
   private applyPostDispatchEffects(frame: RequestFrame, response: ResponseFrame): void {
     if (!response.ok) return;
 
@@ -2476,32 +2250,6 @@ export class Kernel extends Host<Env> {
       }
     }
 
-    if (
-      frame.call === "pkg.add" ||
-      frame.call === "pkg.create" ||
-      frame.call === "pkg.sync" ||
-      frame.call === "pkg.install" ||
-      frame.call === "pkg.remove" ||
-      frame.call === "pkg.checkout" ||
-      frame.call === "sys.bootstrap"
-    ) {
-      const data = (response as {
-        data?: {
-          package?: {
-            scope?: { kind?: unknown; uid?: unknown };
-          };
-          packages?: Array<{
-            scope?: { kind?: unknown; uid?: unknown };
-          }>;
-        };
-      }).data;
-      const scope = data?.package?.scope ?? data?.packages?.[0]?.scope;
-      if (frame.call === "sys.bootstrap" || scope?.kind === "global") {
-        this.broadcastToRole("user", "pkg.changed");
-      } else if (scope?.kind === "user" && typeof scope.uid === "number") {
-        this.broadcastToUserUid(scope.uid, "pkg.changed");
-      }
-    }
   }
 
   private async dispatchSignalWatches(
@@ -2512,16 +2260,7 @@ export class Kernel extends Host<Env> {
     const watches = this.signalWatches.match(uid, frame.signal, processId);
     for (const watch of watches) {
       try {
-        if (watch.targetKind === "app") {
-          const appClientSession = this.getActiveAppSignalWatchClient(watch);
-          if (watch.appSessionId && watch.appClientId && !appClientSession) {
-            this.signalWatches.deleteHandled(watch.watchId);
-            continue;
-          }
-          await this.invokePackageAppSignalHandler(watch, processId, frame, appClientSession);
-        } else {
-          await this.invokeProcessSignalWatch(watch, processId, frame);
-        }
+        await this.invokeProcessSignalWatch(watch, processId, frame);
         if (watch.once) {
           this.signalWatches.deleteHandled(watch.watchId);
         }
@@ -2531,98 +2270,6 @@ export class Kernel extends Host<Env> {
         console.warn(`[Kernel] signal watch ${watch.watchId} failed: ${message}`);
       }
     }
-  }
-
-  private getActiveAppSignalWatchClient(watch: SignalWatchRecord): AppClientSessionContext | null {
-    if (!watch.appSessionId || !watch.appClientId) {
-      return null;
-    }
-    const session = this.appSessions.getActiveForUid(watch.uid, watch.appSessionId);
-    if (
-      !session ||
-      session.packageId !== watch.packageId ||
-      session.packageName !== watch.packageName ||
-      session.entrypointName !== watch.entrypointName ||
-      session.routeBase !== watch.routeBase
-    ) {
-      return null;
-    }
-    return session.clients.find((client) => client.clientId === watch.appClientId) ?? null;
-  }
-
-  private async invokePackageAppSignalHandler(
-    watch: SignalWatchRecord,
-    processId: string,
-    frame: SignalFrame,
-    appClientSession: AppClientSessionContext | null,
-  ): Promise<void> {
-    if (!watch.packageId || !watch.packageName || !watch.entrypointName || !watch.routeBase) {
-      throw new Error(`App signal watch ${watch.watchId} is missing package metadata`);
-    }
-    const record = this.packages.resolve(
-      watch.packageId,
-      visiblePackageScopesForActor({ uid: watch.uid }),
-    );
-    if (!record || !record.enabled || record.manifest.name !== watch.packageName) {
-      throw new Error(`Package app not found for watch ${watch.watchId}`);
-    }
-
-    const entrypoint = record.manifest.entrypoints.find((candidate) => (
-      candidate.kind === "ui" &&
-      candidate.name === watch.entrypointName &&
-      candidate.route === watch.routeBase
-    ));
-    if (!entrypoint) {
-      throw new Error(`UI entrypoint not found for watch ${watch.watchId}`);
-    }
-
-    const user = this.auth.getPasswdByUid(watch.uid);
-    if (!user) {
-      throw new Error(`User not found for watch ${watch.watchId}`);
-    }
-
-    const now = Date.now();
-    const appFrame: AppFrameContext = {
-      uid: user.uid,
-      username: user.username,
-      packageId: record.packageId,
-      packageName: record.manifest.name,
-      entrypointName: entrypoint.name,
-      routeBase: watch.routeBase,
-      issuedAt: now,
-      expiresAt: now + DEFAULT_APP_FRAME_TTL_MS,
-    };
-    const runner = this.ctx.exports.AppRunner.getByName(buildAppRunnerName(user.uid, record.packageId));
-    await runner.ensureRuntime({
-      packageId: record.packageId,
-      packageName: record.manifest.name,
-      routeBase: watch.routeBase,
-      entrypointName: entrypoint.name,
-      artifact: record.artifact,
-      appFrame,
-    });
-
-    await runner.deliverSignal({
-      signal: frame.signal,
-      payload: frame.payload,
-      sourcePid: processId,
-      watch: {
-        id: watch.watchId,
-        ...(watch.key ? { key: watch.key } : {}),
-        ...(watch.state === undefined ? {} : { state: watch.state }),
-        createdAt: watch.createdAt,
-      },
-      ...(appClientSession
-        ? {
-            appSession: {
-              sessionId: appClientSession.sessionId,
-              clientId: appClientSession.clientId,
-              rpcBase: appClientSession.rpcBase,
-              expiresAt: appClientSession.expiresAt,
-            },
-          }
-        : {}),
-    });
   }
 
   private async invokeProcessSignalWatch(
@@ -3317,24 +2964,22 @@ export class Kernel extends Host<Env> {
       return;
     }
 
-    if (origin.type === "app") {
-      const resolve = this.pendingAppResponses.get(origin.id);
-      if (resolve) {
-        this.pendingAppResponses.delete(origin.id);
-        resolve(frame);
-      } else {
-        void body?.stream.cancel("Request was cancelled").catch(() => {});
-      }
+    const resolve = this.pendingKernelResponses.get(origin.id);
+    if (resolve) {
+      this.pendingKernelResponses.delete(origin.id);
+      resolve(frame);
+    } else {
+      void body?.stream.cancel("Request was cancelled").catch(() => {});
     }
   }
 
-  private createPendingAppResponse(id: string): {
+  private createPendingKernelResponse(id: string): {
     promise: Promise<ResponseFrame>;
     cleanup: () => void;
   } {
     let settled = false;
     const promise = new Promise<ResponseFrame>((resolve) => {
-      this.pendingAppResponses.set(id, (frame) => {
+      this.pendingKernelResponses.set(id, (frame) => {
         settled = true;
         resolve(frame);
       });
@@ -3344,7 +2989,7 @@ export class Kernel extends Host<Env> {
       promise,
       cleanup: () => {
         if (!settled) {
-          this.pendingAppResponses.delete(id);
+          this.pendingKernelResponses.delete(id);
         }
       },
     };
@@ -3581,22 +3226,6 @@ export class Kernel extends Host<Env> {
       }),
     );
   }
-}
-
-export function findAppFrameEntrypoint(
-  entrypoints: readonly PackageEntrypoint[],
-  entrypointName: string,
-  routeBase: string,
-): PackageEntrypoint | null {
-  return entrypoints.find((entrypoint) => {
-    if (entrypoint.kind === "ui") {
-      return entrypoint.name === entrypointName && entrypoint.route === routeBase;
-    }
-    if (entrypoint.kind === "command") {
-      return (entrypoint.command?.trim() || entrypoint.name) === entrypointName;
-    }
-    return false;
-  }) ?? null;
 }
 
 async function cancelUnlockedBody(body: FrameBody | undefined, reason: string): Promise<void> {

@@ -4,7 +4,6 @@ import type {
   ConsoleAdapterAccount,
   ConsoleMcpServer,
   ConsoleOverviewData,
-  ConsolePackage,
   ConsoleTarget,
 } from "../../gsv-console/domain/consoleModels";
 import { buildDesktopObjectsFromConsole } from "./desktopObjects";
@@ -46,54 +45,6 @@ const adapterInventory: ConsoleAdapter = {
   accounts: [adapter],
 };
 
-const appPackage: ConsolePackage = {
-  packageId: "space-simulation",
-  name: "Space Simulation",
-  description: "Orbital sim",
-  version: "1.0.0",
-  runtime: "web-ui",
-  enabled: true,
-  scopeKind: "global",
-  scopeUid: null,
-  sourceRepo: "gsv/space-simulation",
-  sourceRef: "main",
-  sourceSubdir: "",
-  sourcePublic: true,
-  reviewRequired: false,
-  reviewApprovedAt: null,
-  reviewPending: false,
-  installedAt: 1_700_000_000,
-  updatedAt: 1_700_000_000,
-  bindingNames: [],
-  entrypoints: [{
-    name: "main",
-    kind: "ui",
-    description: "Main app",
-    route: "/apps/space-simulation/",
-    command: "",
-    syscalls: [],
-  }],
-  uiEntrypoints: [{
-    name: "main",
-    kind: "ui",
-    description: "Main app",
-    route: "/apps/space-simulation/",
-    command: "",
-    syscalls: [],
-  }],
-  profiles: [],
-};
-
-const integrationPackage: ConsolePackage = {
-  ...appPackage,
-  packageId: "custom-mcp",
-  name: "Custom MCP",
-  runtime: "dynamic-worker",
-  sourceRepo: "gsv/custom-mcp",
-  entrypoints: [],
-  uiEntrypoints: [],
-};
-
 const mcpServer: ConsoleMcpServer = {
   serverId: "custom-mcp",
   uid: 1,
@@ -112,19 +63,10 @@ const mcpServer: ConsoleMcpServer = {
   updatedAt: 1_700_000_100,
 };
 
-const nativePackage: ConsolePackage = {
-  ...appPackage,
-  packageId: "@gsv/chat",
-  name: "@gsv/chat",
-  description: "Native chat shell surface",
-  sourceRepo: "gsv/chat",
-};
-
 const overview: ConsoleOverviewData = {
   loadedAt: 1_700_000_200,
   processes: [],
   targets: [target],
-  packages: [appPackage, integrationPackage, nativePackage],
   accounts: [],
   adapterInventory: [adapterInventory],
   adapters: [adapter],
@@ -155,17 +97,6 @@ describe("buildDesktopObjectsFromConsole", () => {
       kind: "integrations",
       detailId: "custom-mcp",
     });
-    expect(objects.find((object) => object.id === "applications")?.children[0]?.route).toEqual({
-      kind: "applications",
-      detailId: "space-simulation",
-    });
-    expect(objects.find((object) => object.id === "applications")?.children[0]?.appRoute).toEqual({
-      appId: "Space Simulation",
-      suffix: "/",
-      search: "",
-      hash: "",
-    });
-    expect(objects.find((object) => object.id === "applications")?.children).toHaveLength(1);
     expect(objects.find((object) => object.id === "integrations")?.children).toHaveLength(1);
   });
 });

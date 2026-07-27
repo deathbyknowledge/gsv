@@ -1,6 +1,6 @@
 # Routing Reference
 
-GSV routing is kernel-level message and syscall routing. It is not only chat routing. The Kernel Durable Object is the central router for WebSocket clients, agent processes, package apps, adapter workers, and connected devices.
+GSV routing is kernel-level message and syscall routing. It is not only chat routing. The Kernel Durable Object is the central router for WebSocket clients, agent processes, adapter workers, and connected devices.
 
 ## Routing Surfaces
 
@@ -8,9 +8,8 @@ GSV routing is kernel-level message and syscall routing. It is not only chat rou
 |---|---|---|---|
 | CLI or browser client | WebSocket request frame | syscall name, caller capabilities, optional `target` | Kernel handler, Process DO, or device driver |
 | Agent process | `Kernel.recvFrame(pid, frame)` | process identity and syscall | Kernel handler or device driver |
-| Package app | `Kernel.appRequest(...)` | app frame, package manifest, entrypoint grants | Kernel handler or device driver |
 | Adapter worker | `adapter.inbound` syscall | linked actor identity and surface route | User init process or routed process |
-| Device driver | WebSocket response frame | persisted route id | Original client, process, or app |
+| Device driver | WebSocket response frame | persisted route id | Original client or process |
 
 All requests use the same frame shape:
 
@@ -27,7 +26,7 @@ All requests use the same frame shape:
 
 The dispatcher first checks `args.target`. If `target` is omitted or set to `gsv`, the syscall is handled natively by the Kernel. If `target` names a connected device and the syscall is routable, the Kernel forwards it to that device.
 
-The `fs.*`, `shell.*`, and `net.*` domains support device routing. Other domains such as `sys.*`, `proc.*`, `pkg.*`, `repo.*`, `adapter.*`, and `notification.*` are kernel-internal.
+The `fs.*`, `shell.*`, and `net.*` domains support device routing. Other domains such as `sys.*`, `proc.*`, `repo.*`, `adapter.*`, and `notification.*` are kernel-internal.
 
 ```json
 { "path": "/etc/passwd", "target": "gsv" }
@@ -123,16 +122,6 @@ approval or denial containing that exact current token resumes `proc.hil`;
 bare decisions and stale tokens fail closed. Provider reply threading does not
 authorize a decision.
 
-## Package App Routing
-
-Package UI and RPC calls are routed through package identity frames. The Kernel verifies:
-
-- The package is installed and enabled.
-- The route base and entrypoint match the installed manifest.
-- The entrypoint grants the requested syscall.
-- The user identity in the app frame is still valid.
-
-Package app syscalls can use the same device routing path as clients and processes. Async device responses are held in memory as pending app responses until the device reply or timeout arrives.
 
 ## Device Routing
 

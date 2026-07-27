@@ -1,5 +1,4 @@
-export type ConsoleListKind = "machines" | "library" | "tasks" | "messengers" | "integrations" | "applications";
-export type PackageListKind = "applications";
+export type ConsoleListKind = "machines" | "library" | "tasks" | "messengers" | "integrations";
 
 export type ConsoleListSelection = {
   createNew?: boolean;
@@ -15,7 +14,3 @@ export type SelectedConsoleDetail = {
 };
 
 export const NEW_DETAIL_ID = "__new__";
-
-export function isPackageListKind(kind: ConsoleListKind): kind is PackageListKind {
-  return kind === "applications";
-}

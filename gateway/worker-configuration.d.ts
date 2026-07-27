@@ -4,21 +4,20 @@
 declare namespace Cloudflare {
 	interface GlobalProps {
 		mainModule: typeof import("./src/index");
-		durableNamespaces: "Kernel" | "Process" | "AppRunner";
+		durableNamespaces: "Kernel" | "Process";
 	}
 	interface Env {
 		STORAGE: R2Bucket;
-		LOADER: WorkerLoader;
+		LOADER?: WorkerLoader;
 		AI: Ai;
 		ASSETS: Fetcher;
 		RIPGIT_INTERNAL_KEY: string;
 		GSV_TEST_OPENAI_KEY: string;
 		KERNEL: DurableObjectNamespace<import("./src/index").Kernel>;
 		PROCESS: DurableObjectNamespace<import("./src/index").Process>;
-		CHANNEL_WHATSAPP: Service /* entrypoint WhatsAppChannelEntrypoint from gsv-channel-whatsapp */;
+		CHANNEL_TELEGRAM: Service /* entrypoint TelegramChannel from gsv-channel-telegram */;
 		CHANNEL_DISCORD: Service /* entrypoint DiscordChannel from gsv-channel-discord */;
 		RIPGIT: Fetcher /* ripgit */;
-		ASSEMBLER: Fetcher /* gsv-assembler */;
 	}
 }
 interface Env extends Cloudflare.Env {}

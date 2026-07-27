@@ -8,11 +8,6 @@ export function GatewaySignalInvalidator() {
 
   useEffect(() => {
     return client.onSignal((signal) => {
-      if (signal === "pkg.changed") {
-        void queryClient.invalidateQueries({ queryKey: ["packages"] });
-        return;
-      }
-
       if (signal === "mcp.changed") {
         void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
         return;

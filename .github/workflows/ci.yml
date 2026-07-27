@@ -21,7 +21,6 @@ jobs:
       sdk: ${{ steps.filter.outputs.sdk }}
       web: ${{ steps.filter.outputs.web }}
       extension: ${{ steps.filter.outputs.extension }}
-      assembler: ${{ steps.filter.outputs.assembler }}
       gateway: ${{ steps.filter.outputs.gateway }}
       ripgit: ${{ steps.filter.outputs.ripgit }}
       cli: ${{ steps.filter.outputs.cli }}
@@ -40,9 +39,6 @@ jobs:
               - 'package.json'
               - 'package-lock.json'
               - 'packages/gsv/package.json'
-              - 'assembler/package.json'
-              - 'assembler/Cargo.toml'
-              - 'assembler/Cargo.lock'
               - 'cli/Cargo.toml'
               - 'cli/Cargo.lock'
               - 'extension/package.json'
@@ -82,12 +78,6 @@ jobs:
               - 'package-lock.json'
               - 'packages/gsv/**'
               - 'extension/**'
-            assembler:
-              - '.github/workflows/ci.yml'
-              - 'package.json'
-              - 'package-lock.json'
-              - 'scripts/worker-build.sh'
-              - 'assembler/**'
             gateway:
               - '.github/workflows/ci.yml'
               - 'package.json'
@@ -158,41 +148,6 @@ jobs:
       - name: Build browser extension
         if: needs.changes.outputs.extension == 'true'
         run: npm run extension:build
-
-  assembler-build:
-    name: Assembler Build
-    runs-on: ubuntu-latest
-    needs: [changes]
-    if: needs.changes.outputs.assembler == 'true'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run Rust unit tests
-        working-directory: assembler
-        run: cargo test
-
-      - name: Rust check
-        working-directory: assembler
-        run: cargo check --target wasm32-unknown-unknown
-
-      - name: Bundle worker
-        working-directory: assembler
-        run: npm exec -- wrangler deploy --minify --dry-run --outdir dist/worker
 
   gateway-test:
     name: Gateway Tests
