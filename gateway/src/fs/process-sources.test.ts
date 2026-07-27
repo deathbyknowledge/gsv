@@ -230,8 +230,9 @@ describe("createProcessSourceBackend", () => {
       "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json",
     );
     expect(JSON.parse(await manifest!.text())).toMatchObject({
-      sourceId: "repo:sam/docs",
-      sourceKey: "global:repo:sam/docs",
+      version: 1,
+      packageId: "repo:sam/docs",
+      packageKey: "global:repo:sam/docs",
     });
 
     expect(applyCalls).toHaveLength(0);
@@ -312,91 +313,6 @@ describe("createProcessSourceBackend", () => {
     expect(applyCalls[0][0]).toEqual({ owner: "sam", repo: "docs", branch: "main" });
     expect(applyCalls[0][3]).toBe("update docs");
     expect(applyCalls[0][5]).toEqual({ baseRef: "mainhead123", expectedHead: "mainhead123" });
-  });
-
-  it("reads version 1 source overlays and upgrades them on the next write", async () => {
-    const storage = makeBucket();
-    const manifestKey =
-      "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/manifest.json";
-    const legacyContentKey =
-      "process-source-overlays/task%3Asource/global%3Arepo%3Asam%2Fdocs/files/legacy.md";
-    await storage.put(legacyContentKey, "staged before upgrade\n");
-    await storage.put(manifestKey, JSON.stringify({
-      version: 1,
-      packageId: "repo:sam/docs",
-      packageKey: "global:repo:sam/docs",
-      baseRef: "legacy-base",
-      createdAt: 100,
-      updatedAt: 200,
-      changes: {
-        "legacy.md": {
-          type: "put",
-          path: "legacy.md",
-          contentKey: legacyContentKey,
-          size: 22,
-          updatedAt: 200,
-        },
-        "removed.md": {
-          type: "delete",
-          path: "removed.md",
-          recursive: false,
-          updatedAt: 200,
-        },
-      },
-    }));
-
-    const backend = createProcessSourceBackend({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/docs")],
-      processId: "task:source",
-      config: makeConfig(),
-      ripgit: {
-        readPath: async (_repo: unknown, path: string) => path === "removed.md"
-          ? {
-              kind: "file",
-              bytes: new TextEncoder().encode("removed in overlay\n"),
-              size: 19,
-            }
-          : { kind: "missing" },
-      } as any,
-    });
-
-    await expect(backend!.readFile("/src/repos/sam/docs/legacy.md"))
-      .resolves.toBe("staged before upgrade\n");
-    await expect(backend!.readFile("/src/repos/sam/docs/removed.md"))
-      .rejects.toThrow("ENOENT");
-    await expect(getRepoSourceStatus({
-      identity: IDENTITY,
-      storage,
-      repos: [makeRepo("sam/docs")],
-      processId: "task:source",
-      config: makeConfig(),
-      ripgit: null,
-    }, "sam/docs")).resolves.toMatchObject({
-      changes: [
-        { type: "put", path: "legacy.md" },
-        { type: "delete", path: "removed.md" },
-      ],
-    });
-
-    await backend!.writeFile("/src/repos/sam/docs/new.md", "new after upgrade\n");
-
-    const upgraded = JSON.parse(await (await storage.get(manifestKey))!.text());
-    expect(upgraded).toMatchObject({
-      version: 2,
-      sourceId: "repo:sam/docs",
-      sourceKey: "global:repo:sam/docs",
-      baseRef: "legacy-base",
-      createdAt: 100,
-      changes: {
-        "legacy.md": { type: "put", contentKey: legacyContentKey },
-        "new.md": { type: "put" },
-        "removed.md": { type: "delete" },
-      },
-    });
-    expect(upgraded).not.toHaveProperty("packageId");
-    expect(upgraded).not.toHaveProperty("packageKey");
   });
 
   it("keeps public non-owned repos read-only through /src/repos", async () => {
