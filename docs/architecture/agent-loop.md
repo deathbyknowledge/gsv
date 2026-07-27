@@ -73,7 +73,8 @@ actions such as `skills show`; long source paths and full skill bodies are not
 embedded in standing context.
 
 System-provided skills are bundled into the gateway and seeded into user home
-`skills.d` during bootstrap when missing.
+`skills.d` during bootstrap. Before prompt skill discovery, the gateway restores
+any missing built-in paths while preserving existing files.
 
 The assembled prompt, config, tool list, device list, and approval policy are
 cached in `currentRun` for the duration of that run.

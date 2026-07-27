@@ -11,6 +11,7 @@ const createGenerationServiceMock = vi.hoisted(() => vi.fn((_options?: unknown) 
   stream: vi.fn(),
   generateText: vi.fn(),
 })));
+const seedBuiltinSkillsToHomeMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../inference/service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../inference/service")>();
@@ -19,6 +20,10 @@ vi.mock("../inference/service", async (importOriginal) => {
     createGenerationService: createGenerationServiceMock,
   };
 });
+
+vi.mock("./sys/skills-seed", () => ({
+  seedBuiltinSkillsToHome: seedBuiltinSkillsToHomeMock,
+}));
 
 import {
   handleAiConfig,
@@ -51,6 +56,8 @@ beforeEach(() => {
   sendFrameToProcessMock.mockReset();
   generateMock.mockReset();
   createGenerationServiceMock.mockClear();
+  seedBuiltinSkillsToHomeMock.mockReset();
+  seedBuiltinSkillsToHomeMock.mockResolvedValue({ username: "sam", copied: 0, skipped: 0 });
 });
 
 function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
@@ -314,6 +321,7 @@ describe("handleAiConfig", () => {
       ownerUid?: number;
       capabilities?: string[];
       oauthAccounts?: OAuthAccountRecord[];
+      ripgit?: Fetcher;
     } = {},
   ): KernelContext {
     const uid = options.uid ?? 1000;
@@ -378,7 +386,7 @@ describe("handleAiConfig", () => {
         })),
       },
       processId: options.processId,
-      env: {},
+      env: options.ripgit ? { RIPGIT: options.ripgit } : {},
     } as unknown as KernelContext;
   }
 
@@ -445,6 +453,34 @@ describe("handleAiConfig", () => {
       "config/ai/skills/index_mode": "off",
       "users/1000/ai/skills/index_mode": "names",
     }))).resolves.toMatchObject({ skillIndexMode: "names" });
+  });
+
+  it("reconciles the owning user's built-in skills before collecting the prompt index", async () => {
+    let seedingComplete = false;
+    seedBuiltinSkillsToHomeMock.mockImplementation(async () => {
+      seedingComplete = true;
+      return { username: "sam", copied: 3, skipped: 3 };
+    });
+    const ripgit = {
+      fetch: vi.fn(async () => {
+        expect(seedingComplete).toBe(true);
+        return new Response("missing", { status: 404 });
+      }),
+    } as unknown as Fetcher;
+    const ctx = makeAiConfigContext({}, {
+      uid: 2000,
+      ownerUid: 1000,
+      processId: "task-1",
+      ripgit,
+    });
+
+    await handleAiConfig({}, ctx);
+
+    expect(seedBuiltinSkillsToHomeMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ uid: 1000, username: "sam", home: "/home/sam" }),
+    );
+    expect(ripgit.fetch).toHaveBeenCalled();
   });
 
   it("returns the text executor for kernel and process callers", async () => {

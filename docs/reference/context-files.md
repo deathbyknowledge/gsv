@@ -49,9 +49,10 @@ the run-as agent's ~/skills.d/, when distinct from the owner
 For a process running as a distinct agent account, owner skills are considered
 before agent-specific skills.
 
-The gateway ships built-in skills as text modules. During `sys.bootstrap`, those
-files are copied into each bootstrapped user's `~/skills.d/` when missing.
-Existing user skills are preserved.
+The gateway ships built-in skills as text modules. `sys.bootstrap` seeds them
+into the bootstrapped user's `~/skills.d/`. Prompt configuration also
+restores missing built-in skill paths before collecting the skill index.
+Existing and customized files are never overwritten.
 
 Supported forms:
 
