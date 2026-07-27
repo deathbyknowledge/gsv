@@ -127,12 +127,14 @@ export function EditDefaultsPanel({
   const initialReasoningIndex = reasoningIndexForValue(behavior.reasoning);
   const baselineFiles = contextSectionsFromFiles(context.files);
   const baselineFilesSignature = contextSignature(baselineFiles);
-  const baselineKey = [
+  // Behavior-only baseline — deliberately excludes the context query so a
+  // behavior save (which invalidates the config query) can't re-baseline the
+  // context draft out from under a still-unsaved / failed context edit.
+  const behaviorBaselineKey = [
     initialModelIndex,
     initialFallbackIndex,
     initialReasoningIndex,
     savedSignature,
-    context.dataUpdatedAt,
     optionsKey(modelSelectOptions),
     optionsKey(fallbackSelectOptions),
   ].join("|");
@@ -150,19 +152,26 @@ export function EditDefaultsPanel({
   const rootRef = useRef<HTMLElement>(null);
   const flashTimerRef = useRef<number | null>(null);
 
-  // Re-baseline whenever the saved values change (external edit, or our own
-  // save round-tripping through the config / context queries).
+  // Re-baseline behavior fields when the saved behavior changes (external edit,
+  // or our own save round-tripping through the config query).
   useEffect(() => {
     setModelIndex(initialModelIndex);
     setFallbackIndex(initialFallbackIndex);
     setReasoningIndex(initialReasoningIndex);
     setApprovalPolicy(savedPolicy);
-    setFilesDraft(contextSectionsFromFiles(context.files));
-    setContextIndex(0);
     setConfirmDiscard(false);
     setPending(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baselineKey]);
+  }, [behaviorBaselineKey]);
+
+  // Re-baseline the context draft only when the saved context itself changes —
+  // keyed off the context query alone so a behavior save (or failed partial
+  // save) leaves an unsaved context draft intact.
+  useEffect(() => {
+    setFilesDraft(contextSectionsFromFiles(context.files));
+    setContextIndex(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [context.dataUpdatedAt]);
 
   // On open: move focus to the surface (in-place swap).
   useEffect(() => {
