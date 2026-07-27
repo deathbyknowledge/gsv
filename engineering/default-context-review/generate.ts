@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_BOOT_CONTEXT_TEMPLATE,
   DEFAULT_MEMORY_CONTEXT_TEMPLATE,
-  DEFAULT_OPEN_LOOPS_CONTEXT,
   DEFAULT_STYLE_CONTEXT,
 } from "../../gateway/src/prompts/agent-home.ts";
 import {
@@ -277,7 +276,7 @@ async function buildSnapshot(): Promise<Record<string, unknown>> {
       template: DEFAULT_STYLE_CONTEXT,
       defaultIncluded: true,
       kind: "seeded-home",
-      note: "Copied once into the agent home. Later source changes do not replace a user-edited copy.",
+      note: "Seeded into the agent home. Exact generated copies are upgraded while user-edited copies are preserved.",
       sourceRefs: await refs([
         ["gateway/src/prompts/agent-home.ts", "export const DEFAULT_STYLE_CONTEXT", "seed text"],
         ["gateway/src/kernel/account-home.ts", "\"context.d/00-style.md\"", "home seeding"],
@@ -291,24 +290,10 @@ async function buildSnapshot(): Promise<Record<string, unknown>> {
       template: DEFAULT_MEMORY_CONTEXT_TEMPLATE,
       defaultIncluded: true,
       kind: "seeded-home",
-      note: "Standing instructions for the agent's repo-backed memory wiki.",
+      note: "A compact introduction to searchable wiki memory and always-loaded standing memory.",
       sourceRefs: await refs([
         ["gateway/src/prompts/agent-home.ts", "export const DEFAULT_MEMORY_CONTEXT_TEMPLATE", "seed template"],
         ["gateway/src/kernel/account-home.ts", "\"context.d/15-memory.md\"", "home seeding"],
-      ]),
-    },
-    {
-      id: "program:20-open-loops.md",
-      group: "program",
-      filename: "20-open-loops.md",
-      runtimePath: "{{program.home}}/context.d/20-open-loops.md",
-      template: DEFAULT_OPEN_LOOPS_CONTEXT,
-      defaultIncluded: true,
-      kind: "seeded-home",
-      note: "An initially empty standing list that is nevertheless included verbatim.",
-      sourceRefs: await refs([
-        ["gateway/src/prompts/agent-home.ts", "export const DEFAULT_OPEN_LOOPS_CONTEXT", "seed text"],
-        ["gateway/src/kernel/account-home.ts", "\"context.d/20-open-loops.md\"", "home seeding"],
       ]),
     },
   ];

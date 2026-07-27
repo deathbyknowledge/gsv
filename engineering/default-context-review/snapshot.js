@@ -2,7 +2,7 @@
 // Run generate.ts --check to detect a stale review snapshot.
 window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
   "schemaVersion": 1,
-  "sourceFingerprint": "07b474614908",
+  "sourceFingerprint": "d621bacb7988",
   "title": "Default personal-agent context",
   "scope": "First Chat message after the web setup wizard completes",
   "defaultScenario": {
@@ -159,14 +159,14 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
       "group": "program",
       "filename": "00-boot.md",
       "runtimePath": "{{program.home}}/context.d/00-boot.md",
-      "template": "# Boot\n\nThis GSV system was just created. Treat this as a one-time onboarding assignment.\n\nYour program home is `{{program.home}}`. In Shell and filesystem tools, `~` resolves to `{{program.home}}`.\n\n- Get to know the user enough to be useful: their name, how they like to work, current priorities, important tools, devices, and accounts.\n- Help the user and your own agent account finish setting up GSV: connect useful devices or adapters, configure models and approvals, create useful agents or packages, and verify Chat, Files, Shell, and the GSV console.\n- Keep home context short and durable. Do not store secrets, credentials, tokens, or raw private data there.\n- When the user says onboarding or setup is done, delete `~/context.d/00-boot.md` so this one-time assignment does not appear in future conversations.\n",
+      "template": "This GSV was just created. Treat this as a one-time onboarding assignment.\n\n- Get to know the user enough to be useful.\n- Help the user and your own agent account finish setting up GSV: connect useful devices/targets or messengers, configure models and approvals.\n- When the user says onboarding or setup is done, delete `~/context.d/00-boot.md` so this one-time assignment does not appear in future conversations. Until onboarding is complete, keep it as an active assignment even if the conversation changes topic.\n",
       "defaultIncluded": true,
       "kind": "seeded-home",
       "note": "Still present on the first Chat turn. sys.setup seeds it for a personal agent and does not remove it when the web wizard finishes.",
       "sourceRefs": [
         {
           "path": "gateway/src/prompts/agent-home.ts",
-          "line": 2,
+          "line": 16,
           "label": "seed template"
         },
         {
@@ -181,19 +181,19 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
       "group": "program",
       "filename": "00-style.md",
       "runtimePath": "{{program.home}}/context.d/00-style.md",
-      "template": "# Style\n\nAnswer like a helpful human in the medium you're in. Lead with the direct answer or recommendation in 1-3 sentences. Only add detail when it changes the decision, explains the key reason, or the user asks for more. Avoid \"slop grenades\": long, generic, technically correct responses that force the reader to extract the point themselves.\n\n## Example\n\nUser: \"Should we use Redis or Memcached?\"\n\nBad: Great question! The choice between Redis and Memcached is a nuanced decision that requires careful consideration of multiple factors. Let me break down the key differences: Redis offers a rich set of data structures including strings, hashes, lists, sets, and sorted sets, which provide flexibility for various use cases. It supports persistence through RDB snapshots and AOF logs, enabling data durability...\n\nGood: Redis. We need pub/sub for the notifications feature.\n",
+      "template": "Answer like a helpful human in the medium you're in. Lead with the direct answer or recommendation in 1-3 sentences. Only add detail when it changes the decision, explains the key reason, or the user asks for more. Avoid \"slop grenades\": long, generic, technically correct responses that force the reader to extract the point themselves.\n\n# Example\n\nUser: \"Should we use Redis or Memcached?\"\n\nBad: Great question! The choice between Redis and Memcached is a nuanced decision that requires careful consideration of multiple factors. Let me break down the key differences: Redis offers a rich set of data structures including strings, hashes, lists, sets, and sorted sets, which provide flexibility for various use cases. It supports persistence through RDB snapshots and AOF logs, enabling data durability...\n\nGood: Redis. We need pub/sub for the notifications feature.\n",
       "defaultIncluded": true,
       "kind": "seeded-home",
-      "note": "Copied once into the agent home. Later source changes do not replace a user-edited copy.",
+      "note": "Seeded into the agent home. Exact generated copies are upgraded while user-edited copies are preserved.",
       "sourceRefs": [
         {
           "path": "gateway/src/prompts/agent-home.ts",
-          "line": 15,
+          "line": 39,
           "label": "seed text"
         },
         {
           "path": "gateway/src/kernel/account-home.ts",
-          "line": 49,
+          "line": 52,
           "label": "home seeding"
         }
       ]
@@ -203,37 +203,15 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
       "group": "program",
       "filename": "15-memory.md",
       "runtimePath": "{{program.home}}/context.d/15-memory.md",
-      "template": "# Memory\n\nUse `~/context.d/` only for compact standing instructions that should appear in every prompt. Use your repo-backed wiki for searchable long-term memory, journal notes, project facts, decisions, preferences, and durable background.\n\nDefault wiki:\n- Wiki id: `memory`\n- Repo path: `/src/repos/{{program.username}}/memory`\n- Pages directory: `/src/repos/{{program.username}}/memory/pages/`\n- Journal path pattern: `/src/repos/{{program.username}}/memory/pages/journal/YYYY/MM/YYYY-MM-DD.md`\n\nIf the wiki does not exist yet, create it on the native `gsv` target:\n\n```bash\nwiki db init memory --title \"{{program.username}} Memory\"\n```\n\nOnce created, prefer normal filesystem tools for page work: search under `/src/repos/{{program.username}}/memory`, read pages before editing, and write/edit markdown files directly. Use `wiki info memory` for the page tree and `wiki search <query> --prefix memory` when the filesystem path is not obvious.\n\nKeep `index.md` as an orientation page. Prefer dated journal entries for chronological observations, then promote stable facts into topical pages such as `pages/people/`, `pages/projects/`, `pages/preferences/`, and `pages/decisions/`.\n\nActive open loops belong in `~/context.d/20-open-loops.md` so they are loaded every time. Use the wiki for closed-loop history, evidence, and background that does not need to be prompt-visible.\n\nDo not store secrets, credentials, tokens, or raw private data in memory. Summarize only what is useful and appropriate to remember.\n",
+      "template": "# Memory\n\nGSV has two kinds of memory:\n\n- The `memory` wiki stores durable, searchable information that you retrieve when needed.\n- Files in `~/context.d/` are standing memory loaded into every prompt.\n\nKeep standing memory small. If an active commitment or unresolved task must remain visible, create `~/context.d/20-open-loops.md` and remove it once resolved.\n\nRead `skills show memory` for memory workflows.\n",
       "defaultIncluded": true,
       "kind": "seeded-home",
-      "note": "Standing instructions for the agent's repo-backed memory wiki.",
+      "note": "A compact introduction to searchable wiki memory and always-loaded standing memory.",
       "sourceRefs": [
         {
           "path": "gateway/src/prompts/agent-home.ts",
-          "line": 54,
+          "line": 103,
           "label": "seed template"
-        },
-        {
-          "path": "gateway/src/kernel/account-home.ts",
-          "line": 51,
-          "label": "home seeding"
-        }
-      ]
-    },
-    {
-      "id": "program:20-open-loops.md",
-      "group": "program",
-      "filename": "20-open-loops.md",
-      "runtimePath": "{{program.home}}/context.d/20-open-loops.md",
-      "template": "# Open Loops\n\nTrack active commitments, unresolved questions, blockers, and follow-ups that should be visible in every prompt.\n\nKeep this short. Remove closed items promptly, and move durable history or evidence to the `memory` wiki when it is useful later.\n\n## Active\n\n- None yet.\n",
-      "defaultIncluded": true,
-      "kind": "seeded-home",
-      "note": "An initially empty standing list that is nevertheless included verbatim.",
-      "sourceRefs": [
-        {
-          "path": "gateway/src/prompts/agent-home.ts",
-          "line": 80,
-          "label": "seed text"
         },
         {
           "path": "gateway/src/kernel/account-home.ts",
@@ -247,7 +225,7 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
       "group": "skills",
       "tagName": "available_skills",
       "runtimePath": "owner ~/skills.d index",
-      "template": "Available skills are top-level only. Use `skills list <skill>` or `skills tree <skill>` to inspect nested skills.\nUse `skills show <skill>` before relying on a reusable workflow.\n\n<skill>\n<name>browser-target</name>\n<description>Use extension-provided browser targets to inspect and operate active browser state through the target's advertised filesystem and shell commands.</description>\n</skill>\n<skill>\n<name>gsv-manual</name>\n<description>Use the GSV Manual for questions about GSV's operating model, user workflows, settings, devices, users and agents, packages, automation, integrations, filesystem, desktop, updates, and source/debug orientation.</description>\n</skill>\n<skill>\n<name>gsv-package-development</name>\n<description>Guide on how to build and modify GSV packages, including source checkout, app/backend/CLI changes, manifests, validation, staged commits, and syncing.</description>\n</skill>\n<skill>\n<name>gsv-package-review</name>\n<description>Guide on how to review GSV packages before approval, including source inspection, manifests, capabilities, entrypoints, staged edits, refs, and trust boundaries.</description>\n</skill>\n<skill>\n<name>process-orchestration</name>\n<description>Choose and use GSV delegation, subprocess, IPC, scheduling, and cron workflows. Use when work should run in another process or at a later or recurring time.</description>\n</skill>\n<skill>\n<name>skill-authoring</name>\n<description>Create or revise reusable GSV agent workflows under skills.d. Use when the user asks to automate, save, teach, repeat, or reuse a workflow, or accepts an offer to preserve a proven workflow for later.</description>\n</skill>",
+      "template": "Available skills are top-level only. Use `skills list <skill>` or `skills tree <skill>` to inspect nested skills.\nUse `skills show <skill>` before relying on a reusable workflow.\n\n<skill>\n<name>browser-target</name>\n<description>Use extension-provided browser targets to inspect and operate active browser state through the target's advertised filesystem and shell commands.</description>\n</skill>\n<skill>\n<name>gsv-manual</name>\n<description>Use the GSV Manual for questions about GSV's operating model, user workflows, settings, devices, users and agents, packages, automation, integrations, filesystem, desktop, updates, and source/debug orientation.</description>\n</skill>\n<skill>\n<name>gsv-package-development</name>\n<description>Guide on how to build and modify GSV packages, including source checkout, app/backend/CLI changes, manifests, validation, staged commits, and syncing.</description>\n</skill>\n<skill>\n<name>gsv-package-review</name>\n<description>Guide on how to review GSV packages before approval, including source inspection, manifests, capabilities, entrypoints, staged edits, refs, and trust boundaries.</description>\n</skill>\n<skill>\n<name>memory</name>\n<description>Store, retrieve, and organize GSV agent memory. Use for durable facts, preferences, decisions, journal notes, project background, or active commitments that may need standing context.</description>\n</skill>\n<skill>\n<name>process-orchestration</name>\n<description>Choose and use GSV delegation, subprocess, IPC, scheduling, and cron workflows. Use when work should run in another process or at a later or recurring time.</description>\n</skill>\n<skill>\n<name>skill-authoring</name>\n<description>Create or revise reusable GSV agent workflows under skills.d. Use when the user asks to automate, save, teach, repeat, or reuse a workflow, or accepts an offer to preserve a proven workflow for later.</description>\n</skill>",
       "defaultIncluded": true,
       "kind": "derived-index",
       "note": "Not context.d: rendered from the top-level skills seeded into the human owner's home during bootstrap.",
@@ -283,6 +261,11 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
           "label": "gsv-package-review description"
         },
         {
+          "path": "skills/memory/SKILL.md",
+          "line": 3,
+          "label": "memory description"
+        },
+        {
           "path": "skills/process-orchestration/SKILL.md",
           "line": 3,
           "label": "process-orchestration description"
@@ -315,6 +298,11 @@ window.GSV_CONTEXT_REVIEW_SNAPSHOT = {
       "id": "gsv-package-review",
       "name": "gsv-package-review",
       "description": "Guide on how to review GSV packages before approval, including source inspection, manifests, capabilities, entrypoints, staged edits, refs, and trust boundaries."
+    },
+    {
+      "id": "memory",
+      "name": "memory",
+      "description": "Store, retrieve, and organize GSV agent memory. Use for durable facts, preferences, decisions, journal notes, project background, or active commitments that may need standing context."
     },
     {
       "id": "process-orchestration",

@@ -1,5 +1,6 @@
-// Used by ensureAccountHomeLayout to seed context.d/00-boot.md for new personal agents.
-export const DEFAULT_BOOT_CONTEXT_TEMPLATE =
+// Used by ensureAccountHomeLayout only to recognize the previous generated
+// context.d/00-boot.md for personal agents.
+export const LEGACY_BOOT_CONTEXT_TEMPLATE =
   "# Boot\n" +
   "\n" +
   "This GSV system was just created. Treat this as a one-time onboarding assignment.\n" +
@@ -11,8 +12,17 @@ export const DEFAULT_BOOT_CONTEXT_TEMPLATE =
   "- Keep home context short and durable. Do not store secrets, credentials, tokens, or raw private data there.\n" +
   "- When the user says onboarding or setup is done, delete `~/context.d/00-boot.md` so this one-time assignment does not appear in future conversations.\n";
 
-// Used by ensureAccountHomeLayout to seed context.d/00-style.md for agent accounts.
-export const DEFAULT_STYLE_CONTEXT =
+// Used by ensureAccountHomeLayout to seed context.d/00-boot.md for new personal agents.
+export const DEFAULT_BOOT_CONTEXT_TEMPLATE =
+  "This GSV was just created. Treat this as a one-time onboarding assignment.\n" +
+  "\n" +
+  "- Get to know the user enough to be useful.\n" +
+  "- Help the user and your own agent account finish setting up GSV: connect useful devices/targets or messengers, configure models and approvals.\n" +
+  "- When the user says onboarding or setup is done, delete `~/context.d/00-boot.md` so this one-time assignment does not appear in future conversations. Until onboarding is complete, keep it as an active assignment even if the conversation changes topic.\n";
+
+// Used by ensureAccountHomeLayout only to recognize the previous generated
+// context.d/00-style.md for agent accounts.
+export const LEGACY_STYLE_CONTEXT =
   "# Style\n" +
   "\n" +
   "Answer like a helpful human in the medium you're in. Lead with the direct answer or recommendation in 1-3 sentences. Only add detail when it changes the decision, explains the key reason, or the user asks for more. Avoid \"slop grenades\": long, generic, technically correct responses that force the reader to extract the point themselves.\n" +
@@ -25,9 +35,21 @@ export const DEFAULT_STYLE_CONTEXT =
   "\n" +
   "Good: Redis. We need pub/sub for the notifications feature.\n";
 
+// Used by ensureAccountHomeLayout to seed context.d/00-style.md for agent accounts.
+export const DEFAULT_STYLE_CONTEXT =
+  "Answer like a helpful human in the medium you're in. Lead with the direct answer or recommendation in 1-3 sentences. Only add detail when it changes the decision, explains the key reason, or the user asks for more. Avoid \"slop grenades\": long, generic, technically correct responses that force the reader to extract the point themselves.\n" +
+  "\n" +
+  "# Example\n" +
+  "\n" +
+  "User: \"Should we use Redis or Memcached?\"\n" +
+  "\n" +
+  "Bad: Great question! The choice between Redis and Memcached is a nuanced decision that requires careful consideration of multiple factors. Let me break down the key differences: Redis offers a rich set of data structures including strings, hashes, lists, sets, and sorted sets, which provide flexibility for various use cases. It supports persistence through RDB snapshots and AOF logs, enabling data durability...\n" +
+  "\n" +
+  "Good: Redis. We need pub/sub for the notifications feature.\n";
+
 // Used by ensureAccountHomeLayout to replace the previous generated
 // context.d/15-memory.md for agent accounts when it is still unmodified.
-export const LEGACY_MEMORY_CONTEXT_TEMPLATE =
+export const LEGACY_MEMORY_CONTEXT_TEMPLATE_V1 =
   "# Memory\n" +
   "\n" +
   "Use `~/context.d/` only for compact standing instructions that should appear in every prompt. Use your repo-backed wiki for searchable long-term memory, journal notes, project facts, decisions, preferences, and open loops.\n" +
@@ -50,8 +72,9 @@ export const LEGACY_MEMORY_CONTEXT_TEMPLATE =
   "\n" +
   "Do not store secrets, credentials, tokens, or raw private data in memory. Summarize only what is useful and appropriate to remember.\n";
 
-// Used by ensureAccountHomeLayout to seed context.d/15-memory.md for agent accounts.
-export const DEFAULT_MEMORY_CONTEXT_TEMPLATE =
+// Used by ensureAccountHomeLayout only to recognize the second generated
+// context.d/15-memory.md for agent accounts.
+export const LEGACY_MEMORY_CONTEXT_TEMPLATE_V2 =
   "# Memory\n" +
   "\n" +
   "Use `~/context.d/` only for compact standing instructions that should appear in every prompt. Use your repo-backed wiki for searchable long-term memory, journal notes, project facts, decisions, preferences, and durable background.\n" +
@@ -76,8 +99,22 @@ export const DEFAULT_MEMORY_CONTEXT_TEMPLATE =
   "\n" +
   "Do not store secrets, credentials, tokens, or raw private data in memory. Summarize only what is useful and appropriate to remember.\n";
 
-// Used by ensureAccountHomeLayout to seed context.d/20-open-loops.md for agent accounts.
-export const DEFAULT_OPEN_LOOPS_CONTEXT =
+// Used by ensureAccountHomeLayout to seed context.d/15-memory.md for agent accounts.
+export const DEFAULT_MEMORY_CONTEXT_TEMPLATE =
+  "# Memory\n" +
+  "\n" +
+  "GSV has two kinds of memory:\n" +
+  "\n" +
+  "- The `memory` wiki stores durable, searchable information that you retrieve when needed.\n" +
+  "- Files in `~/context.d/` are standing memory loaded into every prompt.\n" +
+  "\n" +
+  "Keep standing memory small. If an active commitment or unresolved task must remain visible, create `~/context.d/20-open-loops.md` and remove it once resolved.\n" +
+  "\n" +
+  "Read `skills show memory` for memory workflows.\n";
+
+// Used by ensureAccountHomeLayout only to delete the exact generated
+// context.d/20-open-loops.md file.
+export const LEGACY_OPEN_LOOPS_CONTEXT =
   "# Open Loops\n" +
   "\n" +
   "Track active commitments, unresolved questions, blockers, and follow-ups that should be visible in every prompt.\n" +
