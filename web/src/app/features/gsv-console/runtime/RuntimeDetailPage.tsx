@@ -57,14 +57,16 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
               disabled={pending}
               onClick={() => setConfirmAction("reset")}
             />
-            <Button
-              variant="dangerGhost"
-              label={pending && action.variables?.action === "kill" ? "KILLING" : "KILL TASK"}
-              disabled={pending}
-              onClick={() => setConfirmAction("kill")}
-            />
             {action.isError ? <span class="gsv-runtime-task-action-error">{action.error.message}</span> : null}
           </div>
+        )}
+        dangerAction={(
+          <Button
+            variant="dangerGhost"
+            label={pending && action.variables?.action === "kill" ? "KILLING" : "KILL TASK"}
+            disabled={pending}
+            onClick={() => setConfirmAction("kill")}
+          />
         )}
         icon={iconForProcess(process)}
         title={process.label}

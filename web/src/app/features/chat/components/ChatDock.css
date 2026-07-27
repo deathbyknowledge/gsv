@@ -328,6 +328,13 @@
   opacity: 0.72;
 }
 
+.gsv-chat-min-dot {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+
 .gsv-shell-root .gsv-chat {
   background: #070612;
   box-shadow: -18px 0 52px rgba(0, 0, 0, 0.52);

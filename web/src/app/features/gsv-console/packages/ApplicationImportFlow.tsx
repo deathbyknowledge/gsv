@@ -118,7 +118,7 @@ export function ApplicationImportFlow({
   const importedApplication = flow.importedPackage
     ? isConsoleApplicationPackage(flow.importedPackage)
     : true;
-  const importReady = isPackageImportDraftReady(flow.draft);
+  const importReady = isPackageImportDraftReady(flow.draft) && !flow.duplicateSource;
   const canEnable = Boolean(flow.importedPackage)
     && !flow.importMutation.isPending
     && !flow.reviewMutation.isPending
@@ -191,8 +191,10 @@ export function ApplicationImportFlow({
           value={flow.draft.source}
           placeholder="https://github.com/team/package.git"
           clearable
-          status={flow.draft.source.trim() ? "success" : "warning"}
-          message={flow.draft.source.trim() ? "Source ready" : "Repository or remote URL required"}
+          status={flow.duplicateSource ? "error" : flow.draft.source.trim() ? "success" : "warning"}
+          message={flow.duplicateSource
+            ? "That package is already imported"
+            : flow.draft.source.trim() ? "Source ready" : "Repository or remote URL required"}
           onChange={(source) => flow.updateDraft({ source })}
         />
         <TextInput

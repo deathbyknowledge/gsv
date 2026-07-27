@@ -3,6 +3,9 @@ export interface StatusBarProps {
   context?: string;
   clock?: string;
   power?: string;
+  /** Tone for the `power` readout. When set, the power word takes its status
+   *  color; otherwise it keeps the neutral lavender. */
+  powerTone?: "online" | "loading" | "offline" | "error";
   statusLabel?: string;
   statusTone?: "online" | "loading" | "offline" | "error";
   /** When set, the bar renders this single line as its content instead of the
@@ -36,6 +39,7 @@ export function StatusBar({
   context = "CTX 50%",
   clock = "14:21:08",
   power = "SYNC",
+  powerTone,
   statusLabel = "GSV ONLINE",
   statusTone = "online",
   label,
@@ -75,7 +79,7 @@ export function StatusBar({
           </div>
           <div style={{ display: "flex", gap: "22px", alignItems: "center" }}>
             <span>{clock}</span>
-            <span style={{ color: "#bbb6ff" }}>{"⏻ "}{power}</span>
+            <span style={{ color: powerTone ? statusColor(powerTone) : "#bbb6ff" }}>{"⏻ "}{power}</span>
           </div>
         </>
       )}

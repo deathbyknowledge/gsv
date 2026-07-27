@@ -34,7 +34,7 @@ export function MachineDetailPage({
   return (
     <>
       <ConsoleDetailPage
-        actions={(
+        dangerAction={(
           <div class="gsv-console-detail-actions">
             <Button
               variant="dangerGhost"

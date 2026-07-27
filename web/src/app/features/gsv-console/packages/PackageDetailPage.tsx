@@ -84,14 +84,16 @@ export function PackageDetailPage({
                 setConfirmAction("checkout");
               }}
             />
-            <Button
-              variant="dangerGhost"
-              label={lifecycle.removeMutation.isPending ? "REMOVING" : "REMOVE PACKAGE"}
-              disabled={pending}
-              onClick={() => setConfirmAction("remove")}
-            />
             {error ? <span class="gsv-console-detail-action-error">{error.message}</span> : null}
           </div>
+        )}
+        dangerAction={(
+          <Button
+            variant="dangerGhost"
+            label={lifecycle.removeMutation.isPending ? "REMOVING" : "REMOVE PACKAGE"}
+            disabled={pending}
+            onClick={() => setConfirmAction("remove")}
+          />
         )}
         icon={pkg.uiEntrypoints.length > 0 ? "stars" : "pencil"}
         title={pkg.name}

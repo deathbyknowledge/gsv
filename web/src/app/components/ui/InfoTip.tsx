@@ -1,7 +1,5 @@
-import { useId } from "preact/hooks";
 import { IconButton } from "./IconButton";
-import { POS_CLASS, type TooltipPosition } from "./Tooltip";
-import "./Tooltip.css";
+import { Hint, type TooltipPosition } from "./Tooltip";
 import "./InfoTip.css";
 
 export interface InfoTipProps {
@@ -15,18 +13,16 @@ export interface InfoTipProps {
 
 /** InfoTip — a borderless help icon (circle + "?") that reveals a short hint on
  *  hover/focus. Drop it after a field label to surface extra info. It composes
- *  the IconButton "help" glyph as the trigger inside the tooltip bubble
- *  structure, so there's a single button (unlike Tooltip's children mode, which
- *  would nest a button inside a button). */
+ *  the IconButton "help" glyph as the trigger, wrapped in the portaled `Hint`
+ *  so the bubble escapes any `overflow`-clipping ancestor (a field label row,
+ *  a list row, a scroll container). The `gsv-infotip` wrapper is kept so
+ *  InfoTip.css can align/space the trigger after a label. */
 export function InfoTip({ text, position = "top", label = "More info" }: InfoTipProps) {
-  const bubbleId = useId();
   return (
-    <span class={`gsv-tt ${POS_CLASS[position]} gsv-infotip`}>
-      <IconButton glyph="help" ghost size={16} ariaLabel={label} ariaDescribedBy={bubbleId} />
-      <span class="gsv-tt-bub gsv-sublabel" id={bubbleId} role="tooltip">
-        {text}
-        <span class="gsv-tt-arrow" />
-      </span>
+    <span class="gsv-infotip">
+      <Hint text={text} position={position}>
+        <IconButton glyph="help" ghost size={16} ariaLabel={label} />
+      </Hint>
     </span>
   );
 }

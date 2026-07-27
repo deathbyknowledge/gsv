@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import DOMPurify from "dompurify";
 import { parse as parseMarkdown } from "marked";
+import { CopyGlyph } from "../../../components/ui/lineGlyphs";
 import { CopyIconButton, MessageMeta } from "../../../components/ui/MessageMeta";
 import { ReasoningGlyph } from "../../../components/ui/ReasoningGlyph";
 import { ActionRail, SwipeRow, TranscriptMobileContext, useTranscriptMobile } from "./SwipeRow";
@@ -253,12 +254,7 @@ function CopyButton({
         onClick={onCopy}
         aria-label={copied ? `Copied ${roleLabel(role).toLowerCase()} message` : `Copy ${roleLabel(role).toLowerCase()} message`}
       >
-        <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
-          <g fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="7" height="7" />
-            <rect x="6" y="6" width="7" height="7" />
-          </g>
-        </svg>
+        <CopyGlyph size={11} />
       </button>
     </Hint>
   );

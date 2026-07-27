@@ -93,7 +93,7 @@
 }
 /* Portaled bubble arrow — driven entirely by the resolved-side class + the
    inline `--gsv-tt-arrow-offset` (px along the shared edge, set from placement).
-   Scoped to `.gsv-tt-portal` so InfoTip's static, wrapper-anchored arrows above
+   Scoped to `.gsv-tt-portal` so any non-portaled, wrapper-anchored arrows above
    are untouched. The side class is the post-flip side, so the arrow always sits
    on the edge nearest the trigger and points at it. */
 .gsv-tt-portal.gsv-tt-side-top .gsv-tt-arrow {

@@ -95,6 +95,14 @@
   color: var(--meta);
   letter-spacing: 0.14em;
 }
+/* Attention states tone the status word (matching the title's error recolor);
+   done/running stay dim so a long reasoning list doesn't read as noise. */
+.gsv-chat-rp-entry.is-error .gsv-chat-rp-entry-status {
+  color: var(--error);
+}
+.gsv-chat-rp-entry.is-warning .gsv-chat-rp-entry-status {
+  color: var(--warn);
+}
 
 .gsv-chat-rp-detail-toggle {
   appearance: none;

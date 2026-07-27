@@ -29,6 +29,15 @@ const story: Story = {
         </div>
       </div>
       <div class="ds-cell">
+        <div class="ds-label">Power tone (powerTone — colors the ⏻ system readout)</div>
+        <div class="ds-col" style={{ width: "760px", maxWidth: "100%" }}>
+          <StatusBar showStatus={false} power="3 RUNS" />
+          <StatusBar showStatus={false} power="SYNCING" powerTone="loading" />
+          <StatusBar showStatus={false} power="OFFLINE" powerTone="offline" />
+          <StatusBar showStatus={false} power="ERROR" powerTone="error" />
+        </div>
+      </div>
+      <div class="ds-cell">
         <div class="ds-label">Hide model / status (showModel · showStatus)</div>
         <div class="ds-col" style={{ width: "760px", maxWidth: "100%" }}>
           <StatusBar showModel={false} />

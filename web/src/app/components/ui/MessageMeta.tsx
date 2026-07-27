@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { CopyGlyph } from "./lineGlyphs";
 import { Hint } from "./Tooltip";
 import "./MessageMeta.css";
 
@@ -48,12 +49,7 @@ export function CopyIconButton({
         aria-label={copyAriaLabel ?? copyLabel}
         onClick={onCopy}
       >
-        <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-          <g fill="none" stroke="currentColor" stroke-width="1.5">
-            <rect x="3" y="3" width="7" height="7" />
-            <rect x="6" y="6" width="7" height="7" />
-          </g>
-        </svg>
+        <CopyGlyph size={13} />
       </button>
     </Hint>
   );

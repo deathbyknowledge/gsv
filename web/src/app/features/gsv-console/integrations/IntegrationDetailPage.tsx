@@ -41,7 +41,7 @@ export function IntegrationDetailPage({
   return (
     <>
       <ConsoleDetailPage
-        actions={(
+        dangerAction={(
           <div class="gsv-console-detail-actions">
             <Button
               variant="dangerGhost"

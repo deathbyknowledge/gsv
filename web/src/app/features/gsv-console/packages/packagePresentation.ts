@@ -83,6 +83,7 @@ export function packageDetailSections(pkg: ConsolePackage): ConsoleDetailSection
     {
       title: "PACKAGE",
       meta: statusForPackage(pkg),
+      metaTone: toneForPackage(pkg),
       rows: liveRows([
         detailRow("package-id", "PACKAGE ID", pkg.packageId),
         detailRow("status", "STATUS", statusForPackage(pkg), {

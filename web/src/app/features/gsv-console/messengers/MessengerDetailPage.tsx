@@ -48,7 +48,7 @@ export function MessengerDetailPage({
   return (
     <>
       <ConsoleDetailPage
-        actions={(
+        dangerAction={(
           <div class="gsv-console-detail-actions">
             <Button
               variant="dangerGhost"

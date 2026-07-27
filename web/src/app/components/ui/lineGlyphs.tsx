@@ -98,6 +98,18 @@ export function ArrowLeftGlyph({ size = 14 }: LineGlyphProps) {
   );
 }
 
+/** Two overlapping rounded squares — the traditional "copy to clipboard"
+ *  glyph. Shared by every copy action so the symbol reads the same wherever it
+ *  appears (front sheet over a back sheet peeking top-left). */
+export function CopyGlyph({ size = 14 }: LineGlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="8" y="8" width="13" height="13" rx="2.5" />
+      <path d="M16 8 V5 a2 2 0 0 0-2-2 H5 a2 2 0 0 0-2 2 v9 a2 2 0 0 0 2 2 h3" />
+    </svg>
+  );
+}
+
 /** Processor chip — the saved model profiles. */
 export function ModelChipGlyph({ size = 14 }: LineGlyphProps) {
   return (

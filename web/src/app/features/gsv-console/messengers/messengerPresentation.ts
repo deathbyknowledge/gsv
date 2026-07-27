@@ -97,6 +97,7 @@ export function adapterDetailSections(adapter: ConsoleAdapterAccount): ConsoleDe
     {
       title: "MESSENGER",
       meta: statusForAdapter(adapter),
+      metaTone: toneForAdapter(adapter),
       rows: liveRows([
         detailRow("adapter", "ADAPTER", formatTokenLabel(adapter.adapter)),
         detailRow("account", "ACCOUNT", adapter.accountId),

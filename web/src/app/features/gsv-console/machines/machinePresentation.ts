@@ -9,7 +9,9 @@ import { compactText, formatAge, uidLabel } from "../domain/consoleFormat";
 import type { ConsoleTarget } from "../domain/consoleModels";
 
 export function iconForTarget(target: ConsoleTarget): string {
-  if (target.kind === "browser") return "bookmark";
+  // Browser targets use the chrome doticon (matching the step-1 platform tile);
+  // `chrome` exists only as a doticon, so route through the `doticons/` prefix.
+  if (target.kind === "browser") return "doticons/chrome";
   return "computer";
 }
 
@@ -42,11 +44,14 @@ export function machineDetailSections(target: ConsoleTarget): ConsoleDetailSecti
     {
       title: "MACHINE",
       meta: statusForTarget(target),
+      metaTone: toneForTarget(target),
       rows: liveRows([
         detailRow("platform", "PLATFORM", target.platform),
         detailRow("version", "VERSION", target.version),
         detailRow("owner", "OWNER", target.ownerUsername || uidLabel(target.ownerUid)),
-        detailRow("last-seen", "LAST SEEN", target.lastSeenAt === null ? "" : formatAge(target.lastSeenAt)),
+        detailRow("last-seen", "LAST SEEN", target.lastSeenAt === null ? "" : formatAge(target.lastSeenAt), {
+          labelInfo: "When this machine last connected or disconnected. For an online machine it's when the current session began; for an offline one, when it dropped.",
+        }),
       ]),
     },
     {

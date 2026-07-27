@@ -5,7 +5,7 @@ import { GsvMark } from "../../../components/ui/GsvMark";
 import { DesktopHint } from "./DesktopHint";
 import { IconMenu } from "../../../components/ui/IconMenu";
 import { ObjectCard } from "../../../components/ui/ObjectCard";
-import { StatusDot } from "../../../components/ui/StatusDot";
+import { StatusDot, STATUS_TEXT } from "../../../components/ui/StatusDot";
 import { Tile } from "../../../components/ui/Tile";
 import {
   type DesktopChildObject,
@@ -173,6 +173,19 @@ export function GsvDesktop({
       : inventoryReady
         ? "SYSTEM MAP"
         : inventoryState.toUpperCase();
+  // Tone for the HUD status readout: a selected object carries its own status
+  // tone; a not-ready inventory maps error/offline/loading to their tones (same
+  // mapping as the inventory-state dot below). Neutral chrome ("SYSTEM MAP",
+  // "GSV / CONTROL") stays uncolored (dim default).
+  const hudTone: ShellStatus | null = selectedObject
+    ? selectedObject.status
+    : gsvOpen || inventoryReady
+      ? null
+      : inventoryState === "error"
+        ? "error"
+        : inventoryState === "offline"
+          ? "idle"
+          : "warn";
 
   // When a node is selected, settle the view so its objects are readable: scroll
   // up to centre the strip, but never past the point where the tiles row sits at
@@ -271,7 +284,7 @@ export function GsvDesktop({
               : inventoryMessage}
           </small>
         </div>
-        <p>{hudStatus}</p>
+        <p style={hudTone ? { color: STATUS_TEXT[hudTone] } : undefined}>{hudStatus}</p>
       </header>
 
       <div class="gsv-space-scroll" ref={sectionRef}>
@@ -344,7 +357,6 @@ export function GsvDesktop({
                     type="button"
                     class={`gsv-space-tile-button${selectedObjectId === object.id ? " is-selected" : ""}${activeObjectId === object.id ? " is-active" : ""}`}
                     aria-pressed={selectedObjectId === object.id ? "true" : "false"}
-                    title={`${object.label}: ${object.meta}, ${object.statusLabel}`}
                     onMouseEnter={() => setHoveredObjectId(object.id)}
                     onMouseLeave={() => setHoveredObjectId((current) => (current === object.id ? null : current))}
                     onClick={(event) => {
@@ -356,6 +368,7 @@ export function GsvDesktop({
                       label={object.label}
                       glyph={object.glyph}
                       status={object.status}
+                      statusHint={object.statusLabel}
                       selected={selectedObjectId === object.id}
                     />
                   </button>

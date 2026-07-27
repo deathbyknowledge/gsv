@@ -18,6 +18,9 @@ export interface TextAreaProps {
   status?: TextAreaStatus;
   message?: string;
   requirement?: TextAreaRequirement;
+  /** When true, reveal the required-empty error immediately (e.g. on a submit
+   *  attempt) even if the field hasn't been blurred yet. */
+  forceValidate?: boolean;
   disabled?: boolean;
   readonly?: boolean;
   maxLength?: number;
@@ -46,6 +49,7 @@ export function TextArea(props: TextAreaProps) {
     status = "none",
     message = "",
     requirement = "none",
+    forceValidate = false,
     disabled = false,
     readonly = false,
     maxLength = 0,
@@ -55,13 +59,24 @@ export function TextArea(props: TextAreaProps) {
 
   const fieldId = useId();
   const [internalValue, setInternalValue] = useState(props.value ?? "");
+  const [blurred, setBlurred] = useState(false);
   const controlled = props.value !== undefined;
 
   const value = controlled ? props.value ?? "" : internalValue;
 
-  const rawStatus = status && status !== "none" ? status : "";
+  // Systemic required enforcement (see TextInput): a required field left empty
+  // shows "REQUIRED" once blurred or on a forced submit-time validation; a
+  // caller-supplied `status` always wins.
+  const requiredEmpty = requirement === "required" && String(value).trim().length === 0;
+  const showRequiredError = requiredEmpty && (blurred || forceValidate);
+  const effectiveStatus: TextAreaStatus =
+    status !== "none" ? status : showRequiredError ? "error" : "none";
+  const effectiveMessage =
+    status !== "none" ? message : showRequiredError ? "REQUIRED" : message;
+
+  const rawStatus = effectiveStatus && effectiveStatus !== "none" ? effectiveStatus : "";
   const statusKey = rawStatus === "warning" ? "warn" : rawStatus;
-  const hasStatusMsg = !!rawStatus && message.length > 0;
+  const hasStatusMsg = !!rawStatus && effectiveMessage.length > 0;
 
   const showCounter = maxLength > 0 && !hasStatusMsg;
   const counterText = maxLength > 0 ? `${String(value).length} / ${maxLength}` : "";
@@ -110,15 +125,19 @@ export function TextArea(props: TextAreaProps) {
         spellcheck={false}
         aria-labelledby={hasLabelRow && label.length > 0 ? `${fieldId}-label` : undefined}
         aria-describedby={describedBy}
-        aria-invalid={status === "error" ? true : undefined}
+        aria-invalid={effectiveStatus === "error" ? true : undefined}
         onInput={(e) => emit((e.target as HTMLTextAreaElement).value)}
+        onBlur={(e) => {
+          setBlurred(true);
+          textareaProps?.onBlur?.(e);
+        }}
       />
       {hasStatusRow ? (
         <div class="gsv-ta-statusrow">
           {hasStatusMsg ? (
             <span class="gsv-ta-right">
               <span class="gsv-ta-dot" />
-              <span class="gsv-ta-msg gsv-sublabel" id={`${fieldId}-msg`}>{message}</span>
+              <span class="gsv-ta-msg gsv-sublabel" id={`${fieldId}-msg`}>{effectiveMessage}</span>
             </span>
           ) : null}
           {showCounter ? <span class="gsv-ta-counter gsv-sublabel">{counterText}</span> : null}
