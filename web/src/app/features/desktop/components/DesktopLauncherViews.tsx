@@ -1,0 +1,244 @@
+import type { DesktopApp, DesktopAppIcon } from "../domain/desktopApp";
+import type { WindowSummary } from "../runtime/windowManager";
+
+type DesktopAppIconsProps = {
+  apps: readonly DesktopApp[];
+  activeAppId: string | null;
+  selectedAppId: string | null;
+  onSelectApp: (appId: string) => void;
+  onOpenApp: (appId: string, options?: { forceNew?: boolean }) => void;
+};
+
+type TaskbarWindowsProps = {
+  summaries: readonly WindowSummary[];
+  onActivateWindow: (windowId: string) => void;
+  onCloseWindow: (windowId: string) => void;
+};
+
+type MobileAppGridProps = {
+  apps: readonly DesktopApp[];
+  onActivateApp: (input: MobileAppActivationInput) => void;
+  onNavigate: (direction: "next" | "previous") => void;
+};
+
+type MobileWindowStackProps = {
+  summaries: readonly WindowSummary[];
+};
+
+export type MobileAppActivationInput = {
+  appId: string;
+  button: HTMLButtonElement;
+  target: HTMLElement;
+  preventDefault: () => void;
+  stopPropagation: () => void;
+};
+
+function iconClassName(appId: string, activeAppId: string | null, selectedAppId: string | null): string {
+  const classes = ["desktop-icon"];
+  if (appId === activeAppId) {
+    classes.push("is-active");
+  }
+  if (appId === selectedAppId) {
+    classes.push("is-selected");
+  }
+  return classes.join(" ");
+}
+
+function taskbarClassName(summary: WindowSummary): string {
+  const classes = ["taskbar-window"];
+  if (summary.mode === "minimized") {
+    classes.push("is-minimized");
+  }
+  if (summary.active) {
+    classes.push("is-active");
+  }
+  return classes.join(" ");
+}
+
+export function DesktopAppIconGlyph({ icon }: { icon: DesktopAppIcon }) {
+  if (icon.kind === "svg") {
+    return (
+      <span
+        class="desktop-glyph is-package-svg"
+        aria-hidden="true"
+        dangerouslySetInnerHTML={{ __html: icon.svg }}
+      />
+    );
+  }
+
+  return (
+    <span class="desktop-glyph is-fallback" aria-hidden="true">
+      <span>{icon.label}</span>
+    </span>
+  );
+}
+
+function mobileWindowLayerClassName(summary: WindowSummary, index: number): string {
+  const classes = ["mobile-window-layer"];
+  if (index === 0) {
+    classes.push("is-front-window");
+  }
+  if (summary.mode !== "minimized") {
+    classes.push("is-visible-window");
+  }
+  if (summary.active && summary.mode !== "minimized") {
+    classes.push("is-active-window");
+  }
+  if (summary.mode === "minimized") {
+    classes.push("is-paused-window");
+  }
+  return classes.join(" ");
+}
+
+function mobileWindowLayerStyle(summary: WindowSummary, index: number) {
+  const pausedDepth = summary.mode === "minimized" ? 1 : 0;
+  const depthIndex = index + pausedDepth;
+
+  return {
+    "--window-depth-index": String(index),
+    "--window-depth-x": `${18 + depthIndex * 9}px`,
+    "--window-depth-y": `${16 + depthIndex * 8}px`,
+    "--window-depth-z": `${depthIndex * -42}px`,
+    "--window-depth-scale": Math.max(0.74, 1 - depthIndex * 0.055).toFixed(3),
+    "--window-layer-opacity": (summary.mode === "minimized" ? Math.max(0.24, 0.62 - index * 0.1) : Math.max(0.44, 0.95 - index * 0.12)).toFixed(3),
+    "--window-depth-compact-x": `${12 + depthIndex * 5}px`,
+    "--window-depth-compact-y": `${14 + depthIndex * 7}px`,
+    "--window-layer-z-index": String(20 - index),
+  };
+}
+
+export function DesktopAppIcons({
+  apps,
+  activeAppId,
+  selectedAppId,
+  onSelectApp,
+  onOpenApp,
+}: DesktopAppIconsProps) {
+  return (
+    <>
+      {apps.map((app) => (
+        <button
+          key={app.id}
+          type="button"
+          class={iconClassName(app.id, activeAppId, selectedAppId)}
+          data-app-id={app.id}
+          onClick={() => onSelectApp(app.id)}
+          onDblClick={(event) => onOpenApp(app.id, { forceNew: event.shiftKey })}
+          onFocus={() => onSelectApp(app.id)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") {
+              return;
+            }
+            event.preventDefault();
+            onOpenApp(app.id, { forceNew: event.shiftKey });
+          }}
+        >
+          <DesktopAppIconGlyph icon={app.icon} />
+          <span class="desktop-label">{app.name}</span>
+        </button>
+      ))}
+    </>
+  );
+}
+
+export function MobileAppGrid({
+  apps,
+  onActivateApp,
+  onNavigate,
+}: MobileAppGridProps) {
+  return (
+    <>
+      {apps.map((app) => (
+        <button
+          key={app.id}
+          type="button"
+          class="mobile-app-icon"
+          data-app-id={app.id}
+          onClick={(event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) {
+              return;
+            }
+            onActivateApp({
+              appId: app.id,
+              button: event.currentTarget,
+              target,
+              preventDefault: () => event.preventDefault(),
+              stopPropagation: () => event.stopPropagation(),
+            });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              onNavigate("next");
+              return;
+            }
+            if (event.key === "ArrowUp") {
+              event.preventDefault();
+              onNavigate("previous");
+            }
+          }}
+        >
+          <DesktopAppIconGlyph icon={app.icon} />
+          <span class="mobile-app-copy">
+            <strong>{app.name}</strong>
+            <small>{app.description}</small>
+          </span>
+          <span class="mobile-window-stack" data-mobile-window-stack aria-hidden="true" />
+        </button>
+      ))}
+    </>
+  );
+}
+
+export function MobileWindowStack({ summaries }: MobileWindowStackProps) {
+  return (
+    <>
+      {summaries.map((summary, index) => (
+        <span
+          key={summary.windowId}
+          class={mobileWindowLayerClassName(summary, index)}
+          data-window-id={summary.windowId}
+          style={mobileWindowLayerStyle(summary, index)}
+        >
+          <span class="mobile-window-layer-title">{summary.title}</span>
+        </span>
+      ))}
+    </>
+  );
+}
+
+export function TaskbarWindows({
+  summaries,
+  onActivateWindow,
+  onCloseWindow,
+}: TaskbarWindowsProps) {
+  return (
+    <>
+      {summaries
+        .slice()
+        .sort((left, right) => right.zIndex - left.zIndex)
+        .map((summary) => (
+          <button
+            key={summary.windowId}
+            type="button"
+            class={taskbarClassName(summary)}
+            data-window-id={summary.windowId}
+            title={`${summary.title} - ${summary.route}`}
+            onClick={() => onActivateWindow(summary.windowId)}
+            onAuxClick={(event) => {
+              if (event.button !== 1) {
+                return;
+              }
+              event.preventDefault();
+              onCloseWindow(summary.windowId);
+            }}
+          >
+            <span class="taskbar-window-title">{summary.title}</span>
+            {summary.dirty ? <span class="taskbar-dirty" aria-label="Unsaved changes" /> : null}
+            {summary.badge ? <span class="taskbar-badge">{summary.badge}</span> : null}
+          </button>
+        ))}
+    </>
+  );
+}

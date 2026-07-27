@@ -30,6 +30,7 @@ describe("user-facing signal policy", () => {
     expect(USER_CONNECTION_SIGNALS).toEqual(expect.arrayContaining([
       "device.status",
       "adapter.status",
+      "pkg.changed",
       "mcp.changed",
       "notification.created",
       "notification.updated",

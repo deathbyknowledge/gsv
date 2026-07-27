@@ -39,7 +39,8 @@ type ShellRailProps = {
 
 /** Sections that show a "create" entry in their drawer. The label is the same
  *  for every section. Messengers are intentionally absent — connecting a
- *  messenger is done from its dedicated platform page. */
+ *  messenger is done from its dedicated platform page. Applications are absent —
+ *  they route to the applications list page instead of a drawer. */
 const CREATE_LABEL: Record<string, string> = {
   machines: "+ CONNECT NEW",
   integrations: "+ CONNECT NEW",
@@ -224,7 +225,7 @@ export function ShellRail({
                     </span>
                     <i style={{ background: statusColor(object.status), color: statusColor(object.status) }} />
                   </button>
-                  {expanded ? (
+                  {expanded && object.id !== "applications" ? (
                     <div class="gsv-rail-subitems" aria-label={`${object.label} objects`}>
                       {object.children.map((child) => (
                         <button

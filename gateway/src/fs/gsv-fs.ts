@@ -5,6 +5,7 @@
  *   /proc/*, /dev/*, /sys/*, /var/{spool,log}/*, /etc/{passwd,shadow,group,cron.d} → KernelMountBackend
  *   /var/media/*                                          → ProcessMediaMountBackend
  *   /src/repos/*                                       → Process source/ripgit repo backend
+ *   /usr/local/bin/*                                      → Package backend
  *   everything else                                           → R2 backend
  *
  * Two paths remain hybrid in GsvFs itself:
@@ -41,6 +42,7 @@ import { KernelMountBackend } from "./backends/kernel";
 import { ProcessMediaMountBackend } from "./backends/process-media";
 import { isProcessMediaPath } from "../shared/process-media-path";
 import { isAccountHomeReservedPath } from "./backends/account-home";
+import { isPackageMountPath } from "./backends/packages";
 import { isProcessSourcePath } from "./backends/process-sources";
 import { normalizePath } from "./utils";
 import { bindStreamToAbort } from "../shared/streams";
@@ -57,6 +59,7 @@ export class GsvFs implements IFileSystem {
   private readonly processMediaBackend: MountBackend;
   private readonly sourceBackend: MountBackend | null;
   private readonly accountHomeBackend: MountBackend | null;
+  private readonly packageBackend: MountBackend | null;
 
   constructor(
     bucket: R2Bucket,
@@ -65,6 +68,7 @@ export class GsvFs implements IFileSystem {
     selfPid?: string,
     sourceBackend?: MountBackend | null,
     accountHomeBackend?: MountBackend | null,
+    packageBackend?: MountBackend | null,
   ) {
     this.identity = identity;
     this.kernel = kernel ?? null;
@@ -73,6 +77,7 @@ export class GsvFs implements IFileSystem {
     this.processMediaBackend = new ProcessMediaMountBackend(bucket, identity, this.kernel, selfPid ?? null);
     this.sourceBackend = sourceBackend ?? null;
     this.accountHomeBackend = accountHomeBackend ?? null;
+    this.packageBackend = packageBackend ?? null;
   }
 
   async readFile(path: string, options?: { encoding?: BufferEncoding | null } | BufferEncoding): Promise<string> {
@@ -461,6 +466,13 @@ export class GsvFs implements IFileSystem {
       throw new Error(`EACCES: permission denied, '${normalizePath(path)}'`);
     }
 
+    if (isPackageMountPath(path)) {
+      if (!this.packageBackend) {
+        throw new Error(`ENOSYS: package backend is unavailable for '${path}'`);
+      }
+      return this.packageBackend;
+    }
+
     if (this.kernelBackend.handles(path)) {
       return this.kernelBackend;
     }
@@ -492,6 +504,10 @@ export class GsvFs implements IFileSystem {
 
     if (this.sourceBackend) {
       entries.add("src");
+    }
+
+    if (this.packageBackend) {
+      entries.add("usr");
     }
 
     return [...entries].sort();

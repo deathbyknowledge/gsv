@@ -21,6 +21,17 @@ import type {
 import type { ShellExecArgs, ShellExecResult } from "./shell";
 import type { NetFetchArgs, NetFetchResult } from "./net";
 import type {
+  AppAttachArgs,
+  AppCloseArgs,
+  AppCloseResult,
+  AppDetachArgs,
+  AppDetachResult,
+  AppLaunchResult,
+  AppListArgs,
+  AppListResult,
+  AppOpenArgs,
+} from "./apps";
+import type {
   CodeModeExecArgs,
   CodeModeExecResult,
   CodeModeRunArgs,
@@ -90,6 +101,34 @@ import type {
   ProcSpawnArgs,
   ProcSpawnResult,
 } from "./proc";
+import type {
+  PkgAddArgs,
+  PkgAddResult,
+  PkgCheckoutArgs,
+  PkgCheckoutResult,
+  PkgCreateArgs,
+  PkgCreateResult,
+  PkgInstallArgs,
+  PkgInstallResult,
+  PkgListArgs,
+  PkgListResult,
+  PkgPublicListArgs,
+  PkgPublicListResult,
+  PkgPublicSetArgs,
+  PkgPublicSetResult,
+  PkgRemoteAddArgs,
+  PkgRemoteAddResult,
+  PkgRemoteListArgs,
+  PkgRemoteListResult,
+  PkgRemoteRemoveArgs,
+  PkgRemoteRemoveResult,
+  PkgRemoveArgs,
+  PkgRemoveResult,
+  PkgReviewApproveArgs,
+  PkgReviewApproveResult,
+  PkgSyncArgs,
+  PkgSyncResult,
+} from "./packages";
 import type {
   RepoApplyArgs,
   RepoApplyResult,
@@ -252,6 +291,12 @@ export type SyscallDomains = {
 
   "net.fetch": { args: NetFetchArgs; result: NetFetchResult };
 
+  "app.open": { args: AppOpenArgs; result: AppLaunchResult };
+  "app.attach": { args: AppAttachArgs; result: AppLaunchResult };
+  "app.list": { args: AppListArgs; result: AppListResult };
+  "app.detach": { args: AppDetachArgs; result: AppDetachResult };
+  "app.close": { args: AppCloseArgs; result: AppCloseResult };
+
   "codemode.exec": { args: CodeModeExecArgs; result: CodeModeExecResult };
   "codemode.run": { args: CodeModeRunArgs; result: CodeModeRunResult };
 
@@ -289,6 +334,20 @@ export type SyscallDomains = {
   };
   "proc.reset": { args: ProcResetArgs; result: ProcResetResult };
   "proc.setidentity": { args: ProcSetIdentityArgs; result: ProcSetIdentityResult };
+
+  "pkg.list": { args: PkgListArgs; result: PkgListResult };
+  "pkg.add": { args: PkgAddArgs; result: PkgAddResult };
+  "pkg.create": { args: PkgCreateArgs; result: PkgCreateResult };
+  "pkg.sync": { args: PkgSyncArgs; result: PkgSyncResult };
+  "pkg.checkout": { args: PkgCheckoutArgs; result: PkgCheckoutResult };
+  "pkg.install": { args: PkgInstallArgs; result: PkgInstallResult };
+  "pkg.review.approve": { args: PkgReviewApproveArgs; result: PkgReviewApproveResult };
+  "pkg.remove": { args: PkgRemoveArgs; result: PkgRemoveResult };
+  "pkg.remote.list": { args: PkgRemoteListArgs; result: PkgRemoteListResult };
+  "pkg.remote.add": { args: PkgRemoteAddArgs; result: PkgRemoteAddResult };
+  "pkg.remote.remove": { args: PkgRemoteRemoveArgs; result: PkgRemoteRemoveResult };
+  "pkg.public.list": { args: PkgPublicListArgs; result: PkgPublicListResult };
+  "pkg.public.set": { args: PkgPublicSetArgs; result: PkgPublicSetResult };
 
   "repo.list": { args: RepoListArgs; result: RepoListResult };
   "repo.create": { args: RepoCreateArgs; result: RepoCreateResult };

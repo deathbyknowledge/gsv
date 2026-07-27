@@ -33,6 +33,7 @@ import { resolveUserPath } from "../fs";
 import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
+import { resolvePackageAgentRunAs } from "./package-agents";
 import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
 import {
   findProcessAiModelProfile,
@@ -326,6 +327,10 @@ export function resolveRunAsIdentity(
   const trimmed = runAs.trim();
   const isRoot = ctx.identity!.process.uid === 0;
 
+  if (trimmed.includes("#")) {
+    return resolvePackageAgentRunAs(ctx, trimmed, ownerUid, isRoot);
+  }
+
   const entry = /^\d+$/.test(trimmed)
     ? auth.getPasswdByUid(Number(trimmed))
     : auth.getPasswdByUsername(trimmed);
@@ -361,6 +366,16 @@ function withProcSendOrigin(frame: RequestFrame, ctx: KernelContext): RequestFra
 }
 
 function interactionOriginForContext(ctx: KernelContext): InteractionOrigin | undefined {
+  if (ctx.appFrame) {
+    return {
+      kind: "app",
+      packageId: ctx.appFrame.packageId,
+      packageName: ctx.appFrame.packageName,
+      entrypointName: ctx.appFrame.entrypointName,
+      routeBase: ctx.appFrame.routeBase,
+    };
+  }
+
   if (ctx.processId) {
     return processInteractionOrigin(ctx.processId, ctx.identity?.process.uid);
   }

@@ -1,0 +1,1466 @@
+import { getAgentByName } from "agents";
+import { WorkerEntrypoint } from "cloudflare:workers";
+import type {
+  BinaryBody,
+  PackageAssemblerInterface,
+  PackageAssemblyAnalysis,
+  PackageAssemblyResponse,
+} from "@humansandmachines/gsv/protocol";
+import {
+  RipgitClient,
+  type RipgitPackageAnalyzeResponse,
+  type RipgitPackageSnapshotResponse,
+  type RipgitRepoRef,
+} from "../fs/ripgit/client";
+import type {
+  AppFrameContext,
+  KernelBindingProps,
+} from "../protocol/app-frame";
+import type { RequestFrame, ResponseFrame } from "../protocol/frames";
+import { decodeBase64Bytes } from "../shared/base64";
+import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
+
+/**
+ * Package model for GSV kernel-managed packages.
+ *
+ * Packages are modeled as:
+ * - a manifest: identity + declared entrypoints + requested capabilities
+ * - an artifact: the concrete code bundle for a target runtime
+ * - install-time grants: the actual binding/state providers wired in by kernel
+ *
+ * This is designed to fit Cloudflare Dynamic Workers on the gateway side:
+ * packages declare the bindings they expect, and the kernel decides which
+ * concrete entrypoints or storage providers to expose at install/launch time.
+ *
+ * Important identity rule:
+ * - worker/runtime identity is versioned by artifact hash
+ * - package state identity is stable by package name + scope
+ * - Package DO names must not include package version
+ */
+
+export type PackageRuntime = "dynamic-worker" | "node" | "web-ui";
+
+type PackageAssemblerBinding = Fetcher & Pick<PackageAssemblerInterface, "assemblePackage">;
+const PACKAGE_PUBLIC_FILE_WRITE_CONCURRENCY = 2;
+
+export type PackageModuleKind =
+  | "esm"
+  | "commonjs"
+  | "text"
+  | "json"
+  | "data";
+
+export type PackageEntrypointKind =
+  | "command"
+  | "http"
+  | "rpc"
+  | "ui";
+
+export type PackageInstallScope =
+  | { kind: "global" }
+  | { kind: "user"; uid: number };
+
+export type PackageIcon =
+  | { kind: "builtin"; id: string }
+  | { kind: "svg"; svg: string };
+
+export type PackageBindingKind =
+  | "kernel"
+  | "fs"
+  | "service"
+  | "custom";
+
+export type PackageEgressMode = "none" | "inherit" | "allowlist";
+
+export type PackageBindingProviderKind =
+  | "kernel-entrypoint"
+  | "package-fs"
+  | "service"
+  | "custom";
+
+export interface PackageSource {
+  repo: string;
+  ref: string;
+  subdir: string;
+  resolvedCommit?: string | null;
+}
+
+export interface PackageModuleDef {
+  path: string;
+  kind: PackageModuleKind;
+  content: string;
+}
+
+export interface PackagePublicFileDef {
+  path: string;
+  contentType: string;
+  encoding: "utf-8" | "base64";
+  content: string;
+}
+
+export interface PackageArtifact {
+  /**
+   * Immutable artifact identity for cache keys / loader ids.
+   * Prefer content-addressed values, e.g. "sha256:...".
+   */
+  hash: string;
+  mainModule: string;
+  compatibilityDate?: string;
+  compatibilityFlags?: string[];
+  modules: PackageModuleDef[];
+  publicFiles?: PackagePublicFileDef[];
+}
+
+export interface PackageArtifactMetadata {
+  hash: string;
+  mainModule: string;
+  compatibilityDate?: string;
+  compatibilityFlags?: string[];
+  modulePaths: string[];
+  publicFilePaths?: string[];
+  runtimeAccess?: PackageRuntimeAccess;
+}
+
+export interface PackageEntrypoint {
+  name: string;
+  kind: PackageEntrypointKind;
+  module: string;
+  exportName?: string;
+  description?: string;
+  command?: string;
+  route?: string;
+  icon?: PackageIcon;
+  syscalls?: string[];
+  windowDefaults?: {
+    width: number;
+    height: number;
+    minWidth: number;
+    minHeight: number;
+  };
+}
+
+export interface PackageProfileContextFile {
+  name: string;
+  text: string;
+}
+
+export interface PackageProfileManifest {
+  name: string;
+  displayName: string;
+  description?: string;
+  icon?: string;
+  contextFiles: PackageProfileContextFile[];
+  approvalPolicy?: string;
+  /**
+   * Syscall capabilities the profile's agent account requires (from
+   * `profiles/<name>/capabilities.json`, a JSON string array). These are granted
+   * on the agent's own gid at enable; declaring them is a privilege request that
+   * is surfaced at the package review gate.
+   */
+  capabilities?: string[];
+}
+
+type KernelAppStub = {
+  appRequest: (context: AppFrameContext, frame: RequestFrame) => Promise<ResponseFrame>;
+};
+
+export class KernelBinding extends WorkerEntrypoint<Env, KernelBindingProps> {
+  private getAppFrame(): AppFrameContext {
+    const appFrame = this.ctx.props.appFrame;
+    if (!appFrame) {
+      throw new Error("KernelBinding requires request-scoped appFrame props");
+    }
+    return appFrame;
+  }
+
+  async request<S extends SyscallName>(call: S, args: ArgsOf<S>): Promise<ResultOf<S>> {
+    const response = await this.requestFrame(call, args);
+    if (response.body) {
+      await response.body.stream.cancel(`${call} returned a body`).catch(() => {});
+      throw new Error(`${call} returned a body; use requestFrame()`);
+    }
+    return response.data;
+  }
+
+  async requestFrame<S extends SyscallName>(
+    call: S,
+    args: ArgsOf<S>,
+    options: { body?: BinaryBody } = {},
+  ): Promise<{ data: ResultOf<S>; body?: BinaryBody }> {
+    const kernel = await getAgentByName(this.env.KERNEL, "singleton") as KernelAppStub;
+    const frame: RequestFrame<S> = {
+      type: "req",
+      id: crypto.randomUUID(),
+      call,
+      args,
+      ...(options.body ? { body: options.body } : {}),
+    };
+
+    const response = await kernel.appRequest(this.getAppFrame(), frame as RequestFrame);
+    if (!response.ok) {
+      throw new Error(response.error.message);
+    }
+
+    return {
+      data: response.data as ResultOf<S>,
+      ...(response.body ? { body: response.body } : {}),
+    };
+  }
+}
+
+/**
+ * Declared binding requested by the package.
+ *
+ * Example:
+ * - binding: "KERNEL"
+ * - kind: "kernel"
+ * - interfaceName: "gsv.kernel.v1"
+ */
+export interface PackageBindingRequest {
+  binding: string;
+  kind: PackageBindingKind;
+  interfaceName: string;
+  required: boolean;
+  description?: string;
+}
+
+export interface PackageCapabilityDeclaration {
+  bindings?: PackageBindingRequest[];
+  egress?: {
+    mode: PackageEgressMode;
+    allow?: string[];
+  };
+  daemon?: {
+    rpcSchedules?: boolean;
+  };
+  storage?: {
+    sql?: boolean;
+  };
+  tails?: string[];
+}
+
+export interface PackageManifest {
+  name: string;
+  description: string;
+  version: string;
+  runtime: PackageRuntime;
+  source: PackageSource;
+  entrypoints: PackageEntrypoint[];
+  publicRoutes?: string[];
+  profiles?: PackageProfileManifest[];
+  capabilities?: PackageCapabilityDeclaration;
+}
+
+/**
+ * Concrete binding grant decided by kernel at install or launch time.
+ */
+export interface PackageBindingGrant {
+  binding: string;
+  providerKind: PackageBindingProviderKind;
+  providerRef: string;
+  config?: Record<string, string>;
+}
+
+export interface PackageGrantSet {
+  bindings?: PackageBindingGrant[];
+  egress?: {
+    mode: PackageEgressMode;
+    allow?: string[];
+  };
+  daemon?: {
+    rpcSchedules?: boolean;
+  };
+  storage?: {
+    sql?: boolean;
+  };
+}
+
+export interface PackageRuntimeAccess {
+  egress?: {
+    mode: PackageEgressMode;
+    allow?: string[];
+  };
+  daemon?: {
+    rpcSchedules?: boolean;
+  };
+  storage?: {
+    sql?: boolean;
+  };
+}
+
+export interface InstalledPackageRecord {
+  packageId: string;
+  scope: PackageInstallScope;
+  manifest: PackageManifest;
+  artifact: PackageArtifactMetadata;
+  grants?: PackageGrantSet;
+  enabled: boolean;
+  reviewRequired: boolean;
+  reviewedAt?: number | null;
+  installedAt: number;
+  updatedAt: number;
+}
+
+export interface PackageInstallRecordInput extends Omit<InstalledPackageRecord, "artifact" | "installedAt" | "updatedAt"> {
+  artifact: PackageArtifact;
+  installedAt?: number;
+  updatedAt?: number;
+}
+
+export const DEFAULT_PACKAGE_COMPATIBILITY_DATE = "2026-01-28";
+
+const TEXT_DECODER = new TextDecoder();
+
+export function packageRouteBase(packageName: string): string {
+  return `/apps/${packageName}`;
+}
+
+type PackageScopeOwner = { uid: number } | null | undefined;
+
+export function packageScopeKey(scope: PackageInstallScope): string {
+  switch (scope.kind) {
+    case "global":
+      return "global";
+    case "user":
+      return `user:${scope.uid}`;
+  }
+}
+
+export function defaultPackageInstallScopeForActor(
+  actor: PackageScopeOwner,
+): PackageInstallScope {
+  if (actor && actor.uid !== 0) {
+    return { kind: "user", uid: actor.uid };
+  }
+  return { kind: "global" };
+}
+
+export function visiblePackageScopesForActor(
+  actor: PackageScopeOwner,
+): PackageInstallScope[] {
+  const scopes: PackageInstallScope[] = [];
+  if (actor && actor.uid !== 0) {
+    scopes.push({ kind: "user", uid: actor.uid });
+  }
+  scopes.push({ kind: "global" });
+  return scopes;
+}
+
+export function packageScopeEquals(
+  left: PackageInstallScope,
+  right: PackageInstallScope,
+): boolean {
+  return packageScopeKey(left) === packageScopeKey(right);
+}
+
+const PACKAGE_ARTIFACT_PREFIX = "runtime/package-artifacts";
+const PACKAGE_PUBLIC_HASH_PLACEHOLDER = "__GSV_ARTIFACT_HASH__";
+const PACKAGE_PUBLIC_BASE_PLACEHOLDER = "/public/gsv/packages/__GSV_ARTIFACT_HASH__";
+const PUBLIC_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable";
+
+export function artifactMetadataFromArtifact(artifact: PackageArtifact): PackageArtifactMetadata {
+  return {
+    hash: artifact.hash,
+    mainModule: artifact.mainModule,
+    compatibilityDate: artifact.compatibilityDate,
+    compatibilityFlags: artifact.compatibilityFlags,
+    modulePaths: artifact.modules.map((module) => module.path),
+    publicFilePaths: artifact.publicFiles?.map((file) =>
+      resolvePackagePublicFilePath(artifact.hash, file.path)
+    ) ?? [],
+  };
+}
+
+export function packageArtifactStorageKey(hash: string): string {
+  return `${PACKAGE_ARTIFACT_PREFIX}/${encodeURIComponent(hash)}.json`;
+}
+
+export function packageArtifactPublicSegment(hash: string): string {
+  return hash.replace(/[^A-Za-z0-9._-]/g, "-");
+}
+
+export function packageArtifactPublicBase(hash: string): string {
+  return `/public/gsv/packages/${packageArtifactPublicSegment(hash)}`;
+}
+
+export async function storePackageArtifact(bucket: R2Bucket, artifact: PackageArtifact): Promise<void> {
+  await storePackagePublicFiles(bucket, artifact);
+  await bucket.put(
+    packageArtifactStorageKey(artifact.hash),
+    JSON.stringify(packageArtifactLoaderRecord(artifact)),
+    {
+      httpMetadata: {
+        contentType: "application/json; charset=utf-8",
+      },
+    },
+  );
+}
+
+function packageArtifactLoaderRecord(artifact: PackageArtifact): PackageArtifact {
+  const { publicFiles: _publicFiles, ...loaderArtifact } = artifact;
+  return loaderArtifact;
+}
+
+async function storePackagePublicFiles(bucket: R2Bucket, artifact: PackageArtifact): Promise<void> {
+  const publicFiles = artifact.publicFiles ?? [];
+  if (publicFiles.length === 0) {
+    return;
+  }
+
+  await mapWithConcurrency(publicFiles, PACKAGE_PUBLIC_FILE_WRITE_CONCURRENCY, async (file) => {
+    const resolvedPath = resolvePackagePublicFilePath(artifact.hash, file.path);
+    const key = `public/${resolvedPath}`;
+    const content = resolvePackagePublicFileContent(artifact.hash, file);
+    await bucket.put(key, content, {
+      httpMetadata: {
+        contentType: file.contentType,
+        cacheControl: PUBLIC_ASSET_CACHE_CONTROL,
+      },
+      customMetadata: {
+        uid: "0",
+        gid: "0",
+        mode: "644",
+      },
+    });
+  });
+}
+
+function resolvePackagePublicFilePath(hash: string, path: string): string {
+  return trimLeadingSlash(path)
+    .replaceAll(PACKAGE_PUBLIC_HASH_PLACEHOLDER, packageArtifactPublicSegment(hash));
+}
+
+function resolvePackagePublicFileContent(
+  hash: string,
+  file: PackagePublicFileDef,
+): string | Uint8Array {
+  const content = file.content.replaceAll(
+    PACKAGE_PUBLIC_BASE_PLACEHOLDER,
+    packageArtifactPublicBase(hash),
+  );
+  switch (file.encoding) {
+    case "utf-8":
+      return content;
+    case "base64":
+      return decodeBase64Bytes(content);
+    default:
+      throw new Error(
+        `Unsupported package public file encoding: ${(file as { encoding: string }).encoding}`,
+      );
+  }
+}
+
+export async function loadPackageArtifact(bucket: R2Bucket, hash: string): Promise<PackageArtifact> {
+  const record = await bucket.get(packageArtifactStorageKey(hash));
+  if (!record) {
+    throw new Error(`Package artifact not found for hash: ${hash}`);
+  }
+  return JSON.parse(await record.text()) as PackageArtifact;
+}
+
+export function resolvePackageProfileReference(
+  reference: string,
+  packages: PackageStore,
+  scopes: PackageInstallScope[],
+): { record: InstalledPackageRecord; packageProfile: PackageProfileManifest } | null {
+  const trimmed = typeof reference === "string" ? reference.trim() : "";
+  const separator = trimmed.lastIndexOf("#");
+  if (separator <= 0 || separator >= trimmed.length - 1) {
+    return null;
+  }
+
+  const packageRef = trimmed.slice(0, separator).trim();
+  const profileName = trimmed.slice(separator + 1).trim();
+  if (!packageRef || !profileName) {
+    return null;
+  }
+
+  const exact = packages.resolve(packageRef, scopes);
+  if (exact) {
+    const packageProfile = exact.manifest.profiles?.find((entry) => entry.name === profileName);
+    return packageProfile ? { record: exact, packageProfile } : null;
+  }
+
+  const candidates = packages.list({ scopes }).filter((candidate) =>
+    matchesPackageReference(candidate, packageRef) &&
+    (candidate.manifest.profiles ?? []).some((entry) => entry.name === profileName)
+  );
+
+  if (candidates.length === 0) {
+    return null;
+  }
+  if (candidates.length > 1) {
+    throw new Error(`Ambiguous package profile reference: ${reference}`);
+  }
+
+  const record = candidates[0];
+  const packageProfile = record.manifest.profiles?.find((entry) => entry.name === profileName);
+  return packageProfile ? { record, packageProfile } : null;
+}
+
+export function packageArtifactToWorkerCode(
+  artifact: PackageArtifact,
+  env?: Record<string, unknown>,
+  runtimeAccess?: PackageRuntimeAccess,
+): WorkerLoaderWorkerCode {
+  const modules: Record<string, WorkerLoaderModule | string> = {};
+
+  for (const module of artifact.modules) {
+    switch (module.kind) {
+      case "esm":
+        modules[module.path] = { js: module.content };
+        break;
+      case "commonjs":
+        modules[module.path] = { cjs: module.content };
+        break;
+      case "text":
+        modules[module.path] = { text: module.content };
+        break;
+      case "json":
+        modules[module.path] = { json: JSON.parse(module.content) };
+        break;
+      case "data":
+        modules[module.path] = {
+          data: Uint8Array.from(atob(module.content), (char) => char.charCodeAt(0)).buffer,
+        };
+        break;
+      default:
+        throw new Error(`Unsupported package module kind: ${(module as { kind: string }).kind}`);
+    }
+  }
+
+  return {
+    compatibilityDate: artifact.compatibilityDate ?? DEFAULT_PACKAGE_COMPATIBILITY_DATE,
+    compatibilityFlags: artifact.compatibilityFlags,
+    mainModule: artifact.mainModule,
+    modules,
+    env,
+    globalOutbound: packageGlobalOutbound(runtimeAccess?.egress),
+  };
+}
+
+function packageGlobalOutbound(egress: PackageRuntimeAccess["egress"]): Fetcher | null | undefined {
+  if (!egress || egress.mode === "none") {
+    return null;
+  }
+  if (egress.mode === "inherit") {
+    return undefined;
+  }
+  const allow = normalizeOutboundAllowlist(egress.allow);
+  return {
+    fetch(input: RequestInfo | URL, init?: RequestInit) {
+      const request = outboundRequest(input, init);
+      const url = new URL(request.url);
+      if (!isOutboundAllowed(url, allow)) {
+        return Promise.reject(new Error(`Outbound request denied: ${url.origin}`));
+      }
+      return fetch(request);
+    },
+  } as Fetcher;
+}
+
+function normalizeOutboundAllowlist(allow: readonly string[] | undefined): Set<string> {
+  const values = new Set<string>();
+  for (const entry of allow ?? []) {
+    const normalized = normalizeOutboundAllowEntry(entry);
+    if (normalized) {
+      values.add(normalized);
+    }
+  }
+  return values;
+}
+
+function normalizeOutboundAllowEntry(entry: string): string | null {
+  const trimmed = entry.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    const parsed = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return null;
+    }
+    return outboundAllowKey(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function outboundRequest(input: RequestInfo | URL, init?: RequestInit): Request {
+  return new Request(input, {
+    ...init,
+    redirect: "manual",
+  });
+}
+
+function isOutboundAllowed(url: URL, allow: ReadonlySet<string>): boolean {
+  return allow.has(outboundAllowKey(url));
+}
+
+function outboundAllowKey(url: URL): string {
+  return `${url.protocol}//${url.host.toLowerCase()}`;
+}
+
+function runtimeAccessForReview(input: {
+  reviewRequired: boolean;
+  reviewedAt?: number | null;
+  grants?: PackageGrantSet;
+}): PackageRuntimeAccess {
+  if (input.reviewRequired && !input.reviewedAt) {
+    return {
+      egress: { mode: "none" },
+    };
+  }
+  return {
+    egress: input.grants?.egress ?? { mode: "none" },
+    ...(input.grants?.daemon?.rpcSchedules ? { daemon: { rpcSchedules: true } } : {}),
+    ...(input.grants?.storage?.sql ? { storage: { sql: true } } : {}),
+  };
+}
+
+type LegacyPackageIcon = PackageIcon | { kind: "asset"; module: string };
+type StoredPackageEntrypoint = Omit<PackageEntrypoint, "icon"> & { icon?: LegacyPackageIcon };
+type StoredPackageManifest = Omit<PackageManifest, "entrypoints"> & {
+  entrypoints: StoredPackageEntrypoint[];
+};
+type PackageSourceCapabilities = {
+  kernel?: readonly string[];
+  outbound?: readonly string[];
+  daemon?: readonly string[];
+  storage?: readonly string[];
+};
+
+function normalizeStoredManifest(
+  manifest: StoredPackageManifest,
+  artifact?: PackageArtifact | null,
+): PackageManifest {
+  return {
+    ...manifest,
+    entrypoints: manifest.entrypoints.map((entrypoint) => {
+      const { icon: rawIcon, ...rest } = entrypoint;
+      const normalizedIcon = rawIcon
+        ? normalizeStoredIcon(rawIcon, artifact)
+        : undefined;
+      return {
+        ...rest,
+        ...(normalizedIcon ? { icon: normalizedIcon } : {}),
+      };
+    }),
+  };
+}
+
+function normalizeStoredIcon(
+  icon: LegacyPackageIcon,
+  artifact?: PackageArtifact | null,
+): PackageIcon {
+  if (icon.kind !== "asset") {
+    return icon;
+  }
+  if (!artifact) {
+    throw new Error(`Package icon ${icon.module} requires artifact content for migration`);
+  }
+  const module = artifact.modules.find((candidate) => candidate.path === icon.module);
+  if (!module || module.content.trim().length === 0) {
+    throw new Error(`Package icon asset not found in artifact: ${icon.module}`);
+  }
+  return {
+    kind: "svg",
+    svg: module.content,
+  };
+}
+
+export class PackageStore {
+  constructor(
+    private readonly sql: SqlStorage,
+    private readonly bucket: R2Bucket,
+  ) {}
+
+  async install(input: PackageInstallRecordInput): Promise<InstalledPackageRecord> {
+    const now = Date.now();
+    const manifest = normalizeStoredManifest(input.manifest, input.artifact);
+    const artifactMetadata = {
+      ...artifactMetadataFromArtifact(input.artifact),
+      runtimeAccess: runtimeAccessForReview(input),
+    };
+    const record: InstalledPackageRecord = {
+      ...input,
+      manifest,
+      artifact: artifactMetadata,
+      installedAt: input.installedAt ?? now,
+      updatedAt: input.updatedAt ?? now,
+    };
+
+    assertValidPackageRecord(record);
+    await storePackageArtifact(this.bucket, input.artifact);
+
+    this.sql.exec(
+      `INSERT OR REPLACE INTO packages
+        (package_id, scope_key, scope_kind, scope_uid, name, version, runtime, enabled, manifest_json, artifact_hash, artifact_meta_json, grants_json, installed_at, updated_at, review_required, reviewed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      record.packageId,
+      packageScopeKey(record.scope),
+      record.scope.kind,
+      record.scope.kind === "user" ? record.scope.uid : null,
+      record.manifest.name,
+      record.manifest.version,
+      record.manifest.runtime,
+      record.enabled ? 1 : 0,
+      JSON.stringify(record.manifest),
+      record.artifact.hash,
+      JSON.stringify(record.artifact),
+      record.grants ? JSON.stringify(record.grants) : null,
+      record.installedAt,
+      record.updatedAt,
+      record.reviewRequired ? 1 : 0,
+      record.reviewedAt ?? null,
+    );
+
+    return record;
+  }
+
+  async getArtifact(hash: string): Promise<PackageArtifact> {
+    return loadPackageArtifact(this.bucket, hash);
+  }
+
+  get(
+    packageId: string,
+    scope: PackageInstallScope,
+  ): InstalledPackageRecord | null {
+    const rows = this.sql.exec<RowShape>(
+      "SELECT * FROM packages WHERE package_id = ? AND scope_key = ?",
+      packageId,
+      packageScopeKey(scope),
+    ).toArray();
+    return rows[0] ? toRecord(rows[0]) : null;
+  }
+
+  resolve(
+    packageId: string,
+    scopes: readonly PackageInstallScope[],
+  ): InstalledPackageRecord | null {
+    for (const scope of scopes) {
+      const record = this.get(packageId, scope);
+      if (record) {
+        return record;
+      }
+    }
+    return null;
+  }
+
+  list(opts?: {
+    enabled?: boolean;
+    runtime?: PackageRuntime;
+    name?: string;
+    scope?: PackageInstallScope;
+    scopes?: readonly PackageInstallScope[];
+  }): InstalledPackageRecord[] {
+    const where: string[] = [];
+    const params: Array<string | number> = [];
+    const scopes = opts?.scopes ?? (opts?.scope ? [opts.scope] : undefined);
+
+    if (typeof opts?.enabled === "boolean") {
+      where.push("enabled = ?");
+      params.push(opts.enabled ? 1 : 0);
+    }
+    if (opts?.runtime) {
+      where.push("runtime = ?");
+      params.push(opts.runtime);
+    }
+    if (opts?.name) {
+      where.push("name = ?");
+      params.push(opts.name);
+    }
+    if (scopes && scopes.length === 1) {
+      where.push("scope_key = ?");
+      params.push(packageScopeKey(scopes[0]));
+    } else if (scopes && scopes.length > 1) {
+      where.push(`scope_key IN (${scopes.map(() => "?").join(", ")})`);
+      for (const scope of scopes) {
+        params.push(packageScopeKey(scope));
+      }
+    }
+
+    const sql = where.length > 0
+      ? `SELECT * FROM packages WHERE ${where.join(" AND ")} ORDER BY name, version, updated_at DESC`
+      : "SELECT * FROM packages ORDER BY name, version, updated_at DESC";
+
+    const records = this.sql.exec<RowShape>(sql, ...params).toArray().map(toRecord);
+    if (scopes && scopes.length > 1) {
+      const order = new Map(scopes.map((scope, index) => [packageScopeKey(scope), index]));
+      records.sort((left, right) => {
+        const leftOrder = order.get(packageScopeKey(left.scope)) ?? Number.MAX_SAFE_INTEGER;
+        const rightOrder = order.get(packageScopeKey(right.scope)) ?? Number.MAX_SAFE_INTEGER;
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder;
+        }
+        const nameOrder = left.manifest.name.localeCompare(right.manifest.name);
+        if (nameOrder !== 0) {
+          return nameOrder;
+        }
+        if (left.updatedAt !== right.updatedAt) {
+          return right.updatedAt - left.updatedAt;
+        }
+        return left.packageId.localeCompare(right.packageId);
+      });
+    }
+    return records;
+  }
+
+  setEnabled(packageId: string, enabled: boolean, scope: PackageInstallScope): boolean {
+    const existing = this.get(packageId, scope);
+    if (!existing) return false;
+
+    this.sql.exec(
+      "UPDATE packages SET enabled = ?, updated_at = ? WHERE package_id = ? AND scope_key = ?",
+      enabled ? 1 : 0,
+      Date.now(),
+      packageId,
+      packageScopeKey(scope),
+    );
+
+    return true;
+  }
+
+  setReviewed(packageId: string, reviewedAt: number | null, scope: PackageInstallScope): boolean {
+    const existing = this.get(packageId, scope);
+    if (!existing) return false;
+
+    const artifactMetadata = {
+      ...existing.artifact,
+      runtimeAccess: runtimeAccessForReview({
+        reviewRequired: existing.reviewRequired,
+        reviewedAt,
+        grants: existing.grants,
+      }),
+    };
+
+    this.sql.exec(
+      "UPDATE packages SET reviewed_at = ?, artifact_meta_json = ?, updated_at = ? WHERE package_id = ? AND scope_key = ?",
+      reviewedAt,
+      JSON.stringify(artifactMetadata),
+      Date.now(),
+      packageId,
+      packageScopeKey(scope),
+    );
+
+    return true;
+  }
+
+  remove(packageId: string, scope: PackageInstallScope): boolean {
+    const existing = this.get(packageId, scope);
+    if (!existing) return false;
+
+    this.sql.exec(
+      "DELETE FROM packages WHERE package_id = ? AND scope_key = ?",
+      packageId,
+      packageScopeKey(scope),
+    );
+    return true;
+  }
+
+}
+
+type RowShape = {
+  package_id: string;
+  scope_key: string;
+  scope_kind: string;
+  scope_uid: number | null;
+  manifest_json: string;
+  artifact_hash: string;
+  artifact_meta_json: string;
+  grants_json: string | null;
+  enabled: number;
+  installed_at: number;
+  updated_at: number;
+  review_required: number | null;
+  reviewed_at: number | null;
+};
+
+function toRecord(row: RowShape): InstalledPackageRecord {
+  const artifact = parseJson<PackageArtifactMetadata>(row.artifact_meta_json);
+  const grants = row.grants_json ? parseJson<PackageGrantSet>(row.grants_json) : undefined;
+  const reviewRequired = row.review_required !== 0;
+  const reviewedAt = row.reviewed_at ?? null;
+  return {
+    packageId: row.package_id,
+    scope: scopeFromRow(row),
+    manifest: normalizeStoredManifest(
+      parseJson<StoredPackageManifest>(row.manifest_json),
+    ),
+    artifact: {
+      ...artifact,
+      runtimeAccess: artifact.runtimeAccess ?? runtimeAccessForReview({
+        reviewRequired,
+        reviewedAt,
+        grants,
+      }),
+    },
+    grants,
+    enabled: row.enabled !== 0,
+    reviewRequired,
+    reviewedAt,
+    installedAt: row.installed_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function scopeFromRow(row: Pick<RowShape, "scope_kind" | "scope_uid">): PackageInstallScope {
+  switch (row.scope_kind) {
+    case "user":
+      if (typeof row.scope_uid !== "number") {
+        throw new Error("Invalid package row: user scope missing uid");
+      }
+      return { kind: "user", uid: row.scope_uid };
+    case "global":
+      return { kind: "global" };
+    default:
+      throw new Error(`Invalid package row: unsupported scope ${row.scope_kind}`);
+  }
+}
+
+function parseJson<T>(value: string): T {
+  return JSON.parse(value) as T;
+}
+
+export async function resolvePackageFromRipgitSource(
+  env: Env,
+  source: PackageSource,
+): Promise<{ manifest: PackageManifest; artifact: PackageArtifact }> {
+  const ripgitBinding = env.RIPGIT;
+  if (!ripgitBinding) {
+    throw new Error("RIPGIT binding is required for package source resolution");
+  }
+
+  const ripgit = new RipgitClient(ripgitBinding);
+  return resolvePackageFromRipgitNativeBuild(env, ripgit, source);
+}
+
+async function resolvePackageFromRipgitNativeBuild(
+  env: Env,
+  ripgit: RipgitClient,
+  source: PackageSource,
+): Promise<{ manifest: PackageManifest; artifact: PackageArtifact }> {
+  const assembler = requirePackageAssembler(env);
+  const repo = parseRipgitRepoRef(source);
+  const subdir = normalizePackageSourceSubdir(source.subdir);
+  const analysis = await ripgit.analyzePackage(repo, subdir);
+
+  if (!analysis.ok || !analysis.definition) {
+    throw new Error(formatRipgitPackageFailure("package analysis failed", analysis.diagnostics));
+  }
+  const resolvedRepo = {
+    ...repo,
+    branch: analysis.source.resolved_commit,
+  };
+  const snapshot = await ripgit.snapshotPackage(resolvedRepo, subdir);
+  assertSnapshotMatchesAnalysis(analysis, snapshot);
+  const build = await assembler.assemblePackage({
+    analysis: analysis as PackageAssemblyAnalysis,
+    target: "dynamic-worker",
+    files: snapshot.files,
+    binary_files: snapshot.binary_files ?? {},
+  });
+
+  assertAssemblySucceeded(build);
+
+  const packageName = packageNameFromPackageJsonName(analysis.package_json.name);
+  const sourceCapabilities = analysis.definition.meta.capabilities as PackageSourceCapabilities;
+  const kernelSyscalls = uniqueStrings(sourceCapabilities.kernel);
+  const outboundAllowlist = uniqueStrings(sourceCapabilities.outbound);
+  const daemonCapabilities = uniqueStrings(sourceCapabilities.daemon);
+  const storageCapabilities = uniqueStrings(sourceCapabilities.storage);
+  const routeBase = packageRouteBase(packageName);
+  const artifact = convertAssembledArtifact(build);
+  const icon = toNativePackageIcon(analysis.definition.meta.icon, artifact);
+  const profiles = await readPackageProfiles(ripgit, resolvedRepo, subdir);
+  const hasBrowserEntrypoint = Boolean(analysis.definition.browser);
+  const hasBackendEntrypoint = Boolean(analysis.definition.backend);
+  const publicRoutes = uniqueStrings(analysis.definition.backend?.public_routes ?? []);
+
+  const entrypoints: PackageEntrypoint[] = [
+    ...analysis.definition.commands.map((command) => ({
+      name: command.name,
+      kind: "command" as const,
+      module: artifact.mainModule,
+      exportName: "GsvCommandEntrypoint",
+      command: command.name,
+      description: analysis.definition?.meta.description ?? undefined,
+      syscalls: kernelSyscalls,
+    })),
+    ...(hasBrowserEntrypoint ? [{
+      name: analysis.definition.meta.display_name,
+      kind: "ui" as const,
+      module: artifact.mainModule,
+      route: routeBase,
+      icon,
+      syscalls: kernelSyscalls,
+      windowDefaults: analysis.definition.meta.window
+        ? {
+            width: analysis.definition.meta.window.width ?? 1040,
+            height: analysis.definition.meta.window.height ?? 720,
+            minWidth: analysis.definition.meta.window.min_width ?? 760,
+            minHeight: analysis.definition.meta.window.min_height ?? 520,
+          }
+        : undefined,
+    }] : []),
+    ...(hasBackendEntrypoint ? [{
+      name: `${analysis.definition.meta.display_name} RPC`,
+      kind: "rpc" as const,
+      module: artifact.mainModule,
+      exportName: "GsvAppRpcEntrypoint",
+      description: analysis.definition?.meta.description ?? undefined,
+    }] : []),
+  ];
+
+  return {
+    manifest: {
+      name: packageName,
+      description: analysis.definition.meta.description ?? "",
+      version: analysis.package_json.version?.trim() || "0.0.0",
+      runtime: hasBrowserEntrypoint ? "web-ui" : "dynamic-worker",
+      source: {
+        repo: source.repo,
+        ref: source.ref,
+        subdir: normalizePackageSourceSubdir(build.source.subdir),
+        resolvedCommit: build.source.resolved_commit,
+      },
+      entrypoints,
+      ...(publicRoutes.length > 0 ? { publicRoutes } : {}),
+      ...(profiles.length > 0 ? { profiles } : {}),
+      capabilities: {
+        bindings: [
+          ...(kernelSyscalls.length > 0 ? [{
+            binding: "KERNEL",
+            kind: "kernel" as const,
+            interfaceName: "gsv.kernel.v1",
+            required: true,
+          }] : []),
+        ],
+        egress: outboundAllowlist.length > 0
+          ? {
+              mode: "allowlist",
+              allow: outboundAllowlist,
+            }
+          : {
+              mode: "none",
+            },
+        ...(daemonCapabilities.includes("rpc-schedules")
+          ? { daemon: { rpcSchedules: true } }
+          : {}),
+        ...(storageCapabilities.includes("sql")
+          ? { storage: { sql: true } }
+          : {}),
+      },
+    },
+    artifact,
+  };
+}
+
+function parseRipgitRepoRef(source: Pick<PackageSource, "repo" | "ref">): {
+  owner: string;
+  repo: string;
+  branch: string;
+} {
+  const [owner, repo] = source.repo.split("/", 2);
+  if (!owner || !repo) {
+    throw new Error(`package source repo must be '<owner>/<repo>', got '${source.repo}'`);
+  }
+  return {
+    owner,
+    repo,
+    branch: source.ref,
+  };
+}
+
+function convertAssembledArtifact(
+  build: PackageAssemblyResponse,
+): PackageArtifact {
+  if (!build.artifact) {
+    throw new Error("package assembly artifact is missing");
+  }
+
+  return {
+    hash: build.artifact.hash,
+    mainModule: build.artifact.main_module,
+    compatibilityDate: DEFAULT_PACKAGE_COMPATIBILITY_DATE,
+    modules: build.artifact.modules.map((module) => ({
+      path: module.path,
+      kind: module.kind === "source-module" ? "esm" : module.kind,
+      content: module.content,
+    })),
+    publicFiles: (build.artifact.public_files ?? []).map((file) => ({
+      path: file.path,
+      contentType: file.content_type,
+      encoding: file.encoding,
+      content: file.content,
+    })),
+  };
+}
+
+function requirePackageAssembler(env: Env): PackageAssemblerBinding {
+  const binding = env.ASSEMBLER as (Fetcher & Partial<PackageAssemblerInterface>) | undefined;
+  if (!binding || typeof binding.assemblePackage !== "function") {
+    throw new Error("ASSEMBLER binding is required for package assembly");
+  }
+  return binding as PackageAssemblerBinding;
+}
+
+function assertAssemblySucceeded(build: PackageAssemblyResponse): asserts build is PackageAssemblyResponse & {
+  artifact: NonNullable<PackageAssemblyResponse["artifact"]>;
+} {
+  if (!build.ok || !build.artifact) {
+    throw new Error(formatRipgitPackageFailure("package assembly failed", build.diagnostics));
+  }
+}
+
+function assertSnapshotMatchesAnalysis(
+  analysis: RipgitPackageAnalyzeResponse,
+  snapshot: RipgitPackageSnapshotResponse,
+): void {
+  if (snapshot.source.resolved_commit !== analysis.source.resolved_commit) {
+    throw new Error(
+      `package snapshot commit mismatch: analysis=${analysis.source.resolved_commit} snapshot=${snapshot.source.resolved_commit}`,
+    );
+  }
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const limit = Math.max(1, Math.floor(concurrency));
+  const results = new Array<R>(values.length);
+  let cursor = 0;
+
+  async function worker(): Promise<void> {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(values[index], index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, () => worker()));
+  return results;
+}
+
+function packageNameFromPackageJsonName(packageJsonName: string): string {
+  const trimmed = packageJsonName.trim();
+  const candidate = trimmed.split("/").filter(Boolean).at(-1) ?? trimmed;
+  const normalized = candidate.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!normalized) {
+    throw new Error(`Unable to derive package name from package.json name: ${packageJsonName}`);
+  }
+  return normalized;
+}
+
+async function readPackageProfiles(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  subdir: string,
+): Promise<PackageProfileManifest[]> {
+  const profilesRoot = joinRipgitPath(subdir, "profiles");
+  const profilesTree = await ripgit.readPath(repo, profilesRoot);
+  if (profilesTree.kind !== "tree") {
+    return [];
+  }
+
+  const entries = profilesTree.entries
+    .filter((entry) => entry.type === "tree")
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right));
+
+  const profiles: PackageProfileManifest[] = [];
+  for (const name of entries) {
+    const profileRoot = joinRipgitPath(profilesRoot, name);
+    const contextRoot = joinRipgitPath(profileRoot, "context.d");
+    const contextTree = await ripgit.readPath(repo, contextRoot);
+    if (contextTree.kind !== "tree") {
+      continue;
+    }
+
+    const contextFiles: PackageProfileContextFile[] = [];
+    for (const entry of contextTree.entries
+      .filter((item) => item.type === "blob")
+      .sort((left, right) => left.name.localeCompare(right.name))) {
+      const file = await ripgit.readPath(repo, joinRipgitPath(contextRoot, entry.name));
+      if (file.kind !== "file") {
+        continue;
+      }
+      const text = decodeProfileTextFile(file.bytes);
+      if (!text) {
+        continue;
+      }
+      contextFiles.push({
+        name: entry.name,
+        text,
+      });
+    }
+
+    if (contextFiles.length === 0) {
+      continue;
+    }
+
+    const description = await readPackageProfileDescription(ripgit, repo, profileRoot);
+    const approvalPolicy = await readPackageProfileApprovalPolicy(ripgit, repo, profileRoot);
+    const icon = await readPackageProfileIconPath(ripgit, repo, profileRoot);
+    const capabilities = await readPackageProfileCapabilities(ripgit, repo, profileRoot);
+    profiles.push({
+      name,
+      displayName: humanizeProfileName(name),
+      ...(description ? { description } : {}),
+      ...(icon ? { icon } : {}),
+      contextFiles,
+      ...(approvalPolicy ? { approvalPolicy } : {}),
+      ...(capabilities.length > 0 ? { capabilities } : {}),
+    });
+  }
+
+  return profiles;
+}
+
+async function readPackageProfileDescription(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  profileRoot: string,
+): Promise<string | null> {
+  const descriptionFile = await ripgit.readPath(repo, joinRipgitPath(profileRoot, "description.md"));
+  if (descriptionFile.kind !== "file") {
+    return null;
+  }
+  return decodeProfileTextFile(descriptionFile.bytes);
+}
+
+async function readPackageProfileApprovalPolicy(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  profileRoot: string,
+): Promise<string | null> {
+  const approvalFile = await ripgit.readPath(repo, joinRipgitPath(profileRoot, "approval.json"));
+  if (approvalFile.kind !== "file") {
+    return null;
+  }
+  try {
+    const decoded = TEXT_DECODER.decode(approvalFile.bytes);
+    const parsed = JSON.parse(decoded) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return JSON.stringify(parsed);
+  } catch {
+    return null;
+  }
+}
+
+async function readPackageProfileCapabilities(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  profileRoot: string,
+): Promise<string[]> {
+  const file = await ripgit.readPath(repo, joinRipgitPath(profileRoot, "capabilities.json"));
+  if (file.kind !== "file") {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(TEXT_DECODER.decode(file.bytes)) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return [...new Set(parsed.filter((c): c is string => typeof c === "string" && c.length > 0))];
+  } catch {
+    return [];
+  }
+}
+
+async function readPackageProfileIconPath(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  profileRoot: string,
+): Promise<string | null> {
+  const profileTree = await ripgit.readPath(repo, profileRoot);
+  if (profileTree.kind !== "tree") {
+    return null;
+  }
+
+  const iconEntry = profileTree.entries
+    .filter((entry) => entry.type === "blob" && /^icon\.[^.]+$/i.test(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .at(0);
+
+  return iconEntry ? joinRipgitPath(profileRoot, iconEntry.name) : null;
+}
+
+function toNativePackageIcon(
+  iconPath: string | null | undefined,
+  artifact: PackageArtifact,
+): PackageIcon | undefined {
+  if (!iconPath) {
+    return undefined;
+  }
+  const normalizedPath = normalizePackageModulePath(iconPath.replace(/^(\.\/)+/, ""));
+  const module = artifact.modules.find((candidate) => candidate.path === normalizedPath);
+  if (!module || module.content.trim().length === 0) {
+    throw new Error(`Package icon asset not found in artifact: ${normalizedPath}`);
+  }
+  return {
+    kind: "svg",
+    svg: module.content,
+  };
+}
+
+function uniqueStrings(values: readonly string[] | undefined): string[] {
+  return [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
+}
+
+function formatRipgitPackageFailure(
+  prefix: string,
+  diagnostics: RipgitPackageAnalyzeResponse["diagnostics"],
+): string {
+  if (!Array.isArray(diagnostics) || diagnostics.length === 0) {
+    return prefix;
+  }
+  return `${prefix}: ${diagnostics.map((diagnostic) => `${diagnostic.code} ${diagnostic.message}`).join("; ")}`;
+}
+
+function normalizePackageModulePath(path: string): string {
+  return trimLeadingSlash(path);
+}
+
+function trimLeadingSlash(path: string): string {
+  return path.replace(/^\/+/, "");
+}
+
+function trimSlashes(path: string): string {
+  return path.replace(/^\/+|\/+$/g, "");
+}
+
+function humanizeProfileName(name: string): string {
+  return name
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function matchesPackageReference(
+  record: InstalledPackageRecord,
+  reference: string,
+): boolean {
+  const sourceRepo = record.manifest.source.repo;
+  const normalizedSubdir = normalizePackageSourceSubdir(record.manifest.source.subdir) || ".";
+  const importRepoAlias = `import:${sourceRepo}`;
+  const importPathAlias = `import:${sourceRepo}:${normalizedSubdir}`;
+  return record.packageId === reference
+    || record.manifest.name === reference
+    || sourceRepo === reference
+    || importRepoAlias === reference
+    || importPathAlias === reference;
+}
+
+function decodeProfileTextFile(bytes: Uint8Array): string | null {
+  for (const byte of bytes) {
+    if (byte === 0) {
+      return null;
+    }
+  }
+  const text = TEXT_DECODER.decode(bytes).trim();
+  return text.length > 0 ? text : null;
+}
+
+function normalizePackageSourceSubdir(path: string): string {
+  const normalized = trimSlashes(path.trim());
+  return normalized.length === 0 || normalized === "." ? "." : normalized;
+}
+
+function joinRipgitPath(base: string, child: string): string {
+  const normalizedBase = trimSlashes(base);
+  const normalizedChild = trimSlashes(child);
+  if (normalizedBase.length === 0) {
+    return normalizedChild;
+  }
+  if (normalizedChild.length === 0) {
+    return normalizedBase;
+  }
+  return `${normalizedBase}/${normalizedChild}`;
+}
+
+function assertValidPackageRecord(record: InstalledPackageRecord): void {
+  if (record.packageId.trim().length === 0) {
+    throw new Error("packageId is required");
+  }
+  if (packageScopeKey(record.scope).trim().length === 0) {
+    throw new Error("scope is required");
+  }
+  if (record.manifest.name.trim().length === 0) {
+    throw new Error("manifest.name is required");
+  }
+  if (record.manifest.version.trim().length === 0) {
+    throw new Error("manifest.version is required");
+  }
+  if (record.manifest.entrypoints.length === 0 && (record.manifest.profiles?.length ?? 0) === 0) {
+    throw new Error("manifest must contain at least one entrypoint or profile");
+  }
+  if (record.artifact.hash.trim().length === 0) {
+    throw new Error("artifact.hash is required");
+  }
+  if (record.artifact.mainModule.trim().length === 0) {
+    throw new Error("artifact.mainModule is required");
+  }
+  if (record.artifact.modulePaths.length === 0) {
+    throw new Error("artifact.modulePaths must contain at least one module");
+  }
+
+  const modulePaths = new Set(record.artifact.modulePaths);
+  if (!modulePaths.has(record.artifact.mainModule)) {
+    throw new Error(`artifact.mainModule not found in modules: ${record.artifact.mainModule}`);
+  }
+
+  for (const entrypoint of record.manifest.entrypoints) {
+    if (!modulePaths.has(entrypoint.module)) {
+      throw new Error(`entrypoint module not found in artifact: ${entrypoint.module}`);
+    }
+    if (entrypoint.icon?.kind === "svg" && entrypoint.icon.svg.trim().length === 0) {
+      throw new Error(`entrypoint icon svg must not be empty: ${entrypoint.name}`);
+    }
+    if (entrypoint.kind === "ui") {
+      const expectedPrefix = packageRouteBase(record.manifest.name);
+      if (!entrypoint.route || !entrypoint.route.startsWith(expectedPrefix)) {
+        throw new Error(`ui entrypoint route must live under ${expectedPrefix}`);
+      }
+    }
+  }
+
+  for (const profile of record.manifest.profiles ?? []) {
+    if (profile.name.trim().length === 0) {
+      throw new Error("manifest.profiles[].name is required");
+    }
+    if (profile.contextFiles.length === 0) {
+      throw new Error(`manifest profile ${profile.name} must contain at least one context file`);
+    }
+  }
+
+  if (record.manifest.source.repo.trim().length === 0) {
+    throw new Error("manifest.source.repo is required");
+  }
+  if (record.manifest.source.ref.trim().length === 0) {
+    throw new Error("manifest.source.ref is required");
+  }
+  if (record.manifest.source.subdir.trim().length === 0) {
+    throw new Error("manifest.source.subdir is required");
+  }
+
+  const egress = record.manifest.capabilities?.egress;
+  if (egress?.mode !== "allowlist" && egress?.allow && egress.allow.length > 0) {
+    throw new Error("capabilities.egress.allow is only valid when mode is 'allowlist'");
+  }
+
+  const grantedEgress = record.grants?.egress;
+  if (
+    grantedEgress?.mode !== "allowlist" &&
+    grantedEgress?.allow &&
+    grantedEgress.allow.length > 0
+  ) {
+    throw new Error("grants.egress.allow is only valid when mode is 'allowlist'");
+  }
+}

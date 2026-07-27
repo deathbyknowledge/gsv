@@ -6,8 +6,9 @@ import type { ProcessIdentity, SysSetupArgs, SysSetupResult, UserIdentity } from
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
-import { seedBuiltinSkillsToHome } from "./skills-seed";
+import { seedRepoSkillsToHome } from "./skills-seed";
 import { ensurePersonalAgent } from "../agents";
+import { provisionEnabledPackagesForCaller } from "../package-agents";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -157,8 +158,9 @@ export async function handleSysSetup(
   ctx: KernelContext,
 ): Promise<SysSetupResult> {
   const { auth, config } = ctx;
-  const requestedUsername = typeof args.username === "string" && args.username.trim().length > 0
-    ? args.username.trim()
+  const rawArgs = args as Record<string, unknown>;
+  const requestedUsername = typeof rawArgs.username === "string" && rawArgs.username.trim().length > 0
+    ? rawArgs.username.trim()
     : "<unknown>";
   const startedAt = Date.now();
   const timings: SetupTiming[] = [];
@@ -217,7 +219,7 @@ export async function handleSysSetup(
       bootstrap = await timeSetupStep(
         timings,
         "bootstrap-system",
-        () => handleSysBootstrap(undefined, {
+        () => handleSysBootstrap(rawArgs.bootstrap as SysSetupArgs["bootstrap"], {
           ...ctx,
           identity: bootstrapIdentity,
         }),
@@ -312,13 +314,19 @@ export async function handleSysSetup(
       },
     );
 
-    if (bootstrap && ctx.env.RIPGIT) {
+    const bootstrapResult = bootstrap;
+    if (bootstrapResult && ctx.env.RIPGIT) {
       // handleSysBootstrap seeds the first setup user's skills; seed root explicitly too.
       const ripgit = new RipgitClient(ctx.env.RIPGIT);
+      const sourceRepo = {
+        owner: "root",
+        repo: "gsv",
+        branch: bootstrapResult.head ?? bootstrapResult.ref,
+      };
       await timeSetupStep(
         timings,
         "seed-root-skills",
-        () => seedBuiltinSkillsToHome(ripgit, rootProcessIdentity),
+        () => seedRepoSkillsToHome(ripgit, sourceRepo, rootProcessIdentity),
       );
     }
 
@@ -333,6 +341,13 @@ export async function handleSysSetup(
 
     await timeSetupStep(timings, "provision-personal-agent", async () => {
       await ensurePersonalAgent(ctx, processIdentity, agentName);
+    });
+
+    await timeSetupStep(timings, "provision-package-agents", async () => {
+      await provisionEnabledPackagesForCaller(
+        { ...ctx, identity: bootstrapIdentity },
+        ctx.packages.list({ enabled: true }),
+      );
     });
 
     const rootShadow = auth.getShadowByUsername("root");

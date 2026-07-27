@@ -6,7 +6,7 @@ body:
     id: component
     attributes:
       label: Component
-      options: [Gateway, CLI, Web UI, Device node, Adapter, Other]
+      options: [Gateway, CLI, Web UI, Device node, Adapter, Built-in package, Other]
     validations:
       required: true
 

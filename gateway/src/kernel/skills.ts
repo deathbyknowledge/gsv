@@ -4,16 +4,23 @@ import type {
 } from "@humansandmachines/gsv/protocol";
 import {
   accountHomeRepoRef,
+  packageSourcePathNameMap,
+  packageSourceRepoPath,
+  packageSourcePathName,
   RipgitClient,
   type RipgitRepoRef,
 } from "../fs";
 import type { KernelContext } from "./context";
+import {
+  visiblePackageScopesForActor,
+  type InstalledPackageRecord,
+} from "./packages";
 
 const TEXT_DECODER = new TextDecoder();
 const MAX_SKILL_WALK_DEPTH = 4;
 const MAX_DESCRIPTION_LENGTH = 220;
 
-export type SkillSourceKind = "home";
+export type SkillSourceKind = "home" | "package";
 
 export type SkillSource = {
   kind: SkillSourceKind;
@@ -96,6 +103,8 @@ export async function collectKernelSkillDocuments(
   if (ripgit && runAsIdentity) {
     files.push(...await collectRipgitRuntimeSkillFiles(
       ripgit,
+      ctx,
+      runAsIdentity,
       resolveSkillHomeLayers(ctx, runAsIdentity),
       options,
     ));
@@ -110,7 +119,7 @@ export async function collectFilesystemSkillDocuments(
   identity: ProcessIdentity,
   options: SkillCollectionOptions = { includeNested: true },
 ): Promise<SkillDocument[]> {
-  const roots = filesystemSkillRoots(resolveSkillHomeLayers(ctx, identity));
+  const roots = filesystemSkillRoots(ctx, identity, resolveSkillHomeLayers(ctx, identity));
   const files: ParsedSkillFile[] = [];
   for (const root of roots) {
     files.push(...await collectFsSkillFiles(fs, root.rootPath, root.source, root.idPrefix, options));
@@ -315,6 +324,8 @@ function formatPromptSkillEntry(
 
 async function collectRipgitRuntimeSkillFiles(
   ripgit: RipgitClient,
+  ctx: KernelContext,
+  runAsIdentity: ProcessIdentity,
   homeLayers: SkillHomeLayer[],
   options: SkillCollectionOptions,
 ): Promise<ParsedSkillFile[]> {
@@ -336,10 +347,31 @@ async function collectRipgitRuntimeSkillFiles(
     ));
   }
 
+  const packageScopeIdentity = homeLayers[0]?.identity ?? runAsIdentity;
+  const packageRecords = ctx.packages.list({
+    enabled: true,
+    scopes: visiblePackageScopesForActor(packageScopeIdentity),
+  });
+  const packagePathNames = packageSourcePathNameMap(packageRecords);
+  for (const record of packageRecords) {
+    const sourcePathName = packagePathNames.get(record) ?? packageSourcePathName(record);
+    const root = packageTopLevelSkillRoot(record);
+    if (!root) {
+      continue;
+    }
+    files.push(...await collectRipgitSkillFiles(ripgit, root.repo, root.path, {
+      kind: "package",
+      label: `pkg:${record.manifest.name}`,
+      writable: packageSourceWritable(record, runAsIdentity),
+    }, root.virtualPath, sourcePathName, options));
+  }
+
   return files;
 }
 
 function filesystemSkillRoots(
+  ctx: KernelContext,
+  runAsIdentity: ProcessIdentity,
   homeLayers: SkillHomeLayer[],
 ): SkillRoot[] {
   const roots: SkillRoot[] = [];
@@ -352,6 +384,25 @@ function filesystemSkillRoots(
         label: layer.label,
         writable: true,
       },
+    });
+  }
+
+  const packageScopeIdentity = homeLayers[0]?.identity ?? runAsIdentity;
+  const packageRecords = ctx.packages.list({
+    enabled: true,
+    scopes: visiblePackageScopesForActor(packageScopeIdentity),
+  });
+  const packagePathNames = packageSourcePathNameMap(packageRecords);
+  for (const record of packageRecords) {
+    const sourcePathName = packagePathNames.get(record) ?? packageSourcePathName(record);
+    roots.push({
+      rootPath: `${packageSourceRepoPath(record)}/skills.d`,
+      source: {
+        kind: "package",
+        label: `pkg:${record.manifest.name}`,
+        writable: packageSourceWritable(record, runAsIdentity),
+      },
+      idPrefix: sourcePathName,
     });
   }
 
@@ -728,6 +779,9 @@ function skillId(name: string, source: SkillSource, count: number, idPrefix?: st
   if (count <= 1) {
     return name;
   }
+  if (source.kind === "package") {
+    return `${idPrefix ?? source.label.slice("pkg:".length)}:${name}`;
+  }
   return `${normalizeSkillSourceLabel(source.label)}:${name}`;
 }
 
@@ -741,12 +795,59 @@ function sourceSkillKey(file: SkillFile, idBase = file.idBase): string {
 }
 
 function sourceRank(source: SkillSource): number {
-  switch (source.label) {
-    case "home": return 0;
-    case "user": return 0;
-    case "agent": return 1;
-    default: return 2;
+  if (source.kind === "home") {
+    switch (source.label) {
+      case "home": return 0;
+      case "user": return 0;
+      case "agent": return 1;
+      default: return 2;
+    }
   }
+  return 3;
+}
+
+function packageTopLevelSkillRoot(record: InstalledPackageRecord): {
+  repo: RipgitRepoRef;
+  path: string;
+  virtualPath: string;
+} | null {
+  const repo = repoRefFromPackage(record);
+  if (!repo) {
+    return null;
+  }
+  return {
+    repo,
+    path: packageSourceRipgitPath(record, "skills.d"),
+    virtualPath: `${packageSourceRepoPath(record)}/skills.d`,
+  };
+}
+
+function packageSourceRipgitPath(record: InstalledPackageRecord, child: string): string {
+  const subdir = trimSlashes(record.manifest.source.subdir);
+  if (!subdir || subdir === ".") {
+    return trimSlashes(child);
+  }
+  return joinPath(subdir, child);
+}
+
+function repoRefFromPackage(record: InstalledPackageRecord): RipgitRepoRef | null {
+  const [owner, repo, ...rest] = record.manifest.source.repo.split("/");
+  if (!owner || !repo || rest.length > 0) {
+    return null;
+  }
+  return {
+    owner,
+    repo,
+    branch: record.manifest.source.resolvedCommit ?? record.manifest.source.ref,
+  };
+}
+
+function packageSourceWritable(record: InstalledPackageRecord, identity: ProcessIdentity): boolean {
+  if (identity.uid === 0) {
+    return true;
+  }
+  const [owner, repo, ...rest] = record.manifest.source.repo.split("/");
+  return Boolean(owner && repo && rest.length === 0 && owner === identity.username);
 }
 
 function parseFrontmatter(content: string): { frontmatter: Map<string, string>; body: string } {

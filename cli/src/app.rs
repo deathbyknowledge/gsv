@@ -248,6 +248,18 @@ pub(crate) async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .await
             }
         }
+        Commands::Packages { action } => {
+            run_with_auto_setup_and_login_retry(
+                &url,
+                &cfg,
+                cli_token_override.clone(),
+                cli_user_override.clone(),
+                cli_password_override.clone(),
+                "packages",
+                |auth| async { commands::run_packages(&url, auth, action.clone()).await },
+            )
+            .await
+        }
         Commands::Infra { action } => commands::run_infra(action, &cfg).await,
         Commands::Version => run_version(),
     }

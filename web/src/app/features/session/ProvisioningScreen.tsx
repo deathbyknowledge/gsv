@@ -12,7 +12,7 @@ type ProvisioningScreenProps = {
 
 const STEPS = [
   { title: "Creating account", copy: "Securing your account and admin settings." },
-  { title: "Preparing workspace", copy: "Loading the built-in skills and starter settings." },
+  { title: "Preparing system files", copy: "Loading the built-in apps and starter settings." },
   { title: "Opening desktop", copy: "Getting the first session ready." },
 ];
 

@@ -130,6 +130,11 @@ export type SysSetupArgs = {
   rootPassword?: string;
   /** Optional name for the user's 1:1 personal agent account (defaults to a curated name). */
   agentName?: string;
+  bootstrap?: {
+    remoteUrl?: string;
+    repo?: string;
+    ref?: string;
+  };
   ai?: {
     provider?: string;
     model?: string;
@@ -146,7 +151,7 @@ export type SysSetupArgs = {
 export type OnboardingLane = "quick" | "customize" | "advanced";
 export type OnboardingMode = "manual" | "guided";
 export type OnboardingStage = "welcome" | "details" | "review";
-export type OnboardingDetailStep = "account" | "admin" | "system" | "ai" | "device";
+export type OnboardingDetailStep = "account" | "admin" | "system" | "ai" | "source" | "device";
 
 export type OnboardingDraft = {
   lane: OnboardingLane;
@@ -173,6 +178,11 @@ export type OnboardingDraft = {
     model: string;
     apiKey: string;
   };
+  source: {
+    enabled: boolean;
+    value: string;
+    ref: string;
+  };
   device: {
     enabled: boolean;
     deviceId: string;
@@ -196,6 +206,9 @@ export type OnboardingAssistPatch = {
     | "ai.enabled"
     | "ai.provider"
     | "ai.model"
+    | "source.enabled"
+    | "source.value"
+    | "source.ref"
     | "device.enabled"
     | "device.deviceId"
     | "device.label"
@@ -235,7 +248,11 @@ export type SysSetupResult = {
   };
 };
 
-export type SysBootstrapArgs = Record<string, never>;
+export type SysBootstrapArgs = {
+  remoteUrl?: string;
+  repo?: string;
+  ref?: string;
+};
 
 export type SysBootstrapResult = {
   repo: string;
@@ -243,6 +260,13 @@ export type SysBootstrapResult = {
   ref: string;
   head: string | null;
   changed: boolean;
+  manual: {
+    repo: string;
+    remoteUrl: string;
+    ref: string;
+    head: string | null;
+    changed: boolean;
+  };
 };
 
 export type SysConfigGetArgs = {

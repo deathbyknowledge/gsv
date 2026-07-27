@@ -28,7 +28,7 @@ export type AiSkillIndexEntry = {
   name: string;
   description: string;
   source: {
-    kind: "home";
+    kind: "home" | "package";
     label: string;
     writable: boolean;
   };

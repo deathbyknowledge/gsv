@@ -3,6 +3,7 @@
  */
 
 import type { AuthStore } from "./auth-store";
+import { packageAgentAccessGroup } from "./package-agents";
 
 export type AccountPasswdRef = {
   uid: number;
@@ -11,8 +12,8 @@ export type AccountPasswdRef = {
 };
 
 /**
- * Whether `ownerUid` may run processes as `target` (personal agent or
- * primary-group agent). Does not include "run as the human
+ * Whether `ownerUid` may run processes as `target` (personal agent, primary-group
+ * agent, or package-agent access group). Does not include "run as the human
  * owner themself" — use caller run-as identity for that in proc.spawn.
  */
 export function canOwnerDelegateRunAs(
@@ -26,6 +27,9 @@ export function canOwnerDelegateRunAs(
 
   const group = auth.getGroupByGid(target.gid);
   if (group?.name === target.username && group.members.includes(ownerName)) return true;
+
+  const accessGroup = auth.getGroupByName(packageAgentAccessGroup(target.username));
+  if (accessGroup?.members.includes(ownerName)) return true;
 
   return false;
 }

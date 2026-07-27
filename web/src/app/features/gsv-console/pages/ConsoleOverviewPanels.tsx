@@ -32,10 +32,12 @@ import type {
   ConsoleMcpServer,
   ConsoleOverviewCounts,
   ConsoleOverviewData,
+  ConsolePackage,
   ConsoleProcess,
   ConsoleTarget,
 } from "../domain/consoleModels";
 import type { ShellSurfaceId } from "../../gsv-shell/domain/shellModel";
+import { isNativeWebPackageName } from "../../packages/nativePackages";
 import {
   processSub,
   statusForProcess,
@@ -70,7 +72,7 @@ type CrewCard = {
   statusLabel: string;
 };
 
-type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
+type OverviewSurface = Exclude<ShellSurfaceId, "desktop" | "app">;
 export type ConsoleOverviewTarget = OverviewSurface | "models" | "model-default" | "new-agent" | "overrides" | "tasks";
 export type OpenSurface = (surface: ConsoleOverviewTarget) => void;
 export type OpenAgent = (accountUid: number) => void;
@@ -92,6 +94,14 @@ function listRowStatus(tone: StatusTone): ListRowStatus {
   return tone;
 }
 
+function isApplicationPackage(pkg: ConsolePackage): boolean {
+  return pkg.runtime === "web-ui" || pkg.uiEntrypoints.length > 0;
+}
+
+function isNativeConsolePackage(pkg: ConsolePackage): boolean {
+  return isNativeWebPackageName(pkg.name) || isNativeWebPackageName(pkg.packageId);
+}
+
 function isRunningProcess(process: ConsoleProcess): boolean {
   return process.state === "running" || process.activeRunId !== null;
 }
@@ -110,6 +120,20 @@ function joinMeta(parts: readonly (number | string | null | undefined | false)[]
 function clampLabel(value: string, fallback: string): string {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : fallback;
+}
+
+function packageStatus(pkg: ConsolePackage): Pick<OverviewRow, "statusLabel" | "tag" | "tone"> {
+  if (pkg.reviewPending) {
+    return {
+      tone: "update",
+      statusLabel: "REVIEW",
+      tag: { label: "UPDATE", tone: "update" },
+    };
+  }
+  if (pkg.enabled) {
+    return { tone: "online", statusLabel: "ONLINE" };
+  }
+  return { tone: "idle", statusLabel: "IDLE" };
 }
 
 function targetRow(target: ConsoleTarget): OverviewRow {
@@ -148,6 +172,18 @@ function integrationRow(server: ConsoleMcpServer): OverviewRow {
     tone: failed ? "error" : ready ? "online" : active ? "warn" : "idle",
     statusLabel: failed ? "ERROR" : active ? "CHECK" : ready ? undefined : "IDLE",
     tag: server.state === "authenticating" ? { label: "SIGN-IN", tone: "warn" } : undefined,
+  };
+}
+
+function applicationRow(pkg: ConsolePackage): OverviewRow {
+  const status = packageStatus(pkg);
+  return {
+    id: pkg.packageId,
+    icon: OBJECT_GLYPH_ICON.applications,
+    label: pkg.name,
+    meta: packageSourceLabel(pkg),
+    tone: status.tone,
+    tag: status.tag,
   };
 }
 
@@ -201,6 +237,14 @@ function sortTargets(targets: readonly ConsoleTarget[]): ConsoleTarget[] {
   return [...targets].sort((left, right) => Number(right.online) - Number(left.online) || left.label.localeCompare(right.label));
 }
 
+function sortPackages(packages: readonly ConsolePackage[]): ConsolePackage[] {
+  return [...packages].sort((left, right) => {
+    if (left.reviewPending !== right.reviewPending) return left.reviewPending ? -1 : 1;
+    if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
+    return left.name.localeCompare(right.name);
+  });
+}
+
 function sortMcpServers(servers: readonly ConsoleMcpServer[]): ConsoleMcpServer[] {
   return [...servers].sort((left, right) => {
     const leftError = left.state === "failed" || left.error.trim().length > 0;
@@ -220,6 +264,12 @@ function formatTokenLabel(value: string): string {
     .filter(Boolean)
     .map((part) => part.length <= 3 ? part.toUpperCase() : `${part.slice(0, 1).toUpperCase()}${part.slice(1).toLowerCase()}`)
     .join(" ") || "Unknown";
+}
+
+function packageSourceLabel(pkg: ConsolePackage): string {
+  const sourceParts = pkg.sourceRepo.split(/[/:]/g).filter(Boolean);
+  const source = sourceParts[sourceParts.length - 1] ?? "";
+  return joinMeta([source, pkg.version ? `v${pkg.version}` : "", pkg.scopeKind === "unknown" ? "" : pkg.scopeKind.toUpperCase()]);
 }
 
 function rowLimit<T>(rows: readonly T[], limit = DASHBOARD_ROW_LIMIT): readonly T[] {
@@ -699,6 +749,42 @@ function FleetPanel({
   );
 }
 
+function ApplicationsPanel({
+  applications,
+  onOpenListCreate,
+  onOpenListDetail,
+  onOpenSurface,
+}: {
+  applications: readonly ConsolePackage[];
+  onOpenListCreate?: OpenListCreate;
+  onOpenListDetail?: OpenListDetail;
+  onOpenSurface?: OpenSurface;
+}) {
+  const rows = sortPackages(applications).map(applicationRow);
+  const openList = onOpenSurface ? () => onOpenSurface("applications") : undefined;
+  const openDetail = (row: OverviewRow) => (
+    onOpenListDetail ? () => onOpenListDetail("applications", row.id, row.label) : openList
+  );
+  const openCreate = onOpenListCreate
+    ? () => onOpenListCreate("applications")
+    : openList;
+
+  return (
+    <section class="gsv-settings-block gsv-settings-applications-block">
+      <ActionSectionHeader
+        title="APPLICATIONS"
+        onClick={openList}
+      />
+      <div class="gsv-settings-section-rows">
+        {rows.length === 0 ? <EmptyRow label="NO APPLICATIONS" /> : rowLimit(rows, 5).map((row) => (
+          <MiniRow key={row.id} row={row} onClick={openDetail(row)} />
+        ))}
+        <AddRow label="NEW APPLICATION" onClick={openCreate} />
+      </div>
+    </section>
+  );
+}
+
 export function SettingsOverviewDashboard({
   counts,
   data,
@@ -714,6 +800,9 @@ export function SettingsOverviewDashboard({
   onOpenListDetail?: OpenListDetail;
   onOpenSurface?: OpenSurface;
 }) {
+  const visiblePackages = data.packages.filter((pkg) => !isNativeConsolePackage(pkg));
+  const applications = visiblePackages.filter(isApplicationPackage);
+
   return (
     <div class="gsv-settings-overview-frame">
       <div class="gsv-settings-overview" aria-label="GSV settings overview">
@@ -748,6 +837,12 @@ export function SettingsOverviewDashboard({
           onOpenListDetail={onOpenListDetail}
           onOpenSurface={onOpenSurface}
           targets={data.targets}
+        />
+        <ApplicationsPanel
+          applications={applications}
+          onOpenListCreate={onOpenListCreate}
+          onOpenListDetail={onOpenListDetail}
+          onOpenSurface={onOpenSurface}
         />
       </div>
       </div>

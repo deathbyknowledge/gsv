@@ -1,12 +1,23 @@
+export type RepoSourceSummary = {
+  kind: "package";
+  subdir: string;
+  ref?: string;
+  baseRef?: string;
+  packageId?: string;
+  name?: string;
+  updatedAt?: number;
+};
+
 export type RepoSummary = {
   repo: string;
   owner: string;
   name: string;
-  kind: "home" | "user";
+  kind: "home" | "package" | "user";
   writable: boolean;
   public: boolean;
   ref?: string;
   baseRef?: string;
+  sources?: RepoSourceSummary[];
   description?: string;
   updatedAt?: number;
 };

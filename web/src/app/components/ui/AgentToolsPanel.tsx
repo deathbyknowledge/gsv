@@ -91,6 +91,17 @@ const CAPABILITY_FAMILIES: CapabilityFamily[] = [
     ],
   },
   {
+    label: "Packages",
+    options: [
+      { match: "pkg.*", label: "All package tools", description: "Every package operation." },
+      { match: "pkg.list", label: "List packages" },
+      { match: "pkg.install", label: "Install packages" },
+      { match: "pkg.review.approve", label: "Approve package reviews" },
+      { match: "pkg.public.set", label: "Publish or unpublish packages" },
+      { match: "pkg.remove", label: "Remove packages" },
+    ],
+  },
+  {
     label: "Processes",
     options: [
       { match: "proc.*", label: "All process tools", description: "Every process and conversation operation." },

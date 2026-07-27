@@ -19,6 +19,7 @@ import {
   bodyToText,
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
+import type { InstalledPackageRecord } from "../../kernel/packages";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
 
 const generateMock = vi.hoisted(() => vi.fn());
@@ -64,6 +65,45 @@ const IDENTITY: ProcessIdentity = {
   cwd: "/home/sam",
 };
 
+function makePackage(partial?: Partial<InstalledPackageRecord>): InstalledPackageRecord {
+  return {
+    packageId: "import:root/pkg-test:.",
+    scope: { kind: "global" },
+    manifest: {
+      name: "sample-console",
+      description: "Sample console",
+      version: "0.1.0",
+      runtime: "web-ui",
+      source: {
+        repo: "root/pkg-test",
+        ref: "main",
+        subdir: ".",
+        resolvedCommit: "abc123",
+      },
+      entrypoints: [{ name: "Console", kind: "ui" }],
+      capabilities: {
+        bindings: [],
+        egress: {
+          mode: "none",
+        },
+      },
+    },
+    artifact: { hash: "hash1", mainModule: "index.js", modulePaths: ["index.js"] },
+    grants: {
+      bindings: [],
+      egress: {
+        mode: "none",
+      },
+    },
+    enabled: false,
+    reviewRequired: true,
+    reviewedAt: null,
+    installedAt: 1,
+    updatedAt: 2,
+    ...partial,
+  } as InstalledPackageRecord;
+}
+
 function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): DeviceRecord {
   const now = 1_800_000_000_000;
   return {
@@ -85,6 +125,8 @@ function makeDevice(partial: Partial<DeviceRecord> & { device_id: string }): Dev
 function makeContext(options?: {
   capabilities?: string[];
   config?: Record<string, string>;
+  pkg?: InstalledPackageRecord;
+  packages?: InstalledPackageRecord[];
   procs?: Partial<KernelContext["procs"]>;
   devices?: KernelContext["devices"];
   auth?: KernelContext["auth"];
@@ -92,6 +134,7 @@ function makeContext(options?: {
   schedules?: KernelContext["schedules"];
   ipcCalls?: KernelContext["ipcCalls"];
   oauth?: KernelContext["oauth"];
+  getAppRunner?: KernelContext["getAppRunner"];
   scheduleIpcCallTimeout?: KernelContext["scheduleIpcCallTimeout"];
   scheduleScheduleWake?: KernelContext["scheduleScheduleWake"];
   processRunId?: string;
@@ -99,6 +142,7 @@ function makeContext(options?: {
   aiRun?: (model: string, input: Record<string, unknown>) => Promise<unknown>;
   ripgit?: Fetcher;
 }): KernelContext {
+  const records = [...(options?.packages ?? [options?.pkg ?? makePackage()])];
   const identity = options?.identity ?? IDENTITY;
   const configValues = new Map<string, string>(Object.entries(options?.config ?? {}));
   const defaultAuth = {
@@ -125,11 +169,17 @@ function makeContext(options?: {
     getPersonalAgentUid: vi.fn(() => null),
     resolveGids: vi.fn(() => [...identity.gids]),
   } as unknown as KernelContext["auth"];
+  const findRecord = (packageId: string, scope?: InstalledPackageRecord["scope"]) => {
+    const index = records.findIndex((record) =>
+      record.packageId === packageId && (!scope || packageScopeKey(record.scope) === packageScopeKey(scope))
+    );
+    return index >= 0 ? { index, record: records[index] } : null;
+  };
   return {
     env: {
       STORAGE: env.STORAGE,
       RIPGIT: options?.ripgit ?? {} as Fetcher,
-      LOADER: { get() { throw new Error("LOADER should not be used in shell tests"); } },
+      LOADER: { get() { throw new Error("LOADER should not be used in pkg shell tests"); } },
       ...(options?.aiRun ? { AI: { run: vi.fn(options.aiRun) } } : {}),
     } as unknown as Env,
     auth: {
@@ -182,6 +232,41 @@ function makeContext(options?: {
       remove: vi.fn(() => true),
       getByActivePid: vi.fn(() => null),
     } as unknown as KernelContext["conversations"],
+    packages: {
+      list(opts?: { scopes?: readonly InstalledPackageRecord["scope"][] }) {
+        if (!opts?.scopes) {
+          return [...records];
+        }
+        const scopeKeys = new Set(opts.scopes.map(packageScopeKey));
+        return records.filter((record) => scopeKeys.has(packageScopeKey(record.scope)));
+      },
+      resolve(packageId: string, scopes?: readonly InstalledPackageRecord["scope"][]) {
+        for (const scope of scopes ?? []) {
+          const found = findRecord(packageId, scope);
+          if (found) return found.record;
+        }
+        return records.find((record) => record.packageId === packageId) ?? null;
+      },
+      get(packageId: string, scope?: InstalledPackageRecord["scope"]) {
+        return findRecord(packageId, scope)?.record ?? null;
+      },
+      setEnabled(packageId: string, enabled: boolean, scope?: InstalledPackageRecord["scope"]) {
+        const found = findRecord(packageId, scope);
+        if (!found) return null;
+        const existing = found.record;
+        const updated = { ...existing, enabled, updatedAt: existing.updatedAt + 1 };
+        records[found.index] = updated;
+        return updated;
+      },
+      setReviewed(packageId: string, reviewedAt: number, scope?: InstalledPackageRecord["scope"]) {
+        const found = findRecord(packageId, scope);
+        if (!found) return null;
+        const existing = found.record;
+        const updated = { ...existing, reviewedAt, reviewRequired: true, updatedAt: existing.updatedAt + 1 };
+        records[found.index] = updated;
+        return updated;
+      },
+    } as never,
     oauth: options?.oauth ?? {
       listAccounts: vi.fn(() => []),
       listFlows: vi.fn(() => []),
@@ -202,14 +287,24 @@ function makeContext(options?: {
     identity: {
       role: "user",
       process: identity,
-      capabilities: options?.capabilities ?? ["repo.refs", "repo.log"],
+      capabilities: options?.capabilities ?? ["pkg.list", "repo.refs", "repo.log"],
     },
-    processId: "task:shell",
+    processId: "task:pkg",
     processRunId: options?.processRunId,
     serverVersion: "0.4.1",
+    getAppRunner: options?.getAppRunner,
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
   } as KernelContext;
+}
+
+function packageScopeKey(scope: InstalledPackageRecord["scope"]): string {
+  switch (scope.kind) {
+    case "global":
+      return "global";
+    case "user":
+      return `user:${scope.uid}`;
+  }
 }
 
 function makeSkillFetcher(
@@ -442,6 +537,69 @@ describe("native shell execution", () => {
     }
   });
 
+  it("uses the owning human's package scopes for agent-backed fs", async () => {
+    const humanPackage = makePackage({
+      packageId: "user:1000:human-tools",
+      scope: { kind: "user", uid: 1000 },
+      enabled: true,
+      manifest: {
+        ...makePackage().manifest,
+        name: "human-tools",
+        source: {
+          repo: "root/human-tools",
+          ref: "main",
+          subdir: ".",
+          resolvedCommit: "abc123",
+        },
+        entrypoints: [{ name: "Human Tool", kind: "command", command: "human-tool" }],
+      },
+    });
+    const agentPackage = makePackage({
+      packageId: "user:2000:agent-tools",
+      scope: { kind: "user", uid: 2000 },
+      enabled: true,
+      manifest: {
+        ...makePackage().manifest,
+        name: "agent-tools",
+        source: {
+          repo: "root/agent-tools",
+          ref: "main",
+          subdir: ".",
+          resolvedCommit: "abc123",
+        },
+        entrypoints: [{ name: "Agent Tool", kind: "command", command: "agent-tool" }],
+      },
+    });
+    const ctx = makeContext({
+      capabilities: ["fs.read"],
+      packages: [humanPackage, agentPackage],
+      identity: {
+        uid: 2000,
+        gid: 2000,
+        gids: [2000],
+        username: "sam-agent",
+        home: "/home/sam-agent",
+        cwd: "/home/sam-agent",
+      },
+      procs: {
+        getOwnerUid: vi.fn(() => 1000),
+      } as unknown as KernelContext["procs"],
+    });
+
+    const sourceList = await handleFsRead({ path: "/src/repos/root" }, ctx);
+    expect(sourceList.data.ok).toBe(true);
+    if (sourceList.data.ok && "directories" in sourceList.data) {
+      expect(sourceList.data.directories).toContain("human-tools");
+      expect(sourceList.data.directories).not.toContain("agent-tools");
+    }
+
+    const binList = await handleFsRead({ path: "/usr/local/bin" }, ctx);
+    expect(binList.data.ok).toBe(true);
+    if (binList.data.ok && "files" in binList.data) {
+      expect(binList.data.files).toContain("human-tool");
+      expect(binList.data.files).not.toContain("agent-tool");
+    }
+  });
 });
 
 describe("native shell capability discovery", () => {
@@ -596,6 +754,34 @@ describe("native shell capability discovery", () => {
     expect(result.stdout).toContain("workflow\tinstagram-browser\t");
     expect(result.stdout).toContain("skills show 'instagram-browser'");
     expect(json.stdout).not.toContain("Open the connected browser");
+  });
+
+  it("discovers commands from the caller-visible package registry", async () => {
+    const accessibilityPackage = makePackage({
+      packageId: "user:1000:accessibility-tools",
+      scope: { kind: "user", uid: 1000 },
+      enabled: true,
+      manifest: {
+        ...makePackage().manifest,
+        name: "accessibility-tools",
+        description: "Audit web interfaces for accessibility problems.",
+        entrypoints: [{
+          name: "Accessibility Audit",
+          kind: "command",
+          command: "a11y-audit",
+          description: "Audit a web page for contrast and accessibility problems.",
+        }],
+      },
+    });
+    const result = await handleShellExec(
+      { input: "man --search -- 'check page contrast'" },
+      makeContext({ capabilities: ["shell.exec"], packages: [accessibilityPackage] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout.split("\n")[2]).toContain("command\ta11y-audit\t");
+    expect(result.stdout).toContain("command\ta11y-audit\t");
+    expect(result.stdout).toContain("man 'a11y-audit'");
   });
 
   it("discovers only caller-visible connected targets", async () => {
@@ -1175,7 +1361,7 @@ describe("proc native command", () => {
 
   it("accepts dash-prefixed proc spawn prompts after the option delimiter", async () => {
     const parent = {
-      processId: "task:shell",
+      processId: "task:pkg",
       uid: IDENTITY.uid,
       ownerUid: IDENTITY.uid,
       gid: IDENTITY.gid,
@@ -1298,7 +1484,7 @@ describe("proc native command", () => {
   it("delegates bounded work through a new child process", async () => {
     const spawnedPids: string[] = [];
     const parent = {
-      processId: "task:shell",
+      processId: "task:pkg",
       uid: IDENTITY.uid,
       ownerUid: IDENTITY.uid,
       gid: IDENTITY.gid,
@@ -1343,7 +1529,7 @@ describe("proc native command", () => {
             ok: true,
             status: "started",
             pid,
-            sourcePid: "task:shell",
+            sourcePid: "task:pkg",
             conversationId: "default",
             runId: req.args.runId,
           },
@@ -1358,12 +1544,12 @@ describe("proc native command", () => {
         capabilities: ["proc.spawn", "proc.ipc.call"],
         procs: {
           get(pid: string) {
-            if (pid === "task:shell") return parent;
+            if (pid === "task:pkg") return parent;
             if (pid === spawnedPids[0]) {
               return {
                 ...parent,
                 processId: pid,
-                parentPid: "task:shell",
+                parentPid: "task:pkg",
                 interactive: false,
                 label: "planning",
               };
@@ -1389,13 +1575,13 @@ describe("proc native command", () => {
       spawnedPids[0],
       expect.objectContaining({ username: "sam" }),
       expect.objectContaining({
-        parentPid: "task:shell",
+        parentPid: "task:pkg",
         interactive: false,
         label: "planning",
       }),
     );
     expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
-      sourcePid: "task:shell",
+      sourcePid: "task:pkg",
       sourceRunId: "parent-run",
       targetPid: spawnedPids[0],
       targetRunId: expect.any(String),
@@ -1461,7 +1647,7 @@ describe("proc native command", () => {
   }) => {
     const children: string[] = [];
     const parent = {
-      processId: "task:shell",
+      processId: "task:pkg",
       uid: IDENTITY.uid,
       ownerUid: IDENTITY.uid,
       gid: IDENTITY.gid,
@@ -1682,7 +1868,7 @@ describe("proc native command", () => {
         procs: {
           getOwnerUid: vi.fn(() => IDENTITY.uid),
           get: vi.fn((pid: string) => {
-            if (pid === "proc:child" || pid === "task:shell") {
+            if (pid === "proc:child" || pid === "task:pkg") {
               return {
                 processId: pid,
                 uid: IDENTITY.uid,
@@ -2077,7 +2263,7 @@ describe("fs copy", () => {
 
 });
 
-describe("native administration shell commands", () => {
+describe("pkg shell command", () => {
   it("shows codemode command usage", async () => {
     const result = await handleShellExec(
       { input: "codemode --help" },
@@ -2411,7 +2597,7 @@ describe("native administration shell commands", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toBe("task:shell\ntask:shell\n");
+    expect(result.stdout).toBe("task:pkg\ntask:pkg\n");
     expect(result.stderr).toBe("");
   });
 
@@ -3011,7 +3197,7 @@ describe("native administration shell commands", () => {
       if (frame.type !== "req") return null;
       if (frame.call === "proc.media.write") {
         stagedBytes = frame.body ? await bodyToBytes(frame.body) : undefined;
-        stagedKey = `var/media/1000/task:shell/${frame.args.mediaId}`;
+        stagedKey = `var/media/1000/task:pkg/${frame.args.mediaId}`;
         return {
           type: "res",
           id: frame.id,
@@ -3047,7 +3233,7 @@ describe("native administration shell commands", () => {
     expect(result.stdout).toContain("run_id=run-native-file");
     expect(stagedBytes && [...stagedBytes]).toEqual([80, 78, 71]);
     expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
-      "task:shell",
+      "task:pkg",
       expect.objectContaining({
         call: "proc.run.attach",
         args: expect.objectContaining({
@@ -3069,7 +3255,7 @@ describe("native administration shell commands", () => {
       if (frame.type !== "req") return null;
       if (frame.call === "proc.media.write") {
         await frame.body?.stream.cancel("test does not need the bytes");
-        key = `var/media/1000/task:shell/${frame.args.mediaId}`;
+        key = `var/media/1000/task:pkg/${frame.args.mediaId}`;
         return {
           type: "res",
           id: frame.id,
@@ -3106,8 +3292,8 @@ describe("native administration shell commands", () => {
     expect(result.status).toBe("failed");
     expect(result.stderr).toContain("run is no longer active");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      "task:shell",
-      expect.objectContaining({ call: "proc.media.delete", args: { pid: "task:shell", key } }),
+      "task:pkg",
+      expect.objectContaining({ call: "proc.media.delete", args: { pid: "task:pkg", key } }),
     );
   });
 
@@ -3139,7 +3325,7 @@ describe("native administration shell commands", () => {
       processRunId: "run-schedule-here",
       procs: {
         get: vi.fn(() => ({
-          processId: "task:shell",
+          processId: "task:pkg",
           uid: IDENTITY.uid,
           ownerUid: IDENTITY.uid,
           activeConversationId: null,
@@ -3162,7 +3348,7 @@ describe("native administration shell commands", () => {
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       target: {
         kind: "process.event",
-        pid: "task:shell",
+        pid: "task:pkg",
         conversationId: "default",
         message: "Check the oven.",
         replyTo: {
@@ -3261,7 +3447,7 @@ describe("native administration shell commands", () => {
       },
     }));
     const caller = {
-      processId: "task:shell",
+      processId: "task:pkg",
       uid: IDENTITY.uid,
       ownerUid: IDENTITY.uid,
       activeConversationId: "ops",
@@ -3292,7 +3478,7 @@ describe("native administration shell commands", () => {
       expression: { kind: "every", everyMs: 120_000 },
       target: {
         kind: "process.event",
-        pid: "task:shell",
+        pid: "task:pkg",
         conversationId: "ops",
         message: "Send a niche animal fact.",
       },
@@ -3377,7 +3563,7 @@ describe("native administration shell commands", () => {
         config,
         procs: {
           get: vi.fn(() => ({
-            processId: "task:shell",
+            processId: "task:pkg",
             uid: IDENTITY.uid,
             ownerUid: IDENTITY.uid,
             activeConversationId: null,
@@ -3397,7 +3583,7 @@ describe("native administration shell commands", () => {
       expression: expectedExpression,
       target: {
         kind: "process.event",
-        pid: "task:shell",
+        pid: "task:pkg",
         conversationId: expectedConversation,
         message: "Check in.",
       },
@@ -3486,8 +3672,8 @@ describe("native administration shell commands", () => {
             records: [{
               id: "sched-err",
               ownerUid: IDENTITY.uid,
-              creator: { kind: "process", uid: IDENTITY.uid, username: IDENTITY.username, pid: "task:shell" },
-              runAs: { kind: "process", uid: IDENTITY.uid, username: IDENTITY.username, pid: "task:shell" },
+              creator: { kind: "process", uid: IDENTITY.uid, username: IDENTITY.username, pid: "task:pkg" },
+              runAs: { kind: "process", uid: IDENTITY.uid, username: IDENTITY.username, pid: "task:pkg" },
               name: "broken target",
               enabled: false,
               expression: { kind: "after", afterMs: 30_000 },
@@ -3513,6 +3699,332 @@ describe("native administration shell commands", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("LAST\tERROR\tSOURCE");
     expect(result.stdout).toContain("error\tProcess not found: missing");
+  });
+
+  it("requires an explicit package for manifest inspection", async () => {
+    const result = await handleShellExec(
+      { input: "pkg manifest", cwd: "/src/repos/root/pkg-test" },
+      makeContext(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("packageId is required");
+  });
+
+  it("shows package source as a repo path", async () => {
+    const result = await handleShellExec(
+      { input: "pkg source sample-console" },
+      makeContext(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("repo: root/pkg-test");
+    expect(result.stdout).toContain("path: /src/repos/root/pkg-test");
+    expect(result.stderr).toBe("");
+  });
+
+  it("uses explicit --here for repo status from /src/repos", async () => {
+    const result = await handleShellExec(
+      { input: "rgit status --here", cwd: "/src/repos/root/pkg-test/src" },
+      makeContext({ capabilities: ["repo.list"] }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("Repo: root/pkg-test");
+    expect(result.stdout).toContain("No staged changes.");
+    expect(result.stderr).toBe("");
+  });
+
+  it("uses the package source ref for repo log from /src/repos", async () => {
+    const calls: string[] = [];
+    const packageA = makePackage({
+      packageId: "import:root/pkg-test:packages/a",
+      manifest: {
+        ...makePackage().manifest,
+        name: "sample-a",
+        source: {
+          repo: "root/pkg-test",
+          ref: "feature/a",
+          subdir: "packages/a",
+          resolvedCommit: "commit-a",
+        },
+      },
+    });
+    const packageB = makePackage({
+      packageId: "import:root/pkg-test:packages/b",
+      manifest: {
+        ...makePackage().manifest,
+        name: "sample-b",
+        source: {
+          repo: "root/pkg-test",
+          ref: "feature/b",
+          subdir: "packages/b",
+          resolvedCommit: "commit-b",
+        },
+      },
+    });
+    const ripgit = {
+      async fetch(input: RequestInfo | URL) {
+        const url = new URL(String(input));
+        calls.push(url.toString());
+        expect(url.pathname).toBe("/hyperspace/repos/root/pkg-test/log");
+        expect(url.searchParams.get("ref")).toBe("feature/b");
+        return Response.json([{
+          hash: "commit-b",
+          tree_hash: "tree123",
+          author: "Sam",
+          author_email: "sam@gsv.local",
+          author_time: 1,
+          committer: "Sam",
+          committer_email: "sam@gsv.local",
+          commit_time: 1,
+          message: "package update",
+          parents: [],
+        }]);
+      },
+    } as Fetcher;
+
+    const result = await handleShellExec(
+      { input: "rgit log --here", cwd: "/src/repos/root/pkg-test/packages/b/src" },
+      makeContext({ capabilities: ["repo.log"], packages: [packageA, packageB], ripgit }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("commit-b");
+    expect(result.stdout).toContain("package update");
+    expect(result.stderr).toBe("");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("shows review status in pkg list output", async () => {
+    const result = await handleShellExec(
+      { input: "pkg list" },
+      makeContext(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("sample-console");
+    expect(result.stdout).toContain("pending");
+  });
+
+  it("enables an approved package through pkg enable", async () => {
+    const result = await handleShellExec(
+      { input: "pkg enable sample-console" },
+      makeContext({
+        capabilities: ["pkg.install"],
+        pkg: makePackage({
+          scope: { kind: "user", uid: 1000 },
+          reviewedAt: 100,
+          reviewRequired: true,
+        }),
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("enabled sample-console");
+    expect(result.stderr).toBe("");
+  });
+
+  it("runs package commands through app runner", async () => {
+    const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
+    const runner = {
+      async ensureRuntime(input: unknown) {
+        calls.push({ kind: "ensure", value: input });
+      },
+      async runCommand(input: unknown) {
+        calls.push({ kind: "run", value: input });
+        return {
+          stdout: "hello from runner\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    };
+
+    const result = await handleShellExec(
+      { input: "hello-world alpha beta" },
+      makeContext({
+        pkg: makePackage({
+          enabled: true,
+          reviewRequired: false,
+          manifest: {
+            ...makePackage().manifest,
+            entrypoints: [
+              {
+                name: "Hello World",
+                kind: "command",
+                module: "index.js",
+                exportName: "GsvCommandEntrypoint",
+                command: "hello-world",
+              },
+            ],
+          },
+        }),
+        getAppRunner() {
+          return runner;
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("hello from runner");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.kind).toBe("ensure");
+    expect(calls[1]).toEqual({
+      kind: "run",
+      value: {
+        commandName: "hello-world",
+        args: ["alpha", "beta"],
+        cwd: "/home/sam",
+        uid: 1000,
+        gid: 1000,
+        username: "sam",
+      },
+    });
+  });
+
+  it("registers owner-scoped package commands for agent-backed shells", async () => {
+    const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
+    const runner = {
+      async ensureRuntime(input: unknown) {
+        calls.push({ kind: "ensure", value: input });
+      },
+      async runCommand(input: unknown) {
+        calls.push({ kind: "run", value: input });
+        return {
+          stdout: "human tool ran\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    };
+    const humanPackage = makePackage({
+      packageId: "user:1000:human-tools",
+      scope: { kind: "user", uid: 1000 },
+      enabled: true,
+      reviewRequired: false,
+      manifest: {
+        ...makePackage().manifest,
+        name: "human-tools",
+        entrypoints: [{
+          name: "Human Tool",
+          kind: "command",
+          module: "index.js",
+          exportName: "GsvCommandEntrypoint",
+          command: "human-tool",
+        }],
+      },
+    });
+    const agentPackage = makePackage({
+      packageId: "user:2000:agent-tools",
+      scope: { kind: "user", uid: 2000 },
+      enabled: true,
+      reviewRequired: false,
+      manifest: {
+        ...makePackage().manifest,
+        name: "agent-tools",
+        entrypoints: [{
+          name: "Agent Tool",
+          kind: "command",
+          module: "index.js",
+          exportName: "GsvCommandEntrypoint",
+          command: "agent-tool",
+        }],
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "human-tool alpha" },
+      makeContext({
+        packages: [humanPackage, agentPackage],
+        identity: {
+          uid: 2000,
+          gid: 2000,
+          gids: [2000],
+          username: "sam-agent",
+          home: "/home/sam-agent",
+          cwd: "/home/sam-agent",
+        },
+        procs: {
+          getOwnerUid: vi.fn(() => 1000),
+        } as unknown as KernelContext["procs"],
+        getAppRunner() {
+          return runner;
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("human tool ran\n");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({
+      kind: "ensure",
+      value: expect.objectContaining({
+        packageId: "user:1000:human-tools",
+        appFrame: expect.objectContaining({
+          uid: 2000,
+          username: "sam-agent",
+        }),
+      }),
+    });
+    expect(calls[1]).toEqual({
+      kind: "run",
+      value: {
+        commandName: "human-tool",
+        args: ["alpha"],
+        cwd: "/home/sam-agent",
+        uid: 2000,
+        gid: 2000,
+        username: "sam-agent",
+      },
+    });
+  });
+
+  it("resolves current package source commands from the owning human scope", async () => {
+    const humanPackage = makePackage({
+      packageId: "user:1000:human-tools",
+      scope: { kind: "user", uid: 1000 },
+      enabled: true,
+      manifest: {
+        ...makePackage().manifest,
+        name: "human-tools",
+        entrypoints: [{ name: "Human Tool", kind: "command", command: "human-tool" }],
+      },
+    });
+    const agentPackage = makePackage({
+      packageId: "user:2000:agent-tools",
+      scope: { kind: "user", uid: 2000 },
+      enabled: true,
+      manifest: {
+        ...makePackage().manifest,
+        name: "agent-tools",
+        entrypoints: [{ name: "Agent Tool", kind: "command", command: "agent-tool" }],
+      },
+    });
+
+    const result = await handleShellExec(
+      { input: "pkg manifest human-tools" },
+      makeContext({
+        capabilities: ["pkg.list"],
+        packages: [humanPackage, agentPackage],
+        identity: {
+          uid: 2000,
+          gid: 2000,
+          gids: [2000],
+          username: "sam-agent",
+          home: "/home/sam-agent",
+          cwd: "/home/sam-agent",
+        },
+        procs: {
+          getOwnerUid: vi.fn(() => 1000),
+        } as unknown as KernelContext["procs"],
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain('"name": "human-tools"');
+    expect(result.stderr).toBe("");
   });
 
   it("initializes wiki databases through the native wiki command", async () => {
@@ -3666,6 +4178,54 @@ describe("native administration shell commands", () => {
     expect(result.exitCode).toBe(0);
     expect(searchPrefixes).toEqual(["index.md"]);
     expect(result.stdout).toContain("/src/repos/root/gsv-manual/index.md\t4\tAuth overview.");
+  });
+
+  it("does not allow packages to shadow the wiki command", async () => {
+    const calls: Array<{ kind: "ensure" | "run"; value: unknown }> = [];
+    const runner = {
+      async ensureRuntime(input: unknown) {
+        calls.push({ kind: "ensure", value: input });
+      },
+      async runCommand(input: unknown) {
+        calls.push({ kind: "run", value: input });
+        return {
+          stdout: "shadowed wiki command\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    };
+
+    const result = await handleShellExec(
+      { input: "wiki search auth" },
+      makeContext({
+        pkg: makePackage({
+          enabled: true,
+          reviewRequired: false,
+          manifest: {
+            ...makePackage().manifest,
+            name: "wiki",
+            entrypoints: [
+              {
+                name: "wiki",
+                kind: "command",
+                module: "index.js",
+                exportName: "GsvCommandEntrypoint",
+                command: "wiki",
+              },
+            ],
+          },
+        }),
+        getAppRunner() {
+          return runner;
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).not.toContain("shadowed wiki command");
+    expect(calls).toHaveLength(0);
   });
 
   it("aborts native shell execution with its request", async () => {

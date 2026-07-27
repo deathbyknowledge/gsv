@@ -18,6 +18,7 @@ import { buildMessageCommand } from "./message";
 import { buildMcpCommand } from "./mcp";
 import { buildNetCommands } from "./net";
 import { buildOAuthCommand } from "./oauth";
+import { buildPackageCommands, buildPkgCommand } from "./pkg";
 import { buildProcCommand } from "./proc";
 import { buildRgitCommands } from "./rgit";
 import { buildSchedCommand } from "./sched";
@@ -51,6 +52,7 @@ export function buildCustomCommands(
   const crontab = buildCrontabCommand(fs, ctx);
   const codemode = buildCodeModeCommand(fs, identity, ctx, options?.request);
   const mcp = buildMcpCommand(ctx);
+  const pkg = buildPkgCommand(ctx);
   const skills = buildSkillsCommand(fs, ctx, identity);
   const wiki = buildWikiCommand(ctx);
   const proc = buildProcCommand(ctx);
@@ -85,11 +87,18 @@ export function buildCustomCommands(
     llm,
     ...mediaCommands,
     message,
+    pkg,
     skills,
     wiki,
     flynn,
     ...notifyCommands,
   ];
-  discovery.registerCommands(nativeCommands);
-  return nativeCommands;
+  const packageCommands = buildPackageCommands(
+    identity,
+    ctx,
+    new Set(nativeCommands.map((command) => command.name)),
+  );
+  const commands = [...nativeCommands, ...packageCommands];
+  discovery.registerCommands(commands);
+  return commands;
 }

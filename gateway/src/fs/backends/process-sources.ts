@@ -5,6 +5,7 @@ import type {
 } from "just-bash";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { RepoSummary } from "@humansandmachines/gsv/protocol";
+import type { InstalledPackageRecord } from "../../kernel/packages";
 import type { ExtendedMountStat, FsSearchBackendResult, MountBackend } from "../mount";
 import {
   RipgitClient,
@@ -113,6 +114,43 @@ export function createProcessSourceBackend(
 export function isProcessSourcePath(path: string): boolean {
   const normalized = normalizePath(path);
   return normalized === "/src" || normalized.startsWith("/src/");
+}
+
+export function packageSourcePathName(record: Pick<InstalledPackageRecord, "manifest">): string {
+  return sanitizePackageSourcePathSegment(record.manifest.name);
+}
+
+export function packageSourceRepoPath(record: Pick<InstalledPackageRecord, "manifest">): string {
+  const repo = normalizeRepoPath(record.manifest.source.repo);
+  const subdir = normalizeRepoPath(record.manifest.source.subdir);
+  const root = `/src/repos/${repo}`;
+  return subdir ? `${root}/${subdir}` : root;
+}
+
+export function packageSourcePathNameMap<T extends Pick<InstalledPackageRecord, "packageId" | "scope" | "manifest">>(
+  records: T[],
+): Map<T, string> {
+  const entries = records.map((record) => ({
+    record,
+    baseName: packageSourcePathName(record) || sanitizePackageSourcePathSegment(record.packageId) || "package",
+  }));
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    counts.set(entry.baseName, (counts.get(entry.baseName) ?? 0) + 1);
+  }
+
+  const used = new Set<string>();
+  const result = new Map<T, string>();
+  for (const entry of entries.sort(compareSourcePathEntries)) {
+    const collides = (counts.get(entry.baseName) ?? 0) > 1;
+    const preferred = collides
+      ? `${entry.baseName}--${packageSourcePathDisambiguator(entry.record)}`
+      : entry.baseName;
+    const name = uniquePackageSourcePathName(preferred, used);
+    used.add(name);
+    result.set(entry.record, name);
+  }
+  return result;
 }
 
 class ProcessSourceBackend implements MountBackend {
@@ -623,7 +661,7 @@ class ProcessSourceBackend implements MountBackend {
   }
 
   private async searchOverlay(
-    repoRoot: string,
+    packageRoot: string,
     overlay: SourceOverlayManifest,
     relativePath: string,
     query: string,
@@ -642,7 +680,7 @@ class ProcessSourceBackend implements MountBackend {
       for (let index = 0; index < lines.length; index += 1) {
         if (lines[index].includes(query)) {
           matches.push({
-            path: `${repoRoot}/${change.path}`.replace(/\/+$/g, ""),
+            path: `${packageRoot}/${change.path}`.replace(/\/+$/g, ""),
             line: index + 1,
             content: lines[index],
           });
@@ -848,6 +886,12 @@ function visibleSourceRepos(
       continue;
     }
     repos.set(parsed.sourceKey, parsed);
+    for (const source of summary.sources ?? []) {
+      const packageSource = sourceRepoForPackageSource(summary, source);
+      if (packageSource) {
+        repos.set(packageSource.sourceKey, packageSource);
+      }
+    }
   }
   return [...repos.values()].sort((left, right) => {
     const owner = left.owner.localeCompare(right.owner);
@@ -886,6 +930,42 @@ function sourceRepoForSummary(summary: RepoSummary): SourceRepo | null {
   }
 }
 
+function sourceRepoForPackageSource(
+  summary: RepoSummary,
+  source: NonNullable<RepoSummary["sources"]>[number],
+): SourceRepo | null {
+  if (source.kind !== "package") {
+    return null;
+  }
+  try {
+    const parsed = parseRepoSlug(summary.repo || `${summary.owner}/${summary.name}`);
+    const ref = sourceRefForSourceSummary(source, sourceRefForSummary(summary));
+    const baseRef = sourceBaseRefForSourceSummary(source, ref);
+    const subdir = normalizeRepoPath(source.subdir);
+    return {
+      owner: parsed.owner,
+      name: parsed.repo,
+      repo: `${parsed.owner}/${parsed.repo}`,
+      rootPath: `/src/repos/${parsed.owner}/${parsed.repo}`,
+      ref,
+      baseRef,
+      matchSubdir: subdir === "." ? "" : subdir,
+      sourceKey: [
+        "repo-source",
+        `${parsed.owner}/${parsed.repo}`,
+        source.packageId ?? "",
+        subdir,
+        ref,
+        baseRef,
+      ].join(":"),
+      defaultSource: false,
+      writable: summary.writable,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function sourceRefForSummary(summary: RepoSummary): string {
   return typeof summary.ref === "string" && summary.ref.trim().length > 0
     ? summary.ref.trim()
@@ -895,6 +975,24 @@ function sourceRefForSummary(summary: RepoSummary): string {
 function sourceBaseRefForSummary(summary: RepoSummary, fallback: string): string {
   return typeof summary.baseRef === "string" && summary.baseRef.trim().length > 0
     ? summary.baseRef.trim()
+    : fallback;
+}
+
+function sourceRefForSourceSummary(
+  source: NonNullable<RepoSummary["sources"]>[number],
+  fallback: string,
+): string {
+  return typeof source.ref === "string" && source.ref.trim().length > 0
+    ? source.ref.trim()
+    : fallback;
+}
+
+function sourceBaseRefForSourceSummary(
+  source: NonNullable<RepoSummary["sources"]>[number],
+  fallback: string,
+): string {
+  return typeof source.baseRef === "string" && source.baseRef.trim().length > 0
+    ? source.baseRef.trim()
     : fallback;
 }
 
@@ -953,7 +1051,7 @@ function resolveSourceRepoPath(repos: SourceRepo[], path: string): {
   );
   const identities = new Set(tied.map((match) => sourceRepoIdentity(match.repo)));
   if (identities.size > 1 && normalizedPath !== best.repo.rootPath) {
-    throw new Error(`Ambiguous source refs for '${normalizedPath}'`);
+    throw new Error(`Ambiguous source refs for '${normalizedPath}'. Use a path that selects one package source subdir.`);
   }
   return best;
 }
@@ -978,6 +1076,58 @@ function compareResolvedSourceRepoMatches(
 
 function sourceRepoIdentity(repo: SourceRepo): string {
   return `${repo.ref}\0${repo.baseRef}`;
+}
+
+function compareSourcePathEntries<T extends Pick<InstalledPackageRecord, "packageId" | "scope" | "manifest">>(
+  left: { record: T; baseName: string },
+  right: { record: T; baseName: string },
+): number {
+  const name = left.baseName.localeCompare(right.baseName);
+  if (name !== 0) {
+    return name;
+  }
+  const source = sourcePathDisambiguationKey(left.record).localeCompare(sourcePathDisambiguationKey(right.record));
+  if (source !== 0) {
+    return source;
+  }
+  return packageSourceRecordKey(left.record).localeCompare(packageSourceRecordKey(right.record));
+}
+
+function packageSourcePathDisambiguator(record: Pick<InstalledPackageRecord, "packageId" | "manifest">): string {
+  return sanitizePackageSourcePathSegment(sourcePathDisambiguationKey(record))
+    || sanitizePackageSourcePathSegment(record.packageId)
+    || "package";
+}
+
+function sourcePathDisambiguationKey(record: Pick<InstalledPackageRecord, "packageId" | "manifest">): string {
+  const source = record.manifest.source;
+  const subdir = normalizeRepoPath(source.subdir);
+  return subdir && subdir !== "."
+    ? `${source.repo}-${subdir}`
+    : source.repo;
+}
+
+function sanitizePackageSourcePathSegment(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function uniquePackageSourcePathName(preferred: string, used: Set<string>): string {
+  let candidate = preferred || "package";
+  let index = 2;
+  while (used.has(candidate)) {
+    candidate = `${preferred || "package"}-${index}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function packageSourceRecordKey(record: Pick<InstalledPackageRecord, "packageId" | "scope">): string {
+  switch (record.scope.kind) {
+    case "user":
+      return `user:${record.scope.uid}:${record.packageId}`;
+    case "global":
+      return `global:${record.packageId}`;
+  }
 }
 
 function sourceRepoStorageKey(repo: SourceRepo): string {
@@ -1007,7 +1157,7 @@ function sourceStatusForRepo(
 function parseRepoSlug(raw: string): RipgitRepoRef {
   const [owner, repo, extra] = raw.trim().split("/");
   if (!owner || !repo || extra) {
-    throw new Error(`Invalid source repo: ${raw}`);
+    throw new Error(`Invalid package source repo: ${raw}`);
   }
   return { owner, repo };
 }

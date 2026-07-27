@@ -1,6 +1,7 @@
 import type {
   ConsoleMcpServer,
   ConsoleOverviewData,
+  ConsolePackage,
   ConsoleTarget,
 } from "../../gsv-console/domain/consoleModels";
 import type {
@@ -8,8 +9,10 @@ import type {
   DesktopGlyph,
   DesktopObject,
   DesktopObjectId,
+  ShellAppRoute,
   ShellStatus,
 } from "./shellModel";
+import { isNativeWebPackageName } from "../../packages/nativePackages";
 import {
   messengerFamilies,
   type MessengerFamily,
@@ -29,6 +32,8 @@ type DesktopObjectBranch = {
   id: DesktopObjectId;
   children: DesktopChildObject[];
 };
+
+type PackageBranchId = Extract<DesktopObjectId, "integrations" | "applications">;
 
 type StatusSummary = {
   total: number;
@@ -64,12 +69,21 @@ const SPECS: Record<DesktopObjectId, DesktopObjectSpec> = {
     glyph: "integrations",
     singular: "MCP server",
     plural: "MCP servers",
-    x: 50,
+    x: 26,
     y: 70,
+  },
+  applications: {
+    id: "applications",
+    label: "APPLICATIONS",
+    glyph: "applications",
+    singular: "web package",
+    plural: "web packages",
+    x: 72,
+    y: 68,
   },
 };
 
-const BRANCH_ORDER: DesktopObjectId[] = ["machines", "messengers", "integrations"];
+const BRANCH_ORDER: DesktopObjectId[] = ["machines", "messengers", "integrations", "applications"];
 const KNOWN_TOKEN_LABELS: Record<string, string> = {
   discord: "Discord",
   gsv: "GSV",
@@ -77,6 +91,7 @@ const KNOWN_TOKEN_LABELS: Record<string, string> = {
 };
 
 export function buildDesktopObjectsFromConsole(data: ConsoleOverviewData | null | undefined): DesktopObject[] {
+  const applicationChildren = classifyApplications(safeArray(data?.packages));
   const branches: Record<DesktopObjectId, DesktopObjectBranch> = {
     machines: {
       id: "machines",
@@ -93,6 +108,10 @@ export function buildDesktopObjectsFromConsole(data: ConsoleOverviewData | null 
       children: safeArray(data?.mcpServers)
         .map(mcpServerToChild)
         .sort(compareChildren),
+    },
+    applications: {
+      id: "applications",
+      children: applicationChildren,
     },
   };
 
@@ -168,6 +187,25 @@ function familyBlurb(family: MessengerFamily): string {
   }
 }
 
+function packageToChild(pkg: ConsolePackage, branchId: PackageBranchId): DesktopChildObject {
+  const status = packageStatus(pkg);
+
+  return {
+    id: stableId(branchId === "applications" ? "application" : "integration", [pkg.packageId], pkg.name),
+    label: firstNonEmpty(pkg.name, pkg.packageId) ?? "Unnamed package",
+    type: packageTypeLabel(pkg, branchId),
+    blurb: packageBlurb(pkg),
+    status: status.status,
+    statusLabel: status.label,
+    glyph: branchId,
+    appRoute: branchId === "applications" ? appRouteForPackage(pkg) : undefined,
+    route: {
+      kind: branchId,
+      detailId: pkg.packageId,
+    },
+  };
+}
+
 function mcpServerToChild(server: ConsoleMcpServer): DesktopChildObject {
   const status = mcpServerStatus(server);
 
@@ -234,6 +272,45 @@ function statusLabelForChildren(children: readonly DesktopChildObject[]): string
   return `${summary.total} IDLE`;
 }
 
+function classifyApplications(packages: readonly ConsolePackage[]): DesktopChildObject[] {
+  const children: DesktopChildObject[] = [];
+
+  for (const pkg of packages) {
+    if (isNativeConsolePackage(pkg)) {
+      continue;
+    }
+    if (isApplicationPackage(pkg)) {
+      children.push(packageToChild(pkg, "applications"));
+    }
+  }
+
+  children.sort(compareChildren);
+  return children;
+}
+
+function isApplicationPackage(pkg: ConsolePackage): boolean {
+  return pkg.runtime === "web-ui"
+    || safeArray(pkg.uiEntrypoints).length > 0
+    || safeArray(pkg.entrypoints).some((entrypoint) => firstNonEmpty(entrypoint.kind)?.toLowerCase() === "ui");
+}
+
+function isNativeConsolePackage(pkg: ConsolePackage): boolean {
+  return isNativeWebPackageName(pkg.name) || isNativeWebPackageName(pkg.packageId);
+}
+
+function packageStatus(pkg: ConsolePackage): { status: ShellStatus; label: string } {
+  if (pkg.reviewPending === true || (pkg.reviewRequired === true && pkg.reviewApprovedAt === null)) {
+    return { status: "update", label: "REVIEW" };
+  }
+  if (pkg.enabled !== true) {
+    return { status: "idle", label: "DISABLED" };
+  }
+  if (pkg.runtime === "unknown" && safeArray(pkg.entrypoints).length === 0) {
+    return { status: "warn", label: "UNKNOWN" };
+  }
+  return { status: "online", label: "ENABLED" };
+}
+
 function mcpServerStatus(server: ConsoleMcpServer): { status: ShellStatus; label: string } {
   if (server.state === "failed" || firstNonEmpty(server.error)) {
     return { status: "error", label: "ERROR" };
@@ -250,6 +327,20 @@ function mcpServerStatus(server: ConsoleMcpServer): { status: ShellStatus; label
   return { status: "idle", label: "IDLE" };
 }
 
+function appRouteForPackage(pkg: ConsolePackage): ShellAppRoute | undefined {
+  const uiEntrypoints = safeArray(pkg.uiEntrypoints).filter((entrypoint) => entrypoint.route.trim().length > 0);
+  if (pkg.runtime !== "web-ui" || pkg.enabled !== true || uiEntrypoints.length === 0) {
+    return undefined;
+  }
+
+  return {
+    appId: uiEntrypoints.length === 1 ? pkg.name : `${pkg.name}-${uiEntrypoints[0].name}`,
+    suffix: "/",
+    search: "",
+    hash: "",
+  };
+}
+
 function targetTypeLabel(target: ConsoleTarget, platform: string): string {
   if (target.kind === "browser") {
     return platform ? `BROWSER · ${platform.toUpperCase()}` : "BROWSER TARGET";
@@ -260,6 +351,14 @@ function targetTypeLabel(target: ConsoleTarget, platform: string): string {
   return platform ? `MACHINE · ${platform.toUpperCase()}` : "MACHINE";
 }
 
+function packageTypeLabel(pkg: ConsolePackage, branchId: PackageBranchId): string {
+  const runtime = formatRuntime(pkg.runtime);
+  if (branchId === "applications") {
+    return runtime ? `APPLICATION · ${runtime}` : "APPLICATION";
+  }
+  return runtime ? `INTEGRATION · ${runtime}` : "INTEGRATION";
+}
+
 function targetBlurb(target: ConsoleTarget): string {
   const implementsLabel = joinNonEmpty(target.implements);
   return firstNonEmpty(
@@ -268,6 +367,17 @@ function targetBlurb(target: ConsoleTarget): string {
     target.ownerUsername ? `Owned by ${target.ownerUsername}.` : "",
     target.version ? `Version ${target.version}.` : "",
   ) ?? "Execution target.";
+}
+
+function packageBlurb(pkg: ConsolePackage): string {
+  const entrypointDescription = firstNonEmpty(...safeArray(pkg.entrypoints).map((entrypoint) => entrypoint.description));
+  return firstNonEmpty(
+    pkg.description,
+    entrypointDescription,
+    pkg.sourceRepo,
+    joinNonEmpty(pkg.bindingNames),
+    pkg.packageId,
+  ) ?? "Package.";
 }
 
 function summarizeStatuses(children: readonly DesktopChildObject[]): StatusSummary {
@@ -315,6 +425,13 @@ function normalizeIdPart(value: unknown): string {
 
 function countLabel(count: number, singular: string, plural: string): string {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function formatRuntime(runtime: unknown): string {
+  if (runtime === "web-ui") return "WEB UI";
+  if (runtime === "dynamic-worker") return "WORKER";
+  if (runtime === "node") return "NODE";
+  return "";
 }
 
 function formatTokenLabel(value: unknown): string {

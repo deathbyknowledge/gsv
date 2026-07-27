@@ -25,7 +25,7 @@ Consolidated plan for identity + auth work:
 ## Next slice (process cwd + archives)
 
 Execution unit: `process`. Durable artifacts are explicit filesystem paths,
-R2 archives, source trees, home context, knowledge, or repositories. There is
+R2 archives, package source, home context, knowledge, or repositories. There is
 no separate workspace primitive.
 
 - [x] Keep `cwd` in process identity/runtime context so relative paths resolve
@@ -34,7 +34,7 @@ no separate workspace primitive.
 - [x] Keep active conversation state in Process SQLite
 - [x] Archive reset/kill/compaction history under the run-as agent's home in R2
 - [x] Keep prompt context in system/profile/home/process providers
-- [x] Keep skills in owner and run-as agent home `skills.d` sources
+- [x] Keep skills in profile, home, and visible package `skills.d` sources
 - [ ] Surface richer archive/segment history in Files, Chat, or a process
   inspector
 
@@ -56,7 +56,7 @@ different prompt.
   - mirror the GSV repo into ripgit on first deploy
   - update the mirror on subsequent deploys
   - mount it read-only at `/src/gsv`
-  - keep mutable repair work in explicit project paths or source repositories
+  - keep mutable repair work in explicit project paths or package source
 - [ ] Add deployment pointer metadata in kernel
   - current source repo
   - deployed commit/ref
@@ -288,7 +288,7 @@ those records while keeping `GsvFs` as the operational filesystem for live files
   - `history(path, limit?)`
   - `archiveSession(processId, sessionId, messages, summary?)`
 - [ ] Explicit boundary: repo-backed archives are NOT a replacement for `GsvFs`
-  - good fits: `context.d/*`, memory notes, archived sessions, and skills
+  - good fits: `context.d/*`, memory notes, archived sessions, skills/app packages later
   - bad fits: `/sys`, `/proc`, `/dev`, auth/config runtime truth, active process state, scratch files
 - [ ] Repo granularity decision:
   - one repo per user for home context/skills (`context.d/`, memory notes)

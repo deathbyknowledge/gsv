@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeAccountsPayload,
   normalizeConfigPayload,
+  normalizePackagesPayload,
   normalizeTargetsPayload,
 } from "./consoleNormalization";
 
@@ -48,6 +49,42 @@ describe("console normalization", () => {
       { deviceId: "browser:brave", kind: "browser" },
       { deviceId: "macbook", kind: "native-device", implements: ["fs.*", "net.fetch"] },
     ]);
+  });
+
+  it("normalizes package service profiles and account state", () => {
+    const [pkg] = normalizePackagesPayload({
+      packages: [{
+        packageId: "import:team/strudel-live:.",
+        name: "strudel-live",
+        runtime: "dynamic-worker",
+        enabled: true,
+        profiles: [{
+          name: "coproducer",
+          displayName: "Co-producer",
+          capabilities: ["proc.history"],
+          account: {
+            runAs: "strudel-live#coproducer",
+            username: "strudel-live-coproducer",
+            provisioned: true,
+            runnable: true,
+          },
+        }],
+      }],
+    });
+
+    expect(pkg.profiles).toEqual([{
+      name: "coproducer",
+      displayName: "Co-producer",
+      description: "",
+      icon: "",
+      capabilities: ["proc.history"],
+      account: {
+        runAs: "strudel-live#coproducer",
+        username: "strudel-live-coproducer",
+        provisioned: true,
+        runnable: true,
+      },
+    }]);
   });
 
   it("normalizes resolved account capabilities", () => {

@@ -31,12 +31,12 @@ const CONFIG: AiConfigResult = {
   ],
   skillIndex: [
     {
-      id: "device-management",
-      name: "device-management",
-      description: "Manage connected devices.",
+      id: "package-development",
+      name: "package-development",
+      description: "Build and update packages.",
       source: {
         kind: "home",
-        label: "home:device-management",
+        label: "home:package-development",
         writable: false,
       },
     },
@@ -268,8 +268,9 @@ describe("createSkillIndexProvider", () => {
     expect(prompt).not.toContain("<process");
     expect(prompt).toContain("Use `skills list <skill>`");
     expect(prompt).toContain("<skill>");
-    expect(prompt).toContain("<name>device-management</name>");
-    expect(prompt).toContain("<description>Manage connected devices.</description>");
+    expect(prompt).toContain("<name>package-development</name>");
+    expect(prompt).toContain("<description>Build and update packages.</description>");
+    expect(prompt).not.toContain("/src/packages/");
     expect(prompt).not.toContain("system.context:");
   });
 
@@ -278,8 +279,8 @@ describe("createSkillIndexProvider", () => {
       config: { ...CONFIG, skillIndexMode: "names" },
     }), resolvePromptProviders("task"));
 
-    expect(prompt).toContain("<name>device-management</name>");
-    expect(prompt).not.toContain("<description>Manage connected devices.</description>");
+    expect(prompt).toContain("<name>package-development</name>");
+    expect(prompt).not.toContain("<description>Build and update packages.</description>");
   });
 
   it("omits prompt skill enumeration without disabling live discovery", async () => {
@@ -288,7 +289,7 @@ describe("createSkillIndexProvider", () => {
     }), resolvePromptProviders("task"));
 
     expect(prompt).not.toContain("<available_skills>");
-    expect(prompt).not.toContain("device-management");
+    expect(prompt).not.toContain("package-development");
   });
 });
 

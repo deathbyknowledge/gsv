@@ -1,5 +1,6 @@
 import {
   createAccountHomeBackend,
+  createPackageBackend,
   createProcessSourceBackend,
   RipgitClient,
   requestProcessView,
@@ -32,6 +33,7 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
       devices: ctx.devices,
       caps: ctx.caps,
       config: ctx.config,
+      packages: ctx.packages,
       cron: createCronFileService(ctx),
       schedules: ctx.schedules,
       processRequest: requestProcessView,
@@ -43,5 +45,6 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
       ownerUid,
       isRoot: identity.uid === 0,
     }),
+    createPackageBackend(identity, ctx.packages, { uid: ownerUid }),
   );
 }

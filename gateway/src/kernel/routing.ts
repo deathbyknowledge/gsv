@@ -11,7 +11,7 @@ import type { SyscallName } from "../syscalls";
 export type RouteOrigin =
   | { type: "connection"; id: string }
   | { type: "process"; id: string }
-  | { type: "kernel"; id: string };
+  | { type: "app"; id: string };
 
 export type RouteEntry = {
   id: string;
@@ -86,7 +86,7 @@ export class RoutingTable {
 
     const row = rows[0];
     return {
-      origin: { type: row.origin_type as RouteOrigin["type"], id: row.origin_id },
+      origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
       call: row.call as SyscallName,
       deviceId: row.device_id,
       driverConnectionId: row.driver_connection_id,
@@ -116,7 +116,7 @@ export class RoutingTable {
     return {
       id: row.id,
       call: row.call as SyscallName,
-      origin: { type: row.origin_type as RouteOrigin["type"], id: row.origin_id },
+      origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
       deviceId: row.device_id,
       driverConnectionId: row.driver_connection_id,
       createdAt: row.created_at,
@@ -144,7 +144,7 @@ export class RoutingTable {
 
     return rows.map((row) => ({
       id: row.id,
-      origin: { type: row.origin_type as RouteOrigin["type"], id: row.origin_id },
+      origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
       deviceId: row.device_id,
       scheduleId: row.schedule_id,
     }));
@@ -172,7 +172,7 @@ export class RoutingTable {
 
     return rows.map((row) => ({
       id: row.id,
-      origin: { type: row.origin_type as RouteOrigin["type"], id: row.origin_id },
+      origin: { type: row.origin_type as "connection" | "process" | "app", id: row.origin_id },
       deviceId: row.device_id,
       scheduleId: row.schedule_id,
     }));

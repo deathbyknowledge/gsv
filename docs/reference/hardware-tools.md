@@ -72,7 +72,7 @@ man --search -- 'put the image from this chat on my laptop'
 man -k 'run this every weekday morning'
 ```
 
-Results are ranked across caller-visible native commands, skills,
+Results are ranked across caller-visible native and package commands, skills,
 targets, and ready MCP integrations. Each row includes an exact `NEXT` action.
 Use `man <command>` after discovery for command-specific guidance.
 
@@ -114,7 +114,7 @@ Important native paths:
 - `/proc` exposes process inspection surfaces.
 - `/dev` exposes device-like virtual endpoints.
 
-Native shell commands run in the Worker sandbox. They are useful for GSV control-plane work, virtual filesystem inspection, and HTTP/network operations allowed by the runtime. They do not run on the user's laptop.
+Native shell commands run in the Worker sandbox. They are useful for GSV control-plane work, virtual filesystem inspection, package commands, and HTTP/network operations allowed by the runtime. They do not run on the user's laptop.
 
 `man --search` includes reusable process workflows populated from layered
 `skills.d` directories. Its `NEXT` action opens matching workflows with
@@ -220,7 +220,7 @@ For `fs.*` and `shell.exec`, the Gateway reads `target` at dispatch time.
 - `shell.exec` with `sessionId` routes through the persisted shell session owner; `target` is not required for continuation.
 - `target` is removed before native execution or device forwarding, so implementations receive the same syscall-specific arguments.
 
-Other syscall domains such as `proc.*`, `repo.*`, `sys.*`, `notification.*`, `signal.*`, and `adapter.*` are kernel/control-plane interfaces and are not hardware-routed.
+Other syscall domains such as `proc.*`, `pkg.*`, `repo.*`, `sys.*`, `notification.*`, `signal.*`, and `adapter.*` are kernel/control-plane interfaces and are not hardware-routed.
 
 `CodeMode` is process-local. It is not device-routed itself; code running inside
 the sandbox calls `shell(...)` and `fs.*(...)`, and those nested calls use the

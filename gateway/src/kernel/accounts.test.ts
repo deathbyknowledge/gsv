@@ -394,10 +394,13 @@ describe("handleAccountList", () => {
     expect(result.accounts[0].relation).toBe("self");
   });
 
-  it("lists a custom agent the caller can run via its primary group", () => {
+  it("lists a package agent the caller can run via its access group", () => {
     const { ctxFor, passwd, groups, shadow } = createCtx();
+    // A package agent: locked, the owner is NOT in its cap-bearing primary
+    // group, but IS in its `<username>-run` access group.
     passwd.push({ username: "wiki-builder", uid: 2000, gid: 2000, gecos: "Wiki Builder", home: "/home/wiki-builder", shell: "/bin/init" });
-    groups.push({ name: "wiki-builder", gid: 2000, members: ["alice"] });
+    groups.push({ name: "wiki-builder", gid: 2000, members: [] });
+    groups.push({ name: "wiki-builder-run", gid: 2001, members: ["alice"] });
     shadow.set("wiki-builder", "!");
 
     const result = handleAccountList({}, ctxFor(userIdentity(1000, "alice", ["account.list"])));
@@ -408,7 +411,7 @@ describe("handleAccountList", () => {
     expect(agent?.runnable).toBe(true);
     expect(agent?.displayName).toBe("Wiki Builder");
 
-    // A different human without primary-group membership does not see it.
+    // A different human who never enabled the package does not see it.
     passwd.push({ username: "carol", uid: 1500, gid: 1500, gecos: "carol", home: "/home/carol", shell: "/bin/init" });
     groups.push({ name: "carol", gid: 1500, members: [] });
     shadow.set("carol", "x");
@@ -423,11 +426,13 @@ describe("handleAccountList", () => {
     shadow.set("bob", "x");
 
     passwd.push({ username: "wiki-builder", uid: 2000, gid: 2000, gecos: "Wiki Builder", home: "/home/wiki-builder", shell: "/bin/init" });
-    groups.push({ name: "wiki-builder", gid: 2000, members: ["alice"] });
+    groups.push({ name: "wiki-builder", gid: 2000, members: [] });
+    groups.push({ name: "wiki-builder-run", gid: 2001, members: ["alice"] });
     shadow.set("wiki-builder", "!");
 
     passwd.push({ username: "bob-helper", uid: 2100, gid: 2100, gecos: "Bob Helper", home: "/home/bob-helper", shell: "/bin/init" });
-    groups.push({ name: "bob-helper", gid: 2100, members: ["bob"] });
+    groups.push({ name: "bob-helper", gid: 2100, members: [] });
+    groups.push({ name: "bob-helper-run", gid: 2101, members: ["bob"] });
     shadow.set("bob-helper", "!");
 
     const result = handleAccountList({ uid: 1000 }, ctxFor(userIdentity(0, "root", ["*"])));

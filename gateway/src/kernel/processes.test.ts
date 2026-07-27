@@ -320,13 +320,13 @@ describe("ProcessRegistry", () => {
     const registry = new ProcessRegistry(sql as unknown as SqlStorage);
 
     registry.spawn("task:4", makeIdentity("/home/sam"), {
-      cwd: "/src/repos/sam/project",
-      contextFiles: [{ name: "brief.md", text: "Investigate the project." }],
+      cwd: "/src/repos/sam/pkg-test",
+      contextFiles: [{ name: "brief.md", text: "Investigate the package." }],
     });
 
-    expect(registry.get("task:4")?.cwd).toBe("/src/repos/sam/project");
+    expect(registry.get("task:4")?.cwd).toBe("/src/repos/sam/pkg-test");
     expect(registry.getContextFiles("task:4")).toEqual([
-      { name: "brief.md", text: "Investigate the project." },
+      { name: "brief.md", text: "Investigate the package." },
     ]);
   });
 });

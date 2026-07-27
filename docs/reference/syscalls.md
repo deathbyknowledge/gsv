@@ -1,6 +1,6 @@
 # Syscalls Reference
 
-Syscalls are GSV's stable operation surface. They are invoked over WebSocket request frames, by process tool calls, and by adapter code with the required permissions.
+Syscalls are GSV's stable operation surface. They are invoked over WebSocket request frames, by process tool calls, and by package or adapter code with the required permissions.
 
 Source of truth:
 
@@ -62,6 +62,177 @@ type MediaInput = {
   transcription?: string;
 };
 
+type PkgRuntime = "dynamic-worker" | "node" | "web-ui";
+type PkgEntrypointSummary = {
+  name: string;
+  kind: "command" | "http" | "rpc" | "ui";
+  description?: string;
+  command?: string;
+  route?: string;
+  icon?: { kind: "builtin"; id: string } | { kind: "svg"; svg: string };
+  syscalls?: string[];
+  windowDefaults?: { width: number; height: number; minWidth: number; minHeight: number };
+};
+
+type PkgSummary = {
+  packageId: string;
+  scope: { kind: "global" | "user" | "workspace"; uid?: number; workspaceId?: string };
+  name: string;
+  description: string;
+  version: string;
+  runtime: PkgRuntime;
+  enabled: boolean;
+  source: { repo: string; ref: string; subdir: string; resolvedCommit?: string | null; public: boolean };
+  entrypoints: PkgEntrypointSummary[];
+  bindingNames: string[];
+  review: { required: boolean; approvedAt: number | null };
+  installedAt: number;
+  updatedAt: number;
+};
+
+type PkgCatalogEntry = {
+  name: string;
+  description: string;
+  version: string;
+  runtime: PkgRuntime;
+  source: { repo: string; ref: string; subdir: string; resolvedCommit?: string | null };
+  entrypoints: PkgEntrypointSummary[];
+  bindingNames: string[];
+};
+
+type BootstrapPackageSummary = {
+  packageId: string;
+  name: string;
+  description: string;
+  version: string;
+  runtime: PkgRuntime;
+  enabled: boolean;
+  source: { repo: string; ref: string; subdir: string; resolvedCommit: string | null };
+  entrypoints: Array<{
+    name: string;
+    kind: "command" | "ui";
+    description?: string;
+    command?: string;
+    route?: string;
+    icon?: string;
+    syscalls?: string[];
+    windowDefaults?: { width: number; height: number; minWidth: number; minHeight: number };
+  }>;
+};
+
+type ConnectionIdentity =
+  | { role: "user"; process: ProcessIdentity; capabilities: string[] }
+  | { role: "driver"; process: ProcessIdentity; capabilities: string[]; device: string; implements: string[] }
+  | { role: "service"; process: ProcessIdentity; capabilities: string[]; channel: string };
+
+type OAuthConnectionKind = "ai-provider" | "mcp-server" | "generic";
+type OAuthFlowSummary = {
+  flowId: string;
+  uid: number;
+  kind: OAuthConnectionKind;
+  provider: string;
+  accountKey: string;
+  label: string | null;
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  clientId: string;
+  redirectUri: string;
+  scope: string | null;
+  resource: string | null;
+  createdAt: number;
+  expiresAt: number;
+};
+type OAuthAccountSummary = {
+  accountId: string;
+  uid: number;
+  kind: OAuthConnectionKind;
+  provider: string;
+  accountKey: string;
+  label: string | null;
+  scope: string | null;
+  resource: string | null;
+  clientId: string;
+  tokenType: string;
+  expiresAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  lastUsedAt: number | null;
+  metadata: Record<string, unknown>;
+};
+type McpTransportType = "auto" | "streamable-http" | "sse";
+type McpConnectionState = "not-connected" | "authenticating" | "connecting" | "connected" | "discovering" | "ready" | "failed";
+type McpToolSummary = {
+  name: string;
+  description: string | null;
+  inputSchema: Record<string, unknown> | null;
+  outputSchema: Record<string, unknown> | null;
+};
+type McpServerSummary = {
+  serverId: string;
+  uid: number;
+  name: string;
+  url: string;
+  transport: McpTransportType;
+  state: McpConnectionState;
+  authUrl: string | null;
+  error: string | null;
+  instructions: string | null;
+  capabilities: Record<string, unknown> | null;
+  tools: McpToolSummary[];
+  resourceCount: number;
+  promptCount: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type OnboardingDraft = {
+  lane: "quick" | "customize" | "advanced";
+  mode: "manual" | "guided";
+  stage: "welcome" | "details" | "review";
+  detailStep: "account" | "admin" | "system" | "ai" | "source" | "device";
+  account: { username: string; password: string; passwordConfirm: string };
+  admin: { mode: "same" | "custom"; password: string };
+  system: { timezone: string };
+  ai: { enabled: boolean; provider: string; model: string; apiKey: string };
+  source: { enabled: boolean; value: string; ref: string };
+  device: { enabled: boolean; deviceId: string; label: string; expiryDays: string };
+};
+
+type OnboardingAssistPatch = {
+  op: "set" | "clear";
+  path:
+    | "account.username" | "admin.mode" | "system.timezone" | "ai.enabled" | "ai.provider" | "ai.model"
+    | "source.enabled" | "source.value" | "source.ref"
+    | "device.enabled" | "device.deviceId" | "device.label" | "device.expiryDays";
+  value?: string | boolean;
+};
+
+type AdapterSurface = {
+  kind: "dm" | "group" | "channel" | "thread";
+  id: string;
+  name?: string;
+  handle?: string;
+  threadId?: string;
+};
+
+type AdapterConnectChallenge = {
+  type: string;
+  message?: string;
+  data?: string;
+  expiresAt?: number;
+  extra?: Record<string, unknown>;
+};
+
+type AdapterAccountStatus = {
+  accountId: string;
+  connected: boolean;
+  authenticated: boolean;
+  mode?: string;
+  lastActivity?: number;
+  error?: string;
+  extra?: Record<string, unknown>;
+};
+
 type NotificationRecord = {
   notificationId: string;
   title: string;
@@ -74,7 +245,8 @@ type NotificationRecord = {
   actions: Array<{ kind: string; label: string; target?: string; args?: Record<string, unknown> }>;
   source:
     | { kind: "user" }
-    | { kind: "process"; processId: string };
+    | { kind: "process"; processId: string }
+    | { kind: "app"; packageId: string; packageName: string; entrypointName: string };
 };
 ```
 
@@ -173,7 +345,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mcp`, `notify`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
+| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env, builtin commands such as `pkg`, `codemode`, `mcp`, and `notify`, and installed package CLI commands such as `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
 
 ```ts
 type ShellSyscalls = {
@@ -354,6 +526,7 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
+| `proc.profile.list` | `handleProcProfileList` | Returns system AI profiles plus enabled package-backed profiles visible to the caller. Package entries are sorted by package name and display name. |
 | `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. A default interactive top-level spawn reuses the caller's default conversation executor; custom spawns get UUID pids. |
 | `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media entries contain process-scoped keys returned by `proc.media.write` or external URLs; inline `media.data` is not accepted. Media-bearing user messages are admitted immediately and generation starts after background media preparation. Kernel-owned delivery paths can preallocate a run id; the Process reconciles it against active, queued, and recorded admissions and reports which state a replay found. Touches workspace activity before forwarding. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
@@ -492,6 +665,11 @@ type ProcessSyscalls = {
     result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; parentPid: string | null; state: string; activeRunId: string | null; activeConversationId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string; isDefaultConversation?: boolean }> };
   };
 
+  "proc.profile.list": {
+    args: Empty;
+    result: { profiles: Array<{ id: AiContextProfile; alias?: string; kind: "system" | "package"; displayName: string; description?: string; interactive: boolean; startable: boolean; background: boolean; spawnMode: "singleton" | "new"; packageId?: string; packageName?: string }> };
+  };
+
   "proc.spawn": {
     args: { runAs?: string; interactive?: boolean; fresh?: boolean; label?: string; prompt?: string; assignment?: ProcSpawnAssignment; parentPid?: string; cwd?: string };
     result: { ok: true; pid: string; label?: string; cwd: string } | OperationError;
@@ -621,6 +799,93 @@ type ProcessSyscalls = {
 
 `proc.ipc.deliver` and `proc.setidentity` are kernel-only. User and device callers receive a forbidden response.
 
+## Packages: `pkg.*`
+
+`pkg.*` manages installed packages, package catalogs, review state, and package visibility. Use `repo.*` for generic repository operations against package source repos.
+
+Runtime behavior:
+
+| Syscall | Handler | Behavior |
+|---|---|---|
+| `pkg.list` | `handlePkgList` | Lists visible packages with optional `enabled`, exact trimmed `name`, and `runtime` filters. Visible scope is actor user scope first, then global. |
+| `pkg.add` | `handlePkgAdd` | Imports a package from `remoteUrl` or GitHub `repo`, resolves and assembles it, stores the artifact, and upserts the package record. Defaults `ref` to `main` and `subdir` to `.`. Imports outside `root/gsv` stay disabled and review-required by default. |
+| `pkg.sync` | `handlePkgSync` | Re-resolves one installed package at its recorded source ref, or an explicit `ref`, and replaces the installed manifest/artifact through the same path as `pkg.checkout`. Requires a package specifier. |
+| `pkg.checkout` | `handlePkgCheckout` | Re-resolves an existing package at a new ref and replaces manifest and artifact while preserving grants, enabled state, review flags, and install time. Requires mutable package access. |
+| `pkg.install` | `handlePkgInstall` | Enables an installed package. Errors if review is required and not approved. Idempotent when already enabled. |
+| `pkg.review.approve` | `handlePkgReviewApprove` | Sets review approval metadata for review-required packages. If review is not required, returns unchanged. |
+| `pkg.remove` | `handlePkgRemove` | Removes the package row and revokes the caller owner's run-as access for package agents. Returns a disabled summary of the removed package. |
+| `pkg.remote.list` | `handlePkgRemoteList` | Lists current user package catalog remotes from config, sorted by name. Requires identity. |
+| `pkg.remote.add` | `handlePkgRemoteAdd` | Stores a current-user remote config key. Remote names must be alphanumeric with dashes; URLs must be HTTP or HTTPS and are normalized. |
+| `pkg.remote.remove` | `handlePkgRemoteRemove` | Deletes a current-user remote config key. Returns whether anything was removed. |
+| `pkg.public.list` | `handlePkgPublicList` | Lists local public packages, or fetches `<baseUrl>/public/packages` from a named/URL remote. Invalid remote catalog entries are dropped. |
+| `pkg.public.set` | `handlePkgPublicSet` | Marks a source repo public or private in config. Requires repo owner, root, or wildcard capability. |
+
+Mutating package calls require root, wildcard capability, or ownership of the package user scope. `pkg.add`, `pkg.create`, `pkg.sync`, `pkg.install`, `pkg.remove`, and `pkg.checkout` broadcast `pkg.changed` to that scope after success.
+
+```ts
+type PackageSyscalls = {
+  "pkg.list": {
+    args: { enabled?: boolean; name?: string; runtime?: PkgRuntime };
+    result: { packages: PkgSummary[] };
+  };
+
+  "pkg.add": {
+    args: { remoteUrl?: string; repo?: string; ref?: string; subdir?: string; enable?: boolean };
+    result: { changed: boolean; imported: { repo: string; remoteUrl: string; ref: string; head: string | null }; package: PkgSummary };
+  };
+
+  "pkg.sync": {
+    args: { packageId: string; ref?: string };
+    result: { packages: PkgSummary[] };
+  };
+
+  "pkg.checkout": {
+    args: { packageId: string; ref: string };
+    result: { changed: boolean; package: PkgSummary };
+  };
+
+  "pkg.install": {
+    args: { packageId: string };
+    result: { changed: boolean; package: PkgSummary };
+  };
+
+  "pkg.review.approve": {
+    args: { packageId: string };
+    result: { changed: boolean; package: PkgSummary };
+  };
+
+  "pkg.remove": {
+    args: { packageId: string };
+    result: { changed: boolean; package: PkgSummary };
+  };
+
+  "pkg.remote.list": {
+    args: Empty;
+    result: { remotes: Array<{ name: string; baseUrl: string }> };
+  };
+
+  "pkg.remote.add": {
+    args: { name: string; baseUrl: string };
+    result: { changed: boolean; remote: { name: string; baseUrl: string }; remotes: Array<{ name: string; baseUrl: string }> };
+  };
+
+  "pkg.remote.remove": {
+    args: { name: string };
+    result: { removed: boolean; remotes: Array<{ name: string; baseUrl: string }> };
+  };
+
+  "pkg.public.list": {
+    args: { remote?: string };
+    result: { serverName: string; source: { kind: "local" | "remote"; name: string; baseUrl?: string }; packages: PkgCatalogEntry[] };
+  };
+
+  "pkg.public.set": {
+    args: { packageId?: string; repo?: string; public: boolean };
+    result: { changed: boolean; repo: string; public: boolean };
+  };
+};
+```
+
 ## Repositories: `repo.*`
 
 `repo.*` is the kernel-level interface to ripgit repositories. It exposes versioned content, history, diffs, imports, and atomic commits without modeling a Git index or separate `add` step. In the native GSV shell, `/src/repos/{owner}/{repo}` edits are staged per process and committed through `rgit commit`; direct `repo.apply` callers still submit one explicit atomic commit.
@@ -629,9 +894,9 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `repo.list` | `handleRepoList` | Lists home, workspace, public, and registered user repositories visible to the caller. Optional `owner` filters by repo owner. |
+| `repo.list` | `handleRepoList` | Lists repositories visible to the caller. Results include home, workspace, visible package source, and registered user repos. Optional `owner` filters by repo owner. |
 | `repo.create` | `handleRepoCreate` | Creates a repository by writing an empty initial commit to `ref`, default `main`. Existing refs return `created: false`. Only root, wildcard, or the username owner can write. |
-| `repo.refs` | `handleRepoRefs` | Reads heads and tags. Allows owned and public repositories. |
+| `repo.refs` | `handleRepoRefs` | Reads heads and tags. Allows owned repos, public repos, and visible package source repos. |
 | `repo.read` | `handleRepoRead` | Reads a tree or file at `repo`, `ref`, and `path`. Defaults `ref` to `main` and `path` to root. Binary files return `content: null`. |
 | `repo.search` | `handleRepoSearch` | Searches text in a repo, optionally under `prefix`. Requires a non-empty query. |
 | `repo.log` | `handleRepoLog` | Reads first-parent commit history. `limit` defaults to 30 and clamps to 1-100; `offset` defaults to 0. |
@@ -639,9 +904,9 @@ Runtime behavior:
 | `repo.compare` | `handleRepoCompare` | Compares `base` and `head` refs or hashes. `stat: true` omits hunks from ripgit. |
 | `repo.apply` | `handleRepoApply` | Atomically commits `put`, `delete`, and `move` operations to one ref. `expectedHead` enables optimistic concurrency. `allowEmpty` permits an empty commit. |
 | `repo.import` | `handleRepoImport` | Imports or refreshes a repo from an upstream Git URL/ref into a local ripgit repo. Omit `remoteUrl` to pull from the repo's stored upstream. |
-| `repo.delete` | `handleRepoDelete` | Deletes a writable ripgit repository and unregisters its repo metadata. |
+| `repo.delete` | `handleRepoDelete` | Deletes a writable ripgit repository and unregisters its repo metadata. Refuses repositories still backing installed packages. |
 
-Write access is intentionally narrower than read access. Non-root users can write repos owned by their username. Public repos are readable but not writable unless ownership also matches. Native shell writes under `/src/repos` stage in a process-local overlay until `rgit commit` or `rgit discard`.
+Write access is intentionally narrower than read access. Non-root users can write repos owned by their username. Public repos and visible package source repos are readable but not writable unless ownership also matches. Native shell writes under `/src/repos` stage in a process-local overlay until `rgit commit` or `rgit discard`.
 
 ```ts
 type RepoDiffFile = {
@@ -661,7 +926,7 @@ type RepoDiffFile = {
 type RepoSyscalls = {
   "repo.list": {
     args: { owner?: string };
-    result: { repos: Array<{ repo: string; owner: string; name: string; kind: "home" | "workspace" | "user"; writable: boolean; public: boolean; ref?: string; baseRef?: string; description?: string; updatedAt?: number }> };
+    result: { repos: Array<{ repo: string; owner: string; name: string; kind: "home" | "workspace" | "package" | "user"; writable: boolean; public: boolean; ref?: string; baseRef?: string; sources?: Array<{ kind: "package"; subdir: string; ref?: string; baseRef?: string; packageId?: string; name?: string; updatedAt?: number }>; description?: string; updatedAt?: number }> };
   };
 
   "repo.create": {
@@ -728,8 +993,8 @@ Runtime behavior:
 |---|---|---|
 | `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and starts/reconciles the user init process. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
-| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. |
-| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is `deathbyknowledge/gsv-manual#main`. Requires `RIPGIT`. |
+| `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, and optional system bootstrap. Username, password, and timezone are validated. |
+| `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv` and `root/gsv-manual`, registers both as public system repositories, and seeds repository skills into the caller's home. By default, stable gateway builds pin `root/gsv` to their matching `vX.Y.Z` release tag; dev and other non-release builds use `main`. Explicit args win, followed by `GSV_BOOTSTRAP_REF` and a ref embedded in `GSV_BOOTSTRAP_UPSTREAM`; the upstream accepts `owner/repo`, a git URL, or either form with `#ref`. The manual remains on its independently configured ref, defaulting to `main`. Requires `RIPGIT`. |
 | `sys.config.get` | `handleSysConfigGet` | Reads exact config key or visible prefix. Root sees all; non-root sees own `users/<uid>/` keys and non-sensitive `config/` keys. Sensitive names such as password, token, secret, and api key are hidden from non-root. |
 | `sys.config.set` | `handleSysConfigSet` | Writes a config value. Root can write any key; non-root can write only own user-overridable keys, currently under `users/<uid>/ai/`. Values are coerced with `String(value)`. |
 | `sys.device.list` | `handleSysDeviceList` | Lists devices accessible by owner uid or group ACL. Root sees all. Defaults to online devices only unless `includeOffline` is true. |
@@ -778,13 +1043,13 @@ type SystemSyscalls = {
   };
 
   "sys.setup": {
-    args: { username: string; password: string; rootPassword?: string; timezone?: string; ai?: { provider?: string; model?: string; apiKey?: string }; node?: { deviceId: string; label?: string; expiresAt?: number } };
+    args: { username: string; password: string; rootPassword?: string; timezone?: string; bootstrap?: { remoteUrl?: string; repo?: string; ref?: string }; ai?: { provider?: string; model?: string; apiKey?: string }; node?: { deviceId: string; label?: string; expiresAt?: number } };
     result: { server: { version: string; release: string }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; nodeToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node"; label: string | null; allowedRole: "driver" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
   };
 
   "sys.bootstrap": {
-    args: Record<string, never>;
-    result: { repo: string; remoteUrl: string; ref: string; head: string | null; changed: boolean };
+    args: { remoteUrl?: string; repo?: string; ref?: string };
+    result: { repo: string; remoteUrl: string; ref: string; head: string | null; changed: boolean; manual: { repo: string; remoteUrl: string; ref: string; head: string | null; changed: boolean } };
   };
 
   "sys.config.get": {
@@ -910,7 +1175,7 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `ai.tools` | `handleAiTools` | Process-internal. Lists online accessible devices and filters built-in tool definitions by caller capabilities. Routable filesystem and shell tools are wrapped with required `target`; CodeMode is exposed as a process-local programmable tool. MCP tools are used through CodeMode or shell, not expanded into this direct tool list. |
-| `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/zai-org/glm-5.2`, fallback profile to `workers-ai-kimi-k2-6`, max tokens to 8192, context window to provider/model metadata or configured fallback, and context budget to 32768 bytes. |
+| `ai.config` | `handleAiConfig` | Process-internal. Resolves user override then system AI config. Defaults profile to `task`, provider to `workers-ai`, model to `@cf/zai-org/glm-5.2`, fallback profile to `workers-ai-kimi-k2-6`, max tokens to 8192, context window to provider/model metadata or configured fallback, and context budget to 32768 bytes. Package profiles load manifest context files and approval policy. |
 | `ai.transcription.create` | `handleAiTranscriptionCreate` | Requires audio metadata plus an audio request body. An optional `pid` resolves model configuration for an accessible process. On failure or empty text, an explicitly configured transcription stack in the fallback profile is tried once. Returns transcription text and model metadata in JSON. |
 | `ai.image.read` | `handleAiImageRead` | Requires image metadata plus an image request body. Uses Moondream 3.1 exclusively for caption, query, OCR, point, and detect modes. Query reasoning may include normalized grounding coordinates. Query and OCR can request prompt-driven JSON, XML, Markdown, or CSV; JSON is parsed and optionally checked against the supplied schema. Caption, query, and OCR may stream decoded UTF-8 output in the response body. The shell `img2txt` command may acquire that body from a target-qualified filesystem path, but the AI syscall remains byte-oriented and does not route or resolve paths. |
 | `ai.image.generate` | `handleAiImageGenerate` | Accepts a text prompt. Inline generated image bytes use a response body; `data.image` contains MIME type and size, and providers may instead return `url`. |
@@ -925,7 +1190,7 @@ type AiSyscalls = {
 
   "ai.config": {
     args: { profile?: AiContextProfile };
-    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; profileContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "home"; label: string; writable: boolean } }>; profileApprovalPolicy?: string | null; maxContextBytes: number };
+    result: { profile?: AiContextProfile; provider: string; model: string; apiKey: string; reasoning?: string; maxTokens: number; contextWindowTokens: number | null; contextWindowSource: "model" | "config" | "unknown"; systemContextFiles?: Array<{ name: string; text: string }>; profileContextFiles?: Array<{ name: string; text: string }>; skillIndex?: Array<{ id: string; name: string; description: string; source: { kind: "profile" | "home" | "workspace" | "package"; label: string; writable: boolean } }>; profileApprovalPolicy?: string | null; maxContextBytes: number };
   };
 
   "ai.transcription.create": {

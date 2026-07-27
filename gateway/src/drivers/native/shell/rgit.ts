@@ -226,7 +226,29 @@ function defaultRepoRef(ctx: KernelContext, repo: string, sourcePath?: string): 
   if (!found) {
     return null;
   }
-  return found.ref ?? null;
+  const source = sourcePath ? repoSourceForPath(found, sourcePath) : null;
+  return source?.ref ?? found.ref ?? null;
+}
+
+function repoSourceForPath(
+  summary: RepoListResult["repos"][number],
+  sourcePath: string,
+): NonNullable<RepoListResult["repos"][number]["sources"]>[number] | null {
+  const rootPath = `/src/repos/${summary.repo}`;
+  if (sourcePath !== rootPath && !sourcePath.startsWith(`${rootPath}/`)) {
+    return null;
+  }
+  const relativePath = sourcePath === rootPath
+    ? ""
+    : normalizeRepoPath(sourcePath.slice(rootPath.length + 1));
+  const matches = (summary.sources ?? [])
+    .map((source) => ({
+      source,
+      subdir: normalizeRepoPath(source.subdir),
+    }))
+    .filter((entry) => pathIsWithin(relativePath, entry.subdir))
+    .sort((left, right) => right.subdir.length - left.subdir.length);
+  return matches[0]?.source ?? null;
 }
 
 function parseRepoTarget(args: string[], cwd: string, startIndex = 0): RepoTarget {
@@ -257,6 +279,20 @@ function normalizeRepoArg(raw: string): string {
     throw new Error(`Invalid repo: ${raw}`);
   }
   return `${owner}/${repo}`;
+}
+
+function normalizeRepoPath(path: string | null | undefined): string {
+  return String(path ?? "")
+    .trim()
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== ".")
+    .join("/");
+}
+
+function pathIsWithin(path: string, maybeParent: string): boolean {
+  const normalizedPath = normalizeRepoPath(path);
+  const normalizedParent = normalizeRepoPath(maybeParent);
+  return !normalizedParent || normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}/`);
 }
 
 function parseListArgs(args: string[]): { owner?: string } {

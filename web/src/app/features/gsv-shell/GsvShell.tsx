@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { IconMenu } from "../../components/ui/IconMenu";
 import { StatusDot } from "../../components/ui/StatusDot";
 import type { StatusTone } from "../../components/ui/StatusDot";
+import { AppFramePage } from "../apps/components/AppFramePage";
 import { ChatDock, type StartedChatProcess } from "../chat/components/ChatDock";
 import type { ChatAgentData, ChatAgentSelection, ChatProcessSummary } from "../chat/domain";
 import {
@@ -380,6 +381,14 @@ export function GsvShell({
   const openSettingsRoute = (target: SettingsRouteTarget): void => {
     guard.requestLeave(() => shell.openSettingsRoute(shellSettingsRouteForTarget(target)));
   };
+  const openAppById = (appId: string, title?: string): void => {
+    guard.requestLeave(() => shell.openAppRoute({
+      appId,
+      suffix: "/",
+      search: "",
+      hash: "",
+    }, title));
+  };
   const activeSettingsRoute: ShellSettingsRoute = shell.activeSurface === "settings"
     ? shell.activePageTab?.settingsRoute ?? { view: "overview" }
     : { view: "overview" };
@@ -515,19 +524,30 @@ export function GsvShell({
                 ) : null}
                 <div class="gsv-shell-page-stack">
                   <div class="gsv-shell-page-content">
-                    <GsvConsole
-                      activeSurface={shell.activeSurface}
-                      onBackToDesktop={guardedBackToDesktop}
-                      onClose={closeActiveScreen}
-                      onOpenSurface={openShellSurface}
-                      onOpenSectionCreate={createSectionObject}
-                      onOpenChat={() => shell.setChatOpen(true)}
-                      onNewTask={requestNewTask}
-                      onLibraryRouteChange={shell.syncActiveLibraryRoute}
-                      onSettingsRouteChange={shell.syncActiveSettingsRoute}
-                      libraryRoute={activeLibraryRoute}
-                      settingsRoute={activeSettingsRoute}
-                    />
+                    {shell.activeSurface === "app" && shell.activePageTab?.appRoute ? (
+                      <AppFramePage
+                        key={shell.activePageTab.key}
+                        appRoute={shell.activePageTab.appRoute}
+                        onBackToDesktop={guardedBackToDesktop}
+                        onClose={closeActiveScreen}
+                        onOpenAppRoute={shell.openAppRoute}
+                      />
+                    ) : shell.activeSurface !== "app" ? (
+                      <GsvConsole
+                        activeSurface={shell.activeSurface}
+                        onBackToDesktop={guardedBackToDesktop}
+                        onClose={closeActiveScreen}
+                        onOpenApp={openAppById}
+                        onOpenSurface={openShellSurface}
+                        onOpenSectionCreate={createSectionObject}
+                        onOpenChat={() => shell.setChatOpen(true)}
+                        onNewTask={requestNewTask}
+                        onLibraryRouteChange={shell.syncActiveLibraryRoute}
+                        onSettingsRouteChange={shell.syncActiveSettingsRoute}
+                        libraryRoute={activeLibraryRoute}
+                        settingsRoute={activeSettingsRoute}
+                      />
+                    ) : null}
                   </div>
                 </div>
               </>

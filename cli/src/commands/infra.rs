@@ -18,7 +18,6 @@ struct DeployCommandOptions {
     bundle_dir: Option<PathBuf>,
     api_token: Option<String>,
     account_id: Option<String>,
-    codemode: deploy::CodeModePreference,
     discord_bot_token: Option<String>,
     telegram_bot_token: Option<String>,
 }
@@ -60,7 +59,6 @@ pub(crate) async fn run_infra(
             bundle_dir,
             api_token,
             account_id,
-            codemode,
             discord_bot_token,
             telegram_bot_token,
         } => {
@@ -75,7 +73,6 @@ pub(crate) async fn run_infra(
                     bundle_dir,
                     api_token,
                     account_id,
-                    codemode,
                     discord_bot_token,
                     telegram_bot_token,
                 },
@@ -91,7 +88,6 @@ pub(crate) async fn run_infra(
             bundle_dir,
             api_token,
             account_id,
-            codemode,
             discord_bot_token,
             telegram_bot_token,
         } => {
@@ -106,7 +102,6 @@ pub(crate) async fn run_infra(
                     bundle_dir,
                     api_token,
                     account_id,
-                    codemode,
                     discord_bot_token,
                     telegram_bot_token,
                 },
@@ -216,6 +211,7 @@ fn component_is_selected(components: &[String], component: &str) -> bool {
 fn teardown_component_description(component: &str) -> &'static str {
     match component {
         "ripgit" => "Git-backed storage worker",
+        "assembler" => "Package assembly worker",
         "gateway" => "Core API + sessions worker",
         "channel-whatsapp" => "WhatsApp channel worker",
         "channel-discord" => "Discord channel worker",
@@ -394,7 +390,6 @@ async fn apply_deploy(
         bundle_dir,
         api_token,
         account_id,
-        codemode,
         discord_bot_token,
         telegram_bot_token,
     } = options;
@@ -454,7 +449,6 @@ async fn apply_deploy(
         &bundle_version,
         &components,
         &instance,
-        codemode,
     )
     .await?;
 

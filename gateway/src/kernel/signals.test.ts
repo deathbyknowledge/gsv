@@ -54,6 +54,138 @@ describe("signal watch handlers", () => {
     });
   });
 
+  it("registers app-owned watches against the current app frame", () => {
+    const ctx = makeContext({
+      appFrame: {
+        packageId: "pkg-wiki",
+        packageName: "wiki",
+        entrypointName: "wiki",
+        routeBase: "/apps/wiki",
+        uid: 1000,
+        username: "hank",
+        capabilities: ["*"],
+        expiresAt: Date.now() + 60_000,
+      },
+    });
+
+    const result = handleSignalWatch({
+      signal: "proc.run.finished",
+      processId: "proc-child",
+      key: "builder:product-alpha",
+      state: { db: "product-alpha" },
+    }, ctx);
+
+    expect(result.watchId).toBe("watch-1");
+    expect(ctx.signalWatches.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      signal: "proc.run.finished",
+      processId: "proc-child",
+      key: "builder:product-alpha",
+      state: { db: "product-alpha" },
+      target: expect.objectContaining({
+        kind: "app",
+        packageId: "pkg-wiki",
+        packageName: "wiki",
+        entrypointName: "wiki",
+        routeBase: "/apps/wiki",
+      }),
+    }));
+  });
+
+  it("scopes app-owned watches to the active app session client", () => {
+    const ctx = makeContext({
+      appFrame: {
+        packageId: "pkg-chat",
+        packageName: "chat",
+        entrypointName: "Chat",
+        routeBase: "/apps/chat",
+        uid: 1000,
+        username: "hank",
+        issuedAt: 1,
+        expiresAt: Date.now() + 60_000,
+      },
+      appSessions: {
+        getActiveForUid: vi.fn(() => ({
+          sessionId: "session-1",
+          uid: 1000,
+          username: "hank",
+          packageId: "pkg-chat",
+          packageName: "chat",
+          entrypointName: "Chat",
+          routeBase: "/apps/chat",
+          createdAt: 1,
+          lastUsedAt: null,
+          expiresAt: Date.now() + 60_000,
+          state: "active",
+          clients: [{
+            sessionId: "session-1",
+            clientId: "client-1",
+            uid: 1000,
+            username: "hank",
+            packageId: "pkg-chat",
+            packageName: "chat",
+            entrypointName: "Chat",
+            routeBase: "/apps/chat",
+            rpcBase: "/apps/sessions/session-1/clients/client-1/socket",
+            createdAt: 1,
+            lastUsedAt: null,
+            expiresAt: Date.now() + 60_000,
+          }],
+        })),
+      },
+    });
+
+    handleSignalWatch({
+      signal: "proc.run.stream",
+      processId: "proc-child",
+      key: "chat:session-1:client-1:proc-child:proc.run.stream",
+      owner: { appSessionId: "session-1", clientId: "client-1" },
+      state: { clientId: "client-1", pid: "proc-child" },
+      once: false,
+    }, ctx);
+
+    expect(ctx.appSessions.getActiveForUid).toHaveBeenCalledWith(1000, "session-1");
+    expect(ctx.signalWatches.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      expiresAt: null,
+      target: expect.objectContaining({
+        kind: "app",
+        appSessionId: "session-1",
+        appClientId: "client-1",
+      }),
+    }));
+  });
+
+  it("registers app watches for agent-run processes under the owner uid", () => {
+    const ctx = makeContext({
+      appFrame: {
+        packageId: "pkg-chat",
+        packageName: "chat",
+        entrypointName: "Chat",
+        routeBase: "/apps/chat",
+        uid: 1000,
+        username: "hank",
+        issuedAt: 1,
+        expiresAt: Date.now() + 60_000,
+      },
+      procs: {
+        get: vi.fn(() => ({ uid: 2000, ownerUid: 1000 })),
+        getOwnerUid: vi.fn(() => 1000),
+      },
+    });
+
+    handleSignalWatch({
+      signal: "proc.run.stream",
+      processId: "proc-personal-agent",
+      key: "chat:proc-personal-agent:proc.run.stream",
+      once: false,
+    }, ctx);
+
+    expect(ctx.signalWatches.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 1000,
+      processId: "proc-personal-agent",
+    }));
+  });
+
   it("registers process watches under the calling process owner uid", () => {
     const ctx = makeContext({
       processId: "proc-agent",

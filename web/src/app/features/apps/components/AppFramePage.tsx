@@ -1,0 +1,228 @@
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { Button } from "../../../components/ui/Button";
+import { ConsoleHeader } from "../../../components/ui/ConsoleHeader";
+import { Icon } from "../../../components/ui/Icon";
+import { Spinner } from "../../../components/ui/Spinner";
+import { useGateway } from "../../../services/gateway/GatewayProvider";
+import type { DesktopApp } from "../../desktop/domain/desktopApp";
+import { createAppRuntime } from "../../desktop/runtime/appsRuntime";
+import type { AppInstance } from "../../desktop/runtime/appRuntime";
+import { usePackageApps } from "../../packages/usePackageApps";
+import type { ShellAppRoute } from "../../gsv-shell/domain/shellModel";
+import { normalizeShellAppRoute } from "../../gsv-shell/domain/shellModel";
+import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
+import "./AppFramePage.css";
+
+type AppFramePageProps = {
+  appRoute: ShellAppRoute;
+  onBackToDesktop: () => void;
+  onClose?: () => void;
+  onOpenAppRoute: (route: ShellAppRoute, title?: string) => string;
+};
+
+function normalizedRouteBase(app: DesktopApp): string {
+  const url = new URL(app.routeBase, window.location.origin);
+  return url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname;
+}
+
+function runtimeRouteForAppRoute(app: DesktopApp, appRoute: ShellAppRoute): string {
+  const route = normalizeShellAppRoute(appRoute);
+  const base = normalizedRouteBase(app);
+  const suffix = route.suffix === "/" ? "/" : route.suffix;
+  return `${base}${suffix}${route.search}${route.hash}`;
+}
+
+function appRouteFromRuntimeRoute(app: DesktopApp, route: string): ShellAppRoute {
+  const url = new URL(route || app.routeBase, window.location.origin);
+  const base = normalizedRouteBase(app);
+  const suffix = url.pathname === base || url.pathname === `${base}/`
+    ? "/"
+    : url.pathname.startsWith(`${base}/`)
+      ? `/${url.pathname.slice(base.length + 1)}`
+      : "/";
+
+  return normalizeShellAppRoute({
+    appId: app.id,
+    suffix,
+    search: url.search,
+    hash: url.hash,
+  });
+}
+
+function createAppWindowId(): string {
+  const randomId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `native-app-${randomId}`;
+}
+
+function AppFrameEmpty({
+  actionLabel,
+  message,
+  onAction,
+  title,
+}: {
+  actionLabel?: string;
+  message: string;
+  onAction?: () => void;
+  title: string;
+}) {
+  return (
+    <div class="gsv-app-frame-empty">
+      <span class="gsv-app-frame-empty-icon">
+        <Icon name="stars" size={26} />
+      </span>
+      <div>
+        <h2>{title}</h2>
+        <p>{message}</p>
+      </div>
+      {actionLabel && onAction ? <Button variant="secondary" label={actionLabel} onClick={onAction} /> : null}
+    </div>
+  );
+}
+
+export function AppFramePage({
+  appRoute,
+  onBackToDesktop,
+  onClose,
+  onOpenAppRoute,
+}: AppFramePageProps) {
+  const { client: gatewayClient, connected } = useGateway();
+  const packageApps = usePackageApps({ gatewayClient, enabled: connected });
+  const hostRef = useRef<HTMLDivElement>(null);
+  const onOpenAppRouteRef = useRef(onOpenAppRoute);
+  const windowId = useMemo(createAppWindowId, []);
+  const [title, setTitle] = useState<string | null>(null);
+  const [badge, setBadge] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  useUnsavedGuard(() => dirty);
+  // Read inside the mount effect's stable closure: a dirty app frame that opens
+  // a new app route is replaced (tabless shell), so route that through the guard.
+  const requestLeave = useUnsavedGuardLeave();
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  const requestLeaveRef = useRef(requestLeave);
+  requestLeaveRef.current = requestLeave;
+  const app = useMemo(
+    () => packageApps.data?.find((candidate) => candidate.id === appRoute.appId) ?? null,
+    [appRoute.appId, packageApps.data],
+  );
+  const runtimeRoute = useMemo(
+    () => app ? runtimeRouteForAppRoute(app, appRoute) : null,
+    [app, appRoute],
+  );
+  const displayTitle = title?.trim() || app?.name || appRoute.appId;
+
+  useEffect(() => {
+    onOpenAppRouteRef.current = onOpenAppRoute;
+  }, [onOpenAppRoute]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || !app || !runtimeRoute) {
+      return;
+    }
+
+    const registry = createAppRuntime(gatewayClient);
+    const instance: AppInstance = registry.createInstance(app);
+    host.replaceChildren();
+
+    void instance.mount(host, {
+      app,
+      route: runtimeRoute,
+      windowId,
+      requestFocus: () => host.focus(),
+      setTitle,
+      setBadge,
+      setDirty,
+      requestNewWindow: (route) => {
+        const open = () => onOpenAppRouteRef.current(
+          appRouteFromRuntimeRoute(app, route ?? runtimeRoute),
+          app.name,
+        );
+        // Clean frame: open synchronously and return the new window id as
+        // before. Dirty frame: confirm first; the window isn't created until
+        // the user accepts, so report no window (null) per the host contract —
+        // an empty string would read as a successful id past the bridge's
+        // `?? null` fallback.
+        if (!dirtyRef.current) {
+          return open();
+        }
+        requestLeaveRef.current(open);
+        return null;
+      },
+    });
+
+    return () => {
+      void instance.terminate?.();
+      host.replaceChildren();
+    };
+  }, [app, gatewayClient, runtimeRoute, windowId]);
+
+  return (
+    <section class="gsv-app-frame-page" aria-label={`${displayTitle} app`}>
+      <ConsoleHeader
+        crumbs={[
+          { label: "GSV", onClick: onBackToDesktop, notLast: true },
+          { label: "APPLICATIONS", notLast: true },
+          { label: displayTitle },
+        ]}
+        tail="GSV · APP"
+        onBack={onBackToDesktop}
+        onClose={onClose}
+      />
+      <div class="gsv-app-frame-toolbar">
+        <div class="gsv-app-frame-identity">
+          <span class="gsv-app-frame-icon">
+            <Icon name="stars" size={18} />
+          </span>
+          <div>
+            <strong>{displayTitle}</strong>
+            <span>
+              {app?.launch.kind === "package" ? app.launch.packageName : appRoute.appId}
+              {badge ? ` · ${badge}` : ""}
+              {dirty ? " · UNSAVED" : ""}
+            </span>
+          </div>
+        </div>
+        <span class="gsv-app-frame-route">{runtimeRoute ?? "/open"}</span>
+      </div>
+      <div class="gsv-app-frame-host-shell">
+        {!connected ? (
+          <AppFrameEmpty
+            title="GATEWAY OFFLINE"
+            message="Package entrypoints are unavailable until the shell reconnects."
+            actionLabel="BACK TO DESKTOP"
+            onAction={onBackToDesktop}
+          />
+        ) : packageApps.isLoading ? (
+          <AppFrameEmpty
+            title="LOADING APP"
+            message="Package entrypoints are being loaded from the gateway."
+          />
+        ) : packageApps.isError ? (
+          <AppFrameEmpty
+            title="APP LIST UNAVAILABLE"
+            message="The package app registry could not be loaded."
+            actionLabel="BACK TO DESKTOP"
+            onAction={onBackToDesktop}
+          />
+        ) : app ? (
+          <div class="gsv-app-frame-host" ref={hostRef} tabIndex={-1} />
+        ) : (
+          <AppFrameEmpty
+            title="APP NOT FOUND"
+            message="This route does not match a launchable web UI package."
+            actionLabel="BACK TO DESKTOP"
+            onAction={onBackToDesktop}
+          />
+        )}
+        {app && !runtimeRoute ? (
+          <div class="gsv-app-frame-loading">
+            <Spinner size={22} />
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}

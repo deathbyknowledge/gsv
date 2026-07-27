@@ -191,8 +191,8 @@ export class AuthStore {
 
   nextUid(): number {
     // Allocate above both uids and group gids: User Private Groups use gid = uid,
-    // and standalone groups take ids from the same space, so a fresh id must
-    // clear both tables to avoid later reuse.
+    // and standalone groups (e.g. package-agent access groups) take ids from the
+    // same space, so a fresh id must clear both tables to avoid later reuse.
     const max = this.maxAllocatedId();
     return max < 1000 ? 1000 : max + 1;
   }

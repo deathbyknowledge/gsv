@@ -11,11 +11,12 @@ import {
   type ShellSettingsRoute,
   type ShellSurfaceId,
 } from "../../gsv-shell/domain/shellModel";
-import type { ConsoleListKind, ConsoleListSelection } from "../domain/consoleListTypes";
+import type { ConsoleListKind, ConsoleListSelection, PackageListKind } from "../domain/consoleListTypes";
 import { IntegrationsPage } from "../integrations/IntegrationsPage";
 import { LibraryPage } from "../library/LibraryPage";
 import { MachinesPage } from "../machines/MachinesPage";
 import { MessengersPage } from "../messengers/MessengersPage";
+import { PackageListPage } from "../packages/PackageListPage";
 import { ConsoleAgentPage } from "../pages/ConsoleAgentPage";
 import { ConsoleConfigPage, type ConsoleConfigDetail } from "../pages/ConsoleConfigPage";
 import { ConsoleCrewPage } from "../pages/ConsoleCrewPage";
@@ -26,12 +27,13 @@ import { CardListTemplateMockPage } from "../card-template/CardListTemplateMockP
 import { ConnectFlowsMockPage } from "../connect-flows/ConnectFlowsMockPage";
 
 type GsvConsoleProps = {
-  activeSurface: Exclude<ShellSurfaceId, "desktop">;
+  activeSurface: Exclude<ShellSurfaceId, "desktop" | "app">;
   onBackToDesktop: () => void;
   onClose?: () => void;
   libraryRoute?: ShellLibraryRoute;
   onLibraryRouteChange?: (route: ShellLibraryRoute) => void;
-  onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop">) => void;
+  onOpenApp?: (appId: string, title?: string) => void;
+  onOpenSurface?: (surface: Exclude<ShellSurfaceId, "desktop" | "app">) => void;
   onOpenSectionCreate?: (kind: DesktopObjectId) => void;
   onOpenChat?: () => void;
   /** Start a fresh task (Tasks list NEW TASK) — opens the dock AND spawns a new
@@ -42,8 +44,12 @@ type GsvConsoleProps = {
 };
 
 type SettingsRoute = ShellSettingsRoute;
-type SettingsListSurface = "machines" | "messengers" | "integrations" | "library" | "runtime";
+type SettingsListSurface = "machines" | "messengers" | "integrations" | "applications" | "library" | "runtime";
 export type SettingsRouteTarget = "overview" | "crew" | "tasks" | "models" | "overrides";
+
+function isPackageSettingsKind(kind: ConsoleListKind): kind is PackageListKind {
+  return kind === "applications";
+}
 
 function surfaceTail(surface: ShellSurfaceId): string {
   if (surface === "files") {
@@ -70,6 +76,9 @@ function surfaceTail(surface: ShellSurfaceId): string {
   if (surface === "integrations") {
     return "GSV · INTEGRATIONS";
   }
+  if (surface === "applications") {
+    return "GSV · APPLICATIONS";
+  }
   if (surface === "crew" || surface === "agent") {
     return "GSV · CREW";
   }
@@ -82,10 +91,11 @@ function surfaceTail(surface: ShellSurfaceId): string {
   return "GSV · CONTROL";
 }
 
-function isSettingsListSurface(surface: Exclude<ShellSurfaceId, "desktop">): surface is SettingsListSurface {
+function isSettingsListSurface(surface: Exclude<ShellSurfaceId, "desktop" | "app">): surface is SettingsListSurface {
   return surface === "machines"
     || surface === "messengers"
     || surface === "integrations"
+    || surface === "applications"
     || surface === "library"
     || surface === "runtime";
 }
@@ -113,6 +123,7 @@ function settingsRouteLabel(route: SettingsRoute): string {
   if (route.createNew) {
     if (route.kind === "machines") return "NEW MACHINE";
     if (route.kind === "integrations") return "NEW INTEGRATION";
+    if (route.kind === "applications") return "NEW APPLICATION";
   }
   if (route.detailLabel) {
     return route.detailLabel;
@@ -128,6 +139,7 @@ function settingsListDetailLabel(route: Extract<SettingsRoute, { view: "list" }>
   if (route.createNew) {
     if (route.kind === "machines") return "NEW MACHINE";
     if (route.kind === "integrations") return "NEW INTEGRATION";
+    if (route.kind === "applications") return "NEW APPLICATION";
     if (route.kind === "messengers") return "NEW MESSENGER";
     if (route.kind === "library") return "NEW PAGE";
     return "NEW TASK";
@@ -177,6 +189,7 @@ export function GsvConsole({
   onBackToDesktop,
   onClose,
   onLibraryRouteChange,
+  onOpenApp,
   onOpenSurface,
   onOpenSectionCreate,
   onOpenChat,
@@ -187,7 +200,7 @@ export function GsvConsole({
   const [selectedAgentUid, setSelectedAgentUid] = useState<number | null>(null);
   const [agentCreateNew, setAgentCreateNew] = useState(false);
   // Track the open detail of the active top-level list surface (machines /
-  // messengers / integrations / runtime). Settings surfaces drive
+  // messengers / integrations / applications / runtime). Settings surfaces drive
   // their own breadcrumb via the settings route; these don't, so without this a
   // detail opened from a top-level surface leaves no breadcrumb path back to the
   // list and the header back jumps all the way to the desktop.
@@ -289,6 +302,9 @@ export function GsvConsole({
           onRouteChange={onLibraryRouteChange}
         />
       );
+    }
+    if (isPackageSettingsKind(kind)) {
+      return <PackageListPage {...options} kind={kind} onOpenApp={onOpenApp} />;
     }
     return null;
   };
@@ -491,6 +507,8 @@ export function GsvConsole({
           <MessengersPage key={surfaceDetailSeq} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "integrations" ? (
           <IntegrationsPage key={surfaceDetailSeq} onSelectionChange={setSurfaceDetail} />
+        ) : activeSurface === "applications" ? (
+          <PackageListPage key={surfaceDetailSeq} kind="applications" onOpenApp={onOpenApp} onSelectionChange={setSurfaceDetail} />
         ) : activeSurface === "library" ? (
           <LibraryPage
             route={libraryRoute}

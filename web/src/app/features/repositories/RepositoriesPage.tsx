@@ -150,6 +150,7 @@ function deleteDisabledReason({
   if (!connected) return "Gateway offline";
   if (!repo) return "Select a repository";
   if (!repo.writable) return "Repository is read-only";
+  if (repo.sources.length > 0) return "Remove packages using this repository first";
   return "";
 }
 
@@ -1477,7 +1478,7 @@ export function RepositoriesPage() {
                   <ConfirmModal
                     title="CONFIRM DELETE"
                     message={`Delete repository "${confirmDeleteRepo.repo}"?`}
-                    note="The ripgit repository and stored content are removed."
+                    note="The ripgit repository and stored content are removed. Installed package-backed repositories must be detached first."
                     confirmLabel="DELETE REPOSITORY"
                     confirmPhrase={confirmDeleteRepo.repo}
                     confirmInputPlaceholder={confirmDeleteRepo.repo}

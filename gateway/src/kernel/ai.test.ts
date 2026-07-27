@@ -158,9 +158,6 @@ function makeContext(
         },
       }]),
     },
-    env: {
-      LOADER: {} as WorkerLoader,
-    },
   } as unknown as KernelContext;
 }
 
@@ -223,22 +220,6 @@ describe("handleAiTools", () => {
     expect(codeModeTool?.description).toContain("inputSchema/outputSchema");
     expect(codeModeTool?.description).not.toContain("declare function lookup");
     expect(ctx.mcp.listTools).not.toHaveBeenCalled();
-  });
-
-  it("does not advertise CodeMode without a Worker Loader binding", async () => {
-    const ctx = makeContext("ready");
-    delete ctx.env.LOADER;
-
-    const result = await handleAiTools(ctx);
-
-    expect(result.tools.map((tool) => tool.name)).toEqual([
-      "Read",
-      "Write",
-      "Edit",
-      "Delete",
-      "Search",
-      "Shell",
-    ]);
   });
 
   it("advertises owner-owned MCP tools for service-account agent processes", async () => {

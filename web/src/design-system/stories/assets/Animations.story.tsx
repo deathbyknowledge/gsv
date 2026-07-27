@@ -1,8 +1,10 @@
 import type { JSX } from "preact";
+import { useEffect, useRef } from "preact/hooks";
 import type { Story } from "../../story";
 import { AsciiPlanet } from "../../../app/components/ui/AsciiPlanet";
 import { AsciiGalaxyScan } from "../../../app/components/ui/AsciiGalaxyScan";
 import { AuthBackground } from "../../../app/features/session/backgrounds/AuthBackground";
+import { createAppLaunchLoader } from "../../../app/features/desktop/runtime/appLoading";
 import { TemplateEmptyState } from "../../../app/features/gsv-console/list-template/TemplateEmptyState";
 import "../../assets.css";
 
@@ -11,10 +13,38 @@ import "../../assets.css";
  * cells. Usage audit (manual grep, 2026-07-13): every piece here has live app
  * usage, so no UNUSED badges apply.
  *  - AsciiPlanet          → TemplateEmptyState, ConsoleOverviewPanels
- *  - AsciiGalaxyScan      → AuthBackground
+ *  - AsciiGalaxyScan      → AuthBackground, app-launch loader
  *  - AuthBackground       → AuthLayout (stars variant = GlyphStars alone)
+ *  - createAppLaunchLoader→ appsRuntime (desktop app boot overlay)
  *  - TemplateEmptyState   → ListTemplate, CardListTemplate
  */
+
+/** Live mount of the imperative app-launch loader (appLoading.ts exports a
+ *  DOM factory, not a component). Its overlay chrome lives in the app-global
+ *  styles.css, so the catalog carries a scoped copy under .as-applaunch. */
+function AppLaunchLoaderCell() {
+  const hostRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) {
+      return;
+    }
+    const loader = createAppLaunchLoader({
+      appName: "Weather",
+      route: "/apps/weather",
+      seed: "ds-assets",
+    });
+    loader.setPhase("runtime", "Loading app");
+    host.append(loader.element);
+    return () => {
+      loader.destroy();
+      loader.element.remove();
+    };
+  }, []);
+
+  return <div ref={hostRef} class="as-anim-cell as-applaunch" style={{ height: "320px" }} />;
+}
 
 const AUTH_GALAXY_CELL_STYLE = {
   position: "relative",
@@ -27,7 +57,7 @@ const AUTH_GALAXY_CELL_STYLE = {
 const story: Story = {
   title: "Animations",
   group: "Assets",
-  blurb: "live ascii pieces · planets, galaxy scan, and authentication backdrops",
+  blurb: "live ascii pieces · planets, galaxy scan, auth + app-launch backdrops",
   render: () => (
     <div class="ds-col">
       <div class="as-section">
@@ -81,6 +111,13 @@ const story: Story = {
         <div class="as-anim-cell" style={{ position: "relative", height: "220px" }}>
           <AuthBackground variant="stars" />
         </div>
+      </div>
+
+      <div class="as-section">
+        <div class="ds-label" style={{ marginBottom: "14px" }}>
+          App-launch loader (appLoading.ts) · live galaxy scan forming "APP", held in the runtime phase
+        </div>
+        <AppLaunchLoaderCell />
       </div>
 
       <div class="as-section">

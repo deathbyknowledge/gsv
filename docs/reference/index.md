@@ -22,6 +22,10 @@ need the system model, go to [Architecture](../architecture/).
 - [Routing](./routing.md)
 - [Storage](./r2-storage.md)
 
+## Packages
+
+- [Package SDK](./package-sdk.md)
+
 ## Most useful next reads
 
 - [How-to Guides](../how-to/)

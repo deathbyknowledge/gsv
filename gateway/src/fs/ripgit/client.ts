@@ -107,6 +107,81 @@ export type RipgitLogEntry = {
   parents: string[];
 };
 
+export type RipgitPackageDiagnostic = {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  path: string;
+  line: number;
+  column: number;
+};
+
+export type RipgitPackageAnalyzeResponse = {
+  source: {
+    repo: string;
+    ref: string;
+    resolved_commit: string;
+    subdir: string;
+  };
+  package_root: string;
+  identity: {
+    package_json_name: string;
+    version?: string | null;
+    display_name: string;
+  };
+  package_json: {
+    name: string;
+    version?: string | null;
+    type?: string | null;
+    dependencies: Record<string, string>;
+    dev_dependencies: Record<string, string>;
+  };
+  definition?: {
+    meta: {
+      display_name: string;
+      description?: string | null;
+      icon?: string | null;
+      window?: {
+        width?: number | null;
+        height?: number | null;
+        min_width?: number | null;
+        min_height?: number | null;
+      } | null;
+      capabilities: {
+        kernel: string[];
+        outbound: string[];
+      };
+    };
+    commands: Array<{
+      name: string;
+      entry?: string | null;
+    }>;
+    browser?: {
+      entry: string;
+      assets: string[];
+    } | null;
+    backend?: {
+      entry: string;
+      public_routes: string[];
+    } | null;
+  } | null;
+  diagnostics: RipgitPackageDiagnostic[];
+  ok: boolean;
+  analysis_hash: string;
+};
+
+export type RipgitPackageSnapshotResponse = {
+  source: {
+    repo: string;
+    ref: string;
+    resolved_commit: string;
+    subdir: string;
+  };
+  package_root: string;
+  files: Record<string, string>;
+  binary_files?: Record<string, string>;
+};
+
 type RipgitApplyResponse = {
   ok: boolean;
   head?: string | null;
@@ -380,6 +455,32 @@ export class RipgitClient {
     return response.json<RipgitCompareResponse>();
   }
 
+  async analyzePackage(
+    repo: RipgitRepoRef,
+    subdir: string,
+  ): Promise<RipgitPackageAnalyzeResponse> {
+    const response = await this.binding.fetch(this.makePackagesAnalyzeUrl(repo, subdir), {
+      headers: this.makeInternalHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `analyze package '${repo.owner}/${repo.repo}:${subdir}'`));
+    }
+    return response.json<RipgitPackageAnalyzeResponse>();
+  }
+
+  async snapshotPackage(
+    repo: RipgitRepoRef,
+    subdir: string,
+  ): Promise<RipgitPackageSnapshotResponse> {
+    const response = await this.binding.fetch(this.makePackagesSnapshotUrl(repo, subdir), {
+      headers: this.makeInternalHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `snapshot package '${repo.owner}/${repo.repo}:${subdir}'`));
+    }
+    return response.json<RipgitPackageSnapshotResponse>();
+  }
+
   private makeReadUrl(repo: RipgitRepoRef, path: string): URL {
     return this.makeUrl(
       `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/read?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&path=${encodeURIComponent(path)}`,
@@ -461,6 +562,18 @@ export class RipgitClient {
       url.searchParams.set("stat", "1");
     }
     return url;
+  }
+
+  private makePackagesAnalyzeUrl(repo: RipgitRepoRef, subdir: string): URL {
+    return this.makeUrl(
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/packages/analyze?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&subdir=${encodeURIComponent(subdir)}`,
+    );
+  }
+
+  private makePackagesSnapshotUrl(repo: RipgitRepoRef, subdir: string): URL {
+    return this.makeUrl(
+      `/hyperspace/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/packages/snapshot?ref=${encodeURIComponent(repo.branch ?? DEFAULT_BRANCH)}&subdir=${encodeURIComponent(subdir)}`,
+    );
   }
 
   private makeUrl(suffix: string): URL {

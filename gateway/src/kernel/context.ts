@@ -21,12 +21,15 @@ import type { ConversationRegistry } from "./conversations";
 import type { AdapterStore } from "./adapter-store";
 import type { RunRouteStore } from "./run-routes";
 import type { ShellSessionStore } from "./shell-sessions";
+import type { PackageStore } from "./packages";
 import type { OAuthStore } from "./oauth-store";
 import type { McpServerStore } from "./mcp-store";
 import type { SignalWatchStore } from "./signal-watches";
 import type { NotificationStore } from "./notifications";
 import type { IpcCallStore } from "./ipc-calls";
 import type { ScheduleStore } from "./scheduler";
+import type { AppSessionStore } from "./app-sessions";
+import type { AppFrameContext } from "../protocol/app-frame";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
 
 export type KernelContext = {
@@ -37,12 +40,14 @@ export type KernelContext = {
   devices: DeviceRegistry;
   procs: ProcessRegistry;
   conversations: ConversationRegistry;
+  packages: PackageStore;
   oauth: OAuthStore;
   mcp: MCPClientManager;
   mcpServers: McpServerStore;
   adapters: AdapterStore;
   runRoutes: RunRouteStore;
   shellSessions: ShellSessionStore;
+  appSessions: AppSessionStore;
   signalWatches: SignalWatchStore;
   ipcCalls: IpcCallStore;
   notifications: NotificationStore;
@@ -53,8 +58,10 @@ export type KernelContext = {
   processRunId?: string;
   requestSignal?: AbortSignal;
   callerOwnerUid?: number;
+  appFrame?: AppFrameContext;
   serverVersion: string;
   broadcastToUserUid: (uid: number, signal: string, payload?: unknown) => void;
+  getAppRunner: (uid: number, packageId: string) => unknown;
   scheduleIpcCallTimeout: (callId: string, deadlineAt: number) => Promise<string>;
   failIpcCallsByTarget: (uid: number, targetPid: string, error: string) => void;
   scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;

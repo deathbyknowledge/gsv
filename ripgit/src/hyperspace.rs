@@ -1,4 +1,4 @@
-use crate::{api, diff, git, store, KEYFRAME_INTERVAL};
+use crate::{KEYFRAME_INTERVAL, api, diff, git, packages, store};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use worker::*;
 
@@ -135,6 +135,65 @@ pub async fn handle_compare(sql: &SqlStorage, req: &Request) -> Result<Response>
     };
     let spec = format!("{}...{}", base, head);
     diff::handle_compare(sql, &spec, &url)
+}
+
+pub async fn handle_packages_analyze(
+    sql: &SqlStorage,
+    req: &Request,
+    repo: &str,
+) -> Result<Response> {
+    let locator = match package_source_locator(req, repo) {
+        Ok(locator) => locator,
+        Err(err) => return package_error_response(err),
+    };
+    let analysis = match packages::analyze_package(sql, &locator) {
+        Ok(analysis) => analysis,
+        Err(err) => return package_error_response(err),
+    };
+    Response::from_json(&analysis)
+}
+
+pub async fn handle_packages_snapshot(
+    sql: &SqlStorage,
+    req: &Request,
+    repo: &str,
+) -> Result<Response> {
+    let locator = match package_source_locator(req, repo) {
+        Ok(locator) => locator,
+        Err(err) => return package_error_response(err),
+    };
+    let snapshot = match packages::snapshot_package(sql, &locator) {
+        Ok(snapshot) => snapshot,
+        Err(err) => return package_error_response(err),
+    };
+    Response::from_json(&snapshot)
+}
+
+fn package_error_response(err: Error) -> Result<Response> {
+    Response::error(format_worker_error(err), 400)
+}
+
+fn format_worker_error(err: Error) -> String {
+    match err {
+        Error::RustError(message) => message,
+        other => other.to_string(),
+    }
+}
+
+fn package_source_locator(req: &Request, repo: &str) -> Result<packages::PackageSourceLocator> {
+    let url = req.url()?;
+    let requested_ref = api::get_query(&url, "ref").unwrap_or_else(|| "main".to_string());
+    let Some(subdir) = api::get_query(&url, "subdir") else {
+        return Err(Error::RustError(
+            "missing 'subdir' query parameter".to_string(),
+        ));
+    };
+
+    Ok(packages::PackageSourceLocator {
+        repo: repo.to_string(),
+        requested_ref,
+        subdir,
+    })
 }
 
 pub async fn handle_apply(sql: &SqlStorage, req: &mut Request) -> Result<Response> {

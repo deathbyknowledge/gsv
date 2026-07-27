@@ -22,6 +22,7 @@ export function SystemDetails({
 }) {
   const showAdvanced = advancedSectionsVisible(draft);
   const showAiRows = showAdvanced && draft.ai.enabled;
+  const showSourceRows = showAdvanced && draft.source.enabled;
   const showNodeRows = showAdvanced && draft.device.enabled;
   const options = timezoneOptions.includes(draft.system.timezone)
     ? timezoneOptions
@@ -201,6 +202,59 @@ export function SystemDetails({
               onChange={(value) => updateDraft((current) => ({
                 ...current,
                 ai: { ...current.ai, apiKey: value },
+              }))}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="gsv-setup-preference-group" data-setup-source-section hidden={!showAdvanced}>
+        <div class="gsv-setup-section-head">
+          <h3>
+            System files
+            <InfoTip
+              position="right"
+              label="Explain system files"
+              text="System files are the built-in apps and settings GSV starts with. Advanced users can point this at a Git repository or remote URL; Version can be a branch, tag, or commit."
+            />
+          </h3>
+          <p class="gsv-prose-sm">Use the official system files, or choose a repository and version you control.</p>
+        </div>
+        <div class="system-details-fields">
+          <div data-setup-source-enabled>
+            <Toggle
+              label="Use custom system files"
+              on={draft.source.enabled}
+              disabled={!showAdvanced}
+              onChange={(checked) => updateDraft((current) => ({
+                ...current,
+                source: { ...current.source, enabled: checked },
+              }))}
+            />
+          </div>
+          <div data-setup-source-row hidden={!showSourceRows}>
+            <TextInput
+              label="System files location"
+              placeholder="deathbyknowledge/gsv"
+              disabled={!showSourceRows}
+              value={draft.source.value}
+              inputProps={{ "data-setup-bootstrap-source": true, autoComplete: "off" }}
+              onChange={(value) => updateDraft((current) => ({
+                ...current,
+                source: { ...current.source, value },
+              }))}
+            />
+          </div>
+          <div data-setup-source-ref-row hidden={!showSourceRows}>
+            <TextInput
+              label="Version"
+              placeholder="main"
+              disabled={!showSourceRows}
+              value={draft.source.ref}
+              inputProps={{ "data-setup-bootstrap-ref": true, autoComplete: "off" }}
+              onChange={(value) => updateDraft((current) => ({
+                ...current,
+                source: { ...current.source, ref: value },
               }))}
             />
           </div>

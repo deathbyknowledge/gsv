@@ -7170,6 +7170,15 @@ function parseInteractionOriginRecord(value: unknown): InteractionOrigin | undef
     };
   }
 
+  if (kind === "app") {
+    const packageId = normalizeOptionalString(record.packageId);
+    const packageName = normalizeOptionalString(record.packageName);
+    const entrypointName = normalizeOptionalString(record.entrypointName);
+    const routeBase = normalizeOptionalString(record.routeBase);
+    if (!packageId || !packageName || !entrypointName || !routeBase) return undefined;
+    return { kind, packageId, packageName, entrypointName, routeBase };
+  }
+
   if (kind === "adapter") {
     const adapter = normalizeOptionalString(record.adapter);
     const accountId = normalizeOptionalString(record.accountId);
@@ -7290,6 +7299,12 @@ function formatReplyDestinationForContext(
       description: "automatic to this GSV client",
     };
   }
+  if (origin.kind === "app") {
+    return {
+      key: JSON.stringify(["app", origin.packageId, origin.entrypointName, origin.routeBase]),
+      description: "automatic to this GSV app",
+    };
+  }
   if (origin.kind === "process") {
     return {
       key: `process:${origin.sourcePid}`,
@@ -7332,6 +7347,13 @@ function prefixUserMessageContent(message: UserMessage, prefix: string): UserMes
 
 function formatInteractionOriginForContext(origin: InteractionOrigin | undefined): string | null {
   if (!origin) return null;
+
+  if (origin.kind === "app") {
+    if (origin.packageId === "chat" || origin.routeBase === "/apps/chat") {
+      return null;
+    }
+    return `${origin.packageName} app (${origin.entrypointName})`;
+  }
 
   if (origin.kind === "adapter") {
     const adapter = titleCase(origin.adapter);

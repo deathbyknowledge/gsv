@@ -109,14 +109,14 @@ Default policies:
 
 | Profiles | Default | Rules |
 |---|---|---|
-| Interactive processes | `auto` | Ask for `shell.exec`, `fs.delete`, and `sys.mcp.call`. |
+| `init`, `task`, `review`, `app`, `mcp` | `auto` | Ask for `shell.exec`, `fs.delete`, and `sys.mcp.call`. |
 | `cron` | `auto` | Deny `fs.delete` and `sys.mcp.call`; allow `shell.exec`. |
 
 ## Runtime Config Keys
 
 | Key | Default | Description |
 |---|---|---|
-| `config/server/name` | `gsv` | Server name used by hostname-style tools and client metadata. |
+| `config/server/name` | `gsv` | Server name used by hostname-style tools and package metadata. |
 | `config/server/timezone` | `UTC` | Runtime timezone value. |
 | `config/server/version` | current `VERSION` | Semantic server version exposed to runtime tools. |
 | `config/shell/timeout_ms` | `30000` | Default native shell timeout. |
@@ -129,6 +129,15 @@ The protocol's `server.version` is this semantic product version. `server.releas
 identifies the deployed build: stable release bundles use their exact `vX.Y.Z` tag,
 while local and dev builds report `dev`. The release identifier is build metadata,
 not a writable configuration key.
+
+## Package Config
+
+Package-related config is also stored in the same key/value store:
+
+| Key Pattern | Description |
+|---|---|
+| `users/{uid}/pkg/remotes/{name}` | User package catalog remotes managed by `pkg.remote.*`. |
+| `config/pkg/public-repos/{owner}/{repo}` | Public package repo allowlist managed by `pkg.public.*`. |
 
 ## Practical Notes
 

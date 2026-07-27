@@ -10,8 +10,8 @@ humans to reason about.
 ## Design Intent
 
 GSV processes should be durable agent instances, not single chat sessions. A
-process may have an owner, a workspace, mounted context, tools,
-and process-local state. Multiple users, clients, adapters, schedules, or other
+process may have an owner, a workspace, mounted context, package source, tools,
+and process-local state. Multiple users, apps, adapters, schedules, or other
 processes may need to interact with that same process over time.
 
 The model should therefore distinguish:
@@ -22,7 +22,7 @@ The model should therefore distinguish:
 - A process signal: control-plane operation such as abort, kill, reset, pause,
   resume, or reload.
 - A transport frame: the envelope used to move requests, responses, and async
-  push messages across WebSocket, service binding, or process
+  push messages across WebSocket, service binding, app bridge, or process
   boundaries.
 - A scheduler: Kernel-owned cron/timer service that dispatches typed work under
   an explicit principal.
@@ -121,6 +121,7 @@ type ProcessEvent = {
     | "process.message"
     | "process.call"
     | "schedule.tick"
+    | "package.event"
     | "hil.reply";
   payload: unknown;
   traceId?: string;
@@ -332,7 +333,7 @@ not accidentally reload old bulk history.
 A process owner is not enough to define conversation authority.
 
 A process has maximum capabilities. A conversation narrows what a participant
-can see and do. This prevents guest users, adapters, or other
+can see and do. This prevents guest users, packages, adapters, or other
 processes from implicitly gaining access to the owner's private context or tool
 surface.
 
@@ -438,8 +439,8 @@ The current implementation supports:
 - `process.event`
 - `adapter.send`
 
-Process lifecycle targets, advanced retry behavior, and cross-user run-as rules
-remain future work.
+Package events, process lifecycle targets, advanced retry behavior, and
+cross-user run-as rules remain future work.
 
 ### Chat delivery contracts
 
@@ -575,16 +576,17 @@ Implemented:
 Still pending:
 
 - `process.lifecycle` schedule targets.
+- package-owned Kernel schedules and package event targets.
 
 ### 8. Add filesystem views
 
 Implemented process conversation and scheduler state as Linux-like virtual
 paths backed by the owning Process and Kernel state.
 
-### 9. Add cross-user access
+### 9. Add packages and cross-user access
 
-Add process ACLs and cross-user conversation policies once the same-owner model
-is proven.
+Add package-owned schedules, package event targets, process ACLs, and cross-user
+conversation policies once the same-owner model is proven.
 
 ## Non-Goals For The First Pass
 
@@ -593,6 +595,7 @@ is proven.
 - arbitrary cross-user IPC
 - arbitrary parallel process execution
 - advanced cron syntax without a reliable parser
+- package-owned timers before process targets work
 - replacing `signal.watch` in the same change
 
 ## See also

@@ -10,6 +10,7 @@ import type {
   RepositoryReadResult,
   RepositoryRefs,
   RepositorySearchResult,
+  RepositorySourceSummary,
   RepositorySummary,
   RepositoryTreeEntry,
   RepositoryVisibilityResult,
@@ -180,13 +181,27 @@ function normalizeRepositorySummary(entry: Record<string, unknown>): RepositoryS
     public: entry.public === true,
     ref: asString(entry.ref) || undefined,
     baseRef: asString(entry.baseRef) || undefined,
+    sources: asArray<Record<string, unknown>>(entry.sources).map(normalizeSourceSummary),
     description: asString(entry.description) || undefined,
     updatedAt: asOptionalNumber(entry.updatedAt),
   };
 }
 
+function normalizeSourceSummary(entry: Record<string, unknown>): RepositorySourceSummary {
+  const kind = asString(entry.kind);
+  return {
+    kind: kind === "package" ? "package" : "unknown",
+    subdir: asString(entry.subdir) || ".",
+    ref: asString(entry.ref) || undefined,
+    baseRef: asString(entry.baseRef) || undefined,
+    packageId: asString(entry.packageId) || undefined,
+    name: asString(entry.name) || undefined,
+    updatedAt: asOptionalNumber(entry.updatedAt),
+  };
+}
+
 function normalizeRepositoryKind(value: string): RepositoryKind {
-  if (value === "home" || value === "user" || value === "workspace") {
+  if (value === "home" || value === "package" || value === "user" || value === "workspace") {
     return value;
   }
   return "unknown";

@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
+import type { InstalledPackageRecord } from "../packages";
 
-const { handleSysBootstrapMock, seedBuiltinSkillsToHomeMock } = vi.hoisted(() => ({
+const { handleSysBootstrapMock, seedRepoSkillsToHomeMock } = vi.hoisted(() => ({
   handleSysBootstrapMock: vi.fn(),
-  seedBuiltinSkillsToHomeMock: vi.fn(),
+  seedRepoSkillsToHomeMock: vi.fn(),
 }));
 
 vi.mock("./bootstrap", () => ({
@@ -11,12 +12,12 @@ vi.mock("./bootstrap", () => ({
 }));
 
 vi.mock("./skills-seed", () => ({
-  seedBuiltinSkillsToHome: seedBuiltinSkillsToHomeMock,
+  seedRepoSkillsToHome: seedRepoSkillsToHomeMock,
 }));
 
 import { handleSysSetup } from "./setup";
 
-function createCtx(overrides?: { setupMode?: boolean; ripgit?: Fetcher }) {
+function createCtx(overrides?: { setupMode?: boolean; packages?: InstalledPackageRecord[]; ripgit?: Fetcher }) {
   type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
   type GroupRow = { name: string; gid: number; members: string[] };
 
@@ -136,6 +137,9 @@ function createCtx(overrides?: { setupMode?: boolean; ripgit?: Fetcher }) {
       STORAGE: storage,
       ...(overrides?.ripgit ? { RIPGIT: overrides.ripgit } : {}),
     } as unknown as KernelContext["env"],
+    packages: {
+      list: vi.fn(() => overrides?.packages ?? []),
+    } as unknown as KernelContext["packages"],
     serverVersion: "0.0.1-test",
   } as KernelContext;
 
@@ -146,13 +150,20 @@ describe("handleSysSetup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     handleSysBootstrapMock.mockResolvedValue({
-      repo: "root/gsv-manual",
-      remoteUrl: "https://github.com/deathbyknowledge/gsv-manual",
+      repo: "root/gsv",
+      remoteUrl: "https://github.com/deathbyknowledge/gsv",
       ref: "main",
-      head: "manual123",
+      head: "abc123",
       changed: true,
+      manual: {
+        repo: "root/gsv-manual",
+        remoteUrl: "https://github.com/deathbyknowledge/gsv-manual",
+        ref: "main",
+        head: "manual123",
+        changed: true,
+      },
     });
-    seedBuiltinSkillsToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
+    seedRepoSkillsToHomeMock.mockResolvedValue({ username: "root", copied: 0, skipped: 0 });
   });
 
   it("creates first user, ai config, and node token", async () => {
@@ -222,6 +233,39 @@ describe("handleSysSetup", () => {
     expect(auth.setPersonalAgent).toHaveBeenCalledWith(1000, 1001);
   });
 
+  it("grants the first user access to enabled package profile agents", async () => {
+    const packageRecord = {
+      packageId: "import:root/wiki:.",
+      scope: { kind: "global" },
+      enabled: true,
+      manifest: {
+        name: "wiki",
+        profiles: [{
+          name: "builder",
+          displayName: "Wiki Builder",
+          contextFiles: [],
+          capabilities: ["fs.read"],
+        }],
+      },
+    } as InstalledPackageRecord;
+    const { ctx, passwd, groups } = createCtx({ packages: [packageRecord] });
+
+    await handleSysSetup(
+      {
+        username: "alice",
+        password: "password-123",
+        agentName: "mira",
+      },
+      ctx,
+    );
+
+    expect(passwd.find((entry) => entry.username === "wiki-builder")).toEqual(
+      expect.objectContaining({ uid: 1002, gid: 1002 }),
+    );
+    expect(new Set(passwd.map((entry) => entry.uid)).size).toBe(passwd.length);
+    expect(groups.find((group) => group.name === "wiki-builder-run")?.members).toEqual(["alice"]);
+  });
+
   it("seeds shipped skills into root home after first setup bootstrap", async () => {
     const ripgit = {
       fetch: vi.fn(async (input: RequestInfo | URL) => {
@@ -234,7 +278,7 @@ describe("handleSysSetup", () => {
         return new Response("missing", { status: 404 });
       }),
     } as Fetcher;
-    const { ctx } = createCtx({ ripgit });
+    const { ctx } = createCtx({ ripgit, packages: [] });
 
     await handleSysSetup(
       {
@@ -252,8 +296,9 @@ describe("handleSysSetup", () => {
         }),
       }),
     );
-    expect(seedBuiltinSkillsToHomeMock).toHaveBeenCalledWith(
+    expect(seedRepoSkillsToHomeMock).toHaveBeenCalledWith(
       expect.any(Object),
+      { owner: "root", repo: "gsv", branch: "abc123" },
       expect.objectContaining({ username: "root", home: "/root" }),
     );
   });

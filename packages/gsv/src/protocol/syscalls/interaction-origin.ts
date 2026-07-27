@@ -7,6 +7,14 @@ export type ClientInteractionOrigin = {
   platform?: string;
 };
 
+export type AppInteractionOrigin = {
+  kind: "app";
+  packageId: string;
+  packageName: string;
+  entrypointName: string;
+  routeBase: string;
+};
+
 export type AdapterInteractionOrigin = {
   kind: "adapter";
   adapter: string;
@@ -53,6 +61,7 @@ export type SchedulerInteractionOrigin = {
 
 export type InteractionOrigin =
   | ClientInteractionOrigin
+  | AppInteractionOrigin
   | AdapterInteractionOrigin
   | DeviceInteractionOrigin
   | ProcessInteractionOrigin

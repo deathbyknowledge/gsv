@@ -18,6 +18,7 @@ export function chooseInitialRepository(repos: readonly RepositorySummary[]): st
 
 export function repoKindLabel(kind: RepositoryKind, rawKind = ""): string {
   if (kind === "home") return "HOME";
+  if (kind === "package") return "PACKAGE";
   if (kind === "workspace") return "WORKSPACE";
   if (kind === "user") return "USER";
   return rawKind ? rawKind.toUpperCase() : "REPO";
@@ -25,6 +26,7 @@ export function repoKindLabel(kind: RepositoryKind, rawKind = ""): string {
 
 export function repoKindTone(kind: RepositoryKind): TagTone {
   if (kind === "home") return "online";
+  if (kind === "package") return "accent";
   if (kind === "workspace") return "info";
   if (kind === "user") return "idle";
   return "idle";
@@ -37,6 +39,15 @@ export function formatRepositoryOption(repo: RepositorySummary): string {
 export function repositoryDescription(repo: RepositorySummary): string {
   if (repo.description?.trim()) {
     return repo.description.trim();
+  }
+  if (repo.sources.length > 1) {
+    const names = repo.sources.slice(0, 3).map((source) => source.name || source.packageId || source.subdir).join(", ");
+    const more = repo.sources.length > 3 ? `, +${repo.sources.length - 3}` : "";
+    return `Package source for ${names}${more}`;
+  }
+  const source = repo.sources[0];
+  if (source) {
+    return `Package source${source.name ? ` for ${source.name}` : ""}${source.subdir && source.subdir !== "." ? ` in ${source.subdir}` : ""}`;
   }
   return `${repo.public ? "Public" : "Private"} ripgit repository`;
 }

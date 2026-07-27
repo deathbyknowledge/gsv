@@ -847,20 +847,20 @@ describe("proc handlers", () => {
 
     const result = await handleProcSpawn({
       label: "Review Demo Tool",
-      prompt: "Review this project.",
-      cwd: "/src/repos/sam/demo-a/tools/demo-tool",
+      prompt: "Review this package.",
+      cwd: "/src/repos/sam/demo-a/packages/demo-tool",
     }, ctx);
 
     expect(result).toMatchObject({
       ok: true,
-      cwd: "/src/repos/sam/demo-a/tools/demo-tool",
+      cwd: "/src/repos/sam/demo-a/packages/demo-tool",
     });
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
         uid: personalAgent.uid,
         username: personalAgent.username,
-        cwd: "/src/repos/sam/demo-a/tools/demo-tool",
+        cwd: "/src/repos/sam/demo-a/packages/demo-tool",
       }),
       expect.objectContaining({
         ownerUid: IDENTITY.uid,
@@ -872,7 +872,7 @@ describe("proc handlers", () => {
     }));
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       call: "proc.send",
-      args: expect.objectContaining({ message: "Review this project." }),
+      args: expect.objectContaining({ message: "Review this package." }),
     }));
   });
 
@@ -904,6 +904,10 @@ describe("proc handlers", () => {
         spawn: vi.fn(),
       },
       conversations: spawnConversationsMock(),
+      packages: {
+        resolve: vi.fn(() => null),
+        list: vi.fn(() => []),
+      },
     } as unknown as KernelContext;
 
     const result = await handleProcSpawn({
@@ -1034,6 +1038,10 @@ describe("proc handlers", () => {
         spawn: vi.fn(),
       },
       conversations: spawnConversationsMock(),
+      packages: {
+        resolve: vi.fn(() => null),
+        list: vi.fn(() => []),
+      },
     } as unknown as KernelContext;
 
     const result = await handleProcSpawn({ parentPid: `init:${IDENTITY.uid}` }, ctx);
@@ -1047,7 +1055,7 @@ describe("proc handlers", () => {
   });
 
   it("rejects inheriting run-as identity from an explicit unrelated parent", async () => {
-    const delegatedAgent = {
+    const packageAgent = {
       ...IDENTITY,
       uid: 3000,
       gid: 3000,
@@ -1066,25 +1074,25 @@ describe("proc handlers", () => {
       cwd: "/home/sam-agent",
     };
     const ctx = {
-      processId: "proc:delegated-agent",
+      processId: "proc:package-agent",
       callerOwnerUid: IDENTITY.uid,
       env: {},
       identity: {
-        process: delegatedAgent,
+        process: packageAgent,
         capabilities: ["proc.spawn"],
       },
       procs: {
         get: vi.fn((pid: string) => {
-          if (pid === "proc:delegated-agent") {
+          if (pid === "proc:package-agent") {
             return {
               processId: pid,
-              uid: delegatedAgent.uid,
+              uid: packageAgent.uid,
               ownerUid: IDENTITY.uid,
-              gid: delegatedAgent.gid,
-              gids: delegatedAgent.gids,
-              username: delegatedAgent.username,
-              home: delegatedAgent.home,
-              cwd: delegatedAgent.cwd,
+              gid: packageAgent.gid,
+              gids: packageAgent.gids,
+              username: packageAgent.username,
+              home: packageAgent.home,
+              cwd: packageAgent.cwd,
             };
           }
           if (pid === "proc:personal-agent") {
@@ -1230,7 +1238,7 @@ describe("resolveCallerOwnerUid", () => {
 
 describe("resolveRunAsIdentity", () => {
   // Owner human 1000 (alice); her personal agent 2000; a least-privilege
-  // delegated agent 3000 that alice is NOT authorized to act as.
+  // package agent 3000 that alice is NOT authorized to act as.
   const passwd: Record<number, { username: string; uid: number; gid: number; home: string }> = {
     1000: { username: "alice", uid: 1000, gid: 1000, home: "/home/alice" },
     2000: { username: "alice-agent", uid: 2000, gid: 2000, home: "/home/alice-agent" },
@@ -1259,7 +1267,7 @@ describe("resolveRunAsIdentity", () => {
   }
 
   it("denies an agent-backed process from running as the owning human", () => {
-    // Caller runs as a delegated agent (3000); owner is the human (1000).
+    // Caller runs as the package agent (3000); owner is the human (1000).
     const res = resolveRunAsIdentity(ctxFor(3000, "proc:abc"), "alice", 1000);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/cannot run as alice/i);
@@ -1273,17 +1281,20 @@ describe("resolveRunAsIdentity", () => {
     if (agent.ok) expect(agent.identity.uid).toBe(2000);
   });
 
-  it("allows runAs by custom agent username when the owner is in its primary group", () => {
+  it("allows runAs by package agent username when the owner is in the access group", () => {
     const wikiBuilder = { username: "wiki-builder", uid: 3000, gid: 3000, home: "/home/wiki-builder" };
     const auth = {
       getPasswdByUid: vi.fn((uid: number) => (uid === 3000 ? wikiBuilder : passwd[uid] ?? null)),
       getPasswdByUsername: vi.fn((name: string) => (name === "wiki-builder" ? wikiBuilder : byName[name] ?? null)),
       getPersonalAgentUid: vi.fn((ownerUid: number) => (ownerUid === 1000 ? 2000 : null)),
       getGroupByGid: vi.fn((gid: number) => {
-        if (gid === 3000) return { name: "wiki-builder", gid: 3000, members: ["alice"] };
+        if (gid === 3000) return { name: "wiki-builder", gid: 3000, members: [] };
         return { name: `g${gid}`, gid, members: [] as string[] };
       }),
-      getGroupByName: vi.fn(() => null),
+      getGroupByName: vi.fn((name: string) => {
+        if (name === "wiki-builder-run") return { name, gid: 3001, members: ["alice"] };
+        return null;
+      }),
       resolveGids: vi.fn((_username: string, gid: number) => [gid]),
     };
     const ctx = {
@@ -1341,3 +1352,29 @@ describe("handleProcList", () => {
     expect(list).toHaveBeenCalledWith(1000);
   });
 });
+
+function makePackage(packageId: string, name: string, repo: string, subdir = ".") {
+  return {
+    packageId,
+    scope: { kind: "user", uid: IDENTITY.uid },
+    manifest: {
+      name,
+      description: name,
+      version: "0.1.0",
+      runtime: "web-ui",
+      source: {
+        repo,
+        ref: "main",
+        subdir,
+        resolvedCommit: "base123",
+      },
+      entrypoints: [],
+    },
+    artifact: { hash: "hash", mainModule: "main.js", modulePaths: ["main.js"] },
+    enabled: true,
+    reviewRequired: false,
+    reviewedAt: 1,
+    installedAt: 1,
+    updatedAt: 1,
+  };
+}

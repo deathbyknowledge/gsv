@@ -270,7 +270,7 @@ export async function handleAccountCreate(
 /**
  * List the accounts the owning human may run processes as: their own account,
  * their personal agent, and any account whose private group they belong to
- * (custom agents). Root sees all accounts as runnable.
+ * (custom agents, package agents). Root sees all accounts as runnable.
  */
 export function handleAccountList(
   args: AccountListArgs,

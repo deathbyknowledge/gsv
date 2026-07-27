@@ -3,22 +3,25 @@ import {
   accountHomeRepoRef,
   RipgitClient,
   type RipgitApplyOp,
+  type RipgitRepoRef,
 } from "../../fs";
-import { BUILTIN_SKILL_FILES } from "./builtin-skills";
 
+const SOURCE_SKILLS_ROOT = "skills";
 const TARGET_SKILLS_ROOT = "skills.d";
 const SKILLS_DIR_MARKER = `${TARGET_SKILLS_ROOT}/.dir`;
 
-export type BuiltinSkillSeedResult = {
+export type BootstrapSkillSeedResult = {
   username: string;
   copied: number;
   skipped: number;
 };
 
-export async function seedBuiltinSkillsToHome(
+export async function seedRepoSkillsToHome(
   ripgit: RipgitClient,
+  sourceRepo: RipgitRepoRef,
   identity: ProcessIdentity,
-): Promise<BuiltinSkillSeedResult> {
+): Promise<BootstrapSkillSeedResult> {
+  const sourceFiles = await listSourceSkillFiles(ripgit, sourceRepo, SOURCE_SKILLS_ROOT);
   const homeRepo = accountHomeRepoRef(identity.username);
   const ops: RipgitApplyOp[] = [];
   let skipped = 0;
@@ -32,10 +35,17 @@ export async function seedBuiltinSkillsToHome(
     });
   }
 
-  for (const skill of BUILTIN_SKILL_FILES) {
-    const targetPath = `${TARGET_SKILLS_ROOT}/${skill.path}`;
+  for (const sourcePath of sourceFiles) {
+    const relativePath = sourcePath.slice(`${SOURCE_SKILLS_ROOT}/`.length);
+    const targetPath = `${TARGET_SKILLS_ROOT}/${relativePath}`;
     const existing = await ripgit.readPath(homeRepo, targetPath);
     if (existing.kind !== "missing") {
+      skipped += 1;
+      continue;
+    }
+
+    const source = await ripgit.readPath(sourceRepo, sourcePath);
+    if (source.kind !== "file") {
       skipped += 1;
       continue;
     }
@@ -43,7 +53,7 @@ export async function seedBuiltinSkillsToHome(
     ops.push({
       type: "put",
       path: targetPath,
-      contentBytes: Array.from(new TextEncoder().encode(skill.content)),
+      contentBytes: Array.from(source.bytes),
     });
   }
 
@@ -52,7 +62,7 @@ export async function seedBuiltinSkillsToHome(
       homeRepo,
       identity.username,
       `${identity.username}@gsv.local`,
-      "gsv: seed built-in skills",
+      "gsv: seed bootstrap skills",
       ops,
     );
   }
@@ -62,4 +72,49 @@ export async function seedBuiltinSkillsToHome(
     copied: ops.filter((op) => op.type === "put" && op.path !== SKILLS_DIR_MARKER).length,
     skipped,
   };
+}
+
+async function listSourceSkillFiles(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  root: string,
+): Promise<string[]> {
+  const files: string[] = [];
+  await walkSourceSkillFiles(ripgit, repo, root, files, 0);
+  return files.sort((left, right) => left.localeCompare(right));
+}
+
+async function walkSourceSkillFiles(
+  ripgit: RipgitClient,
+  repo: RipgitRepoRef,
+  path: string,
+  files: string[],
+  depth: number,
+): Promise<void> {
+  if (depth > 12) {
+    return;
+  }
+
+  const tree = await ripgit.readPath(repo, path);
+  if (tree.kind === "missing") {
+    return;
+  }
+  if (tree.kind === "file") {
+    files.push(path);
+    return;
+  }
+
+  for (const entry of tree.entries) {
+    if (entry.name === ".dir" || entry.name === ".git" || entry.name === ".github") {
+      continue;
+    }
+    const child = `${path}/${entry.name}`;
+    if (entry.type === "blob") {
+      files.push(child);
+      continue;
+    }
+    if (entry.type === "tree") {
+      await walkSourceSkillFiles(ripgit, repo, child, files, depth + 1);
+    }
+  }
 }

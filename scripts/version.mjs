@@ -32,6 +32,7 @@ function writeVersionFile(version) {
 function listPackageJsonFiles() {
   const files = [
     "package.json",
+    "assembler/package.json",
     "extension/package.json",
     "gateway/package.json",
     "web/package.json",
@@ -113,6 +114,11 @@ function syncPackageJsonVersions(version) {
 
 function syncSourceVersions(version) {
   replaceInFile(
+    "assembler/Cargo.toml",
+    /^version = "[^"]+"$/m,
+    `version = "${version}"`,
+  );
+  replaceInFile(
     "cli/Cargo.toml",
     /^version = "[^"]+"$/m,
     `version = "${version}"`,
@@ -176,6 +182,11 @@ function syncSourceVersions(version) {
 
 function syncCargoLocks(version) {
   replaceInFile(
+    "assembler/Cargo.lock",
+    /(name = "assembler"\nversion = ")[^"]+(")/,
+    `$1${version}$2`,
+  );
+  replaceInFile(
     "cli/Cargo.lock",
     /(name = "gsv"\nversion = ")[^"]+(")/,
     `$1${version}$2`,
@@ -226,6 +237,8 @@ function managedFiles() {
     "VERSION",
     "package.json",
     "package-lock.json",
+    "assembler/Cargo.toml",
+    "assembler/Cargo.lock",
     "cli/Cargo.toml",
     "cli/Cargo.lock",
     "ripgit/Cargo.toml",

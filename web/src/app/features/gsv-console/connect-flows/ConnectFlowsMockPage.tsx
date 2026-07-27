@@ -7,6 +7,7 @@ import type { ConnectFlowDef } from "./connectFlowTypes";
 import { machineConnectFlow } from "./machineConnectMock";
 import { messengerConnectFlow } from "./messengerConnectMock";
 import { integrationConnectFlow } from "./integrationConnectMock";
+import { applicationConnectFlow } from "./applicationConnectMock";
 import "../list-template/ListTemplateMockPage.css";
 import "./ConnectFlowsMockPage.css";
 
@@ -14,12 +15,13 @@ const FLOWS: readonly ConnectFlowDef[] = [
   machineConnectFlow,
   messengerConnectFlow,
   integrationConnectFlow,
+  applicationConnectFlow,
 ];
 
 /** Standalone mock of the CONNECT-NEW flows — reachable at /connect-flows with
  *  the full shell chrome (rail + chat). Pick a flow, walk every step with mock
  *  data, to review the redesigned connect UX before applying it to the real
- *  Machines / Messenger / Integrations pages. */
+ *  Machines / Messenger / Integrations / Applications pages. */
 export function ConnectFlowsMockPage(_props: { onOpenChat?: () => void }) {
   const [flowIndex, setFlowIndex] = useState(0);
   const [step, setStep] = useState(0);
