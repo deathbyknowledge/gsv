@@ -466,7 +466,7 @@ export function canReadRepo(rawRepo: string, ctx: KernelContext): boolean {
 export function canWriteRepo(rawRepo: string, ctx: KernelContext): boolean {
   const repo = parseRepoSlug(rawRepo);
   const identity = requireIdentity(ctx);
-  if (identity.process.uid === 0 || identity.capabilities.includes("*")) {
+  if (identity.process.uid === 0) {
     return true;
   }
   if (repo.owner === identity.process.username) {

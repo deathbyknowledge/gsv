@@ -215,6 +215,7 @@ export type GsvSchedNamespace = GsvClientNamespaces["sched"];
 export type GsvShellNamespace = GsvClientNamespaces["shell"];
 export type GsvSignalNamespace = GsvClientNamespaces["signal"];
 export type GsvSysNamespace = GsvClientNamespaces["sys"];
+export type GsvUserNamespace = GsvClientNamespaces["user"];
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 8_000;
 const PROTOCOL_VERSION = 2;
@@ -348,6 +349,7 @@ const SYSCALL_NAMES = [
   "sys.link.consume",
   "account.create",
   "account.list",
+  "user.admin",
   "sched.list",
   "sched.add",
   "sched.update",

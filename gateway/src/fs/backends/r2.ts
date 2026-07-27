@@ -110,8 +110,9 @@ export class R2MountBackend implements MountBackend {
           : inferContentType(p),
       },
       customMetadata: {
-        uid: String(this.identity.uid),
-        gid: String(this.identity.gid),
+        ...existing?.customMetadata,
+        uid: existing?.customMetadata?.uid ?? String(this.identity.uid),
+        gid: existing?.customMetadata?.gid ?? String(this.identity.gid),
         mode: existing?.customMetadata?.mode ?? "644",
       },
     });
@@ -138,8 +139,9 @@ export class R2MountBackend implements MountBackend {
       this.bucket.put(key, fixed.readable, {
         httpMetadata: toR2HttpMetadata(p, options),
         customMetadata: {
-          uid: String(this.identity.uid),
-          gid: String(this.identity.gid),
+          ...existing?.customMetadata,
+          uid: existing?.customMetadata?.uid ?? String(this.identity.uid),
+          gid: existing?.customMetadata?.gid ?? String(this.identity.gid),
           mode: existing?.customMetadata?.mode ?? "644",
         },
       }),
@@ -262,9 +264,13 @@ export class R2MountBackend implements MountBackend {
     const dirKey = key.endsWith("/") ? key : key + "/";
     const markerKey = dirKey + ".dir";
     const existing = await this.bucket.head(markerKey);
-    if (existing && !options?.recursive) throw new Error(`EEXIST: file already exists, mkdir '${p}'`);
+    if (existing) {
+      if (options?.recursive) return;
+      throw new Error(`EEXIST: file already exists, mkdir '${p}'`);
+    }
 
-    await this.bucket.put(markerKey, "", {
+    const stored = await this.bucket.put(markerKey, "", {
+      onlyIf: { etagDoesNotMatch: "*" },
       customMetadata: {
         uid: String(this.identity.uid),
         gid: String(this.identity.gid),
@@ -272,6 +278,9 @@ export class R2MountBackend implements MountBackend {
         dirmarker: "1",
       },
     });
+    if (!stored && !options?.recursive) {
+      throw new Error(`EEXIST: file already exists, mkdir '${p}'`);
+    }
   }
 
   async readdir(path: string): Promise<string[]> {
@@ -361,7 +370,8 @@ export class R2MountBackend implements MountBackend {
       throw new Error(`EEXIST: file already exists, symlink '${p}'`);
     }
 
-    await this.bucket.put(key, target, {
+    const stored = await this.bucket.put(key, target, {
+      onlyIf: { etagDoesNotMatch: "*" },
       httpMetadata: { contentType: "text/plain" },
       customMetadata: {
         uid: String(this.identity.uid),
@@ -370,6 +380,7 @@ export class R2MountBackend implements MountBackend {
         symlink: "1",
       },
     });
+    if (!stored) throw new Error(`EEXIST: file already exists, symlink '${p}'`);
   }
 
   async readlink(path: string): Promise<string> {

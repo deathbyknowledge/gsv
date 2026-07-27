@@ -1094,7 +1094,7 @@ function installScopeForActor(ctx: KernelContext): PackageInstallScope {
 
 function assertMutablePackageAccess(record: InstalledPackageRecord, ctx: KernelContext): void {
   const identity = requireIdentity(ctx);
-  if (identity.process.uid === 0 || (identity.capabilities ?? []).includes("*")) {
+  if (identity.process.uid === 0) {
     return;
   }
   if (packageScopeEquals(record.scope, { kind: "user", uid: resolveCallerOwnerUid(ctx) })) {
@@ -1321,9 +1321,6 @@ function assertRepoOwnerOrRoot(
 ): void {
   const { owner } = parseSyncRepoRef(repo);
   if (identity.process.uid === 0 || identity.process.username === owner) {
-    return;
-  }
-  if ((identity.capabilities ?? []).includes("*")) {
     return;
   }
   throw new Error(`Forbidden: only ${owner} or root may change visibility for ${repo}`);

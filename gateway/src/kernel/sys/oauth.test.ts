@@ -20,7 +20,7 @@ type FakeOAuth = {
   listFlows: ReturnType<typeof vi.fn>;
   deleteAccount: ReturnType<typeof vi.fn>;
   getFlow: ReturnType<typeof vi.fn>;
-  getFlowByStateHash: ReturnType<typeof vi.fn>;
+  consumeFlowByStateHash: ReturnType<typeof vi.fn>;
   upsertAccount: ReturnType<typeof vi.fn>;
   deleteFlow: ReturnType<typeof vi.fn>;
 };
@@ -57,7 +57,7 @@ function createFakeOAuth(): FakeOAuth {
     listFlows: vi.fn(() => []),
     deleteAccount: vi.fn(() => true),
     getFlow: vi.fn(),
-    getFlowByStateHash: vi.fn(),
+    consumeFlowByStateHash: vi.fn(),
     upsertAccount: vi.fn((input) => ({
       accountId: "acct-1",
       ...input,
@@ -442,7 +442,7 @@ describe("sys.oauth handlers", () => {
   });
 
   it("exchanges an OAuth callback code and stores tokens behind the summary boundary", async () => {
-    oauth.getFlowByStateHash.mockReturnValue(flow);
+    oauth.consumeFlowByStateHash.mockReturnValue(flow);
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = init?.body as URLSearchParams;
       expect(body.get("grant_type")).toBe("authorization_code");
@@ -476,7 +476,7 @@ describe("sys.oauth handlers", () => {
       expiresAt: 1_700_003_600_000,
       scope: "openid profile email",
     }));
-    expect(oauth.deleteFlow).toHaveBeenCalledWith("flow-1");
+    expect(oauth.consumeFlowByStateHash).toHaveBeenCalledOnce();
     expect(JSON.stringify(result)).not.toContain("access-secret");
     expect(JSON.stringify(result)).not.toContain("refresh-secret");
   });

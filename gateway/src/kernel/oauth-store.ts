@@ -141,18 +141,12 @@ export class OAuthStore {
     };
   }
 
-  getFlowByStateHash(stateHash: string, now = Date.now()): OAuthFlowRecord | null {
-    const rows = this.sql.exec<OAuthFlowRow>(
-      "SELECT * FROM oauth_flows WHERE state_hash = ?",
+  consumeFlowByStateHash(stateHash: string, now = Date.now()): OAuthFlowRecord | null {
+    const row = this.sql.exec<OAuthFlowRow>(
+      "DELETE FROM oauth_flows WHERE state_hash = ? RETURNING *",
       stateHash,
-    ).toArray();
-    const row = rows[0];
-    if (!row) return null;
-    if (row.expires_at <= now) {
-      this.deleteFlow(row.flow_id);
-      return null;
-    }
-    return flowFromRow(row);
+    ).toArray()[0];
+    return row && row.expires_at > now ? flowFromRow(row) : null;
   }
 
   getFlow(flowId: string, uid?: number, now = Date.now()): OAuthFlowRecord | null {

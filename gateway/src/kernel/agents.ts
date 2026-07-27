@@ -41,6 +41,7 @@ import {
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
 import { DEFAULT_PERSONA_CONTEXT_TEMPLATE } from "../prompts/persona";
+import { requireUserAdmin } from "./user-authority";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -208,8 +209,8 @@ export async function ensurePersonalAgent(
 }
 
 /**
- * Create an account on behalf of an authenticated caller. Humans are an
- * administrative action (root only); agents are owned by the caller's human.
+ * Create an account on behalf of an authenticated caller. Humans require
+ * user-administration authority; agents are owned by the caller's human.
  */
 export async function handleAccountCreate(
   args: AccountCreateArgs,
@@ -222,25 +223,14 @@ export async function handleAccountCreate(
   }
 
   const kind: AccountKind = args.kind === "human" ? "human" : "agent";
+  if (kind === "human") {
+    requireUserAdmin(ctx);
+    return createHumanAccount(args, ctx);
+  }
+
   const name = normalizeAccountName(auth, args.username);
   if (!name) {
     throw new Error(`Invalid or unavailable username: ${String(args.username)}`);
-  }
-
-  if (kind === "human") {
-    // Creating human accounts is an administrative action.
-    if (!caller.capabilities.includes("*")) {
-      throw new Error("Creating human accounts requires root");
-    }
-    const { identity } = await createAccount(ctx, {
-      kind: "human",
-      username: name,
-      password: args.password,
-      gecos: args.gecos?.trim() || undefined,
-      shared: true,
-    });
-    const agent = await ensurePersonalAgent(ctx, identity);
-    return { account: identity, kind, personalAgent: agent.identity };
   }
 
   const ownerUid = resolveCallerOwnerUid(ctx);
@@ -265,6 +255,27 @@ export async function handleAccountCreate(
     contextFiles: extraContextFiles,
   });
   return { account: identity, kind };
+}
+
+/** Create and fully provision a login-capable human after caller authorization. */
+export async function createHumanAccount(
+  args: Pick<AccountCreateArgs, "username" | "password" | "gecos">,
+  ctx: KernelContext,
+): Promise<AccountCreateResult & { kind: "human"; personalAgent: ProcessIdentity }> {
+  const name = normalizeAccountName(ctx.auth, args.username);
+  if (!name) {
+    throw new Error(`Invalid or unavailable username: ${String(args.username)}`);
+  }
+
+  const { identity } = await createAccount(ctx, {
+    kind: "human",
+    username: name,
+    password: args.password,
+    gecos: args.gecos?.trim() || undefined,
+    shared: true,
+  });
+  const agent = await ensurePersonalAgent(ctx, identity);
+  return { account: identity, kind: "human", personalAgent: agent.identity };
 }
 
 /**

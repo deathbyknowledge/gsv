@@ -25,6 +25,9 @@ import {
 import {
   KERNEL_V014_ADD_ADAPTER_INGRESS_DELIVERY_ID,
 } from "./v014_add_adapter_ingress_delivery_id";
+import {
+  KERNEL_V015_HARDEN_IDENTITY_AUTHORITY,
+} from "./v015_harden_identity_authority";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -44,6 +47,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V012_ADD_SCHEDULE_ATTEMPT_COUNT,
   KERNEL_V013_ADD_ADAPTER_INGRESS_RECEIPTS,
   KERNEL_V014_ADD_ADAPTER_INGRESS_DELIVERY_ID,
+  KERNEL_V015_HARDEN_IDENTITY_AUTHORITY,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

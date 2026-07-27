@@ -7,7 +7,7 @@ import { CapabilityStore } from "./capabilities";
 import { ConfigStore } from "./config";
 import { DeviceRegistry } from "./devices";
 import { ProcessRegistry } from "./processes";
-import { hashPassword } from "../auth/shadow";
+import { hashPassword, makeShadowEntry } from "../auth/shadow";
 import {
   createMockSqlTables,
   handleMockSchemaStatement,
@@ -415,7 +415,7 @@ describe("handleConnect", () => {
       {
         protocol: 2,
         client: { id: "c1", version: "1", platform: "test", role: "user" },
-        auth: { username: "root", token: issued.token },
+        auth: { username: "ROOT", token: issued.token },
       },
       ctx,
     );
@@ -655,7 +655,7 @@ describe("handleConnect", () => {
       {
         protocol: 2,
         client: { id: "c1", version: "1", platform: "test", role: "user" },
-        auth: { username: "root", password: "hunter2" },
+        auth: { username: "ROOT", password: "hunter2" },
       },
       ctx,
     );
@@ -664,6 +664,39 @@ describe("handleConnect", () => {
     if (result.ok) {
       expect(result.identity.process.uid).toBe(0);
     }
+  });
+
+  it("normalizes ASCII authentication names but rejects Unicode case-fold aliases", async () => {
+    const ctx = makeCtx(sql);
+    const passwordHash = await hashPassword("password-123");
+    await ctx.auth.bootstrap();
+    ctx.auth.addUser({
+      username: "kate",
+      uid: 1000,
+      gid: 1000,
+      gecos: "Kate",
+      home: "/home/kate",
+      shell: "/bin/init",
+    });
+    ctx.auth.setShadow(makeShadowEntry("kate", passwordHash));
+    const issued = await ctx.auth.issueToken({ uid: 1000, kind: "user" });
+
+    await expect(ctx.auth.authenticate("KATE", "password-123")).resolves.toMatchObject({
+      ok: true,
+      identity: { username: "kate" },
+    });
+    await expect(ctx.auth.authenticateToken("KATE", issued.token)).resolves.toMatchObject({
+      ok: true,
+      identity: { username: "kate" },
+    });
+    await expect(ctx.auth.authenticate("\u212Aate", "password-123")).resolves.toEqual({
+      ok: false,
+      error: "Unknown user",
+    });
+    await expect(ctx.auth.authenticateToken("\u212Aate", issued.token)).resolves.toEqual({
+      ok: false,
+      error: "Unknown user",
+    });
   });
 
   it("rejects driver password auth when machine-token enforcement is enabled", async () => {

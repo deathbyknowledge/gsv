@@ -24,7 +24,8 @@ type SyscallDomain =
   | "notification"
   | "adapter"
   | "signal"
-  | "account";
+  | "account"
+  | "user";
 
 function domainOf(syscall: SyscallName): SyscallDomain {
   return syscall.split(".")[0] as SyscallDomain;

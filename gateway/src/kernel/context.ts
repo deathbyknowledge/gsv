@@ -60,6 +60,7 @@ export type KernelContext = {
   callerOwnerUid?: number;
   appFrame?: AppFrameContext;
   serverVersion: string;
+  transactionSync: <T>(closure: () => T) => T;
   broadcastToUserUid: (uid: number, signal: string, payload?: unknown) => void;
   getAppRunner: (uid: number, packageId: string) => unknown;
   scheduleIpcCallTimeout: (callId: string, deadlineAt: number) => Promise<string>;

@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(14);
+    expect(KERNEL_MIGRATIONS).toHaveLength(15);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -88,6 +88,10 @@ describe("kernel schema migrations", () => {
       id: 14,
       name: "add_adapter_ingress_delivery_id",
     });
+    expect(KERNEL_MIGRATIONS[14]).toMatchObject({
+      id: 15,
+      name: "harden_identity_authority",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -125,6 +129,7 @@ describe("kernel schema migrations", () => {
       "oauth_accounts",
       "user_mcp_servers",
       "adapter_ingress_receipts",
+      "identity_id_allocator",
     ]);
   });
 
@@ -250,6 +255,25 @@ describe("kernel schema migrations", () => {
     );
     expect(normalizedStatements()).toContain(
       "ALTER TABLE adapter_ingress_receipts ADD COLUMN provider_delivery_id TEXT",
+    );
+  });
+
+  it("revokes persisted root-only capabilities from non-root groups", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "DELETE FROM group_capabilities WHERE gid = 100 AND capability = 'sys.bootstrap'",
+    );
+    expect(statements).toContain(
+      "DELETE FROM group_capabilities WHERE gid <> 0 AND capability = '*'",
+    );
+  });
+
+  it("initializes one shared identity allocator above every persisted uid and gid", () => {
+    const allocator = createTableStatement("identity_id_allocator");
+    expect(allocator).toContain("singleton INTEGER PRIMARY KEY CHECK (singleton = 1)");
+    expect(allocator).toContain("next_id INTEGER NOT NULL CHECK (next_id >= 1000)");
+    expect(normalizedStatements()).toContain(
+      "INSERT INTO identity_id_allocator (singleton, next_id) SELECT 1, MAX(1000, COALESCE(MAX(id), 999) + 1) FROM ( SELECT uid AS id FROM passwd UNION ALL SELECT gid AS id FROM passwd UNION ALL SELECT gid AS id FROM groups )",
     );
   });
 

@@ -221,7 +221,6 @@ describe("CapabilityStore", () => {
       "sched.*",
       "shell.*",
       "signal.*",
-      "sys.bootstrap",
       "sys.config.get",
       "sys.config.set",
       "sys.device.delete",
@@ -298,6 +297,16 @@ describe("CapabilityStore", () => {
     const result = store.grant(100, "not valid!");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain("Invalid capability format");
+  });
+
+  it("reserves the unrestricted capability for root gid 0", () => {
+    expect(store.grant(100, "*")).toEqual({
+      ok: false,
+      error: "The unrestricted capability is reserved for root",
+    });
+    expect(store.list(100)).toEqual([]);
+    expect(store.grant(0, "*")).toEqual({ ok: true });
+    expect(store.list(0)).toEqual([{ gid: 0, capability: "*" }]);
   });
 
   it("revoke removes a capability", () => {

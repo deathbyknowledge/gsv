@@ -55,6 +55,9 @@ export async function handleSysBootstrap(
   args: SysBootstrapArgs | undefined,
   ctx: KernelContext,
 ): Promise<SysBootstrapResult> {
+  if (ctx.identity?.process.uid !== 0) {
+    throw new Error("sys.bootstrap requires root");
+  }
   if (!ctx.env.RIPGIT) {
     throw new Error("RIPGIT binding is required for system bootstrap");
   }
@@ -63,9 +66,6 @@ export async function handleSysBootstrap(
   const { remoteUrl: manualRemoteUrl, ref: manualRef } = resolveManualBootstrapUpstream(ctx.env);
 
   const ripgit = new RipgitClient(ctx.env.RIPGIT);
-  if (!ctx.identity) {
-    throw new Error("Authenticated identity required");
-  }
   const actorName = ctx.identity.process.username;
   const startedAt = Date.now();
   const timings: BootstrapTiming[] = [];

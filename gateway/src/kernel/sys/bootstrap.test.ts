@@ -314,4 +314,21 @@ describe("handleSysBootstrap", () => {
       "RIPGIT binding is required for system bootstrap",
     );
   });
+
+  it("requires uid 0 even when the caller has the unrestricted capability", async () => {
+    const ctx = makeContext();
+    ctx.identity!.process = {
+      uid: 1000,
+      gid: 1000,
+      gids: [1000, 100],
+      username: "alice",
+      home: "/home/alice",
+      cwd: "/home/alice",
+    };
+
+    await expect(handleSysBootstrap(undefined, ctx)).rejects.toThrow(
+      "sys.bootstrap requires root",
+    );
+    expect(importFromUpstreamMock).not.toHaveBeenCalled();
+  });
 });

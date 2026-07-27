@@ -1164,6 +1164,87 @@ type SystemSyscalls = {
 };
 ```
 
+## User administration: `user.admin`
+
+`user.admin` is the authenticated, Kernel-owned account-administration
+boundary. The Kernel reconstructs the caller from current account state and
+checks administrative authority before validating or applying any requested
+mutation. uid 0 is root. A non-root caller must have the exact `user.admin`
+capability granted directly to its current primary gid; an effective grant
+inherited from a supplementary group does not authorize administration. This
+keeps personal agents and other cross-members from inheriting a human's
+delegated administrative authority.
+
+Runtime behavior:
+
+| Syscall | Handler | Behavior |
+|---|---|---|
+| `user.admin` | `handleUserAdmin` | With `action: "create"`, creates a login-capable human using the shared account-provisioning path, including its personal agent. With `action: "permissions"`, returns the human's current group and capability state and optionally updates direct capabilities or supplementary group memberships. Omitting all four mutation arrays performs a read only. Invalid or unauthorized requests fail before account, group, or capability state is changed. |
+
+The permissions result separates capabilities granted directly on the target
+account's primary gid from the effective capabilities resolved across all of
+its current groups. `grant` and `revoke` modify only that direct primary-gid
+set. `addGroups` and `removeGroups` modify supplementary membership, which can
+change the effective set without changing `directCapabilities`. `changed` is
+true only when the request changed stored capability or membership state.
+
+Root permission state may be viewed, but any requested capability or group
+mutation targeting uid 0 is denied. Adding or removing membership in the root
+group (gid 0), or in any target's immutable primary group, is also denied.
+`*` cannot be granted to a non-root account; an already-corrupt direct `*`
+grant on a non-root primary gid may be revoked. These checks are performed
+before any mutation in the request, and the complete permission patch commits
+in one Kernel SQLite transaction.
+
+After a successful change, the Kernel re-resolves every live human connection
+and process identity so a capability inherited through another user's group
+cannot remain cached. Process-originated requests and scheduled work also
+revalidate current delegated run-as membership before executing.
+
+```ts
+type UserAdminArgs =
+  | {
+      action: "create";
+      username: string;
+      password: string;
+      gecos?: string;
+    }
+  | {
+      action: "permissions";
+      username: string;
+      grant?: string[];
+      revoke?: string[];
+      addGroups?: string[];
+      removeGroups?: string[];
+    };
+
+type UserAdminResult =
+  | {
+      action: "create";
+      account: ProcessIdentity;
+      personalAgent: ProcessIdentity;
+    }
+  | {
+      action: "permissions";
+      user: { username: string; uid: number; gid: number };
+      groups: Array<{ name: string; gid: number; primary: boolean }>;
+      directCapabilities: string[];
+      effectiveCapabilities: string[];
+      changed: boolean;
+    };
+```
+
+The native `gsv` shell exposes the same boundary through `user create`, `user
+register`, and `user permissions` (with `user edit-permissions` as an alias).
+Creation reads the new password only from command stdin via
+`--password-stdin`; redirect a protected file instead of placing a password in
+the `shell.exec` command text. Set the empty file to mode `0600` before a
+trusted client populates it, and remove it after use. Native `register`
+provisions the account and prints the next login action, but cannot replace the
+identity of the already authenticated WebSocket. Permission changes re-enter
+normal syscall dispatch, so they receive the same durable authorization,
+atomic mutation, and live identity refresh as a direct `user.admin` request.
+
 ## AI: `ai.*`
 
 `ai.tools` and `ai.config` are internal Process bootstrap calls. The media

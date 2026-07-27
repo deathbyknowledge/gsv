@@ -51,7 +51,7 @@ import {
   type RouteOrigin,
 } from "./routing";
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
-import { ProcessRegistry, type ProcessState } from "./processes";
+import { ProcessRegistry, type ProcessRecord, type ProcessState } from "./processes";
 import { ConversationRegistry } from "./conversations";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
@@ -71,6 +71,7 @@ import { APP_CLIENT_SESSION_TTL_MS, AppSessionStore } from "./app-sessions";
 import {
   ensureKernelBootstrapped,
   handleConnect,
+  resolveConnectionCapabilities,
   setupRequiredDetails,
   SETUP_REQUIRED_ERROR_CODE,
 } from "./connect";
@@ -128,6 +129,7 @@ import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
 import { handleProcSpawn } from "./proc-handlers";
 import { ensureDefaultConversationExecutor } from "./agents";
+import { canOwnerDelegateRunAs } from "./account-access";
 import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
@@ -1692,10 +1694,31 @@ export class Kernel extends Host<Env> {
   }
 
   private buildProcessContext(processId: string, processRunId?: string): KernelContext | null {
-    const identity = this.procs.getIdentity(processId);
-    if (!identity) {
+    const proc = this.procs.get(processId);
+    if (!proc) {
       return null;
     }
+
+    const account = this.auth.getPasswdByUid(proc.uid);
+    if (!account || account.username !== proc.username) {
+      return null;
+    }
+    if (
+      proc.ownerUid !== 0 &&
+      proc.ownerUid !== account.uid &&
+      !canOwnerDelegateRunAs(this.auth, proc.ownerUid, account)
+    ) {
+      return null;
+    }
+
+    const identity: ProcessIdentity = {
+      uid: account.uid,
+      gid: account.gid,
+      gids: this.auth.resolveGids(account.username, account.gid),
+      username: account.username,
+      home: account.home,
+      cwd: proc.cwd,
+    };
 
     const connIdentity: ConnectionIdentity = {
       role: "user",
@@ -1785,6 +1808,7 @@ export class Kernel extends Host<Env> {
       callerOwnerUid: options.callerOwnerUid,
       appFrame: options.appFrame,
       serverVersion: SERVER_VERSION,
+      transactionSync: (closure) => this.ctx.storage.transactionSync(closure),
       broadcastToUserUid: this.broadcastToUserUid.bind(this),
       getAppRunner: this.getAppRunner.bind(this),
       scheduleIpcCallTimeout: this.scheduleIpcCallTimeout.bind(this),
@@ -2463,6 +2487,21 @@ export class Kernel extends Host<Env> {
 
   private applyPostDispatchEffects(frame: RequestFrame, response: ResponseFrame): void {
     if (!response.ok) return;
+
+    if (frame.call === "user.admin") {
+      const data = (response as {
+        data?: {
+          action?: unknown;
+          changed?: unknown;
+        };
+      }).data;
+      if (
+        data?.action === "permissions" &&
+        data.changed === true
+      ) {
+        this.refreshUserAuthority();
+      }
+    }
 
     if (frame.call === "sys.device.delete") {
       const data = (response as {
@@ -3274,6 +3313,15 @@ export class Kernel extends Host<Env> {
     if (!account) {
       throw new Error(`Cannot resolve schedule run-as uid ${uid}`);
     }
+    if (
+      record.ownerUid !== 0 &&
+      record.ownerUid !== account.uid &&
+      !canOwnerDelegateRunAs(this.auth, record.ownerUid, account)
+    ) {
+      throw new Error(
+        `Permission denied: schedule owner ${record.ownerUid} cannot run as ${account.username}`,
+      );
+    }
 
     return {
       uid: account.uid,
@@ -3399,7 +3447,11 @@ export class Kernel extends Host<Env> {
    * refreshed, and identity.changed is emitted when it changes.
    */
   private reconcileOwnedIdentities(ownerUid: number): void {
-    for (const proc of this.procs.list(ownerUid)) {
+    this.reconcileProcessIdentities(this.procs.list(ownerUid));
+  }
+
+  private reconcileProcessIdentities(processes: ProcessRecord[]): void {
+    for (const proc of processes) {
       const entry = this.auth.getPasswdByUsername(proc.username);
       if (!entry) continue;
 
@@ -3431,6 +3483,48 @@ export class Kernel extends Host<Env> {
         console.error(`[Kernel] Failed to send identity.changed to ${proc.processId}:`, err);
       });
     }
+  }
+
+  /** Make capability and group edits authoritative for every affected principal. */
+  private refreshUserAuthority(): void {
+    for (const connection of this.connections.values()) {
+      const state = connection.state as ConnectionState | undefined;
+      if (
+        !state ||
+        state.step !== "connected" ||
+        !state.identity ||
+        state.identity.role !== "user"
+      ) {
+        continue;
+      }
+      const account = this.auth.getPasswdByUid(state.identity.process.uid);
+      if (!account) {
+        connection.close(1008, "Account unavailable");
+        continue;
+      }
+      if (state.identity.process.username !== account.username) {
+        connection.close(1008, "Account unavailable");
+        continue;
+      }
+
+      const gids = this.auth.resolveGids(account.username, account.gid);
+      const process = {
+        ...state.identity.process,
+        gid: account.gid,
+        gids,
+        home: account.home,
+      };
+      connection.setState({
+        ...state,
+        identity: {
+          ...state.identity,
+          process,
+          capabilities: resolveConnectionCapabilities(state.identity.role, process, this.caps),
+        } as ConnectionIdentity,
+      });
+    }
+
+    this.reconcileProcessIdentities(this.procs.list());
   }
 
   /**
@@ -3535,10 +3629,27 @@ export class Kernel extends Host<Env> {
       const state = connection.state;
       if (!state || state.step !== "connected" || !state.identity) continue;
 
+      const account = this.auth.getPasswdByUid(state.identity.process.uid);
+      if (!account || account.username !== state.identity.process.username) {
+        connection.close(1008, "Account unavailable");
+        continue;
+      }
+      const process = {
+        ...state.identity.process,
+        gid: account.gid,
+        gids: this.auth.resolveGids(account.username, account.gid),
+        home: account.home,
+      };
+      const identity = {
+        ...state.identity,
+        process,
+        capabilities: resolveConnectionCapabilities(state.identity.role, process, this.caps),
+      } as ConnectionIdentity;
+      connection.setState({ ...state, identity });
       this.connections.set(connection.id, connection);
-      if (state.identity.role === "driver") {
-        onlineTargets.add(state.identity.device);
-        this.devices.setOnline(state.identity.device, true);
+      if (identity.role === "driver") {
+        onlineTargets.add(identity.device);
+        this.devices.setOnline(identity.device, true);
       }
     }
 

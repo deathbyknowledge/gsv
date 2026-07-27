@@ -20,10 +20,12 @@ import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import type { KernelContext } from "./context";
 import type { AuthStore } from "./auth-store";
 import type { PasswdEntry } from "../auth/passwd";
+import { ACCOUNT_USERNAME_RE, normalizeAccountUsername } from "../auth/username";
+
+export { ACCOUNT_USERNAME_RE };
 
 const TEXT_ENCODER = new TextEncoder();
 
-export const ACCOUNT_USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 export const MIN_PASSWORD_LENGTH = 8;
 
 /** A username is available when it collides with no existing user or group. */
@@ -31,14 +33,10 @@ export function isUsernameAvailable(auth: AuthStore, name: string): boolean {
   return !auth.getPasswdByUsername(name) && !auth.getGroupByName(name);
 }
 
-/**
- * Validate and normalize a candidate username. Returns null when the name is
- * malformed or already taken.
- */
+/** A valid candidate username that does not collide with a user or group. */
 export function normalizeAccountName(auth: AuthStore, value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const name = value.trim().toLowerCase();
-  if (!ACCOUNT_USERNAME_RE.test(name)) return null;
+  const name = normalizeAccountUsername(value);
+  if (!name) return null;
   if (!isUsernameAvailable(auth, name)) return null;
   return name;
 }

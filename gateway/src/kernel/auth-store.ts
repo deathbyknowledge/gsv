@@ -18,6 +18,7 @@ import type { ShadowEntry } from "../auth/shadow";
 import { parseShadow, serializeShadow, isLocked, makeShadowEntry, hashToken, verify } from "../auth/shadow";
 import type { GroupEntry } from "../auth/group";
 import { parseGroup, serializeGroup, resolveGids } from "../auth/group";
+import { normalizeAccountUsername } from "../auth/username";
 
 export type AuthIdentity = {
   uid: number;
@@ -159,6 +160,7 @@ export class AuthStore {
   }
 
   addUser(entry: PasswdEntry): void {
+    this.observeIdentityIds(entry.uid, entry.gid);
     this.sql.exec(
       "INSERT INTO passwd (username, uid, gid, gecos, home, shell) VALUES (?, ?, ?, ?, ?, ?)",
       entry.username, entry.uid, entry.gid, entry.gecos, entry.home, entry.shell,
@@ -169,6 +171,7 @@ export class AuthStore {
     const existing = this.getPasswdByUsername(username);
     if (!existing) return false;
 
+    this.observeIdentityIds(fields.uid, fields.gid);
     this.sql.exec(
       "UPDATE passwd SET uid = ?, gid = ?, gecos = ?, home = ?, shell = ? WHERE username = ?",
       fields.uid ?? existing.uid,
@@ -190,11 +193,7 @@ export class AuthStore {
   }
 
   nextUid(): number {
-    // Allocate above both uids and group gids: User Private Groups use gid = uid,
-    // and standalone groups (e.g. package-agent access groups) take ids from the
-    // same space, so a fresh id must clear both tables to avoid later reuse.
-    const max = this.maxAllocatedId();
-    return max < 1000 ? 1000 : max + 1;
+    return this.allocateIdentityId();
   }
 
   // ---------------------------------------------------------------------------
@@ -283,6 +282,7 @@ export class AuthStore {
   }
 
   addGroup(entry: GroupEntry): void {
+    this.observeIdentityIds(entry.gid);
     this.sql.exec(
       "INSERT INTO groups (name, gid, members) VALUES (?, ?, ?)",
       entry.name, entry.gid, entry.members.join(","),
@@ -307,16 +307,32 @@ export class AuthStore {
   }
 
   nextGid(): number {
-    const max = this.maxAllocatedId();
-    return max < 100 ? 100 : max + 1;
+    return this.allocateIdentityId();
   }
 
-  /** Highest id in use across passwd uids and group gids. */
-  private maxAllocatedId(): number {
-    const rows = this.sql.exec<{ m: number | null }>(
-      "SELECT MAX(m) as m FROM (SELECT MAX(uid) as m FROM passwd UNION ALL SELECT MAX(gid) as m FROM groups)",
+  private allocateIdentityId(): number {
+    const rows = this.sql.exec<{ id: number }>(
+      `UPDATE identity_id_allocator
+       SET next_id = next_id + 1
+       WHERE singleton = 1
+       RETURNING next_id - 1 AS id`,
     ).toArray();
-    return rows[0]?.m ?? 0;
+    const id = rows[0]?.id;
+    if (!Number.isSafeInteger(id)) {
+      throw new Error("Identity id allocator is unavailable");
+    }
+    return id;
+  }
+
+  private observeIdentityIds(...ids: Array<number | undefined>): void {
+    const observed = ids.filter((id): id is number => Number.isSafeInteger(id));
+    if (observed.length === 0) return;
+    this.sql.exec(
+      `UPDATE identity_id_allocator
+       SET next_id = MAX(next_id, ? + 1)
+       WHERE singleton = 1`,
+      Math.max(...observed),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -333,16 +349,18 @@ export class AuthStore {
   // ---------------------------------------------------------------------------
 
   async authenticate(username: string, credential: string): Promise<AuthResult> {
-    const user = this.getPasswdByUsername(username);
+    const normalizedUsername = normalizeAccountUsername(username);
+    if (!normalizedUsername) return { ok: false, error: "Unknown user" };
+    const user = this.getPasswdByUsername(normalizedUsername);
     if (!user) return { ok: false, error: "Unknown user" };
 
-    const shadow = this.getShadowByUsername(username);
+    const shadow = this.getShadowByUsername(normalizedUsername);
     if (!shadow) return { ok: false, error: "No credentials found" };
 
     const valid = await verify(credential, shadow.hash);
     if (!valid) return { ok: false, error: "Authentication failed" };
 
-    const gids = this.resolveGids(username, user.gid);
+    const gids = this.resolveGids(user.username, user.gid);
 
     return {
       ok: true,
@@ -362,7 +380,9 @@ export class AuthStore {
     token: string,
     options: TokenAuthOptions = {},
   ): Promise<AuthResult> {
-    const user = this.getPasswdByUsername(username);
+    const normalizedUsername = normalizeAccountUsername(username);
+    if (!normalizedUsername) return { ok: false, error: "Unknown user" };
+    const user = this.getPasswdByUsername(normalizedUsername);
     if (!user) return { ok: false, error: "Unknown user" };
 
     const tokenHash = await hashToken(token);
@@ -417,7 +437,7 @@ export class AuthStore {
       tokenRow.token_id,
     );
 
-    const gids = this.resolveGids(username, user.gid);
+    const gids = this.resolveGids(user.username, user.gid);
     return {
       ok: true,
       identity: {

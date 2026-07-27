@@ -154,16 +154,11 @@ export class LinkChallengeStore {
 
   private generateCode(): string {
     const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    const part = () => {
-      let out = "";
-      for (let i = 0; i < 4; i++) {
-        const idx = Math.floor(Math.random() * alphabet.length);
-        out += alphabet[idx];
-      }
-      return out;
-    };
-
-    return `${part()}-${part()}`;
+    const code = Array.from(
+      crypto.getRandomValues(new Uint8Array(8)),
+      (value) => alphabet[value & 31],
+    ).join("");
+    return `${code.slice(0, 4)}-${code.slice(4)}`;
   }
 }
 

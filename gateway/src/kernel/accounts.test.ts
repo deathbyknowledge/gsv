@@ -107,7 +107,12 @@ function createCtx() {
   function ctxFor(identity: ConnectionIdentity, options: { ripgit?: boolean } = {}): KernelContext {
     return {
       auth: auth as unknown as KernelContext["auth"],
-      caps: { resolve: vi.fn(() => []) } as unknown as KernelContext["caps"],
+      caps: {
+        list: vi.fn((gid?: number) => gid === identity.process.gid
+          ? identity.capabilities.map((capability) => ({ gid, capability }))
+          : []),
+        resolve: vi.fn(() => []),
+      } as unknown as KernelContext["caps"],
       env: {
         STORAGE: storage,
         ...(options.ripgit ? { RIPGIT: ripgit } : {}),
@@ -275,15 +280,55 @@ describe("handleAccountCreate", () => {
     await expect(handleAccountCreate({ kind: "agent", username: "Bad Name" }, ctx)).rejects.toThrow(
       /unavailable|invalid/i,
     );
+    await expect(handleAccountCreate({ kind: "agent", username: "\u212Aite" }, ctx)).rejects.toThrow(
+      /unavailable|invalid/i,
+    );
+    await expect(handleAccountCreate({ kind: "agent", username: `alice${" ".repeat(60)}` }, ctx))
+      .rejects.toThrow(/unavailable|invalid/i);
   });
 
-  it("requires root to create a human account", async () => {
+  it("normalizes ordinary ASCII uppercase usernames", async () => {
     const { ctxFor } = createCtx();
+    const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
+
+    const result = await handleAccountCreate({ kind: "agent", username: "Scout" }, ctx);
+
+    expect(result.account.username).toBe("scout");
+  });
+
+  it("denies human creation before mutating state without user.admin", async () => {
+    const { ctxFor, auth } = createCtx();
     const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
 
     await expect(
       handleAccountCreate({ kind: "human", username: "bob", password: "password-123" }, ctx),
-    ).rejects.toThrow(/root/i);
+    ).rejects.toThrow("Permission denied");
+    expect(auth.nextUid).not.toHaveBeenCalled();
+    expect(auth.addUser).not.toHaveBeenCalled();
+    expect(auth.setShadow).not.toHaveBeenCalled();
+  });
+
+  it("does not treat a non-root wildcard capability as root authority", async () => {
+    const { ctxFor } = createCtx();
+    const ctx = ctxFor(userIdentity(1000, "alice", ["*"]));
+
+    await expect(
+      handleAccountCreate({ kind: "human", username: "bob", password: "password-123" }, ctx),
+    ).rejects.toThrow("Permission denied");
+  });
+
+  it("allows a directly delegated user administrator to create a human", async () => {
+    const { ctxFor, shadow, groups } = createCtx();
+    const ctx = ctxFor(userIdentity(1000, "alice", ["user.admin"]));
+
+    const result = await handleAccountCreate(
+      { kind: "human", username: "bob", password: "password-123" },
+      ctx,
+    );
+
+    expect(result.account.username).toBe("bob");
+    expect(shadow.get("bob")).not.toBe("!");
+    expect(groups.find((group) => group.name === "users")?.members).toContain("bob");
   });
 
   it("rejects a weak human password without mutating auth state", async () => {

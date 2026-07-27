@@ -616,6 +616,16 @@ describe("repo syscalls", () => {
     });
   });
 
+  it("does not treat a non-root wildcard capability as an arbitrary write bypass", () => {
+    const ctx = makeContext(makeFetcher(() => {
+      throw new Error("ripgit should not be called");
+    }));
+    ctx.identity!.capabilities = ["*"];
+
+    expect(canWriteRepo("alice/private", ctx)).toBe(true);
+    expect(canWriteRepo("bob/private", ctx)).toBe(false);
+  });
+
   it("compares refs through query parameters so branch names may contain slashes", async () => {
     const fetcher = makeFetcher((url) => {
       expect(url.pathname).toBe("/hyperspace/repos/alice/demo/compare");
