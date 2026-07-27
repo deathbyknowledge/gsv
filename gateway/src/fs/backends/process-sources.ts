@@ -68,16 +68,6 @@ type SourceOverlayChange =
     };
 
 type SourceOverlayManifest = {
-  version: 2;
-  sourceId: string;
-  sourceKey: string;
-  baseRef: string;
-  createdAt: number;
-  updatedAt: number;
-  changes: Record<string, SourceOverlayChange>;
-};
-
-type LegacySourceOverlayManifest = {
   version: 1;
   packageId: string;
   packageKey: string;
@@ -1182,17 +1172,11 @@ async function readOverlayManifest(
     return empty;
   }
   try {
-    const parsed = JSON.parse(await obj.text()) as
-      | Partial<SourceOverlayManifest>
-      | Partial<LegacySourceOverlayManifest>;
-    const matchesRepo = parsed.version === 2
-      ? parsed.sourceId === repo.sourceKey
-        && parsed.sourceKey === sourceRepoStorageKey(repo)
-      : parsed.version === 1
-        && parsed.packageId === repo.sourceKey
-        && parsed.packageKey === sourceRepoStorageKey(repo);
+    const parsed = JSON.parse(await obj.text()) as Partial<SourceOverlayManifest>;
     if (
-      !matchesRepo ||
+      parsed.version !== 1 ||
+      parsed.packageId !== repo.sourceKey ||
+      parsed.packageKey !== sourceRepoStorageKey(repo) ||
       !parsed.changes
     ) {
       return empty;
@@ -1222,9 +1206,9 @@ async function readOverlayManifest(
       }
     }
     return {
-      version: 2,
-      sourceId: repo.sourceKey,
-      sourceKey: sourceRepoStorageKey(repo),
+      version: 1,
+      packageId: repo.sourceKey,
+      packageKey: sourceRepoStorageKey(repo),
       baseRef: typeof parsed.baseRef === "string" && parsed.baseRef
         ? parsed.baseRef
         : empty.baseRef,
@@ -1240,9 +1224,9 @@ async function readOverlayManifest(
 function emptyOverlayManifest(repo: SourceRepo, baseRef = sourceBaseRefForRepo(repo, null)): SourceOverlayManifest {
   const now = Date.now();
   return {
-    version: 2,
-    sourceId: repo.sourceKey,
-    sourceKey: sourceRepoStorageKey(repo),
+    version: 1,
+    packageId: repo.sourceKey,
+    packageKey: sourceRepoStorageKey(repo),
     baseRef,
     createdAt: now,
     updatedAt: now,
