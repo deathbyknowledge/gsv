@@ -52,11 +52,7 @@ export const KERNEL_V015_REMOVE_PACKAGE_RUNTIME: SqlMigration = {
       CREATE INDEX idx_signal_watches_target_key
       ON signal_watches (uid, target_process_id, dedupe_key, status)
     `,
-    `
-      DELETE FROM group_capabilities
-      WHERE capability = 'app.*'
-         OR capability = 'pkg.*'
-         OR capability LIKE 'pkg.%'
-    `,
+    "DELETE FROM group_capabilities WHERE capability = 'app.*' OR capability LIKE 'pkg.%' OR gid IN (SELECT passwd.gid FROM passwd JOIN config_kv ON config_kv.key = 'users/' || passwd.uid || '/pkg/owner')",
+    "DELETE FROM processes WHERE uid IN (SELECT passwd.uid FROM passwd JOIN config_kv ON config_kv.key = 'users/' || passwd.uid || '/pkg/owner')",
   ],
 };
