@@ -5,6 +5,7 @@ import { CrewDefaultsPanel } from "../components/CrewDefaultsPanel";
 import { EditDefaultsPanel, type EditDefaultsSection } from "../components/EditDefaultsPanel";
 import {
   ConsolePage,
+  ConsolePageState,
   ConsoleResourceBoundary,
 } from "../components/ConsolePageTemplate";
 import { ListTemplate, type ListTemplateRow } from "../list-template/ListTemplate";
@@ -50,16 +51,32 @@ export function ConsoleCrewPage({ onManageAgent, onCreateAgent }: ConsoleCrewPag
         resource={accounts.resource}
         emptyLabel="NO CREW ACCOUNTS"
         errorLabel="CREW"
-        render={(data) => (
-          <CrewRoster
-            accounts={data}
-            config={config.config}
-            processResource={processes.resource}
-            toolTargets={toolTargetsForConsoleTargets(targets.targets)}
-            onManageAgent={onManageAgent}
-            onCreateAgent={onCreateAgent}
-          />
-        )}
+        render={(data) => {
+          // The defaults editor derives its model/fallback/reasoning/approval
+          // baselines from config; an in-flight or errored config would read as
+          // empty and a save could clear persisted overrides (saveBehavior writes
+          // every field with includeEmpty). Gate on config having loaded — but
+          // still render on a legitimately empty (loaded) config.
+          if (config.resource.isUnavailable) {
+            return <ConsolePageState kind="offline" detail="CONNECTION REQUIRED" />;
+          }
+          if (config.resource.isError) {
+            return <ConsolePageState kind="error" detail={config.resource.errorText || "CREW"} />;
+          }
+          if (config.resource.isLoading) {
+            return <ConsolePageState kind="loading" />;
+          }
+          return (
+            <CrewRoster
+              accounts={data}
+              config={config.config}
+              processResource={processes.resource}
+              toolTargets={toolTargetsForConsoleTargets(targets.targets)}
+              onManageAgent={onManageAgent}
+              onCreateAgent={onCreateAgent}
+            />
+          );
+        }}
       />
     </ConsolePage>
   );
