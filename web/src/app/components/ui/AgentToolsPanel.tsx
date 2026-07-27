@@ -127,7 +127,11 @@ export function AgentToolsPanel({
   };
 
   const startEditing = (index: number) => {
-    setEditingIndexes((current) => new Set([...current, index]));
+    // One row expanded at a time (matching addRule): opening a saved override
+    // collapses any other pencil-edited row and the pinned new row to read-only
+    // summaries — their values are already applied to the policy.
+    setEditingIndexes(new Set([index]));
+    setNewIndex(null);
   };
 
   const updateRule = (index: number, next: AgentToolApprovalRule) => {
