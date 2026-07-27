@@ -27,11 +27,4 @@ Search when the page path is not obvious:
 wiki search <query> --prefix gsv-manual
 ```
 
-For image reading and the native `img2txt` command:
-
-```bash
-wiki read gsv-manual/pages/apps-desktop/image-reading.md
-man img2txt
-```
-
 Keep answers grounded in the retrieved manual pages.
