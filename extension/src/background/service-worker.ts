@@ -26,7 +26,7 @@ import { createBrowserTargetDriver, type BrowserTargetActivity } from "./driver"
 const client = new GSVClient();
 const driver = client.driver({
   platform: "browser-extension",
-  version: "0.4.0",
+  version: "0.4.1",
   keepalive: {
     intervalMs: 25_000,
     acknowledgement: { timeoutMs: 10_000 },

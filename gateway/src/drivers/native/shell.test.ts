@@ -192,7 +192,7 @@ function makeContext(options?: {
     config: {
       get(key: string) {
         if (key === "config/server/name") return "gsv";
-        if (key === "config/server/version") return "0.4.0";
+        if (key === "config/server/version") return "0.4.1";
         return configValues.get(key) ?? null;
       },
       getExplicit(key: string) {
@@ -291,7 +291,7 @@ function makeContext(options?: {
     },
     processId: "task:pkg",
     processRunId: options?.processRunId,
-    serverVersion: "0.4.0",
+    serverVersion: "0.4.1",
     getAppRunner: options?.getAppRunner,
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
