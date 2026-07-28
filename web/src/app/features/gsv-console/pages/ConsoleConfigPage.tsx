@@ -1323,13 +1323,13 @@ function ModelProfileForm({
               onStepChange?.(Math.max(0, clampedStep - 1) as ModelProfileStep);
             }}
           />
+          <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
           <Button
             variant="primary"
             label={pending ? pendingLabel || "SAVING" : clampedStep === 3 ? "SAVE" : "CONTINUE"}
             disabled={!canContinue}
             onClick={clampedStep === 3 ? runTestAndSave : goNext}
           />
-          <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
         </div>
       </Surface>
     );
@@ -1354,13 +1354,6 @@ function ModelProfileForm({
         {renderMakeDefaultOption()}
         <SettingsStatus text={statusText} tone={statusTone} />
         <div class="gsv-console-settings-actions">
-          <Button
-            variant="primary"
-            label={pending ? pendingLabel || "SAVING" : "SAVE"}
-            disabled={!canSave || pending}
-            onClick={runTestAndSave}
-          />
-          <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
           {profile && onDelete ? (
             <Button
               variant="dangerGhost"
@@ -1369,6 +1362,15 @@ function ModelProfileForm({
               onClick={() => setConfirmDelete(true)}
             />
           ) : null}
+          <div class="gsv-console-model-primary-actions">
+            <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
+            <Button
+              variant="primary"
+              label={pending ? pendingLabel || "SAVING" : "SAVE"}
+              disabled={!canSave || pending}
+              onClick={runTestAndSave}
+            />
+          </div>
         </div>
       </Surface>
       {profile && onDelete && confirmDelete ? (
