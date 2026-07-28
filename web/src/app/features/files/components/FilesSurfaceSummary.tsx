@@ -883,6 +883,7 @@ export function FilesSurfaceSummary({
   const appliedLocationRef = useRef<string | null>(null);
   useEffect(() => {
     if (!initialTarget || !initialPath) {
+      appliedLocationRef.current = null;
       return;
     }
     const locationKey = `${initialTarget}\u0000${initialPath}`;
