@@ -155,13 +155,20 @@
   border-top: 1px solid var(--rule-section);
 }
 
-/* Regular/primary actions — pushed to the right edge of the footer. When there
-   is no destructive action, margin-left:auto still right-aligns the group. */
 .gsv-console-detail-footer-actions {
-  margin-left: auto;
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+}
+
+/* Regular/primary actions default to the right edge of the footer. Wizard
+   progress can opt into the centered placement. */
+.gsv-console-detail-footer-actions.is-end {
+  margin-left: auto;
+}
+
+.gsv-console-detail-footer-actions.is-center {
+  margin-inline: auto;
 }
 
 .gsv-console-detail-actions {

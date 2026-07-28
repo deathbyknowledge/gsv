@@ -560,6 +560,7 @@ function ModelSettingsDetail({
           l3={MODEL_PROFILE_STEP_LABELS[3]}
         />
       ) : undefined}
+      actionsAlignment={isNewProfile ? "center" : undefined}
       icon="stars"
       title={title}
       typeLabel="GSV · MODEL"
