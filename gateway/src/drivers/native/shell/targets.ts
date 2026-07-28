@@ -175,7 +175,7 @@ function showTarget(args: string[], ctx: KernelContext, commandName: "targets" |
 
 function parseTargetListOptions(args: string[], requireQuery = false): ListOptions {
   const options: ListOptions = {
-    includeOffline: false,
+    includeOffline: true,
     json: false,
     limit: DEFAULT_TARGET_LIMIT,
     offset: 0,
@@ -219,7 +219,7 @@ function parseTargetListOptions(args: string[], requireQuery = false): ListOptio
     options.query = positional.join(" ").trim().toLowerCase();
   }
   if (requireQuery && !options.query) {
-    throw new Error("usage: targets search <query> [--all] [--limit N] [--offset N] [--json]");
+    throw new Error("usage: targets search <query> [--all|--online] [--limit N] [--offset N] [--json]");
   }
   return options;
 }
@@ -338,11 +338,12 @@ function formatTimestamp(value: number | null): string {
 
 function targetsUsage(commandName: "targets" | "devices"): string {
   return [
-    `Usage: ${commandName} list [--all] [--search QUERY] [--limit N] [--offset N] [--json]`,
-    `Usage: ${commandName} search <query> [--all] [--limit N] [--offset N] [--json]`,
+    `Usage: ${commandName} list [--all|--online] [--search QUERY] [--limit N] [--offset N] [--json]`,
+    `Usage: ${commandName} search <query> [--all|--online] [--limit N] [--offset N] [--json]`,
     `Usage: ${commandName} show <target-id> [--json]`,
     "",
-    "Lists target ids available to this process. Use target ids with target-aware",
-    "Shell, filesystem, CodeMode, and cp operations.",
+    "Lists registered target ids visible to this process and their online state.",
+    "Offline targets cannot accept target-aware operations until they reconnect.",
+    "Use --online to show only targets that are currently reachable.",
   ].join("\n") + "\n";
 }
