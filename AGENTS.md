@@ -103,6 +103,13 @@ Do not create tables, indexes, or ad hoc `ensureColumn` migrations from store co
 
 ## Change discipline
 
+### Protected prompt and context content
+
+- Keep production prompt text and repository-defined defaults or seeds for system `config/ai/context.d/*` and user or agent account `~/context.d/*` in `gateway/src/prompts/**`.
+- Treat `gateway/src/prompts/**` as read-only unless the user explicitly requests a prompt or standing-context content change.
+- Do not edit prompt or seeded `context.d` content to work around runtime, protocol, tool-discovery, or UI behavior. Fix the owning implementation boundary.
+- If a task appears to require changing protected prompt or context content without explicit authorization, stop and ask first.
+
 1. Inspect the current branch, diff, callers, and owning subsystem before editing.
 2. State the invariant and the component that should own the behavior.
 3. For broad cleanup, present the proposed batch before changing behavior so maintainers can supply historical context.
