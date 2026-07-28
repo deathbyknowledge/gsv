@@ -244,7 +244,26 @@ describe("sys.oauth handlers", () => {
     expect(result.flow).not.toHaveProperty("extraAuthParams");
   });
 
-  it("polls a pending OpenAI Codex device-code flow", async () => {
+  it.each([
+    {
+      responseBody: JSON.stringify({ error: "deviceauth_authorization_pending" }),
+      responseStatus: 403,
+      scenario: "the OpenAI pending code",
+    },
+    {
+      responseBody: JSON.stringify({ error: "authorization_pending" }),
+      responseStatus: 400,
+      scenario: "the standard pending code",
+    },
+    {
+      responseBody: "",
+      responseStatus: 404,
+      scenario: "an empty not-found response",
+    },
+  ])("polls a pending OpenAI Codex device-code flow for $scenario", async ({
+    responseBody,
+    responseStatus,
+  }) => {
     const ctx = makeContext(1000, oauth);
     oauth.getFlow.mockReturnValue({
       ...flow,
@@ -258,10 +277,8 @@ describe("sys.oauth handlers", () => {
         interval_seconds: "5",
       },
     });
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
-      error: "deviceauth_authorization_pending",
-    }), {
-      status: 403,
+    const fetcher = vi.fn(async () => new Response(responseBody, {
+      status: responseStatus,
       headers: { "content-type": "application/json" },
     }));
 
@@ -278,6 +295,35 @@ describe("sys.oauth handlers", () => {
       intervalSeconds: 5,
       expiresAt: flow.expiresAt,
     });
+    expect(oauth.upsertAccount).not.toHaveBeenCalled();
+    expect(oauth.deleteFlow).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a rejected OpenAI Codex device-code flow", async () => {
+    const ctx = makeContext(1000, oauth);
+    oauth.getFlow.mockReturnValue({
+      ...flow,
+      authorizationEndpoint: "https://auth.openai.com/codex/device",
+      tokenEndpoint: "https://auth.openai.com/oauth/token",
+      redirectUri: "https://auth.openai.com/deviceauth/callback",
+      scope: "openid profile email offline_access",
+      extraAuthParams: {
+        device_auth_id: "device-auth-1",
+        user_code: "ABCD-EFGH",
+        interval_seconds: "5",
+      },
+    });
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      error: "access_denied",
+    }), {
+      status: 403,
+      headers: { "content-type": "application/json" },
+    }));
+
+    await expect(handleSysOAuthDevicePoll({
+      flowId: "flow-1",
+    }, ctx, fetcher)).rejects.toThrow("OpenAI Codex device auth failed with status 403: access_denied");
+
     expect(oauth.upsertAccount).not.toHaveBeenCalled();
     expect(oauth.deleteFlow).not.toHaveBeenCalled();
   });

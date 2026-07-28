@@ -34,6 +34,7 @@ describe("console settings domain", () => {
     expect(providerValues).not.toContain("azure-openai-responses");
     expect(providerValues).not.toContain("cloudflare-workers-ai");
     expect(providerValues).toContain("openai-codex");
+    expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "openai")?.label).toBe("OpenAI (API)");
     expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "workers-ai")?.label).toBe("Workers AI (gateway binding)");
     expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "cloudflare-ai-gateway")?.label).toBe("Cloudflare AI Gateway");
     expect(AI_PROVIDER_OPTIONS.find((option) => option.value === "openai-codex")?.label).toBe("OpenAI Codex (ChatGPT)");
@@ -44,6 +45,7 @@ describe("console settings domain", () => {
     expect(toolProviderField("transcription")?.options).toBe(AI_OPENAI_WORKERS_PROVIDER_OPTIONS);
     expect(toolProviderField("speech")?.options).toBe(AI_OPENAI_WORKERS_PROVIDER_OPTIONS);
     expect(AI_OPENAI_WORKERS_PROVIDER_OPTIONS.map((option) => option.value)).toEqual(["workers-ai", "openai"]);
+    expect(AI_OPENAI_WORKERS_PROVIDER_OPTIONS.find((option) => option.value === "openai")?.label).toBe("OpenAI (API)");
   });
 
   it("keeps model profile credentials out of serialized preset metadata", () => {

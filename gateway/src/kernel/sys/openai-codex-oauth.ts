@@ -114,19 +114,23 @@ export async function pollOpenAICodexDeviceFlow(
     };
   }
 
-  if (response.status === 403 || response.status === 404) {
-    return { status: "pending", intervalSeconds: input.intervalSeconds };
-  }
-
   const body = await readLimitedText(response);
   const errorCode = parseOAuthErrorCode(body);
-  if (errorCode === "deviceauth_authorization_pending") {
+  if (errorCode === "deviceauth_authorization_pending" || errorCode === "authorization_pending") {
     return { status: "pending", intervalSeconds: input.intervalSeconds };
   }
   if (errorCode === "slow_down") {
     return { status: "pending", intervalSeconds: (input.intervalSeconds ?? 5) + 5 };
   }
-  throw new Error(`OpenAI Codex device auth failed with status ${response.status}${body ? `: ${body}` : ""}`);
+  // Codex also uses 403/404 for an unapproved code, sometimes without an OAuth error payload.
+  if (
+    (response.status === 403 || response.status === 404) &&
+    errorCode !== "access_denied" &&
+    errorCode !== "expired_token"
+  ) {
+    return { status: "pending", intervalSeconds: input.intervalSeconds };
+  }
+  throw new Error(`OpenAI Codex device auth failed with status ${response.status}${errorCode ? `: ${errorCode}` : ""}`);
 }
 
 export async function exchangeOpenAICodexAuthorizationCode(

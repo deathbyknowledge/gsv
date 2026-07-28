@@ -65,6 +65,14 @@
   margin-top: 2px;
 }
 
+.gsv-console-codex-login-help {
+  max-width: 62ch;
+  color: var(--prose-dim);
+  font-family: var(--gsv-font-prose);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
 /* Half fields sit side by side — reserve two description lines on both so the
    input boxes line up regardless of description length. */
 .gsv-console-settings-field.is-half .gsv-fld-desc {

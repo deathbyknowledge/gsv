@@ -26,7 +26,7 @@ export const AI_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption> = [
   { value: "moonshotai", label: "Moonshot AI" },
   { value: "moonshotai-cn", label: "Moonshot AI China" },
   { value: "nvidia", label: "NVIDIA" },
-  { value: "openai", label: "OpenAI" },
+  { value: "openai", label: "OpenAI (API)" },
   { value: "openai-codex", label: "OpenAI Codex (ChatGPT)" },
   { value: "opencode", label: "OpenCode" },
   { value: "opencode-go", label: "OpenCode Go" },
@@ -44,7 +44,7 @@ export const AI_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption> = [
 
 export const AI_OPENAI_WORKERS_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption> = [
   { value: "workers-ai", label: "Workers AI (gateway binding)" },
-  { value: "openai", label: "OpenAI" },
+  { value: "openai", label: "OpenAI (API)" },
 ];
 
 export function aiProviderOptionsForValue(
