@@ -128,7 +128,7 @@ const story: Story = {
       </div>
 
       <div class="ds-cell">
-        <div class="ds-label">Primary view — idle (START beside ⋮), context null</div>
+        <div class="ds-label">Primary view — new task (START beside ⋮), context null</div>
         <MobileFrame>
           <ChatDockHeader {...headerProps({
             hasActiveProcess: false,

@@ -328,6 +328,13 @@
   opacity: 0.72;
 }
 
+.gsv-chat-min small .gsv-chat-new-task-glyph {
+  display: inline-flex;
+  margin-left: 5px;
+  color: var(--accent-bright);
+  vertical-align: -2px;
+}
+
 .gsv-chat-min-dot {
   display: inline-flex;
   align-items: center;
@@ -540,6 +547,14 @@
   background: var(--online);
   animation: gsvChatBlink 1.1s step-end infinite;
   opacity: 0.8;
+}
+
+.gsv-shell-root .gsv-chat-agent-activity span.gsv-chat-new-task-glyph {
+  flex: none;
+  display: inline-flex;
+  max-width: none;
+  color: var(--online);
+  overflow: visible;
 }
 
 .gsv-shell-root .gsv-chat-actions {

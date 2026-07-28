@@ -4,7 +4,7 @@ import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
 import { Progress } from "../../../components/ui/Progress";
 import { StatusDot } from "../../../components/ui/StatusDot";
-import { ArrowLeftGlyph, MoreVerticalGlyph, SpeakerOnGlyph, SpeakerOffGlyph } from "../../../components/ui/lineGlyphs";
+import { ArrowLeftGlyph, MoreVerticalGlyph, PlusGlyph, SpeakerOnGlyph, SpeakerOffGlyph } from "../../../components/ui/lineGlyphs";
 import { Hint } from "../../../components/ui/Tooltip";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { ChatAgentViewModel } from "../domain/agent";
@@ -87,6 +87,7 @@ export function ChatDockHeader({
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId);
   const conversationLabel = activeConversation?.title
     || (activeConversationId === "default" ? "Default" : shortId(activeConversationId) || "Default");
+  const showNewTask = activeAgent.activity.toLowerCase() === "idle";
 
   const [mobileView, setMobileView] = useState<MobileHeaderView>(initialMobileView);
   useEffect(() => {
@@ -139,8 +140,10 @@ export function ChatDockHeader({
       aria-expanded={openPopover === "tasks"}
     >
       <StatusDot tone={effectiveStatus} size={7} />
-      <span>{activeAgent.activity}</span>
-      <i aria-hidden="true" />
+      <span>{showNewTask ? "NEW TASK" : activeAgent.activity}</span>
+      {showNewTask ? (
+        <span class="gsv-chat-new-task-glyph" aria-hidden="true"><PlusGlyph size={11} /></span>
+      ) : <i aria-hidden="true" />}
       {triggerChevron}
     </button>
   );

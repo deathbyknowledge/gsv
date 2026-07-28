@@ -6,6 +6,7 @@ import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 import { Counter } from "../../../components/ui/Counter";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
+import { PlusGlyph } from "../../../components/ui/lineGlyphs";
 import { MessageInput, type MessageInputAttachment } from "../../../components/ui/MessageInput";
 import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
 import { Hint, closeAllTooltips } from "../../../components/ui/Tooltip";
@@ -417,6 +418,7 @@ export function ChatDock({
     statusLabel: effectiveStatusLabel,
     contextLabel,
   }), [effectiveAgent, title, effectiveStatus, effectiveStatusLabel, contextLabel]);
+  const showNewTask = activeAgent.activity.toLowerCase() === "idle";
   const transcriptMessages = runtime.rows;
   const runState = runtime.runState ?? (effectiveStatusLabel === "loading" ? undefined : effectiveStatusLabel);
   const canAbortRun = hasActiveProcess
@@ -1030,8 +1032,10 @@ export function ChatDock({
           <strong class="gsv-prose-heading">{activeAgent.name}</strong>
           <small class="gsv-label">
             <span class="gsv-chat-min-dot"><StatusDot tone={effectiveStatus} size={7} /></span>
-            {activeAgent.activity}
-            <i />
+            {showNewTask ? "NEW TASK" : activeAgent.activity}
+            {showNewTask ? (
+              <span class="gsv-chat-new-task-glyph" aria-hidden="true"><PlusGlyph size={12} /></span>
+            ) : <i aria-hidden="true" />}
           </small>
         </span>
       </button>
