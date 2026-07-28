@@ -1921,6 +1921,7 @@ async function spawnAdapterAgentProcess(
       pid,
       identity: agent.identity,
       interactive: true,
+      title: label,
       conversationId: conversation.conversationId,
     },
   } as RequestFrame);

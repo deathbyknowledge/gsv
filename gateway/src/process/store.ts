@@ -269,6 +269,21 @@ export class ProcessStore {
     };
   }
 
+  setConversationTitle(conversationId: string, title: string): boolean {
+    const id = normalizeConversationId(conversationId);
+    const normalized = normalizeNullableString(title);
+    if (!normalized || !this.getConversation(id)) {
+      return false;
+    }
+    this.sql.exec(
+      "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
+      normalized,
+      Date.now(),
+      id,
+    );
+    return true;
+  }
+
   listConversations(options?: { includeClosed?: boolean }): ProcessConversationRecord[] {
     const rows = [...this.sql.exec<{
       id: string;

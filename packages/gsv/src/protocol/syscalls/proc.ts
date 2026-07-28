@@ -786,6 +786,10 @@ export type ProcSetIdentityArgs = {
   pid: string;
   identity: ProcessIdentity;
   interactive?: boolean;
+  /** Initial title for the executor's primary process-local conversation. */
+  title?: string;
+  /** Generate a title from the first admitted primary-conversation message. */
+  autoTitle?: boolean;
   /**
    * Kernel conversation id this executor's primary thread belongs to. The
    * executor archives/reads its primary thread under

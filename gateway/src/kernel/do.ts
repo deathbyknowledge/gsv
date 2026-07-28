@@ -1053,6 +1053,21 @@ export class Kernel extends Host<Env> {
         return true;
       case "proc.changed":
         if (
+          conversationId === "default"
+          && Array.isArray(payload.changes)
+          && payload.changes.includes("title")
+          && typeof payload.title === "string"
+        ) {
+          const title = Array.from(payload.title.trim()).slice(0, 80).join("");
+          if (title) {
+            this.procs.setLabel(processId, title);
+            const conversation = this.conversations.getByActivePid(processId);
+            if (conversation) {
+              this.conversations.setTitle(conversation.conversationId, title);
+            }
+          }
+        }
+        if (
           runId
           && current.activeRunId === runId
           && Array.isArray(payload.changes)

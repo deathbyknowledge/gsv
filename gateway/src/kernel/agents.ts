@@ -349,11 +349,13 @@ export async function resolveConversationExecutor(
   }
 
   const interactive = opts?.interactive ?? true;
+  const title = conversation.title?.trim() || undefined;
+  const label = opts?.label?.trim() || title;
   const pid = `proc:${crypto.randomUUID()}`;
   ctx.procs.spawn(pid, agentIdentity, {
     ownerUid: conversation.ownerUid,
     interactive,
-    label: opts?.label,
+    label,
   });
   ctx.conversations.setActivePid(conversation.conversationId, pid);
 
@@ -365,6 +367,7 @@ export async function resolveConversationExecutor(
       pid,
       identity: agentIdentity,
       interactive,
+      ...(title ? { title } : {}),
       conversationId: conversation.conversationId,
       ...(conversation.latestArchive ? { hydrateFrom: conversation.latestArchive } : {}),
     },
