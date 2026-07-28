@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { InfoTip } from "./InfoTip";
 import "./Segmented.css";
 
@@ -16,6 +16,9 @@ export interface SegmentedProps {
   disabled?: boolean;
   width?: number;
   label?: string;
+  /** Accessible name for the radiogroup when the visible label is rendered
+   *  externally (no `label` prop). Ignored when `label` is set. */
+  ariaLabel?: string;
   info?: string;
   description?: string;
   requirement?: SegmentedRequirement;
@@ -51,6 +54,13 @@ export function Segmented(props: SegmentedProps) {
   } = props;
 
   const [selState, setSelState] = useState<number | undefined>(undefined);
+  // Stay controlled: when the parent supplies a new `value` (e.g. a RESET that
+  // restores the saved selection), drop the local click state so the control
+  // reflects the incoming value instead of the last-clicked segment. Uncontrolled
+  // callers pass a static `value`, so this never fires for them after mount.
+  useEffect(() => {
+    setSelState(undefined);
+  }, [props.value]);
   const sel = selState === undefined ? props.value ?? 1 : selState;
   const groupId = useId();
   const segRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -145,6 +155,7 @@ export function Segmented(props: SegmentedProps) {
         style={{ width: "100%" }}
         role="radiogroup"
         aria-labelledby={labelId}
+        aria-label={labelId ? undefined : props.ariaLabel || undefined}
         aria-describedby={describedBy}
         aria-invalid={status === "error" ? true : undefined}
       >

@@ -1,145 +1,147 @@
 .gsv-tools-panel {
-  display: grid;
-  gap: 14px;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   max-width: 640px;
 }
 
-.gsv-tools-bar {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+/* Section heading — yellow step-title + full-width description. The description
+   holds the gap down to the first field (matches the create-agent form: title,
+   desc, then the field groups). */
+.gsv-tools-heading {
+  margin-bottom: 28px;
 }
 
+/* Same desktop-yellow step-title treatment as the surface's top title. */
 .gsv-tools-title {
+  margin: 0;
+  color: var(--update);
+  text-shadow: 0 0 9px rgba(255, 210, 77, 0.3);
+}
+
+.gsv-tools-desc {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+}
+
+/* Field group — a field label above its control, 30px between groups to match
+   the MODEL/FALLBACK/REASONING rhythm of the create-agent form above. */
+.gsv-tools-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   min-width: 0;
+}
+
+.gsv-tools-field + .gsv-tools-field {
+  margin-top: 30px;
+}
+
+/* Field label row — the same treatment as the Select/Segmented field label
+   (.gsv-fld-lab): 12px sublabel text, 8px down to the control. */
+.gsv-tools-field-lab {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-height: 13px;
 }
 
-.gsv-tools-title > span:first-child {
-  color: var(--label);
-  font-size: 9.5px;
-  letter-spacing: 0.2em;
-}
-
-.gsv-tools-title .gsv-infotip {
+.gsv-tools-field-lab .gsv-infotip {
   margin-inline-start: 0;
 }
 
-.gsv-tools-bar-actions {
-  min-width: 0;
-  display: flex;
-  justify-content: flex-end;
+/* OVERRIDES label row: the label group on the left, the ADD OVERRIDE link on the
+   right (space-between). On a narrow/mobile panel the link wraps to its own line
+   and, as a lone item, falls to flex-start — left-aligned. */
+.gsv-tools-overrides-lab {
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px 12px;
+  justify-content: space-between;
 }
 
-.gsv-tools-bar-actions .gsv-btn {
-  min-height: 30px;
-  padding: 8px 12px;
-  font-size: 9px;
-}
-
-.gsv-tools-overrides {
+.gsv-tools-overrides-name {
   min-width: 0;
-  display: grid;
-  border-top: 1px solid var(--rule-inner);
-  border-bottom: 1px solid var(--rule-inner);
-}
-
-.gsv-tools-overrides-head,
-.gsv-tools-rule {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(150px, 190px) minmax(150px, 190px) auto;
-  align-items: center;
-  gap: 12px;
-}
-
-.gsv-tools-overrides-head {
-  padding: 8px 0;
-  border-bottom: 1px solid var(--rule-inner);
-  color: var(--label);
-  font-family: var(--gsv-font-mono);
-  font-size: 9px;
-  letter-spacing: 0.18em;
-}
-
-.gsv-tools-column-head {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  gap: 6px;
-}
-
-.gsv-tools-column-head .gsv-infotip {
-  letter-spacing: 0;
-}
-
-.gsv-tools-rule-list {
-  display: grid;
-  min-width: 0;
-}
-
-.gsv-tools-rule {
-  padding: 10px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--rule-inner) 72%, transparent);
-}
-
-.gsv-tools-rule:last-child {
-  border-bottom: 0;
-}
-
-.gsv-tools-rule-tool,
-.gsv-tools-rule-target,
-.gsv-tools-rule-action,
-.gsv-tools-rule-delete {
-  min-width: 0;
-}
-
-.gsv-tools-rule-action {
-  min-width: 0;
-}
-
-.gsv-tools-rule-delete {
   display: flex;
-  justify-content: flex-end;
-  justify-self: end;
+  align-items: center;
+  gap: 8px;
 }
 
-.gsv-tools-rule-delete .gsv-ibtn,
-.gsv-tools-rule-delete .gsv-ibtn-disabled {
-  justify-self: end;
+/* Rule list — stored overrides as read-only summary rows (pencil to unlock),
+   the editing/new rule as a stacked labeled-select card. */
+.gsv-tools-rules {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-@container panel (max-width: 700px) {
-  .gsv-tools-bar,
-  .gsv-tools-overrides-head,
-  .gsv-tools-rule {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.gsv-tools-rule-item {
+  min-width: 0;
+  border: 1px solid var(--rule-inner);
+  background: var(--panel-2);
+  padding: 10px 12px;
+}
 
-  .gsv-tools-bar {
-    align-items: stretch;
-    flex-direction: column;
-  }
+.gsv-tools-rule-item.is-editing {
+  border-color: var(--border-raised);
+}
 
-  .gsv-tools-bar-actions,
-  .gsv-tools-bar-actions .gsv-btn,
-  .gsv-tools-rule-delete {
-    width: 100%;
-  }
+.gsv-tools-rule-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
-  .gsv-tools-overrides-head {
-    display: none;
-  }
+.gsv-tools-rule-text {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
 
-  .gsv-tools-rule-delete {
-    justify-self: end;
-  }
+.gsv-tools-rule-text .gsv-listitem {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-tools-rule-text .gsv-sublabel {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gsv-tools-rule-buttons {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.gsv-tools-rule-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gsv-tools-rule-edit-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.gsv-tools-rule-edit-head > :last-child {
+  margin-left: auto;
+}
+
+.gsv-tools-empty {
+  margin: 0;
+  color: var(--text-muted);
 }
