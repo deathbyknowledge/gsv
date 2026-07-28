@@ -542,7 +542,7 @@ describe("native shell capability discovery", () => {
     );
 
     expect(targets.ok).toBe(true);
-    expect(targets.stdout).toContain("device   User-owned connected devices");
+    expect(targets.stdout).toContain("device   User-owned registered devices");
     expect(targets.stdout).not.toContain("adapter  External messaging surfaces");
     expect(targets.stdout).not.toContain("targets search whatsapp");
     expect(sched.stdout).toContain("creates a direct scheduled delivery");
@@ -967,6 +967,31 @@ describe("targets native command", () => {
     );
     expect(alias.ok).toBe(true);
     expect(alias.stdout).toContain("macbook\tdevice\tonline\tdarwin");
+  });
+
+  it("keeps registered offline targets visible by default", async () => {
+    const devices = {
+      listForUser: vi.fn(() => [
+        makeDevice({
+          device_id: "macbook",
+          label: "Work MacBook",
+          platform: "darwin",
+          online: false,
+          connected_at: null,
+          disconnected_at: 1_800_000_000_000,
+        }),
+      ]),
+    } as unknown as KernelContext["devices"];
+    const ctx = makeContext({ capabilities: ["sys.device.list"], devices });
+
+    const result = await handleShellExec({ input: "targets list" }, ctx);
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("macbook\tdevice\toffline\tdarwin");
+
+    const onlineOnly = await handleShellExec({ input: "targets list --online" }, ctx);
+    expect(onlineOnly.ok).toBe(true);
+    expect(onlineOnly.stdout).not.toContain("macbook");
   });
 
   it("shows target details", async () => {

@@ -14,7 +14,7 @@ export const GSV_TARGET_CONTEXT =
   "External messaging surfaces such as Telegram, WhatsApp, etc. are discovered with `message destinations`.\n" +
   "Your final response returns to its origin automatically; use `message attach PATH...` to include files in that response. `message send` is only for an additional or cross-channel text/file delivery.\n" +
   "Files can be moved between targets with target-aware copy, `cp source-target:/path destination-target:/path`.\n" +
-  "Use `targets list` to discover target ids beyond the compact prompt list.\n" +
+  "Use `targets list` to discover registered target ids and their online or offline state beyond the compact online prompt list.\n" +
   "\n" +
   "All of these commands must be run from the `gsv` target.";
 

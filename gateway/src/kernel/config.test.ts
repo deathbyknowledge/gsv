@@ -161,6 +161,7 @@ describe("ConfigStore", () => {
     expect(targets).toContain("message send");
     expect(targets).toContain("cp source-target:/path destination-target:/path");
     expect(targets).toContain("targets list");
+    expect(targets).toContain("online or offline state");
     expect(targets).toContain("must be run from the `gsv` target");
     const discovery = SYSTEM_CONFIG_DEFAULTS["config/ai/context.d/20-discovery.md"];
     expect(discovery).toContain("man --search -- '<plain-language goal>'");
