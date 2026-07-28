@@ -12,12 +12,15 @@ import {
   createModelProfile,
   effectiveAiValuesForViewer,
   modelDisplayName,
+  modelProfileDefaultEntries,
+  modelProfileSaveEntries,
   modelProfileSecretConfigKey,
   modelProfilesConfigKey,
   modelProfilesForConfig,
   modelValidationValuesFromProfileDrafts,
   redactModelProfilesConfigValue,
   serializeModelProfiles,
+  updateModelProfile,
 } from "./consoleSettings";
 
 describe("console settings domain", () => {
@@ -80,6 +83,53 @@ describe("console settings domain", () => {
       "config/ai/reasoning": "high",
       "config/ai/max_tokens": "8192",
       "config/ai/max_context_bytes": "65536",
+    });
+  });
+
+  it("builds saved profile and default writes from the same edited model", () => {
+    const profiles = createModelProfile([], "Fast", {
+      "config/ai/provider": "openai",
+      "config/ai/model": "gpt-old",
+      "config/ai/api_key": "sk-profile",
+    }, 1000);
+    const nextProfiles = updateModelProfile(profiles, profiles[0].id, "Fast", {
+      ...profiles[0].values,
+      "config/ai/model": "gpt-new",
+    }, 2000);
+    const clearedSecretKeys = new Map([[profiles[0].id, new Set<string>()]]);
+    const entries = [
+      ...modelProfileSaveEntries(0, profiles, nextProfiles, clearedSecretKeys),
+      ...modelProfileDefaultEntries([], 0, true, nextProfiles[0], clearedSecretKeys),
+    ];
+    const storedProfiles = JSON.parse(
+      entries.find((entry) => entry.key === modelProfilesConfigKey(0))?.value ?? "{}",
+    ) as { profiles?: Array<{ values: Record<string, string> }> };
+
+    expect(storedProfiles.profiles?.[0].values["config/ai/model"]).toBe("gpt-new");
+    expect(entries).toContainEqual({
+      key: modelProfileSecretConfigKey(0, profiles[0].id, "config/ai/api_key"),
+      value: "sk-profile",
+    });
+    expect(entries).toContainEqual({ key: "config/ai/model", value: "gpt-new" });
+    expect(entries).toContainEqual({ key: "config/ai/api_key", value: "sk-profile" });
+  });
+
+  it("copies an unchanged redacted profile secret when making it default", () => {
+    const profiles = createModelProfile([], "Fast", {
+      "config/ai/provider": "openai",
+      "config/ai/model": "gpt-5",
+      "config/ai/api_key": "",
+    }, 1000);
+    const profileSecretKey = modelProfileSecretConfigKey(42, profiles[0].id, "config/ai/api_key");
+    const config: ConsoleConfigEntry[] = [{
+      key: profileSecretKey,
+      value: "",
+      redacted: true,
+    }];
+
+    expect(modelProfileDefaultEntries(config, 42, false, profiles[0])).toContainEqual({
+      key: "users/42/ai/api_key",
+      copyFromKey: profileSecretKey,
     });
   });
 

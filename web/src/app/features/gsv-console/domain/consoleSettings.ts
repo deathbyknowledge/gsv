@@ -39,6 +39,14 @@ export type ConsoleModelProfile = {
   updatedAt: number;
 };
 
+export type ConsoleConfigWrite = {
+  key: string;
+  value?: string;
+  copyFromKey?: string;
+};
+
+export type ClearedModelProfileSecretKeys = ReadonlyMap<string, ReadonlySet<string>>;
+
 const MODEL_PROFILES_VERSION = 1;
 const MODEL_PROFILE_KEY = "model_profiles";
 const MAX_PROFILE_NAME_LENGTH = 80;
@@ -553,6 +561,79 @@ export function serializeModelProfiles(profiles: readonly ConsoleModelProfile[])
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
     })),
+  });
+}
+
+export function modelProfileSaveEntries(
+  uid: number | null,
+  currentProfiles: readonly ConsoleModelProfile[],
+  nextProfiles: readonly ConsoleModelProfile[],
+  clearedSecretKeys: ClearedModelProfileSecretKeys = new Map(),
+): ConsoleConfigWrite[] {
+  if (uid === null) {
+    throw new Error("A signed-in account is required to save models.");
+  }
+  const nextIds = new Set(nextProfiles.map((profile) => profile.id));
+  const entries: ConsoleConfigWrite[] = [{
+    key: modelProfilesConfigKey(uid),
+    value: serializeModelProfiles(nextProfiles),
+  }];
+  for (const profile of nextProfiles) {
+    const clearedForProfile = clearedSecretKeys.get(profile.id);
+    for (const field of MODEL_PROFILE_SECRET_FIELDS) {
+      const value = profile.values[field.key] ?? "";
+      if (clearedForProfile?.has(field.key)) {
+        entries.push({
+          key: modelProfileSecretConfigKey(uid, profile.id, field.key),
+          value: "",
+        });
+      } else if (value.length > 0) {
+        entries.push({
+          key: modelProfileSecretConfigKey(uid, profile.id, field.key),
+          value,
+        });
+      }
+    }
+  }
+  for (const profile of currentProfiles) {
+    if (nextIds.has(profile.id)) {
+      continue;
+    }
+    for (const field of MODEL_PROFILE_SECRET_FIELDS) {
+      entries.push({
+        key: modelProfileSecretConfigKey(uid, profile.id, field.key),
+        value: "",
+      });
+    }
+  }
+  return entries;
+}
+
+export function modelProfileDefaultEntries(
+  config: readonly ConsoleConfigEntry[],
+  uid: number | null,
+  isRoot: boolean,
+  profile: ConsoleModelProfile,
+  clearedSecretKeys: ClearedModelProfileSecretKeys = new Map(),
+): ConsoleConfigWrite[] {
+  if (uid === null) {
+    throw new Error("A signed-in account is required to update the default model.");
+  }
+  const clearedForProfile = clearedSecretKeys.get(profile.id);
+  return MODEL_PROFILE_FIELDS.flatMap((field): ConsoleConfigWrite[] => {
+    const key = isRoot ? field.key : buildUserAiOverrideKey(uid, field.key);
+    const value = profile.values[field.key] ?? "";
+    if (isSensitiveSettingKey(field.key) && value.length === 0) {
+      if (clearedForProfile?.has(field.key)) {
+        return [{ key, value: "" }];
+      }
+      const copyFromKey = modelProfileSecretConfigKey(uid, profile.id, field.key);
+      if (configEntryForKey(config, copyFromKey)?.redacted === true) {
+        return [{ key, copyFromKey }];
+      }
+      return [];
+    }
+    return [{ key, value }];
   });
 }
 

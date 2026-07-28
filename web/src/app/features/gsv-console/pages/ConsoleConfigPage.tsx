@@ -42,7 +42,6 @@ import {
 import {
   AGENT_MODEL_FIELDS,
   MODEL_PROFILE_FIELDS,
-  MODEL_PROFILE_SECRET_FIELDS,
   RUNTIME_SETTING_GROUPS,
   TOOL_MODEL_GROUPS,
   buildUserAiOverrideKey,
@@ -53,13 +52,13 @@ import {
   effectiveAiValuesForViewer,
   isSensitiveSettingKey,
   modelDisplayName,
+  modelProfileDefaultEntries,
+  modelProfileSaveEntries,
   modelValidationValuesFromProfileDrafts,
   modelProfileSecretConfigKey,
   modelProfileSummary,
-  modelProfilesConfigKey,
   modelProfilesForConfig,
   profileValuesFromDrafts,
-  serializeModelProfiles,
   updateModelProfile,
   viewerAccountForSettings,
   type ConsoleModelProfile,
@@ -163,7 +162,6 @@ type SettingsFieldGroupProps = {
   writeKeyForField: (field: ConsoleSettingField) => string;
 };
 
-type ClearedProfileSecretKeys = ReadonlyMap<string, ReadonlySet<string>>;
 const TOOL_APPROVAL_RUNTIME_ID = "tool-approval";
 const MODEL_ADVANCED_FIELD_KEYS = new Set([
   "config/ai/base_url",
@@ -583,21 +581,39 @@ function ModelSettingsDetail({
         onStepChange={setNewProfileStep}
         onCancel={onBack}
         onDelete={profile ? async () => {
-          await saveModelProfiles(viewer, profiles, deleteModelProfile(profiles, profile.id), onSaveEntries);
+          await onSaveEntries(modelProfileSaveEntries(
+            viewer.uid,
+            profiles,
+            deleteModelProfile(profiles, profile.id),
+          ));
           onCompleted();
-        } : undefined}
-        onMakeDefault={profile ? async (values, clearedSecretKeys) => {
-          await makeProfileDefault(config, viewer, { ...profile, values }, onSaveEntries, clearedSecretKeys);
         } : undefined}
         onCheckOpenAiCodexOAuth={onCheckOpenAiCodexOAuth}
         onPollOpenAiCodexOAuth={onPollOpenAiCodexOAuth}
         onStartOpenAiCodexOAuth={onStartOpenAiCodexOAuth}
         onValidate={onValidateModelConfig}
-        onSave={async (name, values, clearedSecretKeys) => {
+        onSave={async (name, values, clearedSecretKeys, makeDefault) => {
           const nextProfiles = profile
             ? updateModelProfile(profiles, profile.id, name, values)
             : createModelProfile(profiles, name, values);
-          await saveModelProfiles(viewer, profiles, nextProfiles, onSaveEntries, clearedSecretKeys);
+          const savedProfile = profile
+            ? nextProfiles.find((candidate) => candidate.id === profile.id)
+            : nextProfiles[0];
+          if (!savedProfile) {
+            throw new Error("Saved model profile was not found.");
+          }
+          const clearedByProfile = new Map([[savedProfile.id, clearedSecretKeys]]);
+          const entries = modelProfileSaveEntries(viewer.uid, profiles, nextProfiles, clearedByProfile);
+          if (makeDefault) {
+            entries.push(...modelProfileDefaultEntries(
+              config,
+              viewer.uid,
+              viewer.isRoot,
+              savedProfile,
+              clearedByProfile,
+            ));
+          }
+          await onSaveEntries(entries);
           if (!profile) {
             onCompleted();
           }
@@ -935,83 +951,6 @@ function ToolApprovalSettingsGroup({
   );
 }
 
-async function saveModelProfiles(
-  viewer: SettingsViewer,
-  currentProfiles: readonly ConsoleModelProfile[],
-  nextProfiles: readonly ConsoleModelProfile[],
-  onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>,
-  clearedSecretKeys: ClearedProfileSecretKeys = new Map(),
-): Promise<void> {
-  if (viewer.uid === null) {
-    throw new Error("A signed-in account is required to save models.");
-  }
-  const nextIds = new Set(nextProfiles.map((profile) => profile.id));
-  const entries: SaveConsoleConfigInput[] = [{
-    key: modelProfilesConfigKey(viewer.uid),
-    value: serializeModelProfiles(nextProfiles),
-  }];
-  for (const profile of nextProfiles) {
-    const clearedForProfile = clearedSecretKeys.get(profile.id);
-    for (const field of MODEL_PROFILE_SECRET_FIELDS) {
-      const value = profile.values[field.key] ?? "";
-      if (clearedForProfile?.has(field.key)) {
-        entries.push({
-          key: modelProfileSecretConfigKey(viewer.uid, profile.id, field.key),
-          value: "",
-        });
-      } else if (value.length > 0) {
-        entries.push({
-          key: modelProfileSecretConfigKey(viewer.uid, profile.id, field.key),
-          value,
-        });
-      }
-    }
-  }
-  for (const profile of currentProfiles) {
-    if (nextIds.has(profile.id)) {
-      continue;
-    }
-    for (const field of MODEL_PROFILE_SECRET_FIELDS) {
-      entries.push({
-        key: modelProfileSecretConfigKey(viewer.uid, profile.id, field.key),
-        value: "",
-      });
-    }
-  }
-  await onSaveEntries(entries);
-}
-
-async function makeProfileDefault(
-  config: readonly ConsoleConfigEntry[],
-  viewer: SettingsViewer,
-  profile: ConsoleModelProfile,
-  onSaveEntries: (entries: readonly SaveConsoleConfigInput[]) => Promise<void>,
-  clearedSecretKeys: ClearedProfileSecretKeys = new Map(),
-): Promise<void> {
-  if (viewer.uid === null) {
-    throw new Error("A signed-in account is required to update the default model.");
-  }
-  const clearedForProfile = clearedSecretKeys.get(profile.id);
-  await onSaveEntries(MODEL_PROFILE_FIELDS.flatMap((field): SaveConsoleConfigInput[] => {
-    const key = viewer.isRoot ? field.key : buildUserAiOverrideKey(viewer.uid!, field.key);
-    const value = profile.values[field.key] ?? "";
-    if (isSensitiveSettingKey(field.key) && value.length === 0) {
-      if (clearedForProfile?.has(field.key)) {
-        return [{ key, value: "" }];
-      }
-      const copyFromKey = modelProfileSecretConfigKey(viewer.uid!, profile.id, field.key);
-      if (configEntryForKey(config, copyFromKey)?.redacted === true) {
-        return [{ key, copyFromKey }];
-      }
-      return [];
-    }
-    return [{
-      key,
-      value,
-    }];
-  }));
-}
-
 function ModelProfileForm({
   config,
   defaultValues,
@@ -1024,7 +963,6 @@ function ModelProfileForm({
   onCancel,
   onCheckOpenAiCodexOAuth,
   onDelete,
-  onMakeDefault,
   onPollOpenAiCodexOAuth,
   onStepChange,
   onStartOpenAiCodexOAuth,
@@ -1042,10 +980,6 @@ function ModelProfileForm({
   onCancel: () => void;
   onCheckOpenAiCodexOAuth: () => Promise<boolean>;
   onDelete?: () => Promise<void>;
-  onMakeDefault?: (
-    values: Record<string, string>,
-    clearedSecretKeys: ClearedProfileSecretKeys,
-  ) => Promise<void>;
   onPollOpenAiCodexOAuth: (flowId: string) => Promise<OpenAiCodexOAuthPoll>;
   onStepChange?: (step: ModelProfileStep) => void;
   onStartOpenAiCodexOAuth: () => Promise<OpenAiCodexOAuthStart>;
@@ -1053,7 +987,8 @@ function ModelProfileForm({
   onSave: (
     name: string,
     values: Record<string, string>,
-    clearedSecretKeys: ClearedProfileSecretKeys,
+    clearedSecretKeys: ReadonlySet<string>,
+    makeDefault: boolean,
   ) => Promise<void>;
 }) {
   const initialValues = useMemo(
@@ -1073,6 +1008,7 @@ function ModelProfileForm({
   const [pendingLabel, setPendingLabel] = useState("");
   const [statusText, setStatusText] = useState("");
   const [statusTone, setStatusTone] = useState<SettingsStatusTone>("success");
+  const [makeDefault, setMakeDefault] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const duplicateName = profiles.some((candidate) =>
@@ -1099,6 +1035,7 @@ function ModelProfileForm({
     setPendingLabel("");
     setStatusText("");
     setStatusTone("success");
+    setMakeDefault(false);
     setConfirmDelete(false);
   }, [initialValues, profile]);
 
@@ -1123,9 +1060,6 @@ function ModelProfileForm({
   const effectiveClearedSecretKeys = isOpenAiCodexProvider
     ? new Set([...clearedSecretKeys, MODEL_API_KEY_FIELD_KEY])
     : clearedSecretKeys;
-  const clearedProfileSecretKeys = profile
-    ? new Map([[profile.id, effectiveClearedSecretKeys]])
-    : new Map<string, ReadonlySet<string>>();
 
   const dirty = name !== (profile?.name ?? "") ||
     clearedSecretKeys.size > 0 ||
@@ -1296,12 +1230,27 @@ function ModelProfileForm({
       onConnect={() => void run(codexLogin.connect, "Connected", "CONNECTING")}
     />
   ) : null;
+  const renderMakeDefaultOption = () => (
+    <Checkbox
+      label="MAKE DEFAULT MODEL"
+      info="Use this model as the default for agent runs after saving."
+      checked={makeDefault}
+      disabled={!editable || pending}
+      onChange={(checked) => {
+        setMakeDefault(checked);
+        setStatusText("");
+      }}
+    />
+  );
   const runTestAndSave = () => void run(async () => {
     await validateDraftsWithOpenAiCodexLogin();
     setPendingLabel("SAVING");
-    setStatusText(isOpenAiCodexProvider ? "OpenAI Codex verified. Saving model..." : "Model test passed. Saving model...");
-    await onSave(name, effectiveDrafts, clearedProfileSecretKeys);
-  }, "Saved", "TESTING...");
+    const defaultStatus = makeDefault ? " and updating default" : "";
+    setStatusText(isOpenAiCodexProvider
+      ? `OpenAI Codex verified. Saving model${defaultStatus}...`
+      : `Model test passed. Saving model${defaultStatus}...`);
+    await onSave(name, effectiveDrafts, effectiveClearedSecretKeys, makeDefault);
+  }, makeDefault ? "Saved and set as default" : "Saved", "TESTING...");
 
   if (!profile) {
     const clampedStep = Math.max(0, Math.min(step, MODEL_PROFILE_STEP_LABELS.length - 1)) as ModelProfileStep;
@@ -1361,6 +1310,7 @@ function ModelProfileForm({
             {newProfileAdvancedFields.map(renderProfileField)}
           </div>
         )}
+        {clampedStep === 3 ? renderMakeDefaultOption() : null}
         <SettingsStatus text={statusText} tone={statusTone} />
         <div class="gsv-console-settings-actions">
           <Button
@@ -1400,6 +1350,7 @@ function ModelProfileForm({
             {editProfileAdvancedFields.map(renderProfileField)}
           </AdvancedSettingsFields>
         ) : null}
+        {renderMakeDefaultOption()}
         <SettingsStatus text={statusText} tone={statusTone} />
         <div class="gsv-console-settings-actions">
           <Button
@@ -1408,19 +1359,6 @@ function ModelProfileForm({
             disabled={!canSave || pending}
             onClick={runTestAndSave}
           />
-          {profile && onMakeDefault ? (
-            <Button
-              variant="secondary"
-              label="TEST & MAKE DEFAULT"
-              disabled={!editable || pending}
-              onClick={() => void run(async () => {
-                await validateDraftsWithOpenAiCodexLogin();
-                setPendingLabel("UPDATING");
-                setStatusText(isOpenAiCodexProvider ? "OpenAI Codex verified. Updating default..." : "Model test passed. Updating default...");
-                await onMakeDefault(effectiveDrafts, clearedProfileSecretKeys);
-              }, "Default updated", "TESTING...")}
-            />
-          ) : null}
           <Button variant="secondary" label="CANCEL" disabled={pending} onClick={onCancel} />
           {profile && onDelete ? (
             <Button
