@@ -182,7 +182,7 @@ export function ChatReasoningPanel({ messages, target, onClose }: ChatReasoningP
         {blocks.length === 0 ? (
           <p class="gsv-chat-rp-empty gsv-prose">
             Reasoning is no longer available for this item — it may have been
-            archived or belong to another conversation.
+            archived or belong to another task.
           </p>
         ) : blocks.map((block) => block.kind === "prose" ? (
           <div class="gsv-chat-rp-entry" key={block.id}>

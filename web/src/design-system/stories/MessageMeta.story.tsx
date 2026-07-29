@@ -4,8 +4,8 @@ import type { Story } from "../story";
 
 function BranchAction() {
   return (
-    <Hint text="Branch a new conversation from this message">
-      <button type="button" class="gsv-mm-btn" aria-label="Branch a new conversation from this message">
+    <Hint text="Branch a new task from this message">
+      <button type="button" class="gsv-mm-btn" aria-label="Branch a new task from this message">
         <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
           <g fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="4.5" cy="4" r="2" />

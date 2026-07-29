@@ -1,7 +1,6 @@
 export const TARGET_CHAT_PROCESS_EVENT = "gsv:target-chat-process";
 
 export type TargetChatProcess = {
-  conversationId: string | null;
   pid: string;
 };
 
@@ -24,11 +23,7 @@ export function normalizeTargetChatProcess(value: unknown): TargetChatProcess | 
   if (!pid) {
     return null;
   }
-  const conversationId = asTrimmedString(record.conversationId);
-  return {
-    pid,
-    conversationId: conversationId || null,
-  };
+  return { pid };
 }
 
 export function dispatchTargetChatProcess(target: TargetChatProcess): void {

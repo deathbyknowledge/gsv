@@ -8,7 +8,7 @@ GSV routing is kernel-level message and syscall routing. It is not only chat rou
 |---|---|---|---|
 | CLI or browser client | WebSocket request frame | syscall name, caller capabilities, optional `target` | Kernel handler, Process DO, or device driver |
 | Agent process | `Kernel.recvFrame(pid, frame)` | process identity and syscall | Kernel handler or device driver |
-| Adapter worker | `adapter.inbound` syscall | linked actor identity and surface route | User init process or routed process |
+| Adapter worker | `adapter.inbound` syscall | linked actor identity and surface route | Routed process or a newly created personal-agent process |
 | Device driver | WebSocket response frame | persisted route id | Original client or process |
 
 All requests use the same frame shape:
@@ -63,9 +63,14 @@ direct tool calls.
 
 ## Process Routing
 
-Agent conversations are durable processes, identified by PIDs. The long-lived home process for a user is `init:{uid}`. Other processes are spawned with `proc.spawn` and usually receive UUID PIDs.
+Each durable agent task is a process identified by a PID. `proc.spawn` creates a
+new process, and `proc.fork` creates a new process initialized from committed
+history in another process. There is no default process or second
+process-local conversation identifier.
 
-The Kernel stores process metadata in the `processes` table: owner uid, run-as identity, parent PID, cwd, interactive flag, runtime state, active conversation/run ids, label, and context files. `proc.list` is answered directly from this registry.
+The Kernel stores process metadata in the `processes` table: owner uid, run-as
+identity, parent PID, cwd, interactive flag, runtime state, active run id,
+and label. `proc.list` is answered directly from this registry.
 
 These syscalls are forwarded to the target Process DO after ownership checks:
 
@@ -79,7 +84,9 @@ proc.reset
 codemode.run
 ```
 
-When no PID is supplied, process syscalls default to the caller's `init:{uid}` process. Non-root callers cannot access another user's process.
+A request from a Process DO may omit its PID to target the calling process.
+Callers outside a process must select a PID explicitly. Non-root callers cannot
+access another user's process.
 
 ## Process Signal Routing
 
@@ -108,13 +115,17 @@ Inbound behavior:
 - Unlinked DM actor: return a link challenge such as `gsv auth link CODE`.
 - Unlinked non-DM actor: drop the message as `unlinked_actor`.
 
-The default delivery target is the user's `init:{uid}` process. A
-`surface_routes` entry can override this for one linked actor on an exact
+A `surface_routes` entry selects the process for one linked actor on an exact
 adapter account, surface, and optional thread:
 
 ```text
 adapter + accountId + actorId + surface.kind + surface.id + threadId -> uid + pid
 ```
+
+When no route exists, the first admitted message creates a process that runs as
+the user's personal agent and binds that surface to its PID. Later messages
+reuse the route. Selecting `/use personal` creates and routes to a new
+personal-agent process; selecting an existing PID updates the route.
 
 Human-in-the-loop replies are routed specially. If the target process has a
 pending HIL request, its adapter DM prompt includes `hil[requestId]`. Only an

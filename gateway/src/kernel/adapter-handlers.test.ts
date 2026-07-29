@@ -105,7 +105,6 @@ function makeContext(
     cwd: personalAgent.home,
     state: "idle",
     activeRunId: null,
-    activeConversationId: null,
     queuedCount: 0,
     lastActiveAt: null,
     label: "sam-agent (sam)",
@@ -238,37 +237,6 @@ function makeContext(
       getOwnerUid: vi.fn((pid: string) => pid === "pid-1" ? human.uid : null),
       list: vi.fn(() => [processRecord]),
       spawn: vi.fn(),
-    },
-    conversations: {
-      get: vi.fn(() => null),
-      ensureDefault: vi.fn(() => ({
-        record: {
-          conversationId: "conv-1",
-          ownerUid: 1000,
-          agentUid: 1001,
-          title: null,
-          isDefault: true,
-          activePid: "pid-1",
-          archiveBase: "/home/agent/conversations/conv-1",
-          latestArchive: null,
-          createdAt: 0,
-          lastActiveAt: null,
-        },
-        created: false,
-      })),
-      create: vi.fn((input: { conversationId?: string }) => ({
-        conversationId: input.conversationId ?? "conv-agent",
-        ownerUid: 1000,
-        agentUid: 1002,
-        title: "helper",
-        isDefault: false,
-        activePid: null,
-        archiveBase: "/home/helper/conversations/conv-agent",
-        latestArchive: null,
-        createdAt: 0,
-        lastActiveAt: null,
-      })),
-      setActivePid: vi.fn(),
     },
     adapters: {
       status: {
@@ -1309,7 +1277,14 @@ describe("adapter lifecycle handlers", () => {
     expect(first.reply?.deliveryId).toMatch(/^adapter-ingress:[0-9a-f]{64}:reply$/);
     expect(replay).toEqual({ ...first, replayed: "completed" });
     expect(ctx.adapters.surfaceRoutes.setRoute).toHaveBeenCalledTimes(1);
-    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^proc:adapter-ingress:/),
+      expect.objectContaining({
+        call: "proc.setidentity",
+        args: expect.objectContaining({ autoTitle: true }),
+      }),
+    );
   });
 
   it("keeps equal WhatsApp stanza ids distinct across group participants", async () => {
@@ -1390,7 +1365,7 @@ describe("adapter lifecycle handlers", () => {
     expect(replay).toMatchObject({
       ok: true,
       replayed: "completed",
-      reply: { text: "This chat now uses your personal conversation." },
+      reply: { text: "This chat now uses a new personal-agent process." },
     });
     expect(ctx.adapters.surfaceRoutes.setRoute).toHaveBeenCalledTimes(1);
     expect(receipts.complete).toHaveBeenCalledTimes(2);
@@ -2300,7 +2275,7 @@ describe("adapter lifecycle handlers", () => {
     expect(checkpointOrder).toBeLessThan(firstHilOrder);
   });
 
-  it("does not turn a reclaimed HIL answer into a normal conversation turn", async () => {
+  it("does not turn a reclaimed HIL answer into a normal message", async () => {
     let historyReads = 0;
     let hilAttempts = 0;
     sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
@@ -2490,7 +2465,7 @@ describe("adapter lifecycle handlers", () => {
     );
   });
 
-  it("adapter.inbound routes /use personal to the default conversation", async () => {
+  it("adapter.inbound starts a new personal-agent process for /use personal", async () => {
     const status = { upsert: vi.fn() };
     const ctx = makeContext({}, status, { routePid: "pid-1" });
 
@@ -2508,7 +2483,9 @@ describe("adapter lifecycle handlers", () => {
       ctx,
     );
 
-    expect(result.reply?.text).toContain("personal conversation");
+    expect(result.reply?.text).toContain("new personal-agent process");
+    const pid = vi.mocked(ctx.procs.spawn).mock.calls[0]?.[0];
+    expect(pid).toMatch(/^proc:adapter-ingress:/);
     expect(ctx.adapters.surfaceRoutes.setRoute).toHaveBeenCalledWith({
       adapter: "whatsapp",
       accountId: "primary",
@@ -2517,10 +2494,16 @@ describe("adapter lifecycle handlers", () => {
       surfaceId: "dm-1",
       threadId: undefined,
       uid: 1000,
-      pid: "pid-1",
+      pid,
       updatedByUid: 1000,
     });
-    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      pid,
+      expect.objectContaining({
+        call: "proc.setidentity",
+        args: expect.objectContaining({ autoTitle: true }),
+      }),
+    );
   });
 
   it("adapter.inbound routes a dm to a listed process with /use", async () => {
@@ -2607,8 +2590,8 @@ describe("adapter lifecycle handlers", () => {
       expect.objectContaining({
         call: "proc.setidentity",
         args: expect.objectContaining({
+          autoTitle: true,
           identity: expect.objectContaining({ username: "helper" }),
-          conversationId: expect.stringMatching(/^adapter:adapter-ingress:/),
         }),
       }),
     );

@@ -48,7 +48,7 @@ const NATIVE_COMMAND_DESCRIPTORS: Record<string, NativeCommandDescriptor> = {
   codemode: command("Run a reusable JavaScript GSV tool workflow.", "Combine several shell, filesystem, or connected integration operations in one scripted workflow.", ["script", "workflow", "automation", "tools", "javascript"]),
   mcp: command("Discover and call connected MCP integrations.", "Use an external connected service or search its available integration tools.", ["integration", "service", "connector", "api", "tools", "mcp"]),
   proc: command("Inspect, delegate to, message, and control GSV agent processes.", "Create a subagent, delegate a task, contact another agent, or inspect agent history and lifecycle.", ["agent", "subagent", "delegate", "process", "message", "history"]),
-  message: command("Send messages and file attachments through the active conversation.", "Attach a generated or copied file to the automatic final reply, or send an additional message through a chat adapter.", ["chat", "reply", "send", "attachment", "file", "image", "photo", "audio", "document"], [], [
+  message: command("Send messages and file attachments through the active process run.", "Attach a generated or copied file to the automatic final reply, or send an additional message through a chat adapter.", ["chat", "reply", "send", "attachment", "file", "image", "photo", "audio", "document"], [], [
     "message current [--json]",
     "message destinations [--all] [--json]",
     "message attach PATH... [--mime TYPE]",
@@ -56,9 +56,9 @@ const NATIVE_COMMAND_DESCRIPTORS: Record<string, NativeCommandDescriptor> = {
   ]),
   rgit: command("Inspect and commit staged ripgit repository changes.", "Work with GSV repo-backed source, diffs, history, branches, or commits.", ["git", "repository", "source", "diff", "commit"], ["ripgit"]),
   ripgit: command("Alias for the rgit repository command.", "Work with GSV repo-backed source, diffs, history, branches, or commits.", ["git", "repository", "source", "diff", "commit"], ["rgit"]),
-  sched: command("Create and inspect Kernel schedules and delayed prompts.", "Send a prompt later, wake the current conversation, or inspect scheduled work.", ["schedule", "reminder", "recurring", "automation", "later", "timer"], ["crontab"], [
+  sched: command("Create and inspect Kernel schedules and delayed prompts.", "Send a prompt later, wake the current process, or inspect scheduled work.", ["schedule", "reminder", "recurring", "automation", "later", "timer"], ["crontab"], [
     "sched list [--all]",
-    "sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]",
+    "sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "sched add --json JSON",
     "sched enable <id>",

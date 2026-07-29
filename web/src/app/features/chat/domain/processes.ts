@@ -3,16 +3,14 @@ import type {
   ProcAiConfigGetResult,
   ProcAiConfigSetArgs,
   ProcAiConfigSetResult,
-  ProcConversation,
-  ProcConversationCompactArgs,
-  ProcConversationCompactResult,
-  ProcConversationForkArgs,
-  ProcConversationForkResult,
-  ProcConversationListArgs,
-  ProcConversationSegment,
-  ProcConversationSegmentReadArgs,
-  ProcConversationSegmentReadResult,
-  ProcConversationSegmentsArgs,
+  ProcForkArgs,
+  ProcForkResult,
+  ProcHistoryCompactArgs,
+  ProcHistoryCompactResult,
+  ProcHistorySegment,
+  ProcHistorySegmentReadArgs,
+  ProcHistorySegmentReadResult,
+  ProcHistorySegmentsArgs,
   ProcHilArgs,
   ProcHilDecision,
   ProcHilResult,
@@ -35,14 +33,12 @@ export type ChatProcessSummary = {
   state: string;
   runState: ChatRunState;
   activeRunId: string | null;
-  activeConversationId: string | null;
   queuedCount: number;
   lastActiveAt: number | null;
   label: string | null;
   title: string;
   createdAt: number;
   cwd: string;
-  isDefaultConversation: boolean;
 };
 
 export type ChatHistoryMessageRole = ProcHistoryMessage["role"];
@@ -61,14 +57,12 @@ export type ChatHistoryMessage = {
 
 export type ChatHistory = {
   pid: string;
-  conversationId: string | null;
   messages: ChatHistoryMessage[];
   messageCount: number;
   truncated: boolean;
   hasMoreBefore: boolean;
   hasMoreAfter: boolean;
   activeRunId: string | null;
-  activeConversationId: string | null;
   runState: ChatRunState;
   pendingHil: NonNullable<Extract<ProcHistoryResult, { ok: true }>["pendingHil"]> | null;
   context: Extract<ProcHistoryResult, { ok: true }>["context"];
@@ -76,7 +70,6 @@ export type ChatHistory = {
 
 export type ChatSendDraft = {
   pid?: string;
-  conversationId?: string;
   message: string;
   media?: ChatMediaUpload[];
 };
@@ -91,16 +84,14 @@ export type ChatSendPayload = ProcSendArgs;
 export type ChatHilDecision = ProcHilDecision;
 export type ChatHilDecisionArgs = ProcHilArgs;
 export type ChatHilDecisionResult = Extract<ProcHilResult, { ok: true }>;
-export type ChatConversation = ProcConversation;
-export type ChatConversationSegment = ProcConversationSegment;
-export type ChatConversationListArgs = ProcConversationListArgs;
-export type ChatConversationCompactArgs = ProcConversationCompactArgs;
-export type ChatConversationCompactResult = Extract<ProcConversationCompactResult, { ok: true }>;
-export type ChatConversationForkArgs = ProcConversationForkArgs;
-export type ChatConversationForkResult = Extract<ProcConversationForkResult, { ok: true }>;
-export type ChatConversationSegmentReadArgs = ProcConversationSegmentReadArgs;
-export type ChatConversationSegmentReadResult = Extract<ProcConversationSegmentReadResult, { ok: true }>;
-export type ChatConversationSegmentsArgs = ProcConversationSegmentsArgs;
+export type ChatHistorySegment = ProcHistorySegment;
+export type ChatHistoryCompactArgs = ProcHistoryCompactArgs;
+export type ChatHistoryCompactResult = Extract<ProcHistoryCompactResult, { ok: true }>;
+export type ChatForkArgs = ProcForkArgs;
+export type ChatForkResult = Extract<ProcForkResult, { ok: true }>;
+export type ChatHistorySegmentReadArgs = ProcHistorySegmentReadArgs;
+export type ChatHistorySegmentReadResult = Extract<ProcHistorySegmentReadResult, { ok: true }>;
+export type ChatHistorySegmentsArgs = ProcHistorySegmentsArgs;
 export type ChatProcessAiConfig = Extract<ProcAiConfigGetResult, { ok: true }>["config"];
 export type ChatProcessAiConfigSetArgs = ProcAiConfigSetArgs;
 export type ChatProcessAiConfigSetResult = Extract<ProcAiConfigSetResult, { ok: true }>;
@@ -224,7 +215,7 @@ export function normalizeRunState(input: {
 }
 
 export function normalizeProcessSummary(process: ProcListEntry): ChatProcessSummary {
-  const title = process.label?.trim() || (process.isDefaultConversation ? "Home" : "New task");
+  const title = process.label?.trim() || "New task";
 
   return {
     pid: process.pid,
@@ -238,14 +229,12 @@ export function normalizeProcessSummary(process: ProcListEntry): ChatProcessSumm
       queuedCount: process.queuedCount,
     }),
     activeRunId: process.activeRunId,
-    activeConversationId: process.activeConversationId,
     queuedCount: process.queuedCount,
     lastActiveAt: process.lastActiveAt,
     label: process.label,
     title,
     createdAt: process.createdAt,
     cwd: process.cwd,
-    isDefaultConversation: process.isDefaultConversation === true,
   };
 }
 
@@ -280,14 +269,12 @@ export function normalizeHistoryMessage(message: ProcHistoryMessage, index: numb
 export function normalizeHistory(result: Extract<ProcHistoryResult, { ok: true }>): ChatHistory {
   return {
     pid: result.pid,
-    conversationId: result.conversationId ?? null,
     messages: result.messages.map(normalizeHistoryMessage),
     messageCount: result.messageCount,
     truncated: result.truncated === true,
     hasMoreBefore: result.hasMoreBefore === true,
     hasMoreAfter: result.hasMoreAfter === true,
     activeRunId: result.activeRunId ?? null,
-    activeConversationId: result.activeConversationId ?? null,
     runState: normalizeRunState({
       activeRunId: result.activeRunId,
       pendingHil: result.pendingHil,
@@ -302,13 +289,11 @@ export function normalizeSendPayload(
 ): ChatSendPayload {
   const message = draft.message.trim();
   const pid = cleanOptionalString(draft.pid);
-  const conversationId = cleanOptionalString(draft.conversationId);
   const media = draft.media?.filter(Boolean);
 
   return {
     message,
     ...(pid ? { pid } : {}),
-    ...(conversationId ? { conversationId } : {}),
     ...(media && media.length > 0 ? { media } : {}),
   };
 }

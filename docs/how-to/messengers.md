@@ -18,7 +18,7 @@ Try it from your phone, away from your desk: *What's on my Mac's clipboard?*
 ```
 /list               show available agents and active processes
 /where              show where this chat is routed
-/use personal       route back to your personal conversation
+/use personal       start and route to a new personal-agent task
 /use <process-id>   route this chat to an active process
 /use <agent-name>   start and route this chat to an agent
 ```

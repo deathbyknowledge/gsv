@@ -307,6 +307,26 @@ pub(crate) async fn run_client(
         Err(error) => return Err(error),
     };
 
+    let pid = match pid {
+        Some(pid) => pid,
+        None => {
+            let spawned = client.request_ok("proc.spawn", Some(json!({}))).await?;
+            if spawned.get("ok").and_then(Value::as_bool) != Some(true) {
+                let error = spawned
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("proc.spawn failed");
+                return Err(error.to_string().into());
+            }
+            spawned
+                .get("pid")
+                .and_then(Value::as_str)
+                .ok_or("proc.spawn returned no pid")?
+                .to_string()
+        }
+    };
+    debug_log(debug_enabled, format!("chat process pid={pid}"));
+
     if let Some(message) = message {
         begin_wait_for_chat_response(
             completed.as_ref(),
@@ -319,12 +339,12 @@ pub(crate) async fn run_client(
             debug_enabled,
             format!(
                 "proc.send start pid={} chars={}",
-                pid.as_deref().unwrap_or("<init>"),
+                pid,
                 message.chars().count()
             ),
         );
 
-        let result = client.proc_send(pid.as_deref(), &message).await?;
+        let result = client.proc_send(&pid, &message).await?;
         debug_log(
             debug_enabled,
             format!(
@@ -391,14 +411,10 @@ pub(crate) async fn run_client(
         );
         debug_log(
             debug_enabled,
-            format!(
-                "proc.send start pid={} chars={}",
-                pid.as_deref().unwrap_or("<init>"),
-                line.chars().count()
-            ),
+            format!("proc.send start pid={} chars={}", pid, line.chars().count()),
         );
 
-        let result = client.proc_send(pid.as_deref(), line).await?;
+        let result = client.proc_send(&pid, line).await?;
         debug_log(
             debug_enabled,
             format!(

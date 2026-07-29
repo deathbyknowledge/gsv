@@ -159,14 +159,12 @@ function chatProcessFromConsoleProcess(process: ConsoleProcess): ChatProcessSumm
     state: process.rawState || process.state,
     runState: consoleRunState(process),
     activeRunId: process.activeRunId,
-    activeConversationId: process.activeConversationId,
     queuedCount: process.queuedCount,
     lastActiveAt: process.lastActiveAt,
     label: process.label,
     title: process.label || process.pid,
     createdAt: process.createdAt ?? 0,
     cwd: process.cwd,
-    isDefaultConversation: false,
   };
 }
 
@@ -339,7 +337,6 @@ function activeAgentDescription(
   return [
     accountDescription,
     activeProcess.cwd,
-    activeProcess.activeConversationId ? `conversation ${activeProcess.activeConversationId}` : "",
   ].filter(Boolean).join(" · ");
 }
 

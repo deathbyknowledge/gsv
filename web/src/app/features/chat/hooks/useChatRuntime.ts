@@ -18,7 +18,6 @@ import {
 } from "./useChatProcesses";
 
 type UseChatRuntimeOptions = {
-  conversationId?: string | null;
   enabled?: boolean;
   processId: string;
 };
@@ -32,7 +31,6 @@ type ChatHistoryWindow = {
 };
 
 const HISTORY_PAGE_SIZE = 50;
-const DEFAULT_CONVERSATION_ID = "default";
 const OPTIMISTIC_USER_MATCH_WINDOW_MS = 5 * 60 * 1000;
 
 const EMPTY_HISTORY_WINDOW: ChatHistoryWindow = {
@@ -45,7 +43,6 @@ const EMPTY_HISTORY_WINDOW: ChatHistoryWindow = {
 
 function historyStateKey(state: ChatRuntimeState): string {
   return [
-    state.conversationId ?? "",
     state.messageCount,
     state.activeRunId ?? "",
     state.pendingHil?.requestId ?? "",
@@ -53,8 +50,8 @@ function historyStateKey(state: ChatRuntimeState): string {
   ].join(":");
 }
 
-function historyTargetKey(pid: string, conversationId: string | null | undefined): string {
-  return `${pid}\n${conversationId || DEFAULT_CONVERSATION_ID}`;
+function historyTargetKey(pid: string): string {
+  return pid;
 }
 
 function firstHistoryMessageId(history: ChatHistory | null): number | null {
@@ -279,10 +276,7 @@ function mergeHistoryRuntime(
   targetKey: string,
   currentTargetKey: string,
 ): ChatRuntimeState {
-  if (
-    currentTargetKey !== targetKey
-    || (current.conversationId || DEFAULT_CONVERSATION_ID) !== (next.conversationId || DEFAULT_CONVERSATION_ID)
-  ) {
+  if (currentTargetKey !== targetKey) {
     return next;
   }
   return {
@@ -307,8 +301,7 @@ function historyWindowFromHistory(
 function refreshChatRuntimeQueries(queryClient: ReturnType<typeof useQueryClient>): void {
   void queryClient.invalidateQueries({ queryKey: ["processes"] });
   void queryClient.invalidateQueries({ queryKey: chatProcessHistoryQueryKeyRoot });
-  void queryClient.invalidateQueries({ queryKey: ["process", "chat", "conversations"] });
-  void queryClient.invalidateQueries({ queryKey: ["process", "chat", "conversation-segments"] });
+  void queryClient.invalidateQueries({ queryKey: ["process", "chat", "history-segments"] });
 }
 
 function errorMessage(error: unknown): string {
@@ -322,28 +315,25 @@ function errorMessage(error: unknown): string {
 }
 
 export function useChatRuntime({
-  conversationId = null,
   enabled = true,
   processId,
 }: UseChatRuntimeOptions) {
   const { client, connected } = useGateway();
   const queryClient = useQueryClient();
   const hasProcess = processId.trim().length > 0;
-  const selectedConversationId = conversationId || DEFAULT_CONVERSATION_ID;
-  const targetKey = historyTargetKey(processId, selectedConversationId);
+  const targetKey = historyTargetKey(processId);
   const history = useChatProcessHistory({
     enabled: enabled && hasProcess,
     args: hasProcess
       ? {
           pid: processId,
-          conversationId: selectedConversationId,
           limit: HISTORY_PAGE_SIZE,
           tail: true,
         }
       : {},
   });
   const [runtime, setRuntime] = useState<ChatRuntimeState>(() =>
-    emptyChatRuntimeState(processId, conversationId),
+    emptyChatRuntimeState(processId),
   );
   const [historyWindow, setHistoryWindow] = useState<ChatHistoryWindow>(EMPTY_HISTORY_WINDOW);
   const historyWindowRef = useRef(historyWindow);
@@ -368,7 +358,7 @@ export function useChatRuntime({
   useEffect(() => {
     if (!hasProcess) {
       runtimeTargetKeyRef.current = targetKey;
-      setRuntime(emptyChatRuntimeState(processId, conversationId));
+      setRuntime(emptyChatRuntimeState(processId));
       setHistoryWindow(EMPTY_HISTORY_WINDOW);
       return;
     }
@@ -380,9 +370,9 @@ export function useChatRuntime({
       return;
     }
     runtimeTargetKeyRef.current = targetKey;
-    setRuntime(emptyChatRuntimeState(processId, conversationId));
+    setRuntime(emptyChatRuntimeState(processId));
     setHistoryWindow({ ...EMPTY_HISTORY_WINDOW, targetKey });
-  }, [conversationId, hasProcess, history.data, historyKey, historyRuntime, processId, targetKey]);
+  }, [hasProcess, history.data, historyKey, historyRuntime, processId, targetKey]);
 
   useEffect(() => {
     if (!enabled || !connected || !hasProcess) {
@@ -392,7 +382,6 @@ export function useChatRuntime({
     return client.onSignal((signal, payload) => {
       const current = runtimeRef.current;
       const reduction = applyChatSignal(current, signal, payload, {
-        conversationId: current.conversationId ?? conversationId,
         pid: processId,
       });
       if (!reduction.matched) {
@@ -405,16 +394,15 @@ export function useChatRuntime({
         void refetchHistory();
       }
     });
-  }, [client, connected, conversationId, enabled, hasProcess, processId, queryClient, refetchHistory]);
+  }, [client, connected, enabled, hasProcess, processId, queryClient, refetchHistory]);
 
   const appendOptimisticUserMessage = useCallback((message: string, media: unknown[] = []) => {
     setRuntime((current) => addOptimisticUserMessage(
       current,
       message,
-      current.conversationId ?? conversationId,
       media,
     ));
-  }, [conversationId]);
+  }, []);
 
   const loadOlderHistory = useCallback(async () => {
     const currentWindow = historyWindowRef.current;
@@ -434,7 +422,6 @@ export function useChatRuntime({
     try {
       const olderHistory = await getChatHistory(client, {
         pid: processId,
-        conversationId: selectedConversationId,
         limit: HISTORY_PAGE_SIZE,
         beforeMessageId: currentWindow.oldestMessageId,
       });
@@ -464,7 +451,7 @@ export function useChatRuntime({
         loadingOlder: false,
       });
     }
-  }, [client, connected, enabled, hasProcess, processId, selectedConversationId, targetKey]);
+  }, [client, connected, enabled, hasProcess, processId, targetKey]);
 
   return {
     appendOptimisticUserMessage,

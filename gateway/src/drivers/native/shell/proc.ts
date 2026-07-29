@@ -395,17 +395,6 @@ async function delegateFailureResult(
 ): Promise<ExecResult> {
   let error = originalError instanceof Error ? originalError.message : String(originalError);
   const rollbackErrors: string[] = [];
-  let conversationId: string | null = null;
-  try {
-    const conversation = ctx.conversations.getByActivePid(pid);
-    conversationId = conversation?.conversationId ?? null;
-  } catch (lookupError) {
-    rollbackErrors.push(
-      `conversation lookup failed: ${lookupError instanceof Error ? lookupError.message : String(lookupError)}`,
-    );
-  }
-
-  let killed = false;
   try {
     const rollback = await runProcLifecycleSyscall(ctx, "proc.kill", {
       pid,
@@ -414,21 +403,8 @@ async function delegateFailureResult(
     if (!rollback.ok) {
       throw new Error(rollback.error);
     }
-    killed = true;
   } catch (killError) {
     rollbackErrors.push(killError instanceof Error ? killError.message : String(killError));
-  }
-
-  if (killed && conversationId) {
-    try {
-      if (!ctx.conversations.remove(conversationId)) {
-        throw new Error(`failed to remove conversation ${conversationId}`);
-      }
-    } catch (conversationError) {
-      rollbackErrors.push(
-        conversationError instanceof Error ? conversationError.message : String(conversationError),
-      );
-    }
   }
 
   if (rollbackErrors.length > 0) {
@@ -456,10 +432,7 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
       if (index !== 0 || args.length !== 2) {
         throw new Error("--json must be the only proc spawn option");
       }
-      return {
-        ...JSON.parse(requireShellOptionValue(args[index + 1], current)) as ProcSpawnArgs,
-        fresh: true,
-      };
+      return JSON.parse(requireShellOptionValue(args[index + 1], current)) as ProcSpawnArgs;
     }
     if (current === "--as" || current === "--run-as") {
       index += 1;
@@ -502,7 +475,6 @@ function parseProcSpawnCommand(args: string[]): ProcSpawnArgs {
   const positionalPrompt = positional.join(" ").trim();
   const finalPrompt = prompt ?? (positionalPrompt || undefined);
   return {
-    fresh: true,
     ...(runAs ? { runAs } : {}),
     ...(label ? { label } : {}),
     ...(finalPrompt ? { prompt: finalPrompt } : {}),

@@ -1214,27 +1214,16 @@ describe("GsvFs Linux-like runtime views", () => {
 
   });
 
-  it("keeps /proc/self visible when it resolves to a personal-agent executor", async () => {
+  it("does not expose /proc/self outside a process", async () => {
     const fs = makeRuntimeViewFs(SAM);
 
     await expect(fs.readdir("/proc")).resolves.toEqual([
-      "self",
       "task-alpha",
       "task-personal",
       "uptime",
       "version",
     ]);
-    await expect(fs.readdir("/proc/self")).resolves.toEqual([
-      "ai",
-      "history",
-      "identity",
-      "segments",
-      "status",
-    ]);
-
-    const status = await fs.readFile("/proc/self/status");
-    expect(status).toContain("Pid:\ttask-personal");
-    expect(status).toContain("Uid:\t2000");
+    await expect(fs.readdir("/proc/self")).rejects.toThrow("ENOENT");
   });
 
   it("keeps /proc/self visible inside a personal-agent executor", async () => {

@@ -193,7 +193,6 @@ function normalizeProcess(value: unknown): ConsoleProcess | null {
     parentPid: nonEmptyString(record.parentPid),
     interactive: record.interactive === true,
     activeRunId,
-    activeConversationId: nonEmptyString(record.activeConversationId),
     queuedCount,
     createdAt: numberOrNull(record.createdAt),
     lastActiveAt: numberOrNull(record.lastActiveAt),

@@ -11,7 +11,6 @@ function process(label: string | null): ProcListEntry {
     parentPid: null,
     state: "idle",
     activeRunId: null,
-    activeConversationId: null,
     queuedCount: 0,
     lastActiveAt: null,
     label,

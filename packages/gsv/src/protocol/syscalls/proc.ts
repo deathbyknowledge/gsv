@@ -31,8 +31,6 @@ export type ProcSpawnArgs = {
   runAs?: string;
   /** Whether the process can request human-in-the-loop approval. Background spawns set false. */
   interactive?: boolean;
-  /** Force allocation of a new top-level process instead of reusing the default conversation executor. */
-  fresh?: boolean;
   label?: string;
   prompt?: string;
   parentPid?: string;
@@ -585,12 +583,6 @@ export type ProcListEntry = {
   label: string | null;
   createdAt: number;
   cwd: string;
-  /**
-   * True when this process is the owner's default-conversation executor (the
-   * stable "home" inbox running as their personal agent). Clients surface this
-   * conversation as home rather than as a regular spawned thread.
-   */
-  isDefaultConversation?: boolean;
 };
 
 export type ProcListResult = {
@@ -607,19 +599,6 @@ export type ProcSetIdentityArgs = {
   title?: string;
   /** Generate a label from the first admitted message. */
   autoTitle?: boolean;
-  /**
-   * Kernel conversation id this executor's primary thread belongs to. The
-   * executor archives/reads its primary thread under
-   * `/home/<agent>/conversations/<conversationId>/...`, so transcripts are
-   * addressed by the durable conversation rather than the fungible pid.
-   */
-  conversationId?: string;
-  /**
-   * Archive path to hydrate the primary thread from on resume (a fresh executor
-   * picking up a conversation that was previously archived). Deterministic: the
-   * kernel records this pointer when the prior executor archived on kill.
-   */
-  hydrateFrom?: string;
 };
 
 export type ProcSetIdentityResult = { ok: true };

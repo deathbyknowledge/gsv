@@ -628,16 +628,9 @@ export class KernelMountBackend implements MountBackend {
     return false;
   }
 
-  /**
-   * The pid `/proc/self` refers to: the current process when inside one,
-   * otherwise the caller's live default ("inbox") conversation executor (their
-   * personal agent). Returns "" when no executor is live, yielding ENOENT.
-   */
+  /** The current process pid for `/proc/self`, or ENOENT outside a process. */
   private selfProcessPid(): string {
-    if (this.selfPid) return this.selfPid;
-    if (!this.kernel) return "";
-    const agentUid = this.kernel.auth.getPersonalAgentUid(this.identity.uid) ?? this.identity.uid;
-    return this.kernel.conversations?.getDefault(this.identity.uid, agentUid)?.activePid ?? "";
+    return this.selfPid ?? "";
   }
 
   private resolveVisibleProcess(pidSegment: string) {
@@ -936,7 +929,10 @@ export class KernelMountBackend implements MountBackend {
         ? this.kernel.procs.list()
         : this.kernel.procs.list(this.viewerOwnerUid());
       const entries = procs.map((p) => p.processId);
-      entries.push("self", "version", "uptime");
+      if (this.selfPid) {
+        entries.push("self");
+      }
+      entries.push("version", "uptime");
       return entries.sort();
     }
 

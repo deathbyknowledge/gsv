@@ -1052,7 +1052,6 @@ export class Process extends Host<Env> {
             interactive?: boolean;
             title?: string;
             autoTitle?: boolean;
-            hydrateFrom?: string;
           };
           this.store.setValue("pid", idArgs.pid);
           this.store.setValue("identity", JSON.stringify(idArgs.identity));
@@ -1067,9 +1066,6 @@ export class Process extends Host<Env> {
             this.store.setValue(AUTO_TASK_TITLE_KEY, "1");
           } else {
             this.store.deleteValue(AUTO_TASK_TITLE_KEY);
-          }
-          if (idArgs.hydrateFrom) {
-            await this.hydrateHistory(idArgs.hydrateFrom);
           }
           data = { ok: true };
           break;
@@ -5121,27 +5117,6 @@ export class Process extends Host<Env> {
   private historyArchiveDir(): string {
     const homeKey = this.identity.home.replace(/^\/+/, "").replace(/\/+$/, "");
     return `${homeKey}/processes/${encodeURIComponent(this.pid)}/history`;
-  }
-
-  private async hydrateHistory(archivePath: string): Promise<void> {
-    if (this.store.messageCount() > 0) {
-      return; // Already has live messages; never double-hydrate.
-    }
-    let archived: ArchivedMessageRecord[];
-    try {
-      archived = await this.readArchivedMessageRecords(archivePath);
-    } catch (error) {
-      console.warn(
-        `[Process] Failed to hydrate history from ${archivePath}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return;
-    }
-    const generation = this.store.getHistoryGeneration();
-    for (const record of archived) {
-      this.appendRestoredArchivedMessage(record, generation);
-    }
   }
 
   private async archiveHistoryMessages(

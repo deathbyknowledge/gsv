@@ -189,5 +189,4 @@ These paths do not introduce separate storage or lifecycle semantics.
 
 - [The Agent Loop](./agent-loop.md)
 - [Context Compaction](./context-compaction.md)
-- [Process Handoffs](./process-handoffs.md)
 - [Syscalls Reference](../reference/syscalls.md)

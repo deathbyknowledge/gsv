@@ -19,7 +19,6 @@ import { normalizeTranscriptionRequestError } from "../domain/voiceFeedback";
 type ChatAmbientTranscriptionArgs = {
   activeRunCount?: number;
   agentName: string;
-  conversationId: string;
   disabled?: boolean;
   isSpeechOutputPlaying?: () => boolean;
   onDictation: (text: string) => void;
@@ -34,7 +33,6 @@ type ChatAmbientTranscriptionArgs = {
 };
 
 export type ChatTranscriptionTarget = {
-  conversationId: string;
   processId: string | null;
 };
 
@@ -121,7 +119,6 @@ function isLiveState(state: PresenceState): boolean {
 export function useChatAmbientTranscription({
   activeRunCount = 0,
   agentName,
-  conversationId,
   disabled = false,
   isSpeechOutputPlaying,
   onDictation,
@@ -148,8 +145,8 @@ export function useChatAmbientTranscription({
   const recorderRef = useRef<PresenceRecorder | null>(null);
   const liveSessionRef = useRef<LiveTranscriptionSession | null>(null);
   const dictationSessionRef = useRef<DictationSession | null>(null);
-  const targetRef = useRef<ChatTranscriptionTarget>({ conversationId, processId });
-  targetRef.current = { conversationId, processId };
+  const targetRef = useRef<ChatTranscriptionTarget>({ processId });
+  targetRef.current = { processId };
 
   useEffect(() => {
     stateRef.current = state;
@@ -283,10 +280,7 @@ export function useChatAmbientTranscription({
         throw new Error("No speech was transcribed");
       }
       const currentTarget = targetRef.current;
-      if (
-        session.target.processId !== currentTarget.processId ||
-        session.target.conversationId !== currentTarget.conversationId
-      ) {
+      if (session.target.processId !== currentTarget.processId) {
         cancelLiveSession("Chat changed during live transcription");
         recorderRef.current?.stopAmbient();
         setMode("idle");
@@ -303,10 +297,7 @@ export function useChatAmbientTranscription({
             throw session.controller.signal.reason ?? cancellationError("Live transcription stopped");
           }
           const latestTarget = targetRef.current;
-          if (
-            session.target.processId !== latestTarget.processId ||
-            session.target.conversationId !== latestTarget.conversationId
-          ) {
+          if (session.target.processId !== latestTarget.processId) {
             const reason = "Chat changed during live transcription";
             cancelLiveSession(reason);
             recorderRef.current?.stopAmbient();
@@ -323,10 +314,7 @@ export function useChatAmbientTranscription({
       }
       session.target = target;
       const currentTargetAfterSend = targetRef.current;
-      if (
-        currentTargetAfterSend.processId !== target.processId ||
-        currentTargetAfterSend.conversationId !== target.conversationId
-      ) {
+      if (currentTargetAfterSend.processId !== target.processId) {
         cancelLiveSession("Chat changed during live transcription");
         recorderRef.current?.stopAmbient();
         setMode("idle");
@@ -377,10 +365,7 @@ export function useChatAmbientTranscription({
     }
     const text = result.text.trim();
     const currentTarget = targetRef.current;
-    if (
-      session.target.processId !== currentTarget.processId ||
-      session.target.conversationId !== currentTarget.conversationId
-    ) {
+    if (session.target.processId !== currentTarget.processId) {
       cancelDictationSession("Chat changed during dictation");
       setMode("idle");
       setRecorderState(canUseBrowserVoiceRecorder() ? "idle" : "unsupported");
@@ -478,11 +463,8 @@ export function useChatAmbientTranscription({
   useEffect(() => {
     const live = liveSessionRef.current;
     if (
-      live &&
-      (
-        live.target.conversationId !== conversationId ||
-        live.target.processId !== processId
-      )
+      live
+      && live.target.processId !== processId
     ) {
       cancelLiveSession("Chat changed during live transcription");
       recorder.stopAmbient();
@@ -492,10 +474,7 @@ export function useChatAmbientTranscription({
     const dictation = dictationSessionRef.current;
     if (
       dictation &&
-      (
-        dictation.target.processId !== processId ||
-        dictation.target.conversationId !== conversationId
-      )
+      dictation.target.processId !== processId
     ) {
       cancelDictationSession("Chat changed during dictation");
       recorder.cleanupPushRecorder();
@@ -505,7 +484,6 @@ export function useChatAmbientTranscription({
   }, [
     cancelDictationSession,
     cancelLiveSession,
-    conversationId,
     processId,
     recorder,
     setMode,

@@ -86,7 +86,6 @@ function createMockSql() {
         cwd,
         state: "idle",
         active_run_id: null,
-        active_conversation_id: null,
         queued_count: 0,
         last_active_at: null,
         label,
@@ -127,16 +126,14 @@ function createMockSql() {
       const [
         state,
         active_run_id,
-        active_conversation_id,
         queued_count,
         last_active_at,
         processId,
-      ] = bindings as [string, string | null, string | null, number, number | null, string];
+      ] = bindings as [string, string | null, number, number | null, string];
       const row = table.get(processId);
       if (row) {
         row.state = state;
         row.active_run_id = active_run_id;
-        row.active_conversation_id = active_conversation_id;
         row.queued_count = queued_count;
         row.last_active_at = last_active_at;
       }
@@ -295,7 +292,6 @@ describe("ProcessRegistry", () => {
     expect(registry.get("task:runtime")).toMatchObject({
       state: "idle",
       activeRunId: null,
-      activeConversationId: null,
       queuedCount: 0,
       lastActiveAt: null,
     });
@@ -303,7 +299,6 @@ describe("ProcessRegistry", () => {
     registry.updateRuntimeState("task:runtime", {
       state: "waiting_hil",
       activeRunId: "run-1",
-      activeConversationId: "default",
       queuedCount: 2,
       lastActiveAt: 1234,
     });
@@ -311,7 +306,6 @@ describe("ProcessRegistry", () => {
     expect(registry.get("task:runtime")).toMatchObject({
       state: "waiting_hil",
       activeRunId: "run-1",
-      activeConversationId: "default",
       queuedCount: 2,
       lastActiveAt: 1234,
     });

@@ -238,7 +238,8 @@ Worker Loader executor, but is not exposed as a model tool.
 
 `codemode.exec` is process-local and internal-only. It is not handled by the
 Kernel dispatcher and is not itself device-routed. `codemode.run` is public and
-kernel-forwarded to a process, defaulting to the caller's init process. In both
+kernel-forwarded to a process, defaulting to the calling process. External
+callers must supply a PID. In both
 cases, the sandboxed block receives wrappers for the existing filesystem and
 shell tools, plus generated async functions for connected MCP tools:
 
@@ -467,11 +468,11 @@ type ProcIpcCallResult =
 type ProcessSyscalls = {
   "proc.list": {
     args: { uid?: number };
-    result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; parentPid: string | null; state: string; activeRunId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string; isDefaultConversation?: boolean }> };
+    result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; parentPid: string | null; state: string; activeRunId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string }> };
   };
 
   "proc.spawn": {
-    args: { runAs?: string; interactive?: boolean; fresh?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string };
+    args: { runAs?: string; interactive?: boolean; label?: string; prompt?: string; parentPid?: string; cwd?: string };
     result: { ok: true; pid: string; label?: string; cwd: string } | OperationError;
   };
 
@@ -576,7 +577,7 @@ type ProcessSyscalls = {
   };
 
   "proc.setidentity": {
-    args: { pid: string; identity: ProcessIdentity; interactive?: boolean; title?: string; autoTitle?: boolean; conversationId?: string; hydrateFrom?: string };
+    args: { pid: string; identity: ProcessIdentity; interactive?: boolean; title?: string; autoTitle?: boolean };
     result: { ok: true };
   };
 };
@@ -692,7 +693,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and starts/reconciles the user init process. Setup mode rejects with `425` and `next: "sys.setup"`. |
+| `sys.connect` | `handleConnect` | First request on a WebSocket connection. Authenticates, assigns identity, returns capabilities as `syscalls`, returns signal list, registers driver devices, closes older same-client connections, and ensures the user's personal agent account exists. Setup mode rejects with `425` and `next: "sys.setup"`. |
 | `sys.setup.assist` | `handleSysSetupAssist` | Pre-connect setup helper. Uses app AI config to guide onboarding, redacts secrets from drafts, and only accepts whitelisted non-secret patches from model output. Rejected if already connected or initialized. |
 | `sys.setup` | `handleSysSetup` | Pre-connect setup-mode bootstrap. Creates first user, root password, groups/home, optional timezone, optional AI config, optional node token, home layout, imports the manual, and seeds built-in skills. Username, password, and timezone are validated. |
 | `sys.bootstrap` | `handleSysBootstrap` | Imports `root/gsv-manual`, registers it as a public system repository, and seeds the gateway's bundled skills into the caller's home without replacing existing files. `GSV_MANUAL_BOOTSTRAP_UPSTREAM` accepts `owner/repo`, a git URL, or either form with `#ref`; `GSV_MANUAL_BOOTSTRAP_REF` overrides its ref. The default is `deathbyknowledge/gsv-manual#main`. Requires `RIPGIT`. |
@@ -1130,11 +1131,11 @@ process-backed shell, use the following form when each firing should enter the
 current process:
 
 ```bash
-sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]
+sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 ```
 
 The shell resolves `--here` into a typed `process.event` target for the current
-process and active conversation. The target remains bound to that process id;
+process. The target remains bound to that process id;
 recreate it after killing the process. When the shell belongs to an active
 adapter run, `--here` captures that run's authorized
 `AdapterMessageDestination` in `process.event.replyTo`, so the future
@@ -1149,7 +1150,7 @@ sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezo
 
 The shell resolves `--to` against known authorized destinations, including an
 offline adapter account, and creates an `adapter.send` scheduled action. It
-does not accept `--conversation`.
+does not run an agent.
 
 `--at` requires a future ISO timestamp with `Z` or an explicit numeric UTC
 offset. Use `crontab` or `/var/spool/cron/<user>` for recurring background

@@ -30,11 +30,10 @@ import {
 } from "../domain/processes";
 import {
   useAbortChatProcess,
-  useCompactChatConversation,
-  useChatConversations,
-  useChatConversationSegments,
+  useCompactChatHistory,
+  useChatHistorySegments,
   useChatProcessAiConfig,
-  useForkChatConversation,
+  useForkChatProcess,
   useDecideChatHil,
   useSendChatMessage,
   useSetChatProcessAiConfig,
@@ -74,7 +73,6 @@ type ChatDockProps = {
   /** Shell mobile layout (root ≤760px): the dock is a full-screen drawer and
    *  header popovers open as full-body sheets instead of anchored floaters. */
   mobileLayout?: boolean;
-  activeConversationId?: string | null;
   dragging?: boolean;
   atMax?: boolean;
   title?: string;
@@ -90,7 +88,6 @@ type ChatDockProps = {
   onOpenModels?: () => void;
   onOpenTasks?: () => void;
   onProcessStarted?: (process: StartedChatProcess) => void;
-  onSelectConversation?: (conversationId: string) => void;
   onSelectAgent?: (selection: ChatAgentSelection) => void;
   /** Increment to request a fresh task (e.g. the Tasks list NEW TASK action):
    *  opens the dock and spawns a new interactive process rather than reopening
@@ -135,19 +132,19 @@ function formatCostSource(source: string | undefined): string {
   return "pricing unavailable";
 }
 
-function formatConversationCostTooltip(context: ProcContextState | null | undefined): string {
-  const usage: ProcUsageState | null = context?.conversationUsage ?? null;
+function formatHistoryCostTooltip(context: ProcContextState | null | undefined): string {
+  const usage: ProcUsageState | null = context?.historyUsage ?? null;
   if (!usage) {
     return "";
   }
   const cost = usage.cost;
   const tokens = `${formatCount(usage.totalTokens)} tokens`;
   if (!cost) {
-    return `Conversation cost unavailable · ${tokens} · pricing unavailable`;
+    return `History cost unavailable · ${tokens} · pricing unavailable`;
   }
   const total = `${usage.costIncomplete ? "~" : ""}${formatCurrencyCost(cost.total)}`;
   const details = [
-    `Conversation cost ${total}`,
+    `History cost ${total}`,
     tokens,
   ];
   if (usage.cacheReadTokens > 0) {
@@ -218,7 +215,6 @@ export function ChatDock({
   open,
   width,
   mobileLayout = false,
-  activeConversationId = null,
   dragging = false,
   atMax = false,
   title = "Chat",
@@ -234,7 +230,6 @@ export function ChatDock({
   onOpenModels,
   onOpenTasks,
   onProcessStarted,
-  onSelectConversation,
   onSelectAgent,
   newTaskSignal = 0,
 }: ChatDockProps) {
@@ -250,7 +245,6 @@ export function ChatDock({
   const [compactKeepLastDraft, setCompactKeepLastDraft] = useState(1);
   const [newTaskFocusKey, setNewTaskFocusKey] = useState(0);
   const [composerDraft, setComposerDraft] = useState("");
-  const [branchNotice, setBranchNotice] = useState("");
   const minimizedChat = useDraggableMinimizedChat({ open, onActivate: onToggleOpen });
   const [stoppingRun, setStoppingRun] = useState<StoppingRun | null>(null);
   /** Snapshot of the last dismissed control error — a new distinct error re-shows. */
@@ -260,7 +254,6 @@ export function ChatDock({
   const hasActiveProcess = activeProcessId.length > 0;
   const canStartProcess = Boolean(agent);
   const chatRuntime = useChatRuntime({
-    conversationId: activeConversationId,
     enabled: hasActiveProcess,
     processId: activeProcessId,
   });
@@ -268,17 +261,13 @@ export function ChatDock({
   const abortProcess = useAbortChatProcess();
   const sendMessage = useSendChatMessage();
   const hilDecision = useDecideChatHil();
-  const compactConversation = useCompactChatConversation();
-  const forkConversation = useForkChatConversation();
+  const compactHistory = useCompactChatHistory();
+  const forkProcess = useForkChatProcess();
   const processAiConfig = useChatProcessAiConfig({
     enabled: open && hasActiveProcess,
     pid: activeProcessId,
   });
   const setProcessAiConfig = useSetChatProcessAiConfig();
-  const conversations = useChatConversations({
-    enabled: open && hasActiveProcess,
-    args: hasActiveProcess ? { pid: activeProcessId } : {},
-  });
   const { history: processHistory, runtime } = chatRuntime;
   const feedback = useChatFeedback();
   const pendingHil = runtime.pendingHil;
@@ -292,18 +281,13 @@ export function ChatDock({
     && currentRunActive
     && (stoppingRun.runId === null || stoppingRun.runId === currentRunId),
   );
-  // The conversation the dock is showing. The raw `activeConversationId` prop
-  // is RUN-scoped (the gateway's `ln` is `activeRun?.conversationId ?? null`),
-  // so it flips to null whenever a run ends — never key user-facing resets on
-  // it directly, or they fire on every stop/completion.
-  const selectedConversationId = activeConversationId ?? runtime.conversationId ?? "default";
-  // Live mirror of the displayed process/conversation for async mutation
+  // Live mirror of the displayed process for async mutation
   // callbacks (abort/compact): resolve() upserts, so a completion that lands
   // after the user switched away would otherwise inject its status line into
   // whichever transcript is now on screen. Reassigned (not mutated) each
   // render so a captured snapshot stays a stable point-in-time identity.
-  const displayedTargetRef = useRef({ pid: activeProcessId, conversationId: selectedConversationId });
-  displayedTargetRef.current = { pid: activeProcessId, conversationId: selectedConversationId };
+  const displayedTargetRef = useRef({ pid: activeProcessId });
+  displayedTargetRef.current = { pid: activeProcessId };
   const liveActivity = useMemo(
     () => deriveChatLiveActivity(runtime, stoppingCurrentRun),
     [runtime, stoppingCurrentRun],
@@ -372,7 +356,6 @@ export function ChatDock({
     setDraftAttachments([]);
     setAttachmentError("");
     setSelectedArchiveSegmentId("");
-    setBranchNotice("");
     setDismissedError("");
     feedback.reset();
     // The voice status line survives a process switch (the mic keeps recording
@@ -383,32 +366,8 @@ export function ChatDock({
     voiceFeedbackLabel.current = null;
     voiceErrorNoted.current = 0;
     setBodyState("chat");
-    compactConversation.reset();
-  }, [activeProcessId, compactConversation.reset, feedback.reset]);
-
-  useEffect(() => {
-    setSelectedArchiveSegmentId("");
-    setBodyState("chat");
-    // Compaction state and its status lines are conversation-bound: a failed
-    // compact on one conversation must not lock a sibling's composer, and a
-    // pending "Freeing context" line must not resolve onto another transcript.
-    // The recorder-bound "voice" line is deliberately left alone. Keyed on the
-    // DISPLAYED conversation, not the run-scoped prop — keying on the prop
-    // fired this on every run stop/completion and wiped the abort line
-    // between begin() and resolve().
-    compactConversation.reset();
-    feedback.clear("compact");
-    feedback.clear("abort");
-  }, [activeProcessId, selectedConversationId, compactConversation.reset, feedback.clear]);
-
-  // Auto-dismiss the branch success notice after a few seconds.
-  useEffect(() => {
-    if (!branchNotice) {
-      return;
-    }
-    const timer = setTimeout(() => setBranchNotice(""), 4000);
-    return () => clearTimeout(timer);
-  }, [branchNotice]);
+    compactHistory.reset();
+  }, [activeProcessId, compactHistory.reset, feedback.reset]);
 
   const activeAgent = useMemo(() => buildChatAgentViewModel({
     agent: effectiveAgent,
@@ -425,16 +384,15 @@ export function ChatDock({
     && (Boolean(runtime.activeRunId) || Boolean(pendingHil) || runState === "running" || runState === "awaiting_hil");
   const context = runtime.context;
   const replySpeech = useChatReplySpeech({
-    conversationId: selectedConversationId,
     hydrated: !processHistory.isLoading,
     processId: activeProcessId,
     rows: runtime.rows,
   });
-  const conversationSegments = useChatConversationSegments({
+  const historySegments = useChatHistorySegments({
     enabled: open && hasActiveProcess,
-    args: hasActiveProcess ? { pid: activeProcessId, conversationId: selectedConversationId } : {},
+    args: hasActiveProcess ? { pid: activeProcessId } : {},
   });
-  const hasArchivedMessages = (conversationSegments.data?.length ?? 0) > 0;
+  const hasArchivedMessages = (historySegments.data?.length ?? 0) > 0;
   const contextPercent = contextPressurePercent(context?.pressure);
   // Severity tone for the context control: pressure level drives it when we have
   // context data; a load failure with no pressure shows as an error. Everything
@@ -461,7 +419,7 @@ export function ChatDock({
           : context
             ? "Context — pressure unknown"
             : "Context — process idle";
-  const conversationCost = formatConversationCostTooltip(context);
+  const historyCost = formatHistoryCostTooltip(context);
   const hasVisibleMessages = transcriptMessages.length > 0;
   const processLookupLoading = !hasActiveProcess && effectiveStatusLabel === "loading";
   const hasTranscriptError = processHistory.isError && !hasVisibleMessages;
@@ -475,8 +433,8 @@ export function ChatDock({
   const emptyDescription = hasActiveProcess
     ? "This process has not written user, assistant, system, or tool result messages yet."
     : "Start an interactive process to begin a native chat session.";
-  const compactPending = compactConversation.isPending;
-  const compactFailed = compactConversation.isError;
+  const compactPending = compactHistory.isPending;
+  const compactFailed = compactHistory.isError;
   const composerLocked = hasActiveProcess && (compactPending || compactFailed);
   const inputDisabled = (!hasActiveProcess && !canStartProcess && !processLookupLoading) || composerLocked;
   const archiveOpen = bodyState === "archive";
@@ -489,7 +447,6 @@ export function ChatDock({
   ): Promise<ChatTranscriptionTarget | null> => {
     signal?.throwIfAborted();
     let targetPid = pinnedTarget ? pinnedTarget.processId : activeProcessId;
-    let targetConversationId = pinnedTarget ? pinnedTarget.conversationId : selectedConversationId;
     if ((!targetPid && !canStartProcess) || sendMessage.isPending || spawnProcess.isPending) {
       return null;
     }
@@ -506,16 +463,13 @@ export function ChatDock({
       });
       signal?.throwIfAborted();
       targetPid = spawned.pid;
-      targetConversationId = "default";
-      adoptTarget?.({ processId: targetPid, conversationId: targetConversationId });
+      adoptTarget?.({ processId: targetPid });
       onProcessStarted?.(spawned);
-      onSelectConversation?.("default");
     }
     signal?.throwIfAborted();
 
     if (
-      !pinnedTarget ||
-      (targetPid === activeProcessId && targetConversationId === selectedConversationId)
+      !pinnedTarget || targetPid === activeProcessId
     ) {
       chatRuntime.appendOptimisticUserMessage(outgoingMessage, media.map((item): ProcMediaInput => ({
         type: item.type,
@@ -531,18 +485,15 @@ export function ChatDock({
     await sendMessage.mutateAsync({
       message: outgoingMessage,
       pid: targetPid,
-      ...(targetConversationId ? { conversationId: targetConversationId } : {}),
       ...(media.length > 0 ? { media } : {}),
     });
-    return { processId: targetPid, conversationId: targetConversationId };
+    return { processId: targetPid };
   }, [
     activeAgent.name,
     activeProcessId,
     canStartProcess,
     chatRuntime,
     onProcessStarted,
-    onSelectConversation,
-    selectedConversationId,
     sendMessage,
     spawnProcess,
     startRunAs,
@@ -560,7 +511,6 @@ export function ChatDock({
   const ambientTranscription = useChatAmbientTranscription({
     activeRunCount: canAbortRun ? 1 : 0,
     agentName: activeAgent.name,
-    conversationId: selectedConversationId,
     disabled: inputDisabled || abortProcess.isPending,
     isSpeechOutputPlaying: replySpeech.isSpeaking,
     onDictation: appendDictationDraft,
@@ -639,8 +589,8 @@ export function ChatDock({
       ? errorMessage(sendMessage.error, "Message could not be sent.")
       : hilDecision.isError
         ? errorMessage(hilDecision.error, "Tool approval could not be applied.")
-        : forkConversation.isError
-          ? errorMessage(forkConversation.error, "Conversation could not be branched.")
+        : forkProcess.isError
+          ? errorMessage(forkProcess.error, "Task could not be branched.")
           : setProcessAiConfig.isError
             ? errorMessage(setProcessAiConfig.error, "Process model settings could not be updated.")
             : attachmentError;
@@ -663,7 +613,7 @@ export function ChatDock({
   const compactKeepMax = Math.max(1, Math.min(96, compactMessageTotal - 1));
   const canFreeContext = hasActiveProcess
     && !canAbortRun
-    && !compactConversation.isPending
+    && !compactHistory.isPending
     && compactMessageTotal > compactKeepLast;
   const canStartNewTask = canStartProcess && !spawnProcess.isPending;
 
@@ -683,7 +633,6 @@ export function ChatDock({
     }, {
       onSuccess: (result) => {
         onProcessStarted?.(result);
-        onSelectConversation?.("default");
         setNewTaskFocusKey((key) => key + 1);
       },
     });
@@ -697,8 +646,7 @@ export function ChatDock({
     const requestedStop = { pid: activeProcessId, runId: runId ?? null };
     setStoppingRun(requestedStop);
     const target = displayedTargetRef.current;
-    const stillDisplayed = () => displayedTargetRef.current.pid === target.pid
-      && displayedTargetRef.current.conversationId === target.conversationId;
+    const stillDisplayed = () => displayedTargetRef.current.pid === target.pid;
     feedback.begin("abort", "Stopping task");
     abortProcess.mutate({
       pid: activeProcessId,
@@ -784,7 +732,7 @@ export function ChatDock({
       return;
     }
     // Resolved stop/compact/voice status lines describe the previous
-    // operation; once the conversation moves on they'd sit below newer
+    // operation; once the task moves on they'd sit below newer
     // messages, so drop them. In-flight lines stay (their outcome still
     // matters), including a live "Listening…" line.
     for (const entry of feedback.entries) {
@@ -795,20 +743,16 @@ export function ChatDock({
   };
 
   const branchFromMessage = (messageId: number) => {
-    if (!hasActiveProcess || forkConversation.isPending) {
+    if (!hasActiveProcess || forkProcess.isPending) {
       return;
     }
-    const targetConversationId = `branch-${Date.now().toString(36)}`;
-    forkConversation.mutate({
+    const label = `Fork of ${title}`;
+    forkProcess.mutate({
       pid: activeProcessId,
-      conversationId: selectedConversationId,
       throughMessageId: messageId,
-      targetConversationId,
-      title: `Branch from message ${messageId}`,
     }, {
       onSuccess: (result) => {
-        onSelectConversation?.(result.targetConversation.id);
-        setBranchNotice("Successfully branched conversation");
+        onProcessStarted?.({ pid: result.pid, label });
       },
     });
   };
@@ -820,15 +764,13 @@ export function ChatDock({
     setOpenPopover(null);
     setBodyState("chat");
     setSelectedArchiveSegmentId("");
-    compactConversation.reset();
+    compactHistory.reset();
     spawnProcess.mutate({
-      fresh: true,
       interactive: true,
       ...(startRunAs ? { runAs: startRunAs } : {}),
     }, {
       onSuccess: (result) => {
         onProcessStarted?.(result);
-        onSelectConversation?.("default");
         setNewTaskFocusKey((key) => key + 1);
       },
     });
@@ -861,18 +803,15 @@ export function ChatDock({
     const normalizedKeepLast = Math.max(1, Math.min(compactKeepMax, Math.floor(keepLast)));
     setContextConfirmOpen(false);
     const target = displayedTargetRef.current;
-    const stillDisplayed = () => displayedTargetRef.current.pid === target.pid
-      && displayedTargetRef.current.conversationId === target.conversationId;
+    const stillDisplayed = () => displayedTargetRef.current.pid === target.pid;
     feedback.begin("compact", "Freeing context");
-    compactConversation.mutate({
+    compactHistory.mutate({
       pid: activeProcessId,
-      conversationId: selectedConversationId,
       keepLast: normalizedKeepLast,
       generateSummary: true,
     }, {
       onSuccess: (result) => {
-        // A switch mid-flight cleared the running line (compaction state is
-        // conversation-bound) — the archive preselect and resolve() upsert
+        // A switch mid-flight cleared the running line — the archive preselect and resolve() upsert
         // must not land on the newly displayed transcript.
         if (!stillDisplayed()) {
           return;
@@ -1003,7 +942,7 @@ export function ChatDock({
     positionPopover();
     window.addEventListener("resize", positionPopover);
     return () => window.removeEventListener("resize", positionPopover);
-  }, [openPopover, mobileLayout, conversations.data, selectedConversationId, currentModelLabel, currentReasoningLabel]);
+  }, [openPopover, mobileLayout, currentModelLabel, currentReasoningLabel]);
 
   if (!open) {
     return (
@@ -1058,7 +997,7 @@ export function ChatDock({
             >
               <Counter
                 label="KEEP MESSAGES"
-                description={`Choose how many recent messages stay live. Current conversation has ${compactMessageTotal}.`}
+                description={`Choose how many recent messages stay live. Current task has ${compactMessageTotal}.`}
                 min={1}
                 max={compactKeepMax}
                 step={1}
@@ -1076,8 +1015,6 @@ export function ChatDock({
         agentPanelOpen={bodyState === "agent"}
         atMax={atMax}
         canAbortRun={canAbortRun}
-        conversations={conversations.data ?? []}
-        activeConversationId={selectedConversationId}
         contextTone={contextTone}
         contextPercent={contextPercent}
         contextTitle={contextTitle}
@@ -1107,7 +1044,7 @@ export function ChatDock({
         archiveOpen={archiveOpen}
         canFreeContext={canFreeContext}
         compactKeepLast={compactKeepLast}
-        compactPending={compactConversation.isPending}
+        compactPending={compactHistory.isPending}
         hasArchivedMessages={hasArchivedMessages}
         onFreeContext={() => {
           setOpenPopover(null);
@@ -1116,13 +1053,6 @@ export function ChatDock({
         onToggleArchive={() => {
           setOpenPopover(null);
           setBodyState((current) => current === "archive" ? "chat" : "archive");
-        }}
-        conversations={conversations.data ?? []}
-        activeConversationId={selectedConversationId}
-        onSelectConversation={(conversationId) => {
-          setOpenPopover(null);
-          setBodyState("chat");
-          onSelectConversation?.(conversationId);
         }}
         context={context}
         contextLevel={contextLevel}
@@ -1172,7 +1102,6 @@ export function ChatDock({
 
       {bodyState === "archive" && hasActiveProcess ? (
         <ChatArchivePanel
-          conversationId={selectedConversationId}
           processId={activeProcessId}
           selectedSegmentId={selectedArchiveSegmentId}
           onClose={() => returnToChat({ restoreFocus: true })}
@@ -1187,16 +1116,6 @@ export function ChatDock({
             icon="none"
             text={controlError}
             onDismiss={() => setDismissedError(controlError)}
-          />
-        </div>
-      ) : null}
-
-      {bodyState === "chat" && branchNotice ? (
-        <div class="gsv-chat-control-alert">
-          <Alert
-            variant="success"
-            text={branchNotice}
-            onDismiss={() => setBranchNotice("")}
           />
         </div>
       ) : null}
@@ -1217,7 +1136,6 @@ export function ChatDock({
         emptyTitle={emptyTitle}
         emptyDescription={emptyDescription}
         errorMessage={transcriptError}
-        conversationId={selectedConversationId}
         feedback={feedback.entries}
         hasOlderMessages={chatRuntime.hasOlderHistory}
         messages={transcriptMessages}
@@ -1243,7 +1161,7 @@ export function ChatDock({
         attachments={draftAttachments}
         busy={sendMessage.isPending || abortProcess.isPending || spawnProcess.isPending}
         canSend={hasActiveProcess || canStartProcess}
-        cost={conversationCost}
+        cost={historyCost}
         disabled={inputDisabled}
         focusKey={newTaskFocusKey}
         value={composerDraft}
@@ -1300,7 +1218,7 @@ export function ChatDock({
             {" "}to continue.
           </>
         ) : (
-          "Wait for context compression to continue this conversation."
+          "Wait for context compression to continue this task."
         )}
       </div>
       </div>}

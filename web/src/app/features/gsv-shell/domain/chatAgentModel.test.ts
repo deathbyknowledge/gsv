@@ -21,14 +21,12 @@ function process(input: Partial<ChatProcessSummary> & Pick<ChatProcessSummary, "
     state: "idle",
     runState: "idle",
     activeRunId: null,
-    activeConversationId: null,
     queuedCount: 0,
     lastActiveAt: null,
     label: null,
     title: input.pid,
     createdAt: 1,
     cwd: "/home/scout",
-    isDefaultConversation: false,
     ...input,
   };
 }
@@ -43,7 +41,6 @@ function consoleProcess(input: Partial<ConsoleProcess> & Pick<ConsoleProcess, "p
     parentPid: null,
     interactive: true,
     activeRunId: null,
-    activeConversationId: null,
     queuedCount: 0,
     createdAt: 1,
     lastActiveAt: null,

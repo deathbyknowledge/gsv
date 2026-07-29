@@ -5,7 +5,7 @@ import { emptyChatRuntimeState } from "./transcript";
 describe("chat live activity", () => {
   it("prioritizes a requested stop until the active run reconciles", () => {
     const state = {
-      ...emptyChatRuntimeState("pid-1", "default"),
+      ...emptyChatRuntimeState("pid-1"),
       activeRunId: "run-1",
       runState: "running" as const,
     };
@@ -19,13 +19,12 @@ describe("chat live activity", () => {
 
   it("prioritizes pending approvals over generic running state", () => {
     const state = {
-      ...emptyChatRuntimeState("pid-1", "default"),
+      ...emptyChatRuntimeState("pid-1"),
       activeRunId: "run-1",
       pendingHil: {
         pid: "pid-1",
         requestId: "hil-1",
         runId: "run-1",
-        conversationId: "default",
         callId: "call-1",
         toolName: "Shell",
         syscall: "shell.exec",
@@ -44,7 +43,7 @@ describe("chat live activity", () => {
 
   it("describes the latest running tool for the active run", () => {
     const state = {
-      ...emptyChatRuntimeState("pid-1", "default"),
+      ...emptyChatRuntimeState("pid-1"),
       activeRunId: "run-1",
       runState: "running" as const,
       rows: [
@@ -73,7 +72,7 @@ describe("chat live activity", () => {
 
   it("distinguishes thinking from writing reply while streaming", () => {
     const thinking = {
-      ...emptyChatRuntimeState("pid-1", "default"),
+      ...emptyChatRuntimeState("pid-1"),
       activeRunId: "run-1",
       runState: "running" as const,
       rows: [

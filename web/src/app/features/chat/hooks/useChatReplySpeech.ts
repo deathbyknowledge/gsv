@@ -4,7 +4,6 @@ import { createPresenceSpeechOutput } from "../../presence/speechOutput";
 import type { ChatTranscriptRow } from "../domain/transcript";
 
 type UseChatReplySpeechArgs = {
-  conversationId?: string | null;
   hydrated?: boolean;
   processId: string;
   rows: readonly ChatTranscriptRow[];
@@ -31,11 +30,9 @@ function latestSpeakableAssistantRow(
 function speechKey(
   row: ChatTranscriptRow,
   processId: string,
-  conversationId: string | null | undefined,
 ): string {
   return [
     processId,
-    conversationId ?? "default",
     row.runId ?? "",
     row.messageId ?? "",
     row.id,
@@ -44,7 +41,6 @@ function speechKey(
 }
 
 export function useChatReplySpeech({
-  conversationId,
   hydrated = true,
   processId,
   rows,
@@ -80,7 +76,7 @@ export function useChatReplySpeech({
     lastSpokenKeyRef.current = "";
     needsHistoryHydrationRef.current = true;
     speechOutput.cancel(speakRepliesRef.current ? "Speak replies on" : "Speech off");
-  }, [conversationId, processId, speechOutput]);
+  }, [processId, speechOutput]);
 
   useEffect(() => {
     if (!speakReplies) {
@@ -98,7 +94,7 @@ export function useChatReplySpeech({
       }
       return;
     }
-    const key = speechKey(row, processId, conversationId);
+    const key = speechKey(row, processId);
     if (needsHistoryHydrationRef.current) {
       if (!hydrated) {
         return;
@@ -116,7 +112,7 @@ export function useChatReplySpeech({
     }
     lastSpokenKeyRef.current = key;
     void speechOutput.speakReply(row.text);
-  }, [conversationId, hydrated, processId, rows, speakReplies, speechOutput]);
+  }, [hydrated, processId, rows, speakReplies, speechOutput]);
 
   const setSpeakReplies = useCallback((enabled: boolean) => {
     setSpeakRepliesState(enabled);
@@ -126,10 +122,10 @@ export function useChatReplySpeech({
     }
     const row = latestSpeakableAssistantRow(rows);
     if (row && processId) {
-      lastSpokenKeyRef.current = speechKey(row, processId, conversationId);
+      lastSpokenKeyRef.current = speechKey(row, processId);
     }
     setSpeechStatus("Speak replies on");
-  }, [conversationId, processId, rows, speechOutput]);
+  }, [processId, rows, speechOutput]);
 
   const cancelSpeech = useCallback(() => {
     speechOutput.cancel();

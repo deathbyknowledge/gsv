@@ -1,7 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { ChatDockHeader } from "../../app/features/chat/components/ChatDockHeader";
 import type { ChatAgentViewModel } from "../../app/features/chat/domain/agent";
-import type { ChatConversation } from "../../app/features/chat/domain/processes";
 import type { Story } from "../story";
 
 /** Mobile chat header — the two-view layout behind the ⋮/← toggle. Staged
@@ -40,24 +39,6 @@ function mockAgent(overrides: Partial<ChatAgentViewModel> = {}): ChatAgentViewMo
   };
 }
 
-function mockConversation(id: string, title: string | null, messageCount: number): ChatConversation {
-  return {
-    id,
-    generation: 1,
-    status: "open",
-    title,
-    messageCount,
-    createdAt: 0,
-    updatedAt: 0,
-  };
-}
-
-const SINGLE_BRANCH = [mockConversation("default", null, 12)];
-const MULTI_BRANCH = [
-  mockConversation("default", null, 12),
-  mockConversation("b-2", "Refactor plan", 4),
-];
-
 type VariantProps = Partial<Parameters<typeof ChatDockHeader>[0]>;
 
 function headerProps(overrides: VariantProps = {}): Parameters<typeof ChatDockHeader>[0] {
@@ -66,8 +47,6 @@ function headerProps(overrides: VariantProps = {}): Parameters<typeof ChatDockHe
     agentPanelOpen: false,
     atMax: false,
     canAbortRun: false,
-    conversations: SINGLE_BRANCH,
-    activeConversationId: "default",
     contextTone: "default",
     contextPercent: 63,
     contextTitle: "Context 63% · healthy",
@@ -113,12 +92,11 @@ const story: Story = {
   render: () => (
     <div class="ds-col">
       <div class="ds-cell">
-        <div class="ds-label">Primary view — running (abort beside ⋮), multi-branch, 82% attention</div>
+        <div class="ds-label">Primary view — running (abort beside ⋮), 82% attention</div>
         <MobileFrame>
           <ChatDockHeader {...headerProps({
             activeAgent: mockAgent({ status: "live", activity: "Reviewing diffs", statusLabel: "live" }),
             canAbortRun: true,
-            conversations: MULTI_BRANCH,
             contextTone: "attention",
             contextPercent: 82,
             contextTitle: "Context 82% · elevated",
@@ -139,18 +117,17 @@ const story: Story = {
       </div>
 
       <div class="ds-cell">
-        <div class="ds-label">More view — single branch (disabled), speech off</div>
+        <div class="ds-label">More view — speech off</div>
         <MobileFrame>
           <ChatDockHeader {...headerProps({ initialMobileView: "more" })} />
         </MobileFrame>
       </div>
 
       <div class="ds-cell">
-        <div class="ds-label">More view — multi-branch, speaking (transient status)</div>
+        <div class="ds-label">More view — speaking (transient status)</div>
         <MobileFrame>
           <ChatDockHeader {...headerProps({
             initialMobileView: "more",
-            conversations: MULTI_BRANCH,
             speakReplies: true,
             speechStatus: "Speaking 2/5",
           })} />
@@ -174,7 +151,6 @@ const story: Story = {
             <aside class="gsv-chat" style={{ width: "440px", minWidth: 0, height: "100%" }}>
               <ChatDockHeader {...headerProps({
                 mobileLayout: false,
-                conversations: MULTI_BRANCH,
                 canAbortRun: true,
                 activeAgent: mockAgent({ status: "live", activity: "Reviewing diffs" }),
               })} />

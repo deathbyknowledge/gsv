@@ -2,11 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/preact-query";
 import type {
   ProcAbortArgs,
   ProcAiConfigSetArgs,
-  ProcConversationCompactArgs,
-  ProcConversationForkArgs,
-  ProcConversationListArgs,
-  ProcConversationSegmentReadArgs,
-  ProcConversationSegmentsArgs,
+  ProcForkArgs,
+  ProcHistoryCompactArgs,
+  ProcHistorySegmentReadArgs,
+  ProcHistorySegmentsArgs,
   ProcHilArgs,
   ProcHistoryArgs,
   ProcListArgs,
@@ -16,16 +15,15 @@ import type {
 import { useGateway } from "../../../services/gateway/GatewayProvider";
 import {
   abortChatProcess,
-  compactChatConversation,
+  compactChatHistory,
   decideChatHil,
-  forkChatConversation,
+  forkChatProcess,
   getChatProcessAiConfig,
   getChatHistory,
-  listChatConversationSegments,
-  listChatConversations,
+  listChatHistorySegments,
   listChatProcesses,
   readChatProcessMedia,
-  readChatConversationSegment,
+  readChatHistorySegment,
   sendChatMessage,
   setChatProcessAiConfig,
   spawnChatProcess,
@@ -54,24 +52,17 @@ export const chatProcessMediaQueryKey = (args: ProcMediaReadArgs) => [
   args,
 ] as const;
 
-export const chatConversationListQueryKey = (args: ProcConversationListArgs = {}) => [
+export const chatHistorySegmentsQueryKey = (args: ProcHistorySegmentsArgs = {}) => [
   "process",
   "chat",
-  "conversations",
+  "history-segments",
   args,
 ] as const;
 
-export const chatConversationSegmentsQueryKey = (args: ProcConversationSegmentsArgs = {}) => [
+export const chatHistorySegmentQueryKey = (args: ProcHistorySegmentReadArgs) => [
   "process",
   "chat",
-  "conversation-segments",
-  args,
-] as const;
-
-export const chatConversationSegmentQueryKey = (args: ProcConversationSegmentReadArgs) => [
-  "process",
-  "chat",
-  "conversation-segment",
+  "history-segment",
   args,
 ] as const;
 
@@ -135,38 +126,27 @@ export function useChatProcessMedia(options: UseChatProcessMediaOptions) {
   });
 }
 
-export function useChatConversations(options: ChatQueryOptions & { args?: ProcConversationListArgs } = {}) {
+export function useChatHistorySegments(options: ChatQueryOptions & { args?: ProcHistorySegmentsArgs } = {}) {
   const { client, connected } = useGateway();
   const args = options.args ?? {};
 
   return useQuery({
-    queryKey: chatConversationListQueryKey(args),
+    queryKey: chatHistorySegmentsQueryKey(args),
     enabled: connected && options.enabled !== false && hasHistoryTarget(args),
-    queryFn: () => listChatConversations(client, args),
+    queryFn: () => listChatHistorySegments(client, args),
   });
 }
 
-export function useChatConversationSegments(options: ChatQueryOptions & { args?: ProcConversationSegmentsArgs } = {}) {
-  const { client, connected } = useGateway();
-  const args = options.args ?? {};
-
-  return useQuery({
-    queryKey: chatConversationSegmentsQueryKey(args),
-    enabled: connected && options.enabled !== false && hasHistoryTarget(args),
-    queryFn: () => listChatConversationSegments(client, args),
-  });
-}
-
-export function useChatConversationSegment(options: ChatQueryOptions & { args: ProcConversationSegmentReadArgs }) {
+export function useChatHistorySegment(options: ChatQueryOptions & { args: ProcHistorySegmentReadArgs }) {
   const { client, connected } = useGateway();
 
   return useQuery({
-    queryKey: chatConversationSegmentQueryKey(options.args),
+    queryKey: chatHistorySegmentQueryKey(options.args),
     enabled: connected
       && options.enabled !== false
       && options.args.segmentId.trim().length > 0
       && hasHistoryTarget(options.args),
-    queryFn: () => readChatConversationSegment(client, options.args),
+    queryFn: () => readChatHistorySegment(client, options.args),
   });
 }
 
@@ -196,8 +176,7 @@ export function useSpawnChatProcess() {
 function invalidateChatRuntime(queryClient: ReturnType<typeof useQueryClient>): void {
   void queryClient.invalidateQueries({ queryKey: ["processes"] });
   void queryClient.invalidateQueries({ queryKey: chatProcessHistoryQueryKeyRoot });
-  void queryClient.invalidateQueries({ queryKey: ["process", "chat", "conversations"] });
-  void queryClient.invalidateQueries({ queryKey: ["process", "chat", "conversation-segments"] });
+  void queryClient.invalidateQueries({ queryKey: ["process", "chat", "history-segments"] });
 }
 
 export function useSendChatMessage() {
@@ -236,22 +215,22 @@ export function useDecideChatHil() {
   });
 }
 
-export function useCompactChatConversation() {
+export function useCompactChatHistory() {
   const { client } = useGateway();
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (args: ProcConversationCompactArgs) => compactChatConversation(client, args),
+    mutationFn: (args: ProcHistoryCompactArgs) => compactChatHistory(client, args),
     onSuccess: () => invalidateChatRuntime(queryClient),
   });
 }
 
-export function useForkChatConversation() {
+export function useForkChatProcess() {
   const { client } = useGateway();
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (args: ProcConversationForkArgs) => forkChatConversation(client, args),
+    mutationFn: (args: ProcForkArgs) => forkChatProcess(client, args),
     onSuccess: () => invalidateChatRuntime(queryClient),
   });
 }

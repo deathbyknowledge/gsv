@@ -17,7 +17,6 @@ import type { CapabilityStore } from "./capabilities";
 import type { ConfigStore } from "./config";
 import type { DeviceRegistry } from "./devices";
 import type { ProcessRegistry } from "./processes";
-import type { ConversationRegistry } from "./conversations";
 import type { AdapterStore } from "./adapter-store";
 import type { RunRouteStore } from "./run-routes";
 import type { ShellSessionStore } from "./shell-sessions";
@@ -36,7 +35,6 @@ export type KernelContext = {
   config: ConfigStore;
   devices: DeviceRegistry;
   procs: ProcessRegistry;
-  conversations: ConversationRegistry;
   oauth: OAuthStore;
   mcp: MCPClientManager;
   mcpServers: McpServerStore;

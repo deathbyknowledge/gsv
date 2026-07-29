@@ -50,7 +50,7 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 ## System ownership
 
 - `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
-- `gateway/src/process/`: agent loop, conversations, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
+- `gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
 - `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
 - `gateway/src/inference/`: provider integration and model transport.
 - `packages/gsv/`: public client and protocol types.
@@ -72,7 +72,7 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 - A stale run must not mutate active state.
 - Cancellation must propagate to the component that owns the active operation.
 - Request cancellation does not recursively kill an already-created durable shell session unless that contract explicitly says so.
-- `proc.abort` stops the active run, `proc.reset` resets conversation state while preserving the process, and `proc.kill` tears the process down.
+- `proc.abort` stops the active run, `proc.reset` resets history while preserving the process, and `proc.kill` tears the process down.
 - Archive and media cleanup must remain coherent across reset and kill.
 
 ### Protocol and routing

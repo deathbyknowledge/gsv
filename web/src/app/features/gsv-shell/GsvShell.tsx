@@ -223,7 +223,6 @@ export function GsvShell({
 
   const [selectedChatPid, setSelectedChatPid] = useState<string | null>(null);
   const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
-  const [selectedChatConversationId, setSelectedChatConversationId] = useState<string | null>(null);
   const [pendingChatProcess, setPendingChatProcess] = useState<ChatProcessSummary | null>(null);
   // Bumped by NEW TASK actions to ask the chat dock for a fresh task (rather than
   // just reopening the dock on whatever was last selected).
@@ -261,7 +260,6 @@ export function GsvShell({
       !chatProcessList.some((process) => process.pid === selectedChatPid)
     ) {
       setSelectedChatPid(null);
-      setSelectedChatConversationId(null);
     }
   }, [chatProcessList, chatProcesses.isFetching, chatProcesses.isLoading, selectedChatPid, selectedPendingChatProcess]);
 
@@ -284,7 +282,6 @@ export function GsvShell({
       setSelectedChatPid(target.pid);
       setPendingChatProcess(null);
       setSelectedChatAgentId(null);
-      setSelectedChatConversationId(target.conversationId);
       shell.setChatOpen(true);
     };
 
@@ -298,11 +295,7 @@ export function GsvShell({
   const chatStatusLabel = activeChatProcess?.runState.replaceAll("_", " ") ?? (
     chatProcesses.isLoading ? "loading" : "no process"
   );
-  const chatContextLabel = activeChatProcess?.activeConversationId
-    ? `conversation ${activeChatProcess.activeConversationId.slice(0, 8)}`
-    : activeChatProcess
-      ? "default conversation"
-      : "no history";
+  const chatContextLabel = activeChatProcess ? "process history" : "no history";
   const chatAgent = useMemo<ChatAgentData | null>(() => {
     return buildShellChatAgent({
       activeProcess: activeChatProcess,
@@ -320,14 +313,12 @@ export function GsvShell({
       setSelectedChatPid(selection.processId);
       setPendingChatProcess(selection.process ?? null);
       setSelectedChatAgentId(null);
-      setSelectedChatConversationId(null);
       return;
     }
     if (selection.agentId) {
       setSelectedChatPid(null);
       setPendingChatProcess(null);
       setSelectedChatAgentId(selection.agentId);
-      setSelectedChatConversationId(null);
     }
   };
   const selectStartedChatProcess = (process: StartedChatProcess): void => {
@@ -344,18 +335,15 @@ export function GsvShell({
       state: "idle",
       runState: "idle",
       activeRunId: null,
-      activeConversationId: null,
       queuedCount: 0,
       lastActiveAt: now,
       label: process.label ?? null,
       title: process.label?.trim() || "New task",
       createdAt: now,
       cwd: process.cwd || activeChatProcess?.cwd || "",
-      isDefaultConversation: false,
     });
     setSelectedChatPid(process.pid);
     setSelectedChatAgentId(null);
-    setSelectedChatConversationId(null);
   };
   // Navigation that unmounts the active screen is routed through the unsaved
   // guard: a dirty screen prompts "discard changes?" first, a clean one passes
@@ -620,7 +608,6 @@ export function GsvShell({
           open={shell.chatOpen}
           width={shell.resolvedChatWidth}
           mobileLayout={shell.mobileLayout}
-          activeConversationId={selectedChatConversationId ?? activeChatProcess?.activeConversationId ?? null}
           dragging={shell.chatDragging}
           atMax={shell.resolvedChatWidth >= shell.maxChatWidth - 1}
           onResizeStart={shell.startChatDrag}
@@ -630,7 +617,6 @@ export function GsvShell({
           onOpenModels={() => openSettingsRoute("models")}
           onOpenTasks={() => openSettingsRoute("tasks")}
           onProcessStarted={selectStartedChatProcess}
-          onSelectConversation={setSelectedChatConversationId}
           title={activeChatProcess?.title ?? "Chat"}
           status={chatStatus}
           statusLabel={chatStatusLabel}

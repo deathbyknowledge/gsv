@@ -47,7 +47,6 @@ type ChatTranscriptProps = {
   emptyDescription?: string;
   errorMessage?: string;
   action?: ComponentChildren;
-  conversationId?: string | null;
   /** Ephemeral operation feedback lines appended after the newest message. */
   feedback?: readonly ChatFeedbackEntry[];
   hasOlderMessages?: boolean;
@@ -1032,11 +1031,11 @@ function UserMessage({
   // Built once, routed by breakpoint: desktop puts them in the meta row,
   // mobile in the swipe rail — never both (no duplicate controls for AT).
   const branchAction = message.messageId && onBranch ? (
-    <Hint text="Branch a new conversation from this message">
+    <Hint text="Branch a new task from this message">
       <button
         type="button"
         class="gsv-mm-btn"
-        aria-label="Branch a new conversation from this message"
+        aria-label="Branch a new task from this message"
         onClick={() => onBranch(message.messageId as number)}
       >
         <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
@@ -1786,10 +1785,9 @@ function nestedScrollerCanScrollUp(target: EventTarget | null, boundary: HTMLEle
 export function ChatTranscript({
   action,
   activeRunId = null,
-  emptyDescription = "Process history will appear here when a conversation is available.",
-  emptyTitle = "No active conversation",
+  emptyDescription = "Process history will appear here when a task is available.",
+  emptyTitle = "No active task",
   errorMessage = "Process history could not be loaded.",
-  conversationId = null,
   feedback = [],
   hasOlderMessages = false,
   loadingOlderMessages = false,
@@ -1988,7 +1986,7 @@ export function ChatTranscript({
     void Promise.resolve(onLoadOlder()).catch(() => {});
   };
 
-  const transcriptIdentity = `${processId}:${conversationId ?? ""}`;
+  const transcriptIdentity = processId;
   const tailMessage = messages[messages.length - 1];
   const tailKey = `${transcriptIdentity}:${messages.length}:${tailMessage?.id ?? "empty"}`;
   const feedbackKey = feedback.map((entry) => `${entry.id}:${entry.status}:${entry.label}`).join("|");

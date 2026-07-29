@@ -32,7 +32,7 @@ import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../shared/utils";
 import { raceWithAbort } from "../shared/abort";
 import { resolveUserPath } from "../fs";
-import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
+import { ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
 import {
@@ -57,24 +57,20 @@ export function handleProcList(
 
   const records = ctx.procs.list(uid);
 
-  const processes: ProcListEntry[] = records.map((r) => {
-    const conversation = ctx.conversations.getByActivePid(r.processId);
-    return {
-      pid: r.processId,
-      uid: r.ownerUid,
-      username: r.username,
-      interactive: r.interactive,
-      parentPid: r.parentPid,
-      state: r.state,
-      activeRunId: r.activeRunId,
-      queuedCount: r.queuedCount,
-      lastActiveAt: r.lastActiveAt,
-      label: r.label,
-      createdAt: r.createdAt,
-      cwd: r.cwd,
-      isDefaultConversation: conversation?.isDefault === true,
-    };
-  });
+  const processes: ProcListEntry[] = records.map((r) => ({
+    pid: r.processId,
+    uid: r.ownerUid,
+    username: r.username,
+    interactive: r.interactive,
+    parentPid: r.parentPid,
+    state: r.state,
+    activeRunId: r.activeRunId,
+    queuedCount: r.queuedCount,
+    lastActiveAt: r.lastActiveAt,
+    label: r.label,
+    createdAt: r.createdAt,
+    cwd: r.cwd,
+  }));
 
   return { processes };
 }
@@ -86,52 +82,9 @@ export async function handleProcSpawn(
   const identity = ctx.identity!;
   const pid = `proc:${crypto.randomUUID()}`;
   const explicitRunAs = typeof args.runAs === "string" && args.runAs.trim().length > 0;
-  const hasCustomSpawnOptions = args.cwd !== undefined;
   const label = typeof args.label === "string" && args.label.trim().length > 0
     ? args.label.trim()
     : undefined;
-
-  // An interactive, top-level spawn with no explicit run-as targets the caller's
-  // default ("inbox") conversation with their personal agent — the stable
-  // surface. Background spawns (interactive === false, e.g. cron) and child
-  // spawns from a process get their own fresh executor + conversation.
-  const useDefaultExecutor =
-    args.fresh !== true &&
-    !explicitRunAs &&
-    !hasCustomSpawnOptions &&
-    args.interactive !== false &&
-    !ctx.processId &&
-    !args.parentPid;
-
-  if (useDefaultExecutor) {
-    const human = resolveCallerOwnerIdentity(ctx, identity.process);
-    const pidResolved = await ensureDefaultConversationExecutor(ctx, human);
-    const record = ctx.procs.get(pidResolved);
-    if (!record) {
-      return { ok: false, error: "Failed to resolve personal-agent executor" };
-    }
-
-    if (args.prompt) {
-      const origin = interactionOriginForContext(ctx);
-      await sendFrameToProcess(pidResolved, {
-        type: "req",
-        id: crypto.randomUUID(),
-        call: "proc.send",
-        args: {
-          pid: pidResolved,
-          message: args.prompt,
-          ...(origin ? { origin } : {}),
-        },
-      });
-    }
-
-    return {
-      ok: true,
-      pid: record.processId,
-      label: record.label ?? undefined,
-      cwd: record.cwd,
-    };
-  }
 
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const parentPid = args.parentPid ?? ctx.processId;
@@ -197,7 +150,6 @@ export async function handleProcSpawn(
 
   const interactive = args.interactive ?? true;
 
-  let conversationId: string | null = null;
   try {
     ctx.procs.spawn(pid, spawnIdentity, {
       parentPid: parentPid ?? undefined,
@@ -206,20 +158,6 @@ export async function handleProcSpawn(
       label,
       cwd: spawnIdentity.cwd,
     });
-
-    // Each spawned process gets its own durable conversation so its transcript
-    // persists in the run-as agent's home, addressable independent of this
-    // (fungible) executor.
-    const conversation = ctx.conversations.create({
-      ownerUid,
-      agentUid: spawnIdentity.uid,
-      agentHome: spawnIdentity.home,
-      title: label ?? null,
-    });
-    conversationId = conversation.conversationId;
-    if (!ctx.conversations.setActivePid(conversationId, pid)) {
-      throw new Error("Failed to bind process conversation");
-    }
 
     const requestId = crypto.randomUUID();
     const response = await sendFrameToProcess(pid, {
@@ -232,7 +170,6 @@ export async function handleProcSpawn(
         interactive,
         ...(label ? { title: label } : {}),
         autoTitle: label === undefined,
-        conversationId,
       },
     });
     if (!response || response.type !== "res" || response.id !== requestId) {
@@ -246,7 +183,7 @@ export async function handleProcSpawn(
     }
   } catch (error) {
     try {
-      await rollbackSpawn(ctx, pid, conversationId);
+      await rollbackSpawn(ctx, pid);
     } catch (rollbackError) {
       return {
         ok: false,
@@ -287,10 +224,10 @@ export async function handleProcFork(
   ctx: KernelContext,
 ): Promise<ProcForkResult> {
   const identity = ctx.identity!;
-  const sourcePid = args.pid ?? await ensureDefaultConversationExecutor(
-    ctx,
-    resolveCallerOwnerIdentity(ctx, identity.process),
-  );
+  const sourcePid = args.pid ?? ctx.processId;
+  if (!sourcePid) {
+    return { ok: false, error: "proc.fork requires pid outside a process" };
+  }
   const source = ctx.procs.get(sourcePid);
   if (!source) {
     return { ok: false, error: `Process not found: ${sourcePid}` };
@@ -328,7 +265,6 @@ export async function handleProcFork(
     const spawned = await handleProcSpawn({
       runAs: source.username,
       interactive: source.interactive,
-      fresh: true,
       label,
       parentPid: sourcePid,
       cwd: source.cwd,
@@ -365,9 +301,8 @@ export async function handleProcFork(
     if (!targetPid) {
       return { ok: false, error: message };
     }
-    const conversationId = ctx.conversations.getByActivePid(targetPid)?.conversationId ?? null;
     try {
-      await rollbackSpawn(ctx, targetPid, conversationId);
+      await rollbackSpawn(ctx, targetPid);
       targetPid = null;
       return { ok: false, error: message };
     } catch (rollbackError) {
@@ -435,7 +370,6 @@ async function requestProcessSyscall<
 async function rollbackSpawn(
   ctx: KernelContext,
   pid: string,
-  conversationId: string | null,
 ): Promise<void> {
   const requestId = crypto.randomUUID();
   const response = await sendFrameToProcess(pid, {
@@ -454,12 +388,6 @@ async function rollbackSpawn(
     throw new Error("proc.kill rejected rollback");
   }
   ctx.procs.kill(pid);
-  ctx.conversations.clearActivePid(pid);
-  if (conversationId) {
-    if (!ctx.conversations.remove(conversationId)) {
-      throw new Error(`failed to remove conversation ${conversationId}`);
-    }
-  }
 }
 
 /**
@@ -689,7 +617,7 @@ export async function handleProcIpcCall(
 /**
  * Forward a proc.* request to the target Process DO.
  *
- * Resolves the target pid (defaults to caller's init process),
+ * Resolves the target pid (defaults to the calling process),
  * verifies ownership, and delivers via recvFrame RPC.
  */
 export async function forwardToProcess(
@@ -699,13 +627,11 @@ export async function forwardToProcess(
   const identity = ctx.identity!;
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const args = frame.args as { pid?: string };
-  // No explicit target → the caller's default ("inbox") conversation executor
-  // (allocating/reusing one), which is the stable surface for their personal
-  // agent.
-  const pid = args.pid ?? await ensureDefaultConversationExecutor(
-    ctx,
-    resolveCallerOwnerIdentity(ctx, identity.process),
-  );
+  // A process can omit its own pid. External callers must select one explicitly.
+  const pid = args.pid ?? ctx.processId;
+  if (!pid) {
+    throw new Error(`${frame.call} requires pid outside a process`);
+  }
 
   const proc = ctx.procs.get(pid);
   if (!proc) {
@@ -756,20 +682,6 @@ export async function forwardToProcess(
   if (response && response.type === "res") {
     const res = response as ResponseFrame;
     if (res.ok) {
-      let conversation: ReturnType<KernelContext["conversations"]["getByActivePid"]> = null;
-      if (
-        frame.call === "proc.reset"
-        || frame.call === "proc.kill"
-      ) {
-        try {
-          conversation = ctx.conversations.getByActivePid(pid);
-        } catch (error) {
-          console.warn(
-            `[proc] Failed to resolve conversation during ${frame.call} cleanup:`,
-            error,
-          );
-        }
-      }
       if (frame.call === "proc.reset" || frame.call === "proc.kill") {
         ctx.ipcCalls.cancelBySourcePid({ uid: proc.ownerUid, sourcePid: pid });
       }
@@ -780,7 +692,6 @@ export async function forwardToProcess(
           pid,
           "Target process was reset",
         );
-        clearLatestArchiveForConversation(ctx, conversation);
       } else if (frame.call === "proc.kill") {
         ctx.runRoutes.clearForProcess(pid);
         ctx.failIpcCallsByTarget(
@@ -789,20 +700,6 @@ export async function forwardToProcess(
           "Target process was killed",
         );
         ctx.procs.kill(pid);
-        // The executor is gone. Record where its conversation's transcript was
-        // archived (so a future executor hydrates from it), then detach so the
-        // next delivery allocates a fresh executor.
-        if (conversation) {
-          const archived = (res as { data?: { archives?: Array<{ path?: string }> } }).data;
-          const base = conversation.archiveBase.replace(/^\/+/, "");
-          const primaryArchive = archived?.archives?.find((a) =>
-            typeof a.path === "string" && a.path.replace(/^\/+/, "").startsWith(base),
-          );
-          if (primaryArchive?.path) {
-            ctx.conversations.setLatestArchive(conversation.conversationId, primaryArchive.path);
-          }
-        }
-        ctx.conversations.clearActivePid(pid);
       }
       const responseData = res.data;
       const runData = responseData as { runId?: unknown } | undefined;
@@ -890,27 +787,6 @@ function withProcAiConfigProfile(
       },
     },
   };
-}
-
-function clearLatestArchiveForConversation(
-  ctx: KernelContext,
-  conversation: { conversationId: string } | null | undefined,
-): void {
-  if (conversation) {
-    ctx.conversations.setLatestArchive(conversation.conversationId, null);
-  }
-}
-
-function resolveCallerOwnerIdentity(ctx: KernelContext, fallback: ProcessIdentity): ProcessIdentity {
-  const ownerUid = resolveCallerOwnerUid(ctx);
-  if (ownerUid === fallback.uid) {
-    return fallback;
-  }
-  const entry = ctx.auth.getPasswdByUid(ownerUid);
-  if (!entry) {
-    throw new Error(`Cannot resolve caller owner uid ${ownerUid}`);
-  }
-  return accountIdentity(ctx.auth, entry);
 }
 
 function normalizeText(value: unknown): string {

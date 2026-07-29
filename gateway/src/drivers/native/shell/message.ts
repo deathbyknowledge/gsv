@@ -472,7 +472,7 @@ function currentRunRoute(ctx: KernelContext): RunRoute | null {
 }
 
 function describeCurrentRoute(route: RunRoute | null): {
-  kind: "adapter" | "client" | "conversation";
+  kind: "adapter" | "client" | "process";
   label: string;
   transport: "automatic";
 } {
@@ -491,7 +491,7 @@ function describeCurrentRoute(route: RunRoute | null): {
   if (route?.kind === "connection") {
     return { kind: "client", label: "the GSV client that started this run", transport: "automatic" };
   }
-  return { kind: "conversation", label: "this GSV process conversation", transport: "automatic" };
+  return { kind: "process", label: "this GSV process history", transport: "automatic" };
 }
 
 function parseOnlyFlags(args: string[], allowed: Set<string>): Set<string> {

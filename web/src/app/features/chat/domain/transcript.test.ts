@@ -12,14 +12,12 @@ import {
 function history(messages: ChatHistory["messages"]): ChatHistory {
   return {
     pid: "pid-1",
-    conversationId: "default",
     messages,
     messageCount: messages.length,
     truncated: false,
     hasMoreBefore: false,
     hasMoreAfter: false,
     activeRunId: null,
-    activeConversationId: null,
     runState: "idle",
     pendingHil: null,
     context: null,
@@ -66,16 +64,15 @@ describe("chat transcript rows", () => {
       size: 3,
     };
     const state = applyChatSignal(
-      emptyChatRuntimeState("proc-1", "default"),
+      emptyChatRuntimeState("proc-1"),
       "proc.run.output",
       {
         pid: "proc-1",
         runId: "run-1",
-        conversationId: "default",
         text: "Generated image.",
         media: [media],
       },
-      { pid: "proc-1", conversationId: "default" },
+      { pid: "proc-1" },
     ).state;
 
     expect(state.rows).toEqual([
@@ -462,28 +459,25 @@ describe("chat transcript rows", () => {
 
   it("does not add an empty activity row for a run starting", () => {
     let state = addOptimisticUserMessage(
-      emptyChatRuntimeState("pid-1", "default"),
+      emptyChatRuntimeState("pid-1"),
       "hello",
-      "default",
     );
 
     state = applyChatSignal(state, "proc.run.started", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     state = applyChatSignal(state, "proc.run.stream", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
       event: {
         type: "start",
         partial: {
           content: [],
         },
       },
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     expect(state.rows).toEqual([
       expect.objectContaining({
@@ -497,19 +491,18 @@ describe("chat transcript rows", () => {
 
   it("does not let late signals replace the active run", () => {
     let state = applyChatSignal(
-      emptyChatRuntimeState("pid-1", "default"),
+      emptyChatRuntimeState("pid-1"),
       "proc.run.started",
-      { pid: "pid-1", runId: "run-new", conversationId: "default" },
-      { pid: "pid-1", conversationId: "default" },
+      { pid: "pid-1", runId: "run-new" },
+      { pid: "pid-1" },
     ).state;
 
     state = applyChatSignal(state, "proc.run.finished", {
       pid: "pid-1",
       runId: "run-old",
-      conversationId: "default",
       status: "aborted",
       queuedCount: 0,
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     expect(state.activeRunId).toBe("run-new");
     expect(state.runState).toBe("running");
@@ -517,31 +510,28 @@ describe("chat transcript rows", () => {
     state = applyChatSignal(state, "proc.run.started", {
       pid: "pid-1",
       runId: "run-old",
-      conversationId: "default",
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     expect(state.activeRunId).toBe("run-new");
   });
 
   it("moves live backup model status onto the assistant answer", () => {
-    let state = emptyChatRuntimeState("pid-1", "default");
+    let state = emptyChatRuntimeState("pid-1");
 
     state = applyChatSignal(state, "proc.run.started", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     state = applyChatSignal(state, "proc.run.retrying", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
       reason: "Custom provider HTTP 403: not authenticated",
       fallback: {
         from: { provider: "custom", model: "zai-glm-4.7" },
         to: { provider: "openrouter", model: "openai/gpt-5-mini" },
       },
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     expect(state.rows).toEqual([
       expect.objectContaining({
@@ -559,7 +549,6 @@ describe("chat transcript rows", () => {
     state = applyChatSignal(state, "proc.run.output", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
       text: "Recovered answer.",
       fallback: {
         used: true,
@@ -567,7 +556,7 @@ describe("chat transcript rows", () => {
         to: { provider: "openrouter", model: "openai/gpt-5-mini" },
         reason: "Custom provider HTTP 403: not authenticated",
       },
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     expect(state.rows).toEqual([
       expect.objectContaining({
@@ -585,42 +574,38 @@ describe("chat transcript rows", () => {
   });
 
   it("applies live stream, tool, and HIL signals for the active process", () => {
-    let state = emptyChatRuntimeState("pid-1", "default");
+    let state = emptyChatRuntimeState("pid-1");
 
     state = applyChatSignal(state, "proc.run.started", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     state = applyChatSignal(state, "proc.run.stream", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
       event: { type: "text_delta", delta: "Hello" },
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     state = applyChatSignal(state, "proc.run.tool.started", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
       callId: "call-1",
       name: "Shell",
       syscall: "shell.exec",
       args: { input: "ls" },
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     state = applyChatSignal(state, "proc.run.hil.requested", {
       pid: "pid-1",
       requestId: "hil-1",
       runId: "run-1",
-      conversationId: "default",
       callId: "call-1",
       toolName: "Shell",
       syscall: "shell.exec",
       args: { input: "ls" },
       createdAt: 1,
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     expect(state.runState).toBe("awaiting_hil");
     expect(state.pendingHil).toMatchObject({ pid: "pid-1", requestId: "hil-1" });
@@ -631,18 +616,16 @@ describe("chat transcript rows", () => {
   });
 
   it("uses stream partial snapshots as authoritative assistant text", () => {
-    let state = emptyChatRuntimeState("pid-1", "default");
+    let state = emptyChatRuntimeState("pid-1");
 
     state = applyChatSignal(state, "proc.run.started", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     state = applyChatSignal(state, "proc.run.stream", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
       event: {
         type: "text_delta",
         contentIndex: 0,
@@ -651,12 +634,11 @@ describe("chat transcript rows", () => {
           content: [{ type: "text", text: "Hello world" }],
         },
       },
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     state = applyChatSignal(state, "proc.run.stream", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
       event: {
         type: "text_delta",
         contentIndex: 0,
@@ -665,7 +647,7 @@ describe("chat transcript rows", () => {
           content: [{ type: "text", text: "Hello world!" }],
         },
       },
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     expect(state.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -679,7 +661,6 @@ describe("chat transcript rows", () => {
     state = applyChatSignal(state, "proc.run.stream", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
       event: {
         type: "text_delta",
         contentIndex: 2,
@@ -692,7 +673,7 @@ describe("chat transcript rows", () => {
           ],
         },
       },
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     expect(state.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -705,18 +686,16 @@ describe("chat transcript rows", () => {
   });
 
   it("drops stream fallback tool rows when a concrete tool starts", () => {
-    let state = emptyChatRuntimeState("pid-1", "default");
+    let state = emptyChatRuntimeState("pid-1");
 
     state = applyChatSignal(state, "proc.run.started", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     state = applyChatSignal(state, "proc.run.stream", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
       event: {
         type: "toolcall_start",
         contentIndex: 0,
@@ -726,7 +705,7 @@ describe("chat transcript rows", () => {
           arguments: { input: "pwd" },
         },
       },
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     expect(state.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -739,12 +718,11 @@ describe("chat transcript rows", () => {
     state = applyChatSignal(state, "proc.run.tool.started", {
       pid: "pid-1",
       runId: "run-1",
-      conversationId: "default",
       callId: "call-1",
       name: "Shell",
       syscall: "shell.exec",
       args: { input: "pwd" },
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     expect(state.rows.filter((row) => row.toolCallId === "run-1:tool:0")).toHaveLength(0);
     expect(state.rows.filter((row) => row.role === "tool" || row.role === "toolResult")).toEqual([
@@ -758,21 +736,19 @@ describe("chat transcript rows", () => {
 
   it("replaces one optimistic user row when the persisted message signal arrives", () => {
     let state = addOptimisticUserMessage(
-      emptyChatRuntimeState("pid-1", "default"),
+      emptyChatRuntimeState("pid-1"),
       "hello",
-      "default",
     );
-    state = addOptimisticUserMessage(state, "hello", "default");
+    state = addOptimisticUserMessage(state, "hello");
 
     state = applyChatSignal(state, "proc.changed", {
       pid: "pid-1",
-      conversationId: "default",
       changes: ["messages"],
       role: "user",
       content: "hello",
       messageId: 42,
       timestamp: Date.now(),
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
 
     expect(state.rows.filter((row) => row.role === "user" && row.text === "hello")).toHaveLength(2);
     expect(state.rows).toEqual(expect.arrayContaining([
@@ -841,13 +817,12 @@ describe("system error classification", () => {
   it("marks live proc.changed system rows with isError", () => {
     const seeded = applyChatSignal(emptyChatRuntimeState(), "proc.changed", {
       pid: "pid-1",
-      conversationId: "default",
       changes: ["messages"],
       role: "system",
       content: "Generation failed: error code: 1031",
       messageId: 43,
       timestamp: Date.now(),
-    }, { pid: "pid-1", conversationId: "default" }).state;
+    }, { pid: "pid-1" }).state;
     expect(seeded.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "message:43", role: "system", isError: true }),
     ]));

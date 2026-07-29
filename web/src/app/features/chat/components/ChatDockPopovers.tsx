@@ -5,15 +5,10 @@ import { Progress } from "../../../components/ui/Progress";
 import { TwoLevelSelect } from "../../../components/ui/TwoLevelSelect";
 import type { ListRowStatus } from "../../../components/ui/ListRow";
 import type { ChatAgentTaskStatus, ChatAgentViewModel, ChatModelProfileData } from "../domain/agent";
-import type { ChatConversation, ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
-import { formatCount, shortId } from "./chatUiFormat";
+import type { ChatHistory, ChatProcessAiConfig, ChatProcessSummary } from "../domain/processes";
+import { formatCount } from "./chatUiFormat";
 
-export type ChatPopoverId = "model" | "tasks" | "context" | "conversations";
-
-function conversationLabel(conversation: ChatConversation): string {
-  return conversation.title
-    || (conversation.id === "default" ? "Default" : shortId(conversation.id));
-}
+export type ChatPopoverId = "model" | "tasks" | "context";
 
 type ChatDockPopoversProps = {
   activeAgent: ChatAgentViewModel;
@@ -25,9 +20,6 @@ type ChatDockPopoversProps = {
   hasArchivedMessages: boolean;
   onFreeContext: () => void;
   onToggleArchive: () => void;
-  conversations: readonly ChatConversation[];
-  activeConversationId: string;
-  onSelectConversation: (conversationId: string) => void;
   context: ChatHistory["context"] | null;
   contextLevel: string;
   contextPercent: number | null;
@@ -89,9 +81,6 @@ export function ChatDockPopovers({
   hasArchivedMessages,
   onFreeContext,
   onToggleArchive,
-  conversations,
-  activeConversationId,
-  onSelectConversation,
   context,
   contextLevel,
   contextPercent,
@@ -133,32 +122,6 @@ export function ChatDockPopovers({
 
   return (
     <>
-      {openPopover === "conversations" ? (
-        <PopoverMenu
-          ariaLabel="Conversation branches"
-          className="gsv-popover-conversations"
-          header={{ kind: "titled", title: "BRANCHES", count: conversations.length }}
-        >
-          <div class="gsv-popover-list" role="list">
-            {conversations.map((conversation) => {
-              const active = conversation.id === activeConversationId;
-              return (
-                <ListRow
-                  key={conversation.id}
-                  density="compact"
-                  status="none"
-                  label={conversationLabel(conversation)}
-                  sub={conversation.messageCount > 0 ? `${formatCount(conversation.messageCount)} messages` : ""}
-                  statusLabel={active ? "CURRENT" : ""}
-                  active={active}
-                  onClick={() => onSelectConversation(conversation.id)}
-                />
-              );
-            })}
-          </div>
-        </PopoverMenu>
-      ) : null}
-
       {openPopover === "model" ? (
         <PopoverMenu
           ariaLabel="Model and reasoning"

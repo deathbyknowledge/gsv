@@ -111,7 +111,6 @@ Default policies:
 | `config/shell/timeout_ms` | `30000` | Default native shell timeout. |
 | `config/shell/network_enabled` | `true` | Enables network tools in native shell execution. |
 | `config/shell/max_output_bytes` | `524288` | Maximum captured shell output. |
-| `config/process/init_label` | `init ({username})` | Default init process label template. |
 | `config/process/max_per_user` | `0` | Maximum processes per user. `0` means unlimited. |
 
 The protocol's `server.version` is this semantic product version. `server.release`
