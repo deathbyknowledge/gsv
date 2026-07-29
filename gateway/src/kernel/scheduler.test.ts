@@ -83,7 +83,6 @@ function makeReq(call: string, args: unknown): RequestFrame {
 async function prepareScheduleTargetProcess(
   process: DurableObjectStub<Process>,
   pid: string,
-  conversationId = "default",
   identity: ProcessIdentity = USER_IDENTITY,
 ): Promise<void> {
   const setIdentity = await process.recvFrame(makeReq("proc.setidentity", {
@@ -97,15 +96,12 @@ async function prepareScheduleTargetProcess(
   await runInDurableObject(process, (instance: Process) => {
     const processStore = (instance as unknown as {
       store: {
-        ensureConversation(conversationId: string): unknown;
         setValue(key: string, value: string): void;
       };
     }).store;
-    processStore.ensureConversation(conversationId);
     processStore.setValue("currentRun", JSON.stringify({
       runId: `test-suppressed-${crypto.randomUUID()}`,
       queued: false,
-      conversationId,
     }));
   });
 }
@@ -1095,7 +1091,6 @@ describe("scheduler", () => {
 
   it("runs a due schedule through the Kernel and delivers a process event", async () => {
     const pid = `sched-event-${crypto.randomUUID()}`;
-    const conversationId = "ops";
     const kernel = await getAgentByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-test-${crypto.randomUUID()}`,
@@ -1119,7 +1114,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid, conversationId, PERSONAL_AGENT_IDENTITY);
+    await prepareScheduleTargetProcess(process, pid, PERSONAL_AGENT_IDENTITY);
 
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1137,7 +1132,6 @@ describe("scheduler", () => {
         target: {
           kind: "process.event",
           pid,
-          conversationId,
           message: "Run the scheduled ops pulse.",
           data: { source: "test" },
         },
@@ -1155,8 +1149,8 @@ describe("scheduler", () => {
 
     const messages = await runInDurableObject(process, (instance: Process) => {
       return (instance as unknown as {
-        store: { getMessages: (opts: { conversationId: string }) => Array<{ role: string; content: string }> };
-      }).store.getMessages({ conversationId });
+        store: { getMessages: () => Array<{ role: string; content: string }> };
+      }).store.getMessages();
     });
     expect(messages).toHaveLength(1);
     expect(messages[0].role).toBe("system");
@@ -1169,65 +1163,6 @@ describe("scheduler", () => {
     expect(schedule?.state.lastStatus).toBe("ok");
     expect(schedule?.state.runCount).toBe(1);
     expect(schedule?.state.nextRunAtMs).toEqual(expect.any(Number));
-  });
-
-  it("records an error when a process event targets a closed conversation", async () => {
-    const pid = `sched-event-closed-${crypto.randomUUID()}`;
-    const kernel = await getAgentByName<Env, Kernel>(
-      env.KERNEL,
-      `scheduler-closed-conversation-test-${crypto.randomUUID()}`,
-    );
-    const process = await getProcessByPid(pid);
-
-    await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as {
-        auth: ScheduleTestAuth;
-        caps: { seed: () => void };
-        procs: { spawn: typeof instance["procs"]["spawn"] };
-      };
-      k.caps.seed();
-      addTestUser(k.auth);
-      k.procs.spawn(pid, USER_IDENTITY, {
-        ownerUid: USER_IDENTITY.uid,
-        label: "closed scheduled target",
-      });
-    });
-    await prepareScheduleTargetProcess(process, pid, "closed");
-    await process.recvFrame(makeReq("proc.conversation.close", { conversationId: "closed" }));
-
-    const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as { schedules: ScheduleStore; ctx: DurableObjectState };
-      const now = Date.now();
-      const schedule = k.schedules.create({
-        ownerUid: USER_IDENTITY.uid,
-        creator: schedulePrincipal(),
-        runAs: schedulePrincipal(),
-        name: "closed conversation",
-        enabled: true,
-        expression: { kind: "every", everyMs: 60_000, anchorMs: now - 120_000 },
-        target: {
-          kind: "process.event",
-          pid,
-          conversationId: "closed",
-          message: "Do not run.",
-        },
-        now,
-      });
-      k.ctx.storage.sql.exec(
-        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
-        now - 1_000,
-        schedule.id,
-      );
-      return schedule.id;
-    });
-
-    await runInDurableObject(kernel, (instance: Kernel) => instance.onScheduleDue(scheduleId));
-
-    const schedule = await runInDurableObject(kernel, (instance: Kernel) =>
-      (instance as unknown as { schedules: ScheduleStore }).schedules.get(scheduleId),
-    );
-    expect(schedule?.state.lastStatus).toBe("error");
-    expect(schedule?.state.lastError).toBe("Conversation is closed: closed");
   });
 
   it("runs a due command schedule through the Kernel shell", async () => {
@@ -1738,7 +1673,6 @@ describe("scheduler", () => {
 
   it("force-runs a process event schedule before it is due", async () => {
     const pid = `sched-force-${crypto.randomUUID()}`;
-    const conversationId = "ops";
     const kernel = await getAgentByName<Env, Kernel>(
       env.KERNEL,
       `scheduler-force-test-${crypto.randomUUID()}`,
@@ -1759,7 +1693,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid, conversationId);
+    await prepareScheduleTargetProcess(process, pid);
 
     const { scheduleId, nextRunAtMs } = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as { schedules: ScheduleStore };
@@ -1774,7 +1708,6 @@ describe("scheduler", () => {
         target: {
           kind: "process.event",
           pid,
-          conversationId,
           message: "Run early.",
         },
         now,
@@ -1800,8 +1733,8 @@ describe("scheduler", () => {
 
     const messages = await runInDurableObject(process, (instance: Process) =>
       (instance as unknown as {
-        store: { getMessages: (opts: { conversationId: string }) => Array<{ content: string }> };
-      }).store.getMessages({ conversationId }),
+        store: { getMessages: () => Array<{ content: string }> };
+      }).store.getMessages(),
     );
     expect(messages[0].content).toContain("Run early.");
   });

@@ -46,6 +46,7 @@ import {
   handleProcList,
   handleProcIpcCall,
   handleProcIpcSend,
+  handleProcFork,
   handleProcSpawn,
   forwardToProcess,
 } from "./proc-handlers";
@@ -314,6 +315,9 @@ async function dispatchNative(
       case "proc.spawn":
         data = await handleProcSpawn(frame.args, ctx);
         break;
+      case "proc.fork":
+        data = await handleProcFork(frame.args, ctx);
+        break;
       case "proc.ipc.send":
         data = await handleProcIpcSend(frame.args, ctx);
         break;
@@ -330,20 +334,11 @@ async function dispatchNative(
       case "proc.media.read":
       case "proc.media.write":
       case "proc.media.delete":
-      case "proc.conversation.open":
-      case "proc.conversation.list":
-      case "proc.conversation.get":
-      case "proc.conversation.close":
-      case "proc.conversation.reset":
-      case "proc.conversation.policy.get":
-      case "proc.conversation.policy.set":
-      case "proc.conversation.compact":
-      case "proc.conversation.fork":
-      case "proc.conversation.segment.read":
-      case "proc.conversation.segments":
-      case "proc.conversation.timeline":
-      case "proc.conversation.generations":
-      case "proc.conversation.generation.manifest":
+      case "proc.history.policy.get":
+      case "proc.history.policy.set":
+      case "proc.history.compact":
+      case "proc.history.segment.read":
+      case "proc.history.segments":
       case "proc.reset":
         return {
           type: "res",
@@ -355,6 +350,9 @@ async function dispatchNative(
         return errFrame(frame.id, 403, "proc.ipc.deliver is kernel-only");
       case "proc.setidentity":
         return errFrame(frame.id, 403, "proc.setidentity is kernel-only");
+      case "proc.history.export":
+      case "proc.history.import":
+        return errFrame(frame.id, 403, `${frame.call} is kernel-only`);
 
       // --- repo.* ---
       case "repo.list":

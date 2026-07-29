@@ -354,38 +354,34 @@ Runtime behavior:
 | Syscall | Handler | Behavior |
 |---|---|---|
 | `proc.list` | `handleProcList` | Reads the kernel process registry. Root defaults to all processes; non-root defaults to own uid, though an explicit `uid` is currently honored by the handler. |
-| `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers the process, sends kernel-only `proc.setidentity`, and optionally sends the initial prompt. A default interactive top-level spawn reuses the caller's default conversation executor; custom spawns get UUID pids. |
-| `proc.send` | Process DO `handleProcSend` | Defaults `pid` to `init:<uid>` when forwarded and `conversationId` to `default`. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media entries contain process-scoped keys returned by `proc.media.write` or external URLs; inline `media.data` is not accepted. Media-bearing user messages are admitted immediately and generation starts after background media preparation. Kernel-owned delivery paths can preallocate a run id; the Process reconciles it against active, queued, and recorded admissions and reports which state a replay found. Touches workspace activity before forwarding. |
+| `proc.spawn` | `handleProcSpawn` | Resolves the run-as identity, registers a process, sends kernel-only `proc.setidentity`, and optionally admits the initial prompt. |
+| `proc.send` | Process DO `handleProcSend` | Admits work into the target process history. A direct user message supersedes the active run; process and scheduler messages remain FIFO queued. Media entries contain process-scoped keys returned by `proc.media.write` or external URLs; inline `media.data` is not accepted. Media-bearing messages are admitted immediately and generation starts after background preparation. Kernel-owned paths can preallocate a run id, which the Process reconciles against active, queued, and recorded admissions. |
 | `proc.ipc.send` | `handleProcIpcSend` | Process-callable same-owner IPC. Validates that the caller is a registered process, the target exists, and source/target owners match, then sends kernel-only `proc.ipc.deliver` to the target Process DO. The target receives a visible user message envelope and starts or queues a run. |
 | `proc.ipc.call` | `handleProcIpcCall` | Process-callable bounded same-owner IPC. Creates a call id and deadline, delivers the request to the target process, and later sends either `ipc.reply` or `ipc.timeout` to the source process. The syscall returns after acceptance, not after the target replies. |
 | `proc.abort` | Process DO | Cancels the active run. Converts outstanding tool calls to error results, sends `request.cancel` for active tool, CodeMode, and routed provider requests, clears pending HIL and current run, emits `proc.run.finished` with `status: "aborted"`, and may promote the next queued run. Cancellation is nonblocking and late results cannot mutate the successor run. An optional `runId` prevents a stale abort from stopping a successor. |
 | `proc.hil` | Process DO | Resolves a pending human-in-the-loop request. `approve` dispatches the original syscall; `deny` appends a synthetic error tool result. `remember: true` with `approve` stores a process-local allow override for the syscall and target class. |
-| `proc.kill` | Process DO | Optionally archives every non-empty conversation under the run-as agent's home, promotes referenced media into immutable agent-home archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry and detaches its conversation executor. |
-| `proc.history` | Process DO | Returns paged stored messages for `conversationId` or `default`, plus message ids, message count, cursor flags, truncation status, timestamps, pending HIL, and the latest context-pressure state when available. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content; tool results classify completed, failed, user-cancelled, and user-denied outcomes. |
+| `proc.kill` | Process DO | Optionally archives the process history under the run-as agent's home, promotes referenced media into immutable archive objects, clears live process media, and wipes Process DO state. After success the Kernel removes the process registry entry. |
+| `proc.history` | Process DO | Returns paged stored messages, message count and cursor flags, pending HIL, and the latest context-pressure state. Offset paging reads from the beginning. `tail: true` reads the latest page, `beforeMessageId` reads older messages, and `afterMessageId` reads newer messages. Tool results and assistant metadata are expanded into structured content. |
 | `proc.media.read` | Process DO | Reads one process-scoped media object. A successful result returns key, filesystem path, MIME type, and size in `data` and always attaches the media bytes as a response body. |
 | `proc.media.write` | Process DO | Streams one request body directly into process-scoped R2 storage. The body descriptor must declare its exact length so R2 receives a fixed-length stream. An internal caller may supply `mediaId` as an idempotency key: an exact repeated descriptor drains the repeated body and returns the original reference, while conflicting metadata is rejected. Returns a stable media reference for `proc.send`, including its read-only `/var/media/{uid}/{pid}/{id}` filesystem path. |
 | `proc.media.delete` | Process DO | Idempotently deletes one unreferenced process-scoped media object. Keys outside the target process or already referenced by process history are rejected. Used to roll back uploads that are not admitted by `proc.send`. |
-| `proc.conversation.open` | Process DO | Creates or reopens a process-local conversation. If `conversationId` is omitted, the Process DO generates one. Optional `title` is trimmed and stored. |
-| `proc.conversation.list` | Process DO | Lists open conversations by default. `includeClosed: true` includes closed conversations. Each record includes generation, status, title, message count, and timestamps. |
-| `proc.conversation.get` | Process DO | Returns one conversation record for `conversationId` or `default`; unknown conversations return `conversation: null`. |
-| `proc.conversation.close` | Process DO | Marks a conversation closed without deleting history. Future `proc.send` calls to that conversation fail until it is reopened. |
-| `proc.conversation.reset` | Process DO | Archives the selected conversation by default, clears its active messages and queued/runtime state, increments its generation, and reopens it. Other conversations are left intact. |
-| `proc.conversation.policy.get` | Process DO | Returns the context-overflow policy for `conversationId` or `default`. The default is `auto-compact` at 90% pressure while retaining the newest 80 stored messages. |
-| `proc.conversation.policy.set` | Process DO | Sets the context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during normal process-run preflight. |
-| `proc.conversation.compact` | Process DO | Explicitly archives an old prefix of a conversation, inserts a visible system summary marker at the prefix boundary, and records a `compaction` segment. Requires either caller-provided `summary` or `generateSummary: true`, plus exactly one selector: `keepLast` or `throughMessageId`. |
-| `proc.conversation.fork` | Process DO | Branches a live conversation through `throughMessageId`, or restores a compacted `segmentId` into a new process-local conversation. Segment restore includes the live suffix that existed at the compaction boundary unless `includeLiveSuffix: false`. |
-| `proc.conversation.segment.read` | Process DO | Reads paged messages from a compacted segment archive without restoring those messages into the live conversation. |
-| `proc.conversation.segments` | Process DO | Lists recorded lifecycle segments for `conversationId` or `default`, including archive paths and summary marker ids. |
-| `proc.reset` | Process DO | Archives every non-empty conversation under the run-as agent's home, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
-| `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers the validated IPC envelope from the kernel into the target conversation. |
-| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, initial title and auto-title policy, and conversation hydration pointers. |
+| `proc.history.policy.get` | Process DO | Returns the process context-overflow policy. The default is `auto-compact` at 90% pressure while retaining the newest 80 stored messages. |
+| `proc.history.policy.set` | Process DO | Sets the process context-overflow policy. Supported `overflow` values are `auto-compact` and `fail`; the policy is applied during run preflight. |
+| `proc.history.compact` | Process DO | Archives an old history prefix, inserts a visible system summary marker, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast` or `throughMessageId`. |
+| `proc.history.segment.read` | Process DO | Reads paged messages from a compacted segment without restoring them into active history. |
+| `proc.history.segments` | Process DO | Lists compacted segments, including archive paths and summary marker ids. |
+| `proc.fork` | `handleProcFork` | Creates a new process from committed source history through `throughMessageId`, or from a compacted `segmentId`. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
+| `proc.reset` | Process DO | Archives the non-empty history, clears active execution state, queues, process media, and messages, then increments the history generation. |
+| `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers a Kernel-validated IPC envelope to the target process. |
+| `proc.history.export` | Process DO direct path | Kernel-only syscall used by `proc.fork` to materialize committed history as archive paths. |
+| `proc.history.import` | Process DO direct path | Kernel-only syscall used by `proc.fork` to initialize an empty target process from exported archives. |
+| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, initial label, and auto-title policy. |
 
 ```ts
 type ProcHilRequest = {
   pid: string;
   requestId: string;
   runId: string;
-  conversationId?: string;
   callId: string;
   toolName: string;
   syscall: string;
@@ -413,26 +409,14 @@ type ProcHistoryMessage = ProcHistoryMessageBase & {
   content: unknown; // ProcHistoryToolResultContent when role is "toolResult"
 };
 
-type ProcConversation = {
-  id: string;
-  generation: number;
-  status: "open" | "closed";
-  title: string | null;
-  messageCount: number;
-  createdAt: number;
-  updatedAt: number;
-};
-
 type ProcArchiveEntry = {
-  conversationId: string;
   generation: number;
   messages: number;
   path: string;
 };
 
-type ProcConversationSegment = {
+type ProcHistorySegment = {
   id: string;
-  conversationId: string;
   generation: number;
   kind: "compaction";
   fromMessageId: number;
@@ -442,8 +426,7 @@ type ProcConversationSegment = {
   createdAt: number;
 };
 
-type ProcConversationContextPolicy = {
-  conversationId: string;
+type ProcHistoryContextPolicy = {
   overflow: "auto-compact" | "fail";
   compactAtPressure: number;
   keepLast: number;
@@ -452,7 +435,6 @@ type ProcConversationContextPolicy = {
 
 type ProcIpcSendArgs = {
   pid: string;
-  conversationId?: string;
   message: string;
   metadata?: Record<string, unknown>;
 };
@@ -461,7 +443,6 @@ type ProcIpcDeliverArgs = {
   runId: string;
   sourcePid: string;
   source: ProcessIdentity;
-  conversationId?: string;
   message: string;
   metadata?: Record<string, unknown>;
   sentAt: number;
@@ -472,7 +453,7 @@ type ProcIpcDeliverArgs = {
 };
 
 type ProcIpcSendResult =
-  | { ok: true; status: "started"; pid: string; sourcePid: string; conversationId: string; runId: string; queued?: boolean }
+  | { ok: true; status: "started"; pid: string; sourcePid: string; runId: string; queued?: boolean }
   | OperationError;
 
 type ProcIpcCallArgs = ProcIpcSendArgs & {
@@ -480,13 +461,13 @@ type ProcIpcCallArgs = ProcIpcSendArgs & {
 };
 
 type ProcIpcCallResult =
-  | { ok: true; status: "started"; callId: string; pid: string; sourcePid: string; conversationId: string; runId: string; deadlineAt: number; queued?: boolean }
+  | { ok: true; status: "started"; callId: string; pid: string; sourcePid: string; runId: string; deadlineAt: number; queued?: boolean }
   | OperationError;
 
 type ProcessSyscalls = {
   "proc.list": {
     args: { uid?: number };
-    result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; parentPid: string | null; state: string; activeRunId: string | null; activeConversationId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string; isDefaultConversation?: boolean }> };
+    result: { processes: Array<{ pid: string; uid: number; username: string; interactive: boolean; parentPid: string | null; state: string; activeRunId: string | null; queuedCount: number; lastActiveAt: number | null; label: string | null; createdAt: number; cwd: string; isDefaultConversation?: boolean }> };
   };
 
   "proc.spawn": {
@@ -495,7 +476,7 @@ type ProcessSyscalls = {
   };
 
   "proc.send": {
-    args: { pid?: string; conversationId?: string; message: string; media?: MediaInput[] };
+    args: { pid?: string; message: string; media?: MediaInput[] };
     result: { ok: true; status: "started"; runId: string; queued?: boolean; replayed?: "active" | "queued" | "recorded" } | OperationError;
   };
 
@@ -530,8 +511,8 @@ type ProcessSyscalls = {
   };
 
   "proc.history": {
-    args: { pid?: string; conversationId?: string; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
-    result: { ok: true; pid: string; conversationId?: string; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean; hasMoreBefore?: boolean; hasMoreAfter?: boolean; pendingHil?: ProcHilRequest | null; context?: ProcContextState | null } | OperationError;
+    args: { pid?: string; limit?: number; offset?: number; beforeMessageId?: number; afterMessageId?: number; tail?: boolean };
+    result: { ok: true; pid: string; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean; hasMoreBefore?: boolean; hasMoreAfter?: boolean; pendingHil?: ProcHilRequest | null; context?: ProcContextState | null } | OperationError;
   };
 
   "proc.media.read": {
@@ -549,59 +530,44 @@ type ProcessSyscalls = {
     result: { ok: true; key: string } | OperationError;
   };
 
-  "proc.conversation.open": {
-    args: { pid?: string; conversationId?: string; title?: string };
-    result: { ok: true; pid: string; conversation: ProcConversation; created: boolean } | OperationError;
+  "proc.history.policy.get": {
+    args: { pid?: string };
+    result: { ok: true; pid: string; policy: ProcHistoryContextPolicy } | OperationError;
   };
 
-  "proc.conversation.list": {
-    args: { pid?: string; includeClosed?: boolean };
-    result: { ok: true; pid: string; conversations: ProcConversation[] } | OperationError;
+  "proc.history.policy.set": {
+    args: { pid?: string; overflow?: "auto-compact" | "fail"; compactAtPressure?: number; keepLast?: number };
+    result: { ok: true; pid: string; policy: ProcHistoryContextPolicy } | OperationError;
   };
 
-  "proc.conversation.get": {
-    args: { pid?: string; conversationId?: string };
-    result: { ok: true; pid: string; conversation: ProcConversation | null } | OperationError;
+  "proc.history.compact": {
+    args: { pid?: string; summary?: string; generateSummary?: boolean; keepLast?: number; throughMessageId?: number };
+    result: { ok: true; pid: string; segment: ProcHistorySegment; archivedMessages: number; archivedTo: string; summaryMessageId: number } | OperationError;
   };
 
-  "proc.conversation.close": {
-    args: { pid?: string; conversationId: string };
-    result: { ok: true; pid: string; conversationId: string; closed: boolean } | OperationError;
+  "proc.history.segment.read": {
+    args: { pid?: string; segmentId: string; limit?: number; offset?: number };
+    result: { ok: true; pid: string; segment: ProcHistorySegment; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean } | OperationError;
   };
 
-  "proc.conversation.reset": {
-    args: { pid?: string; conversationId?: string; archive?: boolean };
-    result: { ok: true; pid: string; conversationId: string; generation: number; archivedMessages: number; archivedTo?: string } | OperationError;
+  "proc.history.segments": {
+    args: { pid?: string };
+    result: { ok: true; pid: string; segments: ProcHistorySegment[] } | OperationError;
   };
 
-  "proc.conversation.policy.get": {
-    args: { pid?: string; conversationId?: string };
-    result: { ok: true; pid: string; policy: ProcConversationContextPolicy } | OperationError;
+  "proc.fork": {
+    args: { pid?: string; segmentId?: string; throughMessageId?: number; label?: string; includeLiveSuffix?: boolean };
+    result: { ok: true; pid: string; sourcePid: string; segment?: ProcHistorySegment; throughMessageId?: number; restoredMessages: number; includedLiveSuffix: boolean } | OperationError;
   };
 
-  "proc.conversation.policy.set": {
-    args: { pid?: string; conversationId?: string; overflow?: "auto-compact" | "fail"; compactAtPressure?: number; keepLast?: number };
-    result: { ok: true; pid: string; policy: ProcConversationContextPolicy } | OperationError;
+  "proc.history.export": {
+    args: { segmentId?: string; throughMessageId?: number; includeLiveSuffix?: boolean };
+    result: { ok: true; sourcePid: string; archivePaths: string[]; temporaryArchivePaths: string[]; segment?: ProcHistorySegment; throughMessageId?: number; includedLiveSuffix: boolean } | OperationError;
   };
 
-  "proc.conversation.compact": {
-    args: { pid?: string; conversationId?: string; summary?: string; generateSummary?: boolean; keepLast?: number; throughMessageId?: number };
-    result: { ok: true; pid: string; conversationId: string; segment: ProcConversationSegment; archivedMessages: number; archivedTo: string; summaryMessageId: number } | OperationError;
-  };
-
-  "proc.conversation.fork": {
-    args: { pid?: string; conversationId?: string; segmentId?: string; throughMessageId?: number; targetConversationId?: string; title?: string; includeLiveSuffix?: boolean };
-    result: { ok: true; pid: string; sourceConversationId: string; targetConversation: ProcConversation; segment?: ProcConversationSegment; throughMessageId?: number; restoredMessages: number; includedLiveSuffix: boolean } | OperationError;
-  };
-
-  "proc.conversation.segment.read": {
-    args: { pid?: string; conversationId?: string; segmentId: string; limit?: number; offset?: number };
-    result: { ok: true; pid: string; conversationId: string; segment: ProcConversationSegment; messages: ProcHistoryMessage[]; messageCount: number; truncated?: boolean } | OperationError;
-  };
-
-  "proc.conversation.segments": {
-    args: { pid?: string; conversationId?: string };
-    result: { ok: true; pid: string; conversationId: string; segments: ProcConversationSegment[] } | OperationError;
+  "proc.history.import": {
+    args: { archivePaths: string[] };
+    result: { ok: true; pid: string; restoredMessages: number } | OperationError;
   };
 
   "proc.reset": {
@@ -616,7 +582,10 @@ type ProcessSyscalls = {
 };
 ```
 
-`proc.ipc.deliver` and `proc.setidentity` are kernel-only. User and device callers receive a forbidden response.
+`proc.ipc.deliver`, `proc.history.export`, `proc.history.import`, and
+`proc.setidentity` are kernel-only. User and device callers receive a forbidden
+response. Export and import use normal syscall frames; their Process Durable
+Object methods are routing details rather than a second semantic API.
 
 ## Repositories: `repo.*`
 
@@ -1158,7 +1127,7 @@ used only as concrete wake-ups.
 
 The user-facing interface depends on the delivery contract. From a
 process-backed shell, use the following form when each firing should enter the
-current process conversation:
+current process:
 
 ```bash
 sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]
@@ -1170,7 +1139,7 @@ recreate it after killing the process. When the shell belongs to an active
 adapter run, `--here` captures that run's authorized
 `AdapterMessageDestination` in `process.event.replyTo`, so the future
 terminal answer returns to that adapter surface. Without an adapter route, the
-answer remains in the GSV process conversation.
+answer remains in the GSV process history.
 
 For direct scheduled text that must not run the agent, use:
 
@@ -1203,7 +1172,7 @@ Runtime behavior:
 
 Schedule status reports completion of target dispatch, not an implied model-run
 completion contract. For `process.event`, `ok` means the event was
-accepted into the target process conversation, not that a model turn or reply
+accepted into the target process, not that a model turn or reply
 completed. For `adapter.send`, `ok` means the adapter accepted the direct
 delivery. For `process.spawn`, or a
 `command.exec` target that invokes `proc spawn`, `ok` means the spawn was
@@ -1221,7 +1190,7 @@ type ScheduleExpression =
 type ScheduleTarget =
   | { kind: "command.exec"; command: string; cwd?: string; timeoutMs?: number }
   | { kind: "process.spawn"; runAs?: string; label?: string; prompt: string; parentPid?: string; cwd?: string }
-  | { kind: "process.event"; pid: string; conversationId?: string; message: string; data?: Record<string, unknown>; replyTo?: AdapterMessageDestination }
+  | { kind: "process.event"; pid: string; message: string; data?: Record<string, unknown>; replyTo?: AdapterMessageDestination }
   | { kind: "adapter.send"; destination: AdapterMessageDestination; text: string };
 
 type ScheduleRecord = {

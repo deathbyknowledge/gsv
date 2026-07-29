@@ -9,9 +9,7 @@ import type { ArgsOf, ResultOf } from "../../syscalls";
 import type {
   ProcessIdentity,
   ProcAiConfigSnapshot,
-  ProcConversation,
-  ProcConversationGenerationManifest,
-  ProcConversationSegment,
+  ProcHistorySegment,
   ScheduleRecord,
 } from "@humansandmachines/gsv/protocol";
 import type { ProcessRecord } from "../../kernel/processes";
@@ -242,10 +240,6 @@ export class KernelMountBackend implements MountBackend {
       return undefined;
     }
 
-    if (attrParts[0] === "conversations") {
-      return this.readProcConversation(pid, attrParts.slice(1));
-    }
-
     if (attrParts[0] === "ai") {
       return this.readProcAi(proc.processId, proc, attrParts.slice(1));
     }
@@ -271,54 +265,17 @@ export class KernelMountBackend implements MountBackend {
           home: proc.home,
           cwd: proc.cwd,
         }, null, 2) + "\n";
+      case "history":
+        return this.readProcessHistory(pid);
       default:
+        if (attrParts[0] === "segments" && attrParts.length === 2) {
+          const segmentId = decodePathSegment(attrParts[1]);
+          return segmentId
+            ? this.readProcessHistorySegment(pid, segmentId)
+            : undefined;
+        }
         return undefined;
     }
-  }
-
-  private async readProcConversation(
-    pid: string,
-    parts: string[],
-  ): Promise<string | undefined> {
-    if (parts.length === 0) return undefined;
-
-    const conversationId = decodePathSegment(parts[0]);
-    if (!conversationId) return undefined;
-
-    if (parts.length === 1) return undefined;
-
-    const attr = parts[1];
-    if (attr === "status" && parts.length === 2) {
-      const conversation = await this.getProcessConversation(pid, conversationId);
-      return conversation ? jsonText(conversation) : undefined;
-    }
-
-    if (attr === "history" && parts.length === 2) {
-      return this.readProcessConversationHistory(pid, conversationId);
-    }
-
-    if (attr === "timeline" && parts.length === 2) {
-      return this.readProcessConversationTimeline(pid, conversationId);
-    }
-
-    if (attr === "segments") {
-      if (parts.length === 2) return undefined;
-      const segmentId = decodePathSegment(parts[2]);
-      if (!segmentId || parts.length !== 3) return undefined;
-      return this.readProcessConversationSegment(pid, conversationId, segmentId);
-    }
-
-    if (attr === "generations") {
-      if (parts.length === 2) return undefined;
-      const generation = parsePositiveIntegerSegment(parts[2]);
-      if (generation === null) return undefined;
-      if (parts.length === 3) return undefined;
-      if (parts.length === 4 && parts[3] === "manifest") {
-        return this.readProcessConversationGenerationManifest(pid, conversationId, generation);
-      }
-    }
-
-    return undefined;
   }
 
   private async readProcAi(
@@ -725,32 +682,7 @@ export class KernelMountBackend implements MountBackend {
     }
   }
 
-  private async listProcessConversations(pid: string): Promise<ProcConversation[] | null> {
-    const result = await this.processRequest(
-      pid,
-      "proc.conversation.list",
-      { includeClosed: true },
-    );
-    return result?.ok ? result.conversations : null;
-  }
-
-  private async getProcessConversation(
-    pid: string,
-    conversationId: string,
-  ): Promise<ProcConversation | null> {
-    if (!conversationId) return null;
-    const result = await this.processRequest(
-      pid,
-      "proc.conversation.get",
-      { conversationId },
-    );
-    return result?.ok ? result.conversation : null;
-  }
-
-  private async readProcessConversationHistory(
-    pid: string,
-    conversationId: string,
-  ): Promise<string | undefined> {
+  private async readProcessHistory(pid: string): Promise<string | undefined> {
     const messages: unknown[] = [];
     let offset = 0;
     let total: number | null = null;
@@ -759,7 +691,7 @@ export class KernelMountBackend implements MountBackend {
       const page = await this.processRequest(
         pid,
         "proc.history",
-        { conversationId, limit: PROC_HISTORY_PAGE_SIZE, offset },
+        { limit: PROC_HISTORY_PAGE_SIZE, offset },
       );
       if (!page?.ok) return undefined;
       total = page.messageCount;
@@ -771,67 +703,17 @@ export class KernelMountBackend implements MountBackend {
     return jsonLines(messages);
   }
 
-  private async listProcessConversationSegments(
-    pid: string,
-    conversationId: string,
-  ): Promise<ProcConversationSegment[] | null> {
+  private async listProcessHistorySegments(pid: string): Promise<ProcHistorySegment[] | null> {
     const result = await this.processRequest(
       pid,
-      "proc.conversation.segments",
-      { conversationId },
+      "proc.history.segments",
+      {},
     );
     return result?.ok ? result.segments : null;
   }
 
-  private async readProcessConversationTimeline(
+  private async readProcessHistorySegment(
     pid: string,
-    conversationId: string,
-  ): Promise<string | undefined> {
-    const result = await this.processRequest(
-      pid,
-      "proc.conversation.timeline",
-      { conversationId },
-    );
-    return result?.ok ? jsonLines(result.timeline) : undefined;
-  }
-
-  private async listProcessConversationGenerations(
-    pid: string,
-    conversationId: string,
-  ): Promise<number[] | null> {
-    const result = await this.processRequest(
-      pid,
-      "proc.conversation.generations",
-      { conversationId },
-    );
-    return result?.ok ? result.generations : null;
-  }
-
-  private async readProcessConversationGenerationManifest(
-    pid: string,
-    conversationId: string,
-    generation: number,
-  ): Promise<string | undefined> {
-    const manifest = await this.getProcessConversationGenerationManifest(pid, conversationId, generation);
-    return manifest ? jsonText(manifest) : undefined;
-  }
-
-  private async getProcessConversationGenerationManifest(
-    pid: string,
-    conversationId: string,
-    generation: number,
-  ): Promise<ProcConversationGenerationManifest | null> {
-    const result = await this.processRequest(
-      pid,
-      "proc.conversation.generation.manifest",
-      { conversationId, generation },
-    );
-    return result?.ok ? result.manifest : null;
-  }
-
-  private async readProcessConversationSegment(
-    pid: string,
-    conversationId: string,
     segmentId: string,
   ): Promise<string | undefined> {
     const messages: unknown[] = [];
@@ -841,9 +723,8 @@ export class KernelMountBackend implements MountBackend {
     while (total === null || offset < total) {
       const page = await this.processRequest(
         pid,
-        "proc.conversation.segment.read",
+        "proc.history.segment.read",
         {
-          conversationId,
           segmentId,
           limit: PROC_HISTORY_PAGE_SIZE,
           offset,
@@ -1004,38 +885,9 @@ export class KernelMountBackend implements MountBackend {
         if (parts.length === 2) return true;
         return processAiConfigDirEntries(parts.slice(2)).length > 0;
       }
-      if (parts.length === 2 && parts[1] === "conversations") {
+      if (parts.length === 2 && parts[1] === "segments") {
         const proc = this.resolveVisibleProcess(parts[0]);
         return proc !== null;
-      }
-      if (parts.length === 3 && parts[1] === "conversations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
-        if (!proc) return false;
-        const conversation = await this.getProcessConversation(proc.processId, decodePathSegment(parts[2]));
-        return conversation !== null;
-      }
-      if (parts.length === 4 && parts[1] === "conversations" && parts[3] === "segments") {
-        const proc = this.resolveVisibleProcess(parts[0]);
-        if (!proc) return false;
-        const conversation = await this.getProcessConversation(proc.processId, decodePathSegment(parts[2]));
-        return conversation !== null;
-      }
-      if (parts.length === 4 && parts[1] === "conversations" && parts[3] === "generations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
-        if (!proc) return false;
-        const conversation = await this.getProcessConversation(proc.processId, decodePathSegment(parts[2]));
-        return conversation !== null;
-      }
-      if (parts.length === 5 && parts[1] === "conversations" && parts[3] === "generations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
-        const generation = parsePositiveIntegerSegment(parts[4]);
-        if (!proc || generation === null) return false;
-        const manifest = await this.getProcessConversationGenerationManifest(
-          proc.processId,
-          decodePathSegment(parts[2]),
-          generation,
-        );
-        return manifest !== null;
       }
     }
 
@@ -1152,7 +1004,7 @@ export class KernelMountBackend implements MountBackend {
       const parts = path.slice("/proc/".length).split("/");
       if (parts.length === 1) {
         const proc = this.resolveVisibleProcess(parts[0]);
-        if (proc) return ["ai", "conversations", "identity", "status"];
+        if (proc) return ["ai", "history", "identity", "segments", "status"];
       }
       if (parts.length >= 2 && parts[1] === "ai") {
         const proc = this.resolveVisibleProcess(parts[0]);
@@ -1160,40 +1012,11 @@ export class KernelMountBackend implements MountBackend {
         const entries = processAiConfigDirEntries(parts.slice(2));
         return entries.length > 0 ? entries : undefined;
       }
-      if (parts.length === 2 && parts[1] === "conversations") {
+      if (parts.length === 2 && parts[1] === "segments") {
         const proc = this.resolveVisibleProcess(parts[0]);
         if (!proc) return undefined;
-        const conversations = await this.listProcessConversations(proc.processId);
-        return conversations?.map((conversation) => encodePathSegment(conversation.id)).sort();
-      }
-      if (parts.length === 3 && parts[1] === "conversations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
-        if (!proc) return undefined;
-        const conversation = await this.getProcessConversation(proc.processId, decodePathSegment(parts[2]));
-        if (conversation) return ["generations", "history", "segments", "status", "timeline"];
-      }
-      if (parts.length === 4 && parts[1] === "conversations" && parts[3] === "segments") {
-        const proc = this.resolveVisibleProcess(parts[0]);
-        if (!proc) return undefined;
-        const segments = await this.listProcessConversationSegments(proc.processId, decodePathSegment(parts[2]));
+        const segments = await this.listProcessHistorySegments(proc.processId);
         return segments?.map((segment) => encodePathSegment(segment.id)).sort();
-      }
-      if (parts.length === 4 && parts[1] === "conversations" && parts[3] === "generations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
-        if (!proc) return undefined;
-        const generations = await this.listProcessConversationGenerations(proc.processId, decodePathSegment(parts[2]));
-        return generations?.map((generation) => String(generation));
-      }
-      if (parts.length === 5 && parts[1] === "conversations" && parts[3] === "generations") {
-        const proc = this.resolveVisibleProcess(parts[0]);
-        const generation = parsePositiveIntegerSegment(parts[4]);
-        if (!proc || generation === null) return undefined;
-        const manifest = await this.getProcessConversationGenerationManifest(
-          proc.processId,
-          decodePathSegment(parts[2]),
-          generation,
-        );
-        if (manifest) return ["manifest"];
       }
     }
 
@@ -1277,12 +1100,6 @@ function cronFileStat(content: string, mode: number, uid: number, gid: number): 
     uid,
     gid,
   };
-}
-
-function parsePositiveIntegerSegment(segment: string): number | null {
-  if (!/^[1-9]\d*$/.test(segment)) return null;
-  const value = Number(segment);
-  return Number.isSafeInteger(value) ? value : null;
 }
 
 function jsonText(value: unknown): string {

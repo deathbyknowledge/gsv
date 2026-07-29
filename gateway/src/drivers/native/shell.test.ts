@@ -1621,11 +1621,11 @@ describe("proc native command", () => {
     expect(result.stderr).toContain("--profile is no longer supported");
   });
 
-  it("denies conversation commands for same run-as processes owned by another user", async () => {
+  it("denies history commands for same run-as processes owned by another user", async () => {
     const result = await handleShellExec(
       { input: "proc segments --pid foreign-pid" },
       makeContext({
-        capabilities: ["proc.conversation.segments"],
+        capabilities: ["proc.history.segments"],
         procs: {
           getOwnerUid: vi.fn(() => IDENTITY.uid),
           get: vi.fn((pid: string) => {
@@ -1661,7 +1661,6 @@ describe("proc native command", () => {
       data: {
         ok: true,
         pid: "proc:child",
-        conversationId: "default",
         messages: [
           {
             id: 1,
@@ -1686,7 +1685,6 @@ describe("proc native command", () => {
         hasMoreBefore: false,
         hasMoreAfter: false,
         activeRunId: null,
-        activeConversationId: null,
         pendingHil: null,
         context: {
           level: "ok",
@@ -2796,7 +2794,6 @@ describe("native administration shell commands", () => {
       target: {
         kind: "process.event",
         pid: "init:1000",
-        conversationId: "ops",
         message: "Run pulse.",
       },
     };
@@ -2827,7 +2824,6 @@ describe("native administration shell commands", () => {
       target: {
         kind: "process.event",
         pid: "init:1000",
-        conversationId: "ops",
         message: "Run pulse.",
       },
     }));
@@ -3161,7 +3157,6 @@ describe("native administration shell commands", () => {
           processId: "task:shell",
           uid: IDENTITY.uid,
           ownerUid: IDENTITY.uid,
-          activeConversationId: null,
         })),
         getOwnerUid: vi.fn(() => IDENTITY.uid),
       } as Partial<KernelContext["procs"]>,
@@ -3182,7 +3177,6 @@ describe("native administration shell commands", () => {
       target: {
         kind: "process.event",
         pid: "task:shell",
-        conversationId: "default",
         message: "Check the oven.",
         replyTo: {
           kind: "adapter",
@@ -3250,11 +3244,11 @@ describe("native administration shell commands", () => {
       },
     }));
     expect(invalidConversation.status).toBe("failed");
-    expect(invalidConversation.stderr).toContain("--conversation is only valid with --here");
+    expect(invalidConversation.stderr).toContain("unexpected argument: --conversation");
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it("schedules an event into the caller's active conversation", async () => {
+  it("schedules an event into the caller process", async () => {
     const wake = vi.fn(async () => "wake-here");
     const setWakeScheduleId = vi.fn();
     const create = vi.fn((input) => ({
@@ -3283,7 +3277,6 @@ describe("native administration shell commands", () => {
       processId: "task:shell",
       uid: IDENTITY.uid,
       ownerUid: IDENTITY.uid,
-      activeConversationId: "ops",
     };
 
     const result = await handleShellExec(
@@ -3312,7 +3305,6 @@ describe("native administration shell commands", () => {
       target: {
         kind: "process.event",
         pid: "task:shell",
-        conversationId: "ops",
         message: "Send a niche animal fact.",
       },
     }));
@@ -3329,25 +3321,22 @@ describe("native administration shell commands", () => {
         expr: "*/5 * * * *",
         timezone: "Europe/Amsterdam",
       },
-      expectedConversation: "default",
     },
     {
-      label: "cron with an explicit timezone and conversation",
-      options: '--cron "0 9 * * *" --timezone Asia/Tokyo --conversation reviews',
+      label: "cron with an explicit timezone",
+      options: '--cron "0 9 * * *" --timezone Asia/Tokyo',
       config: {},
       expectedExpression: {
         kind: "cron",
         expr: "0 9 * * *",
         timezone: "Asia/Tokyo",
       },
-      expectedConversation: "reviews",
     },
     {
       label: "a relative one-shot delay",
       options: "--after 15m",
       config: {},
       expectedExpression: { kind: "after", afterMs: 900_000 },
-      expectedConversation: "default",
     },
     {
       label: "an absolute one-shot timestamp",
@@ -3357,13 +3346,11 @@ describe("native administration shell commands", () => {
         kind: "at",
         atMs: Date.parse("2099-01-02T03:04:05Z"),
       },
-      expectedConversation: "default",
     },
   ])("supports sched add --here with $label", async ({
     options,
     config,
     expectedExpression,
-    expectedConversation,
   }) => {
     const create = vi.fn((input) => ({
       id: "sched-expression",
@@ -3399,7 +3386,6 @@ describe("native administration shell commands", () => {
             processId: "task:shell",
             uid: IDENTITY.uid,
             ownerUid: IDENTITY.uid,
-            activeConversationId: null,
           })),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
         } as Partial<KernelContext["procs"]>,
@@ -3417,7 +3403,6 @@ describe("native administration shell commands", () => {
       target: {
         kind: "process.event",
         pid: "task:shell",
-        conversationId: expectedConversation,
         message: "Check in.",
       },
     }));

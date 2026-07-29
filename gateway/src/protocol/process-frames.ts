@@ -10,7 +10,6 @@ export type ProcessScheduleDeliverArgs = {
   runId: string;
   scheduleId: string;
   scheduleName?: string;
-  conversationId?: string;
   message: string;
   data?: Record<string, unknown>;
   replyTo?: EventReplyTarget;
@@ -43,7 +42,6 @@ export type ProcessScheduleDeliverResponseFrame =
 export type ProcessAdapterDeliverArgs = {
   runId: string;
   pid: string;
-  conversationId?: string;
   message: string;
   media?: ProcMediaInput[];
   origin: AdapterInteractionOrigin;

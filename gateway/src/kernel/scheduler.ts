@@ -827,9 +827,6 @@ function normalizeScheduleTarget(target: ScheduleTarget): ScheduleTarget {
       kind: "process.event",
       pid: normalizeRequiredText(target.pid, "process.event pid"),
       message: normalizeRequiredText(target.message, "process.event message"),
-      ...(target.conversationId
-        ? { conversationId: normalizeRequiredText(target.conversationId, "process.event conversationId") }
-        : {}),
       ...(target.data === undefined ? {} : { data: normalizePlainObject(target.data, "process.event data") }),
       ...(target.replyTo === undefined
         ? {}

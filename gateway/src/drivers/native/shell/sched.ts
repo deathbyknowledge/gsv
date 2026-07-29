@@ -113,7 +113,6 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
   let to: string | undefined;
   let name: string | undefined;
   let message: string | undefined;
-  let conversationId: string | undefined;
   let timezone: string | undefined;
   const expressions: SchedulerAddArgs["expression"][] = [];
 
@@ -148,14 +147,6 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
       }
       index += 1;
       message = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--conversation") {
-      if (conversationId !== undefined) {
-        throw new Error("--conversation may only be specified once");
-      }
-      index += 1;
-      conversationId = requireShellOptionValue(args[index], current);
       continue;
     }
     if (current === "--timezone") {
@@ -231,9 +222,6 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
   }
 
   if (to !== undefined) {
-    if (conversationId !== undefined) {
-      throw new Error("--conversation is only valid with --here");
-    }
     requireCommandCapability(ctx, "adapter.send");
     const destination = (await resolveVisibleAdapterMessageDestination(to, ctx, {
       includeOffline: true,
@@ -258,14 +246,12 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
   const replyTo = route?.kind === "adapter" && route.processId === processId
     ? route.destination
     : undefined;
-  const targetConversationId = conversationId ?? caller.activeConversationId ?? "default";
   return {
     name,
     expression,
     target: {
       kind: "process.event",
       pid: processId,
-      conversationId: targetConversationId,
       message,
       ...(replyTo ? { replyTo } : {}),
     },
@@ -311,7 +297,7 @@ function schedUsage(): string {
   return [
     "Usage:",
     "  sched list [--all]",
-    "  sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]",
+    "  sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "  sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE",
     "  sched add --json JSON",
     "  sched enable <id>",

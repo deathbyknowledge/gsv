@@ -92,7 +92,7 @@ model-visible message that owns a run, and the next such message whenever its
 reply semantics change, receives a concise chronological annotation such as
 `[Reply destination: automatic to this Telegram direct message.]`. It appears
 beside the existing `[From: ...]` annotation without changing the stored
-message. A route-less run names the GSV process conversation instead. A
+message. A route-less run names the GSV process history instead. A
 non-distinct runtime event that joins an active run is
 only annotated with its source; it does not change that run's reply destination.
 This keeps prior provider input byte-stable when a later message arrives from

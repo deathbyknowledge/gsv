@@ -7,7 +7,7 @@
  */
 
 import type { FrameBody, RequestFrame, ResponseFrame } from "../protocol/frames";
-import type { ResultOf, SyscallName } from "../syscalls";
+import type { ArgsOf, ResultOf, SyscallName } from "../syscalls";
 import type { KernelContext } from "./context";
 import { resolveCallerOwnerUid } from "./context";
 import type {
@@ -17,6 +17,9 @@ import type {
   ProcListResult,
   ProcListEntry,
   ProcAiConfigSetArgs,
+  ProcForkArgs,
+  ProcForkResult,
+  ProcHistoryExportResult,
   ProcIpcCallArgs,
   ProcIpcCallResult,
   ProcIpcSendArgs,
@@ -32,7 +35,6 @@ import { resolveUserPath } from "../fs";
 import { ensureDefaultConversationExecutor, ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
-import { DEFAULT_CONVERSATION_ID } from "../process/conversations";
 import {
   findProcessAiModelProfile,
   omitProcessAiConfigSecrets,
@@ -65,7 +67,6 @@ export function handleProcList(
       parentPid: r.parentPid,
       state: r.state,
       activeRunId: r.activeRunId,
-      activeConversationId: r.activeConversationId,
       queuedCount: r.queuedCount,
       lastActiveAt: r.lastActiveAt,
       label: r.label,
@@ -281,6 +282,156 @@ export async function handleProcSpawn(
   };
 }
 
+export async function handleProcFork(
+  args: ProcForkArgs,
+  ctx: KernelContext,
+): Promise<ProcForkResult> {
+  const identity = ctx.identity!;
+  const sourcePid = args.pid ?? await ensureDefaultConversationExecutor(
+    ctx,
+    resolveCallerOwnerIdentity(ctx, identity.process),
+  );
+  const source = ctx.procs.get(sourcePid);
+  if (!source) {
+    return { ok: false, error: `Process not found: ${sourcePid}` };
+  }
+  const callerOwnerUid = resolveCallerOwnerUid(ctx);
+  if (source.ownerUid !== callerOwnerUid && identity.process.uid !== 0) {
+    return { ok: false, error: `Permission denied: cannot access process ${sourcePid}` };
+  }
+
+  let exported: Extract<ProcHistoryExportResult, { ok: true }> | null = null;
+  let targetPid: string | null = null;
+  try {
+    const exportResult = await requestProcessSyscall(
+      sourcePid,
+      "proc.history.export",
+      {
+        ...(args.segmentId !== undefined ? { segmentId: args.segmentId } : {}),
+        ...(args.throughMessageId !== undefined
+          ? { throughMessageId: args.throughMessageId }
+          : {}),
+        ...(args.includeLiveSuffix !== undefined
+          ? { includeLiveSuffix: args.includeLiveSuffix }
+          : {}),
+      },
+      ctx.requestSignal,
+    );
+    if (!exportResult.ok) {
+      return exportResult;
+    }
+    exported = exportResult;
+    ctx.requestSignal?.throwIfAborted();
+
+    const requestedLabel = normalizeRequiredString(args.label);
+    const label = requestedLabel ?? `Fork of ${source.label ?? source.username}`;
+    const spawned = await handleProcSpawn({
+      runAs: source.username,
+      interactive: source.interactive,
+      fresh: true,
+      label,
+      parentPid: sourcePid,
+      cwd: source.cwd,
+    }, ctx);
+    if (!spawned.ok) {
+      return spawned;
+    }
+    targetPid = spawned.pid;
+    ctx.requestSignal?.throwIfAborted();
+
+    const imported = await requestProcessSyscall(
+      targetPid,
+      "proc.history.import",
+      { archivePaths: exported.archivePaths },
+      ctx.requestSignal,
+    );
+    if (!imported.ok) {
+      throw new Error(imported.error);
+    }
+
+    return {
+      ok: true,
+      pid: targetPid,
+      sourcePid,
+      ...(exported.segment ? { segment: exported.segment } : {}),
+      ...(exported.throughMessageId !== undefined
+        ? { throughMessageId: exported.throughMessageId }
+        : {}),
+      restoredMessages: imported.restoredMessages,
+      includedLiveSuffix: exported.includedLiveSuffix,
+    };
+  } catch (error) {
+    const message = formatError(error);
+    if (!targetPid) {
+      return { ok: false, error: message };
+    }
+    const conversationId = ctx.conversations.getByActivePid(targetPid)?.conversationId ?? null;
+    try {
+      await rollbackSpawn(ctx, targetPid, conversationId);
+      targetPid = null;
+      return { ok: false, error: message };
+    } catch (rollbackError) {
+      return {
+        ok: false,
+        error: `${message}; rollback failed: ${formatError(rollbackError)}`,
+      };
+    }
+  } finally {
+    if (exported?.temporaryArchivePaths.length) {
+      const keys = exported.temporaryArchivePaths.map((path) => path.replace(/^\/+/, ""));
+      try {
+        await ctx.env.STORAGE.delete(keys);
+      } catch (error) {
+        console.warn("[proc] Failed to delete temporary fork history:", error);
+      }
+    }
+  }
+}
+
+async function requestProcessSyscall<
+  S extends "proc.history.export" | "proc.history.import",
+>(
+  pid: string,
+  call: S,
+  args: ArgsOf<S>,
+  signal?: AbortSignal,
+): Promise<ResultOf<S>> {
+  const id = crypto.randomUUID();
+  let cancellation: Promise<unknown> | undefined;
+  const responsePromise = sendFrameToProcess(pid, {
+    type: "req",
+    id,
+    call,
+    args,
+  } as RequestFrame<S> as RequestFrame);
+  let response: Awaited<typeof responsePromise>;
+  try {
+    response = await raceWithAbort(responsePromise, signal, {
+      abortReason: () => signal?.reason ?? new Error("Request cancelled"),
+      onAbort: () => {
+        cancellation = sendFrameToProcess(pid, {
+          type: "sig",
+          signal: REQUEST_CANCEL_SIGNAL,
+          payload: { id, reason: "Request cancelled" },
+        });
+      },
+    });
+  } catch (error) {
+    await cancellation?.catch(() => {});
+    throw error;
+  }
+  if (!response || response.type !== "res" || response.id !== id) {
+    throw new Error(`${call} returned no valid response`);
+  }
+  if (!response.ok) {
+    throw new Error(response.error.message);
+  }
+  if (response.data === undefined) {
+    throw new Error(`${call} returned no data`);
+  }
+  return response.data as ResultOf<S>;
+}
+
 async function rollbackSpawn(
   ctx: KernelContext,
   pid: string,
@@ -421,7 +572,6 @@ export async function handleProcIpcSend(
       runId,
       sourcePid: resolved.sourcePid,
       source: ctx.identity!.process,
-      conversationId: resolved.args.conversationId,
       message: resolved.args.message,
       metadata: resolved.args.metadata,
       origin: processInteractionOrigin(resolved.sourcePid, resolved.source.uid),
@@ -482,7 +632,6 @@ export async function handleProcIpcCall(
         runId,
         sourcePid: resolved.sourcePid,
         source: ctx.identity!.process,
-        conversationId: resolved.args.conversationId,
         message: resolved.args.message,
         metadata: resolved.args.metadata,
         origin: processInteractionOrigin(resolved.sourcePid, resolved.source.uid),
@@ -531,7 +680,6 @@ export async function handleProcIpcCall(
     callId,
     pid: delivered.pid,
     sourcePid: resolved.sourcePid,
-    conversationId: delivered.conversationId,
     runId,
     deadlineAt,
     ...(delivered.queued ? { queued: true } : {}),
@@ -577,7 +725,7 @@ export async function forwardToProcess(
       : frame;
   const responsePromise = sendFrameToProcess(pid, processFrame);
   let cancellation: Promise<unknown> | undefined;
-  const signal = frame.call === "codemode.run" || frame.call === "proc.conversation.compact"
+  const signal = frame.call === "codemode.run" || frame.call === "proc.history.compact"
     ? ctx.requestSignal
     : undefined;
   let response: Awaited<ReturnType<typeof sendFrameToProcess>>;
@@ -612,7 +760,6 @@ export async function forwardToProcess(
       if (
         frame.call === "proc.reset"
         || frame.call === "proc.kill"
-        || frame.call === "proc.conversation.reset"
       ) {
         try {
           conversation = ctx.conversations.getByActivePid(pid);
@@ -634,11 +781,6 @@ export async function forwardToProcess(
           "Target process was reset",
         );
         clearLatestArchiveForConversation(ctx, conversation);
-      } else if (frame.call === "proc.conversation.reset") {
-        const data = (res as { data?: { conversationId?: string } }).data;
-        if (data?.conversationId === DEFAULT_CONVERSATION_ID) {
-          clearLatestArchiveForConversation(ctx, conversation);
-        }
       } else if (frame.call === "proc.kill") {
         ctx.runRoutes.clearForProcess(pid);
         ctx.failIpcCallsByTarget(
@@ -779,7 +921,6 @@ type NormalizedIpcSendArgs =
   | {
       ok: true;
       pid: string;
-      conversationId?: string;
       message: string;
       metadata?: Record<string, unknown>;
     }
@@ -855,13 +996,6 @@ function normalizeIpcSendArgs(
     return { ok: false, error: `${syscall} requires message` };
   }
 
-  const conversationId = record.conversationId === undefined
-    ? undefined
-    : normalizeRequiredString(record.conversationId);
-  if (record.conversationId !== undefined && !conversationId) {
-    return { ok: false, error: `${syscall} conversationId must be a non-empty string` };
-  }
-
   if (
     record.metadata !== undefined
     && (!record.metadata || typeof record.metadata !== "object" || Array.isArray(record.metadata))
@@ -873,7 +1007,6 @@ function normalizeIpcSendArgs(
     ok: true,
     pid,
     message,
-    ...(conversationId ? { conversationId } : {}),
     ...(record.metadata ? { metadata: record.metadata as Record<string, unknown> } : {}),
   };
 }

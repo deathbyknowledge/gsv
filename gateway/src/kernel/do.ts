@@ -2866,7 +2866,6 @@ export class Kernel extends Host<Env> {
           runId,
           scheduleId: record.id,
           scheduleName: record.name,
-          conversationId: target.conversationId,
           message: target.message,
           data: target.data,
           replyTo: target.replyTo,
@@ -2907,7 +2906,6 @@ export class Kernel extends Host<Env> {
       return {
         kind: "process.event",
         pid: target.pid,
-        conversationId: target.conversationId ?? "default",
         runId: admittedRunId,
       };
     }

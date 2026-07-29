@@ -4,15 +4,18 @@ import type { KernelContext } from "../../../kernel/context";
 import { resolveCallerOwnerUid } from "../../../kernel/context";
 import {
   forwardToProcess,
+  handleProcFork,
   handleProcIpcCall,
   handleProcIpcSend,
   handleProcSpawn,
 } from "../../../kernel/proc-handlers";
 import { handleAccountList } from "../../../kernel/agents";
-import type { ArgsOf, ResultOf, SyscallName } from "../../../syscalls";
-import type { ProcSpawnArgs } from "@humansandmachines/gsv/protocol";
-import type { Frame, RequestFrame } from "../../../protocol/frames";
-import { sendFrameToProcess } from "../../../shared/utils";
+import type { ArgsOf, ResultOf } from "../../../syscalls";
+import type {
+  ProcHistoryOverflowPolicy,
+  ProcSpawnArgs,
+} from "@humansandmachines/gsv/protocol";
+import type { RequestFrame } from "../../../protocol/frames";
 import { parseDurationMs, requireCommandCapability, requireShellOptionValue } from "./common";
 
 const DEFAULT_HISTORY_CONTENT_CHARS = 4000;
@@ -155,7 +158,6 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
         result = await handleProcIpcCall({
           pid: spawned.pid,
           message: parsed.message,
-          ...(parsed.conversationId ? { conversationId: parsed.conversationId } : {}),
           ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
         }, ctx);
       } catch (error) {
@@ -179,12 +181,9 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       };
     }
     case "segments": {
-      requireCommandCapability(ctx, "proc.conversation.segments");
+      requireCommandCapability(ctx, "proc.history.segments");
       const parsed = parseProcSegmentsCommand(rest, ctx);
-      const result = await runProcConversationSyscall(ctx, parsed.pid, "proc.conversation.segments", {
-        pid: parsed.pid,
-        conversationId: parsed.conversationId,
-      });
+      const result = await runProcessSyscall(ctx, "proc.history.segments", parsed);
       if (!result.ok) {
         return { stdout: "", stderr: `proc segments: ${result.error}\n`, exitCode: 1 };
       }
@@ -204,17 +203,25 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
     case "policy": {
       const parsed = parseProcPolicyCommand(rest, ctx);
       const call = parsed.set
-        ? "proc.conversation.policy.set"
-        : "proc.conversation.policy.get";
+        ? "proc.history.policy.set"
+        : "proc.history.policy.get";
       requireCommandCapability(ctx, call);
-      const result = await runProcConversationSyscall(ctx, parsed.pid, call, parsed);
+      const result = parsed.set
+        ? await runProcessSyscall(ctx, "proc.history.policy.set", {
+            pid: parsed.pid,
+            ...(parsed.overflow ? { overflow: parsed.overflow } : {}),
+            ...(parsed.compactAtPressure !== undefined
+              ? { compactAtPressure: parsed.compactAtPressure }
+              : {}),
+            ...(parsed.keepLast !== undefined ? { keepLast: parsed.keepLast } : {}),
+          })
+        : await runProcessSyscall(ctx, "proc.history.policy.get", { pid: parsed.pid });
       if (!result.ok) {
         return { stdout: "", stderr: `proc policy: ${result.error}\n`, exitCode: 1 };
       }
       const policy = result.policy;
       return {
         stdout: [
-          `conversation=${policy.conversationId}`,
           `overflow=${policy.overflow}`,
           `compact_at=${policy.compactAtPressure}`,
           `keep_last=${policy.keepLast}`,
@@ -226,9 +233,8 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
     case "history": {
       requireCommandCapability(ctx, "proc.history");
       const parsed = parseProcHistoryCommand(rest, ctx);
-      const result = await runProcConversationSyscall(ctx, parsed.pid, "proc.history", {
+      const result = await runProcessSyscall(ctx, "proc.history", {
         pid: parsed.pid,
-        ...(parsed.conversationId ? { conversationId: parsed.conversationId } : {}),
         ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
         ...(parsed.offset !== undefined ? { offset: parsed.offset } : {}),
         ...(parsed.beforeMessageId !== undefined ? { beforeMessageId: parsed.beforeMessageId } : {}),
@@ -249,9 +255,14 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       };
     }
     case "segment": {
-      requireCommandCapability(ctx, "proc.conversation.segment.read");
+      requireCommandCapability(ctx, "proc.history.segment.read");
       const parsed = parseProcSegmentReadCommand(rest, ctx);
-      const result = await runProcConversationSyscall(ctx, parsed.pid, "proc.conversation.segment.read", parsed);
+      const result = await runProcessSyscall(ctx, "proc.history.segment.read", {
+        pid: parsed.pid,
+        segmentId: parsed.segmentId,
+        ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
+        ...(parsed.offset !== undefined ? { offset: parsed.offset } : {}),
+      });
       if (!result.ok) {
         return { stdout: "", stderr: `proc segment: ${result.error}\n`, exitCode: 1 };
       }
@@ -262,9 +273,9 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       };
     }
     case "compact": {
-      requireCommandCapability(ctx, "proc.conversation.compact");
+      requireCommandCapability(ctx, "proc.history.compact");
       const parsed = parseProcCompactCommand(rest, ctx);
-      const result = await runProcConversationSyscall(ctx, parsed.pid, "proc.conversation.compact", parsed);
+      const result = await runProcessSyscall(ctx, "proc.history.compact", parsed);
       if (!result.ok) {
         return { stdout: "", stderr: `proc compact: ${result.error}\n`, exitCode: 1 };
       }
@@ -280,19 +291,23 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
       };
     }
     case "fork": {
-      requireCommandCapability(ctx, "proc.conversation.fork");
+      requireCommandCapability(ctx, "proc.fork");
       const parsed = parseProcForkCommand(rest, ctx);
-      const result = await runProcConversationSyscall(ctx, parsed.pid, "proc.conversation.fork", parsed);
+      const result = await handleProcFork(parsed, ctx);
       if (!result.ok) {
         return { stdout: "", stderr: `proc fork: ${result.error}\n`, exitCode: 1 };
       }
       return {
         stdout: [
-          `conversation_id=${result.targetConversation.id}`,
+          `pid=${result.pid}`,
+          `source_pid=${result.sourcePid}`,
           `restored=${result.restoredMessages}`,
-          `segment_id=${result.segment.id}`,
+          result.segment ? `segment_id=${result.segment.id}` : "",
+          result.throughMessageId !== undefined
+            ? `through_message_id=${result.throughMessageId}`
+            : "",
           `included_live_suffix=${result.includedLiveSuffix}`,
-        ].join(" ") + "\n",
+        ].filter(Boolean).join(" ") + "\n",
         stderr: "",
         exitCode: 0,
       };
@@ -333,37 +348,27 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
   }
 }
 
-async function runProcConversationSyscall(
-  ctx: KernelContext,
-  pid: string,
-  call: SyscallName,
-  args: Record<string, unknown>,
-): Promise<any> {
-  const identity = ctx.identity!;
-  const proc = ctx.procs.get(pid);
-  if (!proc) {
-    throw new Error(`Process not found: ${pid}`);
-  }
-  const processOwnerUid = proc.ownerUid ?? proc.uid;
-  const callerOwnerUid = resolveCallerOwnerUid(ctx);
-  if (processOwnerUid !== callerOwnerUid && identity.process.uid !== 0) {
-    throw new Error(`Permission denied: cannot access process ${pid}`);
-  }
+type DirectProcessCall =
+  | "proc.history"
+  | "proc.history.policy.get"
+  | "proc.history.policy.set"
+  | "proc.history.compact"
+  | "proc.history.segment.read"
+  | "proc.history.segments";
 
-  const frame = {
+async function runProcessSyscall<S extends DirectProcessCall>(
+  ctx: KernelContext,
+  call: S,
+  args: ArgsOf<S>,
+): Promise<ResultOf<S>> {
+  const frame: RequestFrame<S> = {
     type: "req",
     id: crypto.randomUUID(),
     call,
     args,
-  } as Frame;
-  const response = await sendFrameToProcess(pid, frame);
-  if (!response || response.type !== "res") {
-    throw new Error("invalid process response");
-  }
-  if (!response.ok) {
-    throw new Error(response.error.message);
-  }
-  return response.data;
+  } as RequestFrame<S>;
+  const response = await forwardToProcess(frame as RequestFrame, ctx);
+  return response.data as ResultOf<S>;
 }
 
 type ProcLifecycleCall = "proc.reset" | "proc.kill";
@@ -562,29 +567,23 @@ function formatProcLifecycleResult(result: {
 
 function parseProcSegmentsCommand(args: string[], ctx: KernelContext): {
   pid: string;
-  conversationId?: string;
 } {
-  const parsed = parseProcConversationOptions(args, ctx);
+  const parsed = parseProcProcessOptions(args, ctx);
   if (parsed.positional.length > 0) {
     throw new Error(`unexpected argument: ${parsed.positional[0]}`);
   }
-  return {
-    pid: parsed.pid,
-    ...(parsed.conversationId ? { conversationId: parsed.conversationId } : {}),
-  };
+  return { pid: parsed.pid };
 }
 
 function parseProcPolicyCommand(args: string[], ctx: KernelContext): {
   pid: string;
-  conversationId?: string;
-  overflow?: string;
+  overflow?: ProcHistoryOverflowPolicy;
   compactAtPressure?: number;
   keepLast?: number;
   set: boolean;
 } {
   let pid: string | undefined;
-  let conversationId: string | undefined;
-  let overflow: string | undefined;
+  let overflow: ProcHistoryOverflowPolicy | undefined;
   let compactAtPressure: number | undefined;
   let keepLast: number | undefined;
 
@@ -595,14 +594,13 @@ function parseProcPolicyCommand(args: string[], ctx: KernelContext): {
       pid = requireShellOptionValue(args[index], current);
       continue;
     }
-    if (current === "--conversation") {
-      index += 1;
-      conversationId = requireShellOptionValue(args[index], current);
-      continue;
-    }
     if (current === "--overflow") {
       index += 1;
-      overflow = requireShellOptionValue(args[index], current);
+      const value = requireShellOptionValue(args[index], current);
+      if (value !== "auto-compact" && value !== "fail") {
+        throw new Error("--overflow must be auto-compact or fail");
+      }
+      overflow = value;
       continue;
     }
     if (current === "--compact-at") {
@@ -620,7 +618,6 @@ function parseProcPolicyCommand(args: string[], ctx: KernelContext): {
 
   return {
     pid: pid ?? requireCurrentProcessId(ctx),
-    ...(conversationId ? { conversationId } : {}),
     ...(overflow ? { overflow } : {}),
     ...(compactAtPressure !== undefined ? { compactAtPressure } : {}),
     ...(keepLast !== undefined ? { keepLast } : {}),
@@ -630,14 +627,12 @@ function parseProcPolicyCommand(args: string[], ctx: KernelContext): {
 
 function parseProcSegmentReadCommand(args: string[], ctx: KernelContext): {
   pid: string;
-  conversationId?: string;
   segmentId: string;
   limit?: number;
   offset?: number;
   json?: boolean;
 } {
   let pid: string | undefined;
-  let conversationId: string | undefined;
   let limit: number | undefined;
   let offset: number | undefined;
   let json = false;
@@ -648,11 +643,6 @@ function parseProcSegmentReadCommand(args: string[], ctx: KernelContext): {
     if (current === "--pid") {
       index += 1;
       pid = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--conversation") {
-      index += 1;
-      conversationId = requireShellOptionValue(args[index], current);
       continue;
     }
     if (current === "--limit") {
@@ -683,7 +673,6 @@ function parseProcSegmentReadCommand(args: string[], ctx: KernelContext): {
   return {
     pid: pid ?? requireCurrentProcessId(ctx),
     segmentId,
-    ...(conversationId ? { conversationId } : {}),
     ...(limit !== undefined ? { limit } : {}),
     ...(offset !== undefined ? { offset } : {}),
     ...(json ? { json } : {}),
@@ -692,7 +681,6 @@ function parseProcSegmentReadCommand(args: string[], ctx: KernelContext): {
 
 function parseProcHistoryCommand(args: string[], ctx: KernelContext): {
   pid: string;
-  conversationId?: string;
   limit?: number;
   offset?: number;
   beforeMessageId?: number;
@@ -703,7 +691,6 @@ function parseProcHistoryCommand(args: string[], ctx: KernelContext): {
   maxContentChars: number;
 } {
   let pid: string | undefined;
-  let conversationId: string | undefined;
   let limit: number | undefined;
   let offset: number | undefined;
   let beforeMessageId: number | undefined;
@@ -718,11 +705,6 @@ function parseProcHistoryCommand(args: string[], ctx: KernelContext): {
     if (current === "--pid") {
       index += 1;
       pid = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--conversation") {
-      index += 1;
-      conversationId = requireShellOptionValue(args[index], current);
       continue;
     }
     if (current === "--limit") {
@@ -767,7 +749,6 @@ function parseProcHistoryCommand(args: string[], ctx: KernelContext): {
 
   return {
     pid: pid ?? requireCurrentProcessId(ctx),
-    ...(conversationId ? { conversationId } : {}),
     ...(limit !== undefined ? { limit } : {}),
     ...(offset !== undefined ? { offset } : {}),
     ...(beforeMessageId !== undefined ? { beforeMessageId } : {}),
@@ -781,14 +762,12 @@ function parseProcHistoryCommand(args: string[], ctx: KernelContext): {
 
 function parseProcCompactCommand(args: string[], ctx: KernelContext): {
   pid: string;
-  conversationId?: string;
   summary?: string;
   generateSummary?: boolean;
   keepLast?: number;
   throughMessageId?: number;
 } {
   let pid: string | undefined;
-  let conversationId: string | undefined;
   let summary: string | undefined;
   let generateSummary = false;
   let keepLast: number | undefined;
@@ -799,11 +778,6 @@ function parseProcCompactCommand(args: string[], ctx: KernelContext): {
     if (current === "--pid") {
       index += 1;
       pid = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--conversation") {
-      index += 1;
-      conversationId = requireShellOptionValue(args[index], current);
       continue;
     }
     if (current === "--summary") {
@@ -837,7 +811,6 @@ function parseProcCompactCommand(args: string[], ctx: KernelContext): {
 
   return {
     pid: pid ?? requireCurrentProcessId(ctx),
-    ...(conversationId ? { conversationId } : {}),
     ...(summary ? { summary } : { generateSummary: true }),
     ...(keepLast !== undefined ? { keepLast } : {}),
     ...(throughMessageId !== undefined ? { throughMessageId } : {}),
@@ -846,18 +819,14 @@ function parseProcCompactCommand(args: string[], ctx: KernelContext): {
 
 function parseProcForkCommand(args: string[], ctx: KernelContext): {
   pid: string;
-  conversationId?: string;
   segmentId?: string;
   throughMessageId?: number;
-  targetConversationId?: string;
-  title?: string;
+  label?: string;
   includeLiveSuffix?: boolean;
 } {
   let pid: string | undefined;
-  let conversationId: string | undefined;
   let throughMessageId: number | undefined;
-  let targetConversationId: string | undefined;
-  let title: string | undefined;
+  let label: string | undefined;
   let includeLiveSuffix = true;
   const positional: string[] = [];
 
@@ -868,24 +837,14 @@ function parseProcForkCommand(args: string[], ctx: KernelContext): {
       pid = requireShellOptionValue(args[index], current);
       continue;
     }
-    if (current === "--conversation") {
-      index += 1;
-      conversationId = requireShellOptionValue(args[index], current);
-      continue;
-    }
     if (current === "--message-id") {
       index += 1;
       throughMessageId = parsePositiveShellInteger(requireShellOptionValue(args[index], current), current);
       continue;
     }
-    if (current === "--target") {
+    if (current === "--label") {
       index += 1;
-      targetConversationId = requireShellOptionValue(args[index], current);
-      continue;
-    }
-    if (current === "--title") {
-      index += 1;
-      title = requireShellOptionValue(args[index], current);
+      label = requireShellOptionValue(args[index], current);
       continue;
     }
     if (current === "--segment-only") {
@@ -907,20 +866,16 @@ function parseProcForkCommand(args: string[], ctx: KernelContext): {
     pid: pid ?? requireCurrentProcessId(ctx),
     ...(segmentId ? { segmentId } : {}),
     ...(throughMessageId !== undefined ? { throughMessageId } : {}),
-    ...(conversationId ? { conversationId } : {}),
-    ...(targetConversationId ? { targetConversationId } : {}),
-    ...(title ? { title } : {}),
+    ...(label ? { label } : {}),
     ...(includeLiveSuffix ? {} : { includeLiveSuffix: false }),
   };
 }
 
-function parseProcConversationOptions(args: string[], ctx: KernelContext): {
+function parseProcProcessOptions(args: string[], ctx: KernelContext): {
   pid: string;
-  conversationId?: string;
   positional: string[];
 } {
   let pid: string | undefined;
-  let conversationId: string | undefined;
   const positional: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -930,17 +885,11 @@ function parseProcConversationOptions(args: string[], ctx: KernelContext): {
       pid = requireShellOptionValue(args[index], current);
       continue;
     }
-    if (current === "--conversation") {
-      index += 1;
-      conversationId = requireShellOptionValue(args[index], current);
-      continue;
-    }
     positional.push(current);
   }
 
   return {
     pid: pid ?? requireCurrentProcessId(ctx),
-    ...(conversationId ? { conversationId } : {}),
     positional,
   };
 }
@@ -978,23 +927,16 @@ function parsePressureShellNumber(value: string, option: string): number {
 
 function parseProcMessageCommand(args: string[], allowTimeout: boolean): {
   pid: string;
-  conversationId?: string;
   message: string;
   metadata?: Record<string, unknown>;
   timeoutMs?: number;
 } {
-  let conversationId: string | undefined;
   let metadata: Record<string, unknown> | undefined;
   let timeoutMs: number | undefined;
   const positional: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
     const current = args[index];
-    if (current === "--conversation") {
-      index += 1;
-      conversationId = requireShellOptionValue(args[index], current);
-      continue;
-    }
     if (current === "--metadata-json") {
       index += 1;
       const parsed = JSON.parse(requireShellOptionValue(args[index], current));
@@ -1026,7 +968,6 @@ function parseProcMessageCommand(args: string[], allowTimeout: boolean): {
   return {
     pid: normalizeProcPid(pid),
     message,
-    ...(conversationId ? { conversationId } : {}),
     ...(metadata ? { metadata } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
   };
@@ -1037,7 +978,6 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): {
   label?: string;
   parentPid?: string;
   cwd?: string;
-  conversationId?: string;
   timeoutMs?: number;
   message: string;
 } {
@@ -1045,7 +985,6 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): {
   let label: string | undefined;
   let parentPid: string | undefined = ctx.processId;
   let cwd: string | undefined;
-  let conversationId: string | undefined;
   let timeoutMs: number | undefined;
   const positional: string[] = [];
 
@@ -1071,11 +1010,6 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): {
       cwd = requireShellOptionValue(args[index], current);
       continue;
     }
-    if (current === "--conversation") {
-      index += 1;
-      conversationId = requireShellOptionValue(args[index], current);
-      continue;
-    }
     if (current === "--timeout") {
       index += 1;
       timeoutMs = parseDurationMs(requireShellOptionValue(args[index], current));
@@ -1093,7 +1027,6 @@ function parseProcDelegateCommand(args: string[], ctx: KernelContext): {
     ...(label ? { label } : {}),
     ...(parentPid ? { parentPid } : {}),
     ...(cwd ? { cwd } : {}),
-    ...(conversationId ? { conversationId } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     message,
   };
@@ -1118,7 +1051,6 @@ function formatProcSegmentReadResult(result: any, json: boolean | undefined): st
 
   const lines = [
     `Segment ${result.segment.id}`,
-    `Conversation: ${result.conversationId}`,
     `Messages: ${result.messages.length}/${result.messageCount}${result.truncated ? " (truncated)" : ""}`,
     "",
   ];
@@ -1144,11 +1076,10 @@ function formatProcHistoryResult(
 
   const lines = [
     `History ${result.pid}`,
-    `Conversation: ${result.conversationId ?? "default"}`,
     `Messages: ${result.messages.length}/${result.messageCount}${result.truncated ? " (truncated)" : ""}`,
   ];
   if (result.activeRunId) {
-    lines.push(`Active run: ${result.activeRunId} (${result.activeConversationId ?? "default"})`);
+    lines.push(`Active run: ${result.activeRunId}`);
   }
   if (result.pendingHil) {
     lines.push(`Pending HIL: ${result.pendingHil.requestId} ${result.pendingHil.toolName}`);
@@ -1211,18 +1142,18 @@ function procUsage(): string {
     "  proc reset [--pid PID]",
     "  proc kill PID [--no-archive]",
     "  proc delegate [--as ACCOUNT] [--label LABEL] [--parent PID] [--cwd PATH] [--timeout 10m] <task>",
-    "  proc segments [--pid PID] [--conversation id]",
-    "  proc policy [--pid PID] [--conversation id] [--overflow auto-compact|fail] [--compact-at N] [--keep-last N]",
-    "  proc history [--pid PID] [--conversation id] [--tail] [--limit N] [--offset N] [--json] [--full]",
-    "  proc segment <segment-id> [--pid PID] [--conversation id] [--limit N] [--offset N] [--json]",
-    "  proc compact [--pid PID] [--conversation id] (--keep-last N | --through-message-id ID) [--summary TEXT | --generate-summary]",
-    "  proc fork (<segment-id> | --message-id ID) [--pid PID] [--conversation id] [--target id] [--title TITLE] [--segment-only]",
-    "  proc send <pid> [--conversation id] [--metadata-json json] <message>",
-    "  proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>",
+    "  proc segments [--pid PID]",
+    "  proc policy [--pid PID] [--overflow auto-compact|fail] [--compact-at N] [--keep-last N]",
+    "  proc history [--pid PID] [--tail] [--limit N] [--offset N] [--json] [--full]",
+    "  proc segment <segment-id> [--pid PID] [--limit N] [--offset N] [--json]",
+    "  proc compact [--pid PID] (--keep-last N | --through-message-id ID) [--summary TEXT | --generate-summary]",
+    "  proc fork (<segment-id> | --message-id ID) [--pid PID] [--label LABEL] [--segment-only]",
+    "  proc send <pid> [--metadata-json json] <message>",
+    "  proc call <pid> [--metadata-json json] [--timeout 60s] <message>",
     "",
-    "proc compact archives a conversation prefix and records a segment. Without",
+    "proc compact archives a history prefix and records a segment. Without",
     "--summary, it asks the process model to generate the visible summary.",
-    "proc fork branches a conversation from a message or restores a compacted segment.",
+    "proc fork branches a new process from a message or restores a compacted segment.",
     "proc history reads the live transcript for this process or another visible process.",
     "",
     "proc delegate creates a child process for bounded work and returns a task",

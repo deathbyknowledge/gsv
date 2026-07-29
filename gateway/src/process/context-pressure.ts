@@ -39,7 +39,6 @@ function isImageContent(value: unknown): value is { type: "image"; data: string;
 }
 
 export function buildProcContextState(input: {
-  conversationId: string;
   runId?: string;
   messageCount?: number;
   lastMessageId?: number | null;
@@ -51,7 +50,7 @@ export function buildProcContextState(input: {
   estimatedInputTokens: number;
   usage?: Usage;
   usageState?: ProcUsageState | null;
-  conversationUsage?: ProcUsageState | null;
+  historyUsage?: ProcUsageState | null;
   updatedAt?: number;
 }): ProcContextState {
   const contextWindowTokens = normalizePositiveInt(input.contextWindowTokens);
@@ -71,7 +70,6 @@ export function buildProcContextState(input: {
   const pressure = availableInputTokens === null ? null : inputTokens / availableInputTokens;
 
   return {
-    conversationId: input.conversationId,
     ...(input.runId ? { runId: input.runId } : {}),
     ...(typeof input.messageCount === "number" ? { messageCount: input.messageCount } : {}),
     ...(input.lastMessageId !== undefined ? { lastMessageId: input.lastMessageId } : {}),
@@ -85,7 +83,7 @@ export function buildProcContextState(input: {
     ...(providerOutputTokens !== null ? { outputTokens: providerOutputTokens } : {}),
     ...(providerTotalTokens !== null ? { totalTokens: providerTotalTokens } : {}),
     ...(input.usageState ? { usage: input.usageState } : {}),
-    ...(input.conversationUsage ? { conversationUsage: input.conversationUsage } : {}),
+    ...(input.historyUsage ? { historyUsage: input.historyUsage } : {}),
     availableInputTokens,
     pressure,
     level: levelForPressure(pressure),

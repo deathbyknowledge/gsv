@@ -11,7 +11,7 @@ vi.mock("../shared/utils", () => ({
 }));
 
 import { sendFrameToProcess } from "../shared/utils";
-import { forwardToProcess, handleProcIpcCall, handleProcIpcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
+import { forwardToProcess, handleProcFork, handleProcIpcCall, handleProcIpcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
 import { resolveCallerOwnerUid } from "./context";
 
 const IDENTITY: ProcessIdentity = {
@@ -107,7 +107,6 @@ describe("proc handlers", () => {
         status: "started",
         pid: "target-process",
         sourcePid: "source-process",
-        conversationId: "default",
         runId: (frame as RequestFrame).args.runId,
       } satisfies ProcIpcSendResult,
     } satisfies ResponseFrame));
@@ -138,7 +137,6 @@ describe("proc handlers", () => {
       status: "started",
       pid: "target-process",
       sourcePid: "source-process",
-      conversationId: "default",
     });
     const runId = (sendFrameToProcessMock.mock.calls[0]?.[1] as RequestFrame).args.runId;
     expect(result).toMatchObject({ runId });
@@ -161,7 +159,6 @@ describe("proc handlers", () => {
         status: "started",
         pid: "target-process",
         sourcePid: "source-process",
-        conversationId: "default",
         runId: "unexpected-run",
       } satisfies ProcIpcSendResult,
     } satisfies ResponseFrame);
@@ -193,7 +190,6 @@ describe("proc handlers", () => {
           status: "started",
           pid: "target-process",
           sourcePid: "source-process",
-          conversationId: "default",
           runId: (frame as RequestFrame).args.runId,
         } satisfies ProcIpcSendResult,
       } satisfies ResponseFrame;
@@ -215,7 +211,6 @@ describe("proc handlers", () => {
         status: "started",
         pid: "target-process",
         sourcePid: "source-process",
-        conversationId: "default",
         runId: (frame as RequestFrame).args.runId,
       } satisfies ProcIpcSendResult,
     } satisfies ResponseFrame));
@@ -346,7 +341,7 @@ describe("proc handlers", () => {
   it.each([
     { call: "codemode.run", id: "codemode-1", args: { pid: "proc-1", code: "return 1" } },
     {
-      call: "proc.conversation.compact",
+      call: "proc.history.compact",
       id: "compact-1",
       args: { pid: "proc-1", keepLast: 1, generateSummary: true },
     },
@@ -690,32 +685,6 @@ describe("proc handlers", () => {
     );
   });
 
-  it("clears a default conversation archive pointer after resetting the primary thread", async () => {
-    sendFrameToProcessMock.mockResolvedValue({
-      type: "res",
-      id: "conversation-reset-1",
-      ok: true,
-      data: {
-        ok: true,
-        pid: "proc-1",
-        conversationId: "default",
-        generation: 2,
-        archivedMessages: 1,
-      },
-    } satisfies ResponseFrame);
-    const setLatestArchive = vi.fn();
-    const ctx = makeForwardContext({ setLatestArchive });
-
-    await forwardToProcess({
-      type: "req",
-      id: "conversation-reset-1",
-      call: "proc.conversation.reset",
-      args: { pid: "proc-1" },
-    } as RequestFrame, ctx);
-
-    expect(setLatestArchive).toHaveBeenCalledWith("default:1000:2000", null);
-  });
-
   it("updates a default conversation archive pointer on proc.kill when a primary archive is returned", async () => {
     const setLatestArchive = vi.fn();
     const clearActivePid = vi.fn();
@@ -1052,6 +1021,106 @@ describe("proc handlers", () => {
       expect.any(Object),
       expect.objectContaining({ interactive: true }),
     );
+  });
+
+  it("forks history through kernel-only process syscalls", async () => {
+    const sourcePid = "proc:source";
+    let targetPid: string | null = null;
+    const source = {
+      ...SPAWN_PARENT,
+      processId: sourcePid,
+      label: "Source task",
+      cwd: "/home/sam/work",
+    };
+    const removeTemporaryHistory = vi.fn(async () => undefined);
+    const conversations = spawnConversationsMock();
+    const procs = {
+      get: vi.fn((pid: string) => pid === sourcePid ? source : null),
+      spawn: vi.fn((pid: string) => {
+        targetPid = pid;
+      }),
+      kill: vi.fn(() => true),
+    };
+    const ctx = {
+      processId: sourcePid,
+      callerOwnerUid: IDENTITY.uid,
+      env: { STORAGE: { delete: removeTemporaryHistory } },
+      identity: {
+        process: IDENTITY,
+        capabilities: ["proc.fork", "proc.spawn"],
+      },
+      auth: {
+        getPasswdByUsername: vi.fn(() => ({
+          username: IDENTITY.username,
+          uid: IDENTITY.uid,
+          gid: IDENTITY.gid,
+          gecos: "Sam",
+          home: IDENTITY.home,
+          shell: "/bin/init",
+        })),
+        getPasswdByUid: vi.fn(() => ({ username: IDENTITY.username })),
+        getPersonalAgentUid: vi.fn(() => null),
+        getGroupByGid: vi.fn(() => null),
+        resolveGids: vi.fn(() => IDENTITY.gids),
+      },
+      procs,
+      conversations,
+    } as unknown as KernelContext;
+
+    sendFrameToProcessMock.mockImplementation(async (pid, frame) => {
+      if (frame.type !== "req") return null;
+      if (frame.call === "proc.history.export") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            sourcePid,
+            archivePaths: ["/tmp/fork-history.jsonl.gz"],
+            temporaryArchivePaths: ["/tmp/fork-history.jsonl.gz"],
+            throughMessageId: 2,
+            includedLiveSuffix: false,
+          },
+        } as ResponseFrame;
+      }
+      if (frame.call === "proc.history.import") {
+        expect(pid).toBe(targetPid);
+        expect(frame.args).toEqual({ archivePaths: ["/tmp/fork-history.jsonl.gz"] });
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: true, pid, restoredMessages: 2 },
+        } as ResponseFrame;
+      }
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: { ok: true },
+      } as ResponseFrame;
+    });
+
+    const result = await handleProcFork({
+      pid: sourcePid,
+      throughMessageId: 2,
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      pid: targetPid,
+      sourcePid,
+      throughMessageId: 2,
+      restoredMessages: 2,
+      includedLiveSuffix: false,
+    });
+    expect(procs.spawn).toHaveBeenCalledWith(
+      targetPid,
+      expect.objectContaining({ cwd: "/home/sam/work" }),
+      expect.objectContaining({ parentPid: sourcePid, label: "Fork of Source task" }),
+    );
+    expect(removeTemporaryHistory).toHaveBeenCalledWith(["tmp/fork-history.jsonl.gz"]);
   });
 
   it("rejects inheriting run-as identity from an explicit unrelated parent", async () => {

@@ -213,7 +213,7 @@ async function waitForStoredMessage(
   throw new Error("Timed out waiting for process message");
 }
 
-async function waitForConversationTitle(
+async function waitForTaskTitle(
   stub: DurableObjectStub<Process>,
   expected: string,
   timeoutMs = 2_000,
@@ -221,12 +221,12 @@ async function waitForConversationTitle(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const title = await runInDurableObject(stub, (instance: Process) => (
-      (instance as any).store.getConversation("default")?.title
+      (instance as any).store.getValue("taskTitle")
     ));
     if (title === expected) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error(`Timed out waiting for conversation title: ${expected}`);
+  throw new Error(`Timed out waiting for task title: ${expected}`);
 }
 
 async function driveProcessUntilIdle(
@@ -264,7 +264,7 @@ async function initProcess(pid: string, identity: ProcessIdentity, opts?: { regi
 // ---------------------------------------------------------------------------
 
 describe("Process DO — mechanical", () => {
-  it("records terminal adapter delivery outcomes in conversation history", async () => {
+  it("records terminal adapter delivery outcomes in process history", async () => {
     const pid = "mech-delivery-notice";
     const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -274,7 +274,6 @@ describe("Process DO — mechanical", () => {
       payload: {
         noticeId: "notice:mech-delivery-notice",
         runId: "run-delivery-notice",
-        conversationId: "default",
         deliveryKind: "final",
         state: "ambiguous",
         message: "The automatic reply reached the adapter, but provider delivery is ambiguous.",
@@ -306,7 +305,6 @@ describe("Process DO — mechanical", () => {
           payload: {
             noticeId: `notice:bounded:${index}`,
             runId: `run-${index}`,
-            conversationId: "default",
             message: `Delivery notice ${index}`,
           },
         });
@@ -335,7 +333,6 @@ describe("Process DO — mechanical", () => {
         payload: {
           pid,
           runId: "run-activity",
-          conversationId: "thread",
           queuedCount: 1,
           timestamp: 1000,
         },
@@ -348,7 +345,6 @@ describe("Process DO — mechanical", () => {
         payload: {
           pid,
           runId: "run-activity",
-          conversationId: "thread",
           queuedCount: 1,
           timestamp: 1050,
         },
@@ -361,7 +357,6 @@ describe("Process DO — mechanical", () => {
         payload: {
           pid,
           runId: "run-activity",
-          conversationId: "thread",
           queuedCount: 1,
           timestamp: 1075,
         },
@@ -374,7 +369,6 @@ describe("Process DO — mechanical", () => {
         payload: {
           pid,
           runId: "run-activity",
-          conversationId: "thread",
           changes: ["messages"],
           queuedCount: 1,
           timestamp: 1080,
@@ -388,7 +382,6 @@ describe("Process DO — mechanical", () => {
         payload: {
           pid,
           runId: "run-activity",
-          conversationId: "thread",
           queuedCount: 1,
           timestamp: 1100,
         },
@@ -401,7 +394,6 @@ describe("Process DO — mechanical", () => {
         payload: {
           pid,
           runId: "run-activity",
-          conversationId: "thread",
           queuedCount: 0,
           timestamp: 1200,
         },
@@ -414,14 +406,12 @@ describe("Process DO — mechanical", () => {
     expect(state.running).toMatchObject({
       state: "running",
       activeRunId: "run-activity",
-      activeConversationId: "thread",
       queuedCount: 1,
       lastActiveAt: 1000,
     });
     expect(state.retrying).toMatchObject({
       state: "running",
       activeRunId: "run-activity",
-      activeConversationId: "thread",
       queuedCount: 1,
       lastActiveAt: 1050,
     });
@@ -438,14 +428,12 @@ describe("Process DO — mechanical", () => {
     expect(state.waiting).toMatchObject({
       state: "waiting_hil",
       activeRunId: "run-activity",
-      activeConversationId: "thread",
       queuedCount: 1,
       lastActiveAt: 1100,
     });
     expect(state.idle).toMatchObject({
       state: "idle",
       activeRunId: null,
-      activeConversationId: null,
       queuedCount: 0,
       lastActiveAt: 1200,
     });
@@ -536,7 +524,7 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("stores the primary conversation's initial title", async () => {
+    it("stores the process's initial task title", async () => {
       const pid = "mech-setid-title";
       await registerInKernel(pid, ROOT_IDENTITY);
       const stub = await getProcessByPid(pid);
@@ -544,14 +532,13 @@ describe("Process DO — mechanical", () => {
       await stub.recvFrame(makeReq("proc.setidentity", {
         pid,
         identity: ROOT_IDENTITY,
-        conversationId: "task-conversation",
         title: "  Explicit task title  ",
         autoTitle: true,
       }));
 
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
-        expect(process.store.getConversation("default").title).toBe("Explicit task title");
+        expect(process.store.getValue("taskTitle")).toBe("Explicit task title");
         expect(process.store.getValue("autoTaskTitle")).toBeNull();
       });
     });
@@ -565,7 +552,6 @@ describe("Process DO — mechanical", () => {
       await stub.recvFrame(makeReq("proc.setidentity", {
         pid,
         identity: ROOT_IDENTITY,
-        conversationId: "task-conversation",
         autoTitle: true,
       }));
 
@@ -590,7 +576,7 @@ describe("Process DO — mechanical", () => {
         message: "Please plan a careful database migration.",
       })) as ResponseOkFrame;
       expect(first.data).toMatchObject({ ok: true, status: "started" });
-      await waitForConversationTitle(stub, "Plan Database Migration");
+      await waitForTaskTitle(stub, "Plan Database Migration");
 
       expect(kernelCalls).toHaveLength(1);
       expect(kernelCalls[0]).toMatchObject({
@@ -618,7 +604,6 @@ describe("Process DO — mechanical", () => {
       await stub.recvFrame(makeReq("proc.setidentity", {
         pid,
         identity: ROOT_IDENTITY,
-        conversationId: "task-conversation",
         autoTitle: true,
       }));
 
@@ -637,20 +622,19 @@ describe("Process DO — mechanical", () => {
       await stub.recvFrame(makeReq("proc.send", {
         message: "Investigate flaky checkout tests.",
       }));
-      await waitForConversationTitle(stub, "Investigate flaky checkout tests");
+      await waitForTaskTitle(stub, "Investigate flaky checkout tests");
       await vi.waitFor(() => expect(emitted.some((entry) =>
         entry.signal === "proc.changed" && entry.payload.title === "Investigate flaky checkout tests"
       )).toBe(true));
     });
 
-    it("cancels title generation and ignores a late result after conversation reset", async () => {
+    it("cancels title generation and ignores a late result after process reset", async () => {
       const pid = "mech-auto-task-title-reset";
       await registerInKernel(pid, ROOT_IDENTITY);
       const stub = await getProcessByPid(pid);
       await stub.recvFrame(makeReq("proc.setidentity", {
         pid,
         identity: ROOT_IDENTITY,
-        conversationId: "task-conversation",
         autoTitle: true,
       }));
 
@@ -702,25 +686,20 @@ describe("Process DO — mechanical", () => {
         expect(send.data).toMatchObject({ ok: true, status: "started" });
         await generationStarted;
         expect(generationSignal?.aborted).toBe(false);
-        expect(process.store.getConversation("default")?.title)
+        expect(process.store.getValue("taskTitle"))
           .toBe("Investigate flaky checkout tests");
 
-        const reset = await process.recvFrame(makeReq("proc.conversation.reset", {
-          conversationId: "default",
-          archive: false,
-        })) as ResponseOkFrame;
-        expect(reset.data).toMatchObject({ ok: true, generation: 2 });
+        const reset = await process.recvFrame(makeReq("proc.reset", {})) as ResponseOkFrame;
+        expect(reset.data).toMatchObject({ ok: true, pid });
         expect(generationSignal?.aborted).toBe(true);
-        expect(generationSignal?.reason).toEqual(new Error("Conversation was reset: default"));
+        expect(generationSignal?.reason).toEqual(new Error("Process execution was reset: process.reset"));
 
         releaseGeneration();
         await generationCompleted;
 
-        expect(process.store.getConversation("default")).toMatchObject({
-          generation: 2,
-          title: "Investigate flaky checkout tests",
-        });
-        expect(process.store.messageCount("default")).toBe(0);
+        expect(process.store.getHistoryGeneration()).toBe(2);
+        expect(process.store.getValue("taskTitle")).toBe("Investigate flaky checkout tests");
+        expect(process.store.messageCount()).toBe(0);
         expect(emitted.filter((entry) =>
           entry.signal === "proc.changed" && entry.payload.changes?.includes("title")
         ).map((entry) => entry.payload.title)).toEqual([
@@ -994,7 +973,7 @@ describe("Process DO — mechanical", () => {
         content: expect.stringContaining("[From: schedule sched-1]"),
       });
       expect(result.contextMessages[0].content).toContain(
-        "[Reply destination: this GSV process conversation.]",
+        "[Reply destination: this GSV process.]",
       );
       expect(result.contextMessages[0].content).toContain("[Process Event]:");
       expect(result.emitted).toHaveLength(2);
@@ -1003,7 +982,6 @@ describe("Process DO — mechanical", () => {
         payload: expect.objectContaining({
           pid,
           changes: ["messages"],
-          conversationId: "default",
           messageId: result.messages[0].id,
           role: "system",
           content: result.messages[0].content,
@@ -1014,7 +992,6 @@ describe("Process DO — mechanical", () => {
         signal: "proc.run.started",
         payload: expect.objectContaining({
           pid,
-          conversationId: "default",
           reason: "schedule.event",
         }),
       });
@@ -1093,7 +1070,6 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, (instance: Process) => {
         (instance as any).currentRun = {
           runId: "run-busy",
-          conversationId: "default",
         };
       });
       const firstRequest = makeScheduleDeliverReq(args);
@@ -1113,46 +1089,13 @@ describe("Process DO — mechanical", () => {
         expect(process.currentRun).toMatchObject({ runId: "run-busy" });
         expect(process.store.getMessages()).toEqual([]);
         expect(process.store.queueSize()).toBe(1);
-        expect(process.store.drainQueue("default")).toEqual([
+        expect(process.store.drainQueue()).toEqual([
           expect.objectContaining({
             runId: args.runId,
             message: expect.stringContaining(args.message),
           }),
         ]);
       });
-    });
-
-    it("rejects scheduled runtime events for closed conversations", async () => {
-      const stub = await initProcess("mech-schedule-closed", ROOT_IDENTITY);
-
-      const result = await runInDurableObject(stub, async (instance: Process) => {
-        const process = instance as any;
-        process.store.openConversation({ conversationId: "closed" });
-        const releaseLifecycle = await process.acquireLifecycleTransition();
-        const request = makeScheduleDeliverReq({
-          scheduleId: "sched-closed",
-          conversationId: "closed",
-          message: "do not run",
-        });
-        const delivery = instance.recvFrame(request);
-        await Promise.resolve();
-        process.store.closeConversation("closed");
-        releaseLifecycle();
-        const response = await delivery;
-        return {
-          requestId: request.id,
-          response,
-          messages: process.store.getMessages({ conversationId: "closed" }),
-        };
-      });
-
-      expect(result.response).toMatchObject({
-        type: "res",
-        id: result.requestId,
-        ok: false,
-        error: { message: "Conversation is closed: closed" },
-      });
-      expect(result.messages).toEqual([]);
     });
 
     it("rejects a scheduled runtime event when process teardown wins admission", async () => {
@@ -1187,14 +1130,14 @@ describe("Process DO — mechanical", () => {
       expect(result.messages).toEqual([]);
     });
 
-    it("wakes a busy conversation for a scheduled runtime event", async () => {
+    it("wakes a busy process for a scheduled runtime event", async () => {
       const stub = await initProcess("mech-schedule-busy-wake", ROOT_IDENTITY);
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.scheduleTick = vi.fn(async () => {});
-        process.currentRun = { runId: "run-busy", conversationId: "default" };
+        process.currentRun = { runId: "run-busy" };
 
         await instance.recvFrame(makeScheduleDeliverReq({
           scheduleId: "sched-busy",
@@ -1210,7 +1153,7 @@ describe("Process DO — mechanical", () => {
         expect(contextMessages[0].content).not.toContain("[Reply destination:");
 
         await process.finishRun("run-busy", { status: "ok", text: "done" });
-        expect(process.currentRun).toMatchObject({ conversationId: "default" });
+        expect(process.currentRun).not.toBeNull();
         expect(process.currentRun.runId).not.toBe("run-busy");
       });
     });
@@ -1222,7 +1165,7 @@ describe("Process DO — mechanical", () => {
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
         process.scheduleTick = vi.fn(async () => {});
-        process.currentRun = { runId: "run-busy", conversationId: "default" };
+        process.currentRun = { runId: "run-busy" };
         process.generation = {
           async generate(request: any) {
             expect(request.context.systemPrompt).toBe("Test system prompt.");
@@ -1270,7 +1213,7 @@ describe("Process DO — mechanical", () => {
           data: { runId: "run-scheduled-reply", queued: true },
         });
         expect(process.currentRun).toMatchObject({ runId: "run-busy" });
-        expect(process.store.queueSize("default")).toBe(1);
+        expect(process.store.queueSize()).toBe(1);
 
         process.currentRun = null;
         expect(process.claimNextQueuedRun()).toMatchObject({ runId: "run-scheduled-reply" });
@@ -1367,7 +1310,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "measure context");
         process.currentRun = {
           runId: "run-context-pressure",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -1392,7 +1334,6 @@ describe("Process DO — mechanical", () => {
       const history = (await stub.recvFrame(makeReq("proc.history", {}))) as ResponseOkFrame;
       expect(history.ok).toBe(true);
       expect((history.data as any).context).toMatchObject({
-        conversationId: "default",
         provider: "workers-ai",
         model: "@cf/nvidia/nemotron-3-120b-a12b",
         reasoning: "off",
@@ -1510,7 +1451,6 @@ describe("Process DO — mechanical", () => {
         });
         process.currentRun = {
           runId: "run-origin-context",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -1587,7 +1527,7 @@ describe("Process DO — mechanical", () => {
         const localContext = await process.buildContextMessages("default");
         expect(localContext.slice(0, processContext.length)).toEqual(processContext);
         expect(localContext[6].content).toContain(
-          "[Reply destination: this GSV process conversation.]",
+          "[Reply destination: this GSV process.]",
         );
       });
     });
@@ -1650,11 +1590,9 @@ describe("Process DO — mechanical", () => {
           },
         };
 
-        process.store.openConversation({ conversationId: "side", title: "Side" });
-        process.store.appendMessage("user", "include reasoning", { conversationId: "side" });
+        process.store.appendMessage("user", "include reasoning");
         process.currentRun = {
           runId: "run-chat-text-thinking",
-          conversationId: "side",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -1682,7 +1620,6 @@ describe("Process DO — mechanical", () => {
         text: "done",
         pid,
         runId: "run-chat-text-thinking",
-        conversationId: "side",
         thinking: [
           { type: "thinking", thinking: "Need to preserve this reasoning." },
         ],
@@ -1722,7 +1659,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "Send the report.");
         process.currentRun = {
           runId: "run-final-reply-media",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -1761,7 +1697,7 @@ describe("Process DO — mechanical", () => {
         } satisfies ProcessRunAttachRequestFrame);
         const pendingDelete = await process.recvFrame(makeReq("proc.media.delete", { key }));
         await process.runTick("run-final-reply-media");
-        const history = await process.handleProcHistory({ conversationId: "default" });
+        const history = await process.handleProcHistory({});
         return {
           attach,
           pendingDelete,
@@ -1900,7 +1836,6 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = vi.fn(async () => {});
         process.currentRun = {
           runId: "run-aborted-reply-media",
-          conversationId: "default",
         };
         const attach = await process.recvFrame({
           type: "req",
@@ -1996,7 +1931,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "answer visibly");
         process.currentRun = {
           runId: "run-chat-thinking-only",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -2018,8 +1952,8 @@ describe("Process DO — mechanical", () => {
         return {
           calls,
           emitted,
-          contextState: process.store.getContextState("default"),
-          conversationUsage: process.store.getConversationUsage("default"),
+          contextState: process.store.getContextState(),
+          historyUsage: process.store.getHistoryUsage(),
           messages: process.store.getMessages(),
         };
       });
@@ -2029,14 +1963,14 @@ describe("Process DO — mechanical", () => {
         ["user", "answer visibly"],
         ["assistant", "visible answer"],
       ]);
-      expect(result.conversationUsage).toMatchObject({
+      expect(result.historyUsage).toMatchObject({
         inputTokens: 150,
         outputTokens: 10,
         totalTokens: 160,
         cost: { total: 0.00009, source: "model-pricing" },
         generations: 2,
       });
-      expect(result.contextState?.conversationUsage).toMatchObject({
+      expect(result.contextState?.historyUsage).toMatchObject({
         inputTokens: 150,
         outputTokens: 10,
         cost: { total: 0.00009, source: "model-pricing" },
@@ -2085,7 +2019,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "answer visibly");
         process.currentRun = {
           runId: "run-chat-thinking-only-exhausted",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -2159,7 +2092,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "recover please");
         process.currentRun = {
           runId: "run-chat-empty-final-throw",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -2249,7 +2181,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "run pwd");
         process.currentRun = {
           runId: "run-chat-tool-markup-text",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -2288,7 +2219,6 @@ describe("Process DO — mechanical", () => {
       expect(retry).toMatchObject({
         pid,
         runId: "run-chat-tool-markup-text",
-        conversationId: "default",
         attempt: 1,
         nextAttempt: 2,
         maxAttempts: 3,
@@ -2335,7 +2265,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "fail once please");
         process.currentRun = {
           runId: "run-chat-provider-error-response",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -2425,7 +2354,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "fail over please");
         process.currentRun = {
           runId: "run-chat-provider-error-fallback",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -2487,7 +2415,6 @@ describe("Process DO — mechanical", () => {
       expect(retry).toMatchObject({
         pid,
         runId: "run-chat-provider-error-fallback",
-        conversationId: "default",
         reason: "Custom provider HTTP 403: not authenticated",
         fallback: {
           from: { provider: "custom", model: "zai-glm-4.7" },
@@ -2557,8 +2484,7 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", `old context A ${"x".repeat(4000)}`);
         process.store.appendMessage("assistant", `old context B ${"y".repeat(4000)}`);
         process.store.appendMessage("user", "Context that must stay live.");
-        process.store.setValue("conversationPolicy:default", JSON.stringify({
-          conversationId: "default",
+        process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.5,
           keepLast: 1,
@@ -2566,7 +2492,6 @@ describe("Process DO — mechanical", () => {
         }));
         process.currentRun = {
           runId: "run-chat-fallback-auto-compact",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -2604,7 +2529,7 @@ describe("Process DO — mechanical", () => {
           compactionConfigs,
           emitted,
           messages: process.store.getMessages(),
-          segments: process.store.listConversationSegments(),
+          segments: process.store.listHistorySegments(),
         };
       });
 
@@ -2630,8 +2555,8 @@ describe("Process DO — mechanical", () => {
         .map((entry) => (entry.payload as any).event)
         .filter(Boolean);
       expect(lifecycleEvents).toEqual([
-        "conversation.compacted",
-        "conversation.auto_compacted",
+        "history.compacted",
+        "history.auto_compacted",
       ]);
     });
 
@@ -2683,7 +2608,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "try another account");
         process.currentRun = {
           runId: "run-chat-provider-error-account-fallback",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -2766,7 +2690,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "overflow please");
         process.currentRun = {
           runId: "run-chat-provider-context-overflow-throw",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -2834,7 +2757,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "overflow please");
         process.currentRun = {
           runId: "run-chat-provider-context-overflow-nested",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -2907,7 +2829,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "overflow please");
         process.currentRun = {
           runId: "run-chat-provider-context-overflow-response",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -2928,8 +2849,8 @@ describe("Process DO — mechanical", () => {
         await process.runTick("run-chat-provider-context-overflow-response");
         return {
           emitted,
-          contextState: process.store.getContextState("default"),
-          conversationUsage: process.store.getConversationUsage("default"),
+          contextState: process.store.getContextState(),
+          historyUsage: process.store.getHistoryUsage(),
           messages: process.store.getMessages(),
         };
       });
@@ -2943,13 +2864,13 @@ describe("Process DO — mechanical", () => {
         source: "provider",
         level: "full",
       });
-      expect(result.conversationUsage).toMatchObject({
+      expect(result.historyUsage).toMatchObject({
         inputTokens: 1196265,
         totalTokens: 1196265,
         cost: { total: 0.12, source: "provider" },
         generations: 1,
       });
-      expect(result.contextState?.conversationUsage).toMatchObject({
+      expect(result.contextState?.historyUsage).toMatchObject({
         inputTokens: 1196265,
         cost: { total: 0.12, source: "provider" },
       });
@@ -3016,7 +2937,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "stream please");
         process.currentRun = {
           runId: "run-chat-stream",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -3065,7 +2985,6 @@ describe("Process DO — mechanical", () => {
       expect(streamSignals[2].payload).toMatchObject({
         pid,
         runId: "run-chat-stream",
-        conversationId: "default",
         seq: 3,
         event: {
           type: "text_delta",
@@ -3145,7 +3064,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "stream retry please");
         process.currentRun = {
           runId: "run-chat-stream-retry",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -3276,7 +3194,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "stream retry to tool please");
         process.currentRun = {
           runId: "run-chat-stream-retry-tool-only",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -3326,7 +3243,6 @@ describe("Process DO — mechanical", () => {
       expect(result.emitted[retrySignalIndex]?.payload).toMatchObject({
         pid,
         runId: "run-chat-stream-retry-tool-only",
-        conversationId: "default",
         attempt: 1,
         nextAttempt: 2,
         maxAttempts: 3,
@@ -3382,7 +3298,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "do not stream");
         process.currentRun = {
           runId: "run-chat-stream-off",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -3475,7 +3390,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "use kernel");
         process.currentRun = {
           runId: "run-chat-kernel-executor",
-          conversationId: "default",
           config: {
             executor: { kind: "kernel" },
             provider: "anthropic",
@@ -3588,7 +3502,6 @@ describe("Process DO — mechanical", () => {
 
         const message = await process.generateAssistantResponse({
           runId: "run-chat-device-executor",
-          conversationId: "default",
           config: {
             executor: { kind: "device", target: "local-gpu" },
             provider: "device",
@@ -3691,7 +3604,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "use local gateway");
         process.currentRun = {
           runId: "run-chat-custom-provider-transport-target",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             provider: "custom",
@@ -3899,7 +3811,7 @@ describe("Process DO — mechanical", () => {
           markTickCompleted();
         });
         process.schedule = vi.fn(async () => ({ id: "next-tick" }));
-        process.currentRun = { runId: "run-once", conversationId: "default" };
+        process.currentRun = { runId: "run-once" };
 
         const first = process.tick({ runId: "run-once", generation: 0 });
         await started;
@@ -3926,7 +3838,7 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         process.sendSignal = vi.fn(async () => {});
-        process.currentRun = { runId: "run-failure", conversationId: "default" };
+        process.currentRun = { runId: "run-failure" };
         process.runTick = vi.fn(async () => {
           throw new Error("kernel unavailable");
         });
@@ -3963,7 +3875,7 @@ describe("Process DO — mechanical", () => {
           ]),
         });
         process.store.register("dispatch-old", "call-old", "run-old", "fs.read", { path: "/slow" });
-        process.currentRun = { runId: "run-old", conversationId: "default" };
+        process.currentRun = { runId: "run-old" };
 
         const result = await process.handleProcSend({
           message: "new direction",
@@ -4058,7 +3970,6 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "read both files", { runId: "run-live-tools" });
         process.currentRun = {
           runId: "run-live-tools",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -4143,7 +4054,7 @@ describe("Process DO — mechanical", () => {
         process.emitRunFinished = vi.fn((run: { runId: string }) => {
           finishedRuns.push(run.runId);
         });
-        process.currentRun = { runId: "run-original", conversationId: "default" };
+        process.currentRun = { runId: "run-original" };
 
         const first = process.handleProcSend({
           message: "first takeover",
@@ -4169,7 +4080,7 @@ describe("Process DO — mechanical", () => {
       try {
         const result = await runInDurableObject(stub, async (instance: Process) => {
           const process = instance as any;
-          process.currentRun = { runId: "run-existing", conversationId: "default" };
+          process.currentRun = { runId: "run-existing" };
           const response = await process.handleProcSend({
             message: "read this",
             media: [{ type: "image", mimeType: "image/png", key: foreignKey }],
@@ -4184,7 +4095,7 @@ describe("Process DO — mechanical", () => {
 
         expect(result).toEqual({
           response: { ok: false, error: "media key is outside this process" },
-          currentRun: { runId: "run-existing", conversationId: "default" },
+          currentRun: { runId: "run-existing" },
           messages: [],
         });
         expect(await env.STORAGE.head(foreignKey)).not.toBeNull();
@@ -4325,7 +4236,7 @@ describe("Process DO — mechanical", () => {
           }
           return { ai: process.env.AI };
         });
-        process.currentRun = { runId: "run-busy", conversationId: "default" };
+        process.currentRun = { runId: "run-busy" };
         const mediaKey = `var/media/0/${pid}/fifo.png`;
         await process.env.STORAGE.put(mediaKey, new Uint8Array([1, 2, 3]), {
           httpMetadata: { contentType: "image/png" },
@@ -4345,7 +4256,7 @@ describe("Process DO — mechanical", () => {
         releaseMedia();
         await Promise.all([first, second]);
 
-        expect(process.store.drainQueue("default").map((entry: any) => entry.message)).toEqual([
+        expect(process.store.drainQueue().map((entry: any) => entry.message)).toEqual([
           "first process message",
           "second process message",
         ]);
@@ -4422,7 +4333,7 @@ describe("Process DO — mechanical", () => {
         expect(user.content[0]).toEqual({
           type: "text",
           text: [
-            "[Reply destination: this GSV process conversation.]",
+            "[Reply destination: this GSV process.]",
             "Describe this image.",
           ].join("\n"),
         });
@@ -4715,13 +4626,12 @@ describe("Process DO — mechanical", () => {
           });
           process.currentRun = {
             runId,
-            conversationId: "default",
             pendingMediaMessageId: messageId,
           };
           process.sendSignal = vi.fn(async () => {});
           process.resolveMediaProcessingOptions = vi.fn(async () => ({ ai: process.env.AI }));
 
-          await process.prepareRunMedia(runId, "default", messageId, media);
+          await process.prepareRunMedia(runId, messageId, media);
         });
 
         expect(await env.STORAGE.head(ownKey)).toBeNull();
@@ -4926,7 +4836,6 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(target, (instance: Process) => {
         (instance as any).currentRun = {
           runId: "existing-target-run",
-          conversationId: "default",
         };
       });
 
@@ -4936,7 +4845,6 @@ describe("Process DO — mechanical", () => {
           sourcePid,
           makeReq("proc.ipc.send", {
             pid: targetPid,
-            conversationId: "mail",
             message: "Please summarize the current build status.",
             metadata: { kind: "delegation" },
           }),
@@ -4949,22 +4857,20 @@ describe("Process DO — mechanical", () => {
         status: "started",
         pid: targetPid,
         sourcePid,
-        conversationId: "mail",
         queued: true,
       });
 
       await runInDurableObject(target, (instance: Process) => {
         const process = instance as any;
         const store = process.store;
-        const messages = store.getMessages({ conversationId: "mail" });
+        const messages = store.getMessages();
         expect(messages).toHaveLength(0);
-        expect(store.queueSize("mail")).toBe(1);
-        const queued = store.drainQueue("mail");
+        expect(store.queueSize()).toBe(1);
+        const queued = store.drainQueue();
         expect(queued[0].message).toContain(`Message from sam (${sourcePid}).`);
         expect(queued[0].message).toContain("Please summarize the current build status.");
         expect(queued[0].message).toContain('"kind": "delegation"');
         expect(process.currentRun).toMatchObject({
-          conversationId: "default",
         });
         process.currentRun = null;
       });
@@ -5031,7 +4937,6 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(target, (instance: Process) => {
         (instance as any).currentRun = {
           runId: "existing-target-run",
-          conversationId: "default",
         };
       });
 
@@ -5041,7 +4946,6 @@ describe("Process DO — mechanical", () => {
           sourcePid,
           makeReq("proc.ipc.call", {
             pid: targetPid,
-            conversationId: "mail",
             message: "Please reply with the status.",
             timeoutMs: 30_000,
           }),
@@ -5055,7 +4959,6 @@ describe("Process DO — mechanical", () => {
         status: "started",
         pid: targetPid,
         sourcePid,
-        conversationId: "mail",
         queued: true,
       });
       expect(data.callId).toBeTruthy();
@@ -5063,7 +4966,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(target, (instance: Process) => {
         const store = (instance as any).store;
-        const queued = store.drainQueue("mail");
+        const queued = store.drainQueue();
         expect(queued).toHaveLength(1);
         expect(queued[0].message).toContain(`Delegated task from sam (${sourcePid}).`);
         expect(queued[0].message).toContain("Please complete this task before");
@@ -5099,7 +5002,6 @@ describe("Process DO — mechanical", () => {
         expect(messages[0].content).toContain(`Task id: \`${data.callId}\`.`);
         expect(messages[0].content).toContain("status is green");
         expect(process.currentRun).toMatchObject({
-          conversationId: "default",
         });
         process.currentRun = null;
       });
@@ -5168,7 +5070,7 @@ describe("Process DO — mechanical", () => {
       });
       await runInDurableObject(target, (instance: Process) => {
         const process = instance as any;
-        process.currentRun = { runId: "target-busy-run", conversationId: "default" };
+        process.currentRun = { runId: "target-busy-run" };
       });
 
       const firstSend = (await source.recvFrame(makeReq("proc.send", {
@@ -5242,7 +5144,7 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = vi.fn();
         process.scheduleTick = vi.fn(async () => {});
         process.rememberAbortedRun("run-aborted");
-        process.currentRun = { runId: "run-successor", conversationId: "default" };
+        process.currentRun = { runId: "run-successor" };
 
         await instance.recvFrame({
           type: "sig",
@@ -5260,7 +5162,7 @@ describe("Process DO — mechanical", () => {
         } as any);
 
         expect(process.store.getMessages()).toEqual([]);
-        expect(process.store.queueSize("default")).toBe(0);
+        expect(process.store.queueSize()).toBe(0);
         expect(process.currentRun).toMatchObject({ runId: "run-successor" });
         expect(process.sendSignal).not.toHaveBeenCalled();
         expect(process.scheduleTick).not.toHaveBeenCalled();
@@ -5369,7 +5271,7 @@ describe("Process DO — mechanical", () => {
         const process = instance as any;
         process.sendSignal = vi.fn();
         process.scheduleTick = vi.fn(async () => {});
-        process.currentRun = { runId: "run-active", conversationId: "default" };
+        process.currentRun = { runId: "run-active" };
 
         await instance.recvFrame({
           type: "sig",
@@ -5394,10 +5296,9 @@ describe("Process DO — mechanical", () => {
         ]);
         expect(process.currentRun).toMatchObject({
           runId: "run-active",
-          conversationId: "default",
         });
         expect(process.currentRun).not.toHaveProperty("pendingRuntimeEvents");
-        const queued = process.store.drainQueue("default");
+        const queued = process.store.drainQueue();
         expect(queued).toHaveLength(1);
         expect(queued[0].message).toContain("Review the process event above");
         expect(process.sendSignal).toHaveBeenCalledWith(
@@ -5419,7 +5320,6 @@ describe("Process DO — mechanical", () => {
         process.scheduleTick = vi.fn(async () => {});
         process.currentRun = {
           runId: "active-source-run",
-          conversationId: "default",
         };
       });
 
@@ -5448,7 +5348,7 @@ describe("Process DO — mechanical", () => {
           runId: "active-source-run",
           pendingRuntimeEvents: 1,
         });
-        expect(process.store.queueSize("default")).toBe(0);
+        expect(process.store.queueSize()).toBe(0);
         expect(process.scheduleTick).not.toHaveBeenCalled();
       });
 
@@ -5466,9 +5366,9 @@ describe("Process DO — mechanical", () => {
         const userMessages = process.store.getMessages()
           .filter((message: any) => message.role === "user");
         expect(userMessages.at(-1)?.content).toContain("A runtime event arrived while you were busy.");
-        expect(process.store.queueSize("default")).toBe(0);
+        expect(process.store.queueSize()).toBe(0);
         expect(process.currentRun?.runId).not.toBe("active-source-run");
-        expect(process.currentRun).toMatchObject({ conversationId: "default" });
+        expect(process.currentRun).toMatchObject({});
         process.currentRun = null;
       });
     });
@@ -5522,7 +5422,6 @@ describe("Process DO — mechanical", () => {
         process.store.resolve("dispatch_shell", { ok: true, stdout: "done" });
         process.currentRun = {
           runId: "active-source-turn",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid: sourcePid },
             profile: "task",
@@ -5557,13 +5456,13 @@ describe("Process DO — mechanical", () => {
           runId: "active-source-turn",
           pendingRuntimeEvents: 1,
         });
-        expect(process.store.queueSize("default")).toBe(0);
+        expect(process.store.queueSize()).toBe(0);
 
         await process.runTick("active-source-turn");
 
         return {
           generatedInputs,
-          queueSize: process.store.queueSize("default"),
+          queueSize: process.store.queueSize(),
           currentRun: process.currentRun,
           messages: process.store.getMessages(),
         };
@@ -5606,7 +5505,6 @@ describe("Process DO — mechanical", () => {
           sourcePid,
           makeReq("proc.ipc.call", {
             pid: targetPid,
-            conversationId: "ipc-real",
             message: `Reply with exactly this token and nothing else: ${token}. Do not call tools.`,
             timeoutMs: 60_000,
           }),
@@ -5620,7 +5518,6 @@ describe("Process DO — mechanical", () => {
         status: "started",
         pid: targetPid,
         sourcePid,
-        conversationId: "ipc-real",
       });
       expect(data.callId).toBeTruthy();
       expect(data.runId).toBeTruthy();
@@ -5810,7 +5707,6 @@ describe("Process DO — mechanical", () => {
         process.scheduleTick = async () => {};
         process.currentRun = {
           runId: "active-run",
-          conversationId: "default",
         };
       });
 
@@ -5818,7 +5714,6 @@ describe("Process DO — mechanical", () => {
         runId: "queued-ipc-run",
         sourcePid: "source-process",
         source: ROOT_IDENTITY,
-        conversationId: "side",
         message: "Queued IPC work.",
         metadata: { priority: "normal" },
         sentAt: 1_700_000_000_000,
@@ -5830,7 +5725,6 @@ describe("Process DO — mechanical", () => {
         status: "started",
         pid,
         sourcePid: "source-process",
-        conversationId: "side",
         runId: "queued-ipc-run",
         queued: true,
       });
@@ -5838,9 +5732,9 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
         const store = process.store;
-        expect(store.messageCount("side")).toBe(0);
-        expect(store.queueSize("side")).toBe(1);
-        const queued = store.drainQueue("side");
+        expect(store.messageCount()).toBe(0);
+        expect(store.queueSize()).toBe(1);
+        const queued = store.drainQueue();
         expect(queued[0].message).toContain("Queued IPC work.");
         expect(queued[0].message).toContain('"priority": "normal"');
         process.currentRun = null;
@@ -5848,270 +5742,8 @@ describe("Process DO — mechanical", () => {
     });
   });
 
-  describe("proc.conversation.*", () => {
-    it("opens, gets, and lists process conversations", async () => {
-      const pid = "mech-conversation-open";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      const openRes = (await stub.recvFrame(
-        makeReq("proc.conversation.open", {
-          conversationId: "build",
-          title: "Build thread",
-        }),
-      )) as ResponseOkFrame;
-
-      expect(openRes.ok).toBe(true);
-      expect(openRes.data).toMatchObject({
-        ok: true,
-        pid,
-        created: true,
-        conversation: {
-          id: "build",
-          generation: 1,
-          status: "open",
-          title: "Build thread",
-          messageCount: 0,
-        },
-      });
-
-      const getRes = (await stub.recvFrame(
-        makeReq("proc.conversation.get", { conversationId: "build" }),
-      )) as ResponseOkFrame;
-      expect(getRes.data).toMatchObject({
-        ok: true,
-        pid,
-        conversation: {
-          id: "build",
-          status: "open",
-        },
-      });
-
-      const listRes = (await stub.recvFrame(
-        makeReq("proc.conversation.list", {}),
-      )) as ResponseOkFrame;
-      const listData = listRes.data as any;
-      expect(listData.ok).toBe(true);
-      expect(listData.conversations.map((conversation: any) => conversation.id).sort()).toEqual([
-        "build",
-        "default",
-      ]);
-    });
-
-    it("closes conversations and rejects new sends to them", async () => {
-      const pid = "mech-conversation-close";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      await stub.recvFrame(makeReq("proc.conversation.open", { conversationId: "closed" }));
-
-      const closeRes = (await stub.recvFrame(
-        makeReq("proc.conversation.close", { conversationId: "closed" }),
-      )) as ResponseOkFrame;
-      expect(closeRes.data).toEqual({
-        ok: true,
-        pid,
-        conversationId: "closed",
-        closed: true,
-      });
-
-      const sendRes = (await stub.recvFrame(
-        makeReq("proc.send", {
-          conversationId: "closed",
-          message: "should not start",
-        }),
-      )) as ResponseOkFrame;
-      expect(sendRes.ok).toBe(true);
-      expect(sendRes.data).toEqual({
-        ok: false,
-        error: "Conversation is closed: closed",
-      });
-
-      const listOpenRes = (await stub.recvFrame(
-        makeReq("proc.conversation.list", {}),
-      )) as ResponseOkFrame;
-      expect((listOpenRes.data as any).conversations.map((conversation: any) => conversation.id)).toEqual([
-        "default",
-      ]);
-
-      const listAllRes = (await stub.recvFrame(
-        makeReq("proc.conversation.list", { includeClosed: true }),
-      )) as ResponseOkFrame;
-      expect((listAllRes.data as any).conversations.map((conversation: any) => conversation.id).sort()).toEqual([
-        "closed",
-        "default",
-      ]);
-    });
-
-    it("resets one conversation without clearing another", async () => {
-      const pid = "mech-conversation-reset";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.appendMessage("user", "default survives");
-        store.openConversation({ conversationId: "side", title: "Side" });
-        store.appendMessage("user", "side archive me", { conversationId: "side" });
-      });
-
-      const resetRes = (await stub.recvFrame(
-        makeReq("proc.conversation.reset", { conversationId: "side" }),
-      )) as ResponseOkFrame;
-      const resetData = resetRes.data as any;
-
-      expect(resetData).toMatchObject({
-        ok: true,
-        pid,
-        conversationId: "side",
-        generation: 2,
-        archivedMessages: 1,
-      });
-      expect(resetData.archivedTo).toContain(`/root/conversations/side/`);
-
-      const archiveKey = resetData.archivedTo.replace(/^\//, "");
-      const obj = await env.STORAGE.get(archiveKey);
-      expect(obj).not.toBeNull();
-
-      const generationsRes = (await stub.recvFrame(
-        makeReq("proc.conversation.generations", { conversationId: "side" }),
-      )) as ResponseOkFrame;
-      expect((generationsRes.data as any).generations).toEqual([1, 2]);
-
-      const manifestRes = (await stub.recvFrame(
-        makeReq("proc.conversation.generation.manifest", {
-          conversationId: "side",
-          generation: 1,
-        }),
-      )) as ResponseOkFrame;
-      expect((manifestRes.data as any).manifest).toMatchObject({
-        conversationId: "side",
-        generation: 1,
-        current: false,
-        archives: [
-          expect.objectContaining({
-            kind: "reset",
-            messages: 1,
-            archivePath: resetData.archivedTo,
-          }),
-        ],
-        segments: [],
-        live: null,
-      });
-
-      const timelineRes = (await stub.recvFrame(
-        makeReq("proc.conversation.timeline", { conversationId: "side" }),
-      )) as ResponseOkFrame;
-      expect((timelineRes.data as any).timeline).toEqual([
-        expect.objectContaining({
-          type: "archive",
-          archiveKind: "reset",
-          generation: 1,
-          archivePath: resetData.archivedTo,
-        }),
-        expect.objectContaining({
-          type: "live",
-          generation: 2,
-          messageCount: 0,
-        }),
-      ]);
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        expect(store.messageCount()).toBe(1);
-        expect(store.getMessages()[0].content).toBe("default survives");
-        expect(store.messageCount("side")).toBe(0);
-        expect(store.getConversation("side")).toMatchObject({
-          id: "side",
-          generation: 2,
-          status: "open",
-          title: "Side",
-        });
-      });
-    });
-
-    it("resets active conversation runtime and promotes queued work elsewhere", async () => {
-      const pid = "mech-conversation-reset-runtime";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const process = instance as any;
-        const store = process.store;
-        process.scheduleTick = async () => {};
-        store.openConversation({ conversationId: "side" });
-        store.appendMessage("user", "side before reset", { conversationId: "side" });
-        store.register("dispatch-side", "call-side", "run-side", "fs.read", { path: "/tmp/side.txt" }, "side");
-        store.enqueue("run-side-next", "side queued", undefined, "side");
-        store.enqueue("run-default-next", "default queued");
-        process.currentRun = {
-          runId: "run-side",
-          conversationId: "side",
-        };
-      });
-
-      const resetRes = (await stub.recvFrame(
-        makeReq("proc.conversation.reset", {
-          conversationId: "side",
-          archive: false,
-        }),
-      )) as ResponseOkFrame;
-      expect(resetRes.data).toMatchObject({
-        ok: true,
-        pid,
-        conversationId: "side",
-        generation: 2,
-        archivedMessages: 2,
-      });
-      expect((resetRes.data as any).archivedTo).toBeUndefined();
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const process = instance as any;
-        const store = process.store;
-        expect(store.messageCount("side")).toBe(0);
-        expect(store.queueSize("side")).toBe(0);
-        expect(store.getResults("run-side")).toHaveLength(0);
-        expect(process.currentRun).toMatchObject({
-          runId: "run-default-next",
-          conversationId: "default",
-        });
-        const defaultMessages = store.getMessages();
-        expect(defaultMessages[0]).toMatchObject({
-          role: "user",
-          content: "default queued",
-          generation: 1,
-        });
-        process.currentRun = null;
-      });
-    });
-
-    it("deletes media released by an unarchived conversation reset", async () => {
-      const pid = "mech-conversation-reset-media-cleanup";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-      const key = `var/media/0/${pid}/discard.bin`;
-      await env.STORAGE.put(key, new Uint8Array([7, 8, 9]), {
-        httpMetadata: { contentType: "application/octet-stream" },
-        customMetadata: { uid: "0", gid: "0", mode: "400", processId: pid },
-      });
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.openConversation({ conversationId: "discard" });
-        store.appendMessage("user", "discard attachment", {
-          conversationId: "discard",
-          media: JSON.stringify([{
-            type: "document",
-            mimeType: "application/octet-stream",
-            key,
-            path: `/${key}`,
-          }]),
-        });
-      });
-
-      const reset = await stub.recvFrame(makeReq("proc.conversation.reset", {
-        conversationId: "discard",
-        archive: false,
-      })) as ResponseOkFrame;
-      expect(reset.data).toMatchObject({ ok: true, archivedMessages: 1 });
-      expect(await env.STORAGE.head(key)).toBeNull();
-    });
-
-    it("compacts a conversation prefix into an archived segment", async () => {
+  describe("process history", () => {
+    it("compacts a history prefix into an archived segment", async () => {
       const pid = "mech-conversation-compact";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -6122,17 +5754,15 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = async (signal: string, payload: unknown) => {
           process.__signals.push({ signal, payload });
         };
-        store.openConversation({ conversationId: "thread", title: "Thread" });
         return [
-          store.appendMessage("user", "old user", { conversationId: "thread" }),
-          store.appendMessage("assistant", "old assistant", { conversationId: "thread" }),
-          store.appendMessage("user", "keep this", { conversationId: "thread" }),
+          store.appendMessage("user", "old user", {}),
+          store.appendMessage("assistant", "old assistant", {}),
+          store.appendMessage("user", "keep this", {}),
         ];
       });
 
       const compactRes = (await stub.recvFrame(
-        makeReq("proc.conversation.compact", {
-          conversationId: "thread",
+        makeReq("proc.history.compact", {
           keepLast: 1,
           summary: "The old exchange established the thread context.",
         }),
@@ -6142,11 +5772,9 @@ describe("Process DO — mechanical", () => {
       expect(data).toMatchObject({
         ok: true,
         pid,
-        conversationId: "thread",
         archivedMessages: 2,
         summaryMessageId: messageIds[0],
         segment: {
-          conversationId: "thread",
           generation: 1,
           kind: "compaction",
           fromMessageId: messageIds[0],
@@ -6155,7 +5783,7 @@ describe("Process DO — mechanical", () => {
         },
       });
       expect(data.archivedTo).toMatch(
-        new RegExp(`/root/conversations/thread/.+\\.jsonl\\.gz$`),
+        new RegExp(`/root/processes/${encodeURIComponent(pid)}/history/.+\\.jsonl\\.gz$`),
       );
 
       const archiveKey = data.archivedTo.replace(/^\//, "");
@@ -6163,13 +5791,13 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        const messages = store.getMessages({ conversationId: "thread" });
+        const messages = store.getMessages();
         expect(messages).toHaveLength(2);
         expect(messages[0]).toMatchObject({
           id: messageIds[0],
           role: "system",
         });
-        expect(messages[0].content).toContain("Conversation compacted.");
+        expect(messages[0].content).toContain("Process history compacted.");
         expect(messages[0].content).toContain(data.archivedTo);
         expect(messages[0].content).toContain("The old exchange established the thread context.");
         expect(messages[1]).toMatchObject({
@@ -6181,9 +5809,8 @@ describe("Process DO — mechanical", () => {
           {
             signal: "proc.changed",
             payload: expect.objectContaining({
-              event: "conversation.compacted",
+              event: "history.compacted",
               pid,
-              conversationId: "thread",
               archivedMessages: 2,
               archivedTo: data.archivedTo,
               summaryMessageId: messageIds[0],
@@ -6196,7 +5823,7 @@ describe("Process DO — mechanical", () => {
       });
 
       const segmentsRes = (await stub.recvFrame(
-        makeReq("proc.conversation.segments", { conversationId: "thread" }),
+        makeReq("proc.history.segments", {}),
       )) as ResponseOkFrame;
       expect((segmentsRes.data as any).segments).toEqual([
         expect.objectContaining({
@@ -6206,23 +5833,6 @@ describe("Process DO — mechanical", () => {
         }),
       ]);
 
-      const timelineRes = (await stub.recvFrame(
-        makeReq("proc.conversation.timeline", { conversationId: "thread" }),
-      )) as ResponseOkFrame;
-      expect((timelineRes.data as any).timeline).toEqual([
-        expect.objectContaining({
-          type: "segment",
-          id: data.segment.id,
-          generation: 1,
-        }),
-        expect.objectContaining({
-          type: "live",
-          generation: 1,
-          messageCount: 2,
-          firstMessageId: messageIds[0],
-          lastMessageId: messageIds[2],
-        }),
-      ]);
     });
 
     it("can generate the compaction summary from selected messages", async () => {
@@ -6233,13 +5843,11 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
         const store = process.store;
-        store.openConversation({ conversationId: "thread", title: "Thread" });
-        store.appendMessage("user", "old user goal", { conversationId: "thread" });
-        store.appendMessage("assistant", "old assistant decision", { conversationId: "thread" });
-        store.appendMessage("user", "keep this", { conversationId: "thread" });
+        store.appendMessage("user", "old user goal", {});
+        store.appendMessage("assistant", "old assistant decision", {});
+        store.appendMessage("user", "keep this", {});
         process.currentRun = {
           runId: "config-source",
-          conversationId: "other",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -6259,6 +5867,9 @@ describe("Process DO — mechanical", () => {
             }],
           },
         };
+        const checkpointConfig = process.currentRun.config;
+        process.currentRun = null;
+        process.resolveCheckpointConfig = async () => checkpointConfig;
         process.generation = {
           async generate() {
             throw new Error("unexpected chat generation");
@@ -6280,8 +5891,7 @@ describe("Process DO — mechanical", () => {
       });
 
       const compactRes = (await stub.recvFrame(
-        makeReq("proc.conversation.compact", {
-          conversationId: "thread",
+        makeReq("proc.history.compact", {
           keepLast: 1,
           generateSummary: true,
         }),
@@ -6289,14 +5899,13 @@ describe("Process DO — mechanical", () => {
       expect(compactRes.data).toMatchObject({
         ok: true,
         pid,
-        conversationId: "thread",
         archivedMessages: 2,
       });
       expect(models).toEqual(["@cf/test/model", "fallback-model"]);
 
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
-        const messages = process.store.getMessages({ conversationId: "thread" });
+        const messages = process.store.getMessages();
         expect(messages[0].content).toContain("Generated compact summary.");
         process.currentRun = null;
       });
@@ -6312,13 +5921,11 @@ describe("Process DO — mechanical", () => {
         const store = process.store;
         for (let index = 0; index < 5; index += 1) {
           store.appendMessage("user", `${index}:${"x".repeat(index === 0 ? 50_000 : 10_000)}`, {
-            conversationId: "thread",
           });
         }
-        store.appendMessage("user", "keep", { conversationId: "thread" });
+        store.appendMessage("user", "keep", {});
         process.currentRun = {
           runId: "config-source",
-          conversationId: "other",
           config: {
             executor: { kind: "process", pid },
             provider: "workers-ai",
@@ -6327,19 +5934,21 @@ describe("Process DO — mechanical", () => {
             maxTokens: 4096,
           },
         };
+        const checkpointConfig = process.currentRun.config;
+        process.currentRun = null;
+        process.resolveCheckpointConfig = async () => checkpointConfig;
         process.generation = {
           async generateText(request: any) {
             const content = request.context.messages[0].content as string;
             transcript = content
-              .slice("Conversation segment JSONL:\n".length)
+              .slice("Process history segment JSONL:\n".length)
               .split("\n\nWrite the replacement summary", 1)[0];
             return "Summary.";
           },
         };
       });
 
-      const response = await stub.recvFrame(makeReq("proc.conversation.compact", {
-        conversationId: "thread",
+      const response = await stub.recvFrame(makeReq("proc.history.compact", {
         keepLast: 1,
         generateSummary: true,
       })) as ResponseOkFrame;
@@ -6356,17 +5965,16 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("discards a generated compaction when its conversation changes", async () => {
+    it("discards a generated compaction when its history changes", async () => {
       const pid = "mech-conversation-compact-stale";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
-        process.store.appendMessage("user", "old", { conversationId: "thread" });
-        process.store.appendMessage("user", "keep", { conversationId: "thread" });
+        process.store.appendMessage("user", "old", {});
+        process.store.appendMessage("user", "keep", {});
         process.currentRun = {
           runId: "config-source",
-          conversationId: "other",
           config: {
             executor: { kind: "process", pid },
             provider: "workers-ai",
@@ -6375,27 +5983,30 @@ describe("Process DO — mechanical", () => {
             maxTokens: 4096,
           },
         };
+        const checkpointConfig = process.currentRun.config;
+        process.currentRun = null;
+        process.resolveCheckpointConfig = async () => checkpointConfig;
         process.generation = {
           async generateText() {
-            process.store.resetConversation("thread");
+            process.store.resetHistory();
             return "Stale summary.";
           },
         };
       });
 
-      const archivesBefore = (await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+      const archivePrefix = `root/processes/${encodeURIComponent(pid)}/history/`;
+      const archivesBefore = (await env.STORAGE.list({ prefix: archivePrefix }))
         .objects.map((object) => object.key);
-      const response = await stub.recvFrame(makeReq("proc.conversation.compact", {
-        conversationId: "thread",
+      const response = await stub.recvFrame(makeReq("proc.history.compact", {
         keepLast: 1,
         generateSummary: true,
       })) as ResponseOkFrame;
-      expect(response.data).toEqual({ ok: false, error: "Conversation changed during compaction" });
-      expect((await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+      expect(response.data).toEqual({ ok: false, error: "History changed during compaction" });
+      expect((await env.STORAGE.list({ prefix: archivePrefix }))
         .objects.map((object) => object.key)).toEqual(archivesBefore);
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
-        expect(process.store.listConversationSegments("thread")).toHaveLength(0);
+        expect(process.store.listHistorySegments()).toHaveLength(0);
         process.currentRun = null;
       });
     });
@@ -6403,7 +6014,8 @@ describe("Process DO — mechanical", () => {
     it("rejects a concurrent compaction after another summary replaces its prefix", async () => {
       const pid = "mech-conversation-compact-concurrent";
       const stub = await initProcess(pid, ROOT_IDENTITY);
-      const archivesBefore = (await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+      const archivePrefix = `root/processes/${encodeURIComponent(pid)}/history/`;
+      const archivesBefore = (await env.STORAGE.list({ prefix: archivePrefix }))
         .objects.map((object) => object.key);
       const result = await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
@@ -6416,11 +6028,10 @@ describe("Process DO — mechanical", () => {
         const firstStarted = new Promise<void>((resolve) => {
           markFirstStarted = resolve;
         });
-        process.store.appendMessage("user", "old", { conversationId: "thread" });
-        process.store.appendMessage("user", "keep", { conversationId: "thread" });
+        process.store.appendMessage("user", "old", {});
+        process.store.appendMessage("user", "keep", {});
         process.currentRun = {
           runId: "config-source",
-          conversationId: "other",
           config: {
             executor: { kind: "process", pid },
             provider: "workers-ai",
@@ -6429,6 +6040,9 @@ describe("Process DO — mechanical", () => {
             maxTokens: 4096,
           },
         };
+        const checkpointConfig = process.currentRun.config;
+        process.currentRun = null;
+        process.resolveCheckpointConfig = async () => checkpointConfig;
         process.generation = {
           async generateText() {
             generationCalls += 1;
@@ -6441,30 +6055,28 @@ describe("Process DO — mechanical", () => {
           },
         };
 
-        const first = process.recvFrame(makeReq("proc.conversation.compact", {
-          conversationId: "thread",
+        const first = process.recvFrame(makeReq("proc.history.compact", {
           keepLast: 1,
           generateSummary: true,
         }));
         await firstStarted;
-        const second = await process.recvFrame(makeReq("proc.conversation.compact", {
-          conversationId: "thread",
+        const second = await process.recvFrame(makeReq("proc.history.compact", {
           keepLast: 1,
           generateSummary: true,
         })) as ResponseOkFrame;
         releaseFirst();
         const stale = await first as ResponseOkFrame;
-        const messages = process.store.getMessages({ conversationId: "thread" });
-        const segments = process.store.listConversationSegments("thread");
+        const messages = process.store.getMessages();
+        const segments = process.store.listHistorySegments();
         process.currentRun = null;
         return { second, stale, messages, segments };
       });
 
       expect(result.second.data).toMatchObject({ ok: true, archivedMessages: 1 });
-      expect(result.stale.data).toEqual({ ok: false, error: "Conversation changed during compaction" });
+      expect(result.stale.data).toEqual({ ok: false, error: "History changed during compaction" });
       expect(result.messages[0].content).toContain("Second summary.");
       expect(result.segments).toHaveLength(1);
-      expect((await env.STORAGE.list({ prefix: "root/conversations/thread/" })).objects
+      expect((await env.STORAGE.list({ prefix: archivePrefix })).objects
         .filter((object) => !archivesBefore.includes(object.key)))
         .toHaveLength(1);
     });
@@ -6475,17 +6087,17 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.appendMessage("user", "old", { conversationId: "thread" });
-        store.appendMessage("user", "keep", { conversationId: "thread" });
-        store.recordConversationSegment = () => {
+        store.appendMessage("user", "old", {});
+        store.appendMessage("user", "keep", {});
+        store.recordHistorySegment = () => {
           throw new Error("segment insert failed");
         };
       });
 
-      const archivesBefore = (await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+      const archivePrefix = `root/processes/${encodeURIComponent(pid)}/history/`;
+      const archivesBefore = (await env.STORAGE.list({ prefix: archivePrefix }))
         .objects.map((object) => object.key);
-      const response = await stub.recvFrame(makeReq("proc.conversation.compact", {
-        conversationId: "thread",
+      const response = await stub.recvFrame(makeReq("proc.history.compact", {
         keepLast: 1,
         summary: "Summary.",
       })) as ResponseFrame;
@@ -6493,10 +6105,10 @@ describe("Process DO — mechanical", () => {
         ok: false,
         error: { message: "segment insert failed" },
       });
-      expect((await env.STORAGE.list({ prefix: "root/conversations/thread/" }))
+      expect((await env.STORAGE.list({ prefix: archivePrefix }))
         .objects.map((object) => object.key)).toEqual(archivesBefore);
       await runInDurableObject(stub, (instance: Process) => {
-        expect((instance as any).store.getMessages({ conversationId: "thread" }))
+        expect((instance as any).store.getMessages())
           .toEqual(expect.arrayContaining([
             expect.objectContaining({ role: "user", content: "old" }),
             expect.objectContaining({ role: "user", content: "keep" }),
@@ -6510,16 +6122,14 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.openConversation({ conversationId: "thread", title: "Thread" });
-        store.appendMessage("user", "old user", { conversationId: "thread", createdAt: 10 });
-        store.appendMessage("assistant", "old assistant", { conversationId: "thread", createdAt: 20 });
-        store.appendToolResult("tool-1", "fs.read", "permission denied", true, "thread");
-        store.appendMessage("user", "keep this", { conversationId: "thread", createdAt: 30 });
+        store.appendMessage("user", "old user", { createdAt: 10 });
+        store.appendMessage("assistant", "old assistant", { createdAt: 20 });
+        store.appendToolResult("tool-1", "fs.read", "permission denied", true);
+        store.appendMessage("user", "keep this", { createdAt: 30 });
       });
 
       const compactRes = (await stub.recvFrame(
-        makeReq("proc.conversation.compact", {
-          conversationId: "thread",
+        makeReq("proc.history.compact", {
           keepLast: 1,
           summary: "Earlier context.",
         }),
@@ -6527,8 +6137,7 @@ describe("Process DO — mechanical", () => {
       const compactData = compactRes.data as any;
 
       const firstPageRes = (await stub.recvFrame(
-        makeReq("proc.conversation.segment.read", {
-          conversationId: "thread",
+        makeReq("proc.history.segment.read", {
           segmentId: compactData.segment.id,
           limit: 1,
         }),
@@ -6537,7 +6146,6 @@ describe("Process DO — mechanical", () => {
       expect(firstPage).toMatchObject({
         ok: true,
         pid,
-        conversationId: "thread",
         messageCount: 3,
         truncated: true,
         segment: {
@@ -6555,8 +6163,7 @@ describe("Process DO — mechanical", () => {
       ]);
 
       const secondPageRes = (await stub.recvFrame(
-        makeReq("proc.conversation.segment.read", {
-          conversationId: "thread",
+        makeReq("proc.history.segment.read", {
           segmentId: compactData.segment.id,
           limit: 1,
           offset: 1,
@@ -6577,8 +6184,7 @@ describe("Process DO — mechanical", () => {
       expect((secondPageRes.data as any).truncated).toBe(true);
 
       const toolResultPageRes = (await stub.recvFrame(
-        makeReq("proc.conversation.segment.read", {
-          conversationId: "thread",
+        makeReq("proc.history.segment.read", {
           segmentId: compactData.segment.id,
           limit: 1,
           offset: 2,
@@ -6616,9 +6222,7 @@ describe("Process DO — mechanical", () => {
       });
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.openConversation({ conversationId: "thread", title: "Thread" });
         store.appendMessage("assistant", "Here is the result.", {
-          conversationId: "thread",
           createdAt: 20,
           media: JSON.stringify([{
             type: "image",
@@ -6630,19 +6234,16 @@ describe("Process DO — mechanical", () => {
           }]),
         });
         store.appendMessage("user", "keep this", {
-          conversationId: "thread",
           createdAt: 30,
         });
       });
 
-      const compactRes = await stub.recvFrame(makeReq("proc.conversation.compact", {
-        conversationId: "thread",
+      const compactRes = await stub.recvFrame(makeReq("proc.history.compact", {
         keepLast: 1,
         summary: "Earlier context.",
       })) as ResponseOkFrame;
       const segment = (compactRes.data as any).segment;
-      const segmentRes = await stub.recvFrame(makeReq("proc.conversation.segment.read", {
-        conversationId: "thread",
+      const segmentRes = await stub.recvFrame(makeReq("proc.history.segment.read", {
         segmentId: segment.id,
       })) as ResponseOkFrame;
       const media = (segmentRes.data as any).messages[0].content.media[0];
@@ -6671,189 +6272,7 @@ describe("Process DO — mechanical", () => {
       expect(read.body && [...await bodyToBytes(read.body)]).toEqual([7, 8, 9]);
     });
 
-    it("forks a live conversation from a message", async () => {
-      const pid = "mech-conversation-fork-message";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      const messageIds = await runInDurableObject(stub, (instance: Process) => {
-        const process = instance as any;
-        const store = process.store;
-        process.__signals = [];
-        process.sendSignal = async (signal: string, payload: unknown) => {
-          process.__signals.push({ signal, payload });
-        };
-        store.openConversation({ conversationId: "thread", title: "Thread" });
-        return [
-          store.appendMessage("user", "first", { conversationId: "thread" }),
-          store.appendMessage("assistant", "second", { conversationId: "thread" }),
-          store.appendMessage("user", "third", { conversationId: "thread" }),
-        ];
-      });
-
-      const forkRes = (await stub.recvFrame(
-        makeReq("proc.conversation.fork", {
-          conversationId: "thread",
-          throughMessageId: messageIds[1],
-          targetConversationId: "branch",
-          title: "Branch",
-        }),
-      )) as ResponseOkFrame;
-      expect(forkRes.data).toMatchObject({
-        ok: true,
-        pid,
-        sourceConversationId: "thread",
-        throughMessageId: messageIds[1],
-        restoredMessages: 2,
-        includedLiveSuffix: false,
-        targetConversation: {
-          id: "branch",
-          title: "Branch",
-          messageCount: 2,
-        },
-      });
-
-      const historyRes = (await stub.recvFrame(
-        makeReq("proc.history", { conversationId: "branch" }),
-      )) as ResponseOkFrame;
-      expect((historyRes.data as any).messages.map((message: any) => ({
-        id: message.id,
-        role: message.role,
-        content: message.content,
-      }))).toEqual([
-        { id: expect.any(Number), role: "user", content: "first" },
-        { id: expect.any(Number), role: "assistant", content: "second" },
-      ]);
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const process = instance as any;
-        expect(process.store.getMessages({ conversationId: "thread" }).map((message: any) => message.content)).toEqual([
-          "first",
-          "second",
-          "third",
-        ]);
-        expect(process.__signals).toEqual([
-          {
-            signal: "proc.changed",
-            payload: expect.objectContaining({
-              event: "conversation.forked",
-              pid,
-              sourceConversationId: "thread",
-              targetConversationId: "branch",
-              throughMessageId: messageIds[1],
-              restoredMessages: 2,
-            }),
-          },
-        ]);
-      });
-    });
-
-    it("forks a compacted segment into a new conversation", async () => {
-      const pid = "mech-conversation-fork-segment";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-      const archivedOrigin = {
-        kind: "adapter",
-        adapter: "whatsapp",
-        accountId: "primary",
-        surface: { kind: "group", id: "group-1", name: "GSV Dev" },
-        actorId: "wa:+123",
-        actorLabel: "@sam",
-      };
-      const liveOrigin = {
-        kind: "client",
-        connectionId: "conn-1",
-        clientId: "gsv-ui",
-        platform: "browser",
-      };
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.openConversation({ conversationId: "thread", title: "Thread" });
-        store.appendMessage("user", "old user", {
-          conversationId: "thread",
-          createdAt: 10,
-          origin: JSON.stringify(archivedOrigin),
-        });
-        store.appendMessage("assistant", "old assistant", { conversationId: "thread", createdAt: 20 });
-        store.appendToolResult("tool-1", "fs.read", "permission denied", true, "thread");
-        store.appendMessage("user", "keep this", {
-          conversationId: "thread",
-          createdAt: 30,
-          origin: JSON.stringify(liveOrigin),
-        });
-      });
-
-      const compactRes = (await stub.recvFrame(
-        makeReq("proc.conversation.compact", {
-          conversationId: "thread",
-          keepLast: 1,
-          summary: "Earlier context.",
-        }),
-      )) as ResponseOkFrame;
-      const compactData = compactRes.data as any;
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.appendMessage("user", "later live message", {
-          conversationId: "thread",
-          createdAt: compactData.segment.createdAt + 1000,
-        });
-      });
-
-      const forkRes = (await stub.recvFrame(
-        makeReq("proc.conversation.fork", {
-          conversationId: "thread",
-          segmentId: compactData.segment.id,
-          targetConversationId: "thread-restored",
-          title: "Restored thread",
-        }),
-      )) as ResponseOkFrame;
-      const forkData = forkRes.data as any;
-
-      expect(forkData).toMatchObject({
-        ok: true,
-        pid,
-        sourceConversationId: "thread",
-        restoredMessages: 4,
-        includedLiveSuffix: true,
-        targetConversation: {
-          id: "thread-restored",
-          title: "Restored thread",
-          messageCount: 4,
-        },
-        segment: {
-          id: compactData.segment.id,
-          archivePath: compactData.archivedTo,
-        },
-      });
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        const restored = store.getMessages({ conversationId: "thread-restored" });
-        expect(restored.map((message: any) => [message.role, message.content])).toEqual([
-          ["user", "old user"],
-          ["assistant", "old assistant"],
-          ["toolResult", "permission denied"],
-          ["user", "keep this"],
-        ]);
-        expect(JSON.parse(restored[0].origin)).toEqual(archivedOrigin);
-        expect(JSON.parse(restored[3].origin)).toEqual(liveOrigin);
-        expect(store.toMessages({ conversationId: "thread-restored" })[2]).toMatchObject({
-          role: "toolResult",
-          toolCallId: "tool-1",
-          toolName: "Read",
-          isError: true,
-        });
-
-        const source = store.getMessages({ conversationId: "thread" });
-        expect(source.map((message: any) => message.content)).toEqual([
-          expect.stringContaining("Conversation compacted."),
-          "keep this",
-          "later live message",
-        ]);
-      });
-    });
-
-    it("rejects compaction while that conversation is active", async () => {
+    it("rejects compaction while the process is active", async () => {
       const pid = "mech-conversation-compact-active";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -6863,19 +6282,18 @@ describe("Process DO — mechanical", () => {
         store.appendMessage("user", "active message");
         process.currentRun = {
           runId: "run-active-compact",
-          conversationId: "default",
         };
       });
 
       const compactRes = (await stub.recvFrame(
-        makeReq("proc.conversation.compact", {
+        makeReq("proc.history.compact", {
           keepLast: 0,
           summary: "Should fail.",
         }),
       )) as ResponseOkFrame;
       expect(compactRes.data).toEqual({
         ok: false,
-        error: "Conversation is active: default",
+        error: "Process is active",
       });
 
       await runInDurableObject(stub, (instance: Process) => {
@@ -6893,8 +6311,8 @@ describe("Process DO — mechanical", () => {
         const started = new Promise<void>((resolve) => {
           markStarted = resolve;
         });
-        process.store.appendMessage("user", "old", { conversationId: "thread" });
-        process.store.appendMessage("user", "keep", { conversationId: "thread" });
+        process.store.appendMessage("user", "old", {});
+        process.store.appendMessage("user", "keep", {});
         process.archiveMessageRecords = async (
           _key: string,
           _messages: unknown[],
@@ -6910,8 +6328,8 @@ describe("Process DO — mechanical", () => {
         const execution = process.recvFrame({
           type: "req",
           id: requestId,
-          call: "proc.conversation.compact",
-          args: { conversationId: "thread", keepLast: 1, summary: "Summary." },
+          call: "proc.history.compact",
+          args: { keepLast: 1, summary: "Summary." },
         });
         await started;
         await process.recvFrame({
@@ -6926,22 +6344,21 @@ describe("Process DO — mechanical", () => {
           ok: true,
           data: { ok: false, error: "Compaction was cancelled" },
         });
-        expect(process.store.listConversationSegments("thread")).toHaveLength(0);
+        expect(process.store.listHistorySegments()).toHaveLength(0);
       });
     });
 
-    it("gets and sets visible conversation context policy", async () => {
+    it("gets and sets process history context policy", async () => {
       const pid = "mech-conversation-policy";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
       const defaultRes = (await stub.recvFrame(
-        makeReq("proc.conversation.policy.get", { conversationId: "thread" }),
+        makeReq("proc.history.policy.get", {}),
       )) as ResponseOkFrame;
       expect(defaultRes.data).toMatchObject({
         ok: true,
         pid,
         policy: {
-          conversationId: "thread",
           overflow: "auto-compact",
           compactAtPressure: 0.9,
           keepLast: 80,
@@ -6950,8 +6367,7 @@ describe("Process DO — mechanical", () => {
       });
 
       const setRes = (await stub.recvFrame(
-        makeReq("proc.conversation.policy.set", {
-          conversationId: "thread",
+        makeReq("proc.history.policy.set", {
           overflow: "auto-compact",
           compactAtPressure: 0.82,
           keepLast: 42,
@@ -6961,7 +6377,6 @@ describe("Process DO — mechanical", () => {
         ok: true,
         pid,
         policy: {
-          conversationId: "thread",
           overflow: "auto-compact",
           compactAtPressure: 0.82,
           keepLast: 42,
@@ -6969,13 +6384,12 @@ describe("Process DO — mechanical", () => {
       });
 
       const nextRes = (await stub.recvFrame(
-        makeReq("proc.conversation.policy.get", { conversationId: "thread" }),
+        makeReq("proc.history.policy.get", {}),
       )) as ResponseOkFrame;
       expect(nextRes.data).toMatchObject({
         ok: true,
         pid,
         policy: {
-          conversationId: "thread",
           overflow: "auto-compact",
           compactAtPressure: 0.82,
           keepLast: 42,
@@ -7051,8 +6465,7 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "old context A");
         process.store.appendMessage("assistant", "old context B");
         process.store.appendMessage("user", "Context that must stay live.");
-        process.store.setValue("conversationPolicy:default", JSON.stringify({
-          conversationId: "default",
+        process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.9,
           keepLast: 1,
@@ -7060,7 +6473,6 @@ describe("Process DO — mechanical", () => {
         }));
         process.currentRun = {
           runId: "run-auto-compact",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -7093,7 +6505,7 @@ describe("Process DO — mechanical", () => {
           generationCalls,
           summaryCalls,
           messages: process.store.getMessages(),
-          segments: process.store.listConversationSegments(),
+          segments: process.store.listHistorySegments(),
         };
       });
 
@@ -7113,8 +6525,8 @@ describe("Process DO — mechanical", () => {
         .map((entry) => (entry.payload as any).event)
         .filter(Boolean);
       expect(lifecycleEvents).toEqual([
-        "conversation.compacted",
-        "conversation.auto_compacted",
+        "history.compacted",
+        "history.auto_compacted",
       ]);
     });
 
@@ -7140,8 +6552,7 @@ describe("Process DO — mechanical", () => {
         };
         process.store.appendMessage("user", "old context");
         process.store.appendMessage("user", `retained ${"x".repeat(4000)}`);
-        process.store.setValue("conversationPolicy:default", JSON.stringify({
-          conversationId: "default",
+        process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.5,
           keepLast: 1,
@@ -7149,7 +6560,6 @@ describe("Process DO — mechanical", () => {
         }));
         process.currentRun = {
           runId: "run-auto-compact-insufficient",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             provider: "workers-ai",
@@ -7171,7 +6581,7 @@ describe("Process DO — mechanical", () => {
           generated,
           currentRun: process.currentRun,
           messages: process.store.getMessages(),
-          segments: process.store.listConversationSegments(),
+          segments: process.store.listHistorySegments(),
         };
       });
 
@@ -7179,7 +6589,7 @@ describe("Process DO — mechanical", () => {
       expect(result.currentRun).toBeNull();
       expect(result.segments).toHaveLength(1);
       expect(result.messages.at(-1)?.content).toContain(
-        "Auto-compaction could not reduce this conversation below its context limit.",
+        "Auto-compaction could not reduce this process history below its context limit.",
       );
       expect(result.emitted).toEqual(expect.arrayContaining([
         {
@@ -7215,8 +6625,7 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "old context A");
         process.store.appendMessage("assistant", "old context B");
         process.store.appendMessage("user", "Context that must stay live.");
-        process.store.setValue("conversationPolicy:default", JSON.stringify({
-          conversationId: "default",
+        process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.01,
           keepLast: 1,
@@ -7224,7 +6633,6 @@ describe("Process DO — mechanical", () => {
         }));
         process.currentRun = {
           runId: "run-auto-compact-provider-billing",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -7247,7 +6655,7 @@ describe("Process DO — mechanical", () => {
           emitted,
           currentRun: process.currentRun,
           messages: process.store.getMessages(),
-          segments: process.store.listConversationSegments(),
+          segments: process.store.listHistorySegments(),
         };
       });
 
@@ -7298,8 +6706,7 @@ describe("Process DO — mechanical", () => {
         process.store.appendMessage("user", "old context A");
         process.store.appendMessage("assistant", "old context B");
         process.store.appendMessage("user", "Context that must stay live.");
-        process.store.setValue("conversationPolicy:default", JSON.stringify({
-          conversationId: "default",
+        process.store.setValue("historyPolicy", JSON.stringify({
           overflow: "auto-compact",
           compactAtPressure: 0.01,
           keepLast: 1,
@@ -7307,7 +6714,6 @@ describe("Process DO — mechanical", () => {
         }));
         process.currentRun = {
           runId: "run-auto-compact-abort",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -7330,7 +6736,7 @@ describe("Process DO — mechanical", () => {
           emitted,
           currentRun: process.currentRun,
           messages: process.store.getMessages(),
-          segments: process.store.listConversationSegments(),
+          segments: process.store.listHistorySegments(),
         };
       });
 
@@ -7380,7 +6786,7 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
       await runInDurableObject(stub, (instance: Process) => {
-        (instance as any).currentRun = { runId: "run-new", conversationId: "default" };
+        (instance as any).currentRun = { runId: "run-new" };
       });
 
       const res = (await stub.recvFrame(
@@ -7404,7 +6810,7 @@ describe("Process DO — mechanical", () => {
         process.emitRunFinished = vi.fn(() => new Promise<void>(() => {}));
         process.sendSignal = vi.fn();
         process.scheduleTick = vi.fn(async () => {});
-        process.currentRun = { runId: "run-old", conversationId: "default" };
+        process.currentRun = { runId: "run-old" };
         process.store.enqueue("run-next", "next message");
 
         await process.finishRun("run-old", {
@@ -7420,7 +6826,6 @@ describe("Process DO — mechanical", () => {
           expect.objectContaining({
             pid,
             runId: "run-next",
-            conversationId: "default",
             reason: "queue.promote",
             queuedCount: 0,
             timestamp: expect.any(Number),
@@ -7441,7 +6846,7 @@ describe("Process DO — mechanical", () => {
         process.schedule = vi.fn(async () => ({ id: "finish-retry" }));
 
         process.emitRunFinished(
-          { runId: "run-finish-outbox", conversationId: "default" },
+          { runId: "run-finish-outbox" },
           { reason: "turn.complete", status: "ok", text: "done" },
         );
         await vi.waitFor(() => expect(process.schedule).toHaveBeenCalledWith(
@@ -7469,7 +6874,6 @@ describe("Process DO — mechanical", () => {
         process.store.setValue("pendingRunFinishes", JSON.stringify([{
           pid: process.pid,
           runId: "run-finish-exhausted",
-          conversationId: "default",
           status: "ok",
           reason: "turn.complete",
           text: "completed answer",
@@ -7499,7 +6903,6 @@ describe("Process DO — mechanical", () => {
         expect(process.emitProcChanged).toHaveBeenCalledWith(
           ["messages"],
           expect.objectContaining({
-            conversationId: "default",
             runId: "run-finish-exhausted",
             messageId: expect.any(Number),
           }),
@@ -7572,7 +6975,7 @@ describe("Process DO — mechanical", () => {
       try {
         await runInDurableObject(stub, (instance: Process) => {
           const process = instance as any;
-          process.currentRun = { runId: "run-1", conversationId: "default" };
+          process.currentRun = { runId: "run-1" };
           process.store.register(
             "dispatch-1",
             "call-1",
@@ -7666,7 +7069,7 @@ describe("Process DO — mechanical", () => {
       const stub = await initProcess(pid, ROOT_IDENTITY);
       await runInDurableObject(stub, (instance: Process) => {
         const process = instance as any;
-        process.currentRun = { runId: "run-1", conversationId: "default" };
+        process.currentRun = { runId: "run-1" };
         process.store.register("dispatch-1", "call-1", "run-1", "fs.search", {});
         process.store.markDispatched("dispatch-1");
       });
@@ -7850,7 +7253,6 @@ describe("Process DO — mechanical", () => {
         const resolve = vi.fn();
         process.currentRun = {
           runId,
-          conversationId: "default",
           approvalPolicy: { default: "auto", rules: [] },
         };
         registerToolBlock(process, runId, [
@@ -7870,7 +7272,6 @@ describe("Process DO — mechanical", () => {
         process.store.setPendingHil({
           requestId,
           runId,
-          conversationId: "default",
           toolCallId: "codemode-nested-call",
           toolName: "Read",
           syscall: "fs.read",
@@ -7997,7 +7398,6 @@ describe("Process DO — mechanical", () => {
         const runId = "run-hil-codemode-recovery";
         process.currentRun = {
           runId,
-          conversationId: "default",
           approvalPolicy: { default: "auto", rules: [] },
         };
         registerToolBlock(process, runId, [
@@ -8017,7 +7417,6 @@ describe("Process DO — mechanical", () => {
         process.store.setPendingHil({
           requestId: "approval-lost",
           runId,
-          conversationId: "default",
           ownerDispatchId: "dispatch-call-codemode-outer",
           toolCallId: "codemode-nested-call",
           toolName: "Read",
@@ -8246,31 +7645,29 @@ describe("Process DO — mechanical", () => {
       expect(afterData.hasMoreAfter).toBe(true);
     });
 
-    it("reads history for the requested conversation", async () => {
-      const pid = "mech-history-conversation";
+    it("reads the process history", async () => {
+      const pid = "mech-history-process";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
-        store.appendMessage("user", "default message");
-        store.appendMessage("user", "side message", { conversationId: "side" });
+        store.appendMessage("user", "first message");
+        store.appendMessage("user", "second message");
       });
 
-      const defaultRes = (await stub.recvFrame(
+      const response = (await stub.recvFrame(
         makeReq("proc.history", {}),
       )) as ResponseOkFrame;
-      const sideRes = (await stub.recvFrame(
-        makeReq("proc.history", { conversationId: "side" }),
-      )) as ResponseOkFrame;
 
-      const defaultData = defaultRes.data as any;
-      const sideData = sideRes.data as any;
-      expect(defaultData.conversationId).toBe("default");
-      expect(defaultData.messageCount).toBe(1);
-      expect(defaultData.messages[0].content).toBe("default message");
-      expect(sideData.conversationId).toBe("side");
-      expect(sideData.messageCount).toBe(1);
-      expect(sideData.messages[0].content).toBe("side message");
+      expect(response.data).toMatchObject({
+        ok: true,
+        pid,
+        messageCount: 2,
+        messages: [
+          expect.objectContaining({ content: "first message" }),
+          expect.objectContaining({ content: "second message" }),
+        ],
+      });
     });
 
     it("exposes active run metadata for restore-time controls", async () => {
@@ -8281,18 +7678,17 @@ describe("Process DO — mechanical", () => {
         const process = instance as any;
         process.currentRun = {
           runId: "run-history-active",
-          conversationId: "side",
         };
       });
 
       const res = (await stub.recvFrame(
-        makeReq("proc.history", { conversationId: "side" }),
+        makeReq("proc.history", {}),
       )) as ResponseOkFrame;
 
       expect(res.ok).toBe(true);
       const data = res.data as any;
       expect(data.activeRunId).toBe("run-history-active");
-      expect(data.activeConversationId).toBe("side");
+      expect(data).not.toHaveProperty("activeConversationId");
     });
 
     it("includes full toolResult payload (metadata + output)", async () => {
@@ -8306,7 +7702,6 @@ describe("Process DO — mechanical", () => {
           "fs.read",
           "file contents here",
           false,
-          "default",
           "run-history-tool",
           "completed",
         );
@@ -8459,7 +7854,7 @@ describe("Process DO — mechanical", () => {
       expect(result.result.file.content).toContain("\"ok\":true");
     });
 
-    it("lets process-local codemode read its own /proc conversation view", async () => {
+    it("lets process-local codemode read its own /proc history view", async () => {
       const pid = "mech-codemode-self-proc-view";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -8472,7 +7867,7 @@ describe("Process DO — mechanical", () => {
       const res = (await stub.recvFrame(
         makeReq("codemode.run", {
           code: [
-            "const file = await fs.read({ target: \"gsv\", path: \"/proc/self/conversations/default/history\" });",
+            "const file = await fs.read({ target: \"gsv\", path: \"/proc/self/history\" });",
             "if (!file.ok) throw new Error(file.error);",
             "return file.content;",
           ].join("\n"),
@@ -8663,7 +8058,6 @@ describe("Process DO — mechanical", () => {
 
         process.currentRun = {
           runId: "run-codemode-fetch-approval",
-          conversationId: "default",
           approvalPolicy: {
             default: "auto",
             rules: [{ match: "net.fetch", action: "ask" }],
@@ -8725,7 +8119,6 @@ describe("Process DO — mechanical", () => {
         let dispatched = false;
         process.currentRun = {
           runId: "run-codemode-fetch-capability",
-          conversationId: "default",
         };
         process.waitForCodeModeApproval = async () => {
           requestedApproval = true;
@@ -8764,7 +8157,6 @@ describe("Process DO — mechanical", () => {
 
         process.currentRun = {
           runId: "run-codemode-fetch-stopped-after-fetch",
-          conversationId: "default",
           config: { capabilities: ["codemode.*", "net.fetch"] },
           approvalPolicy: {
             default: "auto",
@@ -8893,7 +8285,6 @@ describe("Process DO — mechanical", () => {
         const dispatchId = "dispatch-call-codemode-failed";
         process.currentRun = {
           runId,
-          conversationId: "default",
           approvalPolicy: { default: "auto", rules: [] },
         };
         registerToolBlock(process, runId, [{
@@ -8930,7 +8321,7 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.reset", () => {
-    it("archives all conversations and clears process history", async () => {
+    it("archives and clears process history", async () => {
       const pid = "mech-reset-1";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -8938,8 +8329,7 @@ describe("Process DO — mechanical", () => {
         const store = (instance as any).store;
         store.appendMessage("user", "hello");
         store.appendMessage("assistant", "hi");
-        store.openConversation({ conversationId: "side", title: "Side" });
-        store.appendMessage("user", "side hello", { conversationId: "side" });
+        store.appendMessage("user", "side hello", {});
       });
 
       const res = (await stub.recvFrame(
@@ -8949,33 +8339,21 @@ describe("Process DO — mechanical", () => {
       const data = res.data as any;
       expect(data.ok).toBe(true);
       expect(data.archivedMessages).toBe(3);
-      expect(data.archivedTo).toContain("/root/conversations/");
-      expect(data.archivedTo).toMatch(/\/$/);
+      expect(data.archivedTo).toMatch(
+        new RegExp(`^/root/processes/${encodeURIComponent(pid)}/history/.+\\.history\\.gen-1\\.jsonl\\.gz$`),
+      );
       expect(data.archives).toEqual([
         expect.objectContaining({
-          conversationId: "default",
           generation: 1,
-          messages: 2,
-          path: expect.stringMatching(/\/default\/.+\.default\.gen-1\.jsonl\.gz$/),
-        }),
-        expect.objectContaining({
-          conversationId: "side",
-          generation: 1,
-          messages: 1,
-          path: expect.stringMatching(/\/side\/.+\.side\.gen-1\.jsonl\.gz$/),
+          messages: 3,
+          path: data.archivedTo,
         }),
       ]);
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         expect(store.messageCount()).toBe(0);
-        expect(store.messageCount("side")).toBe(0);
-        expect(store.getConversation("default").generation).toBe(2);
-        expect(store.getConversation("side")).toMatchObject({
-          generation: 2,
-          status: "open",
-          title: "Side",
-        });
+        expect(store.getHistoryGeneration()).toBe(2);
       });
 
       for (const archive of data.archives) {
@@ -8984,25 +8362,6 @@ describe("Process DO — mechanical", () => {
         expect(obj).not.toBeNull();
       }
 
-      const manifestRes = (await stub.recvFrame(
-        makeReq("proc.conversation.generation.manifest", {
-          conversationId: "default",
-          generation: 1,
-        }),
-      )) as ResponseOkFrame;
-      expect((manifestRes.data as any).manifest).toMatchObject({
-        conversationId: "default",
-        generation: 1,
-        current: false,
-        archives: [
-          expect.objectContaining({
-            kind: "process-reset",
-            messages: 2,
-            archivePath: expect.stringMatching(/\/default\/.+\.default\.gen-1\.jsonl\.gz$/),
-          }),
-        ],
-        live: null,
-      });
     });
 
     it("returns zero when no messages to archive", async () => {
@@ -9094,7 +8453,7 @@ describe("Process DO — mechanical", () => {
             return "";
           },
         };
-        process.archiveAllConversationMessages = vi.fn(async () => {
+        process.archiveHistoryMessages = vi.fn(async () => {
           markArchiveStarted();
           await archiveBlocked;
           return { archivedMessages: 1, archivedTo: "/archive/", archives: [] };
@@ -9104,7 +8463,6 @@ describe("Process DO — mechanical", () => {
         });
         process.currentRun = {
           runId: "run-reset-fence",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",
@@ -9172,9 +8530,7 @@ describe("Process DO — mechanical", () => {
       });
 
       const killed = await stub.recvFrame(makeReq("proc.kill", {})) as ResponseOkFrame;
-      const archive = (killed.data as any).archives.find((item: any) => (
-        item.conversationId === "default"
-      ));
+      const archive = (killed.data as any).archives[0];
       expect(archive).toBeTruthy();
       expect(await env.STORAGE.head(activeKey)).toBeNull();
 
@@ -9184,9 +8540,12 @@ describe("Process DO — mechanical", () => {
         pid: resumedPid,
         identity: ROOT_IDENTITY,
         profile: DEFAULT_PROFILE,
-        hydrateFrom: archive.path,
       })) as ResponseOkFrame;
       expect(initialized.ok).toBe(true);
+      const imported = await resumed.recvFrame(makeReq("proc.history.import", {
+        archivePaths: [archive.path],
+      })) as ResponseOkFrame;
+      expect(imported.data).toMatchObject({ ok: true, pid: resumedPid, restoredMessages: 1 });
 
       const history = await resumed.recvFrame(makeReq("proc.history", {})) as ResponseOkFrame;
       const media = (history.data as any).messages[0].content.media[0];
@@ -9227,7 +8586,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        process.currentRun = { runId: "run-kill-failure", conversationId: "default" };
+        process.currentRun = { runId: "run-kill-failure" };
         process.sendSignal = vi.fn(async () => {
           throw new Error("finish route unavailable");
         });
@@ -9253,7 +8612,7 @@ describe("Process DO — mechanical", () => {
         process.sendSignal = vi.fn(async (signal: string, payload: unknown) => {
           emitted.push({ signal, payload });
         });
-        process.currentRun = { runId, conversationId: "default" };
+        process.currentRun = { runId };
         process.store.register(
           "dispatch-kill-1",
           "call-kill-1",
@@ -9317,15 +8676,14 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("archives all conversations before clearing killed process history", async () => {
+    it("archives process history before clearing a killed process", async () => {
       const pid = "mech-kill-archive-all";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
       await runInDurableObject(stub, (instance: Process) => {
         const store = (instance as any).store;
         store.appendMessage("user", "default before kill");
-        store.openConversation({ conversationId: "build" });
-        store.appendMessage("user", "build before kill", { conversationId: "build" });
+        store.appendMessage("user", "build before kill", {});
       });
 
       const killRes = (await stub.recvFrame(
@@ -9338,10 +8696,11 @@ describe("Process DO — mechanical", () => {
         pid,
         archivedMessages: 2,
       });
-      expect(data.archivedTo).toMatch(/\/root\/conversations\/$/);
-      expect(data.archives.map((archive: any) => archive.conversationId)).toEqual([
-        "build",
-        "default",
+      expect(data.archivedTo).toMatch(
+        new RegExp(`^/root/processes/${encodeURIComponent(pid)}/history/.+\\.history\\.gen-1\\.jsonl\\.gz$`),
+      );
+      expect(data.archives).toEqual([
+        expect.objectContaining({ generation: 1, messages: 2, path: data.archivedTo }),
       ]);
 
       for (const archive of data.archives) {
@@ -9463,9 +8822,9 @@ describe("Process DO — mechanical", () => {
         rows.forEach(([id, result, error, status], index) => {
           sql.exec(
             `INSERT INTO pending_tool_calls (
-              dispatch_id, id, run_id, conversation_id, call, args_json,
+              dispatch_id, id, run_id, call, args_json,
               result_json, error, status, created_at
-            ) VALUES (?, ?, 'run-upgrade-outcomes', 'default', 'fs.read', '{}', ?, ?, ?, ?)`,
+            ) VALUES (?, ?, 'run-upgrade-outcomes', 'fs.read', '{}', ?, ?, ?, ?)`,
             `dispatch-${id}`,
             id,
             result,
@@ -9505,9 +8864,9 @@ describe("Process DO — mechanical", () => {
           createdAt: number,
         ) => sql.exec(
           `INSERT INTO pending_tool_calls (
-            dispatch_id, id, run_id, conversation_id, call, args_json,
+            dispatch_id, id, run_id, call, args_json,
             status, created_at
-          ) VALUES (?, ?, ?, 'default', ?, '{}', ?, ?)`,
+          ) VALUES (?, ?, ?, ?, '{}', ?, ?)`,
           dispatchId,
           id,
           runId,
@@ -9517,9 +8876,9 @@ describe("Process DO — mechanical", () => {
         );
         const insertHil = (requestId: string, runId: string, toolCallId: string) => sql.exec(
           `INSERT INTO pending_hil (
-            request_id, run_id, conversation_id, tool_call_id, tool_name,
+            request_id, run_id, tool_call_id, tool_name,
             syscall, args_json, created_at
-          ) VALUES (?, ?, 'default', ?, 'Read', 'fs.read', '{}', 1)`,
+          ) VALUES (?, ?, ?, 'Read', 'fs.read', '{}', 1)`,
           requestId,
           runId,
           toolCallId,
@@ -9615,7 +8974,7 @@ describe("Process DO — mechanical", () => {
           "default",
         );
         process.store.markDispatched("dispatch-timeout");
-        process.currentRun = { runId: "run-timeout", conversationId: "default" };
+        process.currentRun = { runId: "run-timeout" };
 
         await process.onToolDispatchTimeout({
           runId: "run-timeout",
@@ -9645,7 +9004,6 @@ describe("Process DO — mechanical", () => {
         });
         process.currentRun = {
           runId: "run-media-timeout",
-          conversationId: "default",
           pendingMediaMessageId: messageId,
         };
         const signal = process.runAbortSignal("run-media-timeout");
@@ -9679,7 +9037,7 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
         process.schedule = vi.fn();
-        process.currentRun = { runId: "run-timeouts", conversationId: "default" };
+        process.currentRun = { runId: "run-timeouts" };
         for (const dispatchId of ["dispatch-a", "dispatch-b"]) {
           process.store.register(dispatchId, dispatchId, "run-timeouts", "fs.read", {});
           process.store.markDispatched(dispatchId);
@@ -9717,7 +9075,6 @@ describe("Process DO — mechanical", () => {
         process.dispatchSyscall = vi.fn();
         process.currentRun = {
           runId: "run-timeout-schedule-failure",
-          conversationId: "default",
           approvalPolicy: { default: "auto", rules: [] },
         };
         registerToolBlock(process, "run-timeout-schedule-failure", [
@@ -9802,7 +9159,6 @@ describe("Process DO — mechanical", () => {
           });
           process.currentRun = {
             runId: "run-direct-old",
-            conversationId: "default",
             config: {
               executor: { kind: "process", pid },
               profile: "task",
@@ -9903,7 +9259,7 @@ describe("Process DO — mechanical", () => {
           const process = instance as any;
           process.sendSignal = vi.fn();
           process.scheduleTick = vi.fn(async () => {});
-          process.currentRun = { runId: "run-codemode-old", conversationId: "default" };
+          process.currentRun = { runId: "run-codemode-old" };
 
           const dispatching = process.dispatchCodeModeSyscall(
             "run-codemode-old",
@@ -9956,7 +9312,6 @@ describe("Process DO — mechanical", () => {
         });
         process.currentRun = {
           runId: "run-recovery-claim",
-          conversationId: "default",
           approvalPolicy: { default: "auto", rules: [] },
         };
         registerToolBlock(process, "run-recovery-claim", [
@@ -10020,7 +9375,7 @@ describe("Process DO — mechanical", () => {
       try {
         await runInDurableObject(stub, async (instance: Process) => {
           const process = instance as any;
-          process.currentRun = { runId: "run-sync-body", conversationId: "default" };
+          process.currentRun = { runId: "run-sync-body" };
           process.store.register(
             "dispatch-sync-body",
             "call-sync-body",
@@ -10053,7 +9408,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        process.currentRun = { runId: "run-body-abort", conversationId: "default" };
+        process.currentRun = { runId: "run-body-abort" };
         process.store.register(
           "dispatch-body-abort",
           "call-body-abort",
@@ -10207,7 +9562,6 @@ describe("Process DO — mechanical", () => {
 
         process.currentRun = {
           runId: "run-shell-continuation",
-          conversationId: "default",
           approvalPolicy: {
             default: "auto",
             rules: [{ match: "shell.exec", target: "macbook", action: "deny" }],
@@ -10264,7 +9618,6 @@ describe("Process DO — mechanical", () => {
         });
         process.currentRun = {
           runId: "run-shell-unknown-continuation",
-          conversationId: "default",
           config: {
             executor: { kind: "process", pid },
             profile: "task",

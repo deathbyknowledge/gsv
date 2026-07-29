@@ -13,14 +13,9 @@ import type { ScheduleRecord, ScheduleRunHistoryEntry } from "@humansandmachines
 export type ProcessViewCall =
   | "proc.ai.config.get"
   | "proc.ai.config.set"
-  | "proc.conversation.get"
-  | "proc.conversation.generation.manifest"
-  | "proc.conversation.generations"
-  | "proc.conversation.list"
-  | "proc.conversation.segment.read"
-  | "proc.conversation.segments"
-  | "proc.conversation.timeline"
-  | "proc.history";
+  | "proc.history"
+  | "proc.history.segment.read"
+  | "proc.history.segments";
 
 export type ProcessViewRequest = <S extends ProcessViewCall>(
   pid: string,

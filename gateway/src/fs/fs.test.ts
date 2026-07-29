@@ -146,7 +146,6 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     cwd: "/home/sam",
     state: "idle",
     activeRunId: null,
-    activeConversationId: null,
     queuedCount: 0,
     lastActiveAt: null,
     label: "Alpha",
@@ -170,66 +169,23 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
     home: SAM_AGENT.home,
     cwd: SAM_AGENT.cwd,
   };
-  const conversations = [
-    {
-      id: "default",
-      generation: 1,
-      status: "open",
-      title: null,
-      messageCount: 2,
-      createdAt: 1000,
-      updatedAt: 2000,
-    },
-    {
-      id: "build",
-      generation: 2,
-      status: "open",
-      title: "Build",
-      messageCount: 1,
-      createdAt: 1100,
-      updatedAt: 2100,
-    },
+  const history = [
+    { id: 1, role: "user", content: "hello", timestamp: 1000 },
+    { id: 2, role: "assistant", content: { text: "hi" }, timestamp: 1100 },
   ];
-  const history = {
-    default: [
-      { id: 1, role: "user", content: "hello", timestamp: 1000 },
-      { id: 2, role: "assistant", content: { text: "hi" }, timestamp: 1100 },
-    ],
-    build: [
-      { id: 3, role: "user", content: "run build", timestamp: 1200 },
-    ],
-  };
   const segment = {
     id: "seg-1",
-    conversationId: "default",
     generation: 1,
     kind: "compaction",
     fromMessageId: 1,
     toMessageId: 1,
-    archivePath: "/var/sessions/sam/task-alpha/conversations/default/seg-1.jsonl.gz",
+    archivePath: "/var/sessions/sam/task-alpha/history/seg-1.jsonl.gz",
     summaryMessageId: 2,
     createdAt: 1300,
   };
   const segmentMessages = [
     { id: 1, role: "user", content: "archived hello", timestamp: 1000 },
   ];
-  const archive = {
-    id: "reset-1",
-    conversationId: "default",
-    generation: 1,
-    kind: "reset",
-    messages: 2,
-    archivePath: "/var/sessions/sam/task-alpha/conversations/default/reset-1.jsonl.gz",
-    createdAt: 1600,
-  };
-  const liveGeneration = {
-    conversationId: "default",
-    generation: 1,
-    messageCount: 2,
-    firstMessageId: 1,
-    lastMessageId: 2,
-    updatedAt: 2000,
-  };
   const schedules = [
     {
       id: "sched-1",
@@ -278,7 +234,7 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
   ];
   let samCrontab = "CRON_TZ=Europe/Amsterdam\n0 9 * * * proc spawn --as sam-agent --non-interactive --label daily-pulse \"Daily pulse\"\n";
   const systemCrontabs = new Map<string, string>([
-    ["daily", "0 5 * * * proc compact init:1000 --conversation default --keep-last 80\n"],
+    ["daily", "0 5 * * * proc compact init:1000 --keep-last 80\n"],
   ]);
   const configEntries = new Map<string, string>([
     ["config/ai/provider", "workers-ai"],
@@ -424,7 +380,6 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
       },
     },
     async processRequest(pid, call, args) {
-      const conversationId = String(args?.conversationId ?? "default");
       if (call === "proc.ai.config.get") {
         return { ok: true, pid, config: processAiConfig };
       }
@@ -457,107 +412,30 @@ function makeRuntimeViewFs(identity: ProcessIdentity, selfPid?: string): GsvFs {
           return { ok: true, pid, config: processAiConfig };
         }
       }
-      if (call === "proc.conversation.list") {
-        return { ok: true, pid: "task-alpha", conversations };
-      }
-      if (call === "proc.conversation.get") {
-        return {
-          ok: true,
-          pid: "task-alpha",
-          conversation: conversations.find((conversation) => conversation.id === conversationId) ?? null,
-        };
-      }
       if (call === "proc.history") {
-        const messages = history[conversationId as keyof typeof history] ?? [];
         const offset = Number(args?.offset ?? 0);
         const limit = Number(args?.limit ?? 500);
         return {
           ok: true,
           pid: "task-alpha",
-          conversationId,
-          messages: messages.slice(offset, offset + limit),
-          messageCount: messages.length,
+          messages: history.slice(offset, offset + limit),
+          messageCount: history.length,
         };
       }
-      if (call === "proc.conversation.segments") {
+      if (call === "proc.history.segments") {
         return {
           ok: true,
           pid: "task-alpha",
-          conversationId,
-          segments: conversationId === "default" ? [segment] : [],
+          segments: [segment],
         };
       }
-      if (call === "proc.conversation.segment.read") {
+      if (call === "proc.history.segment.read") {
         return {
           ok: true,
           pid: "task-alpha",
-          conversationId,
           segment,
           messages: segmentMessages,
           messageCount: segmentMessages.length,
-        };
-      }
-      if (call === "proc.conversation.timeline") {
-        return {
-          ok: true,
-          pid: "task-alpha",
-          conversationId,
-          timeline: conversationId === "default"
-            ? [
-                {
-                  type: "segment",
-                  id: segment.id,
-                  conversationId: segment.conversationId,
-                  generation: segment.generation,
-                  segmentKind: segment.kind,
-                  fromMessageId: segment.fromMessageId,
-                  toMessageId: segment.toMessageId,
-                  archivePath: segment.archivePath,
-                  summaryMessageId: segment.summaryMessageId,
-                  createdAt: segment.createdAt,
-                },
-                {
-                  type: "archive",
-                  id: archive.id,
-                  conversationId: archive.conversationId,
-                  generation: archive.generation,
-                  archiveKind: archive.kind,
-                  messages: archive.messages,
-                  archivePath: archive.archivePath,
-                  createdAt: archive.createdAt,
-                },
-                { type: "live", ...liveGeneration },
-              ]
-            : [{ type: "live", conversationId, generation: 2, messageCount: 1, firstMessageId: 3, lastMessageId: 3, updatedAt: 2100 }],
-        };
-      }
-      if (call === "proc.conversation.generations") {
-        return {
-          ok: true,
-          pid: "task-alpha",
-          conversationId,
-          generations: conversationId === "default" ? [1] : [2],
-        };
-      }
-      if (call === "proc.conversation.generation.manifest") {
-        const generation = Number(args?.generation);
-        const isDefaultGeneration = conversationId === "default" && generation === 1;
-        return {
-          ok: true,
-          pid: "task-alpha",
-          conversationId,
-          manifest: isDefaultGeneration
-            ? {
-                conversationId,
-                generation,
-                current: true,
-                status: "open",
-                title: null,
-                archives: [archive],
-                segments: [segment],
-                live: liveGeneration,
-              }
-            : null,
         };
       }
       return { ok: false, error: "unknown call" };
@@ -1305,29 +1183,18 @@ describe("GsvFs Linux-like runtime views", () => {
     }
   });
 
-  it("exposes process conversations and compacted segments under /proc", async () => {
+  it("exposes process history and compacted segments under /proc", async () => {
     const fs = makeRuntimeViewFs(SAM, "task-alpha");
 
     await expect(fs.readdir("/proc/task-alpha")).resolves.toEqual([
       "ai",
-      "conversations",
-      "identity",
-      "status",
-    ]);
-    await expect(fs.readdir("/proc/self/conversations")).resolves.toEqual(["build", "default"]);
-    await expect(fs.readdir("/proc/task-alpha/conversations")).resolves.toEqual(["build", "default"]);
-    await expect(fs.readdir("/proc/task-alpha/conversations/default")).resolves.toEqual([
-      "generations",
       "history",
+      "identity",
       "segments",
       "status",
-      "timeline",
     ]);
 
-    const status = JSON.parse(await fs.readFile("/proc/task-alpha/conversations/default/status"));
-    expect(status).toMatchObject({ id: "default", generation: 1, messageCount: 2 });
-
-    const historyLines = (await fs.readFile("/proc/task-alpha/conversations/default/history"))
+    const historyLines = (await fs.readFile("/proc/task-alpha/history"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
@@ -1336,8 +1203,8 @@ describe("GsvFs Linux-like runtime views", () => {
       expect.objectContaining({ id: 2, role: "assistant" }),
     ]);
 
-    await expect(fs.readdir("/proc/task-alpha/conversations/default/segments")).resolves.toEqual(["seg-1"]);
-    const segmentLines = (await fs.readFile("/proc/task-alpha/conversations/default/segments/seg-1"))
+    await expect(fs.readdir("/proc/task-alpha/segments")).resolves.toEqual(["seg-1"]);
+    const segmentLines = (await fs.readFile("/proc/task-alpha/segments/seg-1"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
@@ -1345,29 +1212,6 @@ describe("GsvFs Linux-like runtime views", () => {
       expect.objectContaining({ id: 1, content: "archived hello" }),
     ]);
 
-    const timelineLines = (await fs.readFile("/proc/task-alpha/conversations/default/timeline"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(timelineLines).toEqual([
-      expect.objectContaining({ type: "segment", id: "seg-1" }),
-      expect.objectContaining({ type: "archive", id: "reset-1", archiveKind: "reset" }),
-      expect.objectContaining({ type: "live", generation: 1, messageCount: 2 }),
-    ]);
-
-    await expect(fs.readdir("/proc/task-alpha/conversations/default/generations")).resolves.toEqual(["1"]);
-    await expect(fs.readdir("/proc/task-alpha/conversations/default/generations/1")).resolves.toEqual(["manifest"]);
-    const manifest = JSON.parse(
-      await fs.readFile("/proc/task-alpha/conversations/default/generations/1/manifest"),
-    );
-    expect(manifest).toMatchObject({
-      conversationId: "default",
-      generation: 1,
-      current: true,
-      archives: [expect.objectContaining({ id: "reset-1" })],
-      segments: [expect.objectContaining({ id: "seg-1" })],
-      live: expect.objectContaining({ messageCount: 2 }),
-    });
   });
 
   it("keeps /proc/self visible when it resolves to a personal-agent executor", async () => {
@@ -1382,11 +1226,11 @@ describe("GsvFs Linux-like runtime views", () => {
     ]);
     await expect(fs.readdir("/proc/self")).resolves.toEqual([
       "ai",
-      "conversations",
+      "history",
       "identity",
+      "segments",
       "status",
     ]);
-    await expect(fs.readdir("/proc/self/conversations")).resolves.toEqual(["build", "default"]);
 
     const status = await fs.readFile("/proc/self/status");
     expect(status).toContain("Pid:\ttask-personal");
@@ -1405,8 +1249,9 @@ describe("GsvFs Linux-like runtime views", () => {
     ]);
     await expect(fs.readdir("/proc/self")).resolves.toEqual([
       "ai",
-      "conversations",
+      "history",
       "identity",
+      "segments",
       "status",
     ]);
 
@@ -1419,7 +1264,7 @@ describe("GsvFs Linux-like runtime views", () => {
     await expect(fs.readdir("/proc/task-foreign")).rejects.toThrow("ENOENT");
   });
 
-  it("hides another user's process conversation view from non-root users", async () => {
+  it("hides another user's process history view from non-root users", async () => {
     const fs = makeRuntimeViewFs(SAM);
 
     await expect(fs.readdir("/proc/task-foreign")).rejects.toThrow("ENOENT");
@@ -1518,9 +1363,9 @@ describe("GsvFs Linux-like runtime views", () => {
     });
     expect(crontabStat.size).toBeGreaterThan(0);
 
-    await fs.writeFile("/var/spool/cron/sam", "0 4 * * * proc compact init:1000 --conversation default --keep-last 80\n");
+    await fs.writeFile("/var/spool/cron/sam", "0 4 * * * proc compact init:1000 --keep-last 80\n");
     await expect(fs.readFile("/var/spool/cron/sam"))
-      .resolves.toBe("0 4 * * * proc compact init:1000 --conversation default --keep-last 80\n");
+      .resolves.toBe("0 4 * * * proc compact init:1000 --keep-last 80\n");
 
     const aliceFs = makeRuntimeViewFs(ALICE);
     await expect(aliceFs.readdir("/var/spool/cron")).resolves.toEqual([]);

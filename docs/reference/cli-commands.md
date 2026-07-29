@@ -42,7 +42,7 @@ Use `:quit`, `:exit`, or `:q` to leave.
 
 Inside the gateway shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --here`
-admits scheduled events to the current process conversation and preserves the
+admits scheduled events to the current process and preserves the
 current authorized adapter reply destination when one exists.
 `crontab` schedules background shell commands, while the remaining `sched`
 commands inspect and control the Kernel schedule records:
@@ -146,12 +146,12 @@ automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
 Use `sched add --here` from a process-backed shell when each firing should admit
-an event into the current process conversation. It creates a typed
+an event into the current process. It creates a typed
 `process.event` schedule for the current process and active conversation; pass
 `--conversation` to override that conversation. When invoked during an adapter
 run, `--here` captures the authorized adapter destination so the future final
 answer returns there. Without such a route, the answer remains in the GSV
-process conversation. The target is bound to the current process id and must be
+process history. The target is bound to the current process id and must be
 recreated after that process is killed.
 
 Use `sched add --to DESTINATION` for direct scheduled text delivery. It creates
