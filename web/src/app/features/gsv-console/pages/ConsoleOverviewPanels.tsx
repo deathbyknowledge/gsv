@@ -160,12 +160,12 @@ function integrationRow(server: ConsoleMcpServer): OverviewRow {
 function accountStatus(account: ConsoleAccount, processes: readonly ConsoleProcess[]): Pick<CrewCard, "meta" | "statusLabel" | "tone"> {
   const ownedProcesses = processes.filter((process) => process.uid === account.uid || process.username === account.username);
   const running = ownedProcesses.some(isRunningProcess);
-  const queued = ownedProcesses.some(isQueuedProcess);
+  const queuedCount = ownedProcesses.filter(isQueuedProcess).length;
   const unknown = ownedProcesses.some((process) => process.state === "unknown");
   const openCount = ownedProcesses.length;
 
-  if (queued) {
-    return { meta: `${openCount} queued`, statusLabel: "QUEUED", tone: "update" };
+  if (queuedCount > 0) {
+    return { meta: `${queuedCount} queued`, statusLabel: "QUEUED", tone: "update" };
   }
   if (running) {
     const openLabel = openCount === 1 ? "1 open task" : `${openCount} open tasks`;

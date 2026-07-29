@@ -114,12 +114,19 @@ function CrewRoster({
   // Seeds from the route's `select` (deep-link to a section, e.g. GLOBAL
   // INSTRUCTIONS) — this component only mounts once config has loaded.
   const [editorSection, setEditorSection] = useState<EditDefaultsSection | null>(initialSection ?? null);
-  // Re-open on a deep-link that arrives after mount (e.g. the route changes to
-  // /settings/crew/context while CREW is already open). Only opens on a
-  // requested section; a null `initialSection` leaves a manual open alone.
+  // Keep the editor in sync with the route's `select` deep-link after mount:
+  // opening on a requested section (e.g. /settings/crew/context while CREW is
+  // already open), and closing when the route navigates *away* from a section
+  // back to /settings/crew. A null→null transition is a purely manual open
+  // (the route never carried a section), so that is left untouched.
+  const prevInitialSection = useRef<EditDefaultsSection | null>(initialSection ?? null);
   useEffect(() => {
+    const prev = prevInitialSection.current;
+    prevInitialSection.current = initialSection ?? null;
     if (initialSection) {
       setEditorSection(initialSection);
+    } else if (prev) {
+      setEditorSection(null);
     }
   }, [initialSection]);
   const rootRef = useRef<HTMLDivElement>(null);
