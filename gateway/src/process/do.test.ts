@@ -5743,6 +5743,67 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("process history", () => {
+    it("exports through a tool-calling assistant message with its tool results", async () => {
+      const sourcePid = "mech-history-export-tool-boundary";
+      const source = await initProcess(sourcePid, ROOT_IDENTITY);
+      const assistantId = await runInDurableObject(source, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("user", "Inspect the file.");
+        const id = store.appendMessage("assistant", "I will inspect it.", {
+          toolCalls: JSON.stringify([{
+            type: "toolCall",
+            id: "call-export-read",
+            name: "Read",
+            arguments: { path: "/tmp/example.txt" },
+          }]),
+        });
+        store.appendToolResult(
+          "call-export-read",
+          "fs.read",
+          "file contents",
+          false,
+        );
+        store.appendMessage("assistant", "This must not be exported.");
+        return id;
+      });
+
+      const exportResponse = await source.recvFrame(makeReq("proc.history.export", {
+        throughMessageId: assistantId,
+      })) as ResponseOkFrame;
+      const exported = exportResponse.data as any;
+      expect(exported).toMatchObject({
+        ok: true,
+        sourcePid,
+        throughMessageId: assistantId,
+        includedLiveSuffix: false,
+      });
+
+      const targetPid = "mech-history-import-tool-boundary";
+      const target = await initProcess(targetPid, ROOT_IDENTITY);
+      const importResponse = await target.recvFrame(makeReq("proc.history.import", {
+        archivePaths: exported.archivePaths,
+      })) as ResponseOkFrame;
+      expect(importResponse.data).toMatchObject({
+        ok: true,
+        pid: targetPid,
+        restoredMessages: 3,
+      });
+
+      await runInDurableObject(target, (instance: Process) => {
+        expect((instance as any).store.getMessages().map((message: any) => ({
+          role: message.role,
+          content: message.content,
+          toolCallId: message.toolCallId,
+        }))).toEqual([
+          { role: "user", content: "Inspect the file.", toolCallId: null },
+          { role: "assistant", content: "I will inspect it.", toolCallId: null },
+          { role: "toolResult", content: "file contents", toolCallId: "call-export-read" },
+        ]);
+      });
+
+      await env.STORAGE.delete(exported.archivePaths[0].replace(/^\/+/, ""));
+    });
+
     it("compacts a history prefix into an archived segment", async () => {
       const pid = "mech-conversation-compact";
       const stub = await initProcess(pid, ROOT_IDENTITY);

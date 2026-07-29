@@ -3005,7 +3005,7 @@ export class Process extends Host<Env> {
       const messages = this.store.getHistoryPrefixMessages({ throughMessageId });
       if (
         messages.length === 0
-        || messages[messages.length - 1]?.id !== throughMessageId
+        || !messages.some((message) => message.id === throughMessageId)
       ) {
         return { ok: false, error: `History message not found: ${throughMessageId}` };
       }
