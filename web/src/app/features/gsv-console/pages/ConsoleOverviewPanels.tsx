@@ -18,6 +18,7 @@ import {
   behaviorForAccount,
 } from "../domain/consoleAgentBehavior";
 import { overrideConfigCount } from "../domain/consoleAi";
+import { useConsoleAgentContext } from "../hooks/useConsoleData";
 import type { ConsoleListKind } from "../domain/consoleListTypes";
 import {
   avatarForAccount,
@@ -305,6 +306,17 @@ function SettingsCard({
   const permission = behavior?.permission ?? "ask";
   const overrides = overrideConfigCount(config);
 
+  // Real global-instruction state (context.d files), mirroring CrewDefaultsPanel
+  // — never the misleading hardcoded "UNDEFINED". Query self-disables with no
+  // viewer / while loading, in which case we show a neutral placeholder.
+  const context = useConsoleAgentContext(viewer?.username ?? "");
+  const contextFilesCount = context.resource.isLoading || context.resource.isUnavailable || context.resource.isError
+    ? null
+    : context.files.length;
+  const instructionsValue = contextFilesCount == null
+    ? "—"
+    : `${contextFilesCount} FILE${contextFilesCount === 1 ? "" : "S"}`;
+
   const openModels = onOpenSurface ? () => onOpenSurface("models") : undefined;
   const openOverrides = onOpenSurface ? () => onOpenSurface("overrides") : undefined;
   const openCrewInstructions = onOpenSurface ? () => onOpenSurface("crew-instructions") : undefined;
@@ -320,7 +332,7 @@ function SettingsCard({
     },
     // Instructions live on the CREW page (GLOBAL INSTRUCTIONS / context.d), so
     // the CTA opens there directly — an "elsewhere" jump, not an in-place edit.
-    { label: "AGENT INSTRUCTIONS", value: "UNDEFINED", linkLabel: "edit files", linkExternal: true, onLink: openCrewInstructions },
+    { label: "AGENT INSTRUCTIONS", value: instructionsValue, linkLabel: "edit files", linkExternal: true, onLink: openCrewInstructions },
   ];
 
   return (

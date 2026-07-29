@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Avatar, type AvatarStatus } from "../../../components/ui/Avatar";
 import type { AgentToolTarget } from "../../../components/ui/agentToolApprovalOptions";
 import { CrewDefaultsPanel } from "../components/CrewDefaultsPanel";
@@ -114,6 +114,14 @@ function CrewRoster({
   // Seeds from the route's `select` (deep-link to a section, e.g. GLOBAL
   // INSTRUCTIONS) — this component only mounts once config has loaded.
   const [editorSection, setEditorSection] = useState<EditDefaultsSection | null>(initialSection ?? null);
+  // Re-open on a deep-link that arrives after mount (e.g. the route changes to
+  // /settings/crew/context while CREW is already open). Only opens on a
+  // requested section; a null `initialSection` leaves a manual open alone.
+  useEffect(() => {
+    if (initialSection) {
+      setEditorSection(initialSection);
+    }
+  }, [initialSection]);
   const rootRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
 
