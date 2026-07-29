@@ -665,9 +665,8 @@ export function createModelProfile(
   if (!normalizedName) {
     throw new Error("Profile name is required");
   }
-  const existing = profiles.find((profile) => profile.name.toLowerCase() === normalizedName.toLowerCase());
-  if (existing) {
-    return updateModelProfile(profiles, existing.id, normalizedName, values, now);
+  if (profiles.some((profile) => profile.name.toLowerCase() === normalizedName.toLowerCase())) {
+    throw new Error("Profile name already exists");
   }
   return [
     {
@@ -863,7 +862,7 @@ function redactModelProfileSecrets(profile: unknown): unknown {
   return { ...record, values };
 }
 
-function normalizeProfileName(value: unknown): string {
+export function normalizeProfileName(value: unknown): string {
   return String(value ?? "").trim().replace(/\s+/g, " ").slice(0, MAX_PROFILE_NAME_LENGTH);
 }
 

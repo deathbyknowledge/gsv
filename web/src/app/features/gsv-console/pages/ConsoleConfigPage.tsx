@@ -58,6 +58,7 @@ import {
   modelProfileSecretConfigKey,
   modelProfileSummary,
   modelProfilesForConfig,
+  normalizeProfileName,
   profileValuesFromDrafts,
   updateModelProfile,
   viewerAccountForSettings,
@@ -598,11 +599,8 @@ function ModelSettingsDetail({
             ? updateModelProfile(profiles, profile.id, name, values)
             : createModelProfile(profiles, name, values);
           const savedProfile = profile
-            ? nextProfiles.find((candidate) => candidate.id === profile.id)
+            ? nextProfiles.find((candidate) => candidate.id === profile.id)!
             : nextProfiles[0];
-          if (!savedProfile) {
-            throw new Error("Saved model profile was not found.");
-          }
           const clearedByProfile = new Map([[savedProfile.id, clearedSecretKeys]]);
           const entries = modelProfileSaveEntries(viewer.uid, profiles, nextProfiles, clearedByProfile);
           if (makeDefault) {
@@ -1014,7 +1012,7 @@ function ModelProfileForm({
 
   const duplicateName = profiles.some((candidate) =>
     candidate.id !== profile?.id &&
-    candidate.name.toLowerCase() === name.trim().toLowerCase()
+    candidate.name.toLowerCase() === normalizeProfileName(name).toLowerCase()
   );
   const isCustomEndpoint = isCustomModelProvider(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "");
   const isOpenAiCodexProvider = normalizeProviderValue(drafts[MODEL_PROVIDER_FIELD_KEY] ?? "") === OPENAI_CODEX_PROVIDER;

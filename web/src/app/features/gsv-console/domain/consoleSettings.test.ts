@@ -59,6 +59,7 @@ describe("console settings domain", () => {
       "config/ai/max_tokens": "8192",
       "config/ai/max_context_bytes": "65536",
     }, 1000);
+    expect(() => createModelProfile(profiles, "Deep   Research", {}, 2000)).toThrow("Profile name already exists");
 
     expect(profiles[0]).toMatchObject({
       id: "deep-research",
