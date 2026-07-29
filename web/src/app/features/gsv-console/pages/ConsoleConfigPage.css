@@ -130,6 +130,13 @@
   align-items: center;
 }
 
+.gsv-console-model-primary-actions {
+  margin-inline-start: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .gsv-console-model-wizard {
   align-content: start;
 }

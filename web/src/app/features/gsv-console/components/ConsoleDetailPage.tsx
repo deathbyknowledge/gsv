@@ -27,14 +27,16 @@ export type ConsoleDetailSection = {
 };
 
 type ConsoleDetailPageProps = {
-  /** Regular/secondary actions. Rendered bottom-right in the page footer,
-   *  alongside the primary button and opposite `dangerAction`. */
+  /** Regular/secondary actions. Rendered at the end of the page footer by
+   *  default, alongside the primary button and opposite `dangerAction`. */
   actions?: ComponentChildren;
+  /** Footer alignment for regular/primary actions. Defaults to the end. */
+  actionsAlignment?: "center" | "end";
   blurb: string;
   children?: ComponentChildren;
   /** Destructive action (FORGET / REMOVE / DISCONNECT / KILL). Rendered at the
    *  bottom-left of the page footer, opposite the regular/primary `actions`
-   *  which sit bottom-right. */
+   *  which sit at the end by default. */
   dangerAction?: ComponentChildren;
   icon: string;
   /** Back navigation. For surfaces whose detail is reflected in the shell
@@ -58,6 +60,7 @@ type ConsoleDetailPageProps = {
 
 export function ConsoleDetailPage({
   actions,
+  actionsAlignment = "end",
   blurb,
   children,
   dangerAction,
@@ -169,7 +172,7 @@ export function ConsoleDetailPage({
         <footer class="gsv-console-detail-footer">
           {hasDanger ? dangerAction : null}
           {hasActions ? (
-            <div class="gsv-console-detail-footer-actions">
+            <div class={`gsv-console-detail-footer-actions is-${actionsAlignment}`}>
               {actions}
               {primaryLabel ? (
                 <Button
