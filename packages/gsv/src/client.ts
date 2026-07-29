@@ -1380,14 +1380,23 @@ function assignNamespaces(target: Record<string, unknown>, call: GsvClientCall):
 
     for (const part of parts.slice(0, -1)) {
       const existing = cursor[part];
-      if (!existing || typeof existing !== "object") {
+      if (
+        !existing
+        || (typeof existing !== "object" && typeof existing !== "function")
+      ) {
         cursor[part] = {};
       }
       cursor = cursor[part] as Record<string, unknown>;
     }
 
-    const method = parts[parts.length - 1];
-    cursor[method] = ((args: unknown = {}) => call(syscall, args as never)) as GsvSyscallMethod<typeof syscall>;
+    const methodName = parts[parts.length - 1];
+    const existing = cursor[methodName];
+    const method = ((args: unknown = {}) =>
+      call(syscall, args as never)) as GsvSyscallMethod<typeof syscall>;
+    if (existing && (typeof existing === "object" || typeof existing === "function")) {
+      Object.assign(method, existing);
+    }
+    cursor[methodName] = method;
   }
 }
 
