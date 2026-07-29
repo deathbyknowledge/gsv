@@ -1,0 +1,155 @@
+/* Dialog — a general modal surface. Panel only (see Dialog.tsx); wrap it in
+   `.gsv-dialog-scrim` for the backdrop + centering. Mirrors the console
+   confirm-layer scrim and the ConfirmModal panel chrome. */
+
+.gsv-dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 3, 16, 0.66);
+}
+
+.gsv-dialog {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #0e0b24;
+  border: 1px solid var(--primary-hi);
+  box-shadow: 0 0 0 1px #060414, 0 18px 50px rgba(0, 0, 0, 0.6);
+  font-family: var(--gsv-font-mono);
+}
+
+/* Tall, definite height so a hosted page's own body can scroll. */
+.gsv-dialog.is-fill {
+  height: min(86vh, 780px);
+}
+
+/* Bracket corners. */
+.gsv-dialog-corner {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  pointer-events: none;
+}
+
+.gsv-dialog-corner.is-tl {
+  top: 5px;
+  left: 5px;
+  border-top: 1px solid var(--bracket);
+  border-left: 1px solid var(--bracket);
+}
+
+.gsv-dialog-corner.is-tr {
+  top: 5px;
+  right: 5px;
+  border-top: 1px solid var(--bracket);
+  border-right: 1px solid var(--bracket);
+}
+
+.gsv-dialog-corner.is-bl {
+  bottom: 5px;
+  left: 5px;
+  border-bottom: 1px solid var(--bracket);
+  border-left: 1px solid var(--bracket);
+}
+
+.gsv-dialog-corner.is-br {
+  bottom: 5px;
+  right: 5px;
+  border-bottom: 1px solid var(--bracket);
+  border-right: 1px solid var(--bracket);
+}
+
+/* Header bar. */
+.gsv-dialog-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 14px;
+  background: var(--header-bar);
+  border-bottom: 1px solid var(--border-raised);
+}
+
+.gsv-dialog-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.gsv-dialog-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.2em;
+  color: var(--text-title);
+}
+
+.gsv-dialog-head-extra {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Back + close — small square icon buttons. */
+.gsv-dialog-back,
+.gsv-dialog-close {
+  flex: none;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--meta);
+  font: inherit;
+  font-family: var(--gsv-font-mono);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.gsv-dialog-back {
+  margin-left: -4px;
+  color: var(--accent);
+}
+
+.gsv-dialog-back:hover,
+.gsv-dialog-close:hover {
+  color: var(--accent-bright);
+  border-color: var(--border-raised);
+}
+
+/* Body. */
+.gsv-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 20px 20px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-section) transparent;
+}
+
+.gsv-dialog-body.is-flush {
+  padding: 0;
+}
+
+@container panel (max-width: 560px) {
+  .gsv-dialog-body:not(.is-flush) {
+    padding: 14px 14px 16px;
+  }
+}

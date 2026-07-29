@@ -1,0 +1,114 @@
+/* ListCard — the standard list display card. Rows are ListRow instances; the
+   card owns the header, row rules, hover-reveal status label, add row, and
+   show-more / view-all footer. */
+.gsv-lc {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gsv-lc-heading.gsv-section-header {
+  min-height: 32px;
+}
+
+/* Header title — a step down from the default section size (scoped to the list
+   card, so the shared SectionHeader is unaffected). */
+.gsv-lc-heading .gsv-section-header-title {
+  font-size: 0.8125rem; /* 13px (was 16px) */
+}
+
+.gsv-lc-list {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Row rules. ListRow sets border:0 inline, so the bottom rule needs !important. */
+.gsv-lc-list > .gsv-lc-row.lr,
+.gsv-lc-list > .gsv-lc-add {
+  border-bottom: 1px solid var(--rule-inner) !important;
+  min-height: 44px;
+}
+
+.gsv-lc-list > *:last-child {
+  border-bottom: 0 !important;
+}
+
+/* CTA / "new" row — same background as the item rows; distinguished instead by
+   the action colour on its glyph + label (the glyph is already --accent), with
+   an underline so it reads as an action. */
+.gsv-lc-add .aa {
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.gsv-lc-add .aa .gsv-label {
+  color: var(--accent) !important;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.gsv-lc-add .aa:hover .gsv-label {
+  color: var(--accent-bright) !important;
+}
+
+/* Status: dot always shown, label revealed on row hover / focus (reserves its
+   width so nothing reflows). */
+.gsv-lc .lr-status {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.gsv-lc .lr:hover .lr-status,
+.gsv-lc .lr:focus-visible .lr-status {
+  opacity: 1;
+}
+
+.gsv-lc-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 3px;
+  object-fit: cover;
+  display: block;
+}
+
+.gsv-lc-empty {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 16px;
+  min-height: 44px;
+  color: #7d78b8;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gsv-lc-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 16px;
+  border-top: 1px solid var(--rule-inner);
+  margin-top: auto;
+}
+
+.gsv-lc-footlink {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--link);
+  font: inherit;
+  font-family: var(--gsv-font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 1px solid currentColor;
+  cursor: pointer;
+}
+
+.gsv-lc-footlink:hover {
+  color: var(--link-hover, var(--accent-bright));
+}

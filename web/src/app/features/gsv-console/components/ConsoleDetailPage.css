@@ -127,6 +127,20 @@
   gap: 16px;
 }
 
+/* Text column beside the icon — description, and (embedded) the status label
+   dropped beneath it in place of the removed title-row status. */
+.gsv-console-detail-bar-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gsv-console-detail-bar-status {
+  display: inline-flex;
+  align-items: center;
+}
+
 .gsv-console-detail-desc {
   min-width: 0;
   margin: 0;

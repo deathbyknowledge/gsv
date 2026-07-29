@@ -1,0 +1,276 @@
+/* ShipSection — a "room" flip card (FILES / LIBRARY / REPOS).
+   FRONT: purple-tinted cover image + title. Hover/click/focus flips to the
+   BACK (sticky), which shows a highlighted item, a grouped list, and a hover
+   CTA. Back surface keeps the room treatment: solid --node-bg + top vignette. */
+.gsv-ss {
+  min-width: 0;
+  height: 276px;
+  perspective: 1400px;
+}
+
+.gsv-ss-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.5s ease;
+}
+
+.gsv-ss[data-flipped="true"] .gsv-ss-inner {
+  transform: rotateY(180deg);
+}
+
+/* Faces — absolutely stacked, only the forward face visible. The away face is
+   also visibility:hidden (after the flip settles) so its controls leave the
+   tab order and can't be clicked through the card. */
+.gsv-ss-front,
+.gsv-ss-back {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  backface-visibility: hidden;
+  background:
+    radial-gradient(120% 78% at 50% 0%, rgba(179, 174, 255, 0.07) 0%, transparent 62%),
+    var(--node-bg);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.gsv-ss-back {
+  transform: rotateY(180deg);
+}
+
+.gsv-ss:not([data-flipped="true"]) .gsv-ss-back,
+.gsv-ss[data-flipped="true"] .gsv-ss-front {
+  visibility: hidden;
+  transition: visibility 0s linear 0.5s;
+}
+
+/* ---- Purple tint (shared by cover + avatar) ------------------------------
+   Green terminal traces → periwinkle: desaturate the source, then recolor with
+   an accent overlay in `color` blend mode (keeps luminance, so black stays
+   black and bright traces become bright purple). Isolated so the blend can't
+   leak onto the card surface behind it. */
+.gsv-ss-cover,
+.gsv-ss-avatar {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.gsv-ss-cover-img,
+.gsv-ss-avatar-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(1) contrast(1.06) brightness(1.02);
+}
+
+.gsv-ss-img-tint {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  mix-blend-mode: color;
+  pointer-events: none;
+}
+
+/* A second, softer wash for depth + to seat the image on-brand. */
+.gsv-ss-img-tint::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 100% at 50% 0%, rgba(179, 174, 255, 0.16) 0%, rgba(10, 8, 24, 0.35) 100%);
+  mix-blend-mode: multiply;
+}
+
+/* ---- FRONT — small cover image top-left, big title below ----------------- */
+.gsv-ss-front {
+  appearance: none;
+  border: 0;
+  padding: 16px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.gsv-ss-cover {
+  flex: none;
+  width: 140px;
+  height: 140px;
+}
+
+.gsv-ss-front-title {
+  margin-top: auto;
+  padding-top: 14px;
+  font-family: var(--gsv-font-mono);
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--text-title);
+}
+
+/* ---- BACK ---------------------------------------------------------------- */
+.gsv-ss-back-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 10px 8px 16px;
+}
+
+.gsv-ss-back-title {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--node-label);
+}
+
+.gsv-ss-back-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 6px;
+}
+
+/* Highlighted item — avatar + label + bigger name, on the accent wash with a
+   bright left rule (carried over from the old featured-row treatment). */
+.gsv-ss-highlight {
+  appearance: none;
+  border: 0;
+  font: inherit;
+  font-family: var(--gsv-font-mono);
+  text-align: left;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+  cursor: pointer;
+  background: rgba(179, 174, 255, 0.11);
+  box-shadow: inset 3px 0 0 var(--accent-bright);
+  transition: background 0.12s;
+}
+
+.gsv-ss-highlight[disabled] {
+  cursor: default;
+}
+
+.gsv-ss-highlight:not([disabled]):hover {
+  background: rgba(179, 174, 255, 0.16);
+}
+
+.gsv-ss-avatar {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--border-raised);
+}
+
+.gsv-ss-highlight-main {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gsv-ss-hl-label {
+  color: var(--meta);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.gsv-ss-hl-name {
+  font-size: 16px;
+  line-height: 1.1;
+  color: var(--accent-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* List — group label + smaller item-name rows. */
+.gsv-ss-list-group {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gsv-ss-list-label {
+  padding: 10px 16px 3px;
+  color: var(--meta);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.gsv-ss-empty {
+  padding: 5px 16px 9px;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+/* List items reuse the ListCard row (ListRow): same inter-row rule + the
+   trailing status label hidden until row hover/focus (matching .gsv-lc). */
+.gsv-ss-list-row.lr {
+  border-bottom: 1px solid var(--rule-inner) !important;
+}
+
+.gsv-ss .lr-status {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.gsv-ss .lr:hover .lr-status,
+.gsv-ss .lr:focus-visible .lr-status {
+  opacity: 1;
+}
+
+/* CTA — blue underlined link, revealed on back hover/focus. */
+.gsv-ss-cta {
+  flex: none;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-family: var(--gsv-font-mono);
+  text-align: left;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  cursor: pointer;
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.gsv-ss-back:hover .gsv-ss-cta,
+.gsv-ss-back:focus-within .gsv-ss-cta {
+  opacity: 1;
+}
+
+.gsv-ss-cta[disabled] {
+  cursor: default;
+  opacity: 0;
+}
+
+.gsv-ss-back:hover .gsv-ss-cta[disabled],
+.gsv-ss-back:focus-within .gsv-ss-cta[disabled] {
+  opacity: 0.55;
+}
+
+.gsv-ss-cta-label {
+  letter-spacing: 0.04em;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.gsv-ss-cta:not([disabled]):hover {
+  color: var(--accent-bright);
+}

@@ -1,0 +1,80 @@
+/* Collapsible — header + (below its breakpoint) a click-to-expand body.
+   Expanded state is a hidden checkbox toggled by an overlay label; above the
+   breakpoint the body always shows and the header navigates normally.
+
+   Breakpoints are container queries against a `panel` container: render inside
+   an ancestor with `container-name: panel`. Desktop > 900 · tablet 561–900 ·
+   mobile <= 560. */
+.gsv-collapse {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gsv-collapse-summary {
+  position: relative;
+  min-width: 0;
+}
+
+.gsv-collapse-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Overlay label + chevron are hidden until the collapsed range kicks in. */
+.gsv-collapse-toggle-label {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+.gsv-collapse-chevron {
+  display: inline-flex;
+  align-items: center;
+  filter: drop-shadow(0 0 3px rgba(150, 140, 255, 0.5));
+  transition: transform 0.14s ease;
+}
+
+/* --- TABLET + MOBILE (<= 900): "tablet" collapsers become drawers --- */
+@container panel (max-width: 900px) {
+  .gsv-collapse[data-collapse="tablet"] > .gsv-collapse-body {
+    display: none;
+  }
+
+  .gsv-collapse[data-collapse="tablet"] > .gsv-collapse-toggle:checked ~ .gsv-collapse-body {
+    display: flex;
+  }
+
+  .gsv-collapse[data-collapse="tablet"] .gsv-collapse-toggle-label {
+    display: flex;
+  }
+
+  .gsv-collapse[data-collapse="tablet"] > .gsv-collapse-toggle:checked ~ .gsv-collapse-summary .gsv-collapse-chevron {
+    transform: rotate(90deg);
+  }
+}
+
+/* --- MOBILE only (<= 560): "mobile" collapsers become drawers --- */
+@container panel (max-width: 560px) {
+  .gsv-collapse[data-collapse="mobile"] > .gsv-collapse-body {
+    display: none;
+  }
+
+  .gsv-collapse[data-collapse="mobile"] > .gsv-collapse-toggle:checked ~ .gsv-collapse-body {
+    display: flex;
+  }
+
+  .gsv-collapse[data-collapse="mobile"] .gsv-collapse-toggle-label {
+    display: flex;
+  }
+
+  .gsv-collapse[data-collapse="mobile"] > .gsv-collapse-toggle:checked ~ .gsv-collapse-summary .gsv-collapse-chevron {
+    transform: rotate(90deg);
+  }
+}

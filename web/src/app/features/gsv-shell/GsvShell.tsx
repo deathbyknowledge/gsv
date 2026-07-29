@@ -11,7 +11,6 @@ import {
 } from "../chat/domain/targetChatProcess";
 import { useChatProcessList } from "../chat/hooks";
 import type {
-  ConsoleOverviewCounts,
   ConsoleOverviewData,
   ConsoleResourceState,
 } from "../gsv-console/domain/consoleModels";
@@ -97,47 +96,6 @@ function desktopInventoryMessage(
   return "loading live inventory";
 }
 
-function systemLoadLabel(
-  counts: ConsoleOverviewCounts | null,
-  resource: ConsoleResourceState<ConsoleOverviewData>,
-): string {
-  if (resource.isError) {
-    return "ERROR";
-  }
-  if (resource.isUnavailable) {
-    return "OFFLINE";
-  }
-  if (resource.isLoading) {
-    return "SYNCING";
-  }
-  if (!counts) {
-    return "SYNC";
-  }
-
-  const active = counts.activeProcesses + counts.queuedProcesses;
-  if (active > 0) {
-    return active === 1 ? "1 RUN" : `${active} RUNS`;
-  }
-  if (counts.targets > 0) {
-    return `${counts.onlineTargets}/${counts.targets} ${counts.targets === 1 ? "TARGET" : "TARGETS"}`;
-  }
-  if (counts.connectedAdapterAccounts > 0) {
-    return counts.connectedAdapterAccounts === 1 ? "1 CHANNEL" : `${counts.connectedAdapterAccounts} CHANNELS`;
-  }
-  return "IDLE";
-}
-
-/** Tone for the system-load readout: only the genuine status states
- *  (error/offline/loading) take a color; counts and IDLE stay neutral. */
-function systemLoadTone(
-  resource: ConsoleResourceState<ConsoleOverviewData>,
-): "error" | "offline" | "loading" | undefined {
-  if (resource.isError) return "error";
-  if (resource.isUnavailable) return "offline";
-  if (resource.isLoading) return "loading";
-  return undefined;
-}
-
 function CollapsedDesktop() {
   return (
     <div class="gsv-collapsed-desktop" aria-hidden="true">
@@ -182,14 +140,6 @@ export function GsvShell({
   const clock = useClock();
   const consoleOverview = useConsoleOverview({ includeConfig: false });
   const consoleConfig = useConsoleConfig();
-  const statusSystemLabel = useMemo(
-    () => systemLoadLabel(consoleOverview.counts, consoleOverview.resource),
-    [consoleOverview.counts, consoleOverview.resource],
-  );
-  const statusSystemTone = useMemo(
-    () => systemLoadTone(consoleOverview.resource),
-    [consoleOverview.resource],
-  );
   const desktopObjects = useMemo(
     () => buildDesktopObjectsFromConsole(consoleOverview.data),
     [consoleOverview.data],
@@ -650,8 +600,6 @@ export function GsvShell({
       <ShellStatusBar
         context={shell.statusContext}
         clock={clock}
-        systemLoadLabel={statusSystemLabel}
-        systemLoadTone={statusSystemTone}
         sessionUsername={sessionUsername}
         mobileHomeDate={mobileHomeDate}
         onLockSession={onLockSession}

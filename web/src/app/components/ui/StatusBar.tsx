@@ -16,6 +16,7 @@ export interface StatusBarProps {
   align?: "between" | "center";
   showModel?: boolean;
   showStatus?: boolean;
+  showPower?: boolean;
 }
 
 function statusColor(tone: NonNullable<StatusBarProps["statusTone"]>): string {
@@ -46,6 +47,7 @@ export function StatusBar({
   align,
   showModel = true,
   showStatus = true,
+  showPower = true,
 }: StatusBarProps) {
   const justify =
     (align ?? (label != null ? "center" : "between")) === "center"
@@ -79,7 +81,9 @@ export function StatusBar({
           </div>
           <div style={{ display: "flex", gap: "22px", alignItems: "center" }}>
             <span>{clock}</span>
-            <span style={{ color: powerTone ? statusColor(powerTone) : "#bbb6ff" }}>{"⏻ "}{power}</span>
+            {showPower ? (
+              <span style={{ color: powerTone ? statusColor(powerTone) : "#bbb6ff" }}>{"⏻ "}{power}</span>
+            ) : null}
           </div>
         </>
       )}

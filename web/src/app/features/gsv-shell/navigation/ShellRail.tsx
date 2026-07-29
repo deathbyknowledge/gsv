@@ -1,5 +1,6 @@
 import { Fragment } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
+import { APP_VERSION } from "../../../../appVersion";
 import { GsvMark } from "../../../components/ui/GsvMark";
 import { Icon } from "../../../components/ui/Icon";
 import { IconButton } from "../../../components/ui/IconButton";
@@ -57,7 +58,7 @@ const GSV_RAIL_ITEMS: { label: string; surface: ShellSurfaceId }[] = [
   { label: "LIBRARY", surface: "library" },
   { label: "TERMINAL", surface: "terminal" },
   { label: "REPOS", surface: "repositories" },
-  { label: "SETTINGS", surface: "settings" },
+  { label: "OVERVIEW", surface: "settings" },
 ];
 
 /** Stable tab key for an object child — mirrors shellTabForDesktopChild so the
@@ -98,8 +99,6 @@ export function ShellRail({
   onOpenObject,
   onCreateObject,
 }: ShellRailProps) {
-  const totalObjects = desktopObjects.reduce((sum, object) => sum + object.children.length, 0);
-
   // A settings list/detail route surfaces as activeSurface="settings" with a
   // generic activeTabKey, so re-derive the object key it points at (matching
   // childKey's `obj:<kind>:<detailId>` shape) to keep the owning drawer + the
@@ -191,8 +190,8 @@ export function ShellRail({
     <aside class="gsv-shell-rail" aria-label="GSV navigation">
       <header class="gsv-rail-head">
         <button type="button" class="gsv-rail-home" onClick={onBackToDesktop}>
-          <span>DESKTOP // GSV</span>
-          <small>GSV · {totalObjects} objects</small>
+          <span>CONTROL // GSV</span>
+          <small>v{APP_VERSION}</small>
         </button>
         <span class="gsv-rail-menu">
           <IconButton glyph="menu" size="small" title="Hide menu" onClick={onToggleCollapsed} />

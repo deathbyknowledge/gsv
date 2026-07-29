@@ -3,8 +3,6 @@ import { StatusBar } from "../../../components/ui/StatusBar";
 type ShellStatusBarProps = {
   context: string;
   clock: string;
-  systemLoadLabel: string;
-  systemLoadTone?: "error" | "offline" | "loading";
   sessionUsername: string;
   mobileHomeDate: string;
   onLockSession: () => void;
@@ -22,8 +20,6 @@ function PowerIcon() {
 export function ShellStatusBar({
   context,
   clock,
-  systemLoadLabel,
-  systemLoadTone,
   sessionUsername,
   mobileHomeDate,
   onLockSession,
@@ -33,10 +29,9 @@ export function ShellStatusBar({
       <StatusBar
         clock={clock}
         context={context}
-        power={systemLoadLabel}
-        powerTone={systemLoadTone}
         showModel={false}
         showStatus={false}
+        showPower={false}
       />
       <div class="gsv-status-actions">
         <span>{mobileHomeDate}</span>

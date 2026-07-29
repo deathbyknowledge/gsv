@@ -37,9 +37,17 @@ const COMPACT_BREAKPOINT = 1024;
 type ConsoleCrewPageProps = {
   onManageAgent?: (uid: number) => void;
   onCreateAgent?: () => void;
+  /** Preselect an in-body defaults-editor section on open (e.g. "context" for
+   *  GLOBAL INSTRUCTIONS), threaded from the crew route's `select` param. */
+  select?: string;
 };
 
-export function ConsoleCrewPage({ onManageAgent, onCreateAgent }: ConsoleCrewPageProps) {
+/** Coerce a route `select` string into a defaults-editor section, or null. */
+function editDefaultsSectionFromSelect(select: string | undefined): EditDefaultsSection | null {
+  return select === "defaults" || select === "permissions" || select === "context" ? select : null;
+}
+
+export function ConsoleCrewPage({ onManageAgent, onCreateAgent, select }: ConsoleCrewPageProps) {
   const accounts = useConsoleAccounts();
   const config = useConsoleConfig();
   const processes = useConsoleProcesses();
@@ -72,6 +80,7 @@ export function ConsoleCrewPage({ onManageAgent, onCreateAgent }: ConsoleCrewPag
               config={config.config}
               processResource={processes.resource}
               toolTargets={toolTargetsForConsoleTargets(targets.targets)}
+              initialSection={editDefaultsSectionFromSelect(select)}
               onManageAgent={onManageAgent}
               onCreateAgent={onCreateAgent}
             />
@@ -87,6 +96,7 @@ function CrewRoster({
   config,
   processResource,
   toolTargets,
+  initialSection,
   onManageAgent,
   onCreateAgent,
 }: {
@@ -94,13 +104,16 @@ function CrewRoster({
   config: readonly ConsoleConfigEntry[];
   processResource: ConsoleResourceState<ConsoleProcess[]>;
   toolTargets: readonly AgentToolTarget[];
+  initialSection?: EditDefaultsSection | null;
   onManageAgent?: (uid: number) => void;
   onCreateAgent?: () => void;
 }) {
   const [query, setQuery] = useState("");
   // In-body edit surface: when set, the list column shows the defaults editor
   // (opened on this section) instead of the roster; ✕ closes back to the list.
-  const [editorSection, setEditorSection] = useState<EditDefaultsSection | null>(null);
+  // Seeds from the route's `select` (deep-link to a section, e.g. GLOBAL
+  // INSTRUCTIONS) — this component only mounts once config has loaded.
+  const [editorSection, setEditorSection] = useState<EditDefaultsSection | null>(initialSection ?? null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
 
