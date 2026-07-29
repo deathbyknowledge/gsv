@@ -9,9 +9,9 @@ This is the important rule for agents: choose `target: "gsv"` for Gateway-native
 | Target | Description |
 |---|---|
 | `gsv` | Native Gateway target running in the Cloudflare Worker sandbox. |
-| `<deviceId>` | A connected CLI device, such as `macbook` or `server`. |
+| `<deviceId>` | A registered CLI device, such as `macbook` or `server`; routable while online. |
 
-The Gateway includes accessible online devices in `ai.tools` context and in `sys.device.list`. Device notes are included there too, so processes can choose targets using the user's own description of what each machine is for. Devices also appear in the native filesystem under `/sys/devices`.
+The Gateway includes accessible online devices in `ai.tools` context and, by default, in `sys.device.list`. Those inventories advertise devices that can accept work immediately. The agent-facing `targets list` command includes every visible registered device by default and labels each one `online` or `offline`; use `targets list --online` to restrict it to reachable targets. Device notes are included too, so processes can identify machines using the user's own descriptions. Registered devices also appear in the native filesystem under `/sys/devices`.
 
 Messaging adapters are not hardware targets and never appear in these
 inventories. Use `message destinations` to discover authorized external chat

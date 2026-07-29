@@ -307,6 +307,7 @@ describe("handleAiTools", () => {
     expect(description).toContain("node-10");
     expect(description).toContain("and 2 more");
     expect(description).toContain("targets list");
+    expect(description).toContain("online status");
     expect(description).not.toContain("node-11");
     expect(description).not.toContain("node-12");
   });
