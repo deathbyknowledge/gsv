@@ -371,7 +371,7 @@ Runtime behavior:
 | `proc.history.compact` | Process DO | Archives an old history prefix, inserts a visible system summary marker, and records a `compaction` segment. Requires a supplied or generated summary and exactly one of `keepLast` or `throughMessageId`. |
 | `proc.history.segment.read` | Process DO | Reads paged messages from a compacted segment without restoring them into active history. |
 | `proc.history.segments` | Process DO | Lists compacted segments, including archive paths and summary marker ids. |
-| `proc.fork` | `handleProcFork` | Creates a new process from committed source history through `throughMessageId`, or from a compacted `segmentId`. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
+| `proc.fork` | `handleProcFork` | Creates a new process from committed source history through `throughMessageId`, or from a compacted `segmentId`. Its label defaults to `Branch of <source label>` and the canonical label is returned. Segment restore includes the live suffix present at the compaction boundary unless `includeLiveSuffix: false`. Active work, queued input, tools, and HIL are not copied. |
 | `proc.reset` | Process DO | Archives the non-empty history, clears active execution state, queues, process media, and messages, then increments the history generation. |
 | `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers a Kernel-validated IPC envelope to the target process. |
 | `proc.history.export` | Process DO direct path | Kernel-only syscall used by `proc.fork` to materialize committed history as archive paths. |
@@ -558,7 +558,7 @@ type ProcessSyscalls = {
 
   "proc.fork": {
     args: { pid?: string; segmentId?: string; throughMessageId?: number; label?: string; includeLiveSuffix?: boolean };
-    result: { ok: true; pid: string; sourcePid: string; segment?: ProcHistorySegment; throughMessageId?: number; restoredMessages: number; includedLiveSuffix: boolean } | OperationError;
+    result: { ok: true; pid: string; label: string; sourcePid: string; segment?: ProcHistorySegment; throughMessageId?: number; restoredMessages: number; includedLiveSuffix: boolean } | OperationError;
   };
 
   "proc.history.export": {

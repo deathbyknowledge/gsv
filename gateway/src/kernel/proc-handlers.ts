@@ -261,7 +261,7 @@ export async function handleProcFork(
     ctx.requestSignal?.throwIfAborted();
 
     const requestedLabel = normalizeRequiredString(args.label);
-    const label = requestedLabel ?? `Fork of ${source.label ?? source.username}`;
+    const label = requestedLabel ?? `Branch of ${source.label ?? source.username}`;
     const spawned = await handleProcSpawn({
       runAs: source.username,
       interactive: source.interactive,
@@ -288,6 +288,7 @@ export async function handleProcFork(
     return {
       ok: true,
       pid: targetPid,
+      label: spawned.label ?? label,
       sourcePid,
       ...(exported.segment ? { segment: exported.segment } : {}),
       ...(exported.throughMessageId !== undefined

@@ -746,13 +746,12 @@ export function ChatDock({
     if (!hasActiveProcess || forkProcess.isPending) {
       return;
     }
-    const label = `Fork of ${title}`;
     forkProcess.mutate({
       pid: activeProcessId,
       throughMessageId: messageId,
     }, {
       onSuccess: (result) => {
-        onProcessStarted?.({ pid: result.pid, label });
+        onProcessStarted?.(result);
       },
     });
   };

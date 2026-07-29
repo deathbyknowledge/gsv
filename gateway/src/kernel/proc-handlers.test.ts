@@ -1030,6 +1030,7 @@ describe("proc handlers", () => {
     expect(result).toMatchObject({
       ok: true,
       pid: targetPid,
+      label: "Branch of Source task",
       sourcePid,
       throughMessageId: 2,
       restoredMessages: 2,
@@ -1038,7 +1039,7 @@ describe("proc handlers", () => {
     expect(procs.spawn).toHaveBeenCalledWith(
       targetPid,
       expect.objectContaining({ cwd: "/home/sam/work" }),
-      expect.objectContaining({ parentPid: sourcePid, label: "Fork of Source task" }),
+      expect.objectContaining({ parentPid: sourcePid, label: "Branch of Source task" }),
     );
     expect(removeTemporaryHistory).toHaveBeenCalledWith(["tmp/fork-history.jsonl.gz"]);
   });

@@ -484,6 +484,7 @@ export type ProcForkResult =
   | {
       ok: true;
       pid: string;
+      label: string;
       sourcePid: string;
       segment?: ProcHistorySegment;
       throughMessageId?: number;
