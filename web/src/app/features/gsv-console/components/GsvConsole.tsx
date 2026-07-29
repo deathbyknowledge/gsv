@@ -317,6 +317,10 @@ export function GsvConsole({
       navigateSettingsRoute({ view: "crew", select: "context" });
       return;
     }
+    if (surface === "crew-permissions") {
+      navigateSettingsRoute({ view: "crew", select: "permissions" });
+      return;
+    }
     if (surface === "tasks") {
       navigateSettingsRoute({ view: "list", kind: "tasks" });
       return;

@@ -16,8 +16,8 @@ import {
 import {
   type AgentApprovalAction,
   behaviorForAccount,
+  parseApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
-import { overrideConfigCount } from "../domain/consoleAi";
 import { useConsoleAgentContext } from "../hooks/useConsoleData";
 import type { ConsoleListKind } from "../domain/consoleListTypes";
 import {
@@ -73,7 +73,7 @@ type CrewCard = {
 };
 
 type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
-export type ConsoleOverviewTarget = OverviewSurface | "models" | "model-default" | "new-agent" | "overrides" | "crew-instructions" | "tasks";
+export type ConsoleOverviewTarget = OverviewSurface | "models" | "model-default" | "new-agent" | "overrides" | "crew-instructions" | "crew-permissions" | "tasks";
 export type OpenSurface = (surface: ConsoleOverviewTarget) => void;
 export type OpenAgent = (accountUid: number) => void;
 export type OpenListDetail = (kind: ConsoleListKind, detailId: string, detailLabel?: string) => void;
@@ -304,7 +304,9 @@ function SettingsCard({
   const savedModels = `${profiles.length} saved model${profiles.length === 1 ? "" : "s"}`;
   const behavior = viewer ? behaviorForAccount(config, viewer.uid, viewer.uid) : null;
   const permission = behavior?.permission ?? "ask";
-  const overrides = overrideConfigCount(config);
+  // Count the saved approval-policy rules (what the CREW permissions editor
+  // owns), not unrelated config overrides.
+  const overrides = behavior ? parseApprovalPolicy(behavior.approval).rules.length : 0;
 
   // Real global-instruction state (context.d files), mirroring CrewDefaultsPanel
   // — never the misleading hardcoded "UNDEFINED". Query self-disables with no
@@ -318,7 +320,7 @@ function SettingsCard({
     : `${contextFilesCount} FILE${contextFilesCount === 1 ? "" : "S"}`;
 
   const openModels = onOpenSurface ? () => onOpenSurface("models") : undefined;
-  const openOverrides = onOpenSurface ? () => onOpenSurface("overrides") : undefined;
+  const openCrewPermissions = onOpenSurface ? () => onOpenSurface("crew-permissions") : undefined;
   const openCrewInstructions = onOpenSurface ? () => onOpenSurface("crew-instructions") : undefined;
 
   const rows: DataCardRow[] = [
@@ -328,7 +330,7 @@ function SettingsCard({
       value: permissionLabel(permission),
       description: `${overrides} override${overrides === 1 ? "" : "s"}`,
       linkLabel: "manage",
-      onLink: openOverrides,
+      onLink: openCrewPermissions,
     },
     // Instructions live on the CREW page (GLOBAL INSTRUCTIONS / context.d), so
     // the CTA opens there directly — an "elsewhere" jump, not an in-place edit.
