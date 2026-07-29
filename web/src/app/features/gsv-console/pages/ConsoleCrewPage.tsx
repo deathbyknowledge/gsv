@@ -40,6 +40,9 @@ type ConsoleCrewPageProps = {
   /** Preselect an in-body defaults-editor section on open (e.g. "context" for
    *  GLOBAL INSTRUCTIONS), threaded from the crew route's `select` param. */
   select?: string;
+  /** Clear the crew route's `select` segment when the editor closes, so the URL
+   *  and history match the visible roster (and don't reopen on reload). */
+  onExitSection?: () => void;
 };
 
 /** Coerce a route `select` string into a defaults-editor section, or null. */
@@ -47,7 +50,7 @@ function editDefaultsSectionFromSelect(select: string | undefined): EditDefaults
   return select === "defaults" || select === "permissions" || select === "context" ? select : null;
 }
 
-export function ConsoleCrewPage({ onManageAgent, onCreateAgent, select }: ConsoleCrewPageProps) {
+export function ConsoleCrewPage({ onManageAgent, onCreateAgent, select, onExitSection }: ConsoleCrewPageProps) {
   const accounts = useConsoleAccounts();
   const config = useConsoleConfig();
   const processes = useConsoleProcesses();
@@ -83,6 +86,7 @@ export function ConsoleCrewPage({ onManageAgent, onCreateAgent, select }: Consol
               initialSection={editDefaultsSectionFromSelect(select)}
               onManageAgent={onManageAgent}
               onCreateAgent={onCreateAgent}
+              onExitSection={onExitSection}
             />
           );
         }}
@@ -99,6 +103,7 @@ function CrewRoster({
   initialSection,
   onManageAgent,
   onCreateAgent,
+  onExitSection,
 }: {
   accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
@@ -107,6 +112,7 @@ function CrewRoster({
   initialSection?: EditDefaultsSection | null;
   onManageAgent?: (uid: number) => void;
   onCreateAgent?: () => void;
+  onExitSection?: () => void;
 }) {
   const [query, setQuery] = useState("");
   // In-body edit surface: when set, the list column shows the defaults editor
@@ -201,7 +207,7 @@ function CrewRoster({
         listContent={viewer && editorSection ? (
           <EditDefaultsPanel
             section={editorSection}
-            onClose={() => setEditorSection(null)}
+            onClose={() => { setEditorSection(null); onExitSection?.(); }}
             viewer={viewer}
             config={config}
             targets={toolTargets}

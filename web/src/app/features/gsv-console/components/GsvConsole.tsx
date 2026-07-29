@@ -473,6 +473,7 @@ export function GsvConsole({
           ) : settingsRoute.view === "crew" ? (
             <ConsoleCrewPage
               select={settingsRoute.select}
+              onExitSection={settingsRoute.select ? backToSettingsCrew : undefined}
               onManageAgent={openSettingsAgent}
               // Route through the unsaved guard: NEW AGENT unmounts the in-body
               // defaults editor, so a dirty draft must prompt before it's dropped.
