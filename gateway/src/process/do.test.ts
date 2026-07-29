@@ -5804,6 +5804,47 @@ describe("Process DO — mechanical", () => {
       await env.STORAGE.delete(exported.archivePaths[0].replace(/^\/+/, ""));
     });
 
+    it("releases the lifecycle transition while writing a fork archive", async () => {
+      const stub = await initProcess("mech-history-export-unlocked", ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const messageId = process.store.appendMessage("user", "Fork this snapshot.");
+        let markArchiveStarted!: () => void;
+        let releaseArchive!: () => void;
+        const archiveStarted = new Promise<void>((resolve) => {
+          markArchiveStarted = resolve;
+        });
+        const archiveBlocked = new Promise<void>((resolve) => {
+          releaseArchive = resolve;
+        });
+        process.archiveForkMessages = vi.fn(async () => {
+          markArchiveStarted();
+          await archiveBlocked;
+          return "/tmp/fork-history.jsonl.gz";
+        });
+
+        const exporting = process.handleHistoryExport({ throughMessageId: messageId });
+        await archiveStarted;
+
+        let transitionRelease: (() => void) | undefined;
+        let transitionAcquired = false;
+        const acquiring = process.acquireLifecycleTransition().then((release: () => void) => {
+          transitionRelease = release;
+          transitionAcquired = true;
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        const acquiredDuringArchive = transitionAcquired;
+
+        releaseArchive();
+        await acquiring;
+        transitionRelease?.();
+        expect(await exporting).toMatchObject({ ok: true });
+        expect(acquiredDuringArchive).toBe(true);
+      });
+    });
+
     it("compacts a history prefix into an archived segment", async () => {
       const pid = "mech-conversation-compact";
       const stub = await initProcess(pid, ROOT_IDENTITY);

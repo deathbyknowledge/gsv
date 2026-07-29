@@ -2969,28 +2969,47 @@ export class Process extends Host<Env> {
       return { ok: false, error: "history export throughMessageId must be a positive integer" };
     }
 
-    const releaseLifecycle = await this.acquireLifecycleTransition();
+    let segment: ReturnType<ProcessStore["getHistorySegment"]> = null;
+    let snapshotMessages: MessageRecord[] = [];
+    let includeLiveSuffix = false;
     const temporaryArchivePaths: string[] = [];
     try {
-      signal?.throwIfAborted();
-      if (segmentId) {
-        const segment = this.store.getHistorySegment(segmentId);
-        if (!segment) {
-          return { ok: false, error: `History segment not found: ${segmentId}` };
-        }
-        const includeLiveSuffix = args.includeLiveSuffix !== false;
-        const archivePaths = [segment.archivePath];
-        if (includeLiveSuffix) {
-          const suffix = this.store.getMessagesForGenerationAfter({
-            generation: segment.generation,
-            afterMessageId: segment.toMessageId,
-            throughCreatedAt: segment.createdAt,
-          });
-          if (suffix.length > 0) {
-            const path = await this.archiveForkMessages(suffix, signal);
-            archivePaths.push(path);
-            temporaryArchivePaths.push(path);
+      const releaseSnapshot = await this.acquireLifecycleTransition();
+      try {
+        signal?.throwIfAborted();
+        if (segmentId) {
+          segment = this.store.getHistorySegment(segmentId);
+          if (!segment) {
+            return { ok: false, error: `History segment not found: ${segmentId}` };
           }
+          includeLiveSuffix = args.includeLiveSuffix !== false;
+          if (includeLiveSuffix) {
+            snapshotMessages = this.store.getMessagesForGenerationAfter({
+              generation: segment.generation,
+              afterMessageId: segment.toMessageId,
+              throughCreatedAt: segment.createdAt,
+            });
+          }
+        } else {
+          snapshotMessages = this.store.getHistoryPrefixMessages({ throughMessageId });
+          if (
+            snapshotMessages.length === 0
+            || !snapshotMessages.some((message) => message.id === throughMessageId)
+          ) {
+            return { ok: false, error: `History message not found: ${throughMessageId}` };
+          }
+        }
+      } finally {
+        releaseSnapshot();
+      }
+
+      signal?.throwIfAborted();
+      if (segment) {
+        const archivePaths = [segment.archivePath];
+        if (snapshotMessages.length > 0) {
+          const path = await this.archiveForkMessages(snapshotMessages, signal);
+          archivePaths.push(path);
+          temporaryArchivePaths.push(path);
         }
         return {
           ok: true,
@@ -3002,14 +3021,7 @@ export class Process extends Host<Env> {
         };
       }
 
-      const messages = this.store.getHistoryPrefixMessages({ throughMessageId });
-      if (
-        messages.length === 0
-        || !messages.some((message) => message.id === throughMessageId)
-      ) {
-        return { ok: false, error: `History message not found: ${throughMessageId}` };
-      }
-      const path = await this.archiveForkMessages(messages, signal);
+      const path = await this.archiveForkMessages(snapshotMessages, signal);
       temporaryArchivePaths.push(path);
       return {
         ok: true,
@@ -3027,8 +3039,6 @@ export class Process extends Host<Env> {
         ok: false,
         error: `Failed to export process history: ${error instanceof Error ? error.message : String(error)}`,
       };
-    } finally {
-      releaseLifecycle();
     }
   }
 
