@@ -643,7 +643,7 @@ describe("Process DO — mechanical", () => {
       )).toBe(true));
     });
 
-    it("ignores a generated title after the source conversation is reset", async () => {
+    it("cancels title generation and ignores a late result after conversation reset", async () => {
       const pid = "mech-auto-task-title-reset";
       await registerInKernel(pid, ROOT_IDENTITY);
       const stub = await getProcessByPid(pid);
@@ -659,6 +659,7 @@ describe("Process DO — mechanical", () => {
         let releaseGeneration!: () => void;
         let markGenerationStarted!: () => void;
         let markGenerationCompleted!: () => void;
+        let generationSignal: AbortSignal | undefined;
         const generationBlocked = new Promise<void>((resolve) => {
           releaseGeneration = resolve;
         });
@@ -678,10 +679,15 @@ describe("Process DO — mechanical", () => {
             markGenerationCompleted();
           }
         };
-        process.kernelRpc = async (call: string) => {
+        process.kernelRpc = async (
+          call: string,
+          _args: unknown,
+          signal?: AbortSignal,
+        ) => {
           if (call !== "ai.text.generate") {
             throw new Error(`unexpected kernel syscall: ${call}`);
           }
+          generationSignal = signal;
           markGenerationStarted();
           await generationBlocked;
           return { text: "Diagnose Checkout Flakiness" };
@@ -695,6 +701,7 @@ describe("Process DO — mechanical", () => {
         })) as ResponseOkFrame;
         expect(send.data).toMatchObject({ ok: true, status: "started" });
         await generationStarted;
+        expect(generationSignal?.aborted).toBe(false);
         expect(process.store.getConversation("default")?.title)
           .toBe("Investigate flaky checkout tests");
 
@@ -703,6 +710,8 @@ describe("Process DO — mechanical", () => {
           archive: false,
         })) as ResponseOkFrame;
         expect(reset.data).toMatchObject({ ok: true, generation: 2 });
+        expect(generationSignal?.aborted).toBe(true);
+        expect(generationSignal?.reason).toEqual(new Error("Conversation was reset: default"));
 
         releaseGeneration();
         await generationCompleted;
@@ -717,6 +726,29 @@ describe("Process DO — mechanical", () => {
         ).map((entry) => entry.payload.title)).toEqual([
           "Investigate flaky checkout tests",
         ]);
+      });
+    });
+
+    it("aborts owned title work when the process is killed", async () => {
+      const pid = "mech-auto-task-title-kill";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const controller = new AbortController();
+        process.taskTitleAbortController = controller;
+        process.sendSignal = vi.fn(async () => {});
+
+        const killed = await process.recvFrame(makeReq("proc.kill", {
+          archive: false,
+        })) as ResponseOkFrame;
+
+        expect(killed.data).toMatchObject({ ok: true, pid });
+        expect(controller.signal.aborted).toBe(true);
+        expect(controller.signal.reason).toEqual(
+          new Error("Process execution was reset: process.kill"),
+        );
+        expect(process.taskTitleAbortController).toBeNull();
       });
     });
   });

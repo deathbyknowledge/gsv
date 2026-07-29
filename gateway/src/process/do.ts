@@ -919,6 +919,7 @@ export class Process extends Host<Env> {
   private readonly deferredTickRunIds = new Set<string>();
   private readonly mediaWriteAdmissions = new Map<string, Promise<void>>();
   private readonly mediaUploadAbortControllers = new Map<string, AbortController>();
+  private taskTitleAbortController: AbortController | null = null;
   private lifecycleTransition: Promise<void> = Promise.resolve();
   private lifecycleEpoch = 0;
   private queuedSendAdmission: Promise<void> = Promise.resolve();
@@ -1554,13 +1555,23 @@ export class Process extends Host<Env> {
     });
     if (!started || sourceGeneration === null) return;
 
-    this.ctx.waitUntil(this.generateTaskTitle(message, fallback, sourceGeneration));
+    const controller = new AbortController();
+    this.taskTitleAbortController = controller;
+    this.ctx.waitUntil(
+      this.generateTaskTitle(message, fallback, sourceGeneration, controller.signal)
+        .finally(() => {
+          if (this.taskTitleAbortController === controller) {
+            this.taskTitleAbortController = null;
+          }
+        }),
+    );
   }
 
   private async generateTaskTitle(
     message: string,
     fallback: string,
     sourceGeneration: number,
+    signal: AbortSignal,
   ): Promise<void> {
     await this.emitProcChanged(["title"], {
       conversationId: DEFAULT_CONVERSATION_ID,
@@ -1583,17 +1594,17 @@ export class Process extends Host<Env> {
           timeoutMs: TASK_TITLE_GENERATION_TIMEOUT_MS,
         },
         sessionAffinityKey: `${this.pid}:task-title`,
-      });
+      }, signal);
       generated = normalizeTaskTitle(result.text);
     } catch {
       return;
     }
-    if (!generated || generated === fallback) return;
+    if (signal.aborted || !generated || generated === fallback) return;
 
     const releaseLifecycle = await this.acquireLifecycleTransition();
     let updated = false;
     try {
-      if (!this.isInitialized()) return;
+      if (signal.aborted || !this.isInitialized()) return;
       const conversation = this.store.getConversation(DEFAULT_CONVERSATION_ID);
       if (
         conversation?.generation !== sourceGeneration
@@ -3639,6 +3650,9 @@ export class Process extends Host<Env> {
   private async resetConversationExecutionState(conversationId: string): Promise<void> {
     const normalizedConversationId = normalizeConversationId(conversationId);
     if (normalizedConversationId === DEFAULT_CONVERSATION_ID) {
+      this.abortTaskTitleGeneration(
+        new Error(`Conversation was reset: ${normalizedConversationId}`),
+      );
       this.store.setValue(PROCESS_RESET_AT_KEY, String(Date.now()));
     }
     const activeRun = this.currentRun;
@@ -3759,10 +3773,12 @@ export class Process extends Host<Env> {
 
   private async resetExecutionState(reason: string, emitFinish = true): Promise<void> {
     this.lifecycleEpoch += 1;
-    this.abortMediaUploads(new Error(`Process execution was reset: ${reason}`));
+    const resetError = new Error(`Process execution was reset: ${reason}`);
+    this.abortTaskTitleGeneration(resetError);
+    this.abortMediaUploads(resetError);
     this.store.setValue(PROCESS_RESET_AT_KEY, String(Date.now()));
     const activeRun = this.currentRun;
-    this.cancelPendingRequests(null, `Process execution was reset: ${reason}`);
+    this.cancelPendingRequests(null, resetError.message);
     this.rejectCodeModeWaiters(null, "Process execution state was reset");
     if (activeRun) {
       this.rememberAbortedRun(activeRun.runId);
@@ -7038,6 +7054,13 @@ export class Process extends Host<Env> {
       controller.abort(reason);
     }
     this.mediaUploadAbortControllers.clear();
+  }
+
+  private abortTaskTitleGeneration(reason: Error): void {
+    const controller = this.taskTitleAbortController;
+    if (!controller) return;
+    this.taskTitleAbortController = null;
+    controller.abort(reason);
   }
 
   private handleRunStopped(runId: string): boolean {
