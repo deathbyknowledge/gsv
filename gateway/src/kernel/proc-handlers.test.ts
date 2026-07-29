@@ -11,7 +11,7 @@ vi.mock("../shared/utils", () => ({
 }));
 
 import { sendFrameToProcess } from "../shared/utils";
-import { forwardToProcess, handleProcIpcCall, handleProcIpcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
+import { forwardToProcess, handleProcFork, handleProcIpcCall, handleProcIpcSend, handleProcSpawn, handleProcList, resolveRunAsIdentity } from "./proc-handlers";
 import { resolveCallerOwnerUid } from "./context";
 
 const IDENTITY: ProcessIdentity = {
@@ -39,15 +39,6 @@ const SPAWN_PARENT = {
   cwd: IDENTITY.cwd,
   interactive: true,
 };
-
-function spawnConversationsMock() {
-  return {
-    create: vi.fn(() => ({ conversationId: "conv-1" })),
-    setActivePid: vi.fn(() => true),
-    clearActivePid: vi.fn(),
-    remove: vi.fn(() => true),
-  };
-}
 
 function makeStorageBucket() {
   return {
@@ -107,7 +98,6 @@ describe("proc handlers", () => {
         status: "started",
         pid: "target-process",
         sourcePid: "source-process",
-        conversationId: "default",
         runId: (frame as RequestFrame).args.runId,
       } satisfies ProcIpcSendResult,
     } satisfies ResponseFrame));
@@ -138,7 +128,6 @@ describe("proc handlers", () => {
       status: "started",
       pid: "target-process",
       sourcePid: "source-process",
-      conversationId: "default",
     });
     const runId = (sendFrameToProcessMock.mock.calls[0]?.[1] as RequestFrame).args.runId;
     expect(result).toMatchObject({ runId });
@@ -161,7 +150,6 @@ describe("proc handlers", () => {
         status: "started",
         pid: "target-process",
         sourcePid: "source-process",
-        conversationId: "default",
         runId: "unexpected-run",
       } satisfies ProcIpcSendResult,
     } satisfies ResponseFrame);
@@ -193,7 +181,6 @@ describe("proc handlers", () => {
           status: "started",
           pid: "target-process",
           sourcePid: "source-process",
-          conversationId: "default",
           runId: (frame as RequestFrame).args.runId,
         } satisfies ProcIpcSendResult,
       } satisfies ResponseFrame;
@@ -215,7 +202,6 @@ describe("proc handlers", () => {
         status: "started",
         pid: "target-process",
         sourcePid: "source-process",
-        conversationId: "default",
         runId: (frame as RequestFrame).args.runId,
       } satisfies ProcIpcSendResult,
     } satisfies ResponseFrame));
@@ -260,7 +246,6 @@ describe("proc handlers", () => {
         status: "started",
         pid: "target-process",
         sourcePid: "source-process",
-        conversationId: "default",
         runId: (frame as RequestFrame).args.runId,
       } satisfies ProcIpcSendResult,
     } satisfies ResponseFrame));
@@ -304,7 +289,6 @@ describe("proc handlers", () => {
       procs: {
         get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })),
       },
-      conversations: { getByActivePid: vi.fn(() => null) },
       runRoutes: { setConnectionRoute: vi.fn() },
     } as unknown as KernelContext;
     const spoofedOrigin = {
@@ -346,7 +330,7 @@ describe("proc handlers", () => {
   it.each([
     { call: "codemode.run", id: "codemode-1", args: { pid: "proc-1", code: "return 1" } },
     {
-      call: "proc.conversation.compact",
+      call: "proc.history.compact",
       id: "compact-1",
       args: { pid: "proc-1", keepLast: 1, generateSummary: true },
     },
@@ -406,7 +390,6 @@ describe("proc handlers", () => {
       procs: {
         get: vi.fn(() => ({ uid: 2000, ownerUid: 1000 })),
       },
-      conversations: { getByActivePid: vi.fn(() => null) },
       runRoutes: { setConnectionRoute },
     } as unknown as KernelContext;
 
@@ -425,39 +408,7 @@ describe("proc handlers", () => {
     });
   });
 
-  it("routes untargeted proc calls through the caller owner's default conversation", async () => {
-    const human: ProcessIdentity = {
-      uid: 1000,
-      gid: 1000,
-      gids: [1000, 100],
-      username: "sam",
-      home: "/home/sam",
-      cwd: "/home/sam",
-    };
-    const agent: ProcessIdentity = {
-      uid: 2000,
-      gid: 2000,
-      gids: [2000, 1000, 100],
-      username: "friday",
-      home: "/home/friday",
-      cwd: "/home/friday",
-    };
-    const ensureDefault = vi.fn(() => ({
-      record: {
-        conversationId: "default:1000:2000",
-        ownerUid: human.uid,
-        agentUid: agent.uid,
-        agentHome: agent.home,
-        title: null,
-        isDefault: true,
-        activePid: "proc-home",
-        archiveBase: "/home/friday/conversations/default%3A1000%3A2000",
-        latestArchive: null,
-        createdAt: 1,
-        lastActiveAt: 2,
-      },
-      created: false,
-    }));
+  it("routes untargeted proc calls to the caller process", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
       id: "history-1",
@@ -466,40 +417,17 @@ describe("proc handlers", () => {
     } satisfies ResponseFrame);
 
     const ctx = {
-      callerOwnerUid: human.uid,
+      processId: "proc-self",
+      callerOwnerUid: IDENTITY.uid,
       identity: {
         role: "user",
-        process: agent,
+        process: IDENTITY,
         capabilities: ["proc.history"],
       },
-      auth: {
-        getPasswdByUid: vi.fn((uid: number) => {
-          if (uid === human.uid) return { ...human, gecos: "sam", shell: "/bin/init" };
-          if (uid === agent.uid) return { ...agent, gecos: "friday", shell: "/bin/init" };
-          return null;
-        }),
-        getPersonalAgentUid: vi.fn((uid: number) => (uid === human.uid ? agent.uid : null)),
-        isPersonalAgentUid: vi.fn((uid: number) => uid === agent.uid),
-        resolveGids: vi.fn((username: string, primaryGid: number) =>
-          username === agent.username ? agent.gids : [primaryGid],
-        ),
-      },
-      env: {
-        STORAGE: {
-          head: vi.fn(async () => null),
-          put: vi.fn(async () => undefined),
-        },
-      },
       procs: {
-        get: vi.fn((pid: string) =>
-          pid === "proc-home"
-            ? { processId: pid, uid: agent.uid, ownerUid: human.uid }
-            : null
-        ),
-      },
-      conversations: {
-        ensureDefault,
-        getByActivePid: vi.fn(() => null),
+        get: vi.fn((pid: string) => pid === "proc-self"
+          ? { processId: pid, uid: IDENTITY.uid, ownerUid: IDENTITY.uid }
+          : null),
       },
     } as unknown as KernelContext;
 
@@ -510,11 +438,29 @@ describe("proc handlers", () => {
       args: {},
     } as RequestFrame, ctx);
 
-    expect(ensureDefault).toHaveBeenCalledWith(human.uid, agent.uid, agent.home);
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      "proc-home",
+      "proc-self",
       expect.objectContaining({ call: "proc.history" }),
     );
+  });
+
+  it("requires an explicit pid outside a process", async () => {
+    const ctx = {
+      callerOwnerUid: IDENTITY.uid,
+      identity: {
+        role: "user",
+        process: IDENTITY,
+        capabilities: ["proc.history"],
+      },
+    } as unknown as KernelContext;
+
+    await expect(forwardToProcess({
+      type: "req",
+      id: "history-1",
+      call: "proc.history",
+      args: {},
+    } as RequestFrame, ctx)).rejects.toThrow("proc.history requires pid outside a process");
+    expect(sendFrameToProcessMock).not.toHaveBeenCalled();
   });
 
   it("forwards process AI profile selectors without materializing profile secrets", async () => {
@@ -566,7 +512,6 @@ describe("proc handlers", () => {
       config: {
         get: vi.fn((key: string) => configEntries.get(key) ?? null),
       },
-      conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
 
     await forwardToProcess({
@@ -624,7 +569,6 @@ describe("proc handlers", () => {
       procs: {
         get: vi.fn(() => ({ uid: 2000, ownerUid: IDENTITY.uid })),
       },
-      conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
 
     await forwardToProcess({
@@ -649,7 +593,7 @@ describe("proc handlers", () => {
     );
   });
 
-  it("clears a default conversation archive pointer after proc.reset", async () => {
+  it("clears process routes and IPC state after proc.reset", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",
       id: "reset-1",
@@ -658,17 +602,15 @@ describe("proc handlers", () => {
         ok: true,
         pid: "proc-1",
         archivedMessages: 1,
-        archivedTo: "/home/sam-agent/conversations/",
+        archivedTo: "/home/sam-agent/history/",
         archives: [{
-          conversationId: "default",
           generation: 1,
           messages: 1,
-          path: "/home/sam-agent/conversations/default%3A1000%3A2000/reset.default.gen-1.jsonl.gz",
+          path: "/home/sam-agent/history/reset.gen-1.jsonl.gz",
         }],
       },
     } satisfies ResponseFrame);
-    const setLatestArchive = vi.fn();
-    const ctx = makeForwardContext({ setLatestArchive });
+    const ctx = makeForwardContext();
 
     await forwardToProcess({
       type: "req",
@@ -677,7 +619,6 @@ describe("proc handlers", () => {
       args: { pid: "proc-1" },
     } as RequestFrame, ctx);
 
-    expect(setLatestArchive).toHaveBeenCalledWith("default:1000:2000", null);
     expect(ctx.ipcCalls.cancelBySourcePid).toHaveBeenCalledWith({
       uid: IDENTITY.uid,
       sourcePid: "proc-1",
@@ -690,36 +631,8 @@ describe("proc handlers", () => {
     );
   });
 
-  it("clears a default conversation archive pointer after resetting the primary thread", async () => {
-    sendFrameToProcessMock.mockResolvedValue({
-      type: "res",
-      id: "conversation-reset-1",
-      ok: true,
-      data: {
-        ok: true,
-        pid: "proc-1",
-        conversationId: "default",
-        generation: 2,
-        archivedMessages: 1,
-      },
-    } satisfies ResponseFrame);
-    const setLatestArchive = vi.fn();
-    const ctx = makeForwardContext({ setLatestArchive });
-
-    await forwardToProcess({
-      type: "req",
-      id: "conversation-reset-1",
-      call: "proc.conversation.reset",
-      args: { pid: "proc-1" },
-    } as RequestFrame, ctx);
-
-    expect(setLatestArchive).toHaveBeenCalledWith("default:1000:2000", null);
-  });
-
-  it("updates a default conversation archive pointer on proc.kill when a primary archive is returned", async () => {
-    const setLatestArchive = vi.fn();
-    const clearActivePid = vi.fn();
-    const ctx = makeForwardContext({ setLatestArchive, clearActivePid });
+  it("unregisters a killed process after its history is archived", async () => {
+    const ctx = makeForwardContext();
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",
       id: "kill-archive",
@@ -729,10 +642,9 @@ describe("proc handlers", () => {
         pid: "proc-1",
         archivedMessages: 1,
         archives: [{
-          conversationId: "default",
           generation: 1,
           messages: 1,
-          path: "/home/sam-agent/conversations/default%3A1000%3A2000/kill.default.gen-1.jsonl.gz",
+          path: "/home/sam-agent/history/kill.gen-1.jsonl.gz",
         }],
       },
     } satisfies ResponseFrame);
@@ -744,11 +656,7 @@ describe("proc handlers", () => {
       args: { pid: "proc-1" },
     } as RequestFrame, ctx);
 
-    expect(setLatestArchive).toHaveBeenLastCalledWith(
-      "default:1000:2000",
-      "/home/sam-agent/conversations/default%3A1000%3A2000/kill.default.gen-1.jsonl.gz",
-    );
-    expect(clearActivePid).toHaveBeenCalledWith("proc-1");
+    expect(ctx.procs.kill).toHaveBeenCalledWith("proc-1");
     expect(ctx.runRoutes.clearForProcess).toHaveBeenCalledWith("proc-1");
     expect(ctx.failIpcCallsByTarget).toHaveBeenCalledWith(
       IDENTITY.uid,
@@ -757,10 +665,8 @@ describe("proc handlers", () => {
     );
   });
 
-  it("preserves a default conversation archive pointer on proc.kill when no archive is returned", async () => {
-    const setLatestArchive = vi.fn();
-    const clearActivePid = vi.fn();
-    const ctx = makeForwardContext({ setLatestArchive, clearActivePid });
+  it("unregisters a killed process when there is no history to archive", async () => {
+    const ctx = makeForwardContext();
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",
       id: "kill-empty",
@@ -780,8 +686,7 @@ describe("proc handlers", () => {
       args: { pid: "proc-1" },
     } as RequestFrame, ctx);
 
-    expect(setLatestArchive).not.toHaveBeenCalled();
-    expect(clearActivePid).toHaveBeenCalledWith("proc-1");
+    expect(ctx.procs.kill).toHaveBeenCalledWith("proc-1");
     expect(ctx.runRoutes.clearForProcess).toHaveBeenCalledWith("proc-1");
   });
 
@@ -842,7 +747,6 @@ describe("proc handlers", () => {
         get: vi.fn(() => null),
         spawn: vi.fn(),
       },
-      conversations: spawnConversationsMock(),
     } as unknown as KernelContext;
 
     const result = await handleProcSpawn({
@@ -907,13 +811,9 @@ describe("proc handlers", () => {
         get: vi.fn(() => null),
         spawn: vi.fn(),
       },
-      conversations: spawnConversationsMock(),
     } as unknown as KernelContext;
 
-    const result = await handleProcSpawn({
-      fresh: true,
-      interactive: true,
-    }, ctx);
+    const result = await handleProcSpawn({ interactive: true }, ctx);
 
     expect(result).toMatchObject({
       ok: true,
@@ -943,7 +843,7 @@ describe("proc handlers", () => {
   });
 
   it.each(["null", "error", "throw"] as const)(
-    "rolls back a fresh spawn when proc.setidentity returns %s",
+    "rolls back a spawn when proc.setidentity returns %s",
     async (failure) => {
       if (failure === "null") {
         sendFrameToProcessMock.mockResolvedValueOnce(null);
@@ -958,7 +858,6 @@ describe("proc handlers", () => {
         sendFrameToProcessMock.mockRejectedValueOnce(new Error("process unavailable"));
       }
 
-      const conversations = spawnConversationsMock();
       const procs = {
         get: vi.fn(() => SPAWN_PARENT),
         spawn: vi.fn(),
@@ -972,10 +871,9 @@ describe("proc handlers", () => {
           capabilities: ["proc.spawn"],
         },
         procs,
-        conversations,
       } as unknown as KernelContext;
 
-      const result = await handleProcSpawn({ fresh: true }, ctx);
+      const result = await handleProcSpawn({}, ctx);
       const pid = procs.spawn.mock.calls[0]?.[0];
 
       expect(result).toMatchObject({
@@ -987,8 +885,6 @@ describe("proc handlers", () => {
         call: "proc.kill",
         args: { pid, archive: false },
       }));
-      expect(conversations.clearActivePid).toHaveBeenCalledWith(pid);
-      expect(conversations.remove).toHaveBeenCalledWith("conv-1");
       expect(procs.kill).toHaveBeenCalledWith(pid);
     },
   );
@@ -1002,7 +898,6 @@ describe("proc handlers", () => {
         ok: false,
         error: { code: 500, message: "finish route unavailable" },
       }));
-    const conversations = spawnConversationsMock();
     const procs = {
       get: vi.fn(() => SPAWN_PARENT),
       spawn: vi.fn(),
@@ -1016,17 +911,14 @@ describe("proc handlers", () => {
         capabilities: ["proc.spawn"],
       },
       procs,
-      conversations,
     } as unknown as KernelContext;
 
-    const result = await handleProcSpawn({ fresh: true }, ctx);
+    const result = await handleProcSpawn({}, ctx);
 
     expect(result).toMatchObject({
       ok: false,
       error: expect.stringContaining("rollback failed: finish route unavailable"),
     });
-    expect(conversations.clearActivePid).not.toHaveBeenCalled();
-    expect(conversations.remove).not.toHaveBeenCalled();
     expect(procs.kill).not.toHaveBeenCalled();
   });
 
@@ -1041,7 +933,6 @@ describe("proc handlers", () => {
         get: vi.fn(() => SPAWN_PARENT),
         spawn: vi.fn(),
       },
-      conversations: spawnConversationsMock(),
     } as unknown as KernelContext;
 
     const result = await handleProcSpawn({ parentPid: `init:${IDENTITY.uid}` }, ctx);
@@ -1052,6 +943,105 @@ describe("proc handlers", () => {
       expect.any(Object),
       expect.objectContaining({ interactive: true }),
     );
+  });
+
+  it("forks history through kernel-only process syscalls", async () => {
+    const sourcePid = "proc:source";
+    let targetPid: string | null = null;
+    const source = {
+      ...SPAWN_PARENT,
+      processId: sourcePid,
+      label: "Source task",
+      cwd: "/home/sam/work",
+    };
+    const removeTemporaryHistory = vi.fn(async () => undefined);
+    const procs = {
+      get: vi.fn((pid: string) => pid === sourcePid ? source : null),
+      spawn: vi.fn((pid: string) => {
+        targetPid = pid;
+      }),
+      kill: vi.fn(() => true),
+    };
+    const ctx = {
+      processId: sourcePid,
+      callerOwnerUid: IDENTITY.uid,
+      env: { STORAGE: { delete: removeTemporaryHistory } },
+      identity: {
+        process: IDENTITY,
+        capabilities: ["proc.fork", "proc.spawn"],
+      },
+      auth: {
+        getPasswdByUsername: vi.fn(() => ({
+          username: IDENTITY.username,
+          uid: IDENTITY.uid,
+          gid: IDENTITY.gid,
+          gecos: "Sam",
+          home: IDENTITY.home,
+          shell: "/bin/init",
+        })),
+        getPasswdByUid: vi.fn(() => ({ username: IDENTITY.username })),
+        getPersonalAgentUid: vi.fn(() => null),
+        getGroupByGid: vi.fn(() => null),
+        resolveGids: vi.fn(() => IDENTITY.gids),
+      },
+      procs,
+    } as unknown as KernelContext;
+
+    sendFrameToProcessMock.mockImplementation(async (pid, frame) => {
+      if (frame.type !== "req") return null;
+      if (frame.call === "proc.history.export") {
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: {
+            ok: true,
+            sourcePid,
+            archivePaths: ["/tmp/fork-history.jsonl.gz"],
+            temporaryArchivePaths: ["/tmp/fork-history.jsonl.gz"],
+            throughMessageId: 2,
+            includedLiveSuffix: false,
+          },
+        } as ResponseFrame;
+      }
+      if (frame.call === "proc.history.import") {
+        expect(pid).toBe(targetPid);
+        expect(frame.args).toEqual({ archivePaths: ["/tmp/fork-history.jsonl.gz"] });
+        return {
+          type: "res",
+          id: frame.id,
+          ok: true,
+          data: { ok: true, pid, restoredMessages: 2 },
+        } as ResponseFrame;
+      }
+      return {
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: { ok: true },
+      } as ResponseFrame;
+    });
+
+    const result = await handleProcFork({
+      pid: sourcePid,
+      throughMessageId: 2,
+    }, ctx);
+
+    expect(result).toMatchObject({
+      ok: true,
+      pid: targetPid,
+      label: "Branch of Source task",
+      sourcePid,
+      throughMessageId: 2,
+      restoredMessages: 2,
+      includedLiveSuffix: false,
+    });
+    expect(procs.spawn).toHaveBeenCalledWith(
+      targetPid,
+      expect.objectContaining({ cwd: "/home/sam/work" }),
+      expect.objectContaining({ parentPid: sourcePid, label: "Branch of Source task" }),
+    );
+    expect(removeTemporaryHistory).toHaveBeenCalledWith(["tmp/fork-history.jsonl.gz"]);
   });
 
   it("rejects inheriting run-as identity from an explicit unrelated parent", async () => {
@@ -1163,8 +1153,6 @@ function makeIpcCallContext(options: {
 }
 
 function makeForwardContext(overrides?: {
-  setLatestArchive?: (conversationId: string, archivePath: string | null) => boolean;
-  clearActivePid?: (pid: string) => void;
   cancelBySourcePid?: (input: { uid: number; sourcePid: string }) => void;
 }): KernelContext {
   return {
@@ -1184,22 +1172,6 @@ function makeForwardContext(overrides?: {
     runRoutes: {
       delete: vi.fn(),
       clearForProcess: vi.fn(),
-    },
-    conversations: {
-      getByActivePid: vi.fn(() => ({
-        conversationId: "default:1000:2000",
-        ownerUid: 1000,
-        agentUid: 2000,
-        title: null,
-        isDefault: true,
-        activePid: "proc-1",
-        archiveBase: "/home/sam-agent/conversations/default%3A1000%3A2000",
-        latestArchive: "/home/sam-agent/conversations/default%3A1000%3A2000/old.default.gen-1.jsonl.gz",
-        createdAt: 1,
-        lastActiveAt: 2,
-      })),
-      setLatestArchive: overrides?.setLatestArchive ?? vi.fn(),
-      clearActivePid: overrides?.clearActivePid ?? vi.fn(),
     },
     ipcCalls: {
       cancelBySourcePid: overrides?.cancelBySourcePid ?? vi.fn(),
@@ -1314,7 +1286,6 @@ describe("handleProcList", () => {
       // human (uid 1000); listing must resolve to the human owner.
       identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: ["proc.list"] },
       procs: { getOwnerUid: vi.fn(() => 1000), list },
-      conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
 
     handleProcList({}, ctx);
@@ -1326,7 +1297,6 @@ describe("handleProcList", () => {
     const ctx = {
       identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: ["proc.list"] },
       procs: { get: vi.fn(() => null), list },
-      conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
 
     handleProcList({}, ctx);
@@ -1338,7 +1308,6 @@ describe("handleProcList", () => {
     const ctx = {
       identity: { role: "user", process: { ...IDENTITY, uid: 0, username: "root" }, capabilities: ["proc.list"] },
       procs: { get: vi.fn(() => null), list },
-      conversations: { getByActivePid: vi.fn(() => null) },
     } as unknown as KernelContext;
 
     handleProcList({}, ctx);

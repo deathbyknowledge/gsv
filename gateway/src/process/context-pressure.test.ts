@@ -59,7 +59,6 @@ describe("context pressure", () => {
 
   it("reserves configured output tokens when calculating pressure", () => {
     const state = buildProcContextState({
-      conversationId: "default",
       provider: "openai",
       model: "gpt-test",
       contextWindowTokens: 1000,
@@ -76,7 +75,6 @@ describe("context pressure", () => {
 
   it("uses provider usage when it is available", () => {
     const state = buildProcContextState({
-      conversationId: "default",
       provider: "workers-ai",
       model: "@cf/test",
       reasoning: "high",
@@ -112,7 +110,7 @@ describe("context pressure", () => {
         source: "model-pricing" as const,
       },
     };
-    const conversationUsage = {
+    const historyUsage = {
       ...usageState,
       inputTokens: 1840,
       outputTokens: 160,
@@ -126,7 +124,6 @@ describe("context pressure", () => {
       generations: 2,
     };
     const state = buildProcContextState({
-      conversationId: "default",
       provider: "workers-ai",
       model: "@cf/test",
       contextWindowTokens: 4000,
@@ -134,18 +131,17 @@ describe("context pressure", () => {
       estimatedInputTokens: 100,
       usage: USAGE,
       usageState,
-      conversationUsage,
+      historyUsage,
       updatedAt: 1,
     });
 
     expect(state.usage?.cost?.total).toBe(0.00058);
-    expect(state.conversationUsage?.cost?.total).toBe(0.00116);
-    expect(state.conversationUsage?.generations).toBe(2);
+    expect(state.historyUsage?.cost?.total).toBe(0.00116);
+    expect(state.historyUsage?.generations).toBe(2);
   });
 
   it("keeps pressure unknown without a context window", () => {
     const state = buildProcContextState({
-      conversationId: "default",
       provider: "custom",
       model: "unknown",
       contextWindowTokens: null,

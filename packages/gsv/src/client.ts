@@ -268,23 +268,17 @@ const SYSCALL_NAMES = [
   "proc.abort",
   "proc.hil",
   "proc.history",
+  "proc.history.policy.get",
+  "proc.history.policy.set",
+  "proc.history.compact",
+  "proc.history.export",
+  "proc.history.import",
+  "proc.history.segment.read",
+  "proc.history.segments",
+  "proc.fork",
   "proc.ai.config.get",
   "proc.ai.config.set",
   "proc.media.delete",
-  "proc.conversation.open",
-  "proc.conversation.list",
-  "proc.conversation.get",
-  "proc.conversation.close",
-  "proc.conversation.reset",
-  "proc.conversation.policy.get",
-  "proc.conversation.policy.set",
-  "proc.conversation.compact",
-  "proc.conversation.fork",
-  "proc.conversation.segment.read",
-  "proc.conversation.segments",
-  "proc.conversation.timeline",
-  "proc.conversation.generations",
-  "proc.conversation.generation.manifest",
   "proc.reset",
   "proc.setidentity",
   "repo.list",
@@ -1386,14 +1380,23 @@ function assignNamespaces(target: Record<string, unknown>, call: GsvClientCall):
 
     for (const part of parts.slice(0, -1)) {
       const existing = cursor[part];
-      if (!existing || typeof existing !== "object") {
+      if (
+        !existing
+        || (typeof existing !== "object" && typeof existing !== "function")
+      ) {
         cursor[part] = {};
       }
       cursor = cursor[part] as Record<string, unknown>;
     }
 
-    const method = parts[parts.length - 1];
-    cursor[method] = ((args: unknown = {}) => call(syscall, args as never)) as GsvSyscallMethod<typeof syscall>;
+    const methodName = parts[parts.length - 1];
+    const existing = cursor[methodName];
+    const method = ((args: unknown = {}) =>
+      call(syscall, args as never)) as GsvSyscallMethod<typeof syscall>;
+    if (existing && (typeof existing === "object" || typeof existing === "function")) {
+      Object.assign(method, existing);
+    }
+    cursor[methodName] = method;
   }
 }
 

@@ -413,53 +413,6 @@
   max-width: 100%;
 }
 
-/* Conversation branch selector — mirrors the model-selection row (uppercase
-   sublabel + chevron). Disabled until a branch exists. */
-.gsv-shell-root .gsv-chat-agent-conversation {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  max-width: 100%;
-  font-weight: 400;
-  letter-spacing: 0.12em;
-  line-height: 1.2;
-  color: #b6b1ff;
-  text-transform: uppercase;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  cursor: pointer;
-  text-align: left;
-}
-.gsv-shell-root .gsv-chat-agent-conversation > span {
-  display: inline-block;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* Hover brightening is pointer-only — on touch the tap would otherwise leave
-   the sticky :hover color behind after the sheet closes. Focus-visible keeps
-   the bright color for keyboard users on every device. */
-@media (hover: hover) {
-  .gsv-shell-root .gsv-chat-agent-conversation:hover {
-    color: #e6e4ff;
-  }
-}
-.gsv-shell-root .gsv-chat-agent-conversation:focus-visible {
-  color: #e6e4ff;
-  outline: none;
-}
-.gsv-shell-root .gsv-chat-agent-conversation:disabled {
-  color: #6661a0;
-  cursor: default;
-}
-.gsv-shell-root .gsv-chat-agent-conversation:disabled .gsv-chat-agent-chevron {
-  opacity: 0.5;
-}
-
 .gsv-shell-root .gsv-chat-agent-model {
   display: inline-flex;
   align-items: center;
@@ -793,9 +746,6 @@
 
 /* Desktop height caps for the row lists — mobile lifts them (the sheet body
    scrolls instead). */
-.gsv-popover-conversations .gsv-popover-list {
-  max-height: min(288px, 44vh);
-}
 .gsv-popover-tasks .gsv-popover-list {
   max-height: 228px;
 }

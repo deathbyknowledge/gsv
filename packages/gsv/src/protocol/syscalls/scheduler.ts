@@ -25,7 +25,6 @@ export type ScheduleTarget =
   | {
       kind: "process.event";
       pid: string;
-      conversationId?: string;
       message: string;
       data?: Record<string, unknown>;
       replyTo?: EventReplyTarget;

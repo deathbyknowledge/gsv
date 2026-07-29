@@ -56,13 +56,13 @@ Each Process DO owns its own SQLite database. This keeps active agent-loop state
 
 | Table | Purpose |
 |---|---|
-| `messages` | Current conversation history for the process. |
+| `messages` | Current history for the process. |
 | `pending_tool_calls` | Durable tool dispatch ledger from registration through terminal result ingestion. |
 | `message_queue` | FIFO process- and scheduler-origin work received while a run is active. |
 | `pending_hil` | Human-in-the-loop approval state. |
 | `process_kv` | Process metadata such as identity, profile, current run, and archive id. |
 
-`proc.reset`, `proc.kill`, and conversation compaction archive exact process
+`proc.reset`, `proc.kill`, and history compaction archive exact process
 messages to R2 under the run-as agent's home.
 
 ## R2 Object Layout
@@ -73,8 +73,8 @@ R2 remains the byte store. The current runtime uses these key families:
 |---|---|---|
 | Any normal filesystem key, for example `home/alice/file.txt` | `R2MountBackend` | Default virtual filesystem storage. |
 | `var/media/{uid}/{pid}/{uuid}` | Process media handling | Uploaded or adapter-provided media attached to process messages and exposed at the matching absolute `/var/media/...` path. |
-| `home/{agent}/.gsv/media/archived-media:{hash}` | Process conversation archiving | Immutable media retained by archived transcripts, scoped to the run-as agent home and independent of executor pid. |
-| `home/{agent}/conversations/{conversationId}/*.jsonl.gz` | Process reset, kill, and compaction | Gzipped JSONL transcript archives addressed independently of executor pid. |
+| `home/{agent}/.gsv/media/archived-media:{hash}` | Process history archiving | Immutable media retained by archived transcripts and scoped to the run-as agent home. |
+| `home/{agent}/processes/{pid}/history/*.jsonl.gz` | Process reset, kill, compaction, and fork | Gzipped JSONL transcript archives scoped to the owning process. |
 | `process-source-overlays/{pid}/{sourceKey}/manifest.json` | `/src/repos`, `rgit` | Manifest of staged source edits for one process/repo. |
 | `process-source-overlays/{pid}/{sourceKey}/files/{path}` | `/src/repos`, `rgit` | Staged file content for source puts. |
 
@@ -102,7 +102,7 @@ Generic visible repos are available under `/src/repos/{owner}/{repo}`. Repos wri
 ## Practical Rules
 
 - Use Kernel SQLite for authoritative control-plane state.
-- Use Process SQLite for active conversation and run state.
+- Use Process SQLite for history and run state.
 - Use R2 for opaque bytes, archives, media, and default filesystem files.
 - Use ripgit for user-editable/versioned documents, knowledge, workspace files, and source repositories.
 - Prefer filesystem paths in agent prompts; the mount layer hides the backing store.

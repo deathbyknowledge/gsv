@@ -4,7 +4,6 @@ import type { ConfigStore } from "../kernel/config";
 import type { CronFileService } from "../kernel/crontab";
 import type { DeviceRegistry } from "../kernel/devices";
 import type { ProcessRegistry } from "../kernel/processes";
-import type { ConversationRegistry } from "../kernel/conversations";
 import type { RequestFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
 import type { ArgsOf, ResultOf } from "../syscalls";
@@ -13,14 +12,9 @@ import type { ScheduleRecord, ScheduleRunHistoryEntry } from "@humansandmachines
 export type ProcessViewCall =
   | "proc.ai.config.get"
   | "proc.ai.config.set"
-  | "proc.conversation.get"
-  | "proc.conversation.generation.manifest"
-  | "proc.conversation.generations"
-  | "proc.conversation.list"
-  | "proc.conversation.segment.read"
-  | "proc.conversation.segments"
-  | "proc.conversation.timeline"
-  | "proc.history";
+  | "proc.history"
+  | "proc.history.segment.read"
+  | "proc.history.segments";
 
 export type ProcessViewRequest = <S extends ProcessViewCall>(
   pid: string,
@@ -62,7 +56,6 @@ export type ScheduleViewStore = {
 export type KernelRefs = {
   auth: AuthStore;
   procs: ProcessRegistry;
-  conversations?: ConversationRegistry;
   devices: DeviceRegistry;
   caps: CapabilityStore;
   config: ConfigStore;

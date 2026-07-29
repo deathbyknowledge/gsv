@@ -530,7 +530,6 @@ function processFileContent(
       `  state: ${process.rawState || process.state}`,
       process.cwd ? `  cwd: ${process.cwd}` : "",
       process.activeRunId ? `  activeRunId: ${process.activeRunId}` : "",
-      process.activeConversationId ? `  conversation: ${process.activeConversationId}` : "",
       process.queuedCount > 0 ? `  queued: ${process.queuedCount}` : "",
     ].filter(Boolean).join("\n")),
   ].join("\n");

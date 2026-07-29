@@ -31,7 +31,7 @@ no separate workspace primitive.
 - [x] Keep `cwd` in process identity/runtime context so relative paths resolve
   against the process current directory, not always `home`
 - [x] Let `proc.spawn` accept an explicit `cwd`
-- [x] Keep active conversation state in Process SQLite
+- [x] Keep process history in Process SQLite
 - [x] Archive reset/kill/compaction history under the run-as agent's home in R2
 - [x] Keep prompt context in system and home providers
 - [x] Keep skills in owner and run-as agent home `skills.d` sources
@@ -72,7 +72,7 @@ different prompt.
 ## Unix identity model (`/etc/passwd`, `/etc/shadow`, `/etc/group`)
 
 Use classic Linux flat-file formats so LLM agents can read/parse them naturally.
-The `shell` field in `/etc/passwd` is `/bin/init` — the user's persistent root AI process.
+The `shell` field in `/etc/passwd` is currently `/bin/init` for user and agent accounts.
 Auth data lives in kernel SQLite (`AuthStore`), exposed at `/etc/*` via GsvFs virtual paths.
 No R2 round-trips for auth, no credentials in object storage.
 
@@ -162,8 +162,7 @@ Merged into unified `GsvFs`. The R2 permission logic now lives in `GsvFs` alongs
 - [x] Handle first-boot, setup mode, reconnect
 - [x] Handle driver + service connections
 - [x] Return `ConnectResult`, reject pre-connect syscalls, capability check per req
-- [x] On successful user connect: ensure user's init process exists (`ProcessRegistry.ensureInit`)
-- [ ] Read user's `shell` field from `/etc/passwd` — if `/bin/init`, spawn/connect to init process
+- [x] On successful user connect: ensure the user's personal agent account exists
 
 ## Routing table (`kernel/routing.ts`)
 
@@ -194,31 +193,17 @@ Routable domains: `fs`, `shell`. Kernel-internal: `proc`, `sys`, `sched`, `adapt
 
 ## Process registry (kernel SQLite)
 
-Kernel tracks all alive processes. Process kind is derived from the processId convention:
-`init:{uid}` = persistent root agent, `task:{uuid}` = ephemeral task, `cron:{jobId}` = cron job.
+Kernel tracks all alive processes. Each task has an opaque process id.
 
 - [x] `processes` table with `process_id`, `parent_pid`, `uid`, `gid`, `gids`, `username`, `home`, `state`, `label`, `created_at`
 - [x] `spawn(processId, identity, { parentPid?, label? })` — insert record
 - [x] `getIdentity(processId)` — look up ProcessIdentity
 - [x] `kill(processId)` / `setState(processId, state)` / `list(uid?)` / `children(parentPid)`
-- [x] `getInit(uid)` / `ensureInit(identity)` — init process helpers
 - [ ] Promote process type/profile to first-class fields instead of inferring everything from the processId string
   - explicit `process_type` (`init` | `task` | `cron` | `mcp` | `app`)
   - optional profile/system-prompt selection
   - spawn semantics for `mcp` / operator-style processes
 - [ ] Unit tests
-
-## Init process lifecycle
-
-Every user has a persistent "init" process (`init:{uid}`) — their root AI agent.
-All messages from any channel converge to the user's init process. The init process is
-the equivalent of a login shell in Linux.
-
-- [ ] Spawn init process on user creation (setup mode / `sys.useradd`)
-- [ ] On `sys.connect` for user role: ensure init exists, track which connection/channel the user is on
-- [ ] Init process loads shared identity from user's home dir (SOUL.md, etc.)
-- [ ] Init process can spawn child processes for tasks via `proc.spawn` through the kernel
-- [ ] When cron fires, kernel spawns `cron:{jobId}` as child of user's init
 
 ## Response routing
 
@@ -231,19 +216,19 @@ Processes produce output; the kernel routes it to the right place based on conte
 - [x] Cleanup route on `proc.run.finished` and on connection close
 - [ ] Add integration tests for run-route delivery/fallback behavior (TTL/store tests done)
 
-## Conversation archival
+## Process history archival
 
-Active conversation state lives in Process SQLite. Exact transcript archives
+Active history lives in Process SQLite. Exact transcript archives
 currently live in R2 under the run-as agent's home; searchable archive views
 remain future work.
 
-- [x] Archive path convention: `/home/{agent}/conversations/{conversationId}/*.jsonl.gz`
-- [x] `proc.reset` archives conversations and starts fresh in the same process
+- [x] Archive path convention: `/home/{agent}/processes/{pid}/history/*.jsonl.gz`
+- [x] `proc.reset` archives history and starts fresh in the same process
 - [x] `proc.kill` archives before destroying the Process DO
 - [ ] Ephemeral processes (task/cron) auto-archive on completion, then kernel destroys the DO
-- [ ] Init process periodically compacts: summarize old messages, flush full transcript to the archive repo
-- [ ] Any process can load archived conversations through repo-backed retrieval
-- [ ] Add searchable archive views over home conversation transcripts
+- [ ] Long-running processes periodically compact old messages
+- [ ] Add repo-backed retrieval for archived process history
+- [ ] Add searchable archive views over process transcripts
 
 ## Context assembly / process profiles
 
@@ -294,7 +279,7 @@ those records while keeping `GsvFs` as the operational filesystem for live files
   - separate repo per user for session archives if transcript volume/search churn warrants it
 - [ ] Keep semantic helpers above kernel primitives; do not add app-shaped syscall domains
 - [ ] Migrate prompt assembly from raw R2 `context.d/*.md` reads to repo-backed retrieval
-- [ ] Migrate conversation archival from raw R2 gzip blobs to repo-backed archives
+- [ ] Migrate process history archives from raw R2 gzip blobs to repo-backed archives
 - [ ] Expose archive retrieval as a context provider for long-context / recursive process retrieval
 - [ ] Optional later: read-only history mount for browsing archived knowledge (not write-through FS)
 - [ ] Optional later: pass narrow `KNOWLEDGE` capability bindings into Dynamic Worker sandboxes
@@ -324,9 +309,9 @@ Kernel-internal process management. Not routable (no `target`).
 - [x] `proc.spawn` — create a child process
 - [x] `proc.kill` — archive + destroy a process
 - [x] `proc.list` — list processes (own or all for root)
-- [x] `proc.send` — send a message to a process (defaults to caller's init)
-- [x] `proc.history` — read conversation history from a process
-- [x] `proc.reset` — archive + clear conversation, process stays alive
+- [x] `proc.send` — send a message to a process (defaults to the calling process)
+- [x] `proc.history` — read history from a process
+- [x] `proc.reset` — archive + clear history, process stays alive
 - [x] Types in `syscalls/proc.ts`
 - [x] Constants in `syscalls/constants.ts`
 - [x] Implement `proc.spawn` handler in dispatcher
@@ -334,7 +319,7 @@ Kernel-internal process management. Not routable (no `target`).
 - [x] Implement `proc.list` handler in dispatcher
 - [x] Implement `proc.send` handler — deliver message to process, trigger agent loop
 - [x] Implement `proc.history` handler — read from process DO
-- [x] Implement `proc.reset` handler — archive + clear process conversation
+- [x] Implement `proc.reset` handler — archive + clear process history
 
 ## Native FS driver (`drivers/native/fs.ts`)
 
@@ -358,7 +343,7 @@ Kernel-internal process management. Not routable (no `target`).
 - [x] Message history storage (SQLite-backed via `ProcessStore`)
 - [x] Agent loop (`continueAgentLoop`: LLM call → tool dispatch → result collection → continue)
 - [x] `proc.send` — direct users supersede active work; background origins queue
-- [x] `proc.reset` — archive messages to R2, clear conversation
+- [x] `proc.reset` — archive messages to R2, clear history
 - [x] `proc.history` — return message history with limit/offset
 - [x] Message queue: FIFO background-origin messages promoted as separate runs
 - [x] Signal delivery: `proc.run.*` and `proc.changed`
@@ -473,8 +458,8 @@ Orchestrated binary streaming between R2 and devices. Future work — port from 
 
 ## User management syscalls
 
-- [ ] `sys.useradd` — create passwd/shadow/group entries, home dir, and init process
-- [ ] `sys.userdel` — remove user entries, kill init + children (uid 0 only)
+- [ ] `sys.useradd` — create passwd/shadow/group entries and a home directory
+- [ ] `sys.userdel` — remove user entries and kill owned processes (uid 0 only)
 - [ ] `sys.usermod` — modify user groups, shell, home (uid 0 only)
 - [ ] `sys.passwd` — change password (own password or any as uid 0)
 - [ ] `sys.groupadd` / `sys.groupdel` — manage groups (uid 0 only)

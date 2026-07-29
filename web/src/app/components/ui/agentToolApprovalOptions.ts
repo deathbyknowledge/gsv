@@ -82,7 +82,7 @@ export const CAPABILITY_FAMILIES: CapabilityFamily[] = [
   {
     label: "Processes",
     options: [
-      { match: "proc.*", label: "All process tools", description: "Every process and conversation operation." },
+      { match: "proc.*", label: "All process tools", description: "Every process and history operation." },
       { match: "proc.spawn", label: "Start processes" },
       { match: "proc.send", label: "Send process messages" },
       { match: "proc.history", label: "Read process history" },

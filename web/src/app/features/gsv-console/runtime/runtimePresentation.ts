@@ -49,7 +49,7 @@ export function processBlurb(process: ConsoleProcess): string {
   const owner = process.username || uidLabel(process.uid) || "unknown owner";
   return compactText(
     [`${statusForProcess(process).toLowerCase()} task`, owner, process.profile, process.cwd],
-    "Process-backed task with conversation state and runtime controls.",
+    "Process-backed task with durable history and runtime controls.",
   );
 }
 
@@ -82,10 +82,9 @@ export function processDetailSections(process: ConsoleProcess): ConsoleDetailSec
     },
     {
       title: "WORKSPACE",
-      meta: process.activeConversationId ? "CONVERSATION" : "CONTEXT",
+      meta: "CONTEXT",
       rows: liveRows([
         detailRow("workspace", "WORKSPACE", process.cwd),
-        detailRow("conversation", "CONVERSATION", process.activeConversationId),
         detailRow("pid", "PROCESS ID", process.pid),
       ]),
     },

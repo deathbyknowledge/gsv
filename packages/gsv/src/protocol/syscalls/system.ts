@@ -73,7 +73,7 @@ export type UserPermissions = {
 /**
  * Account kinds in the unified identity model.
  * - `human`: a real person who logs in (password), member of `users`, gets a
- *   1:1 personal agent and an init process.
+ *   1:1 personal agent account.
  * - `agent`: a non-login service identity owned by a human; runs *as* itself
  *   while the owning human owns its processes.
  */

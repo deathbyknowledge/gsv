@@ -51,7 +51,6 @@ import {
 } from "./routing";
 import { ShellSessionStore, type ShellSessionStatus } from "./shell-sessions";
 import { ProcessRegistry, type ProcessState } from "./processes";
-import { ConversationRegistry } from "./conversations";
 import { AdapterStore } from "./adapter-store";
 import { RunRouteStore, type AdapterRunRoute, type RunRoute } from "./run-routes";
 import { OAuthStore } from "./oauth-store";
@@ -111,7 +110,7 @@ import type {
 import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
 import { handleProcSpawn } from "./proc-handlers";
-import { ensureDefaultConversationExecutor } from "./agents";
+import { ensurePersonalAgent } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
@@ -140,7 +139,6 @@ type ProcessDeliveryNoticeRetry = {
   noticeId: string;
   runId: string;
   processId: string;
-  conversationId: string;
   deliveryKind: "hil" | "final";
   requestId?: string;
   state: "permanent" | "ambiguous" | "exhausted";
@@ -213,7 +211,6 @@ export class Kernel extends Host<Env> {
   private readonly routes: RoutingTable;
   private readonly shellSessions: ShellSessionStore;
   private readonly procs: ProcessRegistry;
-  private readonly conversations: ConversationRegistry;
   private readonly adapters: AdapterStore;
   private readonly runRoutes: RunRouteStore;
   private readonly signalWatches: SignalWatchStore;
@@ -258,8 +255,6 @@ export class Kernel extends Host<Env> {
     this.shellSessions = new ShellSessionStore(sql);
 
     this.procs = new ProcessRegistry(sql);
-
-    this.conversations = new ConversationRegistry(sql);
 
     this.adapters = new AdapterStore(sql);
 
@@ -896,9 +891,6 @@ export class Kernel extends Host<Env> {
     frame: SignalFrame,
     outcome: { state: "permanent" | "ambiguous" | "exhausted"; message: string },
   ): Promise<void> {
-    const payload = frame.payload && typeof frame.payload === "object"
-      ? frame.payload as Record<string, unknown>
-      : {};
     const deliveryKind = frame.signal === "proc.run.hil.requested" ? "hil" : "final";
     const requestId = deliveryKind === "hil"
       ? normalizeAdapterHilRequest(frame.payload, "signal")?.requestId
@@ -919,9 +911,6 @@ export class Kernel extends Host<Env> {
         noticeId,
         runId: route.runId,
         processId: route.processId,
-        conversationId: typeof payload.conversationId === "string"
-          ? payload.conversationId
-          : "default",
         deliveryKind,
         ...(requestId ? { requestId } : {}),
         state: outcome.state,
@@ -941,7 +930,6 @@ export class Kernel extends Host<Env> {
       || typeof input.noticeId !== "string"
       || typeof input.runId !== "string"
       || typeof input.processId !== "string"
-      || typeof input.conversationId !== "string"
       || typeof input.message !== "string"
       || (input.deliveryKind === "hil" && (
         typeof input.requestId !== "string"
@@ -970,7 +958,6 @@ export class Kernel extends Host<Env> {
       payload: {
         noticeId: input.noticeId,
         runId: input.runId,
-        conversationId: input.conversationId,
         deliveryKind: input.deliveryKind,
         ...(requestId ? { requestId } : {}),
         state: input.state,
@@ -990,9 +977,6 @@ export class Kernel extends Host<Env> {
     const payload = frame.payload && typeof frame.payload === "object"
       ? frame.payload as Record<string, unknown>
       : {};
-    const conversationId = typeof payload.conversationId === "string"
-      ? payload.conversationId
-      : null;
     const queuedCount = typeof payload.queuedCount === "number" && Number.isFinite(payload.queuedCount)
       ? payload.queuedCount
       : undefined;
@@ -1023,7 +1007,6 @@ export class Kernel extends Host<Env> {
       this.procs.updateRuntimeState(processId, {
         state,
         ...(runId ? { activeRunId: runId } : {}),
-        ...(conversationId ? { activeConversationId: conversationId } : {}),
         ...(queuedCount !== undefined ? { queuedCount } : {}),
         lastActiveAt: timestamp,
       });
@@ -1046,25 +1029,19 @@ export class Kernel extends Host<Env> {
         this.procs.updateRuntimeState(processId, {
           state: queuedCount && queuedCount > 0 ? "queued" : "idle",
           activeRunId: null,
-          activeConversationId: null,
           ...(queuedCount !== undefined ? { queuedCount } : {}),
           lastActiveAt: timestamp,
         });
         return true;
       case "proc.changed":
         if (
-          conversationId === "default"
-          && Array.isArray(payload.changes)
+          Array.isArray(payload.changes)
           && payload.changes.includes("title")
           && typeof payload.title === "string"
         ) {
           const title = Array.from(payload.title.trim()).slice(0, 80).join("");
           if (title) {
             this.procs.setLabel(processId, title);
-            const conversation = this.conversations.getByActivePid(processId);
-            if (conversation) {
-              this.conversations.setTitle(conversation.conversationId, title);
-            }
           }
         }
         if (
@@ -1584,7 +1561,6 @@ export class Kernel extends Host<Env> {
       config: this.config,
       devices: this.devices,
       procs: this.procs,
-      conversations: this.conversations,
       oauth: this.oauth,
       mcp: this.mcp,
       mcpServers: this.mcpServers,
@@ -2341,9 +2317,8 @@ export class Kernel extends Host<Env> {
     }
 
     if (outcome.identity.role === "user") {
-      const freshIdentity = outcome.identity.process;
-      await ensureDefaultConversationExecutor(ctx, freshIdentity);
-      this.reconcileOwnedIdentities(freshIdentity.uid);
+      await ensurePersonalAgent(ctx, outcome.identity.process);
+      this.reconcileOwnedIdentities(outcome.identity.process.uid);
     }
 
     this.sendOk(connection, frame.id, outcome.result);
@@ -2400,7 +2375,6 @@ export class Kernel extends Host<Env> {
 
     try {
       const data = await handleKernelSetup(frame.args, ctx);
-      await ensureDefaultConversationExecutor(ctx, data.user);
       this.sendOk(connection, frame.id, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2866,7 +2840,6 @@ export class Kernel extends Host<Env> {
           runId,
           scheduleId: record.id,
           scheduleName: record.name,
-          conversationId: target.conversationId,
           message: target.message,
           data: target.data,
           replyTo: target.replyTo,
@@ -2907,7 +2880,6 @@ export class Kernel extends Host<Env> {
       return {
         kind: "process.event",
         pid: target.pid,
-        conversationId: target.conversationId ?? "default",
         runId: admittedRunId,
       };
     }

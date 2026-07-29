@@ -5,6 +5,7 @@ import { PROCESS_V002_MESSAGE_RUN_ID } from "./v002_message_run_id";
 import { PROCESS_V003_MESSAGE_METADATA } from "./v003_message_metadata";
 import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./v005_tool_result_outcome";
 import { PROCESS_V006_PENDING_HIL_OWNER } from "./v006_pending_hil_owner";
+import { PROCESS_V008_SINGLE_PROCESS_HISTORY } from "./v008_single_process_history";
 
 function normalizedStatements(): string[] {
   return PROCESS_MIGRATIONS.flatMap((migration) => migration.statements)
@@ -36,7 +37,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(7);
+    expect(PROCESS_MIGRATIONS).toHaveLength(8);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -65,9 +66,13 @@ describe("process schema migrations", () => {
       id: 7,
       name: "remove_process_context",
     });
+    expect(PROCESS_MIGRATIONS[7]).toMatchObject({
+      id: 8,
+      name: "single_process_history",
+    });
   });
 
-  it("creates the current process table set", () => {
+  it("keeps the shipped v1 table set intact", () => {
     expect(createdTables()).toEqual([
       "conversations",
       "messages",
@@ -80,7 +85,7 @@ describe("process schema migrations", () => {
     ]);
   });
 
-  it("keeps the messages baseline on the current conversation schema", () => {
+  it("keeps the shipped messages baseline intact", () => {
     const messages = createTableStatement("messages");
 
     expect(messages).toContain("conversation_id TEXT NOT NULL DEFAULT 'default'");
@@ -89,7 +94,7 @@ describe("process schema migrations", () => {
     expect(messages).toContain("origin_json TEXT");
   });
 
-  it("keeps queued work scoped by conversation generation", () => {
+  it("keeps the shipped queue baseline intact", () => {
     const messageQueue = createTableStatement("message_queue");
 
     expect(messageQueue).toContain("conversation_id TEXT NOT NULL DEFAULT 'default'");
@@ -98,7 +103,7 @@ describe("process schema migrations", () => {
     expect(messageQueue).toContain("origin_json TEXT");
   });
 
-  it("includes current indexes owned by the process store", () => {
+  it("keeps the shipped indexes intact", () => {
     expect(createdIndexes()).toEqual([
       "messages_conversation_id_id_idx",
       "conversation_archives_conversation_generation_idx",
@@ -146,5 +151,28 @@ describe("process schema migrations", () => {
 
   it("removes persisted process context in v7", () => {
     expect(normalizedStatements()).toContain("DELETE FROM process_kv WHERE key = 'processContextFiles'");
+  });
+
+  it("moves the default conversation into process-scoped history in v8", () => {
+    const statements = PROCESS_V008_SINGLE_PROCESS_HISTORY.statements
+      .map((statement) => statement.trim().replace(/\s+/g, " "));
+
+    expect(statements).toContain("ALTER TABLE messages_v8 RENAME TO messages");
+    expect(statements).toContain("ALTER TABLE pending_tool_calls_v8 RENAME TO pending_tool_calls");
+    expect(statements).toContain("ALTER TABLE message_queue_v8 RENAME TO message_queue");
+    expect(statements).toContain("ALTER TABLE pending_hil_v8 RENAME TO pending_hil");
+    expect(statements).toContain("DROP TABLE conversation_segments");
+    expect(statements).toContain("DROP TABLE conversation_archives");
+    expect(statements).toContain("DROP TABLE conversations");
+
+    const messages = statements.find((statement) => statement.startsWith("CREATE TABLE messages_v8"));
+    const queue = statements.find((statement) => statement.startsWith("CREATE TABLE message_queue_v8"));
+    const segments = statements.find((statement) => statement.startsWith("CREATE TABLE history_segments"));
+    expect(messages).not.toContain("conversation_id");
+    expect(queue).not.toContain("conversation_id");
+    expect(segments).not.toContain("conversation_id");
+    expect(statements.some((statement) => (
+      statement.includes("FROM messages WHERE conversation_id = 'default'")
+    ))).toBe(true);
   });
 });

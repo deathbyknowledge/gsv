@@ -54,10 +54,11 @@ is allowed to do something and where the request should go.
 
 ### Agent Processes
 
-Agents are durable processes, not sessions. Each user has a long-lived init
-process, `init:{uid}`, and can spawn child processes with `proc.spawn`. A process
-has a PID, uid/gid identity, parent, profile, current working directory, optional
-workspace, state, and persistent message history.
+Agents are durable processes, not sessions. Each task has its own process,
+created with `proc.spawn` or `proc.fork`. A process has a PID, uid/gid identity,
+parent, profile, current working directory, optional workspace, state, and
+persistent message history. A personal agent is a run-as account, not a default
+process.
 
 Process state lives in a Process Durable Object with its own SQLite database.
 That database stores active messages, pending tool calls, queued messages,
@@ -81,7 +82,7 @@ Different path families are backed by different stores:
 
 - Kernel SQLite backs control-plane paths such as `/sys`, `/proc`, `/dev`, and
   auth/config overlays in `/etc`.
-- Process SQLite backs active conversation and run state.
+- Process SQLite backs history and run state.
 - R2 stores ordinary bytes, process media, and archives.
 - ripgit stores versioned home knowledge, workspace trees, and repository content.
 

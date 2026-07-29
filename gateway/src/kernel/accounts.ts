@@ -7,7 +7,7 @@
  * the differences:
  *
  *   - human: password login, member of `users` for shared capabilities, gets a
- *     1:1 personal agent + init process provisioned separately.
+ *     1:1 personal agent account provisioned separately.
  *   - agent: locked (no login), owned by a human, cross-membered with the owner
  *     so the human can act as the agent and vice versa.
  */

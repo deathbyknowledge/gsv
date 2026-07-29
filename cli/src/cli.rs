@@ -36,7 +36,7 @@ pub(crate) enum Commands {
         /// Message to send (if omitted, enters interactive mode)
         message: Option<String>,
 
-        /// Optional process ID (defaults to your personal-agent conversation)
+        /// Process ID to continue (creates a new process when omitted)
         #[arg(long)]
         pid: Option<String>,
     },
@@ -553,16 +553,16 @@ pub(crate) enum ProcAction {
         /// Message to deliver
         message: String,
 
-        /// Optional process ID (defaults to your personal-agent conversation)
+        /// Process ID
         #[arg(long)]
-        pid: Option<String>,
+        pid: String,
     },
 
     /// Read process message history
     History {
-        /// Optional process ID (defaults to your personal-agent conversation)
+        /// Process ID
         #[arg(long)]
-        pid: Option<String>,
+        pid: String,
 
         /// Read the newest messages instead of the oldest page
         #[arg(long)]
@@ -577,11 +577,11 @@ pub(crate) enum ProcAction {
         offset: Option<u32>,
     },
 
-    /// Reset process conversation history
+    /// Reset process history
     Reset {
-        /// Optional process ID (defaults to your personal-agent conversation)
+        /// Process ID
         #[arg(long)]
-        pid: Option<String>,
+        pid: String,
     },
 
     /// Kill a process

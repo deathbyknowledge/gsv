@@ -33,34 +33,22 @@ import type {
   ProcAiConfigGetResult,
   ProcAiConfigSetArgs,
   ProcAiConfigSetResult,
-  ProcConversationCloseArgs,
-  ProcConversationCloseResult,
-  ProcConversationCompactArgs,
-  ProcConversationCompactResult,
-  ProcConversationForkArgs,
-  ProcConversationForkResult,
-  ProcConversationGenerationManifestArgs,
-  ProcConversationGenerationManifestResult,
-  ProcConversationGenerationsArgs,
-  ProcConversationGenerationsResult,
-  ProcConversationGetArgs,
-  ProcConversationGetResult,
-  ProcConversationListArgs,
-  ProcConversationListResult,
-  ProcConversationOpenArgs,
-  ProcConversationOpenResult,
-  ProcConversationPolicyGetArgs,
-  ProcConversationPolicyGetResult,
-  ProcConversationPolicySetArgs,
-  ProcConversationPolicySetResult,
-  ProcConversationResetArgs,
-  ProcConversationResetResult,
-  ProcConversationSegmentReadArgs,
-  ProcConversationSegmentReadResult,
-  ProcConversationSegmentsArgs,
-  ProcConversationSegmentsResult,
-  ProcConversationTimelineArgs,
-  ProcConversationTimelineResult,
+  ProcForkArgs,
+  ProcForkResult,
+  ProcHistoryCompactArgs,
+  ProcHistoryCompactResult,
+  ProcHistoryExportArgs,
+  ProcHistoryExportResult,
+  ProcHistoryImportArgs,
+  ProcHistoryImportResult,
+  ProcHistoryPolicyGetArgs,
+  ProcHistoryPolicyGetResult,
+  ProcHistoryPolicySetArgs,
+  ProcHistoryPolicySetResult,
+  ProcHistorySegmentReadArgs,
+  ProcHistorySegmentReadResult,
+  ProcHistorySegmentsArgs,
+  ProcHistorySegmentsResult,
   ProcHilArgs,
   ProcHilResult,
   ProcHistoryArgs,
@@ -265,28 +253,19 @@ export type SyscallDomains = {
   "proc.abort": { args: ProcAbortArgs; result: ProcAbortResult };
   "proc.hil": { args: ProcHilArgs; result: ProcHilResult };
   "proc.history": { args: ProcHistoryArgs; result: ProcHistoryResult };
+  "proc.history.policy.get": { args: ProcHistoryPolicyGetArgs; result: ProcHistoryPolicyGetResult };
+  "proc.history.policy.set": { args: ProcHistoryPolicySetArgs; result: ProcHistoryPolicySetResult };
+  "proc.history.compact": { args: ProcHistoryCompactArgs; result: ProcHistoryCompactResult };
+  "proc.history.export": { args: ProcHistoryExportArgs; result: ProcHistoryExportResult };
+  "proc.history.import": { args: ProcHistoryImportArgs; result: ProcHistoryImportResult };
+  "proc.history.segment.read": { args: ProcHistorySegmentReadArgs; result: ProcHistorySegmentReadResult };
+  "proc.history.segments": { args: ProcHistorySegmentsArgs; result: ProcHistorySegmentsResult };
+  "proc.fork": { args: ProcForkArgs; result: ProcForkResult };
   "proc.ai.config.get": { args: ProcAiConfigGetArgs; result: ProcAiConfigGetResult };
   "proc.ai.config.set": { args: ProcAiConfigSetArgs; result: ProcAiConfigSetResult };
   "proc.media.read": { args: ProcMediaReadArgs; result: ProcMediaReadResult };
   "proc.media.write": { args: ProcMediaWriteArgs; result: ProcMediaWriteResult };
   "proc.media.delete": { args: ProcMediaDeleteArgs; result: ProcMediaDeleteResult };
-  "proc.conversation.open": { args: ProcConversationOpenArgs; result: ProcConversationOpenResult };
-  "proc.conversation.list": { args: ProcConversationListArgs; result: ProcConversationListResult };
-  "proc.conversation.get": { args: ProcConversationGetArgs; result: ProcConversationGetResult };
-  "proc.conversation.close": { args: ProcConversationCloseArgs; result: ProcConversationCloseResult };
-  "proc.conversation.reset": { args: ProcConversationResetArgs; result: ProcConversationResetResult };
-  "proc.conversation.policy.get": { args: ProcConversationPolicyGetArgs; result: ProcConversationPolicyGetResult };
-  "proc.conversation.policy.set": { args: ProcConversationPolicySetArgs; result: ProcConversationPolicySetResult };
-  "proc.conversation.compact": { args: ProcConversationCompactArgs; result: ProcConversationCompactResult };
-  "proc.conversation.fork": { args: ProcConversationForkArgs; result: ProcConversationForkResult };
-  "proc.conversation.segment.read": { args: ProcConversationSegmentReadArgs; result: ProcConversationSegmentReadResult };
-  "proc.conversation.segments": { args: ProcConversationSegmentsArgs; result: ProcConversationSegmentsResult };
-  "proc.conversation.timeline": { args: ProcConversationTimelineArgs; result: ProcConversationTimelineResult };
-  "proc.conversation.generations": { args: ProcConversationGenerationsArgs; result: ProcConversationGenerationsResult };
-  "proc.conversation.generation.manifest": {
-    args: ProcConversationGenerationManifestArgs;
-    result: ProcConversationGenerationManifestResult;
-  };
   "proc.reset": { args: ProcResetArgs; result: ProcResetResult };
   "proc.setidentity": { args: ProcSetIdentityArgs; result: ProcSetIdentityResult };
 

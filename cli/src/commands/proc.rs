@@ -31,7 +31,7 @@ pub(crate) async fn run_proc(
             prompt,
             parent_pid,
         } => {
-            let mut args = json!({ "fresh": true });
+            let mut args = json!({});
             if let Some(run_as) = run_as {
                 args["runAs"] = json!(run_as);
             }
@@ -64,7 +64,7 @@ pub(crate) async fn run_proc(
             }
         }
         ProcAction::Send { message, pid } => {
-            let result = client.proc_send(pid.as_deref(), &message).await?;
+            let result = client.proc_send(&pid, &message).await?;
             println!(
                 "Message accepted: run_id={} status={} queued={}",
                 result.run_id, result.status, result.queued
@@ -76,10 +76,7 @@ pub(crate) async fn run_proc(
             limit,
             offset,
         } => {
-            let mut args = json!({});
-            if let Some(pid) = pid {
-                args["pid"] = json!(pid);
-            }
+            let mut args = json!({ "pid": pid });
             if tail {
                 args["tail"] = json!(true);
             }
@@ -122,11 +119,9 @@ pub(crate) async fn run_proc(
             }
         }
         ProcAction::Reset { pid } => {
-            let mut args = json!({});
-            if let Some(pid) = pid {
-                args["pid"] = json!(pid);
-            }
-            let payload = client.request_ok("proc.reset", Some(args)).await?;
+            let payload = client
+                .request_ok("proc.reset", Some(json!({ "pid": pid })))
+                .await?;
             match serde_json::from_value::<ProcResetPayload>(payload.clone()) {
                 Ok(result) => {
                     if !result.ok {
@@ -194,7 +189,6 @@ struct ProcListEntryPayload {
     parent_pid: Option<String>,
     state: String,
     active_run_id: Option<String>,
-    active_conversation_id: Option<String>,
     queued_count: Option<u32>,
     last_active_at: Option<i64>,
     label: Option<String>,
@@ -253,13 +247,12 @@ fn print_proc_list(processes: &[ProcListEntryPayload]) {
 
     for process in processes {
         println!(
-            "{} state={} uid={} queue={} active={} convo={} parent={} label={} created={} last_active={}",
+            "{} state={} uid={} queue={} active={} parent={} label={} created={} last_active={}",
             process.pid,
             process.state,
             process.uid,
             process.queued_count.unwrap_or(0),
             process.active_run_id.as_deref().unwrap_or("-"),
-            process.active_conversation_id.as_deref().unwrap_or("-"),
             process.parent_pid.as_deref().unwrap_or("-"),
             process.label.as_deref().unwrap_or("-"),
             format_unix_ms(process.created_at),

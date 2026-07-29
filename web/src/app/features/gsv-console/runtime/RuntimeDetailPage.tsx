@@ -33,10 +33,7 @@ export function RuntimeDetailPage({ onBack, process }: RuntimeDetailPageProps) {
     });
   };
   const openChat = () => {
-    dispatchTargetChatProcess({
-      pid: process.pid,
-      conversationId: process.activeConversationId,
-    });
+    dispatchTargetChatProcess({ pid: process.pid });
   };
   const confirm = confirmAction ? taskActionConfirmation(confirmAction, process) : null;
 
@@ -123,7 +120,7 @@ function taskActionConfirmation(action: TaskAction, process: ConsoleProcess): {
       confirmLabel: "RESET TASK",
       title: "CONFIRM RESET",
       message: `Reset task "${process.label}"?`,
-      note: "The current conversation is archived and the task returns to a clean state.",
+      note: "The current history is archived and the task returns to a clean state.",
     };
   }
   return {

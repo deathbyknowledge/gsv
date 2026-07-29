@@ -31,8 +31,6 @@ export type ProcSpawnArgs = {
   runAs?: string;
   /** Whether the process can request human-in-the-loop approval. Background spawns set false. */
   interactive?: boolean;
-  /** Force allocation of a new top-level process instead of reusing the default conversation executor. */
-  fresh?: boolean;
   label?: string;
   prompt?: string;
   parentPid?: string;
@@ -50,7 +48,6 @@ export type ProcKillArgs = {
 };
 
 export type ProcArchiveEntry = {
-  conversationId: string;
   generation: number;
   messages: number;
   path: string;
@@ -68,7 +65,6 @@ export type ProcKillResult =
 
 export type ProcSendArgs = {
   pid?: string;
-  conversationId?: string;
   message: string;
   media?: ProcMediaInput[];
   origin?: InteractionOrigin;
@@ -96,7 +92,6 @@ export type ProcHilRequest = {
   pid: string;
   requestId: string;
   runId: string;
-  conversationId?: string;
   callId: string;
   toolName: string;
   syscall: string;
@@ -138,7 +133,6 @@ export type ProcIpcMetadata = Record<string, unknown>;
 
 export type ProcIpcSendArgs = {
   pid: string;
-  conversationId?: string;
   message: string;
   metadata?: ProcIpcMetadata;
 };
@@ -147,7 +141,6 @@ export type ProcIpcDeliverArgs = {
   runId: string;
   sourcePid: string;
   source: ProcessIdentity;
-  conversationId?: string;
   message: string;
   metadata?: ProcIpcMetadata;
   origin?: InteractionOrigin;
@@ -164,7 +157,6 @@ export type ProcIpcSendResult =
       status: "started";
       pid: string;
       sourcePid: string;
-      conversationId: string;
       runId: string;
       queued?: boolean;
     }
@@ -183,7 +175,6 @@ export type ProcIpcCallResult =
       callId: string;
       pid: string;
       sourcePid: string;
-      conversationId: string;
       runId: string;
       deadlineAt: number;
       queued?: boolean;
@@ -192,7 +183,6 @@ export type ProcIpcCallResult =
 
 export type ProcHistoryArgs = {
   pid?: string;
-  conversationId?: string;
   limit?: number;
   offset?: number;
   beforeMessageId?: number;
@@ -284,7 +274,6 @@ export type ProcMessageMetadata = {
 };
 
 export type ProcContextState = {
-  conversationId: string;
   runId?: string;
   messageCount?: number;
   lastMessageId?: number | null;
@@ -298,7 +287,7 @@ export type ProcContextState = {
   outputTokens?: number;
   totalTokens?: number;
   usage?: ProcUsageState;
-  conversationUsage?: ProcUsageState;
+  historyUsage?: ProcUsageState;
   availableInputTokens: number | null;
   pressure: number | null;
   level: ProcContextPressureLevel;
@@ -367,14 +356,12 @@ export type ProcHistoryResult =
   | {
       ok: true;
       pid: string;
-      conversationId?: string;
       messages: ProcHistoryMessage[];
       messageCount: number;
       truncated?: boolean;
       hasMoreBefore?: boolean;
       hasMoreAfter?: boolean;
       activeRunId?: string | null;
-      activeConversationId?: string | null;
       pendingHil?: ProcHilRequest | null;
       context?: ProcContextState | null;
     }
@@ -417,136 +404,48 @@ export type ProcMediaDeleteResult =
   | { ok: true; key: string }
   | { ok: false; error: string };
 
-export type ProcConversationStatus = "open" | "closed";
+export type ProcHistoryOverflowPolicy = "auto-compact" | "fail";
 
-export type ProcConversation = {
-  id: string;
-  generation: number;
-  status: ProcConversationStatus;
-  title: string | null;
-  messageCount: number;
-  createdAt: number;
-  updatedAt: number;
-};
-
-export type ProcConversationOpenArgs = {
-  pid?: string;
-  conversationId?: string;
-  title?: string;
-};
-
-export type ProcConversationOpenResult =
-  | {
-      ok: true;
-      pid: string;
-      conversation: ProcConversation;
-      created: boolean;
-    }
-  | { ok: false; error: string };
-
-export type ProcConversationListArgs = {
-  pid?: string;
-  includeClosed?: boolean;
-};
-
-export type ProcConversationListResult =
-  | {
-      ok: true;
-      pid: string;
-      conversations: ProcConversation[];
-    }
-  | { ok: false; error: string };
-
-export type ProcConversationGetArgs = {
-  pid?: string;
-  conversationId?: string;
-};
-
-export type ProcConversationGetResult =
-  | {
-      ok: true;
-      pid: string;
-      conversation: ProcConversation | null;
-    }
-  | { ok: false; error: string };
-
-export type ProcConversationCloseArgs = {
-  pid?: string;
-  conversationId: string;
-};
-
-export type ProcConversationCloseResult =
-  | {
-      ok: true;
-      pid: string;
-      conversationId: string;
-      closed: boolean;
-    }
-  | { ok: false; error: string };
-
-export type ProcConversationResetArgs = {
-  pid?: string;
-  conversationId?: string;
-  archive?: boolean;
-};
-
-export type ProcConversationResetResult =
-  | {
-      ok: true;
-      pid: string;
-      conversationId: string;
-      generation: number;
-      archivedMessages: number;
-      archivedTo?: string;
-    }
-  | { ok: false; error: string };
-
-export type ProcConversationOverflowPolicy = "auto-compact" | "fail";
-
-export type ProcConversationContextPolicy = {
-  conversationId: string;
-  overflow: ProcConversationOverflowPolicy;
+export type ProcHistoryContextPolicy = {
+  overflow: ProcHistoryOverflowPolicy;
   compactAtPressure: number;
   keepLast: number;
   updatedAt: number;
 };
 
-export type ProcConversationPolicyGetArgs = {
+export type ProcHistoryPolicyGetArgs = {
   pid?: string;
-  conversationId?: string;
 };
 
-export type ProcConversationPolicyGetResult =
+export type ProcHistoryPolicyGetResult =
   | {
       ok: true;
       pid: string;
-      policy: ProcConversationContextPolicy;
+      policy: ProcHistoryContextPolicy;
     }
   | { ok: false; error: string };
 
-export type ProcConversationPolicySetArgs = {
+export type ProcHistoryPolicySetArgs = {
   pid?: string;
-  conversationId?: string;
-  overflow?: ProcConversationOverflowPolicy;
+  overflow?: ProcHistoryOverflowPolicy;
   compactAtPressure?: number;
   keepLast?: number;
 };
 
-export type ProcConversationPolicySetResult =
+export type ProcHistoryPolicySetResult =
   | {
       ok: true;
       pid: string;
-      policy: ProcConversationContextPolicy;
+      policy: ProcHistoryContextPolicy;
     }
   | { ok: false; error: string };
 
-export type ProcConversationSegmentKind = "compaction";
+export type ProcHistorySegmentKind = "compaction";
 
-export type ProcConversationSegment = {
+export type ProcHistorySegment = {
   id: string;
-  conversationId: string;
   generation: number;
-  kind: ProcConversationSegmentKind;
+  kind: ProcHistorySegmentKind;
   fromMessageId: number;
   toMessageId: number;
   archivePath: string;
@@ -554,184 +453,102 @@ export type ProcConversationSegment = {
   createdAt: number;
 };
 
-export type ProcConversationCompactArgs = {
+export type ProcHistoryCompactArgs = {
   pid?: string;
-  conversationId?: string;
   summary?: string;
   generateSummary?: boolean;
   keepLast?: number;
   throughMessageId?: number;
 };
 
-export type ProcConversationCompactResult =
+export type ProcHistoryCompactResult =
   | {
       ok: true;
       pid: string;
-      conversationId: string;
-      segment: ProcConversationSegment;
+      segment: ProcHistorySegment;
       archivedMessages: number;
       archivedTo: string;
       summaryMessageId: number;
     }
   | { ok: false; error: string };
 
-export type ProcConversationForkArgs = {
+export type ProcForkArgs = {
   pid?: string;
-  conversationId?: string;
   segmentId?: string;
   throughMessageId?: number;
-  targetConversationId?: string;
-  title?: string;
+  label?: string;
   includeLiveSuffix?: boolean;
 };
 
-export type ProcConversationForkResult =
+export type ProcForkResult =
   | {
       ok: true;
       pid: string;
-      sourceConversationId: string;
-      targetConversation: ProcConversation;
-      segment?: ProcConversationSegment;
+      label: string;
+      sourcePid: string;
+      segment?: ProcHistorySegment;
       throughMessageId?: number;
       restoredMessages: number;
       includedLiveSuffix: boolean;
     }
   | { ok: false; error: string };
 
-export type ProcConversationSegmentReadArgs = {
+export type ProcHistorySegmentReadArgs = {
   pid?: string;
-  conversationId?: string;
   segmentId: string;
   limit?: number;
   offset?: number;
 };
 
-export type ProcConversationSegmentReadResult =
+export type ProcHistorySegmentReadResult =
   | {
       ok: true;
       pid: string;
-      conversationId: string;
-      segment: ProcConversationSegment;
+      segment: ProcHistorySegment;
       messages: ProcHistoryMessage[];
       messageCount: number;
       truncated?: boolean;
     }
   | { ok: false; error: string };
 
-export type ProcConversationSegmentsArgs = {
+export type ProcHistorySegmentsArgs = {
   pid?: string;
-  conversationId?: string;
 };
 
-export type ProcConversationSegmentsResult =
+export type ProcHistorySegmentsResult =
   | {
       ok: true;
       pid: string;
-      conversationId: string;
-      segments: ProcConversationSegment[];
+      segments: ProcHistorySegment[];
     }
   | { ok: false; error: string };
 
-export type ProcConversationArchiveKind = "reset" | "process-reset" | "kill";
-
-export type ProcConversationArchive = {
-  id: string;
-  conversationId: string;
-  generation: number;
-  kind: ProcConversationArchiveKind;
-  messages: number;
-  archivePath: string;
-  createdAt: number;
+// Kernel-only: materializes a committed history selection for proc.fork.
+export type ProcHistoryExportArgs = {
+  segmentId?: string;
+  throughMessageId?: number;
+  includeLiveSuffix?: boolean;
 };
 
-export type ProcConversationLiveGeneration = {
-  conversationId: string;
-  generation: number;
-  messageCount: number;
-  firstMessageId: number | null;
-  lastMessageId: number | null;
-  updatedAt: number;
-};
-
-export type ProcConversationTimelineEntry =
-  | {
-      type: "archive";
-      id: string;
-      conversationId: string;
-      generation: number;
-      archiveKind: ProcConversationArchiveKind;
-      messages: number;
-      archivePath: string;
-      createdAt: number;
-    }
-  | {
-      type: "segment";
-      id: string;
-      conversationId: string;
-      generation: number;
-      segmentKind: ProcConversationSegmentKind;
-      fromMessageId: number;
-      toMessageId: number;
-      archivePath: string;
-      summaryMessageId: number | null;
-      createdAt: number;
-    }
-  | ({
-      type: "live";
-    } & ProcConversationLiveGeneration);
-
-export type ProcConversationTimelineArgs = {
-  pid?: string;
-  conversationId?: string;
-};
-
-export type ProcConversationTimelineResult =
+export type ProcHistoryExportResult =
   | {
       ok: true;
-      pid: string;
-      conversationId: string;
-      timeline: ProcConversationTimelineEntry[];
+      sourcePid: string;
+      archivePaths: string[];
+      temporaryArchivePaths: string[];
+      segment?: ProcHistorySegment;
+      throughMessageId?: number;
+      includedLiveSuffix: boolean;
     }
   | { ok: false; error: string };
 
-export type ProcConversationGenerationsArgs = {
-  pid?: string;
-  conversationId?: string;
+// Kernel-only: initializes an empty process from exported history archives.
+export type ProcHistoryImportArgs = {
+  archivePaths: string[];
 };
 
-export type ProcConversationGenerationsResult =
-  | {
-      ok: true;
-      pid: string;
-      conversationId: string;
-      generations: number[];
-    }
-  | { ok: false; error: string };
-
-export type ProcConversationGenerationManifest = {
-  conversationId: string;
-  generation: number;
-  current: boolean;
-  status: ProcConversationStatus;
-  title: string | null;
-  archives: ProcConversationArchive[];
-  segments: ProcConversationSegment[];
-  live: ProcConversationLiveGeneration | null;
-};
-
-export type ProcConversationGenerationManifestArgs = {
-  pid?: string;
-  conversationId?: string;
-  generation: number;
-};
-
-export type ProcConversationGenerationManifestResult =
-  | {
-      ok: true;
-      pid: string;
-      conversationId: string;
-      manifest: ProcConversationGenerationManifest | null;
-    }
+export type ProcHistoryImportResult =
+  | { ok: true; pid: string; restoredMessages: number }
   | { ok: false; error: string };
 
 export type ProcResetArgs = {
@@ -762,18 +579,11 @@ export type ProcListEntry = {
   parentPid: string | null;
   state: string;
   activeRunId: string | null;
-  activeConversationId: string | null;
   queuedCount: number;
   lastActiveAt: number | null;
   label: string | null;
   createdAt: number;
   cwd: string;
-  /**
-   * True when this process is the owner's default-conversation executor (the
-   * stable "home" inbox running as their personal agent). Clients surface this
-   * conversation as home rather than as a regular spawned thread.
-   */
-  isDefaultConversation?: boolean;
 };
 
 export type ProcListResult = {
@@ -786,23 +596,10 @@ export type ProcSetIdentityArgs = {
   pid: string;
   identity: ProcessIdentity;
   interactive?: boolean;
-  /** Initial title for the executor's primary process-local conversation. */
+  /** Initial process label. */
   title?: string;
-  /** Generate a title from the first admitted primary-conversation message. */
+  /** Generate a label from the first admitted message. */
   autoTitle?: boolean;
-  /**
-   * Kernel conversation id this executor's primary thread belongs to. The
-   * executor archives/reads its primary thread under
-   * `/home/<agent>/conversations/<conversationId>/...`, so transcripts are
-   * addressed by the durable conversation rather than the fungible pid.
-   */
-  conversationId?: string;
-  /**
-   * Archive path to hydrate the primary thread from on resume (a fresh executor
-   * picking up a conversation that was previously archived). Deterministic: the
-   * kernel records this pointer when the prior executor archived on kill.
-   */
-  hydrateFrom?: string;
 };
 
 export type ProcSetIdentityResult = { ok: true };

@@ -184,6 +184,19 @@ test("keeps body-bearing syscalls off the data-only namespaces", () => {
   assert.equal(typeof client.fs.transfer.stat, "function");
 });
 
+test("keeps exact syscalls callable when they also own nested namespaces", () => {
+  const client = new GSVClient({ WebSocket: FakeWebSocket });
+
+  // proc.history is registered before its children.
+  assert.equal(typeof client.proc.history, "function");
+  assert.equal(typeof client.proc.history.compact, "function");
+  assert.equal(typeof client.proc.history.policy.get, "function");
+
+  // sys.setup.assist is registered before sys.setup.
+  assert.equal(typeof client.sys.setup, "function");
+  assert.equal(typeof client.sys.setup.assist, "function");
+});
+
 test("bodyFromBytes preserves its input buffer", async () => {
   const bytes = new Uint8Array([1, 2, 3]);
   const framed = bodyFromBytes(bytes);

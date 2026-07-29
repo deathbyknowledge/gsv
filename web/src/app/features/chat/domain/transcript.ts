@@ -57,7 +57,6 @@ export type ChatTranscriptRow = {
 export type ChatRuntimeState = {
   activeRunId: string | null;
   context: ProcContextState | null;
-  conversationId: string | null;
   messageCount: number;
   pendingHil: ProcHilRequest | null;
   rows: ChatTranscriptRow[];
@@ -65,7 +64,6 @@ export type ChatRuntimeState = {
 };
 
 export type ChatSignalTarget = {
-  conversationId?: string | null;
   pid: string;
 };
 
@@ -96,15 +94,13 @@ type ToolResultHistory = {
   toolName: string;
 };
 
-const DEFAULT_CONVERSATION_ID = "default";
 const OPTIMISTIC_USER_MATCH_WINDOW_MS = 5 * 60 * 1000;
 
-export function emptyChatRuntimeState(processId = "", conversationId: string | null = null): ChatRuntimeState {
+export function emptyChatRuntimeState(processId = ""): ChatRuntimeState {
   void processId;
   return {
     activeRunId: null,
     context: null,
-    conversationId,
     messageCount: 0,
     pendingHil: null,
     rows: [],
@@ -120,7 +116,6 @@ export function chatRuntimeStateFromHistory(history: ChatHistory | null): ChatRu
   return {
     activeRunId: history.activeRunId,
     context: history.context ?? null,
-    conversationId: history.conversationId,
     messageCount: history.messageCount,
     pendingHil: history.pendingHil,
     rows: transcriptRowsFromHistory(history),
@@ -131,7 +126,6 @@ export function chatRuntimeStateFromHistory(history: ChatHistory | null): ChatRu
 export function addOptimisticUserMessage(
   state: ChatRuntimeState,
   message: string,
-  conversationId?: string | null,
   media: unknown[] = [],
 ): ChatRuntimeState {
   const text = message.trim();
@@ -141,7 +135,6 @@ export function addOptimisticUserMessage(
   const now = Date.now();
   return {
     ...state,
-    conversationId: conversationId ?? state.conversationId,
     messageCount: state.messageCount + 1,
     rows: [
       ...state.rows,
@@ -196,7 +189,6 @@ export function applyChatSignal(
       state: {
         ...state,
         activeRunId: runId ?? state.activeRunId,
-        conversationId: asString(record?.conversationId) ?? state.conversationId,
         pendingHil: null,
         runState: "running",
       },
@@ -216,7 +208,6 @@ export function applyChatSignal(
       state: {
         ...state,
         activeRunId: runId,
-        conversationId: asString(record?.conversationId) ?? state.conversationId,
         rows: applyStreamEvent(state.rows, runId, event),
         runState: "running",
       },
@@ -253,7 +244,6 @@ export function applyChatSignal(
       state: {
         ...state,
         activeRunId: runId ?? state.activeRunId,
-        conversationId: asString(record?.conversationId) ?? state.conversationId,
         pendingHil: null,
         rows: applyAssistantOutput(state.rows, record, runId),
         runState: "running",
@@ -270,7 +260,6 @@ export function applyChatSignal(
       state: {
         ...state,
         activeRunId: runId ?? state.activeRunId,
-        conversationId: asString(record?.conversationId) ?? state.conversationId,
         pendingHil: null,
         rows: upsertToolRow(state.rows, toolRowFromStarted(record)),
         runState: "running",
@@ -286,7 +275,6 @@ export function applyChatSignal(
       state: {
         ...state,
         activeRunId: pendingHil?.runId ?? state.activeRunId,
-        conversationId: pendingHil?.conversationId ?? state.conversationId,
         pendingHil,
         runState: "awaiting_hil",
       },
@@ -523,7 +511,6 @@ function applyProcChanged(state: ChatRuntimeState, payload: unknown): ChatSignal
     if (row) {
       next = {
         ...next,
-        conversationId: asString(record?.conversationId) ?? next.conversationId,
         messageCount: next.messageCount + 1,
         rows: appendUniqueMessageRow(next.rows, row),
       };
@@ -536,7 +523,6 @@ function applyProcChanged(state: ChatRuntimeState, payload: unknown): ChatSignal
       next = {
         ...next,
         context,
-        conversationId: context.conversationId,
         messageCount: context.messageCount ?? next.messageCount,
       };
       refreshHistory = true;
@@ -1126,7 +1112,6 @@ function normalizeHilRequest(value: unknown): ProcHilRequest | null {
     pid,
     requestId,
     runId,
-    conversationId: asString(record?.conversationId) ?? DEFAULT_CONVERSATION_ID,
     callId,
     toolName,
     syscall,
@@ -1138,10 +1123,6 @@ function normalizeHilRequest(value: unknown): ProcHilRequest | null {
 function normalizeContextState(value: unknown): ProcContextState | null {
   const record = asRecord(value);
   if (!record) {
-    return null;
-  }
-  const conversationId = asString(record.conversationId);
-  if (!conversationId) {
     return null;
   }
   return record as ProcContextState;
@@ -1156,12 +1137,7 @@ function signalMatchesTarget(payload: unknown, target: ChatSignalTarget): boolea
   if (pid && pid !== target.pid) {
     return false;
   }
-  const signalConversation = asString(record.conversationId);
-  if (!signalConversation) {
-    return true;
-  }
-  const targetConversation = target.conversationId || DEFAULT_CONVERSATION_ID;
-  return signalConversation === targetConversation;
+  return true;
 }
 
 function formatMessageContent(value: unknown): string {

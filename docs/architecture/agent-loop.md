@@ -12,7 +12,7 @@ Each agent process is a Durable Object with a SQLite-backed `ProcessStore`.
 Kernel SQLite stores process registry data such as PID, uid/gid, cwd,
 parent, and state. Process SQLite stores the mutable run state:
 
-- `messages`: active conversation history.
+- `messages`: process history.
 - `pending_tool_calls`: durable tool dispatches from registration through
   terminal result ingestion.
 - `message_queue`: FIFO process- and scheduler-origin work received while a run
@@ -46,7 +46,7 @@ uses `ai.text.generate` in background to replace it with a concise title derived
 from the first admitted message. Explicit process labels opt out. Title
 generation is independent of the task run: failure retains the fallback and
 never delays message admission or model execution. The generated result remains
-scoped to the source conversation generation, so a reset or process teardown
+scoped to the source history generation, so a reset or process teardown
 cancels its provider request and invalidates any late output.
 
 Ticks are deliberate. Each loop iteration is scheduled through the Durable
@@ -92,7 +92,7 @@ model-visible message that owns a run, and the next such message whenever its
 reply semantics change, receives a concise chronological annotation such as
 `[Reply destination: automatic to this Telegram direct message.]`. It appears
 beside the existing `[From: ...]` annotation without changing the stored
-message. A route-less run names the GSV process conversation instead. A
+message. A route-less run names the GSV process history instead. A
 non-distinct runtime event that joins an active run is
 only annotated with its source; it does not change that run's reply destination.
 This keeps prior provider input byte-stable when a later message arrives from
@@ -235,13 +235,13 @@ loop without pretending to be user chat.
 
 ## Checkpointing and Archives
 
-Reset and kill can archive each non-empty conversation under the run-as
-identity's home conversation directory before clearing live Process storage.
+Reset and kill can archive non-empty process history under the run-as identity's
+home process directory before clearing live Process storage.
 Live process media is deleted from R2 after referenced bytes have been promoted
 to immutable media objects under the run-as agent's home and archive records
-have been rewritten to those durable keys. A replacement executor can hydrate
-the primary conversation, attachment paths, and bytes from the recorded home
-archive without depending on the old executor pid.
+have been rewritten to those durable keys. `proc.fork` can initialize a new
+process from committed history without sharing live run, queue, tool, or HIL
+state with the source process.
 
 ## Failure Behavior
 
@@ -264,5 +264,4 @@ different approach.
 
 - [Process IPC and Scheduler](./process-ipc-and-scheduler.md)
 - [Context Compaction & Memory](./context-compaction.md)
-- [Process Handoffs](./process-handoffs.md)
 - [Guides](../how-to/)

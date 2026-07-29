@@ -33,8 +33,8 @@ gsv shell
 for the matching `proc.run.finished` signal for up to 120 seconds. The
 interactive prompt returns after each message is accepted so another message
 can supersede an active run; type `quit` or `exit` to leave. `--pid` targets a
-specific process; when omitted, the Kernel targets your default personal-agent
-conversation. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
+specific process; when omitted, the CLI creates one process and uses it for the
+whole command. Set `GSV_CLIENT_DEBUG=1` to trace run-signal matching.
 
 `shell` opens an interactive prompt backed by the gateway `shell.exec` syscall.
 Commands run inside the gateway OS context, not directly on your local machine.
@@ -42,7 +42,7 @@ Use `:quit`, `:exit`, or `:q` to leave.
 
 Inside the gateway shell, `proc` is the process IPC userland command.
 `message` inspects and uses external chat reply routes. `sched add --here`
-admits scheduled events to the current process conversation and preserves the
+admits scheduled events to the current process and preserves the
 current authorized adapter reply destination when one exists.
 `crontab` schedules background shell commands, while the remaining `sched`
 commands inspect and control the Kernel schedule records:
@@ -54,8 +54,8 @@ proc spawn [--as ACCOUNT] [--non-interactive] [--label LABEL] [--prompt TEXT] [-
 proc delegate [--as ACCOUNT] [--label LABEL] [--timeout 10m] <task>
 proc reset [--pid PID]
 proc kill PID [--no-archive]
-proc send <pid> [--conversation id] [--metadata-json json] <message>
-proc call <pid> [--conversation id] [--metadata-json json] [--timeout 60s] <message>
+proc send <pid> [--metadata-json json] <message>
+proc call <pid> [--metadata-json json] [--timeout 60s] <message>
 message current [--json]
 message destinations [--all] [--json]
 message attach PATH... [--mime TYPE]
@@ -69,7 +69,7 @@ crontab -l
 crontab FILE
 crontab -r
 sched list [--all]
-sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE [--conversation ID]
+sched add --here --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 sched add --to DESTINATION --name NAME (--every DURATION | --cron EXPR [--timezone ZONE] | --after DURATION | --at ISO_TIMESTAMP) --message MESSAGE
 sched add --json JSON
 sched enable <id>
@@ -86,7 +86,7 @@ bounded child and reports the result to its caller as a process event; it
 requires a process-backed caller and must not be placed in a crontab.
 `proc send` is asynchronous same-owner process mail. `proc call` is bounded:
 the source process receives either
-`ipc.reply` or `ipc.timeout` in its default conversation. In a process-backed
+`ipc.reply` or `ipc.timeout` as a delegated task event. In a process-backed
 shell, `proc self` prints the current process id and the shell exports it as
 `GSV_PID`; a top-level user shell has no current process, so `proc self` exits
 with an error there.
@@ -146,12 +146,11 @@ automatic retry. An outcome that may have reached the provider is reported as
 `sent=false`, `delivery_confirmed=false`, and `delivery_state=ambiguous`.
 
 Use `sched add --here` from a process-backed shell when each firing should admit
-an event into the current process conversation. It creates a typed
-`process.event` schedule for the current process and active conversation; pass
-`--conversation` to override that conversation. When invoked during an adapter
+an event into the current process. It creates a typed
+`process.event` schedule for the current process. When invoked during an adapter
 run, `--here` captures the authorized adapter destination so the future final
 answer returns there. Without such a route, the answer remains in the GSV
-process conversation. The target is bound to the current process id and must be
+process history. The target is bound to the current process id and must be
 recreated after that process is killed.
 
 Use `sched add --to DESTINATION` for direct scheduled text delivery. It creates
@@ -159,8 +158,7 @@ an `adapter.send` scheduled action and does not run the agent. Destination
 resolution includes known authorized offline destinations because the account
 may be online when the schedule fires. Run `message destinations --all` and
 copy its opaque GSV destination id; provider account, actor, and surface ids are
-not part of the agent-facing command contract. `--conversation` is valid only
-with `--here`.
+not part of the agent-facing command contract.
 A successful `process.event` firing records event admission, not completion of
 a model turn or reply. Choose exactly one time expression. `--at` requires a
 future ISO timestamp with `Z` or an explicit numeric UTC offset.
@@ -194,17 +192,16 @@ mean all users. `sched add --json` is a low-level compatibility path for direct
 ```bash
 gsv proc list [--uid UID]
 gsv proc spawn [--as ACCOUNT] [--label LABEL] [--prompt TEXT] [--parent PID]
-gsv proc send MESSAGE [--pid PID]
-gsv proc history [--pid PID] [--limit N] [--offset N]
-gsv proc reset [--pid PID]
+gsv proc send MESSAGE --pid PID
+gsv proc history --pid PID [--limit N] [--offset N]
+gsv proc reset --pid PID
 gsv proc kill PID [--no-archive]
 ```
 
 Processes are the agent-facing execution model. `spawn` creates a new process;
 `send` only reports acceptance, while `chat` waits for streamed output.
-`history` and `reset` use your default conversation when `--pid` is omitted.
-`kill` requires a PID. `--uid` filters process lists and requires root when
-viewing another user.
+`send`, `history`, `reset`, and `kill` require a PID. `--uid` filters process
+lists and requires root when viewing another user.
 
 ## Device Commands
 

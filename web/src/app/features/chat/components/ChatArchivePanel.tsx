@@ -5,14 +5,13 @@ import {
 } from "../domain/processes";
 import { transcriptRowsFromHistory } from "../domain/transcript";
 import {
-  useChatConversationSegment,
-  useChatConversationSegments,
+  useChatHistorySegment,
+  useChatHistorySegments,
 } from "../hooks";
 import { ChatTranscript } from "./ChatTranscript";
 import { shortId } from "./chatUiFormat";
 
 type ChatArchivePanelProps = {
-  conversationId: string;
   onClose: () => void;
   processId: string;
   selectedSegmentId: string;
@@ -21,18 +20,16 @@ type ChatArchivePanelProps = {
 
 function archiveHistoryFromSegment(
   processId: string,
-  segment: NonNullable<ReturnType<typeof useChatConversationSegment>["data"]>,
+  segment: NonNullable<ReturnType<typeof useChatHistorySegment>["data"]>,
 ): ChatHistory {
   return {
     pid: processId,
-    conversationId: segment.conversationId,
     messages: segment.messages.map(normalizeHistoryMessage),
     messageCount: segment.messageCount,
     truncated: segment.truncated === true,
     hasMoreBefore: false,
     hasMoreAfter: false,
     activeRunId: null,
-    activeConversationId: null,
     runState: "idle",
     pendingHil: null,
     context: null,
@@ -40,22 +37,20 @@ function archiveHistoryFromSegment(
 }
 
 export function ChatArchivePanel({
-  conversationId,
   onClose,
   onSelectSegment,
   processId,
   selectedSegmentId,
 }: ChatArchivePanelProps) {
-  const segments = useChatConversationSegments({
-    args: { pid: processId, conversationId },
+  const segments = useChatHistorySegments({
+    args: { pid: processId },
   });
   const selected = selectedSegmentId
     || segments.data?.[0]?.id
     || "";
-  const segment = useChatConversationSegment({
+  const segment = useChatHistorySegment({
     args: {
       pid: processId,
-      conversationId,
       segmentId: selected,
       limit: 100,
     },
@@ -71,7 +66,7 @@ export function ChatArchivePanel({
   }, []);
 
   return (
-    <section class="gsv-chat-archive" aria-label="Conversation archive">
+    <section class="gsv-chat-archive" aria-label="Process history archive">
       <div class="gsv-chat-rp-head">
         <button
           ref={backRef}

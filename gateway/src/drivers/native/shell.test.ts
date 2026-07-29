@@ -175,13 +175,6 @@ function makeContext(options?: {
       },
       ...(options?.procs ?? {}),
     } as never,
-    conversations: {
-      create: vi.fn(() => ({ conversationId: "conv-1" })),
-      setActivePid: vi.fn(() => true),
-      clearActivePid: vi.fn(),
-      remove: vi.fn(() => true),
-      getByActivePid: vi.fn(() => null),
-    } as unknown as KernelContext["conversations"],
     oauth: options?.oauth ?? {
       listAccounts: vi.fn(() => []),
       listFlows: vi.fn(() => []),
@@ -1036,7 +1029,6 @@ describe("proc native command", () => {
     const cancelBySourcePid = vi.fn();
     const failIpcCallsByTarget = vi.fn();
     const clearProcessRoutes = vi.fn();
-    const clearActivePid = vi.fn();
     const ctx = makeContext({
       capabilities: [capability],
       procs: {
@@ -1052,14 +1044,12 @@ describe("proc native command", () => {
       failIpcCallsByTarget,
       runRoutes: { clearForProcess: clearProcessRoutes },
     });
-    Object.assign(ctx.conversations, { clearActivePid });
     return {
       ctx,
       kill,
       cancelBySourcePid,
       failIpcCallsByTarget,
       clearProcessRoutes,
-      clearActivePid,
     };
   }
 
@@ -1132,7 +1122,7 @@ describe("proc native command", () => {
     );
   });
 
-  it("spawns a fresh process by default from a top-level native shell", async () => {
+  it("spawns a process from a top-level native shell", async () => {
     const spawn = vi.fn();
     const rootIdentity: ProcessIdentity = {
       uid: 0,
@@ -1170,7 +1160,7 @@ describe("proc native command", () => {
     );
 
     const jsonResult = await handleShellExec(
-      { input: `proc spawn --json '{"fresh":false,"label":"json-child"}'` },
+      { input: `proc spawn --json '{"label":"json-child"}'` },
       ctx,
     );
     expect(jsonResult.ok).toBe(true);
@@ -1209,7 +1199,6 @@ describe("proc native command", () => {
       cwd: IDENTITY.cwd,
       state: "running",
       activeRunId: null,
-      activeConversationId: null,
       queuedCount: 0,
       lastActiveAt: null,
       interactive: true,
@@ -1282,7 +1271,6 @@ describe("proc native command", () => {
       cancelBySourcePid,
       failIpcCallsByTarget,
       clearProcessRoutes,
-      clearActivePid,
     } = makeLifecycleContext("proc.kill");
     sendFrameToProcessMock.mockResolvedValueOnce({
       type: "res",
@@ -1315,7 +1303,6 @@ describe("proc native command", () => {
     );
     expect(clearProcessRoutes).toHaveBeenCalledWith("proc:child");
     expect(kill).toHaveBeenCalledWith("proc:child");
-    expect(clearActivePid).toHaveBeenCalledWith("proc:child");
   });
 
   it("delegates bounded work through a new child process", async () => {
@@ -1366,7 +1353,6 @@ describe("proc native command", () => {
             status: "started",
             pid,
             sourcePid: "task:shell",
-            conversationId: "default",
             runId: req.args.runId,
           },
         };
@@ -1451,35 +1437,15 @@ describe("proc native command", () => {
       label: "IPC delivery returns an error",
       throws: false,
       error: "delivery failed",
-      removesConversation: true,
-      lookupError: null,
     },
     {
       label: "IPC setup throws",
       throws: true,
       error: "IPC store unavailable",
-      removesConversation: true,
-      lookupError: null,
     },
-    {
-      label: "conversation cleanup fails",
-      throws: false,
-      error: "delivery failed",
-      removesConversation: false,
-      lookupError: null,
-    },
-    {
-      label: "conversation lookup throws",
-      throws: false,
-      error: "delivery failed",
-      removesConversation: true,
-      lookupError: "conversation registry unavailable",
-    },
-  ])("rolls back a fresh delegated child when $label", async ({
+  ])("rolls back a delegated child when $label", async ({
     throws,
     error,
-    removesConversation,
-    lookupError,
   }) => {
     const children: string[] = [];
     const parent = {
@@ -1493,7 +1459,6 @@ describe("proc native command", () => {
       cwd: IDENTITY.cwd,
       state: "running",
       activeRunId: "parent-run",
-      activeConversationId: "ops",
       queuedCount: 0,
       lastActiveAt: 1,
       interactive: true,
@@ -1510,7 +1475,6 @@ describe("proc native command", () => {
       remove: vi.fn(),
       cancelBySourcePid: vi.fn(),
     };
-    const removeConversation = vi.fn(() => removesConversation);
     const ctx = makeContext({
       capabilities: ["proc.spawn", "proc.ipc.call"],
       procs: {
@@ -1522,7 +1486,6 @@ describe("proc native command", () => {
               processId: pid,
               parentPid: parent.processId,
               activeRunId: null,
-              activeConversationId: null,
               interactive: false,
               label: "investigate the schedule",
             };
@@ -1540,18 +1503,6 @@ describe("proc native command", () => {
     Object.assign(ctx, {
       failIpcCallsByTarget: vi.fn(),
       runRoutes: { clearForProcess: vi.fn() },
-    });
-    Object.assign(ctx.conversations, {
-      getByActivePid: vi.fn(() => {
-        if (lookupError) {
-          throw new Error(lookupError);
-        }
-        return {
-          conversationId: "conv-1",
-          archiveBase: "/home/sam/conversations/conv-1",
-        };
-      }),
-      remove: removeConversation,
     });
     sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
       const req = frame as RequestFrame;
@@ -1589,13 +1540,7 @@ describe("proc native command", () => {
 
     expect(result.status).toBe("failed");
     expect(result.stderr).toContain(`proc delegate: ${error}`);
-    if (lookupError) {
-      expect(result.stderr).toContain(`rollback failed: conversation lookup failed: ${lookupError}`);
-    } else if (removesConversation) {
-      expect(result.stderr).not.toContain("rollback failed");
-    } else {
-      expect(result.stderr).toContain("rollback failed: failed to remove conversation conv-1");
-    }
+    expect(result.stderr).not.toContain("rollback failed");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
       children[0],
       expect.objectContaining({
@@ -1604,11 +1549,6 @@ describe("proc native command", () => {
       }),
     );
     expect(kill).toHaveBeenCalledWith(children[0]);
-    if (lookupError) {
-      expect(removeConversation).not.toHaveBeenCalled();
-    } else {
-      expect(removeConversation).toHaveBeenCalledWith("conv-1");
-    }
   });
 
   it("rejects legacy profile selection in proc spawn", async () => {
@@ -1621,11 +1561,11 @@ describe("proc native command", () => {
     expect(result.stderr).toContain("--profile is no longer supported");
   });
 
-  it("denies conversation commands for same run-as processes owned by another user", async () => {
+  it("denies history commands for same run-as processes owned by another user", async () => {
     const result = await handleShellExec(
       { input: "proc segments --pid foreign-pid" },
       makeContext({
-        capabilities: ["proc.conversation.segments"],
+        capabilities: ["proc.history.segments"],
         procs: {
           getOwnerUid: vi.fn(() => IDENTITY.uid),
           get: vi.fn((pid: string) => {
@@ -1661,7 +1601,6 @@ describe("proc native command", () => {
       data: {
         ok: true,
         pid: "proc:child",
-        conversationId: "default",
         messages: [
           {
             id: 1,
@@ -1686,7 +1625,6 @@ describe("proc native command", () => {
         hasMoreBefore: false,
         hasMoreAfter: false,
         activeRunId: null,
-        activeConversationId: null,
         pendingHil: null,
         context: {
           level: "ok",
@@ -2796,7 +2734,6 @@ describe("native administration shell commands", () => {
       target: {
         kind: "process.event",
         pid: "init:1000",
-        conversationId: "ops",
         message: "Run pulse.",
       },
     };
@@ -2827,7 +2764,6 @@ describe("native administration shell commands", () => {
       target: {
         kind: "process.event",
         pid: "init:1000",
-        conversationId: "ops",
         message: "Run pulse.",
       },
     }));
@@ -3161,7 +3097,6 @@ describe("native administration shell commands", () => {
           processId: "task:shell",
           uid: IDENTITY.uid,
           ownerUid: IDENTITY.uid,
-          activeConversationId: null,
         })),
         getOwnerUid: vi.fn(() => IDENTITY.uid),
       } as Partial<KernelContext["procs"]>,
@@ -3182,7 +3117,6 @@ describe("native administration shell commands", () => {
       target: {
         kind: "process.event",
         pid: "task:shell",
-        conversationId: "default",
         message: "Check the oven.",
         replyTo: {
           kind: "adapter",
@@ -3250,11 +3184,11 @@ describe("native administration shell commands", () => {
       },
     }));
     expect(invalidConversation.status).toBe("failed");
-    expect(invalidConversation.stderr).toContain("--conversation is only valid with --here");
+    expect(invalidConversation.stderr).toContain("unexpected argument: --conversation");
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it("schedules an event into the caller's active conversation", async () => {
+  it("schedules an event into the caller process", async () => {
     const wake = vi.fn(async () => "wake-here");
     const setWakeScheduleId = vi.fn();
     const create = vi.fn((input) => ({
@@ -3283,7 +3217,6 @@ describe("native administration shell commands", () => {
       processId: "task:shell",
       uid: IDENTITY.uid,
       ownerUid: IDENTITY.uid,
-      activeConversationId: "ops",
     };
 
     const result = await handleShellExec(
@@ -3312,7 +3245,6 @@ describe("native administration shell commands", () => {
       target: {
         kind: "process.event",
         pid: "task:shell",
-        conversationId: "ops",
         message: "Send a niche animal fact.",
       },
     }));
@@ -3329,25 +3261,22 @@ describe("native administration shell commands", () => {
         expr: "*/5 * * * *",
         timezone: "Europe/Amsterdam",
       },
-      expectedConversation: "default",
     },
     {
-      label: "cron with an explicit timezone and conversation",
-      options: '--cron "0 9 * * *" --timezone Asia/Tokyo --conversation reviews',
+      label: "cron with an explicit timezone",
+      options: '--cron "0 9 * * *" --timezone Asia/Tokyo',
       config: {},
       expectedExpression: {
         kind: "cron",
         expr: "0 9 * * *",
         timezone: "Asia/Tokyo",
       },
-      expectedConversation: "reviews",
     },
     {
       label: "a relative one-shot delay",
       options: "--after 15m",
       config: {},
       expectedExpression: { kind: "after", afterMs: 900_000 },
-      expectedConversation: "default",
     },
     {
       label: "an absolute one-shot timestamp",
@@ -3357,13 +3286,11 @@ describe("native administration shell commands", () => {
         kind: "at",
         atMs: Date.parse("2099-01-02T03:04:05Z"),
       },
-      expectedConversation: "default",
     },
   ])("supports sched add --here with $label", async ({
     options,
     config,
     expectedExpression,
-    expectedConversation,
   }) => {
     const create = vi.fn((input) => ({
       id: "sched-expression",
@@ -3399,7 +3326,6 @@ describe("native administration shell commands", () => {
             processId: "task:shell",
             uid: IDENTITY.uid,
             ownerUid: IDENTITY.uid,
-            activeConversationId: null,
           })),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
         } as Partial<KernelContext["procs"]>,
@@ -3417,7 +3343,6 @@ describe("native administration shell commands", () => {
       target: {
         kind: "process.event",
         pid: "task:shell",
-        conversationId: expectedConversation,
         message: "Check in.",
       },
     }));

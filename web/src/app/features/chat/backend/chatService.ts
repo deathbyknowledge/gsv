@@ -6,16 +6,14 @@ import type {
   ProcAiConfigGetResult,
   ProcAiConfigSetArgs,
   ProcAiConfigSetResult,
-  ProcConversationCompactArgs,
-  ProcConversationCompactResult,
-  ProcConversationForkArgs,
-  ProcConversationForkResult,
-  ProcConversationListArgs,
-  ProcConversationListResult,
-  ProcConversationSegmentReadArgs,
-  ProcConversationSegmentReadResult,
-  ProcConversationSegmentsArgs,
-  ProcConversationSegmentsResult,
+  ProcForkArgs,
+  ProcForkResult,
+  ProcHistoryCompactArgs,
+  ProcHistoryCompactResult,
+  ProcHistorySegmentReadArgs,
+  ProcHistorySegmentReadResult,
+  ProcHistorySegmentsArgs,
+  ProcHistorySegmentsResult,
   ProcHilArgs,
   ProcHilResult,
   ProcHistoryArgs,
@@ -34,11 +32,10 @@ import {
   normalizeHistory,
   normalizeProcessSummaries,
   normalizeSendPayload,
-  type ChatConversation,
-  type ChatConversationCompactResult,
-  type ChatConversationForkResult,
-  type ChatConversationSegmentReadResult,
-  type ChatConversationSegment,
+  type ChatForkResult,
+  type ChatHistoryCompactResult,
+  type ChatHistorySegmentReadResult,
+  type ChatHistorySegment,
   type ChatHilDecisionResult,
   type ChatHistory,
   type ChatProcessAiConfig,
@@ -187,54 +184,40 @@ export async function readChatProcessMedia(
   };
 }
 
-export async function listChatConversations(
+export async function compactChatHistory(
   client: ChatGsvClient,
-  args: ProcConversationListArgs,
-): Promise<ChatConversation[]> {
-  const result = throwIfFailed<Extract<ProcConversationListResult, { ok: true }>>(
-    await client.proc.conversation.list(args),
-  );
-  return [...result.conversations].sort((left, right) => {
-    if (left.id === "default") return -1;
-    if (right.id === "default") return 1;
-    return right.updatedAt - left.updatedAt || left.id.localeCompare(right.id);
-  });
-}
-
-export async function compactChatConversation(
-  client: ChatGsvClient,
-  args: ProcConversationCompactArgs,
-): Promise<ChatConversationCompactResult> {
-  return throwIfFailed<Extract<ProcConversationCompactResult, { ok: true }>>(
-    await client.proc.conversation.compact(args),
+  args: ProcHistoryCompactArgs,
+): Promise<ChatHistoryCompactResult> {
+  return throwIfFailed<Extract<ProcHistoryCompactResult, { ok: true }>>(
+    await client.proc.history.compact(args),
   );
 }
 
-export async function forkChatConversation(
+export async function forkChatProcess(
   client: ChatGsvClient,
-  args: ProcConversationForkArgs,
-): Promise<ChatConversationForkResult> {
-  return throwIfFailed<Extract<ProcConversationForkResult, { ok: true }>>(
-    await client.proc.conversation.fork(args),
+  args: ProcForkArgs,
+): Promise<ChatForkResult> {
+  return throwIfFailed<Extract<ProcForkResult, { ok: true }>>(
+    await client.proc.fork(args),
   );
 }
 
-export async function listChatConversationSegments(
+export async function listChatHistorySegments(
   client: ChatGsvClient,
-  args: ProcConversationSegmentsArgs,
-): Promise<ChatConversationSegment[]> {
-  const result = throwIfFailed<Extract<ProcConversationSegmentsResult, { ok: true }>>(
-    await client.proc.conversation.segments(args),
+  args: ProcHistorySegmentsArgs,
+): Promise<ChatHistorySegment[]> {
+  const result = throwIfFailed<Extract<ProcHistorySegmentsResult, { ok: true }>>(
+    await client.proc.history.segments(args),
   );
   return [...result.segments].sort((left, right) => right.createdAt - left.createdAt);
 }
 
-export async function readChatConversationSegment(
+export async function readChatHistorySegment(
   client: ChatGsvClient,
-  args: ProcConversationSegmentReadArgs,
-): Promise<ChatConversationSegmentReadResult> {
-  return throwIfFailed<Extract<ProcConversationSegmentReadResult, { ok: true }>>(
-    await client.proc.conversation.segment.read(args),
+  args: ProcHistorySegmentReadArgs,
+): Promise<ChatHistorySegmentReadResult> {
+  return throwIfFailed<Extract<ProcHistorySegmentReadResult, { ok: true }>>(
+    await client.proc.history.segment.read(args),
   );
 }
 

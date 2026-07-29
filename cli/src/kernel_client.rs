@@ -149,13 +149,10 @@ impl KernelClient {
 
     pub async fn proc_send(
         &self,
-        pid: Option<&str>,
+        pid: &str,
         message: &str,
     ) -> Result<ProcSendResult, Box<dyn std::error::Error>> {
-        let mut args = json!({ "message": message });
-        if let Some(pid) = pid {
-            args["pid"] = Value::String(pid.to_string());
-        }
+        let args = json!({ "pid": pid, "message": message });
 
         let payload = self.request_ok("proc.send", Some(args)).await?;
         let result: ProcSendResult = serde_json::from_value(payload)?;

@@ -28,7 +28,6 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
     {
       auth: ctx.auth,
       procs: ctx.procs,
-      conversations: ctx.conversations,
       devices: ctx.devices,
       caps: ctx.caps,
       config: ctx.config,

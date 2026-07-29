@@ -133,8 +133,8 @@ processes.
 For unlinked actors, direct messages receive a link challenge such as
 `gsv auth link CODE`. Non-DM messages from unlinked actors are dropped. Once
 linked, adapter messages are delivered to the user's routed process or their
-`init:{uid}` process. Pending human-in-the-loop approvals can be answered from a
-linked DM surface.
+newly created personal-agent process. Pending human-in-the-loop approvals can be
+answered from a linked DM surface.
 
 ## Git
 

@@ -8,17 +8,13 @@ import { ArrowLeftGlyph, MoreVerticalGlyph, SpeakerOnGlyph, SpeakerOffGlyph } fr
 import { Hint } from "../../../components/ui/Tooltip";
 import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { ChatAgentViewModel } from "../domain/agent";
-import type { ChatConversation } from "../domain/processes";
 import type { ChatPopoverId } from "./ChatDockPopovers";
-import { shortId } from "./chatUiFormat";
 
 type ChatDockHeaderProps = {
   activeAgent: ChatAgentViewModel;
   agentPanelOpen: boolean;
   atMax: boolean;
   canAbortRun: boolean;
-  conversations: readonly ChatConversation[];
-  activeConversationId: string;
   contextTone: "default" | "attention" | "error";
   contextPercent: number | null;
   contextTitle: string;
@@ -44,7 +40,7 @@ type ChatDockHeaderProps = {
 };
 
 /** The two mobile header views: `primary` shows the current task + model
- *  triggers, `more` the branch trigger + speech mode. Toggled by the ⋮/←
+ *  triggers, `more` the current task + speech mode. Toggled by the ⋮/←
  *  button; desktop renders everything at once and never uses this. */
 type MobileHeaderView = "primary" | "more";
 
@@ -59,8 +55,6 @@ export function ChatDockHeader({
   agentPanelOpen,
   atMax,
   canAbortRun,
-  conversations,
-  activeConversationId,
   contextTone,
   contextPercent,
   contextTitle,
@@ -82,12 +76,6 @@ export function ChatDockHeader({
   onToggleOpen,
   onTogglePopover,
 }: ChatDockHeaderProps) {
-  // Only the base "default" thread means there are no branches to choose between.
-  const hasBranches = conversations.length > 1;
-  const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId);
-  const conversationLabel = activeConversation?.title
-    || (activeConversationId === "default" ? "Default" : shortId(activeConversationId) || "Default");
-
   const [mobileView, setMobileView] = useState<MobileHeaderView>(initialMobileView);
   useEffect(() => {
     if (!mobileLayout) {
@@ -141,21 +129,6 @@ export function ChatDockHeader({
       <StatusDot tone={effectiveStatus} size={7} />
       <span>{activeAgent.activity}</span>
       <i aria-hidden="true" />
-      {triggerChevron}
-    </button>
-  );
-
-  const conversationsTrigger = () => (
-    <button
-      type="button"
-      class="gsv-chat-agent-conversation gsv-sublabel"
-      data-chat-popover-trigger="conversations"
-      disabled={!hasBranches}
-      onClick={() => onTogglePopover("conversations")}
-      aria-haspopup="menu"
-      aria-expanded={openPopover === "conversations"}
-    >
-      <span>{conversationLabel}</span>
       {triggerChevron}
     </button>
   );
@@ -245,7 +218,7 @@ export function ChatDockHeader({
         <div class="gsv-chat-agent">
           {agentMain(false)}
           <div class="gsv-chat-m-rows">
-            {mobileView === "primary" ? tasksTrigger() : conversationsTrigger()}
+            {tasksTrigger()}
             {mobileView === "primary" ? modelTrigger() : (
               <button
                 type="button"
@@ -287,9 +260,6 @@ export function ChatDockHeader({
         <div class="gsv-chat-agent-meta-row">
           <Hint text="View activity & tasks" position="bottom-start">
             {tasksTrigger()}
-          </Hint>
-          <Hint text={hasBranches ? "Select conversation branch" : "Conversation branches will show up here"} position="bottom-start">
-            {conversationsTrigger()}
           </Hint>
         </div>
         <Hint text="Change model & reasoning effort" position="bottom-start">

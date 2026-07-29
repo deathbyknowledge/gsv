@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(17);
+    expect(KERNEL_MIGRATIONS).toHaveLength(18);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -100,6 +100,10 @@ describe("kernel schema migrations", () => {
       id: 17,
       name: "reorder_system_context",
     });
+    expect(KERNEL_MIGRATIONS[17]).toMatchObject({
+      id: 18,
+      name: "remove_conversation_registry",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -156,6 +160,13 @@ describe("kernel schema migrations", () => {
 
   it("removes obsolete process context metadata", () => {
     expect(normalizedStatements()).toContain("ALTER TABLE processes DROP COLUMN context_files_json");
+  });
+
+  it("removes the parallel conversation registry", () => {
+    expect(normalizedStatements()).toContain("DROP TABLE conversations");
+    expect(normalizedStatements()).toContain(
+      "ALTER TABLE processes DROP COLUMN active_conversation_id",
+    );
   });
 
   it("moves explicit system context overrides to the new lexical order", () => {

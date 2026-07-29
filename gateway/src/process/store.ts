@@ -2,7 +2,7 @@
  * ProcessStore — SQLite-backed state for a single Process DO.
  *
  * Manages:
- *   - messages: the active conversation (agent loop working memory)
+ *   - messages: the process history (agent loop working memory)
  *   - pending_tool_calls: in-flight tool calls awaiting results
  *   - message_queue: FIFO queue for messages arriving during an active run
  *   - process_kv: key-value metadata (processId, archiveId, etc.)
@@ -35,15 +35,10 @@ import {
   parseStoredProcessMedia,
 } from "./media";
 import {
-  DEFAULT_CONVERSATION_GENERATION,
-  DEFAULT_CONVERSATION_ID,
-  normalizeConversationId,
-  type ConversationArchiveKind,
-  type ConversationSegmentKind,
-  type ProcessConversationArchiveRecord,
-  type ProcessConversationRecord,
-  type ProcessConversationSegmentRecord,
-} from "./conversations";
+  INITIAL_HISTORY_GENERATION,
+  type HistorySegmentKind,
+  type ProcessHistorySegmentRecord,
+} from "./history";
 import {
   PROCESS_AI_CONFIG_STORE_KEY,
   normalizeProcessAiConfigSnapshot,
@@ -56,7 +51,6 @@ export type ToolCallStatus = "registered" | "pending" | "completed" | "error";
 export type ToolCallRecord = {
   id: string;
   dispatchId: string;
-  conversationId: string;
   call: string;
   args: unknown;
   status: ToolCallStatus;
@@ -75,7 +69,6 @@ export type MessageRole = "user" | "assistant" | "system" | "toolResult";
 
 export type MessageRecord = {
   id: number;
-  conversationId: string;
   generation: number;
   runId?: string | null;
   role: MessageRole;
@@ -90,7 +83,6 @@ export type MessageRecord = {
 
 type MessageRow = {
   id: number;
-  conversation_id: string;
   generation: number;
   run_id: string | null;
   role: string;
@@ -114,7 +106,6 @@ export type MessageMetadata = ProcMessageMetadata;
 export type QueuedMessage = {
   id: number;
   runId: string;
-  conversationId: string;
   generation: number;
   message: string;
   media: string | null;
@@ -124,7 +115,6 @@ export type QueuedMessage = {
 export type PendingHilRecord = {
   requestId: string;
   runId: string;
-  conversationId: string;
   ownerDispatchId?: string;
   toolCallId: string;
   toolName: string;
@@ -160,230 +150,27 @@ function resolvedToolResultOutcome(result: unknown): "completed" | "failed" {
 export class ProcessStore {
   constructor(private readonly sql: SqlStorage) {}
 
-  // --- Conversations ---
+  // --- History ---
 
-  ensureConversation(conversationId: string = DEFAULT_CONVERSATION_ID): ProcessConversationRecord {
-    const id = normalizeConversationId(conversationId);
-    const existing = this.getConversation(id);
-    if (existing) {
-      return existing;
-    }
-
-    const now = Date.now();
-    this.sql.exec(
-      `INSERT INTO conversations (id, generation, status, title, created_at, updated_at)
-       VALUES (?, ?, 'open', NULL, ?, ?)`,
-      id,
-      DEFAULT_CONVERSATION_GENERATION,
-      now,
-      now,
-    );
-
-    return {
-      id,
-      generation: DEFAULT_CONVERSATION_GENERATION,
-      status: "open",
-      title: null,
-      createdAt: now,
-      updatedAt: now,
-    };
+  getHistoryGeneration(): number {
+    const stored = Number.parseInt(this.getValue("historyGeneration") ?? "", 10);
+    return Number.isSafeInteger(stored) && stored > 0
+      ? stored
+      : INITIAL_HISTORY_GENERATION;
   }
 
-  getConversation(conversationId: string = DEFAULT_CONVERSATION_ID): ProcessConversationRecord | null {
-    const id = normalizeConversationId(conversationId);
-    const rows = [...this.sql.exec<{
-      id: string;
-      generation: number;
-      status: string;
-      title: string | null;
-      created_at: number;
-      updated_at: number;
-    }>(
-      "SELECT * FROM conversations WHERE id = ? LIMIT 1",
-      id,
-    )];
-    const row = rows[0];
-    if (!row) {
-      return null;
-    }
-    return {
-      id: row.id,
-      generation: row.generation,
-      status: row.status === "closed" ? "closed" : "open",
-      title: row.title,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
+  resetHistory(): number {
+    const generation = this.getHistoryGeneration() + 1;
+    this.clearMessages();
+    this.setValue("historyGeneration", String(generation));
+    return generation;
   }
 
-  getConversationGeneration(conversationId: string = DEFAULT_CONVERSATION_ID): number {
-    return this.ensureConversation(conversationId).generation;
-  }
-
-  openConversation(input?: {
-    conversationId?: string;
-    title?: string | null;
-  }): { conversation: ProcessConversationRecord; created: boolean } {
-    const id = normalizeConversationId(input?.conversationId ?? crypto.randomUUID());
-    const existing = this.getConversation(id);
-    const now = Date.now();
-    const title = normalizeNullableString(input?.title);
-
-    if (existing) {
-      this.sql.exec(
-        `UPDATE conversations
-            SET status = 'open',
-                title = COALESCE(?, title),
-                updated_at = ?
-          WHERE id = ?`,
-        title,
-        now,
-        id,
-      );
-      return {
-        conversation: this.getConversation(id) ?? existing,
-        created: false,
-      };
-    }
-
-    this.sql.exec(
-      `INSERT INTO conversations (id, generation, status, title, created_at, updated_at)
-       VALUES (?, ?, 'open', ?, ?, ?)`,
-      id,
-      DEFAULT_CONVERSATION_GENERATION,
-      title,
-      now,
-      now,
-    );
-
-    return {
-      conversation: {
-        id,
-        generation: DEFAULT_CONVERSATION_GENERATION,
-        status: "open",
-        title,
-        createdAt: now,
-        updatedAt: now,
-      },
-      created: true,
-    };
-  }
-
-  setConversationTitle(conversationId: string, title: string): boolean {
-    const id = normalizeConversationId(conversationId);
-    const normalized = normalizeNullableString(title);
-    if (!normalized || !this.getConversation(id)) {
-      return false;
-    }
-    this.sql.exec(
-      "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
-      normalized,
-      Date.now(),
-      id,
-    );
-    return true;
-  }
-
-  listConversations(options?: { includeClosed?: boolean }): ProcessConversationRecord[] {
-    const rows = [...this.sql.exec<{
-      id: string;
-      generation: number;
-      status: string;
-      title: string | null;
-      created_at: number;
-      updated_at: number;
-    }>(
-      options?.includeClosed
-        ? "SELECT * FROM conversations ORDER BY updated_at DESC, id ASC"
-        : "SELECT * FROM conversations WHERE status != 'closed' ORDER BY updated_at DESC, id ASC",
-    )];
-
-    return rows.map((row) => ({
-      id: row.id,
-      generation: row.generation,
-      status: row.status === "closed" ? "closed" : "open",
-      title: row.title,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
-  }
-
-  closeConversation(conversationId: string): boolean {
-    const id = normalizeConversationId(conversationId);
-    const existing = this.getConversation(id);
-    if (!existing || existing.status === "closed") {
-      return false;
-    }
-    this.sql.exec(
-      "UPDATE conversations SET status = 'closed', updated_at = ? WHERE id = ?",
-      Date.now(),
-      id,
-    );
-    return true;
-  }
-
-  resetConversation(conversationId: string): ProcessConversationRecord {
-    const id = normalizeConversationId(conversationId);
-    const existing = this.ensureConversation(id);
-    const nextGeneration = existing.generation + 1;
-    const now = Date.now();
-
-    this.clearMessages(id);
-    this.sql.exec(
-      `UPDATE conversations
-          SET generation = ?,
-              status = 'open',
-              updated_at = ?
-        WHERE id = ?`,
-      nextGeneration,
-      now,
-      id,
-    );
-
-    return {
-      ...existing,
-      generation: nextGeneration,
-      status: "open",
-      updatedAt: now,
-    };
-  }
-
-  totalMessageCount(): number {
-    const rows = [...this.sql.exec<{ cnt: number }>(
-      "SELECT COUNT(*) as cnt FROM messages",
-    )];
-    return rows[0]?.cnt ?? 0;
-  }
-
-  clearAllMessages(): number {
-    const count = this.totalMessageCount();
-    this.sql.exec("DELETE FROM messages");
-    this.deleteAllContextStates();
-    this.deleteAllConversationUsage();
-    return count;
-  }
-
-  resetAllConversations(): ProcessConversationRecord[] {
-    const now = Date.now();
-    this.clearAllMessages();
-    this.sql.exec(
-      `UPDATE conversations
-          SET generation = generation + 1,
-              status = 'open',
-              updated_at = ?`,
-      now,
-    );
-    return this.listConversations({ includeClosed: true });
-  }
-
-  getConversationPrefixMessages(opts: {
-    conversationId?: string;
+  getHistoryPrefixMessages(opts: {
     keepLast?: number;
     throughMessageId?: number;
   }): MessageRecord[] {
-    const conversationId = normalizeConversationId(opts.conversationId);
-    const generation = this.getConversationGeneration(conversationId);
-    const records = this.getMessagesForGeneration(conversationId, generation);
+    const records = this.getMessagesForGeneration();
 
     if (opts.keepLast !== undefined) {
       const keepLast = Math.max(0, Math.trunc(opts.keepLast));
@@ -408,66 +195,54 @@ export class ProcessStore {
     return [];
   }
 
-  compactConversationPrefix(opts: {
-    conversationId?: string;
+  compactHistoryPrefix(opts: {
     generation: number;
     fromMessageId: number;
     toMessageId: number;
     summary: string;
   }): number {
-    const conversationId = normalizeConversationId(opts.conversationId);
     const summaryMessageId = opts.fromMessageId;
     const now = Date.now();
 
     this.sql.exec(
       `DELETE FROM messages
-        WHERE conversation_id = ?
-          AND generation = ?
+        WHERE generation = ?
           AND id >= ?
           AND id <= ?`,
-      conversationId,
       opts.generation,
       opts.fromMessageId,
       opts.toMessageId,
     );
     this.sql.exec(
       `INSERT INTO messages (
-        id, conversation_id, generation, role, content, tool_calls, tool_call_id, media_json, origin_json, created_at
-      ) VALUES (?, ?, ?, 'system', ?, NULL, NULL, NULL, NULL, ?)`,
+        id, generation, role, content, tool_calls, tool_call_id,
+        media_json, origin_json, metadata_json, created_at
+      ) VALUES (?, ?, 'system', ?, NULL, NULL, NULL, NULL, NULL, ?)`,
       summaryMessageId,
-      conversationId,
       opts.generation,
       opts.summary,
       now,
-    );
-    this.sql.exec(
-      "UPDATE conversations SET updated_at = ? WHERE id = ?",
-      now,
-      conversationId,
     );
 
     return summaryMessageId;
   }
 
-  recordConversationSegment(input: {
+  recordHistorySegment(input: {
     id: string;
-    conversationId?: string;
     generation: number;
-    kind: ConversationSegmentKind;
+    kind: HistorySegmentKind;
     fromMessageId: number;
     toMessageId: number;
     archivePath: string;
     summaryMessageId?: number | null;
-  }): ProcessConversationSegmentRecord {
-    const conversationId = normalizeConversationId(input.conversationId);
+  }): ProcessHistorySegmentRecord {
     const createdAt = Date.now();
     this.sql.exec(
-      `INSERT INTO conversation_segments (
-        id, conversation_id, generation, kind, from_message_id, to_message_id,
+      `INSERT INTO history_segments (
+        id, generation, kind, from_message_id, to_message_id,
         archive_path, summary_message_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       input.id,
-      conversationId,
       input.generation,
       input.kind,
       input.fromMessageId,
@@ -478,7 +253,6 @@ export class ProcessStore {
     );
     return {
       id: input.id,
-      conversationId,
       generation: input.generation,
       kind: input.kind,
       fromMessageId: input.fromMessageId,
@@ -489,11 +263,9 @@ export class ProcessStore {
     };
   }
 
-  listConversationSegments(conversationId: string = DEFAULT_CONVERSATION_ID): ProcessConversationSegmentRecord[] {
-    const normalizedConversationId = normalizeConversationId(conversationId);
+  listHistorySegments(): ProcessHistorySegmentRecord[] {
     return [...this.sql.exec<{
       id: string;
-      conversation_id: string;
       generation: number;
       kind: string;
       from_message_id: number;
@@ -502,15 +274,12 @@ export class ProcessStore {
       summary_message_id: number | null;
       created_at: number;
     }>(
-      `SELECT id, conversation_id, generation, kind, from_message_id, to_message_id,
+      `SELECT id, generation, kind, from_message_id, to_message_id,
               archive_path, summary_message_id, created_at
-         FROM conversation_segments
-        WHERE conversation_id = ?
+         FROM history_segments
         ORDER BY created_at ASC, id ASC`,
-      normalizedConversationId,
     )].map((row) => ({
       id: row.id,
-      conversationId: row.conversation_id,
       generation: row.generation,
       kind: "compaction",
       fromMessageId: row.from_message_id,
@@ -521,14 +290,9 @@ export class ProcessStore {
     }));
   }
 
-  getConversationSegment(
-    conversationId: string,
-    segmentId: string,
-  ): ProcessConversationSegmentRecord | null {
-    const normalizedConversationId = normalizeConversationId(conversationId);
+  getHistorySegment(segmentId: string): ProcessHistorySegmentRecord | null {
     const rows = [...this.sql.exec<{
       id: string;
-      conversation_id: string;
       generation: number;
       kind: string;
       from_message_id: number;
@@ -537,13 +301,11 @@ export class ProcessStore {
       summary_message_id: number | null;
       created_at: number;
     }>(
-      `SELECT id, conversation_id, generation, kind, from_message_id, to_message_id,
+      `SELECT id, generation, kind, from_message_id, to_message_id,
               archive_path, summary_message_id, created_at
-         FROM conversation_segments
-        WHERE conversation_id = ?
-          AND id = ?
+         FROM history_segments
+        WHERE id = ?
         LIMIT 1`,
-      normalizedConversationId,
       segmentId,
     )];
     const row = rows[0];
@@ -552,7 +314,6 @@ export class ProcessStore {
     }
     return {
       id: row.id,
-      conversationId: row.conversation_id,
       generation: row.generation,
       kind: "compaction",
       fromMessageId: row.from_message_id,
@@ -561,85 +322,6 @@ export class ProcessStore {
       summaryMessageId: row.summary_message_id,
       createdAt: row.created_at,
     };
-  }
-
-  recordConversationArchive(input: {
-    id: string;
-    conversationId?: string;
-    generation: number;
-    kind: ConversationArchiveKind;
-    messages: number;
-    archivePath: string;
-  }): ProcessConversationArchiveRecord {
-    const conversationId = normalizeConversationId(input.conversationId);
-    const createdAt = Date.now();
-    this.sql.exec(
-      `INSERT INTO conversation_archives (
-        id, conversation_id, generation, kind, messages, archive_path, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      input.id,
-      conversationId,
-      input.generation,
-      input.kind,
-      input.messages,
-      input.archivePath,
-      createdAt,
-    );
-    return {
-      id: input.id,
-      conversationId,
-      generation: input.generation,
-      kind: input.kind,
-      messages: input.messages,
-      archivePath: input.archivePath,
-      createdAt,
-    };
-  }
-
-  listConversationArchives(conversationId: string = DEFAULT_CONVERSATION_ID): ProcessConversationArchiveRecord[] {
-    const normalizedConversationId = normalizeConversationId(conversationId);
-    return [...this.sql.exec<{
-      id: string;
-      conversation_id: string;
-      generation: number;
-      kind: string;
-      messages: number;
-      archive_path: string;
-      created_at: number;
-    }>(
-      `SELECT id, conversation_id, generation, kind, messages, archive_path, created_at
-         FROM conversation_archives
-        WHERE conversation_id = ?
-        ORDER BY generation ASC, created_at ASC, id ASC`,
-      normalizedConversationId,
-    )].map((row) => ({
-      id: row.id,
-      conversationId: row.conversation_id,
-      generation: row.generation,
-      kind: parseConversationArchiveKind(row.kind),
-      messages: row.messages,
-      archivePath: row.archive_path,
-      createdAt: row.created_at,
-    }));
-  }
-
-  listConversationGenerations(conversationId: string = DEFAULT_CONVERSATION_ID): number[] {
-    const normalizedConversationId = normalizeConversationId(conversationId);
-    const generations = new Set<number>();
-    const conversation = this.ensureConversation(normalizedConversationId);
-    generations.add(conversation.generation);
-
-    for (const row of this.sql.exec<{ generation: number }>(
-      `SELECT generation FROM conversation_segments WHERE conversation_id = ?
-       UNION
-       SELECT generation FROM conversation_archives WHERE conversation_id = ?`,
-      normalizedConversationId,
-      normalizedConversationId,
-    )) {
-      generations.add(row.generation);
-    }
-
-    return [...generations].sort((a, b) => a - b);
   }
 
   // --- Tool calls ---
@@ -650,17 +332,14 @@ export class ProcessStore {
     runId: string,
     call: string,
     args: unknown,
-    conversationId: string = DEFAULT_CONVERSATION_ID,
   ): void {
-    const normalizedConversationId = normalizeConversationId(conversationId);
     this.sql.exec(
       `INSERT INTO pending_tool_calls (
-        dispatch_id, id, run_id, conversation_id, call, args_json, status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'registered', ?)`,
+        dispatch_id, id, run_id, call, args_json, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'registered', ?)`,
       dispatchId,
       id,
       runId,
-      normalizedConversationId,
       call,
       JSON.stringify(args),
       Date.now(),
@@ -740,7 +419,6 @@ export class ProcessStore {
     return [...this.sql.exec<{
       id: string;
       dispatch_id: string;
-      conversation_id: string;
       call: string;
       args_json: string;
       status: string;
@@ -748,7 +426,7 @@ export class ProcessStore {
       error: string | null;
       outcome: string | null;
     }>(
-      `SELECT id, dispatch_id, conversation_id, call, args_json, status, result_json, error, outcome
+      `SELECT id, dispatch_id, call, args_json, status, result_json, error, outcome
          FROM pending_tool_calls
         WHERE run_id = ?
         ORDER BY created_at ASC, rowid ASC`,
@@ -756,7 +434,6 @@ export class ProcessStore {
     )].map((row) => ({
       id: row.id,
       dispatchId: row.dispatch_id,
-      conversationId: row.conversation_id,
       call: row.call,
       args: JSON.parse(row.args_json),
       status: row.status as ToolCallStatus,
@@ -770,27 +447,19 @@ export class ProcessStore {
     this.sql.exec("DELETE FROM pending_tool_calls WHERE run_id = ?", runId);
   }
 
-  clearPendingToolCalls(conversationId?: string): void {
-    if (conversationId === undefined) {
-      this.sql.exec("DELETE FROM pending_tool_calls");
-      return;
-    }
-    this.sql.exec(
-      "DELETE FROM pending_tool_calls WHERE conversation_id = ?",
-      normalizeConversationId(conversationId),
-    );
+  clearPendingToolCalls(): void {
+    this.sql.exec("DELETE FROM pending_tool_calls");
   }
 
   setPendingHil(record: PendingHilRecord): void {
     this.clearPendingHil();
     this.sql.exec(
       `INSERT INTO pending_hil (
-        request_id, run_id, conversation_id, owner_dispatch_id, tool_call_id,
+        request_id, run_id, owner_dispatch_id, tool_call_id,
         tool_name, syscall, args_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       record.requestId,
       record.runId,
-      normalizeConversationId(record.conversationId),
       record.ownerDispatchId ?? null,
       record.toolCallId,
       record.toolName,
@@ -805,7 +474,6 @@ export class ProcessStore {
       ...this.sql.exec<{
         request_id: string;
         run_id: string;
-        conversation_id: string;
         owner_dispatch_id: string | null;
         tool_call_id: string;
         tool_name: string;
@@ -824,7 +492,6 @@ export class ProcessStore {
     return {
       requestId: row.request_id,
       runId: row.run_id,
-      conversationId: row.conversation_id,
       ...(row.owner_dispatch_id ? { ownerDispatchId: row.owner_dispatch_id } : {}),
       toolCallId: row.tool_call_id,
       toolName: row.tool_name,
@@ -842,22 +509,14 @@ export class ProcessStore {
     return record;
   }
 
-  clearPendingHil(conversationId?: string): void {
-    if (conversationId === undefined) {
-      this.sql.exec("DELETE FROM pending_hil");
-      return;
-    }
-    this.sql.exec(
-      "DELETE FROM pending_hil WHERE conversation_id = ?",
-      normalizeConversationId(conversationId),
-    );
+  clearPendingHil(): void {
+    this.sql.exec("DELETE FROM pending_hil");
   }
 
   appendMessage(
     role: MessageRole,
     content: string,
     opts?: {
-      conversationId?: string;
       generation?: number;
       toolCalls?: string;
       toolCallId?: string;
@@ -868,14 +527,13 @@ export class ProcessStore {
       createdAt?: number;
     },
   ): number {
-    const conversationId = normalizeConversationId(opts?.conversationId);
-    const generation = opts?.generation ?? this.getConversationGeneration(conversationId);
+    const generation = opts?.generation ?? this.getHistoryGeneration();
     const metadataJson = stringifyMessageMetadata(opts?.metadata);
     this.sql.exec(
       `INSERT INTO messages (
-        conversation_id, generation, run_id, role, content, tool_calls, tool_call_id, media_json, origin_json, metadata_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      conversationId,
+        generation, run_id, role, content, tool_calls, tool_call_id,
+        media_json, origin_json, metadata_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       generation,
       opts?.runId ?? null,
       role,
@@ -894,7 +552,7 @@ export class ProcessStore {
     if (role === "assistant") {
       const metadata = parseMessageMetadata(metadataJson);
       if (metadata?.usage) {
-        this.addConversationUsage(conversationId, metadata.usage);
+        this.addHistoryUsage(metadata.usage);
       }
     }
 
@@ -943,22 +601,20 @@ export class ProcessStore {
   }
 
   getMessages(opts?: {
-    conversationId?: string;
     limit?: number | null;
     offset?: number;
     beforeMessageId?: number;
     afterMessageId?: number;
     tail?: boolean;
   }): MessageRecord[] {
-    const conversationId = normalizeConversationId(opts?.conversationId);
     const limit = opts?.limit === null ? null : opts?.limit ?? DEFAULT_MESSAGE_READ_LIMIT;
     const offset = opts?.offset ?? 0;
     const beforeMessageId = opts?.beforeMessageId;
     const afterMessageId = opts?.afterMessageId;
     const tail = opts?.tail === true;
     const hasLimit = limit !== null;
-    const where = ["conversation_id = ?"];
-    const args: Array<string | number> = [conversationId];
+    const where: string[] = [];
+    const args: Array<number> = [];
     if (beforeMessageId !== undefined) {
       where.push("id < ?");
       args.push(beforeMessageId);
@@ -973,9 +629,10 @@ export class ProcessStore {
         ? { clause: "LIMIT -1 OFFSET ?", args: [offset] as const }
         : { clause: "", args: [] as const };
     const order = tail || beforeMessageId !== undefined ? "DESC" : "ASC";
+    const filter = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
 
     const rows = [...this.sql.exec<MessageRow>(
-        `SELECT * FROM messages WHERE ${where.join(" AND ")} ORDER BY id ${order} ${pagination.clause}`,
+        `SELECT * FROM messages ${filter} ORDER BY id ${order} ${pagination.clause}`,
       ...args,
       ...pagination.args,
     )];
@@ -986,52 +643,37 @@ export class ProcessStore {
     return rows.map(messageRecordFromRow);
   }
 
-  hasMessageBefore(conversationId: string, messageId: number): boolean {
+  hasMessageBefore(messageId: number): boolean {
     const rows = [...this.sql.exec<{ found: number }>(
-      "SELECT 1 as found FROM messages WHERE conversation_id = ? AND id < ? LIMIT 1",
-      normalizeConversationId(conversationId),
+      "SELECT 1 as found FROM messages WHERE id < ? LIMIT 1",
       messageId,
     )];
     return rows.length > 0;
   }
 
-  hasMessageAfter(conversationId: string, messageId: number): boolean {
+  hasMessageAfter(messageId: number): boolean {
     const rows = [...this.sql.exec<{ found: number }>(
-      "SELECT 1 as found FROM messages WHERE conversation_id = ? AND id > ? LIMIT 1",
-      normalizeConversationId(conversationId),
+      "SELECT 1 as found FROM messages WHERE id > ? LIMIT 1",
       messageId,
     )];
     return rows.length > 0;
   }
 
-  getMessagesForGeneration(
-    conversationId: string = DEFAULT_CONVERSATION_ID,
-    generation?: number,
-  ): MessageRecord[] {
-    const normalizedConversationId = normalizeConversationId(conversationId);
-    const normalizedGeneration = generation ?? this.getConversationGeneration(normalizedConversationId);
+  getMessagesForGeneration(generation: number = this.getHistoryGeneration()): MessageRecord[] {
     return [...this.sql.exec<MessageRow>(
       `SELECT * FROM messages
-        WHERE conversation_id = ?
-          AND generation = ?
+        WHERE generation = ?
         ORDER BY id ASC`,
-      normalizedConversationId,
-      normalizedGeneration,
+      generation,
     )].map(messageRecordFromRow);
   }
 
   getMessagesForGenerationAfter(opts: {
-    conversationId?: string;
     generation: number;
     afterMessageId: number;
     throughCreatedAt?: number;
   }): MessageRecord[] {
-    const normalizedConversationId = normalizeConversationId(opts.conversationId);
-    const args: Array<string | number> = [
-      normalizedConversationId,
-      opts.generation,
-      opts.afterMessageId,
-    ];
+    const args: number[] = [opts.generation, opts.afterMessageId];
     const createdAtFilter = opts.throughCreatedAt === undefined
       ? ""
       : "AND created_at <= ?";
@@ -1041,8 +683,7 @@ export class ProcessStore {
 
     return [...this.sql.exec<MessageRow>(
       `SELECT * FROM messages
-        WHERE conversation_id = ?
-          AND generation = ?
+        WHERE generation = ?
           AND id > ?
           ${createdAtFilter}
         ORDER BY id ASC`,
@@ -1050,22 +691,20 @@ export class ProcessStore {
     )].map(messageRecordFromRow);
   }
 
-  messageCount(conversationId: string = DEFAULT_CONVERSATION_ID): number {
+  messageCount(): number {
     const rows = [...this.sql.exec<{ cnt: number }>(
-      "SELECT COUNT(*) as cnt FROM messages WHERE conversation_id = ?",
-      normalizeConversationId(conversationId),
+      "SELECT COUNT(*) as cnt FROM messages",
     )];
     return rows[0]?.cnt ?? 0;
   }
 
-  messageStats(conversationId: string = DEFAULT_CONVERSATION_ID): {
+  messageStats(): {
     count: number;
     firstMessageId: number | null;
     lastMessageId: number | null;
   } {
     const rows = [...this.sql.exec<{ cnt: number; first_id: number | null; last_id: number | null }>(
-      "SELECT COUNT(*) as cnt, MIN(id) as first_id, MAX(id) as last_id FROM messages WHERE conversation_id = ?",
-      normalizeConversationId(conversationId),
+      "SELECT COUNT(*) as cnt, MIN(id) as first_id, MAX(id) as last_id FROM messages",
     )];
     return {
       count: rows[0]?.cnt ?? 0,
@@ -1074,12 +713,11 @@ export class ProcessStore {
     };
   }
 
-  clearMessages(conversationId: string = DEFAULT_CONVERSATION_ID): number {
-    const normalizedConversationId = normalizeConversationId(conversationId);
-    const count = this.messageCount(normalizedConversationId);
-    this.sql.exec("DELETE FROM messages WHERE conversation_id = ?", normalizedConversationId);
-    this.deleteContextState(normalizedConversationId);
-    this.deleteConversationUsage(normalizedConversationId);
+  clearMessages(): number {
+    const count = this.messageCount();
+    this.sql.exec("DELETE FROM messages");
+    this.deleteContextState();
+    this.deleteHistoryUsage();
     return count;
   }
 
@@ -1127,36 +765,31 @@ export class ProcessStore {
     this.deleteValue(PROCESS_AI_CONFIG_STORE_KEY);
   }
 
-  getContextState(conversationId: string = DEFAULT_CONVERSATION_ID): ProcContextState | null {
-    const raw = this.getValue(contextStateKey(normalizeConversationId(conversationId)));
+  getContextState(): ProcContextState | null {
+    const raw = this.getValue("contextState");
     if (!raw) {
       return null;
     }
     try {
-      const parsed = JSON.parse(raw) as ProcContextState;
-      return parsed && typeof parsed.conversationId === "string" ? parsed : null;
+      const parsed = JSON.parse(raw) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed as ProcContextState
+        : null;
     } catch {
       return null;
     }
   }
 
   setContextState(state: ProcContextState): void {
-    this.setValue(
-      contextStateKey(normalizeConversationId(state.conversationId)),
-      JSON.stringify(state),
-    );
+    this.setValue("contextState", JSON.stringify(state));
   }
 
-  deleteContextState(conversationId: string = DEFAULT_CONVERSATION_ID): void {
-    this.deleteValue(contextStateKey(normalizeConversationId(conversationId)));
+  deleteContextState(): void {
+    this.deleteValue("contextState");
   }
 
-  deleteAllContextStates(): void {
-    this.sql.exec("DELETE FROM process_kv WHERE key LIKE 'contextState:%'");
-  }
-
-  getConversationUsage(conversationId: string = DEFAULT_CONVERSATION_ID): ProcUsageState | null {
-    const raw = this.getValue(conversationUsageKey(normalizeConversationId(conversationId)));
+  getHistoryUsage(): ProcUsageState | null {
+    const raw = this.getValue("historyUsage");
     if (!raw) {
       return null;
     }
@@ -1167,35 +800,26 @@ export class ProcessStore {
     }
   }
 
-  addConversationUsage(
-    conversationId: string = DEFAULT_CONVERSATION_ID,
-    usage: ProcUsageState,
-  ): ProcUsageState {
-    const normalizedConversationId = normalizeConversationId(conversationId);
+  addHistoryUsage(usage: ProcUsageState): ProcUsageState {
     const normalizedUsage = normalizeUsageState(usage);
     if (!normalizedUsage) {
-      return this.getConversationUsage(normalizedConversationId) ?? emptyUsageState();
+      return this.getHistoryUsage() ?? emptyUsageState();
     }
     const merged = mergeUsageStates(
-      this.getConversationUsage(normalizedConversationId),
+      this.getHistoryUsage(),
       normalizedUsage,
     );
-    this.setValue(conversationUsageKey(normalizedConversationId), JSON.stringify(merged));
+    this.setValue("historyUsage", JSON.stringify(merged));
     return merged;
   }
 
-  deleteConversationUsage(conversationId: string = DEFAULT_CONVERSATION_ID): void {
-    this.deleteValue(conversationUsageKey(normalizeConversationId(conversationId)));
-  }
-
-  deleteAllConversationUsage(): void {
-    this.sql.exec("DELETE FROM process_kv WHERE key LIKE 'conversationUsage:%'");
+  deleteHistoryUsage(): void {
+    this.deleteValue("historyUsage");
   }
 
   // --- Message conversion to pi-ai format ---
 
   toMessages(opts?: {
-    conversationId?: string;
     limit?: number | null;
     offset?: number;
   }): Message[] {
@@ -1289,13 +913,11 @@ export class ProcessStore {
     syscallName: string,
     content: string,
     isError: boolean,
-    conversationId: string = DEFAULT_CONVERSATION_ID,
     runId?: string,
     outcome?: ProcToolResultOutcome,
   ): number {
     const toolName = SYSCALL_TOOL_NAMES[syscallName] ?? syscallName;
     return this.appendMessage("toolResult", content, {
-      conversationId,
       runId,
       toolCallId,
       toolCalls: JSON.stringify({
@@ -1312,17 +934,14 @@ export class ProcessStore {
     runId: string,
     message: string,
     media?: string,
-    conversationId: string = DEFAULT_CONVERSATION_ID,
     origin?: string,
   ): void {
-    const normalizedConversationId = normalizeConversationId(conversationId);
-    const generation = this.getConversationGeneration(normalizedConversationId);
+    const generation = this.getHistoryGeneration();
     this.sql.exec(
       `INSERT INTO message_queue (
-        run_id, conversation_id, generation, message, media_json, origin_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        run_id, generation, message, media_json, origin_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
       runId,
-      normalizedConversationId,
       generation,
       message,
       media ?? null,
@@ -1331,31 +950,20 @@ export class ProcessStore {
     );
   }
 
-  dequeue(conversationId?: string): QueuedMessage | null {
-    const normalizedConversationId = conversationId === undefined
-      ? null
-      : normalizeConversationId(conversationId);
+  dequeue(): QueuedMessage | null {
     const rows = [
       ...this.sql.exec<{
         id: number;
         run_id: string;
-        conversation_id: string;
         generation: number;
         message: string;
         media_json: string | null;
         origin_json: string | null;
       }>(
-        normalizedConversationId
-          ? `SELECT id, run_id, conversation_id, generation, message, media_json, origin_json
-               FROM message_queue
-              WHERE conversation_id = ?
-              ORDER BY id ASC
-              LIMIT 1`
-          : `SELECT id, run_id, conversation_id, generation, message, media_json, origin_json
-               FROM message_queue
-              ORDER BY id ASC
-              LIMIT 1`,
-        ...(normalizedConversationId ? [normalizedConversationId] : []),
+        `SELECT id, run_id, generation, message, media_json, origin_json
+           FROM message_queue
+          ORDER BY id ASC
+          LIMIT 1`,
       ),
     ];
     if (rows.length === 0) return null;
@@ -1364,7 +972,6 @@ export class ProcessStore {
     return {
       id: row.id,
       runId: row.run_id,
-      conversationId: row.conversation_id,
       generation: row.generation,
       message: row.message,
       media: row.media_json,
@@ -1372,41 +979,26 @@ export class ProcessStore {
     };
   }
 
-  drainQueue(conversationId?: string): QueuedMessage[] {
-    const normalizedConversationId = conversationId === undefined
-      ? null
-      : normalizeConversationId(conversationId);
+  drainQueue(): QueuedMessage[] {
     const rows = [
       ...this.sql.exec<{
         id: number;
         run_id: string;
-        conversation_id: string;
         generation: number;
         message: string;
         media_json: string | null;
         origin_json: string | null;
       }>(
-        normalizedConversationId
-          ? `SELECT id, run_id, conversation_id, generation, message, media_json, origin_json
-               FROM message_queue
-              WHERE conversation_id = ?
-              ORDER BY id ASC`
-          : `SELECT id, run_id, conversation_id, generation, message, media_json, origin_json
-               FROM message_queue
-              ORDER BY id ASC`,
-        ...(normalizedConversationId ? [normalizedConversationId] : []),
+        `SELECT id, run_id, generation, message, media_json, origin_json
+           FROM message_queue
+          ORDER BY id ASC`,
       ),
     ];
     if (rows.length === 0) return [];
-    if (normalizedConversationId) {
-      this.sql.exec("DELETE FROM message_queue WHERE conversation_id = ?", normalizedConversationId);
-    } else {
-      this.sql.exec("DELETE FROM message_queue");
-    }
+    this.sql.exec("DELETE FROM message_queue");
     return rows.map((row) => ({
       id: row.id,
       runId: row.run_id,
-      conversationId: row.conversation_id,
       generation: row.generation,
       message: row.message,
       media: row.media_json,
@@ -1414,29 +1006,14 @@ export class ProcessStore {
     }));
   }
 
-  clearQueue(conversationId?: string): void {
-    if (conversationId === undefined) {
-      this.sql.exec("DELETE FROM message_queue");
-      return;
-    }
-    this.sql.exec(
-      "DELETE FROM message_queue WHERE conversation_id = ?",
-      normalizeConversationId(conversationId),
-    );
+  clearQueue(): void {
+    this.sql.exec("DELETE FROM message_queue");
   }
 
-  queueSize(conversationId?: string): number {
-    const normalizedConversationId = conversationId === undefined
-      ? null
-      : normalizeConversationId(conversationId);
-    const rows = [
-      ...this.sql.exec<{ cnt: number }>(
-        normalizedConversationId
-          ? "SELECT COUNT(*) as cnt FROM message_queue WHERE conversation_id = ?"
-          : "SELECT COUNT(*) as cnt FROM message_queue",
-        ...(normalizedConversationId ? [normalizedConversationId] : []),
-      ),
-    ];
+  queueSize(): number {
+    const rows = [...this.sql.exec<{ cnt: number }>(
+      "SELECT COUNT(*) as cnt FROM message_queue",
+    )];
     return rows[0]?.cnt ?? 0;
   }
 
@@ -1492,7 +1069,6 @@ function normalizeCompactionCut(
 function messageRecordFromRow(row: MessageRow): MessageRecord {
   return {
     id: row.id,
-    conversationId: row.conversation_id,
     generation: row.generation,
     runId: row.run_id,
     role: row.role as MessageRole,
@@ -1777,27 +1353,6 @@ export function parseAssistantMessageMeta(raw: string | null): AssistantMessageM
       ? meta.toolCalls as ToolCall[]
       : undefined,
   };
-}
-
-function normalizeNullableString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : null;
-}
-
-function parseConversationArchiveKind(value: string): ConversationArchiveKind {
-  if (value === "process-reset" || value === "kill") {
-    return value;
-  }
-  return "reset";
-}
-
-function contextStateKey(conversationId: string): string {
-  return `contextState:${conversationId}`;
-}
-
-function conversationUsageKey(conversationId: string): string {
-  return `conversationUsage:${conversationId}`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

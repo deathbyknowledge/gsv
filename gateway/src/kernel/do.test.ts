@@ -523,9 +523,6 @@ describe("Kernel frame bodies", () => {
       procs: {
         get: () => ({ ownerUid: 0 }),
       },
-      conversations: {
-        getByActivePid: () => null,
-      },
     });
     kernel.buildDispatchDeps = () => ({});
     kernel.applyPostDispatchEffects = vi.fn();
@@ -975,7 +972,6 @@ describe("Kernel process signal routing", () => {
       pid: "proc-1",
       runId,
       requestId,
-      conversationId: "default",
       callId: `call-${requestId}`,
       toolName: "Shell",
       syscall: "shell.exec",
@@ -992,7 +988,6 @@ describe("Kernel process signal routing", () => {
       data: {
         ok: true,
         pid: "proc-1",
-        conversationId: "default",
         messages: [],
         messageCount: 0,
         pendingHil,
@@ -1267,7 +1262,7 @@ describe("Kernel process signal routing", () => {
     const frame = {
       type: "sig",
       signal: "proc.run.finished",
-      payload: { pid: "proc-1", runId: route.runId, conversationId: "default", text: "done" },
+      payload: { pid: "proc-1", runId: route.runId, text: "done" },
     };
 
     await kernel.handleProcessSignal("proc-1", frame);
@@ -1309,7 +1304,7 @@ describe("Kernel process signal routing", () => {
     const frame = {
       type: "sig",
       signal: "proc.run.finished",
-      payload: { pid: "proc-1", runId: route.runId, conversationId: "default", text: "done" },
+      payload: { pid: "proc-1", runId: route.runId, text: "done" },
     };
 
     await kernel.handleProcessSignal("proc-1", frame);
@@ -1334,7 +1329,6 @@ describe("Kernel process signal routing", () => {
       noticeId: "notice:stale",
       runId: "run-stale",
       processId: "proc-1",
-      conversationId: "default",
       deliveryKind: "final",
       state: "exhausted",
       message: "Delivery stopped.",
@@ -1360,7 +1354,6 @@ describe("Kernel process signal routing", () => {
       noticeId: "notice:hil:stale",
       runId: route.runId,
       processId: route.processId,
-      conversationId: "default",
       deliveryKind: "hil",
       requestId: "hil-stale",
       state: "exhausted",
@@ -1394,7 +1387,6 @@ describe("Kernel process signal routing", () => {
       noticeId: "notice:hil:current",
       runId: route.runId,
       processId: route.processId,
-      conversationId: "default",
       deliveryKind: "hil",
       requestId: pending.requestId,
       state: "ambiguous",
@@ -1428,7 +1420,6 @@ describe("Kernel process signal routing", () => {
       noticeId: "notice:accepted",
       runId: route.runId,
       processId: route.processId,
-      conversationId: "default",
       deliveryKind: "final",
       state: "ambiguous",
       message: "Delivery is ambiguous.",
@@ -1700,7 +1691,6 @@ describe("Kernel scheduled process reply routes", () => {
       target: {
         kind: "process.event",
         pid: "proc-1",
-        conversationId: "default",
         message: "Check the oven.",
         replyTo: destination,
       },
@@ -2159,32 +2149,25 @@ describe("Kernel process device requests", () => {
 });
 
 describe("Kernel process runtime projection", () => {
-  it("projects primary conversation titles into process and conversation registries", () => {
+  it("projects process titles into the process registry", () => {
     const setLabel = vi.fn(() => true);
-    const setTitle = vi.fn(() => true);
     const kernel = Object.create(Kernel.prototype) as any;
     kernel.procs = {
       get: vi.fn(() => ({ activeRunId: null, lastActiveAt: null })),
       setLabel,
       updateRuntimeState: vi.fn(),
     };
-    kernel.conversations = {
-      getByActivePid: vi.fn(() => ({ conversationId: "task-conversation" })),
-      setTitle,
-    };
 
     expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.changed",
       payload: {
-        conversationId: "default",
         changes: ["title"],
         title: "  Review migration plan  ",
       },
     }, null)).toBe(true);
 
     expect(setLabel).toHaveBeenCalledWith("proc-1", "Review migration plan");
-    expect(setTitle).toHaveBeenCalledWith("task-conversation", "Review migration plan");
   });
 
   it("waits for earlier process signals before acknowledging a run finish", async () => {
@@ -2249,36 +2232,36 @@ describe("Kernel process runtime projection", () => {
     expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.run.started",
-      payload: { runId: "run-new", conversationId: "default", timestamp: 200 },
+      payload: { runId: "run-new", timestamp: 200 },
     }, "run-new")).toBe(true);
     expect(record).toMatchObject({ activeRunId: "run-new", lastActiveAt: 200 });
 
     expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.run.started",
-      payload: { runId: "run-old", conversationId: "default", timestamp: 150 },
+      payload: { runId: "run-old", timestamp: 150 },
     }, "run-old")).toBe(false);
 
     expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.run.finished",
-      payload: { runId: "run-old", conversationId: "default", timestamp: 250 },
+      payload: { runId: "run-old", timestamp: 250 },
     }, "run-old")).toBe(true);
     expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.run.output",
-      payload: { runId: "run-old", conversationId: "default", timestamp: 300 },
+      payload: { runId: "run-old", timestamp: 300 },
     }, "run-old")).toBe(false);
 
     expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.run.finished",
-      payload: { runId: "run-new", conversationId: "default", timestamp: 400 },
+      payload: { runId: "run-new", timestamp: 400 },
     }, "run-new")).toBe(true);
     expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
       type: "sig",
       signal: "proc.run.started",
-      payload: { runId: "run-old", conversationId: "default", timestamp: 350 },
+      payload: { runId: "run-old", timestamp: 350 },
     }, "run-old")).toBe(false);
 
     expect(updateRuntimeState).toHaveBeenCalledTimes(2);

@@ -119,7 +119,7 @@ function ConversationsVariation() {
   return (
     <PopoverMenu
       className="ds-popover-static"
-      ariaLabel="Conversation branches"
+      ariaLabel="Task branches"
       header={{ kind: "titled", title: "BRANCHES", count: branches.length }}
     >
       <div class="gsv-popover-list" role="list" style={{ maxHeight: "min(288px, 44vh)" }}>

@@ -96,8 +96,8 @@ The inbound path looks like this:
    process route.
 7. Media is streamed into process-owned storage, and the Kernel creates the run
    reply route before admitting the message.
-8. The message is delivered to a durable process, usually the user's personal
-   conversation executor or a routed process.
+8. The message is delivered to the routed process, or to a newly created
+   personal-agent process when the surface has no route yet.
 9. The process runs the normal agent loop and emits `proc.run.*` signals.
 
 The important point is that inbound adapter traffic does not create a special
@@ -217,11 +217,8 @@ After an actor is linked and addresses GSV on a surface, the Kernel can route
 that observed destination to a specific process. The key includes adapter,
 account, actor, surface kind, surface id, and optional thread id.
 
-That means you can choose whether inbound adapter traffic goes to:
-
-- the default init process
-- a specific task process
-- a different routed process for a specific account or surface
+That means inbound adapter traffic can continue in its routed task process,
+move to another existing process, or start a new process under an agent account.
 
 This is what lets GSV keep one durable process model while still supporting
 multiple external surfaces. Actor scope is important: two linked GSV users can

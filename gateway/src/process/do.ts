@@ -56,41 +56,22 @@ import type {
   ProcMediaReadResult,
   ProcMediaWriteArgs,
   ProcMediaWriteResult,
-  ProcConversation,
-  ProcConversationOpenArgs,
-  ProcConversationOpenResult,
-  ProcConversationListArgs,
-  ProcConversationListResult,
-  ProcConversationGetArgs,
-  ProcConversationGetResult,
-  ProcConversationCloseArgs,
-  ProcConversationCloseResult,
-  ProcConversationResetArgs,
-  ProcConversationResetResult,
-  ProcConversationContextPolicy,
-  ProcConversationPolicyGetArgs,
-  ProcConversationPolicyGetResult,
-  ProcConversationPolicySetArgs,
-  ProcConversationPolicySetResult,
-  ProcConversationOverflowPolicy,
-  ProcConversationCompactArgs,
-  ProcConversationCompactResult,
-  ProcConversationForkArgs,
-  ProcConversationForkResult,
-  ProcConversationSegmentReadArgs,
-  ProcConversationSegmentReadResult,
-  ProcConversationSegmentsArgs,
-  ProcConversationSegmentsResult,
-  ProcConversationArchiveKind,
-  ProcConversationTimelineEntry,
-  ProcConversationTimelineArgs,
-  ProcConversationTimelineResult,
-  ProcConversationGenerationsArgs,
-  ProcConversationGenerationsResult,
-  ProcConversationGenerationManifest,
-  ProcConversationGenerationManifestArgs,
-  ProcConversationGenerationManifestResult,
-  ProcConversationLiveGeneration,
+  ProcHistoryContextPolicy,
+  ProcHistoryPolicyGetArgs,
+  ProcHistoryPolicyGetResult,
+  ProcHistoryPolicySetArgs,
+  ProcHistoryPolicySetResult,
+  ProcHistoryOverflowPolicy,
+  ProcHistoryCompactArgs,
+  ProcHistoryCompactResult,
+  ProcHistoryExportArgs,
+  ProcHistoryExportResult,
+  ProcHistoryImportArgs,
+  ProcHistoryImportResult,
+  ProcHistorySegmentReadArgs,
+  ProcHistorySegmentReadResult,
+  ProcHistorySegmentsArgs,
+  ProcHistorySegmentsResult,
   ProcArchiveEntry,
   ProcContextState,
   ProcUsageCostSource,
@@ -210,11 +191,6 @@ import {
 } from "../codemode/request";
 import { formatAgentToolResponse, materializeToolResponse } from "./tool-response";
 import {
-  DEFAULT_CONVERSATION_ID,
-  normalizeConversationId,
-  type ProcessConversationRecord,
-} from "./conversations";
-import {
   createProcessAiConfigSnapshot,
   isProcessAiConfigKey,
   redactProcessAiConfigSnapshot,
@@ -231,7 +207,6 @@ import {
 
 type RunState = {
   runId: string;
-  conversationId: string;
   tickGeneration?: number;
   pendingMediaMessageId?: number;
   pendingRuntimeEvents?: number;
@@ -588,7 +563,7 @@ function isPositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
-function isConversationOverflowPolicy(value: unknown): value is ProcConversationOverflowPolicy {
+function isHistoryOverflowPolicy(value: unknown): value is ProcHistoryOverflowPolicy {
   return value === "auto-compact" || value === "fail";
 }
 
@@ -759,34 +734,8 @@ function emptyProcessArchive(): ProcessArchiveResult {
   };
 }
 
-function conversationArchiveFilename(conversationId: string, generation: number): string {
-  return `${encodeURIComponent(conversationId)}.gen-${generation}.jsonl.gz`;
-}
-
-function compareConversationTimelineEntries(
-  a: ProcConversationTimelineEntry,
-  b: ProcConversationTimelineEntry,
-): number {
-  const generationDelta = a.generation - b.generation;
-  if (generationDelta !== 0) return generationDelta;
-  if (a.type === "live" || b.type === "live") {
-    return timelineEntryTypeRank(a.type) - timelineEntryTypeRank(b.type);
-  }
-  const timeDelta = timelineEntryTimestamp(a) - timelineEntryTimestamp(b);
-  if (timeDelta !== 0) return timeDelta;
-  return timelineEntryTypeRank(a.type) - timelineEntryTypeRank(b.type);
-}
-
-function timelineEntryTimestamp(entry: ProcConversationTimelineEntry): number {
-  return entry.type === "live" ? entry.updatedAt : entry.createdAt;
-}
-
-function timelineEntryTypeRank(type: ProcConversationTimelineEntry["type"]): number {
-  switch (type) {
-    case "archive": return 0;
-    case "segment": return 1;
-    case "live": return 2;
-  }
+function historyArchiveFilename(generation: number): string {
+  return `history.gen-${generation}.jsonl.gz`;
 }
 
 function formatCompactionSummaryMessage(input: {
@@ -795,7 +744,7 @@ function formatCompactionSummaryMessage(input: {
   summary: string;
 }): string {
   return [
-    "Conversation compacted.",
+    "Process history compacted.",
     "",
     `Archived messages: ${input.archivedMessages}`,
     `Archive: ${input.archivePath}`,
@@ -805,13 +754,8 @@ function formatCompactionSummaryMessage(input: {
   ].join("\n");
 }
 
-function conversationPolicyKey(conversationId: string): string {
-  return `conversationPolicy:${normalizeConversationId(conversationId)}`;
-}
-
-function defaultConversationPolicy(conversationId: string): ProcConversationContextPolicy {
+function defaultHistoryPolicy(): ProcHistoryContextPolicy {
   return {
-    conversationId: normalizeConversationId(conversationId),
     overflow: "auto-compact",
     compactAtPressure: 0.9,
     keepLast: 80,
@@ -827,10 +771,10 @@ function buildCompactionSummaryContext(messages: MessageRecord[]): Context {
       {
         role: "user",
         content: [
-          "Conversation segment JSONL:",
+          "Process history segment JSONL:",
           transcript || "(no messages)",
           "",
-          "Write the replacement summary that will remain visible in the live process conversation.",
+          "Write the replacement summary that will remain visible in the live process history.",
         ].join("\n"),
         timestamp: Date.now(),
       },
@@ -929,7 +873,6 @@ export class Process extends Host<Env> {
     super(ctx, env);
     runProcessSqlMigrations(ctx.storage);
     this.store = new ProcessStore(ctx.storage.sql);
-    this.store.ensureConversation(DEFAULT_CONVERSATION_ID);
     this.ripgit = env.RIPGIT
       ? new RipgitClient(env.RIPGIT)
       : null;
@@ -963,21 +906,12 @@ export class Process extends Host<Env> {
     if (typeof parsed.runId !== "string") {
       return null;
     }
-    return {
-      ...parsed,
-      runId: parsed.runId,
-      conversationId: normalizeConversationId(parsed.conversationId),
-    };
+    return { ...parsed, runId: parsed.runId };
   }
 
   private set currentRun(state: RunState | null) {
     if (state) {
-      const conversationId = normalizeConversationId(state.conversationId);
-      this.store.ensureConversation(conversationId);
-      this.store.setValue("currentRun", JSON.stringify({
-        ...state,
-        conversationId,
-      }));
+      this.store.setValue("currentRun", JSON.stringify(state));
     } else {
       this.store.deleteValue("currentRun");
     }
@@ -1008,15 +942,6 @@ export class Process extends Host<Env> {
     const raw = this.store.getValue("interactive");
     if (raw === "0") return false;
     return true;
-  }
-
-  /**
-   * The kernel conversation id this executor's primary ("default") thread maps
-   * to, when assigned at spawn. Drives where the primary thread's transcripts
-   * are archived/hydrated under the agent home, decoupling them from the pid.
-   */
-  private get primaryConversationId(): string | null {
-    return this.store.getValue("primaryConversationId");
   }
 
   /**
@@ -1117,7 +1042,6 @@ export class Process extends Host<Env> {
         const result = await this.handleProcScheduleDeliver(frame.args);
         return { type: "res", id: frame.id, ok: true, data: result };
       }
-
       let data: ResultOf<SyscallName>;
 
       switch (frame.call) {
@@ -1128,28 +1052,20 @@ export class Process extends Host<Env> {
             interactive?: boolean;
             title?: string;
             autoTitle?: boolean;
-            conversationId?: string;
-            hydrateFrom?: string;
           };
           this.store.setValue("pid", idArgs.pid);
           this.store.setValue("identity", JSON.stringify(idArgs.identity));
           if (idArgs.interactive !== undefined) {
             this.store.setValue("interactive", idArgs.interactive ? "1" : "0");
           }
-          if (idArgs.conversationId) {
-            this.store.setValue("primaryConversationId", idArgs.conversationId);
-          }
           const initialTitle = normalizeOptionalString(idArgs.title);
           if (initialTitle) {
-            this.store.setConversationTitle(DEFAULT_CONVERSATION_ID, initialTitle);
+            this.store.setValue("taskTitle", initialTitle);
           }
           if (idArgs.autoTitle === true && !initialTitle) {
             this.store.setValue(AUTO_TASK_TITLE_KEY, "1");
           } else {
             this.store.deleteValue(AUTO_TASK_TITLE_KEY);
-          }
-          if (idArgs.hydrateFrom) {
-            await this.hydratePrimaryConversation(idArgs.hydrateFrom);
           }
           data = { ok: true };
           break;
@@ -1216,77 +1132,48 @@ export class Process extends Host<Env> {
             frame.args as ProcessRunAttachArgs,
           );
           break;
-        case "proc.conversation.open":
-          data = this.handleConversationOpen(
-            (frame.args ?? {}) as ProcConversationOpenArgs,
+        case "proc.history.policy.get":
+          data = this.handleHistoryPolicyGet(
+            (frame.args ?? {}) as ProcHistoryPolicyGetArgs,
           );
           break;
-        case "proc.conversation.list":
-          data = this.handleConversationList(
-            (frame.args ?? {}) as ProcConversationListArgs,
+        case "proc.history.policy.set":
+          data = await this.handleHistoryPolicySet(
+            (frame.args ?? {}) as ProcHistoryPolicySetArgs,
           );
           break;
-        case "proc.conversation.get":
-          data = this.handleConversationGet(
-            (frame.args ?? {}) as ProcConversationGetArgs,
-          );
-          break;
-        case "proc.conversation.close":
-          data = this.handleConversationClose(
-            (frame.args ?? {}) as ProcConversationCloseArgs,
-          );
-          break;
-        case "proc.conversation.reset":
-          data = await this.handleConversationReset(
-            (frame.args ?? {}) as ProcConversationResetArgs,
-          );
-          break;
-        case "proc.conversation.policy.get":
-          data = this.handleConversationPolicyGet(
-            (frame.args ?? {}) as ProcConversationPolicyGetArgs,
-          );
-          break;
-        case "proc.conversation.policy.set":
-          data = await this.handleConversationPolicySet(
-            (frame.args ?? {}) as ProcConversationPolicySetArgs,
-          );
-          break;
-        case "proc.conversation.compact":
+        case "proc.history.compact":
           data = await this.handleCancellableRequest(frame.id, (signal) =>
-            this.handleConversationCompact(
-              (frame.args ?? {}) as ProcConversationCompactArgs,
+            this.handleHistoryCompact(
+              (frame.args ?? {}) as ProcHistoryCompactArgs,
               { signal },
             )
           );
           break;
-        case "proc.conversation.fork":
-          data = await this.handleConversationFork(
-            (frame.args ?? {}) as ProcConversationForkArgs,
+        case "proc.history.export":
+          data = await this.handleCancellableRequest(frame.id, (signal) =>
+            this.handleHistoryExport(
+              (frame.args ?? {}) as ProcHistoryExportArgs,
+              signal,
+            )
           );
           break;
-        case "proc.conversation.segment.read":
-          data = await this.handleConversationSegmentRead(
-            (frame.args ?? {}) as ProcConversationSegmentReadArgs,
+        case "proc.history.import":
+          data = await this.handleCancellableRequest(frame.id, (signal) =>
+            this.handleHistoryImport(
+              (frame.args ?? {}) as ProcHistoryImportArgs,
+              signal,
+            )
           );
           break;
-        case "proc.conversation.segments":
-          data = this.handleConversationSegments(
-            (frame.args ?? {}) as ProcConversationSegmentsArgs,
+        case "proc.history.segment.read":
+          data = await this.handleHistorySegmentRead(
+            (frame.args ?? {}) as ProcHistorySegmentReadArgs,
           );
           break;
-        case "proc.conversation.timeline":
-          data = this.handleConversationTimeline(
-            (frame.args ?? {}) as ProcConversationTimelineArgs,
-          );
-          break;
-        case "proc.conversation.generations":
-          data = this.handleConversationGenerations(
-            (frame.args ?? {}) as ProcConversationGenerationsArgs,
-          );
-          break;
-        case "proc.conversation.generation.manifest":
-          data = this.handleConversationGenerationManifest(
-            (frame.args ?? {}) as ProcConversationGenerationManifestArgs,
+        case "proc.history.segments":
+          data = this.handleHistorySegments(
+            (frame.args ?? {}) as ProcHistorySegmentsArgs,
           );
           break;
         case "proc.reset":
@@ -1353,11 +1240,6 @@ export class Process extends Host<Env> {
       const existing = this.existingRunAdmission(runId);
       if (existing) return existing;
     }
-    const conversationId = normalizeConversationId(args.conversationId);
-    const conversation = this.store.ensureConversation(conversationId);
-    if (conversation.status === "closed") {
-      return { ok: false, error: `Conversation is closed: ${conversationId}` };
-    }
     const origin = serializeInteractionOrigin(args.origin);
     const userCanInterrupt =
       args.origin?.kind !== "process" && args.origin?.kind !== "scheduler";
@@ -1391,20 +1273,19 @@ export class Process extends Host<Env> {
             if (existing) return existing;
           }
           if (this.currentRun) {
-            this.store.enqueue(runId, args.message, media ?? undefined, conversationId, origin ?? undefined);
-            this.maybeStartTaskTitleGeneration(conversationId, args.message);
-            await this.emitProcChanged(["queue"], { conversationId, enqueuedRunId: runId });
+            this.store.enqueue(runId, args.message, media ?? undefined, origin ?? undefined);
+            this.maybeStartTaskTitleGeneration(args.message);
+            await this.emitProcChanged(["queue"], { enqueuedRunId: runId });
             return { ok: true, status: "started", runId, queued: true };
           }
 
           this.store.appendMessage("user", args.message, {
-            conversationId,
             runId,
             media: media ?? undefined,
             origin: origin ?? undefined,
           });
-          this.maybeStartTaskTitleGeneration(conversationId, args.message);
-          this.currentRun = { runId, conversationId };
+          this.maybeStartTaskTitleGeneration(args.message);
+          this.currentRun = { runId };
           this.ctx.waitUntil(this.scheduleTick(runId).catch(async (error) => {
             if (this.currentRun?.runId !== runId) {
               return;
@@ -1416,7 +1297,7 @@ export class Process extends Host<Env> {
               error: error instanceof Error ? error.message : String(error),
             });
           }));
-          this.ctx.waitUntil(this.announceRun(runId, conversationId, "proc.send"));
+          this.ctx.waitUntil(this.announceRun(runId, "proc.send"));
           return { ok: true, status: "started", runId };
         } finally {
           releaseLifecycle();
@@ -1460,15 +1341,13 @@ export class Process extends Host<Env> {
       }
 
       const messageId = this.store.appendMessage("user", args.message, {
-        conversationId,
         runId,
         media: hasMedia ? stringifyStoredProcessMedia(args.media!) ?? undefined : undefined,
         origin: origin ?? undefined,
       });
-      this.maybeStartTaskTitleGeneration(conversationId, args.message);
+      this.maybeStartTaskTitleGeneration(args.message);
       this.currentRun = {
         runId,
-        conversationId,
         ...(hasMedia ? { pendingMediaMessageId: messageId } : {}),
       };
       if (activeRun) {
@@ -1495,7 +1374,7 @@ export class Process extends Host<Env> {
             return;
           }
           const message = `Failed to schedule process run: ${error instanceof Error ? error.message : String(error)}`;
-          await this.appendRuntimeMessage(message, { conversationId, runId });
+          await this.appendRuntimeMessage(message, { runId });
           await this.finishRun(runId, {
             reason: "schedule.error",
             status: "error",
@@ -1506,16 +1385,14 @@ export class Process extends Host<Env> {
       }
       if (activeRun && interrupted?.appended) {
         this.ctx.waitUntil(this.emitProcChanged(["messages"], {
-          conversationId: activeRun.conversationId,
           runId: activeRun.runId,
         }));
       }
-      this.ctx.waitUntil(this.announceRun(runId, conversationId, "proc.send"));
+      this.ctx.waitUntil(this.announceRun(runId, "proc.send"));
 
       if (hasMedia) {
         this.ctx.waitUntil(this.prepareRunMedia(
           runId,
-          conversationId,
           messageId,
           args.media!,
         ));
@@ -1527,11 +1404,8 @@ export class Process extends Host<Env> {
     }
   }
 
-  private maybeStartTaskTitleGeneration(conversationId: string, message: string): void {
-    if (
-      conversationId !== DEFAULT_CONVERSATION_ID
-      || this.store.getValue(AUTO_TASK_TITLE_KEY) !== "1"
-    ) {
+  private maybeStartTaskTitleGeneration(message: string): void {
+    if (this.store.getValue(AUTO_TASK_TITLE_KEY) !== "1") {
       return;
     }
 
@@ -1539,19 +1413,16 @@ export class Process extends Host<Env> {
     let started = false;
     let sourceGeneration: number | null = null;
     this.ctx.storage.transactionSync(() => {
-      const conversation = this.store.getConversation(DEFAULT_CONVERSATION_ID);
       if (
         this.store.getValue(AUTO_TASK_TITLE_KEY) !== "1"
-        || !conversation
-        || conversation.title
+        || this.store.getValue("taskTitle")
       ) {
         return;
       }
-      started = this.store.setConversationTitle(DEFAULT_CONVERSATION_ID, fallback);
-      if (started) {
-        sourceGeneration = conversation.generation;
-        this.store.deleteValue(AUTO_TASK_TITLE_KEY);
-      }
+      this.store.setValue("taskTitle", fallback);
+      sourceGeneration = this.store.getHistoryGeneration();
+      this.store.deleteValue(AUTO_TASK_TITLE_KEY);
+      started = true;
     });
     if (!started || sourceGeneration === null) return;
 
@@ -1574,7 +1445,6 @@ export class Process extends Host<Env> {
     signal: AbortSignal,
   ): Promise<void> {
     await this.emitProcChanged(["title"], {
-      conversationId: DEFAULT_CONVERSATION_ID,
       title: fallback,
     });
 
@@ -1605,20 +1475,19 @@ export class Process extends Host<Env> {
     let updated = false;
     try {
       if (signal.aborted || !this.isInitialized()) return;
-      const conversation = this.store.getConversation(DEFAULT_CONVERSATION_ID);
       if (
-        conversation?.generation !== sourceGeneration
-        || conversation.title !== fallback
+        this.store.getHistoryGeneration() !== sourceGeneration
+        || this.store.getValue("taskTitle") !== fallback
       ) {
         return;
       }
-      updated = this.store.setConversationTitle(DEFAULT_CONVERSATION_ID, generated);
+      this.store.setValue("taskTitle", generated);
+      updated = true;
     } finally {
       releaseLifecycle();
     }
     if (updated) {
       await this.emitProcChanged(["title"], {
-        conversationId: DEFAULT_CONVERSATION_ID,
         title: generated,
       });
     }
@@ -1644,7 +1513,6 @@ export class Process extends Host<Env> {
 
   private async prepareRunMedia(
     runId: string,
-    conversationId: string,
     messageId: number,
     input: NonNullable<ProcSendArgs["media"]>,
   ): Promise<void> {
@@ -1683,7 +1551,6 @@ export class Process extends Host<Env> {
       }
       if (admitted && media) {
         this.ctx.waitUntil(this.emitProcChanged(["messages"], {
-          conversationId,
           runId,
           messageId,
         }).catch((error) => {
@@ -1700,7 +1567,7 @@ export class Process extends Host<Env> {
           return;
         }
         const message = `Failed to schedule process run: ${error instanceof Error ? error.message : String(error)}`;
-        await this.appendRuntimeMessage(message, { conversationId, runId });
+        await this.appendRuntimeMessage(message, { runId });
         await this.finishRun(runId, {
           reason: "schedule.error",
           status: "error",
@@ -1750,8 +1617,7 @@ export class Process extends Host<Env> {
       }
       this.runAbortControllers.get(runId)?.abort(new Error(message));
       this.runAbortControllers.delete(runId);
-      const conversationId = normalizeConversationId(run.conversationId);
-      this.store.appendMessage("system", message, { conversationId, runId });
+      this.store.appendMessage("system", message, { runId });
       this.emitRunFinished(run, {
         reason,
         status: "error",
@@ -1760,7 +1626,7 @@ export class Process extends Host<Env> {
       });
       this.currentRun = null;
       const next = this.claimNextQueuedRun();
-      this.ctx.waitUntil(this.emitProcChanged(["messages"], { conversationId, runId }));
+      this.ctx.waitUntil(this.emitProcChanged(["messages"], { runId }));
       this.promoteNextQueuedRun(next);
     } finally {
       releaseLifecycle();
@@ -1871,12 +1737,10 @@ export class Process extends Host<Env> {
       return { ok: false, error: "proc.ipc.deliver call must be a valid call envelope" };
     }
 
-    const conversationId = normalizeConversationId(args.conversationId);
     const deliveredArgs: ProcIpcDeliverArgs = {
       runId,
       sourcePid,
       source: args.source,
-      conversationId,
       message,
       metadata: args.metadata,
       origin: args.origin ?? { kind: "process", sourcePid, uid: args.source.uid },
@@ -1892,16 +1756,11 @@ export class Process extends Host<Env> {
         if (!this.isInitialized()) {
           return { ok: false, error: "Target process no longer exists" };
         }
-        const conversation = this.store.ensureConversation(conversationId);
-        if (conversation.status === "closed") {
-          return { ok: false, error: `Conversation is closed: ${conversationId}` };
-        }
 
         if (this.currentRun) {
-          this.store.enqueue(runId, renderedMessage, undefined, conversationId, origin ?? undefined);
-          this.maybeStartTaskTitleGeneration(conversationId, message);
+          this.store.enqueue(runId, renderedMessage, undefined, origin ?? undefined);
+          this.maybeStartTaskTitleGeneration(message);
           this.ctx.waitUntil(this.emitProcChanged(["queue"], {
-            conversationId,
             enqueuedRunId: runId,
           }));
           return {
@@ -1909,24 +1768,19 @@ export class Process extends Host<Env> {
             status: "started",
             pid: this.pid,
             sourcePid,
-            conversationId,
             runId,
             queued: true,
           };
         }
 
         this.store.appendMessage("user", renderedMessage, {
-          conversationId,
           runId,
           origin: origin ?? undefined,
         });
-        this.maybeStartTaskTitleGeneration(conversationId, message);
-        this.currentRun = {
-          runId,
-          conversationId,
-        };
+        this.maybeStartTaskTitleGeneration(message);
+        this.currentRun = { runId };
         this.ctx.waitUntil(this.scheduleTick(runId)
-          .then(() => this.announceRun(runId, conversationId, "proc.ipc.deliver"))
+          .then(() => this.announceRun(runId, "proc.ipc.deliver"))
           .catch((error) => this.finishRun(runId, {
             reason: "schedule.error",
             status: "error",
@@ -1939,7 +1793,6 @@ export class Process extends Host<Env> {
           status: "started",
           pid: this.pid,
           sourcePid,
-          conversationId,
           runId,
         };
       } finally {
@@ -1983,7 +1836,6 @@ export class Process extends Host<Env> {
 
       if (interrupted.appended > 0) {
         this.ctx.waitUntil(this.emitProcChanged(["messages"], {
-          conversationId: run.conversationId,
           runId,
         }));
       }
@@ -2103,7 +1955,6 @@ export class Process extends Host<Env> {
           callId: pendingHil.toolCallId,
           pid,
           runId: pendingHil.runId,
-          conversationId: pendingHil.conversationId,
         });
       }
       if (this.handleRunStopped(pendingHil.runId)) {
@@ -2164,7 +2015,6 @@ export class Process extends Host<Env> {
 
   private async handleProcHistory(args: ProcHistoryArgs): Promise<ProcHistoryResult> {
     const pid = this.pid;
-    const conversationId = normalizeConversationId(args.conversationId);
     const limit = args.limit ?? 200;
     const offset = args.offset ?? 0;
     const beforeMessageId = args.beforeMessageId;
@@ -2193,10 +2043,8 @@ export class Process extends Host<Env> {
       return { ok: false, error: "proc.history offset cannot be combined with cursor pagination" };
     }
 
-    this.store.ensureConversation(conversationId);
-    const total = this.store.messageCount(conversationId);
+    const total = this.store.messageCount();
     const records = this.store.getMessages({
-      conversationId,
       limit,
       offset,
       beforeMessageId,
@@ -2207,10 +2055,10 @@ export class Process extends Host<Env> {
     const lastMessageId = records[records.length - 1]?.id ?? null;
     const hasMoreBefore = firstMessageId === null
       ? false
-      : this.store.hasMessageBefore(conversationId, firstMessageId);
+      : this.store.hasMessageBefore(firstMessageId);
     const hasMoreAfter = lastMessageId === null
       ? false
-      : this.store.hasMessageAfter(conversationId, lastMessageId);
+      : this.store.hasMessageAfter(lastMessageId);
     const activeRun = this.currentRun;
 
     const messages: ProcHistoryMessage[] = records.map((r) => {
@@ -2296,16 +2144,14 @@ export class Process extends Host<Env> {
     return {
       ok: true,
       pid,
-      conversationId,
       messages,
       messageCount: total,
       truncated: cursorCount > 0 ? hasMoreBefore || hasMoreAfter : offset + messages.length < total,
       hasMoreBefore,
       hasMoreAfter,
       activeRunId: activeRun?.runId ?? null,
-      activeConversationId: activeRun?.conversationId ?? null,
       pendingHil: this.toProcHilRequest(this.store.getPendingHil()),
-      context: this.getContextStateForHistory(conversationId),
+      context: this.getContextStateForHistory(),
     };
   }
 
@@ -2746,9 +2592,9 @@ export class Process extends Host<Env> {
     }
   }
 
-  private getContextStateForHistory(conversationId: string): ProcContextState | null {
-    const stored = this.store.getContextState(conversationId);
-    const { count: messageCount, lastMessageId } = this.store.messageStats(conversationId);
+  private getContextStateForHistory(): ProcContextState | null {
+    const stored = this.store.getContextState();
+    const { count: messageCount, lastMessageId } = this.store.messageStats();
     if (
       stored
       && stored.messageCount === messageCount
@@ -2759,133 +2605,23 @@ export class Process extends Host<Env> {
     return stored ? { ...stored, messageCount, lastMessageId } : null;
   }
 
-  private handleConversationOpen(args: ProcConversationOpenArgs): ProcConversationOpenResult {
-    const { conversation, created } = this.store.openConversation({
-      conversationId: args.conversationId,
-      title: args.title,
-    });
+  private handleHistoryPolicyGet(
+    _args: ProcHistoryPolicyGetArgs,
+  ): ProcHistoryPolicyGetResult {
     return {
       ok: true,
       pid: this.pid,
-      conversation: this.toProcConversation(conversation),
-      created,
+      policy: this.getHistoryContextPolicy(),
     };
   }
 
-  private handleConversationList(args: ProcConversationListArgs): ProcConversationListResult {
-    return {
-      ok: true,
-      pid: this.pid,
-      conversations: this.store
-        .listConversations({ includeClosed: args.includeClosed })
-        .map((record) => this.toProcConversation(record)),
-    };
-  }
-
-  private handleConversationGet(args: ProcConversationGetArgs): ProcConversationGetResult {
-    const conversationId = normalizeConversationId(args.conversationId);
-    const conversation = this.store.getConversation(conversationId);
-    return {
-      ok: true,
-      pid: this.pid,
-      conversation: conversation ? this.toProcConversation(conversation) : null,
-    };
-  }
-
-  private handleConversationClose(args: ProcConversationCloseArgs): ProcConversationCloseResult {
-    if (typeof args.conversationId !== "string" || args.conversationId.trim().length === 0) {
-      return { ok: false, error: "proc.conversation.close requires conversationId" };
-    }
-    const conversationId = normalizeConversationId(args.conversationId);
-    const closed = this.store.closeConversation(conversationId);
-    return {
-      ok: true,
-      pid: this.pid,
-      conversationId,
-      closed,
-    };
-  }
-
-  private async handleConversationReset(
-    args: ProcConversationResetArgs,
-  ): Promise<ProcConversationResetResult> {
-    let result!: ProcConversationResetResult;
-    let releasedMediaKeys: string[] = [];
-    const releaseLifecycle = await this.acquireLifecycleTransition();
-    try {
-      const pid = this.pid;
-      const conversationId = normalizeConversationId(args.conversationId);
-      const existingConversation = this.store.ensureConversation(conversationId);
-      await this.resetConversationExecutionState(conversationId);
-      const messages = this.store.getMessages({ conversationId, limit: null });
-      releasedMediaKeys = this.activeProcessMediaKeys(messages);
-      const archivedMessages = this.store.messageCount(conversationId);
-      let archivedTo: string | undefined;
-
-      if (args.archive !== false && archivedMessages > 0) {
-        const archiveId = crypto.randomUUID();
-        const key = await this.archiveConversationMessages(
-          conversationId,
-          archiveId,
-        );
-        archivedTo = key ? `/${key}` : undefined;
-        if (archivedTo) {
-          this.store.recordConversationArchive({
-            id: archiveId,
-            conversationId,
-            generation: existingConversation.generation,
-            kind: "reset",
-            messages: archivedMessages,
-            archivePath: archivedTo,
-          });
-        }
-      }
-
-      const conversation = this.store.resetConversation(conversationId);
-
-      result = {
-        ok: true,
-        pid,
-        conversationId,
-        generation: conversation.generation,
-        archivedMessages,
-        archivedTo,
-      };
-    } finally {
-      releaseLifecycle();
-    }
-
-    await this.deleteUnreferencedActiveMedia(releasedMediaKeys).catch((error) => {
-      console.warn(
-        `[Process] Failed to clean conversation media for ${result.conversationId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    });
-    return result;
-  }
-
-  private handleConversationPolicyGet(
-    args: ProcConversationPolicyGetArgs,
-  ): ProcConversationPolicyGetResult {
-    const conversationId = normalizeConversationId(args.conversationId);
-    this.store.ensureConversation(conversationId);
-    return {
-      ok: true,
-      pid: this.pid,
-      policy: this.getConversationContextPolicy(conversationId),
-    };
-  }
-
-  private async handleConversationPolicySet(
-    args: ProcConversationPolicySetArgs,
-  ): Promise<ProcConversationPolicySetResult> {
-    const conversationId = normalizeConversationId(args.conversationId);
-    this.store.ensureConversation(conversationId);
-    const existing = this.getConversationContextPolicy(conversationId);
+  private async handleHistoryPolicySet(
+    args: ProcHistoryPolicySetArgs,
+  ): Promise<ProcHistoryPolicySetResult> {
+    const existing = this.getHistoryContextPolicy();
     const overflow = args.overflow ?? existing.overflow;
-    if (!isConversationOverflowPolicy(overflow)) {
-      return { ok: false, error: "proc.conversation.policy.set overflow must be auto-compact or fail" };
+    if (!isHistoryOverflowPolicy(overflow)) {
+      return { ok: false, error: "proc.history.policy.set overflow must be auto-compact or fail" };
     }
     const compactAtPressure = args.compactAtPressure ?? existing.compactAtPressure;
     if (
@@ -2894,25 +2630,23 @@ export class Process extends Host<Env> {
       compactAtPressure <= 0 ||
       compactAtPressure > 1
     ) {
-      return { ok: false, error: "proc.conversation.policy.set compactAtPressure must be > 0 and <= 1" };
+      return { ok: false, error: "proc.history.policy.set compactAtPressure must be > 0 and <= 1" };
     }
     const keepLast = args.keepLast ?? existing.keepLast;
     if (!isNonNegativeInteger(keepLast)) {
-      return { ok: false, error: "proc.conversation.policy.set keepLast must be a non-negative integer" };
+      return { ok: false, error: "proc.history.policy.set keepLast must be a non-negative integer" };
     }
 
-    const policy: ProcConversationContextPolicy = {
-      conversationId,
+    const policy: ProcHistoryContextPolicy = {
       overflow,
       compactAtPressure,
       keepLast,
       updatedAt: Date.now(),
     };
-    this.store.setValue(conversationPolicyKey(conversationId), JSON.stringify(policy));
+    this.store.setValue("historyPolicy", JSON.stringify(policy));
     await this.emitProcessLifecycle({
-      event: "conversation.policy",
+      event: "history.policy",
       pid: this.pid,
-      conversationId,
       policy,
     });
     return {
@@ -2922,21 +2656,19 @@ export class Process extends Host<Env> {
     };
   }
 
-  private getConversationContextPolicy(conversationId: string): ProcConversationContextPolicy {
-    const normalizedConversationId = normalizeConversationId(conversationId);
-    const fallback = defaultConversationPolicy(normalizedConversationId);
-    const raw = this.store.getValue(conversationPolicyKey(normalizedConversationId));
+  private getHistoryContextPolicy(): ProcHistoryContextPolicy {
+    const fallback = defaultHistoryPolicy();
+    const raw = this.store.getValue("historyPolicy");
     if (!raw) {
       return fallback;
     }
     try {
-      const parsed = JSON.parse(raw) as Partial<ProcConversationContextPolicy>;
+      const parsed = JSON.parse(raw) as Partial<ProcHistoryContextPolicy>;
       const overflow = parsed.overflow;
       const compactAtPressure = parsed.compactAtPressure;
       const keepLast = parsed.keepLast;
       return {
-        conversationId: normalizedConversationId,
-        overflow: isConversationOverflowPolicy(overflow) ? overflow : fallback.overflow,
+        overflow: isHistoryOverflowPolicy(overflow) ? overflow : fallback.overflow,
         compactAtPressure:
           typeof compactAtPressure === "number" &&
           Number.isFinite(compactAtPressure) &&
@@ -2954,62 +2686,60 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async handleConversationCompact(
-    args: ProcConversationCompactArgs,
+  private async handleHistoryCompact(
+    args: ProcHistoryCompactArgs,
     options: {
       allowActive?: boolean;
       reason?: string;
       activeRunId?: string;
       signal?: AbortSignal;
     } = {},
-  ): Promise<ProcConversationCompactResult> {
+  ): Promise<ProcHistoryCompactResult> {
     const pid = this.pid;
-    const conversationId = normalizeConversationId(args.conversationId);
     const explicitSummary = normalizeOptionalString(args.summary);
     const generateSummary = args.generateSummary === true;
     const stopped = () =>
       options.signal?.aborted === true ||
       (options.activeRunId !== undefined && this.currentRun?.runId !== options.activeRunId);
     if (!explicitSummary && !generateSummary) {
-      return { ok: false, error: "proc.conversation.compact requires summary or generateSummary" };
+      return { ok: false, error: "proc.history.compact requires summary or generateSummary" };
     }
     if (explicitSummary && generateSummary) {
-      return { ok: false, error: "proc.conversation.compact accepts either summary or generateSummary, not both" };
+      return { ok: false, error: "proc.history.compact accepts either summary or generateSummary, not both" };
     }
 
     const hasKeepLast = args.keepLast !== undefined;
     const hasThroughMessageId = args.throughMessageId !== undefined;
     if (hasKeepLast === hasThroughMessageId) {
-      return { ok: false, error: "proc.conversation.compact requires exactly one of keepLast or throughMessageId" };
+      return { ok: false, error: "proc.history.compact requires exactly one of keepLast or throughMessageId" };
     }
     if (hasKeepLast && !isNonNegativeInteger(args.keepLast)) {
-      return { ok: false, error: "proc.conversation.compact keepLast must be a non-negative integer" };
+      return { ok: false, error: "proc.history.compact keepLast must be a non-negative integer" };
     }
     if (hasThroughMessageId && !isPositiveInteger(args.throughMessageId)) {
-      return { ok: false, error: "proc.conversation.compact throughMessageId must be a positive integer" };
+      return { ok: false, error: "proc.history.compact throughMessageId must be a positive integer" };
     }
 
-    let conversation!: ProcessConversationRecord;
+    let generation = 0;
     let selected!: MessageRecord[];
     let selectedMediaKeys: string[] = [];
     let lifecycleEpoch = 0;
     const releaseSnapshot = await this.acquireLifecycleTransition();
     try {
-      if (!options.allowActive && this.currentRun?.conversationId === conversationId) {
-        return { ok: false, error: `Conversation is active: ${conversationId}` };
+      if (!options.allowActive && this.currentRun) {
+        return { ok: false, error: "Process is active" };
       }
       if (stopped()) {
         return { ok: false, error: "Compaction was cancelled" };
       }
       lifecycleEpoch = this.lifecycleEpoch;
-      conversation = this.store.ensureConversation(conversationId);
-      selected = this.store.getConversationPrefixMessages({
-        conversationId,
+      generation = this.store.getHistoryGeneration();
+      selected = this.store.getHistoryPrefixMessages({
         keepLast: hasKeepLast ? args.keepLast : undefined,
         throughMessageId: hasThroughMessageId ? args.throughMessageId : undefined,
       });
       if (selected.length === 0) {
-        return { ok: false, error: "No conversation messages selected for compaction" };
+        return { ok: false, error: "No history messages selected for compaction" };
       }
       selectedMediaKeys = this.activeProcessMediaKeys(selected);
     } finally {
@@ -3024,7 +2754,7 @@ export class Process extends Host<Env> {
     let summary = explicitSummary;
     if (!summary) {
       try {
-        summary = await this.generateConversationCompactionSummary(selected, signal);
+        summary = await this.generateHistoryCompactionSummary(selected, signal);
       } catch (error) {
         if (stopped()) {
           return { ok: false, error: "Compaction was cancelled" };
@@ -3052,11 +2782,11 @@ export class Process extends Host<Env> {
     const fromMessageId = selected[0].id;
     const toMessageId = selected[selected.length - 1].id;
     const segmentId = crypto.randomUUID();
-    const archiveKey = `${this.conversationArchiveDir(conversationId)}/${segmentId}.jsonl.gz`;
+    const archiveKey = `${this.historyArchiveDir()}/${segmentId}.jsonl.gz`;
     const archivedTo = `/${archiveKey}`;
     let installed = false;
     let summaryMessageId = 0;
-    let segment!: ReturnType<ProcessStore["recordConversationSegment"]>;
+    let segment!: ReturnType<ProcessStore["recordHistorySegment"]>;
     try {
       try {
         await this.archiveMessageRecords(archiveKey, selected, signal);
@@ -3068,20 +2798,18 @@ export class Process extends Host<Env> {
       }
       const releaseInstall = await this.acquireLifecycleTransition();
       try {
-        const currentConversation = this.store.getConversation(conversationId);
-        const currentRecords = this.store.getConversationPrefixMessages({
-          conversationId,
+        const currentGeneration = this.store.getHistoryGeneration();
+        const currentRecords = this.store.getHistoryPrefixMessages({
           throughMessageId: toMessageId,
         });
         const snapshotMatches =
           this.lifecycleEpoch === lifecycleEpoch &&
-          currentConversation?.generation === conversation.generation &&
+          currentGeneration === generation &&
           currentRecords.length === selected.length &&
           currentRecords.every((message, index) => {
             const snapshot = selected[index];
             return snapshot !== undefined &&
               message.id === snapshot.id &&
-              message.conversationId === snapshot.conversationId &&
               message.generation === snapshot.generation &&
               message.runId === snapshot.runId &&
               message.role === snapshot.role &&
@@ -3095,16 +2823,15 @@ export class Process extends Host<Env> {
           });
         if (
           stopped() ||
-          (!options.allowActive && this.currentRun?.conversationId === conversationId) ||
+          (!options.allowActive && this.currentRun !== null) ||
           !snapshotMatches
         ) {
-          return { ok: false, error: stopped() ? "Compaction was cancelled" : "Conversation changed during compaction" };
+          return { ok: false, error: stopped() ? "Compaction was cancelled" : "History changed during compaction" };
         }
 
         this.ctx.storage.transactionSync(() => {
-          summaryMessageId = this.store.compactConversationPrefix({
-            conversationId,
-            generation: conversation.generation,
+          summaryMessageId = this.store.compactHistoryPrefix({
+            generation,
             fromMessageId,
             toMessageId,
             summary: formatCompactionSummaryMessage({
@@ -3113,10 +2840,9 @@ export class Process extends Host<Env> {
               summary,
             }),
           });
-          segment = this.store.recordConversationSegment({
+          segment = this.store.recordHistorySegment({
             id: segmentId,
-            conversationId,
-            generation: conversation.generation,
+            generation,
             kind: "compaction",
             fromMessageId,
             toMessageId,
@@ -3136,17 +2862,16 @@ export class Process extends Host<Env> {
 
     await this.deleteUnreferencedActiveMedia(selectedMediaKeys).catch((error) => {
       console.warn(
-        `[Process] Failed to clean compacted conversation media for ${conversationId}: ${
+        `[Process] Failed to clean compacted history media for ${this.pid}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
     });
 
     await this.emitProcessLifecycle({
-      event: "conversation.compacted",
+      event: "history.compacted",
       pid,
-      conversationId,
-      generation: conversation.generation,
+      generation,
       segment,
       archivedMessages: selected.length,
       archivedTo,
@@ -3157,7 +2882,6 @@ export class Process extends Host<Env> {
     return {
       ok: true,
       pid,
-      conversationId,
       segment,
       archivedMessages: selected.length,
       archivedTo,
@@ -3165,7 +2889,7 @@ export class Process extends Host<Env> {
     };
   }
 
-  private async generateConversationCompactionSummary(
+  private async generateHistoryCompactionSummary(
     messages: MessageRecord[],
     signal?: AbortSignal,
   ): Promise<string> {
@@ -3222,109 +2946,8 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async handleConversationFork(
-    args: ProcConversationForkArgs,
-  ): Promise<ProcConversationForkResult> {
-    const pid = this.pid;
-    const sourceConversationId = normalizeConversationId(args.conversationId);
-    const segmentId = normalizeOptionalString(args.segmentId);
-    const throughMessageId = args.throughMessageId;
-    const hasSegmentId = Boolean(segmentId);
-    const hasThroughMessageId = throughMessageId !== undefined;
-    if (hasSegmentId === hasThroughMessageId) {
-      return { ok: false, error: "proc.conversation.fork requires exactly one of segmentId or throughMessageId" };
-    }
-    if (hasThroughMessageId && !isPositiveInteger(throughMessageId)) {
-      return { ok: false, error: "proc.conversation.fork throughMessageId must be a positive integer" };
-    }
-
-    const targetConversationId = normalizeConversationId(
-      args.targetConversationId ?? crypto.randomUUID(),
-    );
-    const existingTarget = this.store.getConversation(targetConversationId);
-    if (existingTarget && this.store.messageCount(targetConversationId) > 0) {
-      return { ok: false, error: `Target conversation already has messages: ${targetConversationId}` };
-    }
-
-    const includeLiveSuffix = hasSegmentId ? args.includeLiveSuffix !== false : false;
-    let segment: ReturnType<ProcessStore["getConversationSegment"]> = null;
-    let archivedMessages: ArchivedMessageRecord[] = [];
-    let liveMessages: MessageRecord[] = [];
-
-    if (segmentId) {
-      segment = this.store.getConversationSegment(sourceConversationId, segmentId);
-      if (!segment) {
-        return { ok: false, error: `Conversation segment not found: ${segmentId}` };
-      }
-      try {
-        archivedMessages = await this.readArchivedMessageRecords(segment.archivePath);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return { ok: false, error: `Failed to read segment archive: ${message}` };
-      }
-      liveMessages = includeLiveSuffix
-        ? this.store.getMessagesForGenerationAfter({
-            conversationId: sourceConversationId,
-            generation: segment.generation,
-            afterMessageId: segment.toMessageId,
-            throughCreatedAt: segment.createdAt,
-          })
-        : [];
-    } else {
-      liveMessages = this.store.getConversationPrefixMessages({
-        conversationId: sourceConversationId,
-        throughMessageId,
-      });
-      if (liveMessages.length === 0 || liveMessages[liveMessages.length - 1]?.id !== throughMessageId) {
-        return { ok: false, error: `Message not found in conversation: ${throughMessageId}` };
-      }
-    }
-
-    const { conversation } = this.store.openConversation({
-      conversationId: targetConversationId,
-      title: normalizeOptionalString(args.title) ??
-        `Fork of ${sourceConversationId} at ${
-          segment ? segment.id.slice(0, 8) : `message ${throughMessageId}`
-        }`,
-    });
-    const targetGeneration = conversation.generation;
-    let restoredMessages = 0;
-
-    for (const archived of archivedMessages) {
-      this.appendRestoredArchivedMessage(archived, targetConversationId, targetGeneration);
-      restoredMessages += 1;
-    }
-
-    for (const message of liveMessages) {
-      this.appendRestoredLiveMessage(message, targetConversationId, targetGeneration);
-      restoredMessages += 1;
-    }
-
-    await this.emitProcessLifecycle({
-      event: "conversation.forked",
-      pid,
-      sourceConversationId,
-      targetConversationId,
-      ...(segment ? { segment } : {}),
-      ...(throughMessageId !== undefined ? { throughMessageId } : {}),
-      restoredMessages,
-      includedLiveSuffix: includeLiveSuffix,
-    });
-
-    return {
-      ok: true,
-      pid,
-      sourceConversationId,
-      targetConversation: this.toProcConversation(this.store.getConversation(targetConversationId) ?? conversation),
-      ...(segment ? { segment } : {}),
-      ...(throughMessageId !== undefined ? { throughMessageId } : {}),
-      restoredMessages,
-      includedLiveSuffix: includeLiveSuffix,
-    };
-  }
-
   private async emitProcessLifecycle(payload: Record<string, unknown>): Promise<void> {
-    await this.emitProcChanged(["lifecycle", "conversations", "messages"], payload).catch((error) => {
+    await this.emitProcChanged(["lifecycle", "messages"], payload).catch((error) => {
       console.warn(
         `[Process] Failed to emit proc.changed lifecycle for ${this.pid}: ${
           error instanceof Error ? error.message : String(error)
@@ -3333,9 +2956,147 @@ export class Process extends Host<Env> {
     });
   }
 
+  private async handleHistoryExport(
+    args: ProcHistoryExportArgs,
+    signal?: AbortSignal,
+  ): Promise<ProcHistoryExportResult> {
+    const segmentId = normalizeOptionalString(args.segmentId);
+    const throughMessageId = args.throughMessageId;
+    if (Boolean(segmentId) === (throughMessageId !== undefined)) {
+      return { ok: false, error: "history export requires exactly one of segmentId or throughMessageId" };
+    }
+    if (throughMessageId !== undefined && !isPositiveInteger(throughMessageId)) {
+      return { ok: false, error: "history export throughMessageId must be a positive integer" };
+    }
+
+    let segment: ReturnType<ProcessStore["getHistorySegment"]> = null;
+    let snapshotMessages: MessageRecord[] = [];
+    let includeLiveSuffix = false;
+    const temporaryArchivePaths: string[] = [];
+    try {
+      const releaseSnapshot = await this.acquireLifecycleTransition();
+      try {
+        signal?.throwIfAborted();
+        if (segmentId) {
+          segment = this.store.getHistorySegment(segmentId);
+          if (!segment) {
+            return { ok: false, error: `History segment not found: ${segmentId}` };
+          }
+          includeLiveSuffix = args.includeLiveSuffix !== false;
+          if (includeLiveSuffix) {
+            snapshotMessages = this.store.getMessagesForGenerationAfter({
+              generation: segment.generation,
+              afterMessageId: segment.toMessageId,
+              throughCreatedAt: segment.createdAt,
+            });
+          }
+        } else {
+          snapshotMessages = this.store.getHistoryPrefixMessages({ throughMessageId });
+          if (
+            snapshotMessages.length === 0
+            || !snapshotMessages.some((message) => message.id === throughMessageId)
+          ) {
+            return { ok: false, error: `History message not found: ${throughMessageId}` };
+          }
+        }
+      } finally {
+        releaseSnapshot();
+      }
+
+      signal?.throwIfAborted();
+      if (segment) {
+        const archivePaths = [segment.archivePath];
+        if (snapshotMessages.length > 0) {
+          const path = await this.archiveForkMessages(snapshotMessages, signal);
+          archivePaths.push(path);
+          temporaryArchivePaths.push(path);
+        }
+        return {
+          ok: true,
+          sourcePid: this.pid,
+          archivePaths,
+          temporaryArchivePaths,
+          segment,
+          includedLiveSuffix: includeLiveSuffix,
+        };
+      }
+
+      const path = await this.archiveForkMessages(snapshotMessages, signal);
+      temporaryArchivePaths.push(path);
+      return {
+        ok: true,
+        sourcePid: this.pid,
+        archivePaths: [path],
+        temporaryArchivePaths,
+        throughMessageId,
+        includedLiveSuffix: false,
+      };
+    } catch (error) {
+      await Promise.allSettled(temporaryArchivePaths.map((path) =>
+        this.env.STORAGE.delete(path.replace(/^\/+/, ""))
+      ));
+      return {
+        ok: false,
+        error: `Failed to export process history: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  private async archiveForkMessages(
+    messages: MessageRecord[],
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const key = `${this.historyArchiveDir()}/fork-${crypto.randomUUID()}.jsonl.gz`;
+    await this.archiveMessageRecords(key, messages, signal);
+    return `/${key}`;
+  }
+
+  private async handleHistoryImport(
+    args: ProcHistoryImportArgs,
+    signal?: AbortSignal,
+  ): Promise<ProcHistoryImportResult> {
+    if (
+      !Array.isArray(args.archivePaths)
+      || args.archivePaths.length === 0
+      || args.archivePaths.some((path) => !normalizeOptionalString(path))
+    ) {
+      return { ok: false, error: "history import requires archivePaths" };
+    }
+
+    const releaseLifecycle = await this.acquireLifecycleTransition();
+    try {
+      if (this.currentRun || this.store.messageCount() > 0 || this.store.queueSize() > 0) {
+        return { ok: false, error: "Target process history is not empty" };
+      }
+      const archives: ArchivedMessageRecord[][] = [];
+      for (const path of args.archivePaths) {
+        signal?.throwIfAborted();
+        archives.push(await this.readArchivedMessageRecords(path, signal));
+      }
+      signal?.throwIfAborted();
+      const generation = this.store.getHistoryGeneration();
+      let restoredMessages = 0;
+      this.ctx.storage.transactionSync(() => {
+        for (const archive of archives) {
+          for (const message of archive) {
+            this.appendRestoredArchivedMessage(message, generation);
+            restoredMessages += 1;
+          }
+        }
+      });
+      return { ok: true, pid: this.pid, restoredMessages };
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Failed to import process history: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    } finally {
+      releaseLifecycle();
+    }
+  }
+
   private appendRestoredArchivedMessage(
     message: ArchivedMessageRecord,
-    conversationId: string,
     generation: number,
   ): number {
     const toolCalls = message.role === "assistant"
@@ -3356,7 +3117,6 @@ export class Process extends Host<Env> {
       ? null
       : stringifyStoredProcessMedia(this.parseOwnedProcessMedia(JSON.stringify(message.media)));
     return this.store.appendMessage(message.role, message.content, {
-      conversationId,
       generation,
       toolCalls,
       toolCallId: message.toolCallId,
@@ -3370,11 +3130,9 @@ export class Process extends Host<Env> {
 
   private appendRestoredLiveMessage(
     message: MessageRecord,
-    conversationId: string,
     generation: number,
   ): number {
     return this.store.appendMessage(message.role, message.content, {
-      conversationId,
       generation,
       toolCalls: message.toolCalls ?? undefined,
       toolCallId: message.toolCallId ?? undefined,
@@ -3386,24 +3144,23 @@ export class Process extends Host<Env> {
     });
   }
 
-  private async handleConversationSegmentRead(
-    args: ProcConversationSegmentReadArgs,
-  ): Promise<ProcConversationSegmentReadResult> {
-    const conversationId = normalizeConversationId(args.conversationId);
+  private async handleHistorySegmentRead(
+    args: ProcHistorySegmentReadArgs,
+  ): Promise<ProcHistorySegmentReadResult> {
     const segmentId = normalizeOptionalString(args.segmentId);
     if (!segmentId) {
-      return { ok: false, error: "proc.conversation.segment.read requires segmentId" };
+      return { ok: false, error: "proc.history.segment.read requires segmentId" };
     }
     if (args.offset !== undefined && !isNonNegativeInteger(args.offset)) {
-      return { ok: false, error: "proc.conversation.segment.read offset must be a non-negative integer" };
+      return { ok: false, error: "proc.history.segment.read offset must be a non-negative integer" };
     }
     if (args.limit !== undefined && !isPositiveInteger(args.limit)) {
-      return { ok: false, error: "proc.conversation.segment.read limit must be a positive integer" };
+      return { ok: false, error: "proc.history.segment.read limit must be a positive integer" };
     }
 
-    const segment = this.store.getConversationSegment(conversationId, segmentId);
+    const segment = this.store.getHistorySegment(segmentId);
     if (!segment) {
-      return { ok: false, error: `Conversation segment not found: ${segmentId}` };
+      return { ok: false, error: `History segment not found: ${segmentId}` };
     }
 
     let archivedMessages: ArchivedMessageRecord[];
@@ -3422,7 +3179,6 @@ export class Process extends Host<Env> {
     return {
       ok: true,
       pid: this.pid,
-      conversationId,
       segment,
       messages,
       messageCount: archivedMessages.length,
@@ -3499,193 +3255,14 @@ export class Process extends Host<Env> {
     };
   }
 
-  private handleConversationSegments(
-    args: ProcConversationSegmentsArgs,
-  ): ProcConversationSegmentsResult {
-    const conversationId = normalizeConversationId(args.conversationId);
-    this.store.ensureConversation(conversationId);
+  private handleHistorySegments(
+    _args: ProcHistorySegmentsArgs,
+  ): ProcHistorySegmentsResult {
     return {
       ok: true,
       pid: this.pid,
-      conversationId,
-      segments: this.store.listConversationSegments(conversationId),
+      segments: this.store.listHistorySegments(),
     };
-  }
-
-  private handleConversationTimeline(
-    args: ProcConversationTimelineArgs,
-  ): ProcConversationTimelineResult {
-    const conversationId = normalizeConversationId(args.conversationId);
-    const conversation = this.store.ensureConversation(conversationId);
-    const archives = this.store
-      .listConversationArchives(conversationId)
-      .map((archive): ProcConversationTimelineEntry => ({
-        type: "archive",
-        id: archive.id,
-        conversationId: archive.conversationId,
-        generation: archive.generation,
-        archiveKind: archive.kind,
-        messages: archive.messages,
-        archivePath: archive.archivePath,
-        createdAt: archive.createdAt,
-      }));
-    const segments = this.store
-      .listConversationSegments(conversationId)
-      .map((segment): ProcConversationTimelineEntry => ({
-        type: "segment",
-        id: segment.id,
-        conversationId: segment.conversationId,
-        generation: segment.generation,
-        segmentKind: segment.kind,
-        fromMessageId: segment.fromMessageId,
-        toMessageId: segment.toMessageId,
-        archivePath: segment.archivePath,
-        summaryMessageId: segment.summaryMessageId,
-        createdAt: segment.createdAt,
-      }));
-
-    const live: ProcConversationTimelineEntry = {
-      type: "live",
-      ...this.toProcConversationLiveGeneration(conversation),
-    };
-    const timeline: ProcConversationTimelineEntry[] = [
-      ...archives,
-      ...segments,
-      live,
-    ].sort(compareConversationTimelineEntries);
-
-    return {
-      ok: true,
-      pid: this.pid,
-      conversationId,
-      timeline,
-    };
-  }
-
-  private handleConversationGenerations(
-    args: ProcConversationGenerationsArgs,
-  ): ProcConversationGenerationsResult {
-    const conversationId = normalizeConversationId(args.conversationId);
-    this.store.ensureConversation(conversationId);
-    return {
-      ok: true,
-      pid: this.pid,
-      conversationId,
-      generations: this.store.listConversationGenerations(conversationId),
-    };
-  }
-
-  private handleConversationGenerationManifest(
-    args: ProcConversationGenerationManifestArgs,
-  ): ProcConversationGenerationManifestResult {
-    const conversationId = normalizeConversationId(args.conversationId);
-    if (!isPositiveInteger(args.generation)) {
-      return { ok: false, error: "proc.conversation.generation.manifest generation must be a positive integer" };
-    }
-
-    const manifest = this.buildConversationGenerationManifest(conversationId, args.generation);
-    return {
-      ok: true,
-      pid: this.pid,
-      conversationId,
-      manifest,
-    };
-  }
-
-  private buildConversationGenerationManifest(
-    conversationId: string,
-    generation: number,
-  ): ProcConversationGenerationManifest | null {
-    const conversation = this.store.ensureConversation(conversationId);
-    const archives = this.store
-      .listConversationArchives(conversationId)
-      .filter((archive) => archive.generation === generation);
-    const segments = this.store
-      .listConversationSegments(conversationId)
-      .filter((segment) => segment.generation === generation);
-    const current = conversation.generation === generation;
-
-    if (!current && archives.length === 0 && segments.length === 0) {
-      return null;
-    }
-
-    return {
-      conversationId,
-      generation,
-      current,
-      status: conversation.status,
-      title: conversation.title,
-      archives,
-      segments,
-      live: current ? this.toProcConversationLiveGeneration(conversation) : null,
-    };
-  }
-
-  private toProcConversation(record: ProcessConversationRecord): ProcConversation {
-    return {
-      id: record.id,
-      generation: record.generation,
-      status: record.status,
-      title: record.title,
-      messageCount: this.store.messageCount(record.id),
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
-    };
-  }
-
-  private toProcConversationLiveGeneration(
-    record: ProcessConversationRecord,
-  ): ProcConversationLiveGeneration {
-    const stats = this.store.messageStats(record.id);
-    return {
-      conversationId: record.id,
-      generation: record.generation,
-      messageCount: stats.count,
-      firstMessageId: stats.firstMessageId,
-      lastMessageId: stats.lastMessageId,
-      updatedAt: record.updatedAt,
-    };
-  }
-
-  private async resetConversationExecutionState(conversationId: string): Promise<void> {
-    const normalizedConversationId = normalizeConversationId(conversationId);
-    if (normalizedConversationId === DEFAULT_CONVERSATION_ID) {
-      this.abortTaskTitleGeneration(
-        new Error(`Conversation was reset: ${normalizedConversationId}`),
-      );
-      this.store.setValue(PROCESS_RESET_AT_KEY, String(Date.now()));
-    }
-    const activeRun = this.currentRun;
-    const stoppedActiveRun = activeRun?.conversationId === normalizedConversationId;
-
-    if (stoppedActiveRun) {
-      this.cancelPendingRequests(
-        activeRun.runId,
-        `Conversation was reset: ${normalizedConversationId}`,
-      );
-      this.rememberAbortedRun(activeRun.runId);
-      this.ingestToolResults(activeRun.runId, this.store.getResults(activeRun.runId), {
-        interruptPending: `Conversation was reset: ${normalizedConversationId}`,
-      });
-      this.rejectCodeModeWaiters(
-        activeRun.runId,
-        `Conversation was reset: ${normalizedConversationId}`,
-      );
-      this.emitRunFinished(activeRun, {
-        status: "aborted",
-        reason: "conversation.reset",
-        text: null,
-      });
-      this.currentRun = null;
-    }
-
-    this.store.clearPendingToolCalls(normalizedConversationId);
-    this.store.clearPendingHil(normalizedConversationId);
-    this.store.clearQueue(normalizedConversationId);
-
-    if (stoppedActiveRun) {
-      this.promoteNextQueuedRun();
-    }
   }
 
   private async handleProcReset(): Promise<ProcResetResult> {
@@ -3693,13 +3270,13 @@ export class Process extends Host<Env> {
     try {
       const pid = this.pid;
       await this.resetExecutionState("process.reset");
-      const totalMessages = this.store.totalMessageCount();
+      const totalMessages = this.store.messageCount();
 
       const archive = totalMessages > 0
-        ? await this.archiveAllConversationMessages(crypto.randomUUID(), "process-reset")
+        ? await this.archiveHistoryMessages(crypto.randomUUID())
         : emptyProcessArchive();
 
-      this.store.resetAllConversations();
+      this.store.resetHistory();
 
       await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
 
@@ -3741,20 +3318,18 @@ export class Process extends Host<Env> {
       if (initialized) {
         await this.resetExecutionState("process.kill", false);
       }
-      const totalMessages = initialized ? this.store.totalMessageCount() : 0;
+      const totalMessages = initialized ? this.store.messageCount() : 0;
 
       const archive = shouldArchive && totalMessages > 0
-        ? await this.archiveAllConversationMessages(crypto.randomUUID(), "kill")
+        ? await this.archiveHistoryMessages(crypto.randomUUID())
         : emptyProcessArchive();
 
       if (initialized) {
         await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
       }
 
-      // The executor is fungible: a killed process is gone. The durable
-      // transcript already lives in the agent home (archived above), so we wipe
-      // all live DO storage rather than keeping a reset stub around. A future
-      // executor gets a fresh DO (and hydrates from the home archive on resume).
+      // A killed process is gone. Its transcript was archived above, so wipe the
+      // Process DO only after cancellation and cleanup have completed.
       await this.ctx.storage.deleteAlarm();
       await this.ctx.storage.deleteAll();
       this.killed = true;
@@ -3832,11 +3407,7 @@ export class Process extends Host<Env> {
           let messageId: number | null = null;
           this.ctx.storage.transactionSync(() => {
             if (this.store.getValue(noticeKey)) return;
-            const conversationId = normalizeConversationId(
-              typeof payload.conversationId === "string" ? payload.conversationId : undefined,
-            );
             messageId = this.store.appendMessage("system", message, {
-              conversationId,
               runId: typeof payload.runId === "string" ? payload.runId : undefined,
             });
             this.store.setValue(noticeKey, String(messageId));
@@ -3855,9 +3426,6 @@ export class Process extends Host<Env> {
           });
           if (messageId !== null) {
             await this.emitProcChanged(["messages"], {
-              conversationId: normalizeConversationId(
-                typeof payload.conversationId === "string" ? payload.conversationId : undefined,
-              ),
               runId: typeof payload.runId === "string" ? payload.runId : undefined,
               messageId,
             });
@@ -3918,17 +3486,14 @@ export class Process extends Host<Env> {
 
   private async appendRuntimeMessage(
     content: string,
-    opts?: { conversationId?: string; runId?: string },
+    opts?: { runId?: string },
   ): Promise<void> {
-    const conversationId = normalizeConversationId(opts?.conversationId);
     const timestamp = Date.now();
     const messageId = this.store.appendMessage("system", content, {
-      conversationId,
       runId: opts?.runId,
       createdAt: timestamp,
     });
     await this.emitProcChanged(["messages"], {
-      conversationId,
       messageId,
       role: "system",
       content,
@@ -3940,7 +3505,6 @@ export class Process extends Host<Env> {
   private async handleWatchedSignalTriggered(signal: string, payload: unknown): Promise<void> {
     await this.handleRuntimeEvent(
       formatWatchedSignalMessage(signal, payload),
-      DEFAULT_CONVERSATION_ID,
       "signal.watch",
     );
   }
@@ -3983,26 +3547,17 @@ export class Process extends Host<Env> {
           );
         }
         messageId = this.store.appendMessage("system", content, {
-          conversationId: DEFAULT_CONVERSATION_ID,
           createdAt: timestamp,
           ...(nextRunId ? { runId: nextRunId } : {}),
         });
 
         if (!currentRun) {
-          this.currentRun = {
-            runId: nextRunId!,
-            conversationId: DEFAULT_CONVERSATION_ID,
-          };
-        } else if (
-          (sourceRunId && sourceRunId !== currentRun.runId)
-          || currentRun.conversationId !== DEFAULT_CONVERSATION_ID
-        ) {
+          this.currentRun = { runId: nextRunId! };
+        } else if (sourceRunId && sourceRunId !== currentRun.runId) {
           wakeRunId = crypto.randomUUID();
           this.store.enqueue(
             wakeRunId,
             RUNTIME_EVENT_WAKE_MESSAGE,
-            undefined,
-            DEFAULT_CONVERSATION_ID,
           );
         } else {
           currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
@@ -4014,7 +3569,6 @@ export class Process extends Host<Env> {
     }
 
     this.ctx.waitUntil(this.emitProcChanged(["messages"], {
-      conversationId: DEFAULT_CONVERSATION_ID,
       messageId,
       role: "system",
       content,
@@ -4024,7 +3578,6 @@ export class Process extends Host<Env> {
     }));
     if (wakeRunId) {
       this.ctx.waitUntil(this.emitProcChanged(["queue"], {
-        conversationId: DEFAULT_CONVERSATION_ID,
         enqueuedRunId: wakeRunId,
       }).catch((error) => {
         console.warn(`[Process] Failed to emit IPC queue change for ${this.pid}:`, error);
@@ -4036,10 +3589,7 @@ export class Process extends Host<Env> {
           return;
         }
         const message = `Failed to schedule delegated task: ${error instanceof Error ? error.message : String(error)}`;
-        await this.appendRuntimeMessage(message, {
-          conversationId: DEFAULT_CONVERSATION_ID,
-          runId,
-        });
+        await this.appendRuntimeMessage(message, { runId });
         await this.finishRun(runId, {
           reason: "schedule.error",
           status: "error",
@@ -4047,18 +3597,13 @@ export class Process extends Host<Env> {
           error: message,
         });
       }));
-      this.ctx.waitUntil(this.announceRun(
-        runId,
-        DEFAULT_CONVERSATION_ID,
-        "delegated-task",
-      ));
+      this.ctx.waitUntil(this.announceRun(runId, "delegated-task"));
     }
   }
 
   private async handleProcScheduleDeliver(
     args: ProcessScheduleDeliverArgs,
   ): Promise<{ runId: string; queued: boolean }> {
-    const conversationId = normalizeConversationId(args.conversationId);
     const origin: InteractionOrigin = {
       kind: "scheduler",
       scheduleId: args.scheduleId,
@@ -4066,7 +3611,6 @@ export class Process extends Host<Env> {
     };
     const admission = await this.handleRuntimeEvent(
       formatScheduleEventMessage(args),
-      conversationId,
       "schedule.event",
       {
         origin,
@@ -4077,13 +3621,12 @@ export class Process extends Host<Env> {
     if (!admission.ok) {
       throw new Error(admission.error);
     }
-    this.maybeStartTaskTitleGeneration(conversationId, args.message);
+    this.maybeStartTaskTitleGeneration(args.message);
     return { runId: admission.runId, queued: admission.queued };
   }
 
   private async handleRuntimeEvent(
     content: string,
-    conversationId: string,
     reason: string,
     options: {
       origin?: InteractionOrigin;
@@ -4122,51 +3665,33 @@ export class Process extends Host<Env> {
         }
       }
       if (!admissionError && !replayedAdmission) {
-        const conversation = this.store.ensureConversation(conversationId);
-        if (conversation.status === "closed") {
-          admissionError = `Conversation is closed: ${conversationId}`;
-        } else {
-          const currentRun = this.currentRun;
-          nextRunId = currentRun ? null : options.runId ?? crypto.randomUUID();
-          this.ctx.storage.transactionSync(() => {
-            if (currentRun && options.distinctRun) {
-              wakeRunId = options.runId ?? crypto.randomUUID();
-              this.store.enqueue(
-                wakeRunId,
-                content,
-                undefined,
-                conversationId,
-                serializeInteractionOrigin(options.origin) ?? undefined,
-              );
-              return;
-            }
-            messageId = this.store.appendMessage("system", content, {
-              conversationId,
-              createdAt: timestamp,
-              ...(nextRunId ? { runId: nextRunId } : {}),
-              ...(options.origin
-                ? { origin: serializeInteractionOrigin(options.origin) ?? undefined }
-                : {}),
-            });
-            if (!currentRun) {
-              this.currentRun = {
-                runId: nextRunId!,
-                conversationId,
-              };
-            } else if (currentRun.conversationId === conversationId) {
-              currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
-              this.currentRun = currentRun;
-            } else {
-              wakeRunId = crypto.randomUUID();
-              this.store.enqueue(
-                wakeRunId,
-                RUNTIME_EVENT_WAKE_MESSAGE,
-                undefined,
-                conversationId,
-              );
-            }
+        const currentRun = this.currentRun;
+        nextRunId = currentRun ? null : options.runId ?? crypto.randomUUID();
+        this.ctx.storage.transactionSync(() => {
+          if (currentRun && options.distinctRun) {
+            wakeRunId = options.runId ?? crypto.randomUUID();
+            this.store.enqueue(
+              wakeRunId,
+              content,
+              undefined,
+              serializeInteractionOrigin(options.origin) ?? undefined,
+            );
+            return;
+          }
+          messageId = this.store.appendMessage("system", content, {
+            createdAt: timestamp,
+            ...(nextRunId ? { runId: nextRunId } : {}),
+            ...(options.origin
+              ? { origin: serializeInteractionOrigin(options.origin) ?? undefined }
+              : {}),
           });
-        }
+          if (!currentRun) {
+            this.currentRun = { runId: nextRunId! };
+          } else {
+            currentRun.pendingRuntimeEvents = (currentRun.pendingRuntimeEvents ?? 0) + 1;
+            this.currentRun = currentRun;
+          }
+        });
       }
     } finally {
       releaseLifecycle();
@@ -4181,7 +3706,6 @@ export class Process extends Host<Env> {
 
     if (messageId >= 0) {
       this.ctx.waitUntil(this.emitProcChanged(["messages"], {
-        conversationId,
         messageId,
         role: "system",
         content,
@@ -4190,7 +3714,6 @@ export class Process extends Host<Env> {
     }
     if (wakeRunId) {
       this.ctx.waitUntil(this.emitProcChanged(["queue"], {
-        conversationId,
         enqueuedRunId: wakeRunId,
       }));
     } else if (nextRunId) {
@@ -4200,7 +3723,7 @@ export class Process extends Host<Env> {
           return;
         }
         const message = `Failed to schedule runtime event: ${errorMessageFromUnknown(error)}`;
-        await this.appendRuntimeMessage(message, { conversationId, runId });
+        await this.appendRuntimeMessage(message, { runId });
         await this.finishRun(runId, {
           reason: "schedule.error",
           status: "error",
@@ -4208,7 +3731,7 @@ export class Process extends Host<Env> {
           error: message,
         });
       }));
-      this.ctx.waitUntil(this.announceRun(runId, conversationId, reason));
+      this.ctx.waitUntil(this.announceRun(runId, reason));
     }
     const admittedRunId = nextRunId ?? wakeRunId ?? this.currentRun?.runId;
     if (!admittedRunId) {
@@ -4275,7 +3798,6 @@ export class Process extends Host<Env> {
       return;
     }
 
-    const conversationId = normalizeConversationId(run.conversationId);
     if (run.pendingMediaMessageId) {
       return;
     }
@@ -4301,7 +3823,7 @@ export class Process extends Host<Env> {
     if (toolResults.length > 0) {
       const ingested = this.ingestToolResults(runId, toolResults);
       if (ingested.appended > 0) {
-        await this.emitProcChanged(["messages"], { conversationId, runId });
+        await this.emitProcChanged(["messages"], { runId });
       }
       if (this.handleRunStopped(runId)) {
         return;
@@ -4357,7 +3879,7 @@ export class Process extends Host<Env> {
       const pendingRuntimeEventsInContext = this.currentRun?.runId === runId
         ? this.currentRun.pendingRuntimeEvents ?? 0
         : 0;
-      const messages = await this.buildContextMessages(conversationId);
+      const messages = await this.buildContextMessages();
       this.consumeRuntimeEventsInContext(runId, pendingRuntimeEventsInContext);
       return {
         systemPrompt: run.systemPrompt,
@@ -4376,19 +3898,18 @@ export class Process extends Host<Env> {
       config: AiConfigResult,
     ): Promise<"ready" | "stopped"> => {
       context = await buildGenerationContext();
-      const contextState = await this.updateContextState(runId, conversationId, config, context);
+      const contextState = await this.updateContextState(runId, config, context);
       if (this.handleRunStopped(runId)) {
         return "stopped";
       }
 
-      const policy = this.getConversationContextPolicy(conversationId);
+      const policy = this.getHistoryContextPolicy();
       if (autoCompactionPressure !== null) {
         if (contextState.pressure !== null && contextState.pressure >= 1) {
           await this.finishInsufficientCompactionRun(
             runId,
-            conversationId,
             policy,
-            autoCompactionPressure,
+            autoCompactionPressure ?? policy.compactAtPressure,
             contextState.pressure,
           );
           return "stopped";
@@ -4396,9 +3917,8 @@ export class Process extends Host<Env> {
         return "ready";
       }
 
-      const contextPreflight = await this.applyConversationContextPolicy(
+      const contextPreflight = await this.applyHistoryContextPolicy(
         runId,
-        conversationId,
         config,
         contextState,
       );
@@ -4411,7 +3931,7 @@ export class Process extends Host<Env> {
           return "stopped";
         }
         context = await buildGenerationContext();
-        const compactedState = await this.updateContextState(runId, conversationId, config, context);
+        const compactedState = await this.updateContextState(runId, config, context);
         if (this.handleRunStopped(runId)) {
           return "stopped";
         }
@@ -4421,7 +3941,6 @@ export class Process extends Host<Env> {
         ) {
           await this.finishInsufficientCompactionRun(
             runId,
-            conversationId,
             policy,
             autoCompactionPressure,
             compactedState.pressure,
@@ -4454,11 +3973,10 @@ export class Process extends Host<Env> {
       }
       fallbackIndex = fallback.nextIndex;
       if (failedResponse) {
-        this.recordUnpersistedAssistantUsage(conversationId, failedResponse, run.config!);
+        this.recordUnpersistedAssistantUsage(failedResponse, run.config!);
       }
       const fallbackState = await this.beginGenerationFallback({
         runId,
-        conversationId,
         reason,
         from: run.config!,
         to: fallback.config,
@@ -4487,7 +4005,6 @@ export class Process extends Host<Env> {
       try {
         response = await this.generateAssistantResponse({
           runId,
-          conversationId,
           config: run.config!,
           aiTextGenerateConfig: run.aiTextGenerateConfig,
           context,
@@ -4519,7 +4036,6 @@ export class Process extends Host<Env> {
           console.error(`[Process] LLM context overflow:`, e);
           await this.finishProviderContextOverflowRun(
             runId,
-            conversationId,
             run.config!,
             errorMsg,
           );
@@ -4531,7 +4047,6 @@ export class Process extends Host<Env> {
         ) {
           const retryState = await this.beginGenerationRetry({
             runId,
-            conversationId,
             attempt,
             maxAttempts: MAX_RETRYABLE_GENERATION_ATTEMPTS,
             reason: errorMsg,
@@ -4557,9 +4072,8 @@ export class Process extends Host<Env> {
           model: run.config?.model,
         });
         console.error(`[Process] LLM call failed:`, e);
-        this.store.appendMessage("system", displayError, { conversationId, runId });
+        this.store.appendMessage("system", displayError, { runId });
         await this.emitProcChanged(["messages"], {
-          conversationId,
           runId,
           role: "system",
           content: displayError,
@@ -4618,10 +4132,9 @@ export class Process extends Host<Env> {
         break;
       }
 
-      this.recordUnpersistedAssistantUsage(conversationId, response, run.config!);
+      this.recordUnpersistedAssistantUsage(response, run.config!);
       const retryState = await this.beginGenerationRetry({
         runId,
-        conversationId,
         attempt,
         maxAttempts: MAX_RETRYABLE_GENERATION_ATTEMPTS,
         reason: responseFailure,
@@ -4641,15 +4154,14 @@ export class Process extends Host<Env> {
     }
 
     if (isProviderContextOverflow(response, run.config!.contextWindowTokens)) {
-      const overflowUsage = this.recordUnpersistedAssistantUsage(conversationId, response, run.config!);
-      await this.updateContextState(runId, conversationId, run.config!, context, response.usage, overflowUsage);
+      const overflowUsage = this.recordUnpersistedAssistantUsage(response, run.config!);
+      await this.updateContextState(runId, run.config!, context, response.usage, overflowUsage);
       if (this.handleRunStopped(runId)) {
         return;
       }
       const errorMsg = response.errorMessage ?? describeAssistantResponseFailure(response) ?? undefined;
       await this.finishProviderContextOverflowRun(
         runId,
-        conversationId,
         run.config!,
         errorMsg,
       );
@@ -4658,16 +4170,15 @@ export class Process extends Host<Env> {
 
     const responseFailure = describeAssistantResponseFailure(response);
     if (responseFailure) {
-      this.recordUnpersistedAssistantUsage(conversationId, response, run.config!);
+      this.recordUnpersistedAssistantUsage(response, run.config!);
       const errorMsg = response.errorMessage ?? responseFailure;
       const displayError = formatGenerationFailure(errorMsg, {
         provider: run.config?.provider,
         model: run.config?.model,
       });
       console.error(`[Process] ${errorMsg}`);
-      this.store.appendMessage("system", displayError, { conversationId, runId });
+      this.store.appendMessage("system", displayError, { runId });
       await this.emitProcChanged(["messages"], {
-        conversationId,
         runId,
         role: "system",
         content: displayError,
@@ -4715,7 +4226,6 @@ export class Process extends Host<Env> {
         ...(activeFallbackMetadata ? { fallback: activeFallbackMetadata } : {}),
         pid: this.pid,
         runId,
-        conversationId,
       });
       if (this.handleRunStopped(runId)) {
         return;
@@ -4725,7 +4235,6 @@ export class Process extends Host<Env> {
     const assistantMetadata = buildAssistantMessageMetadata(response, run.config!, activeFallbackMetadata);
     this.ctx.storage.transactionSync(() => {
       this.store.appendMessage("assistant", text, {
-        conversationId,
         runId,
         toolCalls: stringifyAssistantMessageMeta({
           thinking: thinkingBlocks,
@@ -4755,7 +4264,6 @@ export class Process extends Host<Env> {
           runId,
           syscall ?? toolCall.name,
           prepared.args,
-          conversationId,
         );
         if (prepared.missingShellSessionTarget) {
           this.store.fail(dispatchId, UNKNOWN_SHELL_SESSION_TARGET_MESSAGE);
@@ -4776,7 +4284,7 @@ export class Process extends Host<Env> {
     }
 
     context = await buildGenerationContext();
-    await this.updateContextState(runId, conversationId, run.config!, context, response.usage, assistantMetadata?.usage);
+    await this.updateContextState(runId, run.config!, context, response.usage, assistantMetadata?.usage);
     if (this.handleRunStopped(runId)) {
       return;
     }
@@ -4805,7 +4313,6 @@ export class Process extends Host<Env> {
 
   private async generateAssistantResponse(options: {
     runId: string;
-    conversationId: string;
     config: AiConfigResult;
     aiTextGenerateConfig?: AiTextGenerateConfig;
     context: Context;
@@ -4831,7 +4338,6 @@ export class Process extends Host<Env> {
 
   private async generateAssistantResponseLocally(options: {
     runId: string;
-    conversationId: string;
     config: AiConfigResult;
     aiTextGenerateConfig?: AiTextGenerateConfig;
     context: Context;
@@ -4869,7 +4375,7 @@ export class Process extends Host<Env> {
       if (options.streamSeq) {
         options.streamSeq.value = seq;
       }
-      await this.emitRunStreamEvent(options.runId, options.conversationId, seq, event);
+      await this.emitRunStreamEvent(options.runId, seq, event);
       if (event.type === "done") {
         response = event.message;
       } else if (event.type === "error") {
@@ -4952,13 +4458,12 @@ export class Process extends Host<Env> {
   }
 
   private recordUnpersistedAssistantUsage(
-    conversationId: string,
     response: AssistantMessage,
     config: AiConfigResult,
   ): ProcUsageState | undefined {
     const usage = buildAssistantMessageMetadata(response, config)?.usage;
     if (usage) {
-      this.store.addConversationUsage(conversationId, usage);
+      this.store.addHistoryUsage(usage);
     }
     return usage;
   }
@@ -4973,7 +4478,7 @@ export class Process extends Host<Env> {
 
       const shouldQueueRuntimeWake =
         (run.pendingRuntimeEvents ?? 0) > 0
-        && this.store.queueSize(run.conversationId) === 0;
+        && this.store.queueSize() === 0;
       this.emitRunFinished(run, options);
       this.currentRun = null;
       this.runAbortControllers.delete(runId);
@@ -4985,15 +4490,12 @@ export class Process extends Host<Env> {
         this.store.enqueue(
           wakeRunId,
           RUNTIME_EVENT_WAKE_MESSAGE,
-          undefined,
-          run.conversationId,
         );
       }
       const next = this.claimNextQueuedRun();
 
       if (wakeRunId && next?.runId !== wakeRunId) {
         this.ctx.waitUntil(this.emitProcChanged(["queue"], {
-          conversationId: run.conversationId,
           enqueuedRunId: wakeRunId,
         }));
       }
@@ -5022,7 +4524,6 @@ export class Process extends Host<Env> {
 
   private async finishProviderContextOverflowRun(
     runId: string,
-    conversationId: string,
     config: AiConfigResult,
     providerMessage?: string,
   ): Promise<void> {
@@ -5030,9 +4531,8 @@ export class Process extends Host<Env> {
       provider: config.provider,
       model: config.model,
     });
-    this.store.appendMessage("system", message, { conversationId, runId });
+    this.store.appendMessage("system", message, { runId });
     await this.emitProcChanged(["messages"], {
-      conversationId,
       runId,
       role: "system",
       content: message,
@@ -5050,20 +4550,18 @@ export class Process extends Host<Env> {
 
   private async finishInsufficientCompactionRun(
     runId: string,
-    conversationId: string,
-    policy: ProcConversationContextPolicy,
+    policy: ProcHistoryContextPolicy,
     beforePressure: number,
     afterPressure: number,
   ): Promise<void> {
     const message = [
-      "Auto-compaction could not reduce this conversation below its context limit.",
+      "Auto-compaction could not reduce this process history below its context limit.",
       `Pressure: ${Math.round(beforePressure * 100)}% before, ${Math.round(afterPressure * 100)}% after.`,
       `Policy: compact at ${Math.round(policy.compactAtPressure * 100)}% and keep ${policy.keepLast} recent messages.`,
-      "Lower keepLast, compact more history manually, or reset the conversation.",
+      "Lower keepLast, compact more history manually, or reset the process.",
     ].join("\n");
-    this.store.appendMessage("system", message, { conversationId, runId });
+    this.store.appendMessage("system", message, { runId });
     await this.emitProcChanged(["messages"], {
-      conversationId,
       runId,
       role: "system",
       content: message,
@@ -5078,9 +4576,8 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async applyConversationContextPolicy(
+  private async applyHistoryContextPolicy(
     runId: string,
-    conversationId: string,
     config: AiConfigResult,
     state: ProcContextState,
   ): Promise<"ready" | "compacted" | "stopped"> {
@@ -5089,7 +4586,7 @@ export class Process extends Host<Env> {
       return "ready";
     }
 
-    const policy = this.getConversationContextPolicy(conversationId);
+    const policy = this.getHistoryContextPolicy();
     if (pressure < policy.compactAtPressure) {
       return "ready";
     }
@@ -5099,11 +4596,10 @@ export class Process extends Host<Env> {
         "Context limit policy stopped this run.",
         `Policy: fail at ${Math.round(policy.compactAtPressure * 100)}% context pressure.`,
         `Current estimate: ${Math.round(pressure * 100)}%.`,
-        "Compact or reset the conversation before sending more work.",
+        "Compact the history or reset the process before sending more work.",
       ].join("\n");
-      this.store.appendMessage("system", message, { conversationId, runId });
+      this.store.appendMessage("system", message, { runId });
       await this.emitProcChanged(["messages"], {
-        conversationId,
         runId,
         role: "system",
         content: message,
@@ -5117,8 +4613,7 @@ export class Process extends Host<Env> {
       return "stopped";
     }
 
-    const selected = this.store.getConversationPrefixMessages({
-      conversationId,
+    const selected = this.store.getHistoryPrefixMessages({
       keepLast: policy.keepLast,
     });
     if (selected.length === 0) {
@@ -5128,11 +4623,10 @@ export class Process extends Host<Env> {
       const message = [
         "Context limit reached, but auto-compaction could not archive any older messages.",
         `Policy keeps the newest ${policy.keepLast} messages live.`,
-        "Lower the keep-last value, compact manually, or reset this conversation.",
+        "Lower the keep-last value, compact manually, or reset this process.",
       ].join("\n");
-      this.store.appendMessage("system", message, { conversationId, runId });
+      this.store.appendMessage("system", message, { runId });
       await this.emitProcChanged(["messages"], {
-        conversationId,
         runId,
         role: "system",
         content: message,
@@ -5146,9 +4640,8 @@ export class Process extends Host<Env> {
       return "stopped";
     }
 
-    const result = await this.handleConversationCompact(
+    const result = await this.handleHistoryCompact(
       {
-        conversationId,
         keepLast: policy.keepLast,
         generateSummary: true,
       },
@@ -5163,9 +4656,8 @@ export class Process extends Host<Env> {
     }
     if (!result.ok) {
       const message = `Auto-compaction failed before model call: ${result.error}`;
-      this.store.appendMessage("system", message, { conversationId, runId });
+      this.store.appendMessage("system", message, { runId });
       await this.emitProcChanged(["messages"], {
-        conversationId,
         runId,
         role: "system",
         content: message,
@@ -5183,9 +4675,8 @@ export class Process extends Host<Env> {
       return "stopped";
     }
     await this.emitProcessLifecycle({
-      event: "conversation.auto_compacted",
+      event: "history.auto_compacted",
       pid: this.pid,
-      conversationId,
       provider: config.provider,
       model: config.model,
       pressure,
@@ -5198,15 +4689,13 @@ export class Process extends Host<Env> {
 
   private async updateContextState(
     runId: string,
-    conversationId: string,
     config: AiConfigResult,
     context: Context,
     usage?: AssistantMessage["usage"],
     usageState?: ProcUsageState,
   ): Promise<ProcContextState> {
-    const { count: messageCount, lastMessageId } = this.store.messageStats(conversationId);
+    const { count: messageCount, lastMessageId } = this.store.messageStats();
     const state = buildProcContextState({
-      conversationId,
       runId,
       messageCount,
       lastMessageId,
@@ -5218,7 +4707,7 @@ export class Process extends Host<Env> {
       estimatedInputTokens: estimateContextInputTokens(context),
       usage,
       usageState,
-      conversationUsage: this.store.getConversationUsage(conversationId),
+      historyUsage: this.store.getHistoryUsage(),
     });
     this.store.setContextState(state);
     await this.emitProcChanged(["context"], {
@@ -5391,7 +4880,6 @@ export class Process extends Host<Env> {
 
   private async announceRun(
     runId: string,
-    conversationId: string,
     reason: string,
   ): Promise<void> {
     if (this.currentRun?.runId !== runId) {
@@ -5401,7 +4889,6 @@ export class Process extends Host<Env> {
       await this.sendSignal("proc.run.started", {
         pid: this.pid,
         runId,
-        conversationId: normalizeConversationId(conversationId),
         reason,
         queuedCount: this.store.queueSize(),
         timestamp: Date.now(),
@@ -5421,14 +4908,12 @@ export class Process extends Host<Env> {
 
   private async emitRunStreamEvent(
     runId: string,
-    conversationId: string,
     seq: number,
     event: AssistantMessageEvent,
   ): Promise<void> {
     await this.sendSignal("proc.run.stream", {
       pid: this.pid,
       runId,
-      conversationId: normalizeConversationId(conversationId),
       seq,
       event: snapshotAssistantMessageEvent(event),
       timestamp: Date.now(),
@@ -5437,7 +4922,6 @@ export class Process extends Host<Env> {
 
   private async emitRunRetrying(
     runId: string,
-    conversationId: string,
     attempt: number,
     maxAttempts: number,
     reason: string,
@@ -5445,7 +4929,6 @@ export class Process extends Host<Env> {
     await this.sendSignal("proc.run.retrying", {
       pid: this.pid,
       runId,
-      conversationId: normalizeConversationId(conversationId),
       attempt,
       nextAttempt: attempt + 1,
       maxAttempts,
@@ -5456,7 +4939,6 @@ export class Process extends Host<Env> {
 
   private async beginGenerationRetry(options: {
     runId: string;
-    conversationId: string;
     attempt: number;
     maxAttempts: number;
     reason: string;
@@ -5471,7 +4953,6 @@ export class Process extends Host<Env> {
     }
     await this.emitRunRetrying(
       options.runId,
-      options.conversationId,
       options.attempt,
       options.maxAttempts,
       options.reason,
@@ -5481,7 +4962,6 @@ export class Process extends Host<Env> {
 
   private async beginGenerationFallback(options: {
     runId: string;
-    conversationId: string;
     reason: string;
     from: AiConfigResult;
     to: AiConfigResult;
@@ -5498,7 +4978,6 @@ export class Process extends Host<Env> {
     await this.sendSignal("proc.run.retrying", {
       pid: this.pid,
       runId: options.runId,
-      conversationId: normalizeConversationId(options.conversationId),
       attempt: options.fallbackIndex,
       nextAttempt: options.fallbackIndex + 1,
       maxAttempts: options.fallbackCount + 1,
@@ -5546,7 +5025,6 @@ export class Process extends Host<Env> {
     return {
       pid: this.pid,
       runId: run.runId,
-      conversationId: normalizeConversationId(run.conversationId),
       status: options.status ?? "ok",
       reason: options.reason,
       text: options.text ?? null,
@@ -5581,16 +5059,12 @@ export class Process extends Host<Env> {
         : 1;
       if (attempts >= MAX_RUN_FINISH_DELIVERY_ATTEMPTS) {
         this.removePendingRunFinish(runId);
-        const conversationId = normalizeConversationId(
-          typeof payload.conversationId === "string" ? payload.conversationId : undefined,
-        );
         const messageId = this.store.appendMessage(
           "system",
-          "Automatic reply delivery stopped after repeated transport failures. The completed answer remains in this conversation history.",
-          { conversationId, runId },
+          "Automatic reply delivery stopped after repeated transport failures. The completed answer remains in this process history.",
+          { runId },
         );
         this.ctx.waitUntil(this.emitProcChanged(["messages"], {
-          conversationId,
           runId,
           messageId,
         }));
@@ -5649,118 +5123,29 @@ export class Process extends Host<Env> {
     }
   }
 
-  /**
-   * R2-key prefix where a conversation's transcript archives live, under the
-   * run-as agent's home: `home/<agent>/conversations/<id>`. Keyed by the agent
-   * identity + conversation, NOT the (fungible) executor pid, so transcripts
-   * survive across executors and can be hydrated on resume.
-   */
-  private conversationArchiveDir(conversationId: string): string {
+  /** R2-key prefix for this process's transcript archives. */
+  private historyArchiveDir(): string {
     const homeKey = this.identity.home.replace(/^\/+/, "").replace(/\/+$/, "");
-    const normalized = normalizeConversationId(conversationId);
-    // The primary ("default") thread is addressed by the durable kernel
-    // conversation id (e.g. default:<owner>:<agent>) when one is assigned, so
-    // transcripts live at a stable, executor-independent path. Ad-hoc threads
-    // (forks opened via proc.conversation.open) keep their local id.
-    const pathId = normalized === DEFAULT_CONVERSATION_ID && this.primaryConversationId
-      ? this.primaryConversationId
-      : normalized;
-    return `${homeKey}/conversations/${encodeURIComponent(pathId)}`;
+    return `${homeKey}/processes/${encodeURIComponent(this.pid)}/history`;
   }
 
-  /**
-   * Hydrate the primary ("default") thread from a previously-archived transcript
-   * when a fresh executor resumes a conversation. Lossless: the archive holds
-   * the working window as it was at kill (already incorporating any prior
-   * size-compaction summaries), so we restore exactly that window.
-   */
-  private async hydratePrimaryConversation(archivePath: string): Promise<void> {
-    if (this.store.messageCount(DEFAULT_CONVERSATION_ID) > 0) {
-      return; // Already has live messages; never double-hydrate.
-    }
-    let archived: ArchivedMessageRecord[];
-    try {
-      archived = await this.readArchivedMessageRecords(archivePath);
-    } catch (error) {
-      console.warn(
-        `[Process] Failed to hydrate conversation from ${archivePath}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return;
-    }
-    const conversation = this.store.ensureConversation(DEFAULT_CONVERSATION_ID);
-    for (const record of archived) {
-      this.appendRestoredArchivedMessage(record, DEFAULT_CONVERSATION_ID, conversation.generation);
-    }
-  }
-
-  private async archiveConversationMessages(
-    conversationId: string,
+  private async archiveHistoryMessages(
     archiveId: string,
-  ): Promise<string | null> {
-    const normalizedConversationId = normalizeConversationId(conversationId);
-    const messages = this.store.getMessages({
-      conversationId: normalizedConversationId,
-      limit: null,
-    });
-    if (messages.length === 0) return null;
-
-    const key = `${this.conversationArchiveDir(normalizedConversationId)}/${archiveId}.jsonl.gz`;
-
-    await this.archiveMessageRecords(key, messages);
-    return key;
-  }
-
-  private async archiveAllConversationMessages(
-    archiveId: string,
-    kind: ProcConversationArchiveKind,
   ): Promise<ProcessArchiveResult> {
-    const archives: ProcArchiveEntry[] = [];
-    let archivedMessages = 0;
-
-    const conversations = this.store
-      .listConversations({ includeClosed: true })
-      .sort((a, b) => a.id.localeCompare(b.id));
-
-    for (const conversation of conversations) {
-      const messages = this.store.getMessages({
-        conversationId: conversation.id,
-        limit: null,
-      });
-      if (messages.length === 0) {
-        continue;
-      }
-
-      const key = `${this.conversationArchiveDir(conversation.id)}/${archiveId}.${conversationArchiveFilename(
-        conversation.id,
-        conversation.generation,
-      )}`;
-
-      await this.archiveMessageRecords(key, messages);
-      const archivePath = `/${key}`;
-      this.store.recordConversationArchive({
-        id: `${archiveId}:${encodeURIComponent(conversation.id)}:gen-${conversation.generation}`,
-        conversationId: conversation.id,
-        generation: conversation.generation,
-        kind,
-        messages: messages.length,
-        archivePath,
-      });
-      archivedMessages += messages.length;
-      archives.push({
-        conversationId: conversation.id,
-        generation: conversation.generation,
+    const messages = this.store.getMessages({ limit: null });
+    if (messages.length === 0) return emptyProcessArchive();
+    const generation = this.store.getHistoryGeneration();
+    const key = `${this.historyArchiveDir()}/${archiveId}.${historyArchiveFilename(generation)}`;
+    await this.archiveMessageRecords(key, messages);
+    const archivePath = `/${key}`;
+    return {
+      archivedMessages: messages.length,
+      archivedTo: archivePath,
+      archives: [{
+        generation,
         messages: messages.length,
         path: archivePath,
-      });
-    }
-
-    const homeKey = this.identity.home.replace(/^\/+/, "").replace(/\/+$/, "");
-    return {
-      archivedMessages,
-      archivedTo: archivedMessages > 0 ? `/${homeKey}/conversations/` : undefined,
-      archives,
+      }],
     };
   }
 
@@ -5795,14 +5180,32 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async readArchivedMessageRecords(archivePath: string): Promise<ArchivedMessageRecord[]> {
+  private async readArchivedMessageRecords(
+    archivePath: string,
+    signal?: AbortSignal,
+  ): Promise<ArchivedMessageRecord[]> {
     const key = archivePath.replace(/^\/+/, "");
-    const object = await this.env.STORAGE.get(key);
+    signal?.throwIfAborted();
+    const object = await raceWithAbort(this.env.STORAGE.get(key), signal, {
+      onLateResolve: (late) => {
+        if (late?.body && !late.body.locked) {
+          void late.body.cancel("Archive read was cancelled");
+        }
+      },
+    });
     if (!object) {
       throw new Error(`archive not found: ${archivePath}`);
     }
 
-    const jsonl = await gunzip(await object.arrayBuffer());
+    const bytes = await raceWithAbort(object.arrayBuffer(), signal, {
+      onAbort: () => {
+        if (!object.body.locked) {
+          void object.body.cancel("Archive read was cancelled");
+        }
+      },
+    });
+    signal?.throwIfAborted();
+    const jsonl = await gunzip(bytes);
     return jsonl
       .split("\n")
       .map((line) => line.trim())
@@ -5861,9 +5264,9 @@ export class Process extends Host<Env> {
     }
   }
 
-  private async buildContextMessages(conversationId: string): Promise<Context["messages"]> {
-    const records = this.store.getMessages({ conversationId, limit: null });
-    const messages = this.store.toMessages({ conversationId, limit: null });
+  private async buildContextMessages(): Promise<Context["messages"]> {
+    const records = this.store.getMessages({ limit: null });
+    const messages = this.store.toMessages({ limit: null });
     const mediaBudget = { remainingBytes: MAX_PROCESS_MEDIA_READ_BYTES };
 
     for (let index = 0; index < records.length; index += 1) {
@@ -6229,12 +5632,6 @@ export class Process extends Host<Env> {
     toolResults: ReturnType<ProcessStore["getResults"]>,
     options?: { interruptPending?: string },
   ): { interrupted: number; appended: number } {
-    const run = this.currentRun;
-    const conversationId = normalizeConversationId(
-      run?.runId === runId
-        ? run.conversationId
-        : toolResults[0]?.conversationId,
-    );
     let interrupted = 0;
     let appended = 0;
 
@@ -6269,7 +5666,6 @@ export class Process extends Host<Env> {
           result.call,
           content,
           isError,
-          conversationId,
           runId,
           outcome,
         );
@@ -6329,7 +5725,6 @@ export class Process extends Host<Env> {
         const pendingHil: PendingHilRecord = {
           requestId: crypto.randomUUID(),
           runId,
-          conversationId: run.conversationId,
           toolCallId: tc.id,
           toolName,
           syscall,
@@ -6354,7 +5749,6 @@ export class Process extends Host<Env> {
         callId: tc.id,
         pid: this.pid,
         runId,
-        conversationId: run.conversationId,
       });
       if (this.handleRunStopped(runId)) {
         return null;
@@ -6664,11 +6058,6 @@ export class Process extends Host<Env> {
     args: Record<string, unknown>,
   ): Promise<boolean> {
     const requestId = crypto.randomUUID();
-    const conversationId = normalizeConversationId(
-      this.currentRun?.runId === runId
-        ? this.currentRun.conversationId
-        : DEFAULT_CONVERSATION_ID,
-    );
     const approved = new Promise<boolean>((resolve) => {
       const timeoutId = setTimeout(() => {
         this.codeModeApprovals.delete(requestId);
@@ -6683,7 +6072,6 @@ export class Process extends Host<Env> {
     const pendingHil: PendingHilRecord = {
       requestId,
       runId,
-      conversationId,
       ownerDispatchId: dispatchId,
       toolCallId,
       toolName,
@@ -6982,7 +6370,6 @@ export class Process extends Host<Env> {
       pid: this.pid,
       requestId: record.requestId,
       runId: record.runId,
-      conversationId: record.conversationId,
       callId: record.toolCallId,
       toolName: record.toolName,
       syscall: record.syscall,
@@ -7092,16 +6479,12 @@ export class Process extends Host<Env> {
       return null;
     }
     this.store.appendMessage("user", next.message, {
-      conversationId: next.conversationId,
       generation: next.generation,
       runId: next.runId,
       media: next.media ?? undefined,
       origin: next.origin ?? undefined,
     });
-    this.currentRun = {
-      runId: next.runId,
-      conversationId: next.conversationId,
-    };
+    this.currentRun = { runId: next.runId };
     return next;
   }
 
@@ -7113,7 +6496,7 @@ export class Process extends Host<Env> {
     }
     const next = claimed;
     this.ctx.waitUntil(this.scheduleTick(next.runId)
-      .then(() => this.announceRun(next.runId, next.conversationId, "queue.promote"))
+      .then(() => this.announceRun(next.runId, "queue.promote"))
       .catch((error) => this.finishRun(next.runId, {
         reason: "schedule.error",
         status: "error",
@@ -7203,7 +6586,6 @@ function serializeArchivedMessage(
     const meta = parseAssistantMessageMeta(message.toolCalls);
     return {
       id: message.id,
-      conversation_id: message.conversationId,
       generation: message.generation,
       run_id: message.runId ?? undefined,
       role: message.role,
@@ -7220,7 +6602,6 @@ function serializeArchivedMessage(
 
   return {
     id: message.id,
-    conversation_id: message.conversationId,
     generation: message.generation,
     run_id: message.runId ?? undefined,
     role: message.role,
@@ -7406,9 +6787,9 @@ function parseAdapterMessageDestination(value: unknown): AdapterMessageDestinati
   };
 }
 
-const PROCESS_CONVERSATION_REPLY_DESTINATION = {
-  key: "process-conversation",
-  description: "this GSV process conversation",
+const PROCESS_REPLY_DESTINATION = {
+  key: "process",
+  description: "this GSV process",
 } as const;
 
 function formatReplyDestinationForContext(
@@ -7417,7 +6798,7 @@ function formatReplyDestinationForContext(
   key: string;
   description: string;
 } {
-  if (!origin) return PROCESS_CONVERSATION_REPLY_DESTINATION;
+  if (!origin) return PROCESS_REPLY_DESTINATION;
 
   const adapterDestination = origin.kind === "adapter"
     ? origin
@@ -7440,7 +6821,7 @@ function formatReplyDestinationForContext(
       description: `automatic to this ${titleCase(adapterDestination.adapter)} ${surfaceLabel}`,
     };
   }
-  if (origin.kind === "scheduler") return PROCESS_CONVERSATION_REPLY_DESTINATION;
+  if (origin.kind === "scheduler") return PROCESS_REPLY_DESTINATION;
   if (origin.kind === "client") {
     return {
       key: `client:${origin.connectionId}`,

@@ -5,9 +5,8 @@
  * build KernelContext for process-originated syscalls, and for listing
  * processes per user.
  *
- * Process ids are opaque, fungible handles (`proc:<uuid>`): an executor is
- * allocated per running process and discarded on kill. Durable state lives in
- * the run-as agent's home (conversation transcripts), not in the executor.
+ * Process ids are opaque durable handles (`proc:<id>`). A Process Durable
+ * Object owns the execution state and history for that pid until it is killed.
  */
 
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
@@ -17,7 +16,6 @@ export type ProcessState = "idle" | "queued" | "running" | "waiting_tool" | "wai
 export type ProcessRuntimePatch = {
   state?: ProcessState;
   activeRunId?: string | null;
-  activeConversationId?: string | null;
   queuedCount?: number;
   lastActiveAt?: number | null;
 };
@@ -35,7 +33,6 @@ export type ProcessRecord = {
   cwd: string;
   state: ProcessState;
   activeRunId: string | null;
-  activeConversationId: string | null;
   queuedCount: number;
   lastActiveAt: number | null;
   label: string | null;
@@ -58,8 +55,8 @@ export class ProcessRegistry {
   ): void {
     this.sql.exec(
       `INSERT OR REPLACE INTO processes
-        (process_id, parent_pid, uid, owner_uid, interactive, gid, gids, username, home, cwd, state, active_run_id, active_conversation_id, queued_count, last_active_at, label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, NULL, 0, NULL, ?, ?)`,
+        (process_id, parent_pid, uid, owner_uid, interactive, gid, gids, username, home, cwd, state, active_run_id, queued_count, last_active_at, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', NULL, 0, NULL, ?, ?)`,
       processId,
       opts.parentPid ?? null,
       identity.uid,
@@ -174,13 +171,11 @@ export class ProcessRegistry {
       `UPDATE processes
           SET state = ?,
               active_run_id = ?,
-              active_conversation_id = ?,
               queued_count = ?,
               last_active_at = ?
         WHERE process_id = ?`,
       patch.state ?? existing.state,
       patch.activeRunId !== undefined ? patch.activeRunId : existing.activeRunId,
-      patch.activeConversationId !== undefined ? patch.activeConversationId : existing.activeConversationId,
       patch.queuedCount !== undefined ? Math.max(0, Math.floor(patch.queuedCount)) : existing.queuedCount,
       patch.lastActiveAt !== undefined ? patch.lastActiveAt : existing.lastActiveAt,
       processId,
@@ -243,7 +238,6 @@ type RowShape = {
   cwd: string | null;
   state: string;
   active_run_id: string | null;
-  active_conversation_id: string | null;
   queued_count: number | null;
   last_active_at: number | null;
   label: string | null;
@@ -264,7 +258,6 @@ function toRecord(row: RowShape): ProcessRecord {
     cwd: row.cwd ?? row.home,
     state: normalizeProcessState(row.state),
     activeRunId: row.active_run_id,
-    activeConversationId: row.active_conversation_id,
     queuedCount: Math.max(0, Math.floor(row.queued_count ?? 0)),
     lastActiveAt: row.last_active_at,
     label: row.label,

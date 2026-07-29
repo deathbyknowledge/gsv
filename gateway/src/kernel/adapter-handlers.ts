@@ -42,7 +42,7 @@ import type {
 } from "../protocol/process-frames";
 import { sendFrameToProcess } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
-import { ensureDefaultConversationExecutor } from "./agents";
+import { ensurePersonalAgent } from "./agents";
 import { canOwnerRunAsAccount } from "./account-access";
 import { isLocked } from "../auth/shadow";
 import type { AdapterStatusRecord } from "./adapter-status";
@@ -961,6 +961,7 @@ async function resolveClaimedAdapterInbound(input: {
     actorId,
     message.surface,
     uid,
+    receiptId,
     userIdentity,
     ctx,
   );
@@ -1564,6 +1565,7 @@ async function resolveAdapterRoute(
   actorId: string,
   surface: AdapterSurface,
   uid: number,
+  operationId: string,
   userIdentity: ProcessIdentity,
   ctx: KernelContext,
 ): Promise<string> {
@@ -1585,7 +1587,18 @@ async function resolveAdapterRoute(
     ctx.adapters.surfaceRoutes.clearRoute(routeKey);
   }
 
-  return ensureDefaultConversationExecutor(ctx, userIdentity);
+  const personalAgent = await ensurePersonalAgent(ctx, userIdentity);
+  return spawnAdapterAgentProcess(
+    {
+      uid: personalAgent.identity.uid,
+      username: personalAgent.identity.username,
+      label: personalAgent.identity.username,
+      identity: personalAgent.identity,
+    },
+    uid,
+    operationId,
+    ctx,
+  );
 }
 
 async function handleAdapterCommand(args: {
@@ -1630,8 +1643,8 @@ async function handleAdapterCommand(args: {
     return replyToAdapterCommand(
       message,
       routed
-        ? `This chat is routed to ${describeProcessRoute(routed)}. Use /use personal to return to your personal conversation.`
-        : "This chat is using your personal conversation. Use /list to see routable agents and processes.",
+        ? `This chat is routed to ${describeProcessRoute(routed)}.`
+        : "This chat is not routed to a live process. Send a message to start one, or use /list to choose a target.",
     );
   }
 
@@ -1650,7 +1663,18 @@ async function handleAdapterCommand(args: {
       if (!identity) {
         return replyToAdapterCommand(message, "Your local user identity is unavailable.");
       }
-      const pid = await ensureDefaultConversationExecutor(ctx, identity);
+      const personalAgent = await ensurePersonalAgent(ctx, identity);
+      const pid = await spawnAdapterAgentProcess(
+        {
+          uid: personalAgent.identity.uid,
+          username: personalAgent.identity.username,
+          label: personalAgent.identity.username,
+          identity: personalAgent.identity,
+        },
+        uid,
+        operationId,
+        ctx,
+      );
       ctx.adapters.surfaceRoutes.setRoute({
         adapter,
         accountId,
@@ -1662,7 +1686,7 @@ async function handleAdapterCommand(args: {
         pid,
         updatedByUid: uid,
       });
-      return replyToAdapterCommand(message, "This chat now uses your personal conversation.");
+      return replyToAdapterCommand(message, "This chat now uses a new personal-agent process.");
     }
 
     const processMatch = findProcessForSelector(selector, uid, ctx);
@@ -1692,7 +1716,6 @@ async function handleAdapterCommand(args: {
     const pid = await spawnAdapterAgentProcess(
       agent,
       uid,
-      message.surface,
       operationId,
       ctx,
     );
@@ -1757,7 +1780,7 @@ function renderAdapterCommandHelp(): string {
     "Adapter commands:",
     "/list - show available agents and active processes",
     "/where - show where this chat is routed",
-    "/use personal - route back to your personal conversation",
+    "/use personal - start a new personal-agent process",
     "/use <process-id> - route this chat to an active process",
     "/use <agent-name> - start and route this chat to an agent",
     "",
@@ -1888,30 +1911,17 @@ function listRunnableAgents(ownerUid: number, ctx: KernelContext): RunnableAgent
 async function spawnAdapterAgentProcess(
   agent: RunnableAgent,
   ownerUid: number,
-  surface: AdapterSurface,
   operationId: string,
   ctx: KernelContext,
 ): Promise<string> {
   const pid = `proc:${operationId}`;
-  const conversationId = `adapter:${operationId}`;
-  const label = `adapter ${describeAdapterSurface(surface)} (${agent.username})`;
   if (!ctx.procs.get(pid)) {
     ctx.procs.spawn(pid, agent.identity, {
       ownerUid,
       interactive: true,
-      label,
       cwd: agent.identity.cwd,
     });
   }
-
-  const conversation = ctx.conversations.get(conversationId) ?? ctx.conversations.create({
-    conversationId,
-    ownerUid,
-    agentUid: agent.identity.uid,
-    agentHome: agent.identity.home,
-    title: label,
-  });
-  ctx.conversations.setActivePid(conversation.conversationId, pid);
 
   await sendFrameToProcess(pid, {
     type: "req",
@@ -1921,8 +1931,7 @@ async function spawnAdapterAgentProcess(
       pid,
       identity: agent.identity,
       interactive: true,
-      title: label,
-      conversationId: conversation.conversationId,
+      autoTitle: true,
     },
   } as RequestFrame);
 
@@ -1938,11 +1947,6 @@ function shortProcessId(pid: string): string {
     return pid.slice(0, 13);
   }
   return pid.length > 13 ? pid.slice(0, 13) : pid;
-}
-
-function describeAdapterSurface(surface: AdapterSurface): string {
-  const label = surface.name?.trim() || surface.handle?.trim() || surface.id;
-  return surface.kind === "dm" ? "dm" : `${surface.kind} ${label}`;
 }
 
 function resolveActorId(message: AdapterInboundMessage): string | null {

@@ -12,7 +12,6 @@ export type ConsoleProcess = {
   parentPid: string | null;
   interactive: boolean;
   activeRunId: string | null;
-  activeConversationId: string | null;
   queuedCount: number;
   createdAt: number | null;
   lastActiveAt: number | null;

@@ -1,40 +1,29 @@
-# Process IPC and Scheduler Design
+# Process IPC and Scheduler Architecture
 
-This document captures the planned direction for process-to-process
-communication, multi-conversation processes, and scheduled work in GSV.
+GSV processes are durable agent processes. Each process has its own identity,
+authority, execution state, queue, and history. Process-to-process communication
+and scheduled work enter through Kernel-owned syscalls.
 
-The goal is to make the implementation feel like the rest of GSV: Linux-like in
-mental model, explicit about authority, and structured enough for agents and
-humans to reason about.
+## Process model
 
-## Design Intent
+A process owns exactly one active history. The pid names both the durable
+execution boundary and that history; there is no second process-local
+conversation identifier.
 
-GSV processes should be durable agent instances, not single chat sessions. A
-process may have an owner, a workspace, mounted context, tools,
-and process-local state. Multiple users, clients, adapters, schedules, or other
-processes may need to interact with that same process over time.
+This keeps lifecycle state aligned:
 
-The model should therefore distinguish:
+- queued input, the active run, pending tools, and pending HIL belong to the pid;
+- `proc.abort` stops the active run without deleting the process;
+- `proc.reset` archives and clears the process history while preserving the pid;
+- `proc.kill` archives when requested and tears down the process; and
+- `proc.fork` creates a new process initialized from committed source history.
 
-- A process: the durable agent instance and authority boundary.
-- A conversation: an attachable dialogue or interaction stream with a process.
-- An event: normal work or content delivered to a process.
-- A process signal: control-plane operation such as abort, kill, reset, pause,
-  resume, or reload.
-- A transport frame: the envelope used to move requests, responses, and async
-  push messages across WebSocket, service binding, or process
-  boundaries.
-- A scheduler: Kernel-owned cron/timer service that dispatches typed work under
-  an explicit principal.
+Parallel threads are therefore parallel processes. They have independent queues,
+cancellation, permissions, labels, and future histories.
 
-This keeps the OS analogy clear. A GSV process is closer to a daemon than a
-single terminal session. Conversations are attachments to that daemon. Events
-are ordinary input. Process signals control the daemon. Frames are only the
-transport.
+## Frames, events, and signals
 
-## Naming Rules
-
-The existing protocol has a `SignalFrame`:
+`SignalFrame` is the existing asynchronous transport frame:
 
 ```ts
 type SignalFrame<Payload = unknown> = {
@@ -45,325 +34,75 @@ type SignalFrame<Payload = unknown> = {
 };
 ```
 
-That name should not be changed for now. It is the existing async push frame on
-the wire, and compatibility matters.
+It is not itself a process signal. The terms mean:
 
-Architecturally, however, it should be treated as a transport-level push frame,
-not as proof that every payload it carries is a process signal.
+- a notification is an outward observation such as `proc.run.stream` or
+  `proc.run.finished`, often carried in a `SignalFrame`;
+- a process event is ordinary work admitted through `proc.send`, IPC, an
+  adapter, or the scheduler; and
+- a process signal is a lifecycle operation such as abort, reset, or kill.
 
-Use these meanings:
+Runtime events rendered into model context are visibly marked. Process IPC uses
+the current `[Process Event]:` envelope rather than pretending the source was a
+human message.
 
-- `SignalFrame`: existing transport frame with `type: "sig"` and a `signal`
-  topic string.
-- Notification: an outward observation such as `proc.run.stream`, `proc.run.finished`,
-  `device.status`, `exec.status`, or `identity.changed`, often carried over a
-  `SignalFrame`.
-- Process event: normal input/work delivered to a process conversation or inbox.
-- Process signal: process control operation such as abort, kill, reset, pause,
-  resume, or reload.
+## Process IPC
 
-In short: a `SignalFrame` is a frame kind; a process signal is a runtime
-semantic.
+`proc.ipc.send` provides asynchronous same-owner process delivery.
+`proc.ipc.call` adds a bounded request with a call id and deadline. Both require a
+registered source process, an existing target pid, and matching owners. The
+Kernel validates those invariants and sends kernel-only `proc.ipc.deliver` to the
+target Process Durable Object.
 
-## Process Conversations
+IPC acceptance is not completion. A successful send or call means the event was
+started or queued by the target. A call result is delivered later to the source
+process as `ipc.reply` or `ipc.timeout`.
 
-Each process should support one or more conversations.
+The target pid is sufficient: IPC cannot select another history inside the
+target process.
 
-A conversation is the process-local unit for:
+## History, compaction, and branching
 
-- message history
-- queued incoming events
-- participants
-- surface routing
-- HIL state
-- run state
-- narrowed context/tool policy
+The Process Durable Object owns active history, compaction policy, archive
+segments, and generation state. Exact archived transcripts remain outside the
+active model context until explicitly read or used to fork.
 
-Existing processes and existing callers should continue to work through a
-default conversation. Current calls such as `proc.send` and `proc.history` can
-gain an optional `conversationId` while preserving the current behavior when it
-is omitted.
-
-The first implementation should remain process-serial: a process may have many
-conversations, but only one active agent run at a time. Per-conversation or
-parallel execution can be added later after state isolation is mature.
-
-Future process concurrency can be modeled explicitly:
-
-```ts
-type ProcessConcurrency =
-  | { mode: "serial" }
-  | { mode: "per-conversation"; maxRuns?: number }
-  | { mode: "parallel"; maxRuns: number };
-```
-
-The default should be `serial`.
-
-## Process Events
-
-Content-bearing input should enter a process as a typed event, not as an
-untyped chat string.
-
-Example shape:
-
-```ts
-type ProcessEvent = {
-  id: string;
-  source: ProcessPrincipal;
-  target: {
-    pid: string;
-    conversationId?: string;
-    port?: string;
-  };
-  kind:
-    | "user.message"
-    | "adapter.message"
-    | "process.message"
-    | "process.call"
-    | "schedule.tick"
-    | "hil.reply";
-  payload: unknown;
-  traceId?: string;
-  replyTo?: EventReplyTarget;
-  createdAtMs: number;
-};
-```
-
-Some events may be rendered into conversation history. Others may be handled as
-structured input. The runtime should not have to pretend that every inbound
-thing is a user message.
-
-When a runtime event is rendered into model context, it should be visibly marked
-as such. The current convention is a conversation message that starts with
-`[Process Event]:`.
-
-## IPC Primitives
-
-The process syscall surface should grow in layers.
-
-Compatibility extensions:
-
-- `proc.send`: optional `conversationId`; maps to a process event.
-- `proc.history`: optional `conversationId`.
-- `proc.abort`: optionally scoped to a conversation/run where possible.
-- `proc.reset`: should define whether it resets one conversation or the whole
-  process.
-
-Conversation syscalls:
-
-- `proc.conversation.open`
-- `proc.conversation.list`
-- `proc.conversation.get`
-- `proc.conversation.close`
-
-Process-to-process syscalls:
-
-- `proc.mail`: async process-to-process delivery with no immediate response.
-- `proc.call`: request/response delivery with timeout and bounded result.
-- `proc.delegate`: higher-level helper for bounded task delegation.
-
-The first version should support same-owner communication only. Cross-user
-conversation and IPC should wait until process ACLs and context/tool narrowing
-are explicit.
-
-## Conversation Compaction and Reset
-
-Compaction and reset should be first-class conversation lifecycle operations,
-not hidden automation.
-
-The Linux-like model is log rotation plus checkpointing:
-
-- A conversation has an active working log.
-- Compaction rotates an old prefix of that log into an archive segment, writes a
-  visible summary, and keeps the conversation id.
-- Reset rotates the active log into an archive segment and starts a new
-  generation for the same conversation or a new conversation, depending on the
-  requested mode.
-- Checkpointing writes durable continuity artifacts for workspace-backed
-  processes.
-
-This keeps all history movement inspectable. No transcript should disappear into
-an unmodeled background flow.
-
-### Conversation generations and segments
-
-A conversation should track an active generation. Reset increments the
-generation. Compaction creates archive segments inside a generation.
-
-Possible storage concepts:
-
-```ts
-type ConversationGeneration = {
-  pid: string;
-  conversationId: string;
-  generation: number;
-  createdAtMs: number;
-  reason?: string;
-};
-
-type ConversationSegment = {
-  id: string;
-  pid: string;
-  conversationId: string;
-  generation: number;
-  kind: "compaction" | "reset" | "checkpoint";
-  fromMessageId: number;
-  toMessageId: number;
-  archiveUri: string;
-  summaryMessageId?: number;
-  summaryUri?: string;
-  reason?: string;
-  createdAtMs: number;
-};
-```
-
-Message, queue, pending tool call, HIL, and run records should carry the
-conversation id and generation. Late results from an old generation must not
-mutate the active generation.
-
-### Compact
-
-Compaction is lossy for the active model context but should be lossless for raw
-storage.
-
-A compact operation should:
-
-1. Require the conversation to be idle, or queue until the active run completes.
-2. Select an old prefix of active messages.
-3. Archive the exact selected messages as JSONL, compressed where appropriate.
-4. Accept a markdown summary or generate one from the selected prefix.
-5. Replace the selected active messages with one explicit summary/system record.
-6. Record a `ConversationSegment`.
-7. Allow archived segment reads without restoring the archived messages.
-8. Emit `proc.changed` with lifecycle and conversation changes over the
-   existing `SignalFrame` transport.
-
-The summary record should say what happened and where the exact archive lives.
-Agents should be able to inspect the archive through normal history or
-filesystem surfaces.
-
-Compaction should be callable explicitly:
-
-- `proc.conversation.compact`
-- `proc.conversation.fork`
-- `proc.conversation.segment.read`
-- `proc.conversation.segments`
-
-`proc.conversation.fork` is the user-facing branch operation. Given a live
-message id it duplicates the conversation through that message into a new
-process-local conversation. Given a compacted segment id it restores archived
-history into a new conversation.
-
-It may also run automatically under a visible conversation policy, but that
-policy must be part of process/conversation state.
-
-Example policy:
-
-```ts
-type ConversationContextPolicy = {
-  overflow: "auto-compact" | "fail";
-  compactAtPressure: number;
-  keepLast: number;
-};
-```
-
-`proc.conversation.policy.get` and `proc.conversation.policy.set` expose this
-policy. The default auto-compacts at 90% pressure while keeping the newest 80
-stored messages, as part of normal process-run preflight before a model call.
-
-Automatic compaction is acceptable when it is policy-driven, recorded, and
-visible. It should not be a secret background subsystem.
-
-### Reset
-
-Reset is an explicit boundary. It should archive the active generation, clear
-active run state, and start fresh.
-
-Reset should be callable explicitly:
-
-- `proc.conversation.reset`
-
-Reset options should define whether to:
-
-- archive exact transcript
-- carry forward a generated summary
-- clear summary and start empty
-- reset only one conversation
-- reset the whole process
-
-The default should preserve the exact transcript in archive storage. Carrying a
-summary forward should be explicit, because a reset often means "forget the
-working conversation."
-
-Process-wide reset archives each non-empty conversation under the run-as
-agent's home:
-
-```text
-/home/<agent>/conversations/<conversation-id>/<archive-id>.<conversation-id>.gen-<generation>.jsonl.gz
-```
-
-### Checkpoint
-
-Checkpointing should remain distinct from compaction and reset. The current
-runtime persists reset, kill, and compaction transcripts as exact home
-conversation archives; richer checkpoint artifacts remain future work.
-
-### History access
-
-The ordinary history API should remain convenient for active history:
+The public history operations are:
 
 - `proc.history`
+- `proc.history.policy.get`
+- `proc.history.policy.set`
+- `proc.history.compact`
+- `proc.history.segments`
+- `proc.history.segment.read`
+- `proc.fork`
 
-It should grow options for archived or segmented history:
+`proc.fork` is the branch operation. It snapshots only committed history; it
+does not copy an active run, queued input, pending tools, or pending HIL. The
+Kernel asks the source process to export the selected history, spawns a new
+process with the same run-as identity and execution settings, imports the
+history into that empty process, and removes temporary archive objects. A
+failure rolls the child back.
 
-- active generation only
-- include summary markers
-- include archived segment metadata
-- read a specific segment
-- read a specific generation
-
-Exact archived transcript access should be explicit so normal model context does
-not accidentally reload old bulk history.
+`proc.history.export` and `proc.history.import` are kernel-only syscalls. They use
+the normal syscall request path so branching does not create a parallel internal
+API. The Durable Object methods that receive those frames are transport details,
+not another semantic surface.
 
 ## Permissions
 
-A process owner is not enough to define conversation authority.
+The Kernel authenticates callers and enforces process ownership at the syscall
+boundary. Process-local maximum capabilities still constrain calls made by the
+agent loop. Same-owner IPC is the only supported process-to-process authority
+model today; cross-user process access requires an explicit ACL design.
 
-A process has maximum capabilities. A conversation narrows what a participant
-can see and do. This prevents guest users, adapters, or other
-processes from implicitly gaining access to the owner's private context or tool
-surface.
-
-Conversation ACLs should eventually cover:
-
-- `converse`
-- `read_history`
-- `send_event`
-- `signal`
-- `manage`
-- `schedule`
-
-Conversation policy should also cover context and tools:
-
-```ts
-type ConversationPolicy = {
-  context: "owner-private" | "shared" | "guest";
-  tools: {
-    allowedCaps: string[];
-  };
-};
-```
-
-Cross-user access should default to restricted context and restricted tools.
-Owner-private home context should not leak into guest conversations unless the
-owner explicitly allows it.
+Forking preserves the source run-as identity and does not broaden its
+capabilities. The new process receives its own lifecycle and can diverge safely
+after import.
 
 ## Scheduler
 
-The previous Kernel automation path has been removed. The old archivist/curator
-mechanism is not the desired scheduler foundation.
-
-The `sched.*` syscalls are the public scheduler surface:
+The scheduler is Kernel-owned. The public surface is:
 
 - `sched.list`
 - `sched.add`
@@ -371,27 +110,10 @@ The `sched.*` syscalls are the public scheduler surface:
 - `sched.remove`
 - `sched.run`
 
-The scheduler is Kernel-owned. It stores schedule definitions, calculates next
-fire times, runs due work, enforces permissions, tracks run history, and
-dispatches typed targets.
-
-Schedule records should include:
-
-- id
-- owner uid
-- creator principal
-- run-as principal
-- name and description
-- enabled state
-- schedule expression
-- target
-- overlap policy
-- misfire policy
-- retry policy
-- created/updated timestamps
-- last and next run state
-
-Example target shape:
+It stores definitions, calculates next fire times, enforces permissions, tracks
+run history, and dispatches typed targets. Supported expressions are `at`,
+`after`, `every`, and timezone-aware five-field `cron`. Supported targets are
+`command.exec`, `process.spawn`, `process.event`, and `adapter.send`.
 
 ```ts
 type ScheduleTarget =
@@ -412,7 +134,6 @@ type ScheduleTarget =
   | {
       kind: "process.event";
       pid: string;
-      conversationId?: string;
       message: string;
       data?: Record<string, unknown>;
       replyTo?: AdapterMessageDestination;
@@ -424,176 +145,48 @@ type ScheduleTarget =
     };
 ```
 
-The current implementation supports:
-
-- `at`
-- `after`
-- `every`
-- timezone-aware five-field `cron`
-- `command.exec`
-- `process.spawn`
-- `process.event`
-- `adapter.send`
-
-Process lifecycle targets, advanced retry behavior, and cross-user run-as rules
-remain future work.
+Schedule success reports target dispatch, not model-run completion. A successful
+`process.event` means the target process admitted the event. A successful
+`process.spawn` means the new process was created and accepted its initial
+prompt. Child answers remain in the child history unless another mechanism
+consumes them.
 
 ### Chat delivery contracts
 
-The native shell exposes two intentionally different schedule forms:
+The native shell exposes two distinct schedule forms:
 
 ```bash
 sched add --here --name NAME --after 10m --message "Run the agent"
 sched add --to DESTINATION --name NAME --after 10m --message "Send this text"
 ```
 
-`--here` requires a process-backed shell and creates a `process.event` for
-the current process and conversation. When called during an adapter run, it
-captures the current authorized adapter destination in `replyTo`; the future
-event runs the agent, and its terminal answer follows that destination. Without
-an adapter route, the result remains in the process conversation.
+`--here` requires a process-backed shell and creates a `process.event` for the
+current pid. During an adapter run it captures the authorized adapter destination
+in `replyTo`; the future terminal answer follows that destination. Without an
+adapter route, the result remains in process history.
 
-`--to` resolves a known authorized adapter destination, including one whose
-account is currently offline, and creates an `adapter.send` scheduled action.
-It sends the stored text directly without running an agent.
+`--to` creates an `adapter.send` action and sends the stored text directly
+without running an agent. The scheduler validates destination ownership when a
+schedule is created or updated, and delivery rechecks actor and surface
+authority.
 
-An adapter destination contains adapter, account, linked actor, surface, and
-optional thread. It omits the triggering platform message id and display labels.
-The scheduler validates destination ownership when schedules are created or
-updated, and delivery rechecks the actor/surface authority. A successful
-`process.event` schedule run means event admission, not model completion.
+## Linux-like views
 
-## Linux-Like Views
+Syscalls are the source of truth. The filesystem exposes read-only views of the
+same process state:
 
-The structured syscall/API model is the source of truth. Filesystem views make
-the same state legible to users and agents.
-
-Implemented views:
-
-- `/proc/<pid>/conversations`
-- `/proc/<pid>/conversations/<conversationId>`
-- `/proc/<pid>/conversations/<conversationId>/history`
-- `/proc/<pid>/conversations/<conversationId>/segments`
+- `/proc/<pid>/ai`
+- `/proc/<pid>/history`
+- `/proc/<pid>/identity`
+- `/proc/<pid>/segments`
+- `/proc/<pid>/status`
 - `/var/spool/cron`
 - `/var/log/gsv/scheduler`
 
-These are views over Kernel and Process state, not separate stores.
-
-## Implementation Plan
-
-### 1. Remove old automation
-
-Completed initial cleanup:
-
-- removed `gateway/src/kernel/automation.ts`
-- removed `AutomationStore` wiring from the Kernel
-- removed archivist/curator scheduling and dispatch from `gateway/src/kernel/do.ts`
-- removed archivist/curator default profile config
-- removed archivist/curator profile list entries
-
-Keep the existing `SignalFrame` protocol and `signal.watch` behavior unchanged.
-
-### 2. Add process event and conversation types
-
-Partially started. Conversation identifiers and default conversation constants
-exist in the Process runtime. Broader process event, principal, and process
-signal types still need to be introduced. Do not change frame transport naming
-in this phase.
-
-### 3. Add default process conversations
-
-Completed initial storage slice. The Process DO has a `conversations` table, and
-message, queue, pending tool call, and HIL records are scoped to a conversation
-and generation. Current behavior is preserved through the `default`
-conversation.
-
-### 4. Extend proc syscalls
-
-Completed conversation management slice. `proc.send` and `proc.history` accept
-optional `conversationId`, and `proc.conversation.open`, `proc.conversation.list`,
-`proc.conversation.get`, and `proc.conversation.close` expose process-local
-conversation lifecycle state.
-
-### 5. Add conversation lifecycle operations
-
-Partially completed. `proc.conversation.reset` archives a selected conversation
-by default, clears its active messages and queued/runtime state, increments its
-generation, and leaves other conversations intact. `proc.conversation.compact`
-archives an old prefix of active messages, inserts a visible summary marker at
-the prefix boundary, and records a `compaction` segment that can be listed with
-`proc.conversation.segments`. `proc.conversation.segment.read` pages archived
-messages out of a compacted segment without restoring them. `proc.conversation.fork`
-can branch a live conversation through a message id, or restore a compacted
-segment into a new conversation, including the live suffix that existed at the
-compaction boundary by default. Compaction and fork emit `proc.changed` with
-lifecycle changes so UI clients can refresh without polling. Process-wide
-`proc.reset` and `proc.kill` archive every non-empty conversation under the
-run-as agent's home before clearing all conversation messages and runtime state.
-
-Still pending: checkpoint and richer segmented history read APIs. Preserve raw
-transcript archives, visible summary markers, and forkable segments.
-
-### 6. Add same-owner IPC
-
-Partially completed. `proc.ipc.send` provides asynchronous same-owner
-process-to-process delivery. `proc.ipc.call` adds a bounded call request: the
-kernel records a call id and deadline, delivers the request to the target
-process, and later sends `ipc.reply` or `ipc.timeout` back to the source
-process. Both public syscalls only work from a registered source process,
-validate that source and target processes have the same owner, and deliver through
-kernel-only `proc.ipc.deliver`.
-
-The process-facing userland shape is the shell `proc` command (`proc send` and
-`proc call`) rather than a direct model tool. `proc.ipc.*` remains the syscall
-ABI and enforcement point.
-
-Implemented:
-
-- async mail
-- bounded call
-- durable `proc delegate` helper
-
-Defer cross-user IPC until ACLs are in place.
-
-### 7. Implement Kernel scheduler
-
-Implemented:
-
-- Kernel-owned schedule store and `sched.*` syscall handlers.
-- `at`, `after`, `every`, and timezone-aware five-field cron expressions.
-- `process.spawn` targets for scheduled background work.
-- `process.event` targets that enter process context as visible process events.
-- optional `process.event.replyTo` destinations captured by `sched add --here`
-  during an adapter run.
-- direct `adapter.send` scheduled actions created by `sched add --to`.
-- Cloudflare Agent schedules as one-shot wake-ups only; GSV stores the schedule
-  definition and computes the next fire time.
-
-Still pending:
-
-- `process.lifecycle` schedule targets.
-
-### 8. Add filesystem views
-
-Implemented process conversation and scheduler state as Linux-like virtual
-paths backed by the owning Process and Kernel state.
-
-### 9. Add cross-user access
-
-Add process ACLs and cross-user conversation policies once the same-owner model
-is proven.
-
-## Non-Goals For The First Pass
-
-- renaming `SignalFrame`
-- full POSIX compatibility
-- arbitrary cross-user IPC
-- arbitrary parallel process execution
-- advanced cron syntax without a reliable parser
-- replacing `signal.watch` in the same change
+These paths do not introduce separate storage or lifecycle semantics.
 
 ## See also
 
 - [The Agent Loop](./agent-loop.md)
-- [Process Handoffs](./process-handoffs.md)
-- [Guides](../how-to/)
+- [Context Compaction](./context-compaction.md)
+- [Syscalls Reference](../reference/syscalls.md)
