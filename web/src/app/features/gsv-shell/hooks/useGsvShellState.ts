@@ -236,6 +236,9 @@ export function useGsvShellState({
 
   useEffect(() => {
     const onPopState = () => {
+      // Browser history navigation invalidates the "opened from" memory — the
+      // stored origin no longer reflects how we reached the current screen.
+      closeReturnRouteRef.current = null;
       activateRoute(shellRouteFromLocation(window.location), "none");
     };
     window.addEventListener("popstate", onPopState);
@@ -346,7 +349,11 @@ export function useGsvShellState({
     }
     const back = closeReturnRouteRef.current;
     closeReturnRouteRef.current = null;
-    activateRoute(back ?? { surface: "desktop" });
+    // Guard against a stale origin that resolves to the screen being closed
+    // (e.g. reached via browser Back) — returning there would just remove and
+    // re-add the same tab. Fall back to the desktop in that case.
+    const backTab = back ? shellTabForRoute(back) : null;
+    activateRoute(backTab && backTab.key !== activeTabKey ? back! : { surface: "desktop" });
   };
 
   const openControlMenu = (): void => {
