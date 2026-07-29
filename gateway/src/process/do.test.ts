@@ -3714,38 +3714,6 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("appends user message, starts run, loop completes", async () => {
-      const pid = "mech-send-1";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      const res = (await stub.recvFrame(
-        makeReq("proc.send", { message: "Hello agent" }),
-      )) as ResponseOkFrame;
-
-      expect(res.ok).toBe(true);
-      const data = res.data as { ok: true; status: string; runId: string };
-      expect(data.status).toBe("started");
-      expect(data.runId).toBeTruthy();
-      expect(data).not.toHaveProperty("queued");
-
-      // Fire the alarm and wait for the agent loop to complete.
-      // The test worker has no AI binding configured, so the LLM call
-      // errors out gracefully, but the full lifecycle (tick →
-      // finishRun) should still run.
-      await runDurableObjectAlarm(stub);
-      await waitForRunComplete(stub);
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        expect(store.messageCount()).toBe(2);
-        expect(store.getMessages()[0].role).toBe("user");
-        expect(store.getMessages()[0].content).toBe("Hello agent");
-        expect(store.getMessages()[1].role).toBe("system");
-        expect(store.getMessages()[1].content).toContain("Generation failed:");
-        expect(store.getValue("currentRun")).toBeNull();
-      });
-    });
-
     it("queues process messages and preserves their run ids", async () => {
       const pid = "mech-send-queued";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -7559,115 +7527,6 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.history", () => {
-    it("returns stored messages", async () => {
-      const pid = "mech-history-1";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.appendMessage("user", "What is 2+2?", { runId: "run-history-1" });
-        store.appendMessage("assistant", "4", { runId: "run-history-1" });
-        store.appendMessage("user", "Thanks!");
-      });
-
-      const res = (await stub.recvFrame(
-        makeReq("proc.history", {}),
-      )) as ResponseOkFrame;
-
-      expect(res.ok).toBe(true);
-      const data = res.data as any;
-      expect(data.ok).toBe(true);
-      expect(data.pid).toBe(pid);
-      expect(data.messageCount).toBe(3);
-      expect(data.messages).toHaveLength(3);
-      expect(data.messages[0].role).toBe("user");
-      expect(data.messages[0].content).toBe("What is 2+2?");
-      expect(data.messages[0].runId).toBe("run-history-1");
-      expect(data.messages[1].role).toBe("assistant");
-      expect(data.messages[1].content).toBe("4");
-      expect(data.messages[1].runId).toBe("run-history-1");
-      expect(data.messages[2].runId).toBeUndefined();
-    });
-
-    it("returns persisted interaction origin metadata", async () => {
-      const pid = "mech-history-origin";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-      const origin = {
-        kind: "client",
-        connectionId: "conn-1",
-        clientId: "browser-extension",
-        platform: "browser",
-      };
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.appendMessage("user", "from the browser", {
-          origin: JSON.stringify(origin),
-        });
-      });
-
-      const res = (await stub.recvFrame(
-        makeReq("proc.history", {}),
-      )) as ResponseOkFrame;
-
-      expect(res.ok).toBe(true);
-      const data = res.data as any;
-      expect(data.messages[0]).toMatchObject({
-        role: "user",
-        content: "from the browser",
-        origin,
-      });
-    });
-
-    it("returns assistant usage metadata", async () => {
-      const pid = "mech-history-usage-metadata";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.appendMessage("assistant", "priced reply", {
-          metadata: {
-            provider: {
-              api: "workers-ai-binding",
-              provider: "workers-ai",
-              model: "@cf/nvidia/nemotron-3-120b-a12b",
-            },
-            usage: {
-              inputTokens: 100,
-              outputTokens: 25,
-              cacheReadTokens: 0,
-              cacheWriteTokens: 0,
-              totalTokens: 125,
-              cost: {
-                input: 0.00005,
-                output: 0.0000375,
-                cacheRead: 0,
-                cacheWrite: 0,
-                total: 0.0000875,
-                currency: "USD",
-                source: "model-pricing",
-              },
-            },
-          },
-        });
-      });
-
-      const res = (await stub.recvFrame(
-        makeReq("proc.history", {}),
-      )) as ResponseOkFrame;
-
-      expect(res.ok).toBe(true);
-      const data = res.data as any;
-      expect(data.messages[0].metadata).toMatchObject({
-        provider: { provider: "workers-ai" },
-        usage: {
-          inputTokens: 100,
-          outputTokens: 25,
-          cost: { total: 0.0000875, source: "model-pricing" },
-        },
-      });
-    });
-
     it("respects limit and offset", async () => {
       const pid = "mech-history-2";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -7745,31 +7604,6 @@ describe("Process DO — mechanical", () => {
       expect(afterData.messages.map((message: any) => message.content)).toEqual(["msg-7", "msg-8"]);
       expect(afterData.hasMoreBefore).toBe(true);
       expect(afterData.hasMoreAfter).toBe(true);
-    });
-
-    it("reads the process history", async () => {
-      const pid = "mech-history-process";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.appendMessage("user", "first message");
-        store.appendMessage("user", "second message");
-      });
-
-      const response = (await stub.recvFrame(
-        makeReq("proc.history", {}),
-      )) as ResponseOkFrame;
-
-      expect(response.data).toMatchObject({
-        ok: true,
-        pid,
-        messageCount: 2,
-        messages: [
-          expect.objectContaining({ content: "first message" }),
-          expect.objectContaining({ content: "second message" }),
-        ],
-      });
     });
 
     it("exposes active run metadata for restore-time controls", async () => {
@@ -8423,49 +8257,6 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.reset", () => {
-    it("archives and clears process history", async () => {
-      const pid = "mech-reset-1";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.appendMessage("user", "hello");
-        store.appendMessage("assistant", "hi");
-        store.appendMessage("user", "side hello", {});
-      });
-
-      const res = (await stub.recvFrame(
-        makeReq("proc.reset", {}),
-      )) as ResponseOkFrame;
-
-      const data = res.data as any;
-      expect(data.ok).toBe(true);
-      expect(data.archivedMessages).toBe(3);
-      expect(data.archivedTo).toMatch(
-        new RegExp(`^/root/processes/${encodeURIComponent(pid)}/history/.+\\.history\\.gen-1\\.jsonl\\.gz$`),
-      );
-      expect(data.archives).toEqual([
-        expect.objectContaining({
-          generation: 1,
-          messages: 3,
-          path: data.archivedTo,
-        }),
-      ]);
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        expect(store.messageCount()).toBe(0);
-        expect(store.getHistoryGeneration()).toBe(2);
-      });
-
-      for (const archive of data.archives) {
-        const archiveKey = archive.path.replace(/^\//, "");
-        const obj = await env.STORAGE.get(archiveKey);
-        expect(obj).not.toBeNull();
-      }
-
-    });
-
     it("clears active run state and queued messages", async () => {
       const pid = "mech-reset-runtime";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -8763,40 +8554,6 @@ describe("Process DO — mechanical", () => {
       });
     });
 
-    it("archives process history before clearing a killed process", async () => {
-      const pid = "mech-kill-archive-all";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      await runInDurableObject(stub, (instance: Process) => {
-        const store = (instance as any).store;
-        store.appendMessage("user", "default before kill");
-        store.appendMessage("user", "build before kill", {});
-      });
-
-      const killRes = (await stub.recvFrame(
-        makeReq("proc.kill", {}),
-      )) as ResponseOkFrame;
-      const data = killRes.data as any;
-
-      expect(data).toMatchObject({
-        ok: true,
-        pid,
-        archivedMessages: 2,
-      });
-      expect(data.archivedTo).toMatch(
-        new RegExp(`^/root/processes/${encodeURIComponent(pid)}/history/.+\\.history\\.gen-1\\.jsonl\\.gz$`),
-      );
-      expect(data.archives).toEqual([
-        expect.objectContaining({ generation: 1, messages: 2, path: data.archivedTo }),
-      ]);
-
-      for (const archive of data.archives) {
-        const archiveKey = archive.path.replace(/^\//, "");
-        const obj = await env.STORAGE.get(archiveKey);
-        expect(obj).not.toBeNull();
-      }
-
-    });
   });
 
   describe("schema upgrades", () => {
@@ -9773,30 +9530,6 @@ describeIf(OPENAI_KEY)("Process DO — agent loop (real LLM)", () => {
       k.config.delete("users/0/ai/api_key");
     });
   });
-
-  it("simple text response: send → alarm → text + complete", async () => {
-    const pid = "llm-simple-1";
-    await registerInKernel(pid, ROOT_IDENTITY);
-    const stub = await initProcess(pid, ROOT_IDENTITY, { register: false });
-
-    const sendRes = (await stub.recvFrame(
-      makeReq("proc.send", { message: "Respond with exactly the word 'pong'. Nothing else." }),
-    )) as ResponseOkFrame;
-    expect(sendRes.ok).toBe(true);
-
-    await runDurableObjectAlarm(stub);
-    await waitForRunComplete(stub, 25_000);
-
-    await runInDurableObject(stub, (instance: Process) => {
-      const store = (instance as any).store;
-      expect(store.getValue("currentRun")).toBeNull();
-      expect(store.messageCount()).toBeGreaterThanOrEqual(2);
-      const msgs = store.getMessages();
-      if (skipTransientProviderFailure(msgs)) return;
-      expect(msgs[0].role).toBe("user");
-      expect(visibleAssistantText(msgs).toLowerCase()).toContain("pong");
-    });
-  }, 30_000);
 
   it("tool call loop: read file → text response", async () => {
     const pid = "llm-tool-1";

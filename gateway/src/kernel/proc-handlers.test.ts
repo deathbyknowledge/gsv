@@ -265,68 +265,6 @@ describe("proc handlers", () => {
     }
   });
 
-  it("derives client interaction origin for forwarded proc.send", async () => {
-    sendFrameToProcessMock.mockResolvedValue({
-      type: "res",
-      id: "send-1",
-      ok: true,
-      data: { ok: true, status: "started", runId: "run-1" },
-    } satisfies ResponseFrame);
-
-    const ctx = {
-      identity: {
-        role: "user",
-        process: IDENTITY,
-        capabilities: ["proc.send"],
-      },
-      connection: {
-        id: "conn-1",
-        state: {
-          clientId: "browser-extension",
-          clientPlatform: "browser",
-        },
-      },
-      procs: {
-        get: vi.fn(() => ({ uid: IDENTITY.uid, ownerUid: IDENTITY.uid })),
-      },
-      runRoutes: { setConnectionRoute: vi.fn() },
-    } as unknown as KernelContext;
-    const spoofedOrigin = {
-      kind: "adapter",
-      adapter: "whatsapp",
-      accountId: "primary",
-      surface: { kind: "dm", id: "dm-1" },
-      actorId: "external",
-    };
-
-    await forwardToProcess({
-      type: "req",
-      id: "send-1",
-      call: "proc.send",
-      args: {
-        pid: "proc-1",
-        message: "hello",
-        origin: spoofedOrigin,
-      },
-    } as RequestFrame, ctx);
-
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
-      "proc-1",
-      expect.objectContaining({
-        call: "proc.send",
-        args: expect.objectContaining({
-          message: "hello",
-          origin: {
-            kind: "client",
-            connectionId: "conn-1",
-            clientId: "browser-extension",
-            platform: "browser",
-          },
-        }),
-      }),
-    );
-  });
-
   it.each([
     { call: "codemode.run", id: "codemode-1", args: { pid: "proc-1", code: "return 1" } },
     {

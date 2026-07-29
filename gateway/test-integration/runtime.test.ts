@@ -299,6 +299,7 @@ describe("gateway runtime integration", () => {
   });
 
   it("routes reciprocal adapter ingress, durable commands, and automatic replies", async () => {
+    const beforeChallenge = await processHistoryCounts(client);
     const challengeFrame = inboundFrame({
       id: "challenge",
       deliveryId: "challenge-delivery",
@@ -324,6 +325,7 @@ describe("gateway runtime integration", () => {
       id: "challenge-replay",
     }));
     expect(challengeReplay).toEqual({ ...challenge, replayed: "completed" });
+    expect(await processHistoryCounts(client)).toEqual(beforeChallenge);
 
     const consumed = await client.sys.link.consume({ code: challenge.challenge.code.toLowerCase() });
     expect(consumed).toMatchObject({
@@ -564,6 +566,19 @@ async function configureDeterministicAi(
       },
     },
   });
+}
+
+async function processHistoryCounts(client: GSVClient): Promise<Array<{
+  pid: string;
+  messageCount: number;
+}>> {
+  const { processes } = await client.proc.list();
+  const pids = processes.map(({ pid }) => pid).sort();
+  return await Promise.all(pids.map(async (pid) => {
+    const history = await client.proc.history({ pid });
+    if (!history.ok) throw new Error(history.error);
+    return { pid, messageCount: history.messageCount };
+  }));
 }
 
 function inboundFrame(options: {
