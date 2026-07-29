@@ -51,6 +51,13 @@ export function Dialog({
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
+        // If a nested modal (e.g. a ConfirmModal) is open inside this dialog,
+        // let it handle Escape — don't close the whole host dialog out from
+        // under it. querySelector matches descendants only, never this root.
+        const root = rootRef.current;
+        if (root?.querySelector('[role="dialog"], [role="alertdialog"]')) {
+          return;
+        }
         onClose?.();
         return;
       }

@@ -245,15 +245,20 @@ export function useGsvShellState({
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
+  // Remember the screen we're leaving so closing the one we open returns here
+  // (shared by every cross-surface open — plain surfaces and settings routes).
+  const recordCloseOrigin = (targetSurface: ShellSurfaceId): void => {
+    const origin = activePageTab ? shellRouteForTab(activePageTab) : null;
+    closeReturnRouteRef.current = origin && origin.surface !== targetSurface ? origin : null;
+  };
+
   const openSurface = (surface: ShellSurfaceId): void => {
     if (surface === "desktop") {
       activateRoute({ surface: "desktop" });
       return;
     }
 
-    // Remember the screen we're leaving so closing the one we open returns here.
-    const origin = activePageTab ? shellRouteForTab(activePageTab) : null;
-    closeReturnRouteRef.current = origin && origin.surface !== surface ? origin : null;
+    recordCloseOrigin(surface);
 
     if (surface === "settings") {
       activateRoute({ surface: "settings", settingsRoute: { view: "overview" } });
@@ -264,6 +269,7 @@ export function useGsvShellState({
   };
 
   const openSettingsRoute = (route: ShellSettingsRoute): void => {
+    recordCloseOrigin("settings");
     activateRoute({ surface: "settings", settingsRoute: route });
   };
 
