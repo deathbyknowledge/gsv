@@ -18,7 +18,7 @@ export function AccountDetails({
   const usernameValue = draft.account.username;
   const usernameInvalid = usernameValue.length > 0 && !isValidUsername(usernameValue);
   const agentValue = draft.account.agentName;
-  const agentInvalid = agentValue.length > 0 && !isValidUsername(agentValue);
+  const agentInvalid = agentValue.trim().length > 0 && !isValidUsername(agentValue);
 
   return (
     <section class="onboarding-section" data-setup-detail-step="account" hidden={draft.stage !== "details" || activeStep !== "account"}>

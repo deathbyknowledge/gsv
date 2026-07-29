@@ -289,6 +289,7 @@ export function useSessionScreensState({
       onUsername: (value: string) => {
         setLoginValidationError(null);
         setLoginUsername(value);
+        setLoginUsernameTouched(true);
       },
       onPassword: (value: string) => {
         setLoginValidationError(null);
