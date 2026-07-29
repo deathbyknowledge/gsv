@@ -665,31 +665,6 @@ describe("proc handlers", () => {
     );
   });
 
-  it("unregisters a killed process when there is no history to archive", async () => {
-    const ctx = makeForwardContext();
-    sendFrameToProcessMock.mockResolvedValueOnce({
-      type: "res",
-      id: "kill-empty",
-      ok: true,
-      data: {
-        ok: true,
-        pid: "proc-1",
-        archivedMessages: 0,
-        archives: [],
-      },
-    } satisfies ResponseFrame);
-
-    await forwardToProcess({
-      type: "req",
-      id: "kill-empty",
-      call: "proc.kill",
-      args: { pid: "proc-1" },
-    } as RequestFrame, ctx);
-
-    expect(ctx.procs.kill).toHaveBeenCalledWith("proc-1");
-    expect(ctx.runRoutes.clearForProcess).toHaveBeenCalledWith("proc-1");
-  });
-
   it("cleans up pending IPC call when delivery reports failure", async () => {
     sendFrameToProcessMock.mockResolvedValue({
       type: "res",

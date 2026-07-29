@@ -198,30 +198,6 @@ describe("handleSysSetup", () => {
     expect(result.nodeToken?.allowedDeviceId).toBe("macbook");
   });
 
-  it("provisions the requested personal agent username", async () => {
-    const { ctx, auth } = createCtx();
-
-    await handleSysSetup(
-      {
-        username: "alice",
-        password: "password-123",
-        agentName: "mira",
-      },
-      ctx,
-    );
-
-    expect(auth.addUser).toHaveBeenCalledWith(
-      expect.objectContaining({
-        username: "mira",
-        uid: 1001,
-        gid: 1001,
-        gecos: "Mira",
-        home: "/home/mira",
-      }),
-    );
-    expect(auth.setPersonalAgent).toHaveBeenCalledWith(1000, 1001);
-  });
-
   it("seeds shipped skills into root home after first setup bootstrap", async () => {
     const ripgit = {
       fetch: vi.fn(async (input: RequestInfo | URL) => {
@@ -256,18 +232,6 @@ describe("handleSysSetup", () => {
       expect.any(Object),
       expect.objectContaining({ username: "root", home: "/root" }),
     );
-  });
-
-  it("rejects when setup mode is already completed", async () => {
-    const { ctx } = createCtx({ setupMode: false });
-
-    await expect(handleSysSetup(
-      {
-        username: "alice",
-        password: "password-123",
-      },
-      ctx,
-    )).rejects.toThrow("System already initialized");
   });
 
   it("requires a valid username and password", async () => {

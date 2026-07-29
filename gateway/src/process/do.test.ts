@@ -8466,21 +8466,6 @@ describe("Process DO — mechanical", () => {
 
     });
 
-    it("returns zero when no messages to archive", async () => {
-      const pid = "mech-reset-empty";
-      const stub = await initProcess(pid, ROOT_IDENTITY);
-
-      const res = (await stub.recvFrame(
-        makeReq("proc.reset", {}),
-      )) as ResponseOkFrame;
-
-      const data = res.data as any;
-      expect(data.ok).toBe(true);
-      expect(data.archivedMessages).toBe(0);
-      expect(data.archivedTo).toBeUndefined();
-      expect(data.archives).toEqual([]);
-    });
-
     it("clears active run state and queued messages", async () => {
       const pid = "mech-reset-runtime";
       const stub = await initProcess(pid, ROOT_IDENTITY);

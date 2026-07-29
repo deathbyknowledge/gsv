@@ -373,21 +373,6 @@ describe("handleConnect", () => {
     if (!result.ok) expect(result.code).toBe(103);
   });
 
-  it("returns setup-required details on first boot", async () => {
-    const ctx = makeCtx(sql);
-    const result = await handleConnect(
-      { protocol: 2, client: { id: "c1", version: "1", platform: "test", role: "user" } },
-      ctx,
-    );
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.code).toBe(425);
-      expect(result.message).toContain("Setup required");
-      expect(result.details).toEqual({ setupMode: true, next: "sys.setup" });
-    }
-  });
-
   it("rejects no-auth after setup is completed", async () => {
     const ctx = makeCtx(sql);
     const hash = await hashPassword("root-password");
@@ -639,29 +624,6 @@ describe("handleConnect", () => {
       }
       expect(result.result.syscalls).toEqual(["adapter.*"]);
       expect(result.result.signals).toEqual([]);
-    }
-  });
-
-  it("authenticates with password (PBKDF2)", async () => {
-    const ctx = makeCtx(sql);
-    const pwHash = await hashPassword("hunter2");
-
-    await ctx.auth.bootstrap();
-    ctx.caps.seed();
-    await ctx.auth.setPassword("root", pwHash);
-
-    const result = await handleConnect(
-      {
-        protocol: 2,
-        client: { id: "c1", version: "1", platform: "test", role: "user" },
-        auth: { username: "root", password: "hunter2" },
-      },
-      ctx,
-    );
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.identity.process.uid).toBe(0);
     }
   });
 

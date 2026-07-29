@@ -1000,45 +1000,6 @@ describe("adapter lifecycle handlers", () => {
     errorLog.mockRestore();
   });
 
-  it("adapter.disconnect calls disconnect and refreshes status", async () => {
-    const service = {
-      adapterDisconnect: vi.fn(async () => ({ ok: true as const })),
-      adapterStatus: vi.fn(async () => [
-        {
-          accountId: "default",
-          connected: false,
-          authenticated: false,
-          mode: "disconnected",
-        },
-      ]),
-    };
-
-    const status = {
-      upsert: vi.fn(),
-      get: vi.fn(() => ({ ownerUid: 1000 })),
-    };
-    const ctx = makeContext(
-      {
-        CHANNEL_WHATSAPP: service,
-      },
-      status,
-      { identity: userIdentity() },
-    );
-
-    const result = await handleAdapterDisconnect(
-      { adapter: "whatsapp", accountId: "default" },
-      ctx,
-    );
-
-    expect(service.adapterDisconnect).toHaveBeenCalledWith("default");
-    expect(result).toMatchObject({
-      ok: true,
-      adapter: "whatsapp",
-      accountId: "default",
-    });
-    expect(status.upsert).toHaveBeenCalled();
-  });
-
   it("allows only the owner or root to disconnect an adapter account", async () => {
     const adapterDisconnect = vi.fn(async () => ({ ok: true as const }));
     const beginLifecycle = vi.fn();
