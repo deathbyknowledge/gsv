@@ -175,7 +175,7 @@ jobs:
       - name: Type check
         run: npm exec --workspace gateway -- tsc --noEmit
       
-      - name: Run unit tests
+      - name: Run gateway tests
         run: npm run test:run --workspace gateway
 
   ripgit-test:

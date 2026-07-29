@@ -8,8 +8,11 @@
     "dev": "wrangler dev",
     "start": "wrangler dev",
     "cf-typegen": "wrangler types",
-    "test": "vitest",
-    "test:run": "vitest run"
+    "test": "vitest --config vitest.config.ts",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "typecheck:integration": "tsc --noEmit -p tsconfig.integration.json",
+    "test:integration": "npm run typecheck:integration && npm --prefix ../web run build && vitest run --config vitest.integration.config.ts",
+    "test:run": "npm run test:unit && npm run test:integration"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.0",
@@ -17,7 +20,7 @@
     "tsx": "^4.19.0",
     "typescript": "^5.5.2",
     "vitest": "^4.1.9",
-    "wrangler": "^4.84.1"
+    "wrangler": "^4.115.0"
   },
   "dependencies": {
     "@cloudflare/codemode": "^0.3.4",

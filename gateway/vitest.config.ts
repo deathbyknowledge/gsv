@@ -29,8 +29,8 @@ export default defineConfig({
     },
   },
   test: {
-    // Exclude e2e tests (they use bun:test, not vitest)
-    exclude: ["**/alchemy/**", "**/node_modules/**"],
+    // Integration tests own a standalone Wrangler harness process.
+    exclude: ["**/alchemy/**", "**/node_modules/**", "**/test-integration/**"],
     deps: {
       optimizer: {
         ssr: {
