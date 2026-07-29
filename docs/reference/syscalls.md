@@ -378,7 +378,7 @@ Runtime behavior:
 | `proc.conversation.segments` | Process DO | Lists recorded lifecycle segments for `conversationId` or `default`, including archive paths and summary marker ids. |
 | `proc.reset` | Process DO | Archives every non-empty conversation under the run-as agent's home, clears active execution state, queues, process media, and all conversation messages, then increments conversation generations. |
 | `proc.ipc.deliver` | Process DO direct path | Kernel-only through public dispatch. Delivers the validated IPC envelope from the kernel into the target conversation. |
-| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, and conversation hydration pointers. |
+| `proc.setidentity` | Process DO direct path | Kernel-only through public dispatch. Stores pid, identity, interaction mode, initial title and auto-title policy, and conversation hydration pointers. |
 
 ```ts
 type ProcHilRequest = {
@@ -610,7 +610,7 @@ type ProcessSyscalls = {
   };
 
   "proc.setidentity": {
-    args: { pid: string; identity: ProcessIdentity; interactive?: boolean; conversationId?: string; hydrateFrom?: string };
+    args: { pid: string; identity: ProcessIdentity; interactive?: boolean; title?: string; autoTitle?: boolean; conversationId?: string; hydrateFrom?: string };
     result: { ok: true };
   };
 };

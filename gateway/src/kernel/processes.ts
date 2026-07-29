@@ -141,6 +141,19 @@ export class ProcessRegistry {
     );
   }
 
+  setLabel(processId: string, label: string): boolean {
+    const normalized = label.trim();
+    if (!normalized || !this.get(processId)) {
+      return false;
+    }
+    this.sql.exec(
+      "UPDATE processes SET label = ? WHERE process_id = ?",
+      normalized,
+      processId,
+    );
+    return true;
+  }
+
   setState(processId: string, state: ProcessState): boolean {
     this.sql.exec(
       "UPDATE processes SET state = ?, last_active_at = ? WHERE process_id = ?",

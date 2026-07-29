@@ -86,6 +86,9 @@ export async function handleProcSpawn(
   const pid = `proc:${crypto.randomUUID()}`;
   const explicitRunAs = typeof args.runAs === "string" && args.runAs.trim().length > 0;
   const hasCustomSpawnOptions = args.cwd !== undefined;
+  const label = typeof args.label === "string" && args.label.trim().length > 0
+    ? args.label.trim()
+    : undefined;
 
   // An interactive, top-level spawn with no explicit run-as targets the caller's
   // default ("inbox") conversation with their personal agent — the stable
@@ -199,7 +202,7 @@ export async function handleProcSpawn(
       parentPid: parentPid ?? undefined,
       ownerUid,
       interactive,
-      label: args.label,
+      label,
       cwd: spawnIdentity.cwd,
     });
 
@@ -210,7 +213,7 @@ export async function handleProcSpawn(
       ownerUid,
       agentUid: spawnIdentity.uid,
       agentHome: spawnIdentity.home,
-      title: args.label ?? null,
+      title: label ?? null,
     });
     conversationId = conversation.conversationId;
     if (!ctx.conversations.setActivePid(conversationId, pid)) {
@@ -226,6 +229,8 @@ export async function handleProcSpawn(
         pid,
         identity: spawnIdentity,
         interactive,
+        ...(label ? { title: label } : {}),
+        autoTitle: label === undefined,
         conversationId,
       },
     });
@@ -271,7 +276,7 @@ export async function handleProcSpawn(
   return {
     ok: true,
     pid,
-    label: args.label,
+    label,
     cwd: spawnIdentity.cwd,
   };
 }

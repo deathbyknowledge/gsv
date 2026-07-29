@@ -2159,6 +2159,34 @@ describe("Kernel process device requests", () => {
 });
 
 describe("Kernel process runtime projection", () => {
+  it("projects primary conversation titles into process and conversation registries", () => {
+    const setLabel = vi.fn(() => true);
+    const setTitle = vi.fn(() => true);
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.procs = {
+      get: vi.fn(() => ({ activeRunId: null, lastActiveAt: null })),
+      setLabel,
+      updateRuntimeState: vi.fn(),
+    };
+    kernel.conversations = {
+      getByActivePid: vi.fn(() => ({ conversationId: "task-conversation" })),
+      setTitle,
+    };
+
+    expect(kernel.updateProcessRuntimeFromSignal("proc-1", {
+      type: "sig",
+      signal: "proc.changed",
+      payload: {
+        conversationId: "default",
+        changes: ["title"],
+        title: "  Review migration plan  ",
+      },
+    }, null)).toBe(true);
+
+    expect(setLabel).toHaveBeenCalledWith("proc-1", "Review migration plan");
+    expect(setTitle).toHaveBeenCalledWith("task-conversation", "Review migration plan");
+  });
+
   it("waits for earlier process signals before acknowledging a run finish", async () => {
     let releaseStarted!: () => void;
     const startedBlocked = new Promise<void>((resolve) => {

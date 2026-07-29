@@ -30,6 +30,18 @@ describe("ProcessStore", () => {
       });
     });
 
+    it("updates an existing conversation title", async () => {
+      const stub = await getProcessByPid("conversation-set-title");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+
+        expect(store.setConversationTitle("default", "  Migration plan  ")).toBe(true);
+        expect(store.getConversation("default").title).toBe("Migration plan");
+        expect(store.setConversationTitle("missing", "Ignored")).toBe(false);
+        expect(store.setConversationTitle("default", "   ")).toBe(false);
+      });
+    });
+
     it("reopens closed conversations without replacing history", async () => {
       const stub = await getProcessByPid("conversation-reopen");
       await runInDurableObject(stub, (instance: Process) => {

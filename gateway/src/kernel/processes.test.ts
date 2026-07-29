@@ -153,6 +153,13 @@ function createMockSql() {
       return mockSqlRows<T>();
     }
 
+    if (q.startsWith("UPDATE processes SET label = ?")) {
+      const [label, processId] = bindings as [string, string];
+      const row = table.get(processId);
+      if (row) row.label = label;
+      return mockSqlRows<T>();
+    }
+
     if (q.startsWith("UPDATE processes")) {
       const [uid, gid, gids, username, home, cwd, processId] =
         bindings as [number, number, string, string, string, string, string];
@@ -220,6 +227,17 @@ describe("ProcessRegistry", () => {
       home: "/home/sam",
       cwd: "/srv/work/demo",
     });
+  });
+
+  it("updates a live process label", () => {
+    const sql = createMockSql();
+    const registry = new ProcessRegistry(sql as unknown as SqlStorage);
+    registry.spawn("task:title", makeIdentity("/home/sam"), {});
+
+    expect(registry.setLabel("task:title", "  Review migration  ")).toBe(true);
+    expect(registry.get("task:title")?.label).toBe("Review migration");
+    expect(registry.setLabel("missing", "Ignored")).toBe(false);
+    expect(registry.setLabel("task:title", "  ")).toBe(false);
   });
 
   it("remaps cwd inside home when identity home changes", () => {

@@ -502,7 +502,6 @@ export function ChatDock({
     if (!targetPid) {
       const spawned = await spawnProcess.mutateAsync({
         interactive: true,
-        label: outgoingMessage || activeAgent.name,
         ...(startRunAs ? { runAs: startRunAs } : {}),
       });
       signal?.throwIfAborted();
@@ -825,7 +824,6 @@ export function ChatDock({
     spawnProcess.mutate({
       fresh: true,
       interactive: true,
-      label: activeAgent.name,
       ...(startRunAs ? { runAs: startRunAs } : {}),
     }, {
       onSuccess: (result) => {

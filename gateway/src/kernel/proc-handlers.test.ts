@@ -869,6 +869,10 @@ describe("proc handlers", () => {
     );
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       call: "proc.setidentity",
+      args: expect.objectContaining({
+        title: "Review Demo Tool",
+        autoTitle: false,
+      }),
     }));
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       call: "proc.send",
@@ -909,12 +913,10 @@ describe("proc handlers", () => {
     const result = await handleProcSpawn({
       fresh: true,
       interactive: true,
-      label: "New task",
     }, ctx);
 
     expect(result).toMatchObject({
       ok: true,
-      label: "New task",
       cwd: "/home/sam-agent",
     });
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
@@ -925,13 +927,19 @@ describe("proc handlers", () => {
       }),
       expect.objectContaining({
         ownerUid: IDENTITY.uid,
-        label: "New task",
         interactive: true,
       }),
     );
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       call: "proc.setidentity",
+      args: expect.objectContaining({
+        autoTitle: true,
+      }),
     }));
+    const identityFrame = sendFrameToProcessMock.mock.calls.find(([, frame]) =>
+      frame.type === "req" && frame.call === "proc.setidentity"
+    )?.[1] as RequestFrame | undefined;
+    expect(identityFrame?.args).not.toHaveProperty("title");
   });
 
   it.each(["null", "error", "throw"] as const)(

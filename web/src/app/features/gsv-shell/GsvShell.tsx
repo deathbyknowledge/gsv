@@ -348,7 +348,7 @@ export function GsvShell({
       queuedCount: 0,
       lastActiveAt: now,
       label: process.label ?? null,
-      title: process.label?.trim() || chatAgent?.name || "New task",
+      title: process.label?.trim() || "New task",
       createdAt: now,
       cwd: process.cwd || activeChatProcess?.cwd || "",
       isDefaultConversation: false,

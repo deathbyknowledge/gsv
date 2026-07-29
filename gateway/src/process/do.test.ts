@@ -213,6 +213,22 @@ async function waitForStoredMessage(
   throw new Error("Timed out waiting for process message");
 }
 
+async function waitForConversationTitle(
+  stub: DurableObjectStub<Process>,
+  expected: string,
+  timeoutMs = 2_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const title = await runInDurableObject(stub, (instance: Process) => (
+      (instance as any).store.getConversation("default")?.title
+    ));
+    if (title === expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for conversation title: ${expected}`);
+}
+
 async function driveProcessUntilIdle(
   stub: DurableObjectStub<Process>,
   timeoutMs = 50_000,
@@ -517,6 +533,222 @@ describe("Process DO — mechanical", () => {
       await runInDurableObject(stub, (instance: Process) => {
         expect(instance.identity.uid).toBe(1000);
         expect(instance.identity.username).toBe("alice");
+      });
+    });
+
+    it("stores the primary conversation's initial title", async () => {
+      const pid = "mech-setid-title";
+      await registerInKernel(pid, ROOT_IDENTITY);
+      const stub = await getProcessByPid(pid);
+
+      await stub.recvFrame(makeReq("proc.setidentity", {
+        pid,
+        identity: ROOT_IDENTITY,
+        conversationId: "task-conversation",
+        title: "  Explicit task title  ",
+        autoTitle: true,
+      }));
+
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        expect(process.store.getConversation("default").title).toBe("Explicit task title");
+        expect(process.store.getValue("autoTaskTitle")).toBeNull();
+      });
+    });
+  });
+
+  describe("automatic task titles", () => {
+    it("generates one title from the first admitted message", async () => {
+      const pid = "mech-auto-task-title";
+      await registerInKernel(pid, ROOT_IDENTITY);
+      const stub = await getProcessByPid(pid);
+      await stub.recvFrame(makeReq("proc.setidentity", {
+        pid,
+        identity: ROOT_IDENTITY,
+        conversationId: "task-conversation",
+        autoTitle: true,
+      }));
+
+      const kernelCalls: Array<{ call: string; args: any }> = [];
+      const emitted: Array<{ signal: string; payload: any }> = [];
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.scheduleTick = async () => {};
+        process.kernelRpc = async (call: string, args: any) => {
+          kernelCalls.push({ call, args });
+          if (call !== "ai.text.generate") {
+            throw new Error(`unexpected kernel syscall: ${call}`);
+          }
+          return { text: "  \"Plan Database Migration.\"\nsecond line" };
+        };
+        process.sendSignal = async (signal: string, payload: any) => {
+          emitted.push({ signal, payload });
+        };
+      });
+
+      const first = await stub.recvFrame(makeReq("proc.send", {
+        message: "Please plan a careful database migration.",
+      })) as ResponseOkFrame;
+      expect(first.data).toMatchObject({ ok: true, status: "started" });
+      await waitForConversationTitle(stub, "Plan Database Migration");
+
+      expect(kernelCalls).toHaveLength(1);
+      expect(kernelCalls[0]).toMatchObject({
+        call: "ai.text.generate",
+        args: {
+          messages: [{ role: "user", content: "Please plan a careful database migration." }],
+          options: { maxTokens: 32, reasoning: "off", timeoutMs: 20_000 },
+        },
+      });
+      expect(emitted.filter((entry) =>
+        entry.signal === "proc.changed" && entry.payload.changes?.includes("title")
+      ).map((entry) => entry.payload.title)).toEqual([
+        "Please plan a careful database migration",
+        "Plan Database Migration",
+      ]);
+
+      await stub.recvFrame(makeReq("proc.send", { message: "Add rollback steps too." }));
+      expect(kernelCalls).toHaveLength(1);
+    });
+
+    it("keeps the bounded first-message fallback when generation fails", async () => {
+      const pid = "mech-auto-task-title-fallback";
+      await registerInKernel(pid, ROOT_IDENTITY);
+      const stub = await getProcessByPid(pid);
+      await stub.recvFrame(makeReq("proc.setidentity", {
+        pid,
+        identity: ROOT_IDENTITY,
+        conversationId: "task-conversation",
+        autoTitle: true,
+      }));
+
+      const emitted: Array<{ signal: string; payload: any }> = [];
+      await runInDurableObject(stub, (instance: Process) => {
+        const process = instance as any;
+        process.scheduleTick = async () => {};
+        process.kernelRpc = async () => {
+          throw new Error("title generation unavailable");
+        };
+        process.sendSignal = async (signal: string, payload: any) => {
+          emitted.push({ signal, payload });
+        };
+      });
+
+      await stub.recvFrame(makeReq("proc.send", {
+        message: "Investigate flaky checkout tests.",
+      }));
+      await waitForConversationTitle(stub, "Investigate flaky checkout tests");
+      await vi.waitFor(() => expect(emitted.some((entry) =>
+        entry.signal === "proc.changed" && entry.payload.title === "Investigate flaky checkout tests"
+      )).toBe(true));
+    });
+
+    it("cancels title generation and ignores a late result after conversation reset", async () => {
+      const pid = "mech-auto-task-title-reset";
+      await registerInKernel(pid, ROOT_IDENTITY);
+      const stub = await getProcessByPid(pid);
+      await stub.recvFrame(makeReq("proc.setidentity", {
+        pid,
+        identity: ROOT_IDENTITY,
+        conversationId: "task-conversation",
+        autoTitle: true,
+      }));
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let releaseGeneration!: () => void;
+        let markGenerationStarted!: () => void;
+        let markGenerationCompleted!: () => void;
+        let generationSignal: AbortSignal | undefined;
+        const generationBlocked = new Promise<void>((resolve) => {
+          releaseGeneration = resolve;
+        });
+        const generationStarted = new Promise<void>((resolve) => {
+          markGenerationStarted = resolve;
+        });
+        const generationCompleted = new Promise<void>((resolve) => {
+          markGenerationCompleted = resolve;
+        });
+        const emitted: Array<{ signal: string; payload: any }> = [];
+        process.scheduleTick = async () => {};
+        const generateTaskTitle = process.generateTaskTitle.bind(process);
+        process.generateTaskTitle = async (...args: unknown[]) => {
+          try {
+            return await generateTaskTitle(...args);
+          } finally {
+            markGenerationCompleted();
+          }
+        };
+        process.kernelRpc = async (
+          call: string,
+          _args: unknown,
+          signal?: AbortSignal,
+        ) => {
+          if (call !== "ai.text.generate") {
+            throw new Error(`unexpected kernel syscall: ${call}`);
+          }
+          generationSignal = signal;
+          markGenerationStarted();
+          await generationBlocked;
+          return { text: "Diagnose Checkout Flakiness" };
+        };
+        process.sendSignal = async (signal: string, payload: any) => {
+          emitted.push({ signal, payload });
+        };
+
+        const send = await process.recvFrame(makeReq("proc.send", {
+          message: "Investigate flaky checkout tests.",
+        })) as ResponseOkFrame;
+        expect(send.data).toMatchObject({ ok: true, status: "started" });
+        await generationStarted;
+        expect(generationSignal?.aborted).toBe(false);
+        expect(process.store.getConversation("default")?.title)
+          .toBe("Investigate flaky checkout tests");
+
+        const reset = await process.recvFrame(makeReq("proc.conversation.reset", {
+          conversationId: "default",
+          archive: false,
+        })) as ResponseOkFrame;
+        expect(reset.data).toMatchObject({ ok: true, generation: 2 });
+        expect(generationSignal?.aborted).toBe(true);
+        expect(generationSignal?.reason).toEqual(new Error("Conversation was reset: default"));
+
+        releaseGeneration();
+        await generationCompleted;
+
+        expect(process.store.getConversation("default")).toMatchObject({
+          generation: 2,
+          title: "Investigate flaky checkout tests",
+        });
+        expect(process.store.messageCount("default")).toBe(0);
+        expect(emitted.filter((entry) =>
+          entry.signal === "proc.changed" && entry.payload.changes?.includes("title")
+        ).map((entry) => entry.payload.title)).toEqual([
+          "Investigate flaky checkout tests",
+        ]);
+      });
+    });
+
+    it("aborts owned title work when the process is killed", async () => {
+      const pid = "mech-auto-task-title-kill";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const controller = new AbortController();
+        process.taskTitleAbortController = controller;
+        process.sendSignal = vi.fn(async () => {});
+
+        const killed = await process.recvFrame(makeReq("proc.kill", {
+          archive: false,
+        })) as ResponseOkFrame;
+
+        expect(killed.data).toMatchObject({ ok: true, pid });
+        expect(controller.signal.aborted).toBe(true);
+        expect(controller.signal.reason).toEqual(
+          new Error("Process execution was reset: process.kill"),
+        );
+        expect(process.taskTitleAbortController).toBeNull();
       });
     });
   });
