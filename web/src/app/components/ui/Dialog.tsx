@@ -57,9 +57,14 @@ export function Dialog({
       if (e.key === "Tab") {
         const root = rootRef.current;
         if (!root) return;
-        const focusable = root.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-        );
+        // Only enabled, visible controls are real Tab stops — the browser skips
+        // disabled/hidden ones, so including them as `first`/`last` would let the
+        // wrap-around miss and focus escape behind the modal.
+        const focusable = Array.from(
+          root.querySelectorAll<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          ),
+        ).filter((el) => !(el as HTMLButtonElement).disabled && el.offsetParent !== null);
         if (focusable.length === 0) return;
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
