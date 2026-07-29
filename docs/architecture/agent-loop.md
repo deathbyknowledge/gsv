@@ -45,7 +45,8 @@ An unnamed spawned task publishes a bounded fallback title immediately and
 uses `ai.text.generate` in background to replace it with a concise title derived
 from the first admitted message. Explicit process labels opt out. Title
 generation is independent of the task run: failure retains the fallback and
-never delays message admission or model execution.
+never delays message admission or model execution. The generated result remains
+scoped to the source conversation generation, so a reset invalidates late output.
 
 Ticks are deliberate. Each loop iteration is scheduled through the Durable
 Object scheduler so long agent work can cross request/subrequest boundaries

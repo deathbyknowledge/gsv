@@ -1536,6 +1536,7 @@ export class Process extends Host<Env> {
 
     const fallback = fallbackTaskTitle(message);
     let started = false;
+    let sourceGeneration: number | null = null;
     this.ctx.storage.transactionSync(() => {
       const conversation = this.store.getConversation(DEFAULT_CONVERSATION_ID);
       if (
@@ -1547,15 +1548,20 @@ export class Process extends Host<Env> {
       }
       started = this.store.setConversationTitle(DEFAULT_CONVERSATION_ID, fallback);
       if (started) {
+        sourceGeneration = conversation.generation;
         this.store.deleteValue(AUTO_TASK_TITLE_KEY);
       }
     });
-    if (!started) return;
+    if (!started || sourceGeneration === null) return;
 
-    this.ctx.waitUntil(this.generateTaskTitle(message, fallback));
+    this.ctx.waitUntil(this.generateTaskTitle(message, fallback, sourceGeneration));
   }
 
-  private async generateTaskTitle(message: string, fallback: string): Promise<void> {
+  private async generateTaskTitle(
+    message: string,
+    fallback: string,
+    sourceGeneration: number,
+  ): Promise<void> {
     await this.emitProcChanged(["title"], {
       conversationId: DEFAULT_CONVERSATION_ID,
       title: fallback,
@@ -1589,7 +1595,12 @@ export class Process extends Host<Env> {
     try {
       if (!this.isInitialized()) return;
       const conversation = this.store.getConversation(DEFAULT_CONVERSATION_ID);
-      if (conversation?.title !== fallback) return;
+      if (
+        conversation?.generation !== sourceGeneration
+        || conversation.title !== fallback
+      ) {
+        return;
+      }
       updated = this.store.setConversationTitle(DEFAULT_CONVERSATION_ID, generated);
     } finally {
       releaseLifecycle();

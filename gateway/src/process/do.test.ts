@@ -642,6 +642,83 @@ describe("Process DO — mechanical", () => {
         entry.signal === "proc.changed" && entry.payload.title === "Investigate flaky checkout tests"
       )).toBe(true));
     });
+
+    it("ignores a generated title after the source conversation is reset", async () => {
+      const pid = "mech-auto-task-title-reset";
+      await registerInKernel(pid, ROOT_IDENTITY);
+      const stub = await getProcessByPid(pid);
+      await stub.recvFrame(makeReq("proc.setidentity", {
+        pid,
+        identity: ROOT_IDENTITY,
+        conversationId: "task-conversation",
+        autoTitle: true,
+      }));
+
+      await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        let releaseGeneration!: () => void;
+        let markGenerationStarted!: () => void;
+        let markGenerationCompleted!: () => void;
+        const generationBlocked = new Promise<void>((resolve) => {
+          releaseGeneration = resolve;
+        });
+        const generationStarted = new Promise<void>((resolve) => {
+          markGenerationStarted = resolve;
+        });
+        const generationCompleted = new Promise<void>((resolve) => {
+          markGenerationCompleted = resolve;
+        });
+        const emitted: Array<{ signal: string; payload: any }> = [];
+        process.scheduleTick = async () => {};
+        const generateTaskTitle = process.generateTaskTitle.bind(process);
+        process.generateTaskTitle = async (...args: unknown[]) => {
+          try {
+            return await generateTaskTitle(...args);
+          } finally {
+            markGenerationCompleted();
+          }
+        };
+        process.kernelRpc = async (call: string) => {
+          if (call !== "ai.text.generate") {
+            throw new Error(`unexpected kernel syscall: ${call}`);
+          }
+          markGenerationStarted();
+          await generationBlocked;
+          return { text: "Diagnose Checkout Flakiness" };
+        };
+        process.sendSignal = async (signal: string, payload: any) => {
+          emitted.push({ signal, payload });
+        };
+
+        const send = await process.recvFrame(makeReq("proc.send", {
+          message: "Investigate flaky checkout tests.",
+        })) as ResponseOkFrame;
+        expect(send.data).toMatchObject({ ok: true, status: "started" });
+        await generationStarted;
+        expect(process.store.getConversation("default")?.title)
+          .toBe("Investigate flaky checkout tests");
+
+        const reset = await process.recvFrame(makeReq("proc.conversation.reset", {
+          conversationId: "default",
+          archive: false,
+        })) as ResponseOkFrame;
+        expect(reset.data).toMatchObject({ ok: true, generation: 2 });
+
+        releaseGeneration();
+        await generationCompleted;
+
+        expect(process.store.getConversation("default")).toMatchObject({
+          generation: 2,
+          title: "Investigate flaky checkout tests",
+        });
+        expect(process.store.messageCount("default")).toBe(0);
+        expect(emitted.filter((entry) =>
+          entry.signal === "proc.changed" && entry.payload.changes?.includes("title")
+        ).map((entry) => entry.payload.title)).toEqual([
+          "Investigate flaky checkout tests",
+        ]);
+      });
+    });
   });
 
   describe("proc.ai.config", () => {
