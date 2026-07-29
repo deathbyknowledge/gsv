@@ -18,6 +18,7 @@ import {
   behaviorForAccount,
   parseApprovalPolicy,
 } from "../domain/consoleAgentBehavior";
+import { overrideConfigCount } from "../domain/consoleAi";
 import { useConsoleAgentContext } from "../hooks/useConsoleData";
 import type { ConsoleListKind } from "../domain/consoleListTypes";
 import {
@@ -304,9 +305,11 @@ function SettingsCard({
   const savedModels = `${profiles.length} saved model${profiles.length === 1 ? "" : "s"}`;
   const behavior = viewer ? behaviorForAccount(config, viewer.uid, viewer.uid) : null;
   const permission = behavior?.permission ?? "ask";
-  // Count the saved approval-policy rules (what the CREW permissions editor
-  // owns), not unrelated config overrides.
-  const overrides = behavior ? parseApprovalPolicy(behavior.approval).rules.length : 0;
+  // AGENT PERMISSIONS counts the saved approval-policy rules (owned by the CREW
+  // permissions editor); RUNTIME counts the config-level overrides (owned by the
+  // overrides config surface) — two distinct things, each with its own row + CTA.
+  const permissionRules = behavior ? parseApprovalPolicy(behavior.approval).rules.length : 0;
+  const runtimeOverrides = overrideConfigCount(config);
 
   // Real global-instruction state (context.d files), mirroring CrewDefaultsPanel
   // — never the misleading hardcoded "UNDEFINED". Query self-disables with no
@@ -322,19 +325,28 @@ function SettingsCard({
   const openModels = onOpenSurface ? () => onOpenSurface("models") : undefined;
   const openCrewPermissions = onOpenSurface ? () => onOpenSurface("crew-permissions") : undefined;
   const openCrewInstructions = onOpenSurface ? () => onOpenSurface("crew-instructions") : undefined;
+  const openOverrides = onOpenSurface ? () => onOpenSurface("overrides") : undefined;
 
   const rows: DataCardRow[] = [
     { label: "CHAT MODEL", value: chatModel, description: savedModels, linkLabel: "manage", onLink: openModels },
     {
       label: "AGENT PERMISSIONS",
       value: permissionLabel(permission),
-      description: `${overrides} override${overrides === 1 ? "" : "s"}`,
+      description: `${permissionRules} rule${permissionRules === 1 ? "" : "s"}`,
       linkLabel: "manage",
       onLink: openCrewPermissions,
     },
     // Instructions live on the CREW page (GLOBAL INSTRUCTIONS / context.d), so
     // the CTA opens there directly — an "elsewhere" jump, not an in-place edit.
     { label: "AGENT INSTRUCTIONS", value: instructionsValue, linkLabel: "edit files", linkExternal: true, onLink: openCrewInstructions },
+    // System / runtime config (tool-approval fallback, network defaults, server
+    // runtime) — its own entry point to the overrides config surface.
+    {
+      label: "RUNTIME",
+      value: runtimeOverrides === 0 ? "DEFAULTS" : `${runtimeOverrides} OVERRIDE${runtimeOverrides === 1 ? "" : "S"}`,
+      linkLabel: "manage",
+      onLink: openOverrides,
+    },
   ];
 
   return (
