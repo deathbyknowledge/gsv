@@ -9,7 +9,7 @@
  */
 
 import { Bash } from "just-bash";
-import type { BashExecResult } from "just-bash";
+import type { BashExecResult, NetworkConfig } from "just-bash";
 import { resolveUserPath } from "../../fs";
 import type { KernelContext } from "../../kernel/context";
 import type { ShellExecArgs, ShellExecResult } from "../../syscalls/shell";
@@ -19,6 +19,15 @@ import {
   buildCustomCommands,
   type NativeShellCommandOptions,
 } from "./shell/commands";
+
+export const NATIVE_SHELL_NETWORK_CONFIG = {
+  dangerouslyAllowFullInternetAccess: true,
+  // just-bash enables this production guard through node:dns.lookup, which
+  // Cloudflare Workers does not implement. Native gsv requests use global
+  // fetch rather than a private-network binding, so let the runtime resolve
+  // public hostnames instead of failing before fetch.
+  denyPrivateRanges: false,
+} satisfies NetworkConfig;
 
 export async function handleShellExec(
   args: ShellExecArgs,
@@ -160,7 +169,7 @@ function createBash(
       gid: identity.gid,
     },
     network: networkEnabled
-      ? { dangerouslyAllowFullInternetAccess: true }
+      ? NATIVE_SHELL_NETWORK_CONFIG
       : undefined,
     executionLimits: {
       maxCommandCount: 1000,

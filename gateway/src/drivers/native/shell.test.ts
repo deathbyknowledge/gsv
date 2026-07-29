@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { Bash } from "just-bash";
-import { handleShellExec } from "./shell";
+import { handleShellExec, NATIVE_SHELL_NETWORK_CONFIG } from "./shell";
 import {
   handleFsCopy,
   handleFsRead,
@@ -430,6 +430,27 @@ describe("native shell execution", () => {
 
       expect(result).toMatchObject({ status: "completed", exitCode: 0 });
       expect(stored.body && await bodyToBytes(stored.body)).toEqual(bytes);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("routes curl through Worker fetch without the unsupported DNS guard", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("worker network ok"));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const result = await handleShellExec({
+        input: "curl -s https://example.test/data",
+      }, makeContext());
+
+      expect(NATIVE_SHELL_NETWORK_CONFIG.denyPrivateRanges).toBe(false);
+      expect(result).toMatchObject({
+        status: "completed",
+        exitCode: 0,
+        stdout: "worker network ok",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("https://example.test/data");
     } finally {
       vi.unstubAllGlobals();
     }
