@@ -10,6 +10,14 @@ AI. Keep those replacements deterministic and implement their public contracts
 on the fixture's default `WorkerEntrypoint`; `bindingOverrides` targets that
 default export.
 
+Runtime tests configure a process-scoped custom model that talks to a local
+OpenAI-compatible HTTP fixture. This exercises the production model transport,
+stream parsing, Process loop, signal relay, history, and archival flow without
+using credentials or a remote model. The dependency Worker also binds back to
+`GatewayEntrypoint` so adapter ingress and automatic replies cross real service
+bindings in both directions. Its test-only HTTP endpoints are drivers and
+recorders; they are not gateway routes.
+
 Prefer this suite for behavior visible to a gateway client or bound Worker.
 Keep focused unit tests for pure policy, migrations, malformed input, and races
 that cannot be driven deterministically through the public boundary. When an

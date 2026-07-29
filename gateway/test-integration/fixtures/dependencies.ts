@@ -1,7 +1,9 @@
-import { WorkerEntrypoint } from "cloudflare:workers";
+import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
+  AdapterGatewayInterface,
+  AdapterGatewayRequestFrame,
   AdapterOutboundMessage,
   AdapterSurface,
   AdapterWorkerInterface,
@@ -13,14 +15,50 @@ type ImportRequest = {
   remoteRef?: unknown;
 };
 
+export type RecordedOutboundMessage = {
+  accountId: string;
+  message: AdapterOutboundMessage;
+};
+
+interface Env {
+  GATEWAY: Fetcher & AdapterGatewayInterface;
+  INTEGRATION_STATE: DurableObjectNamespace<IntegrationState>;
+}
+
+export class IntegrationState extends DurableObject<Env> {
+  async recordOutbound(entry: RecordedOutboundMessage): Promise<void> {
+    const messages = await this.ctx.storage.get<RecordedOutboundMessage[]>("outbound") ?? [];
+    messages.push(entry);
+    await this.ctx.storage.put("outbound", messages);
+  }
+
+  async listOutbound(accountId?: string): Promise<RecordedOutboundMessage[]> {
+    const messages = await this.ctx.storage.get<RecordedOutboundMessage[]>("outbound") ?? [];
+    return accountId
+      ? messages.filter((entry) => entry.accountId === accountId)
+      : messages;
+  }
+}
+
 export default class TestDependencies
-  extends WorkerEntrypoint
+  extends WorkerEntrypoint<Env>
   implements AdapterWorkerInterface
 {
   readonly adapterId = "test";
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/__test/service-frame" && request.method === "POST") {
+      const frame = await request.json<AdapterGatewayRequestFrame>();
+      const response = await this.env.GATEWAY.serviceFrame(frame);
+      return Response.json(response);
+    }
+
+    if (url.pathname === "/__test/outbound" && request.method === "GET") {
+      const accountId = url.searchParams.get("accountId") ?? undefined;
+      return Response.json(await this.integrationState().listOutbound(accountId));
+    }
 
     if (url.pathname.endsWith("/read") && request.method === "GET") {
       return new Response("Not Found", { status: 404 });
@@ -70,13 +108,14 @@ export default class TestDependencies
   }
 
   async adapterSend(
-    _accountId: string,
+    accountId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
   ): Promise<{ ok: true; messageId: string }> {
     if (body && !body.stream.locked) {
       await body.stream.cancel("Integration fixture does not consume media").catch(() => {});
     }
+    await this.integrationState().recordOutbound({ accountId, message });
     return { ok: true, messageId: `fixture:${message.deliveryId}` };
   }
 
@@ -102,5 +141,10 @@ export default class TestDependencies
 
   async models(): Promise<never[]> {
     return [];
+  }
+
+  private integrationState(): DurableObjectStub<IntegrationState> {
+    const id = this.env.INTEGRATION_STATE.idFromName("singleton");
+    return this.env.INTEGRATION_STATE.get(id);
   }
 }
