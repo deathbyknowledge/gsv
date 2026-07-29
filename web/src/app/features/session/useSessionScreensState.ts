@@ -81,11 +81,7 @@ export function useSessionScreensState({
     }));
   }, [onboarding, onboardingSnapshot.draft.account.username, snapshot.username]);
 
-  useEffect(() => {
-    if (snapshot.username && !loginUsername.trim()) {
-      setLoginUsername(snapshot.username);
-    }
-  }, [loginUsername, snapshot.username]);
+
 
   useEffect(() => {
     if (snapshot.phase === "setup-complete" || snapshot.phase === "ready") {
