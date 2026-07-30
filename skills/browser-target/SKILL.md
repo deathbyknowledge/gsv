@@ -35,6 +35,7 @@ Then run small inspection commands on the browser target itself:
 ```bash
 cat /README.txt
 help
+commands --json
 tabs --help
 page --help
 network --help

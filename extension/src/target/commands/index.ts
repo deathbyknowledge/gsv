@@ -44,3 +44,13 @@ export function helpText(commands: BrowserCommand[]): string {
     "",
   ].join("\n");
 }
+
+export function commandCatalog(commands: BrowserCommand[]): string {
+  return `${JSON.stringify({
+    commands: commands.map((command) => ({
+      name: command.name,
+      summary: command.summary,
+      help: `${command.name} --help`,
+    })),
+  })}\n`;
+}

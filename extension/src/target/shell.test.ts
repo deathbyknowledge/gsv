@@ -6,6 +6,33 @@ import type { BrowserCommand, CommandResult, TargetFileSystem } from "./types";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("BrowserTargetShell", () => {
+  it("exposes browser commands through help and structured discovery", async () => {
+    const commands: BrowserCommand[] = [{
+      name: "example",
+      summary: "Example browser command.",
+      run: commandResult,
+    }];
+    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), commands);
+
+    await expect(shell.exec({ input: "help" })).resolves.toMatchObject({
+      status: "completed",
+      output: expect.stringContaining("example      Example browser command."),
+    });
+
+    const catalog = await shell.exec({ input: "commands --json" });
+    expect(catalog).toMatchObject({ status: "completed" });
+    if (catalog.status !== "completed") {
+      throw new Error(catalog.error);
+    }
+    expect(JSON.parse(catalog.output)).toEqual({
+      commands: [{
+        name: "example",
+        summary: "Example browser command.",
+        help: "example --help",
+      }],
+    });
+  });
+
   it("stops a running command when its request is cancelled", async () => {
     const shell = new BrowserTargetShell(directoryOnlyFileSystem(), []);
     const controller = new AbortController();
