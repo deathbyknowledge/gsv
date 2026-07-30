@@ -373,15 +373,51 @@ export async function scrollPage(
       : null;
     if (element) {
       await validateElementReference(target, element);
+    }
+
+    const beforeState = element
+      ? await readElementState(target, element.backendNodeId)
+      : await readPageScrollState(target);
+    if (scrollBoundaryReached(scrollTarget, beforeState)) {
+      const targetSummary = element
+        ? await summarizeElement(
+            target,
+            tabId,
+            element.backendNodeId,
+            store,
+            element.reference,
+          ).catch(() => detachedSummary(element))
+        : { role: "document", tag: "document" };
+      const position = scrollSummary(beforeState);
+      return {
+        action: "scroll",
+        delivered: {
+          method: "none",
+          accepted: false,
+          skipped: "already-at-boundary",
+          target: targetSummary,
+          events: 0,
+          delta: { x: 0, y: 0 },
+        },
+        observed: {
+          status: "no-change-detected",
+          targetAttached: true,
+          semanticChanged: false,
+          scroll: {
+            before: position,
+            after: position,
+            changed: false,
+            boundaryReached: true,
+          },
+        },
+      };
+    }
+    if (element) {
       await sendDebuggerCommand(target, "DOM.scrollIntoViewIfNeeded", {
         backendNodeId: element.backendNodeId,
       });
     }
     const document = await currentDocumentIdentity(target);
-
-    const beforeState = element
-      ? await readElementState(target, element.backendNodeId)
-      : await readPageScrollState(target);
     const point = element
       ? await clickablePoint(target, element.backendNodeId)
       : await viewportCenter(target);

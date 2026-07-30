@@ -180,6 +180,47 @@ describe("CDP page actions", () => {
     expect(result).not.toHaveProperty("warning");
   });
 
+  it("does not dispatch wheel input when the target is already at the requested boundary", async () => {
+    const fixture = stubCdp({
+      states: [elementState({ scrollTop: 0, scrollHeight: 2400, clientHeight: 600 })],
+    });
+    const { store, reference } = referencedElement();
+
+    const result = await scrollPage(42, "top", reference, undefined, store);
+
+    expect(inputMethods(fixture.sendCommand)).toEqual([]);
+    expect(fixture.sendCommand).not.toHaveBeenCalledWith(
+      { tabId: 42 },
+      "DOM.scrollIntoViewIfNeeded",
+      expect.anything(),
+    );
+    expect(fixture.sendCommand).not.toHaveBeenCalledWith(
+      { tabId: 42 },
+      "DOM.getNodeForLocation",
+      expect.anything(),
+    );
+    expect(result).toMatchObject({
+      delivered: {
+        method: "none",
+        accepted: false,
+        skipped: "already-at-boundary",
+        events: 0,
+        delta: { x: 0, y: 0 },
+      },
+      observed: {
+        status: "no-change-detected",
+        semanticChanged: false,
+        scroll: {
+          before: { y: 0, maxY: 1800 },
+          after: { y: 0, maxY: 1800 },
+          changed: false,
+          boundaryReached: true,
+        },
+      },
+    });
+    expect(result).not.toHaveProperty("warning");
+  });
+
   it("observes selection-only key effects separately from delivery", async () => {
     stubCdp({
       states: [

@@ -165,7 +165,9 @@ target nested virtualized lists; an untargeted scroll acts at the viewport
 center and may be received by whichever scrollable element is under that point.
 Targeted `top` and `bottom` repeat native wheel input and report
 `observed.scroll.boundaryReached`; check that field instead of assuming an
-accepted wheel event reached the boundary.
+accepted wheel event reached the boundary. If the target is already there, the
+action reports `delivered.skipped=already-at-boundary` with zero events and
+does not dispatch input.
 
 Virtualized lists expose only their currently materialized rows. To read one
 completely, record the visible semantic rows, scroll the list by its ref,

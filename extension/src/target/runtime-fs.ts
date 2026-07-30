@@ -149,6 +149,7 @@ const README = [
   "  taking a newer snapshot does not itself expire recent refs, though dynamic pages may replace or repurpose their nodes.",
   "  page click/type/key/scroll use Chrome input and report accepted delivery separately from observed page changes.",
   "  targeted scroll top/bottom repeats bounded native wheel input and reports whether it reached the requested boundary.",
+  "  a target already at top/bottom returns skipped=already-at-boundary without dispatching input.",
   "  page snapshot/js/screenshot and page input briefly attach chrome.debugger to the target tab.",
   "  network start uses chrome.debugger and stays attached until network stop.",
   "  media record uses tabCapture and may require clicking Grant Recording in the GSV extension UI first.",
