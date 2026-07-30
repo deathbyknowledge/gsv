@@ -298,9 +298,10 @@ With `--local`, commands edit `~/.config/gsv/config.toml`. Supported local keys:
 `gateway.session_expires_at_ms`, `cloudflare.account_id`,
 `cloudflare.api_token`, `release.channel`, `r2.account_id`,
 `r2.access_key_id`, `r2.secret_access_key`, `r2.bucket`,
-`session.default_key`, `device.id`, `device.token`, `device.workspace`,
-`channels.whatsapp.url`, and `channels.whatsapp.token`. `release.channel` must
-be `stable` or `dev`; token and secret values are masked on local `get`.
+`session.default_key`, `device.id`, `device.token`, and `device.workspace`.
+`release.channel` must be `stable` or `dev`; token and secret values are masked
+on local `get`. Adapter workers use Cloudflare service bindings rather than
+locally configured WhatsApp URLs or tokens.
 
 ## Adapter Commands
 
@@ -311,12 +312,19 @@ gsv adapter status --adapter ID [--account-id ACCOUNT]
 ```
 
 Adapters are long-lived external account bridges. `--account-id` defaults to
-`default` for connect/disconnect. `--config-json` must be a JSON object and is
-passed to the adapter implementation, for example:
+`default` for connect/disconnect. A normal WhatsApp connect displays a private
+Linked Devices QR challenge in a supported terminal:
 
 ```bash
-gsv adapter connect --adapter whatsapp --config-json '{"pairing":true}'
+gsv adapter connect --adapter whatsapp --account-id personal
+gsv adapter status --adapter whatsapp --account-id personal
 ```
+
+Treat that QR like a password. If terminal rendering fails, the CLI hides the
+underlying payload. `--config-json` must be a JSON object and is passed to the
+adapter implementation. WhatsApp accepts `{"force":true}` only as destructive
+recovery: it clears the existing linked-device authentication and starts a new
+QR pairing. Routine reconnects and ten-minute transport rotation do not use it.
 
 ## Infrastructure Commands
 
@@ -327,16 +335,16 @@ gsv infra destroy [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
 ```
 
 `--codemode` defaults to `auto`. Auto mode enables the gateway's Worker Loader
-binding on Workers Paid accounts and omits it on Workers Free accounts. If plan
-detection is unavailable to the API token, deploy probes the binding during the
-gateway upload and retries without it only when Cloudflare identifies the Worker
-Loader or Dynamic Workers capability as unsupported. Use `on` to require CodeMode
-or `off` to omit the binding explicitly.
+binding only when the account is positively identified as Workers Paid. Free and
+unknown plans omit it, keeping the default deployment Free-safe. Use `on` to
+require CodeMode explicitly or `off` to omit the binding explicitly.
 
 Valid components are `ripgit`, `gateway`, `channel-whatsapp`,
 `channel-discord`, and `channel-telegram`. When no deploy/upgrade component is
 supplied, all components are selected. Deploying `gateway` requires `ripgit` to
-be selected or already deployed.
+be selected or already deployed. Deploying or upgrading an adapter also
+reconciles the adapter-to-gateway and gateway-to-adapter service bindings when a
+gateway already exists. This applies to both the default and named instances.
 
 `deploy` fetches release bundles and applies Cloudflare Workers. `upgrade` does
 the same but auto-refreshes mutable refs such as `latest`, `stable`, and `dev`.
@@ -349,7 +357,9 @@ all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`
 must be combined with it. Unless `--keep-device` is passed, `destroy` also
 attempts to uninstall the local device service. A full teardown also removes the
 legacy assembler Worker when it exists; assembler remains unavailable as a
-deployable component.
+deployable component. Cloudflare removes service bindings associated with a
+destroyed adapter worker, and later gateway upgrades also omit bindings whose
+target worker is absent.
 
 ## Version
 

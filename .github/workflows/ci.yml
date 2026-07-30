@@ -22,6 +22,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       extension: ${{ steps.filter.outputs.extension }}
       gateway: ${{ steps.filter.outputs.gateway }}
+      whatsapp: ${{ steps.filter.outputs.whatsapp }}
       ripgit: ${{ steps.filter.outputs.ripgit }}
       cli: ${{ steps.filter.outputs.cli }}
     steps:
@@ -84,6 +85,15 @@ jobs:
               - 'package-lock.json'
               - 'packages/gsv/**'
               - 'gateway/**'
+            whatsapp:
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'packages/gsv/**'
+              - 'adapters/shared/**'
+              - 'adapters/whatsapp/**'
+              - 'scripts/build-cloudflare-bundles.sh'
+              - 'scripts/check-worker-bundle-size.mjs'
             ripgit:
               - '.github/workflows/ci.yml'
               - 'scripts/worker-build.sh'
@@ -133,9 +143,17 @@ jobs:
         if: needs.changes.outputs.sdk == 'true'
         run: npm run gsv:check
 
+      - name: Test GSV package
+        if: needs.changes.outputs.sdk == 'true'
+        run: npm test --workspace packages/gsv
+
       - name: Check web shell
         if: needs.changes.outputs.web == 'true'
         run: npm run check --workspace web
+
+      - name: Test web shell
+        if: needs.changes.outputs.web == 'true'
+        run: npm run test:run --workspace web
 
       - name: Build web shell
         if: needs.changes.outputs.web == 'true'
@@ -189,7 +207,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: ripgit/package-lock.json
 
@@ -209,6 +227,44 @@ jobs:
       - name: Bundle worker
         working-directory: ripgit
         run: npm exec -- wrangler deploy --minify --dry-run --outdir dist/worker
+
+  whatsapp-test:
+    name: WhatsApp Adapter Tests
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.whatsapp == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            adapters/whatsapp/package-lock.json
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Install WhatsApp adapter dependencies
+        working-directory: adapters/whatsapp
+        run: npm ci
+
+      - name: Type check WhatsApp adapter
+        working-directory: adapters/whatsapp
+        run: npm exec -- tsc --noEmit
+
+      - name: Run shared and WhatsApp adapter tests
+        run: npm exec -- vitest run adapters/shared/test adapters/whatsapp
+
+      - name: Bundle WhatsApp worker
+        working-directory: adapters/whatsapp
+        run: npm exec -- wrangler deploy --minify --dry-run --outdir dist/worker
+
+      - name: Enforce Workers Free bundle budget
+        run: node scripts/check-worker-bundle-size.mjs adapters/whatsapp/dist/worker/index.js 2800000
 
   cli-build:
     name: CLI Build (${{ matrix.os }})

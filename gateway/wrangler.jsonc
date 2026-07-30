@@ -81,13 +81,13 @@
 			"entrypoint": "DiscordChannel"
 		},
 		{
+			"binding": "CHANNEL_WHATSAPP",
+			"service": "gsv-channel-whatsapp",
+			"entrypoint": "WhatsAppChannelEntrypoint"
+		},
+		{
 			"binding": "RIPGIT",
 			"service": "ripgit"
-		}
-	],
-	"worker_loaders": [
-		{
-			"binding": "LOADER"
 		}
 	]
 }

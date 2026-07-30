@@ -17,6 +17,7 @@ declare namespace Cloudflare {
 		PROCESS: DurableObjectNamespace<import("./src/index").Process>;
 		CHANNEL_TELEGRAM: Service /* entrypoint TelegramChannel from gsv-channel-telegram */;
 		CHANNEL_DISCORD: Service /* entrypoint DiscordChannel from gsv-channel-discord */;
+		CHANNEL_WHATSAPP: Service /* entrypoint WhatsAppChannelEntrypoint from gsv-channel-whatsapp */;
 		RIPGIT: Fetcher /* ripgit */;
 	}
 }

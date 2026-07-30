@@ -38,6 +38,38 @@ const SCRIPT_RIPGIT: &str = "ripgit";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
 const SCRIPT_CHANNEL_TELEGRAM: &str = "gsv-channel-telegram";
+const GATEWAY_ENTRYPOINT: &str = "GatewayEntrypoint";
+const GATEWAY_WORKER_LOADER_BINDING: &str = "LOADER";
+const RIPGIT_PAID_CPU_LIMIT_MS: u64 = 300_000;
+
+#[derive(Debug, Clone, Copy)]
+struct AdapterDeploymentSpec {
+    component: &'static str,
+    default_script: &'static str,
+    gateway_binding: &'static str,
+    adapter_entrypoint: &'static str,
+}
+
+const ADAPTER_DEPLOYMENTS: &[AdapterDeploymentSpec] = &[
+    AdapterDeploymentSpec {
+        component: COMPONENT_CHANNEL_WHATSAPP,
+        default_script: SCRIPT_CHANNEL_WHATSAPP,
+        gateway_binding: "CHANNEL_WHATSAPP",
+        adapter_entrypoint: "WhatsAppChannelEntrypoint",
+    },
+    AdapterDeploymentSpec {
+        component: COMPONENT_CHANNEL_DISCORD,
+        default_script: SCRIPT_CHANNEL_DISCORD,
+        gateway_binding: "CHANNEL_DISCORD",
+        adapter_entrypoint: "DiscordChannel",
+    },
+    AdapterDeploymentSpec {
+        component: COMPONENT_CHANNEL_TELEGRAM,
+        default_script: SCRIPT_CHANNEL_TELEGRAM,
+        gateway_binding: "CHANNEL_TELEGRAM",
+        adapter_entrypoint: "TelegramChannel",
+    },
+];
 const RESERVED_NON_DEFAULT_INSTANCE_NAMES: &[&str] = &[SCRIPT_RIPGIT];
 const RESERVED_INSTANCE_NAME_SUFFIXES: &[&str] = &[
     "-ripgit",
@@ -99,21 +131,18 @@ impl DeployInstance {
     }
 
     fn script_name_for_config_service(&self, service: &str) -> String {
+        if let Some(adapter) = adapter_deployment_for_default_script(service) {
+            return self
+                .script_name(adapter.component)
+                .unwrap_or_else(|| service.to_string());
+        }
+
         match service {
             SCRIPT_GATEWAY => self
                 .script_name(COMPONENT_GATEWAY)
                 .unwrap_or_else(|| service.to_string()),
             SCRIPT_RIPGIT => self
                 .script_name(COMPONENT_RIPGIT)
-                .unwrap_or_else(|| service.to_string()),
-            SCRIPT_CHANNEL_WHATSAPP => self
-                .script_name(COMPONENT_CHANNEL_WHATSAPP)
-                .unwrap_or_else(|| service.to_string()),
-            SCRIPT_CHANNEL_DISCORD => self
-                .script_name(COMPONENT_CHANNEL_DISCORD)
-                .unwrap_or_else(|| service.to_string()),
-            SCRIPT_CHANNEL_TELEGRAM => self
-                .script_name(COMPONENT_CHANNEL_TELEGRAM)
                 .unwrap_or_else(|| service.to_string()),
             _ => service.to_string(),
         }
@@ -461,7 +490,6 @@ struct WorkerScriptUpload<'a> {
 
 struct UploadMetadataOptions<'a> {
     instance: &'a DeployInstance,
-    selected_components: &'a HashSet<String>,
     available_scripts: &'a HashSet<String>,
     account_subdomain: Option<&'a str>,
     existing_migration_tag: Option<&'a str>,
@@ -470,6 +498,7 @@ struct UploadMetadataOptions<'a> {
     uploaded_assets: Option<&'a UploadedAssets>,
     keep_assets: bool,
     include_worker_loaders: bool,
+    include_paid_limits: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -490,7 +519,6 @@ pub struct GatewayBootstrapConfig {
     pub llm_provider: Option<String>,
     pub llm_model: Option<String>,
     pub llm_api_key: Option<String>,
-    pub set_whatsapp_pairing: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -575,6 +603,53 @@ pub fn available_components() -> &'static [&'static str] {
         COMPONENT_CHANNEL_DISCORD,
         COMPONENT_CHANNEL_TELEGRAM,
     ]
+}
+
+fn adapter_deployment(component: &str) -> Option<&'static AdapterDeploymentSpec> {
+    ADAPTER_DEPLOYMENTS
+        .iter()
+        .find(|adapter| adapter.component == component)
+}
+
+fn adapter_deployment_for_default_script(script: &str) -> Option<&'static AdapterDeploymentSpec> {
+    ADAPTER_DEPLOYMENTS
+        .iter()
+        .find(|adapter| adapter.default_script == script)
+}
+
+pub fn components_for_binding_reconciliation(components: &[String]) -> Vec<String> {
+    let mut prepared = components.to_vec();
+    let includes_adapter = components
+        .iter()
+        .any(|component| adapter_deployment(component).is_some());
+    let includes_gateway = components
+        .iter()
+        .any(|component| component == COMPONENT_GATEWAY);
+    if includes_adapter && !includes_gateway {
+        prepared.push(COMPONENT_GATEWAY.to_string());
+    }
+    prepared
+}
+
+fn deployment_components_for_binding_reconciliation(
+    components: &[String],
+    instance: &DeployInstance,
+    existing_scripts: &HashSet<String>,
+) -> Vec<String> {
+    let mut deployment = components.to_vec();
+    let includes_adapter = components
+        .iter()
+        .any(|component| adapter_deployment(component).is_some());
+    let includes_gateway = components
+        .iter()
+        .any(|component| component == COMPONENT_GATEWAY);
+    let gateway_script = instance
+        .script_name(COMPONENT_GATEWAY)
+        .expect("gateway is a supported deployment component");
+    if includes_adapter && !includes_gateway && existing_scripts.contains(&gateway_script) {
+        deployment.push(COMPONENT_GATEWAY.to_string());
+    }
+    deployment
 }
 
 fn base_release_url(tag: &str) -> String {
@@ -1362,8 +1437,11 @@ async fn list_worker_scripts(
 
 fn workers_paid_from_usage_model(usage_model: Option<&str>) -> Option<bool> {
     match usage_model.map(|value| value.trim().to_ascii_lowercase()) {
-        Some(value) if value == "standard" || value == "unbound" => Some(true),
-        Some(value) if value == "bundled" => Some(false),
+        // Bundled and Unbound are deprecated usage models retained by some
+        // paid/enterprise accounts; they do not identify a Workers Free plan.
+        Some(value) if value == "standard" || value == "unbound" || value == "bundled" => {
+            Some(true)
+        }
         _ => None,
     }
 }
@@ -1397,7 +1475,6 @@ fn workers_paid_from_subscriptions(subscriptions: &[CloudflareSubscription]) -> 
         };
         let normalized = rate_plan_id.trim().to_ascii_lowercase();
         normalized == "workers_paid"
-            || (normalized.starts_with("workers_") && !normalized.contains("free"))
     })
 }
 
@@ -1450,20 +1527,13 @@ async fn fetch_workers_paid_from_subscriptions(
     Ok(workers_paid_from_subscriptions(&subscriptions))
 }
 
-async fn resolve_codemode_enabled(
+async fn resolve_workers_paid(
     client: &reqwest::Client,
     account_id: &str,
     api_token: &str,
-    preference: CodeModePreference,
-) -> bool {
-    match preference {
-        CodeModePreference::On => return true,
-        CodeModePreference::Off => return false,
-        CodeModePreference::Auto => {}
-    }
-
+) -> Option<bool> {
     match fetch_workers_paid_from_account_settings(client, account_id, api_token).await {
-        Ok(Some(enabled)) => return enabled,
+        Ok(Some(enabled)) => return Some(enabled),
         Ok(None) => {}
         Err(error) => {
             println!(
@@ -1474,14 +1544,29 @@ async fn resolve_codemode_enabled(
     }
 
     match fetch_workers_paid_from_subscriptions(client, account_id, api_token).await {
-        Ok(enabled) => enabled,
+        Ok(enabled) => Some(enabled),
         Err(error) => {
             println!(
-                "Warning: could not read the Workers plan from account subscriptions ({}). CodeMode availability will be probed during gateway upload.",
+                "Warning: could not read the Workers plan from account subscriptions ({}). Paid-only custom limits and CodeMode will be omitted; use --codemode on to opt in explicitly.",
                 error
             );
-            true
+            None
         }
+    }
+}
+
+fn codemode_enabled_for_plan(
+    deploying_gateway: bool,
+    preference: CodeModePreference,
+    workers_paid: Option<bool>,
+) -> bool {
+    if !deploying_gateway {
+        return false;
+    }
+    match preference {
+        CodeModePreference::On => true,
+        CodeModePreference::Off => false,
+        CodeModePreference::Auto => workers_paid == Some(true),
     }
 }
 
@@ -2239,54 +2324,24 @@ fn apply_instance_names_to_bundle(
 fn service_bindings_for_bundle(
     bundle: &PreparedBundle,
     instance: &DeployInstance,
-    selected_components: &HashSet<String>,
     available_scripts: &HashSet<String>,
 ) -> Vec<WranglerServiceBinding> {
     let mut bindings = bundle.wrangler.services.clone();
-    let gateway_script_name = instance
-        .script_name(COMPONENT_GATEWAY)
-        .unwrap_or_else(|| SCRIPT_GATEWAY.to_string());
-    let telegram_script_name = instance
-        .script_name(COMPONENT_CHANNEL_TELEGRAM)
-        .unwrap_or_else(|| SCRIPT_CHANNEL_TELEGRAM.to_string());
-
-    if bundle.component == COMPONENT_CHANNEL_WHATSAPP
-        && !bindings.iter().any(|binding| binding.binding == "GATEWAY")
-        && (selected_components.contains(COMPONENT_GATEWAY)
-            || available_scripts.contains(&gateway_script_name))
-    {
-        bindings.push(WranglerServiceBinding {
-            binding: "GATEWAY".to_string(),
-            service: gateway_script_name.clone(),
-            environment: None,
-            entrypoint: Some("GatewayEntrypoint".to_string()),
-        });
-    }
-
-    if bundle.component == COMPONENT_GATEWAY
-        && !bindings
-            .iter()
-            .any(|binding| binding.binding == "CHANNEL_TELEGRAM")
-        && (selected_components.contains(COMPONENT_CHANNEL_TELEGRAM)
-            || available_scripts.contains(&telegram_script_name))
-    {
-        bindings.push(WranglerServiceBinding {
-            binding: "CHANNEL_TELEGRAM".to_string(),
-            service: telegram_script_name.clone(),
-            environment: None,
-            entrypoint: Some("TelegramChannel".to_string()),
-        });
+    if adapter_deployment(&bundle.component).is_some() {
+        reconcile_service_binding(&mut bindings, "GATEWAY", SCRIPT_GATEWAY, GATEWAY_ENTRYPOINT);
+    } else if bundle.component == COMPONENT_GATEWAY {
+        for adapter in ADAPTER_DEPLOYMENTS {
+            reconcile_service_binding(
+                &mut bindings,
+                adapter.gateway_binding,
+                adapter.default_script,
+                adapter.adapter_entrypoint,
+            );
+        }
     }
 
     let mut filtered = Vec::new();
     for mut binding in bindings {
-        if bundle.component == COMPONENT_GATEWAY
-            && binding.binding == "CHANNEL_WHATSAPP"
-            && binding.entrypoint.as_deref() == Some("WhatsAppChannel")
-        {
-            binding.entrypoint = Some("WhatsAppChannelEntrypoint".to_string());
-        }
-
         binding.service = instance.script_name_for_config_service(&binding.service);
         let keep = available_scripts.contains(&binding.service);
         if keep {
@@ -2300,6 +2355,30 @@ fn service_bindings_for_bundle(
     }
 
     filtered
+}
+
+fn reconcile_service_binding(
+    bindings: &mut Vec<WranglerServiceBinding>,
+    binding_name: &str,
+    service: &str,
+    entrypoint: &str,
+) {
+    if let Some(binding) = bindings
+        .iter_mut()
+        .find(|binding| binding.binding == binding_name)
+    {
+        binding.service = service.to_string();
+        binding.environment = None;
+        binding.entrypoint = Some(entrypoint.to_string());
+        return;
+    }
+
+    bindings.push(WranglerServiceBinding {
+        binding: binding_name.to_string(),
+        service: service.to_string(),
+        environment: None,
+        entrypoint: Some(entrypoint.to_string()),
+    });
 }
 
 fn migration_tag(step: &Value) -> Option<&str> {
@@ -2736,12 +2815,8 @@ fn build_upload_metadata(
         metadata_bindings.push(value);
     }
 
-    for service in service_bindings_for_bundle(
-        bundle,
-        options.instance,
-        options.selected_components,
-        options.available_scripts,
-    ) {
+    for service in service_bindings_for_bundle(bundle, options.instance, options.available_scripts)
+    {
         let mut value = json!({
             "name": service.binding,
             "type": "service",
@@ -2760,6 +2835,18 @@ fn build_upload_metadata(
         for loader in &bundle.wrangler.worker_loaders {
             metadata_bindings.push(json!({
                 "name": loader.binding,
+                "type": "worker_loader"
+            }));
+        }
+        if bundle.component == COMPONENT_GATEWAY
+            && !bundle
+                .wrangler
+                .worker_loaders
+                .iter()
+                .any(|loader| loader.binding == GATEWAY_WORKER_LOADER_BINDING)
+        {
+            metadata_bindings.push(json!({
+                "name": GATEWAY_WORKER_LOADER_BINDING,
                 "type": "worker_loader"
             }));
         }
@@ -2825,8 +2912,16 @@ fn build_upload_metadata(
         metadata["observability"] = observability.clone();
     }
 
-    if let Some(limits) = &bundle.wrangler.limits {
-        metadata["limits"] = serde_json::to_value(limits)?;
+    let paid_limits = paid_limits_for_bundle(bundle);
+    if options.include_paid_limits {
+        if let Some(limits) = paid_limits.as_ref() {
+            metadata["limits"] = serde_json::to_value(limits)?;
+        }
+    } else if paid_limits.is_some() {
+        println!(
+            "Omitting paid-only custom Worker limits for {}.",
+            bundle.script_name
+        );
     }
 
     if let Some(uploaded_assets) = options.uploaded_assets {
@@ -2843,6 +2938,15 @@ fn build_upload_metadata(
     Ok(metadata)
 }
 
+fn paid_limits_for_bundle(bundle: &PreparedBundle) -> Option<WranglerLimits> {
+    bundle.wrangler.limits.clone().or_else(|| {
+        (bundle.component == COMPONENT_RIPGIT).then_some(WranglerLimits {
+            cpu_ms: Some(RIPGIT_PAID_CPU_LIMIT_MS),
+            subrequests: None,
+        })
+    })
+}
+
 pub async fn apply_deploy(
     cfg: &CliConfig,
     account_id: &str,
@@ -2856,16 +2960,10 @@ pub async fn apply_deploy(
         return Err("No components requested for deployment".into());
     }
 
-    let mut prepared = components
-        .iter()
-        .map(|component| load_prepared_bundle(cfg, version, component))
-        .collect::<Result<Vec<_>, _>>()?;
-    for bundle in &mut prepared {
-        apply_instance_names_to_bundle(bundle, instance)?;
-    }
-    prepared.sort_by_key(|bundle| deploy_order(&bundle.component));
-
     let selected_components: HashSet<String> = components.iter().cloned().collect();
+    let gateway_script_name = instance
+        .script_name(COMPONENT_GATEWAY)
+        .ok_or("Unsupported gateway component")?;
     let ripgit_script_name = instance
         .script_name(COMPONENT_RIPGIT)
         .ok_or("Unsupported ripgit component")?;
@@ -2874,21 +2972,50 @@ pub async fn apply_deploy(
         list_worker_scripts(&client, account_id, api_token).await?;
     let existing_scripts: HashSet<String> =
         existing_scripts_with_migrations.keys().cloned().collect();
+
+    let deployment_components =
+        deployment_components_for_binding_reconciliation(components, instance, &existing_scripts);
+    if deployment_components.len() > components.len() {
+        println!(
+            "Including gateway ({}) to reconcile adapter service bindings.",
+            gateway_script_name
+        );
+    }
+
+    let mut prepared = deployment_components
+        .iter()
+        .map(|component| load_prepared_bundle(cfg, version, component))
+        .collect::<Result<Vec<_>, _>>()?;
+    for bundle in &mut prepared {
+        apply_instance_names_to_bundle(bundle, instance)?;
+    }
+    prepared.sort_by_key(|bundle| deploy_order(&bundle.component));
+    let deploying_gateway = deployment_components
+        .iter()
+        .any(|component| component == COMPONENT_GATEWAY);
+
     let ripgit_available = selected_components.contains(COMPONENT_RIPGIT)
         || existing_scripts.contains(&ripgit_script_name);
-    if selected_components.contains(COMPONENT_GATEWAY) && !ripgit_available {
+    if deploying_gateway && !ripgit_available {
         return Err(
             "Deploying `gateway` requires the `ripgit` worker. Include `--component ripgit` or deploy ripgit first."
                 .into(),
         );
     }
     let mut available_scripts = existing_scripts.clone();
-    let mut codemode_enabled = if selected_components.contains(COMPONENT_GATEWAY) {
-        resolve_codemode_enabled(&client, account_id, api_token, codemode_preference).await
+    let workers_plan_required = (deploying_gateway
+        && codemode_preference == CodeModePreference::Auto)
+        || prepared
+            .iter()
+            .any(|bundle| paid_limits_for_bundle(bundle).is_some());
+    let workers_paid = if workers_plan_required {
+        resolve_workers_paid(&client, account_id, api_token).await
     } else {
-        false
+        None
     };
-    if selected_components.contains(COMPONENT_GATEWAY) {
+    let mut codemode_enabled =
+        codemode_enabled_for_plan(deploying_gateway, codemode_preference, workers_paid);
+    if deploying_gateway {
         println!(
             "CodeMode: {}",
             if codemode_enabled {
@@ -2966,7 +3093,6 @@ pub async fn apply_deploy(
             bundle,
             UploadMetadataOptions {
                 instance,
-                selected_components: &selected_components,
                 available_scripts: &available_scripts,
                 account_subdomain: account_subdomain.as_deref(),
                 existing_migration_tag: existing_scripts_with_migrations
@@ -2977,6 +3103,7 @@ pub async fn apply_deploy(
                 uploaded_assets: uploaded_assets_by_script.get(&bundle.script_name),
                 keep_assets: false,
                 include_worker_loaders: bundle.component != COMPONENT_GATEWAY || codemode_enabled,
+                include_paid_limits: workers_paid == Some(true),
             },
         )?;
         let source_map_for_upload = bundle.source_map.as_ref().and_then(|(name, bytes)| {
@@ -3024,7 +3151,6 @@ pub async fn apply_deploy(
                 bundle,
                 UploadMetadataOptions {
                     instance,
-                    selected_components: &selected_components,
                     available_scripts: &available_scripts,
                     account_subdomain: account_subdomain.as_deref(),
                     existing_migration_tag: existing_scripts_with_migrations
@@ -3036,6 +3162,7 @@ pub async fn apply_deploy(
                     uploaded_assets: uploaded_assets_by_script.get(&bundle.script_name),
                     keep_assets: false,
                     include_worker_loaders: false,
+                    include_paid_limits: workers_paid == Some(true),
                 },
             )?;
             let fallback_source_map = bundle.source_map.as_ref().and_then(|(name, bytes)| {
@@ -3100,6 +3227,9 @@ pub async fn apply_deploy(
         }
     }
 
+    // Pass 1 establishes every selected Worker. Pass 2 is required for a clean
+    // install because adapters are uploaded before a newly created gateway;
+    // only now can both sides reference targets that Cloudflare knows exist.
     println!("\nFinalizing service bindings (pass 2/2):");
     for bundle in &prepared {
         println!("Finalizing {} ({})", bundle.component, bundle.script_name);
@@ -3107,7 +3237,6 @@ pub async fn apply_deploy(
             bundle,
             UploadMetadataOptions {
                 instance,
-                selected_components: &selected_components,
                 available_scripts: &available_scripts,
                 account_subdomain: account_subdomain.as_deref(),
                 existing_migration_tag: None,
@@ -3116,6 +3245,7 @@ pub async fn apply_deploy(
                 uploaded_assets: None,
                 keep_assets: bundle.manifest.assets_dir.is_some(),
                 include_worker_loaders: bundle.component != COMPONENT_GATEWAY || codemode_enabled,
+                include_paid_limits: workers_paid == Some(true),
             },
         )?;
         let source_map_for_upload = bundle.source_map.as_ref().and_then(|(name, bytes)| {
@@ -3181,6 +3311,8 @@ pub async fn destroy_deploy(
 
     println!("\nDeleting workers:");
     for (component, script_name) in scripts_to_delete {
+        // Cloudflare's force-delete contract removes service bindings associated
+        // with the target script, so adapter removal also detaches the gateway.
         let deleted =
             delete_worker_script(&client, account_id, api_token, &script_name, true).await?;
         if deleted {
@@ -3411,7 +3543,6 @@ pub async fn bootstrap_gateway_config(
         && config.llm_provider.is_none()
         && config.llm_model.is_none()
         && config.llm_api_key.is_none()
-        && !config.set_whatsapp_pairing
     {
         return Ok(());
     }
@@ -3441,11 +3572,6 @@ pub async fn bootstrap_gateway_config(
             .ok_or("LLM provider is required when setting llm_api_key")?;
         gateway_config_set(&conn, &format!("apiKeys.{}", provider), json!(api_key)).await?;
         println!("Configured API key for provider: {}", provider);
-    }
-
-    if config.set_whatsapp_pairing {
-        gateway_config_set(&conn, "channels.whatsapp.dmPolicy", json!("pairing")).await?;
-        println!("Configured WhatsApp DM policy: pairing");
     }
 
     Ok(())
@@ -3611,6 +3737,39 @@ mod tests {
         builder.into_inner().unwrap().finish().unwrap()
     }
 
+    fn prepared_test_bundle(
+        component: &str,
+        services: Vec<WranglerServiceBinding>,
+    ) -> PreparedBundle {
+        let script_name = DeployInstance::default()
+            .script_name(component)
+            .expect("test component must have a script name");
+        PreparedBundle {
+            bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
+            component: component.to_string(),
+            manifest: BundleManifest {
+                component: component.to_string(),
+                worker: WorkerManifest {
+                    entrypoint: "worker/index.js".to_string(),
+                    source_map: None,
+                    wrangler_config: None,
+                },
+                assets_dir: None,
+            },
+            wrangler: WranglerConfig {
+                name: script_name.clone(),
+                compatibility_date: Some("2026-01-28".to_string()),
+                services,
+                ..WranglerConfig::default()
+            },
+            script_name,
+            entrypoint_part_name: "worker/index.js".to_string(),
+            entrypoint_bytes: Vec::new(),
+            additional_modules: Vec::new(),
+            source_map: None,
+        }
+    }
+
     #[test]
     fn install_extracted_component_replaces_existing_after_staged_extract() {
         let version_root = temp_test_dir("bundle-replace");
@@ -3675,6 +3834,70 @@ mod tests {
     fn normalize_components_accepts_ripgit() {
         let components = normalize_components(&["ripgit".to_string()]).unwrap();
         assert_eq!(components, vec!["ripgit".to_string()]);
+    }
+
+    #[test]
+    fn adapter_changes_prepare_gateway_bundle_for_binding_reconciliation() {
+        assert_eq!(
+            components_for_binding_reconciliation(&[COMPONENT_CHANNEL_WHATSAPP.to_string()]),
+            vec![
+                COMPONENT_CHANNEL_WHATSAPP.to_string(),
+                COMPONENT_GATEWAY.to_string(),
+            ]
+        );
+        assert_eq!(
+            components_for_binding_reconciliation(&[
+                COMPONENT_GATEWAY.to_string(),
+                COMPONENT_CHANNEL_WHATSAPP.to_string(),
+            ]),
+            vec![
+                COMPONENT_GATEWAY.to_string(),
+                COMPONENT_CHANNEL_WHATSAPP.to_string(),
+            ]
+        );
+        assert_eq!(
+            components_for_binding_reconciliation(&[COMPONENT_RIPGIT.to_string()]),
+            vec![COMPONENT_RIPGIT.to_string()]
+        );
+    }
+
+    #[test]
+    fn adapter_only_updates_redeploy_the_existing_instance_gateway() {
+        let whatsapp = vec![COMPONENT_CHANNEL_WHATSAPP.to_string()];
+        let default_instance = DeployInstance::default();
+        assert_eq!(
+            deployment_components_for_binding_reconciliation(
+                &whatsapp,
+                &default_instance,
+                &HashSet::from([SCRIPT_GATEWAY.to_string()]),
+            ),
+            vec![
+                COMPONENT_CHANNEL_WHATSAPP.to_string(),
+                COMPONENT_GATEWAY.to_string(),
+            ]
+        );
+
+        let named_instance = DeployInstance::parse("gsv-personal").unwrap();
+        assert_eq!(
+            deployment_components_for_binding_reconciliation(
+                &whatsapp,
+                &named_instance,
+                &HashSet::from(["gsv-personal".to_string()]),
+            ),
+            vec![
+                COMPONENT_CHANNEL_WHATSAPP.to_string(),
+                COMPONENT_GATEWAY.to_string(),
+            ]
+        );
+
+        assert_eq!(
+            deployment_components_for_binding_reconciliation(
+                &whatsapp,
+                &named_instance,
+                &HashSet::from([SCRIPT_GATEWAY.to_string()]),
+            ),
+            whatsapp
+        );
     }
 
     #[test]
@@ -3745,6 +3968,18 @@ mod tests {
         assert_eq!(
             scripts,
             vec![(COMPONENT_GATEWAY.to_string(), SCRIPT_GATEWAY.to_string())]
+        );
+
+        let named_instance = DeployInstance::parse("gsv-personal").unwrap();
+        let whatsapp_scripts =
+            teardown_worker_scripts(&[COMPONENT_CHANNEL_WHATSAPP.to_string()], &named_instance)
+                .unwrap();
+        assert_eq!(
+            whatsapp_scripts,
+            vec![(
+                COMPONENT_CHANNEL_WHATSAPP.to_string(),
+                "gsv-personal-channel-whatsapp".to_string(),
+            )]
         );
     }
 
@@ -3833,7 +4068,7 @@ cpu_ms = 300000
     fn workers_plan_detection_handles_usage_models_and_subscriptions() {
         assert_eq!(workers_paid_from_usage_model(Some("standard")), Some(true));
         assert_eq!(workers_paid_from_usage_model(Some("unbound")), Some(true));
-        assert_eq!(workers_paid_from_usage_model(Some("bundled")), Some(false));
+        assert_eq!(workers_paid_from_usage_model(Some("bundled")), Some(true));
         assert_eq!(workers_paid_from_usage_model(None), None);
 
         let subscriptions = vec![
@@ -3862,6 +4097,36 @@ cpu_ms = 300000
             state: Some("Cancelled".to_string()),
         }];
         assert!(!workers_paid_from_subscriptions(&cancelled));
+
+        let unrelated_workers_product = vec![CloudflareSubscription {
+            rate_plan: Some(CloudflareRatePlan {
+                id: Some("workers_future_addon".to_string()),
+                scope: Some("account".to_string()),
+            }),
+            state: Some("Paid".to_string()),
+        }];
+        assert!(!workers_paid_from_subscriptions(&unrelated_workers_product));
+
+        assert!(codemode_enabled_for_plan(
+            true,
+            CodeModePreference::Auto,
+            Some(true),
+        ));
+        assert!(!codemode_enabled_for_plan(
+            true,
+            CodeModePreference::Auto,
+            Some(false),
+        ));
+        assert!(!codemode_enabled_for_plan(
+            true,
+            CodeModePreference::Auto,
+            None,
+        ));
+        assert!(!codemode_enabled_for_plan(
+            false,
+            CodeModePreference::On,
+            Some(true),
+        ));
     }
 
     #[test]
@@ -3951,7 +4216,6 @@ cpu_ms = 300000
             &bundle,
             UploadMetadataOptions {
                 instance: &instance,
-                selected_components: &HashSet::new(),
                 available_scripts: &HashSet::new(),
                 account_subdomain: None,
                 existing_migration_tag: None,
@@ -3960,6 +4224,7 @@ cpu_ms = 300000
                 uploaded_assets: None,
                 keep_assets: false,
                 include_worker_loaders: true,
+                include_paid_limits: true,
             },
         )
         .unwrap();
@@ -3975,7 +4240,6 @@ cpu_ms = 300000
             &bundle,
             UploadMetadataOptions {
                 instance: &instance,
-                selected_components: &HashSet::new(),
                 available_scripts: &HashSet::new(),
                 account_subdomain: None,
                 existing_migration_tag: None,
@@ -3984,6 +4248,7 @@ cpu_ms = 300000
                 uploaded_assets: None,
                 keep_assets: false,
                 include_worker_loaders: false,
+                include_paid_limits: false,
             },
         )
         .unwrap();
@@ -3992,6 +4257,90 @@ cpu_ms = 300000
             .unwrap()
             .iter()
             .any(|binding| binding["type"] == "worker_loader"));
+        assert!(metadata_without_loader.get("limits").is_none());
+    }
+
+    #[test]
+    fn free_safe_configs_receive_paid_metadata_only_at_the_deployer_boundary() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let gateway_path = manifest_dir.join("../gateway/wrangler.jsonc");
+        let gateway_config =
+            parse_wrangler_config(&gateway_path, &fs::read_to_string(&gateway_path).unwrap())
+                .unwrap();
+        assert!(gateway_config.worker_loaders.is_empty());
+
+        let ripgit_path = manifest_dir.join("../ripgit/wrangler.toml");
+        let ripgit_config =
+            parse_wrangler_config(&ripgit_path, &fs::read_to_string(&ripgit_path).unwrap())
+                .unwrap();
+        assert!(ripgit_config.limits.is_none());
+
+        let instance = DeployInstance::default();
+        let gateway = prepared_test_bundle(COMPONENT_GATEWAY, Vec::new());
+        let gateway_metadata = build_upload_metadata(
+            &gateway,
+            UploadMetadataOptions {
+                instance: &instance,
+                available_scripts: &HashSet::new(),
+                account_subdomain: None,
+                existing_migration_tag: None,
+                include_migrations: false,
+                script_exists: false,
+                uploaded_assets: None,
+                keep_assets: false,
+                include_worker_loaders: true,
+                include_paid_limits: false,
+            },
+        )
+        .unwrap();
+        assert!(gateway_metadata["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|binding| {
+                binding["name"] == GATEWAY_WORKER_LOADER_BINDING
+                    && binding["type"] == "worker_loader"
+            }));
+
+        let ripgit = prepared_test_bundle(COMPONENT_RIPGIT, Vec::new());
+        let paid_ripgit_metadata = build_upload_metadata(
+            &ripgit,
+            UploadMetadataOptions {
+                instance: &instance,
+                available_scripts: &HashSet::new(),
+                account_subdomain: None,
+                existing_migration_tag: None,
+                include_migrations: false,
+                script_exists: false,
+                uploaded_assets: None,
+                keep_assets: false,
+                include_worker_loaders: false,
+                include_paid_limits: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            paid_ripgit_metadata["limits"]["cpu_ms"],
+            RIPGIT_PAID_CPU_LIMIT_MS,
+        );
+
+        let free_ripgit_metadata = build_upload_metadata(
+            &ripgit,
+            UploadMetadataOptions {
+                instance: &instance,
+                available_scripts: &HashSet::new(),
+                account_subdomain: None,
+                existing_migration_tag: None,
+                include_migrations: false,
+                script_exists: false,
+                uploaded_assets: None,
+                keep_assets: false,
+                include_worker_loaders: false,
+                include_paid_limits: false,
+            },
+        )
+        .unwrap();
+        assert!(free_ripgit_metadata.get("limits").is_none());
     }
 
     #[test]
@@ -4022,9 +4371,114 @@ cpu_ms = 300000
         };
 
         let available_scripts = HashSet::from([SCRIPT_CHANNEL_TELEGRAM.to_string()]);
-        let bindings =
-            service_bindings_for_bundle(&bundle, &instance, &HashSet::new(), &available_scripts);
+        let bindings = service_bindings_for_bundle(&bundle, &instance, &available_scripts);
 
+        assert!(bindings.iter().any(|binding| {
+            binding.binding == "CHANNEL_TELEGRAM"
+                && binding.service == SCRIPT_CHANNEL_TELEGRAM
+                && binding.entrypoint.as_deref() == Some("TelegramChannel")
+        }));
+    }
+
+    #[test]
+    fn service_bindings_reconcile_all_adapter_directions_and_instances() {
+        for instance in [
+            DeployInstance::default(),
+            DeployInstance::parse("gsv-personal").unwrap(),
+        ] {
+            let gateway_script = instance.script_name(COMPONENT_GATEWAY).unwrap();
+            let mut available_scripts = HashSet::from([gateway_script.clone()]);
+            for adapter in ADAPTER_DEPLOYMENTS {
+                available_scripts.insert(instance.script_name(adapter.component).unwrap());
+            }
+
+            let gateway = prepared_test_bundle(COMPONENT_GATEWAY, Vec::new());
+            let gateway_bindings =
+                service_bindings_for_bundle(&gateway, &instance, &available_scripts);
+            for adapter in ADAPTER_DEPLOYMENTS {
+                let binding = gateway_bindings
+                    .iter()
+                    .find(|binding| binding.binding == adapter.gateway_binding)
+                    .unwrap_or_else(|| panic!("missing {}", adapter.gateway_binding));
+                assert_eq!(
+                    binding.service,
+                    instance.script_name(adapter.component).unwrap()
+                );
+                assert_eq!(
+                    binding.entrypoint.as_deref(),
+                    Some(adapter.adapter_entrypoint)
+                );
+
+                let adapter_bundle = prepared_test_bundle(adapter.component, Vec::new());
+                let adapter_bindings =
+                    service_bindings_for_bundle(&adapter_bundle, &instance, &available_scripts);
+                let gateway_binding = adapter_bindings
+                    .iter()
+                    .find(|binding| binding.binding == "GATEWAY")
+                    .expect("adapter must bind back to the gateway");
+                assert_eq!(gateway_binding.service, gateway_script);
+                assert_eq!(
+                    gateway_binding.entrypoint.as_deref(),
+                    Some(GATEWAY_ENTRYPOINT)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn clean_install_second_pass_completes_bidirectional_whatsapp_bindings() {
+        let instance = DeployInstance::default();
+        let whatsapp = prepared_test_bundle(COMPONENT_CHANNEL_WHATSAPP, Vec::new());
+        let gateway = prepared_test_bundle(COMPONENT_GATEWAY, Vec::new());
+        let mut available_scripts = HashSet::new();
+
+        // Pass 1 follows deploy_order: WhatsApp is uploaded before a new
+        // gateway, so Cloudflare cannot accept its GATEWAY target yet.
+        let first_whatsapp = service_bindings_for_bundle(&whatsapp, &instance, &available_scripts);
+        assert!(!first_whatsapp
+            .iter()
+            .any(|binding| binding.binding == "GATEWAY"));
+        available_scripts.insert(SCRIPT_CHANNEL_WHATSAPP.to_string());
+
+        let first_gateway = service_bindings_for_bundle(&gateway, &instance, &available_scripts);
+        assert!(first_gateway.iter().any(|binding| {
+            binding.binding == "CHANNEL_WHATSAPP"
+                && binding.entrypoint.as_deref() == Some("WhatsAppChannelEntrypoint")
+        }));
+        available_scripts.insert(SCRIPT_GATEWAY.to_string());
+
+        // Pass 2 revisits every prepared Worker after all targets exist.
+        let final_whatsapp = service_bindings_for_bundle(&whatsapp, &instance, &available_scripts);
+        assert!(final_whatsapp.iter().any(|binding| {
+            binding.binding == "GATEWAY"
+                && binding.service == SCRIPT_GATEWAY
+                && binding.entrypoint.as_deref() == Some(GATEWAY_ENTRYPOINT)
+        }));
+        let final_gateway = service_bindings_for_bundle(&gateway, &instance, &available_scripts);
+        assert!(final_gateway.iter().any(|binding| {
+            binding.binding == "CHANNEL_WHATSAPP"
+                && binding.service == SCRIPT_CHANNEL_WHATSAPP
+                && binding.entrypoint.as_deref() == Some("WhatsAppChannelEntrypoint")
+        }));
+    }
+
+    #[test]
+    fn service_bindings_drop_removed_adapter_targets() {
+        let instance = DeployInstance::default();
+        let stale_whatsapp_binding = WranglerServiceBinding {
+            binding: "CHANNEL_WHATSAPP".to_string(),
+            service: SCRIPT_CHANNEL_WHATSAPP.to_string(),
+            environment: None,
+            entrypoint: Some("WhatsAppChannel".to_string()),
+        };
+        let gateway = prepared_test_bundle(COMPONENT_GATEWAY, vec![stale_whatsapp_binding]);
+        let available_scripts = HashSet::from([SCRIPT_CHANNEL_TELEGRAM.to_string()]);
+
+        let bindings = service_bindings_for_bundle(&gateway, &instance, &available_scripts);
+
+        assert!(!bindings
+            .iter()
+            .any(|binding| binding.binding == "CHANNEL_WHATSAPP"));
         assert!(bindings.iter().any(|binding| {
             binding.binding == "CHANNEL_TELEGRAM"
                 && binding.service == SCRIPT_CHANNEL_TELEGRAM
@@ -4066,8 +4520,7 @@ cpu_ms = 300000
         };
 
         let available_scripts = HashSet::from(["gsv-personal-ripgit".to_string()]);
-        let bindings =
-            service_bindings_for_bundle(&bundle, &instance, &HashSet::new(), &available_scripts);
+        let bindings = service_bindings_for_bundle(&bundle, &instance, &available_scripts);
 
         assert!(
             bindings
@@ -4145,8 +4598,7 @@ cpu_ms = 300000
             source_map: None,
         };
 
-        let bindings =
-            service_bindings_for_bundle(&bundle, &instance, &HashSet::new(), &HashSet::new());
+        let bindings = service_bindings_for_bundle(&bundle, &instance, &HashSet::new());
 
         assert!(!bindings
             .iter()
@@ -4184,7 +4636,6 @@ cpu_ms = 300000
             &bundle,
             UploadMetadataOptions {
                 instance: &instance,
-                selected_components: &HashSet::new(),
                 available_scripts: &HashSet::new(),
                 account_subdomain: Some("example-subdomain"),
                 existing_migration_tag: None,
@@ -4193,6 +4644,7 @@ cpu_ms = 300000
                 uploaded_assets: None,
                 keep_assets: false,
                 include_worker_loaders: true,
+                include_paid_limits: true,
             },
         )
         .unwrap();

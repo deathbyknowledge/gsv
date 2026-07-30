@@ -4,7 +4,7 @@ Step-by-step guides for common tasks. Each page focuses on one concrete goal —
 
 - [Deploy / Update / Remove](/how-to/deploy) — get GSV running on your Cloudflare account, keep it updated, or take it down
 - [Connect Devices](/how-to/connect-devices) — turn your laptop, phone, and server into one computer your agent can act across
-- [Connect a Messenger](/how-to/messengers) — talk to GSV from Telegram or Discord
+- [Connect a Messenger](/how-to/messengers) — talk to GSV from WhatsApp, Telegram, or Discord
 - [Bring Your Own Model](/how-to/bring-your-own-model) — use your own provider key for better speed and model choice
 - [Integrations (MCP)](/how-to/integrations) — wire in MCP servers to give GSV new tools
 
