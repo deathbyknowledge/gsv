@@ -4,20 +4,28 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "postinstall": "patch-package",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "check": "npm run typecheck && npm run test:run",
+    "bundle": "wrangler deploy --dry-run",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --minify",
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "7.0.0-rc13",
-    "qrcode": "^1.5.4"
+    "@whiskeysockets/baileys": "7.0.0-rc14"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250214.0",
-    "@types/qrcode": "^1.5.6",
-    "patch-package": "^8.0.1",
-    "typescript": "^5.8.2",
-    "wrangler": "^4.3.1"
+    "@cloudflare/vitest-pool-workers": "0.19.1",
+    "@cloudflare/workers-types": "5.20260730.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10",
+    "wrangler": "4.116.0"
+  },
+  "overrides": {
+    "protobufjs": "7.6.5",
+    "sharp": "0.35.3",
+    "ws": "8.21.1"
   }
 }

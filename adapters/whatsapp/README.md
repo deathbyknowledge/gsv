@@ -21,13 +21,16 @@ The record remains pending across transport failures and
 `replayed: "in_progress"`; the existing account alarm retries it and reconstructs
 media for each attempt. A terminal Kernel disposition removes the record.
 
-**Outbound messages** (bot → user): Gateway calls `adapterSend` on the WhatsApp service-binding entrypoint.
+**Outbound messages** (bot → user): Gateway calls `adapterSend` on the
+WhatsApp service-binding entrypoint. Provider sends use a durable delivery
+ledger so a retry cannot silently duplicate an ambiguous WhatsApp send.
 
 ## Account ID
 
-Each WhatsApp account is managed by a Durable Object, identified by an `accountId` (e.g., `"default"`).
-
-The account ID must be passed to the DO via the `X-Account-Id` header on every request. The DO stores this in `storage.kv` for persistence across hibernation.
+Each WhatsApp account is managed by a Durable Object identified by a stable
+local `accountId` (for example, `"default"` or `"account-2"`). The service
+entrypoint resolves that object by name and invokes its typed RPC methods; the
+public Worker does not expose account-control HTTP routes.
 
 ## Lifecycle
 
@@ -39,9 +42,30 @@ gsv adapter status --adapter whatsapp --account-id default
 gsv adapter disconnect --adapter whatsapp --account-id default
 ```
 
-The account Durable Object retains a small internal HTTP surface for status,
-login, logout, and typing activity. The public worker does not expose account
-control routes.
+Connect preserves registered credentials and reconnects an existing linked
+device. `adapter.disconnect` is a real WhatsApp logout and clears those
+credentials. A forced connect (`{"force":true}`) is destructive recovery that
+clears the old link before producing a fresh QR challenge.
+
+Pairing returns the raw WhatsApp QR payload and its expiry to the web UI for
+local rendering. Explicit logout and forced relink advance a durable session
+epoch so late sends, inbound replies, credentials, and Signal keys from the
+old phone cannot cross into the new session.
+
+While connected, the Durable Object rotates its outbound WebSocket every ten
+minutes. Rotation retains authentication and is not a logout. This keeps the
+transport inside Cloudflare's current maximum 15-minute outbound-WebSocket
+keepalive window while leaving alarms as scheduled lifecycle events rather than
+an always-on mechanism.
+
+This design targets the free Workers and Durable Objects plan; it does not
+require Containers. The account alarm also arbitrates pairing expiry,
+connection watchdogs, reconnect backoff, and durable inbound retries.
+
+Inbound media is authenticated and streamed through bounded temporary storage
+up to 48 MiB. Outbound media is capped at 24 MiB aggregate because Baileys
+stages a second encrypted copy during upload within the Durable Object's
+128 MiB memory limit.
 
 ## Group Activation
 
@@ -53,7 +77,9 @@ false so the Gateway can reject the activation conservatively.
 ## Development
 
 ```bash
-npm install
+npm ci
+npm run check
+npm run bundle
 npm run dev
 ```
 

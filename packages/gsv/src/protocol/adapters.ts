@@ -148,21 +148,67 @@ export function isAdapterInboundResult(value: unknown): value is AdapterInboundR
     && (result.error === undefined || typeof result.error === "string");
 }
 
+export type AdapterConnectChallengeFormat = "raw" | "data-url";
+
 export type AdapterConnectChallenge = {
   type: string;
   message?: string;
+  /**
+   * Authentication payload interpreted according to `type` and `format`.
+   * QR challenges use `raw` for provider QR text or `data-url` for an already
+   * rendered image. Callers must not print or log this value.
+   */
   data?: string;
+  format?: AdapterConnectChallengeFormat;
+  /** Absolute Unix time in milliseconds after which this challenge is stale. */
   expiresAt?: number;
   extra?: Record<string, unknown>;
 };
+
+/** Validate an adapter authentication challenge at an RPC boundary. */
+export function isAdapterConnectChallenge(value: unknown): value is AdapterConnectChallenge {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const challenge = value as Partial<AdapterConnectChallenge>;
+  if (typeof challenge.type !== "string" || !challenge.type.trim()) {
+    return false;
+  }
+  if (challenge.message !== undefined && typeof challenge.message !== "string") {
+    return false;
+  }
+  if (challenge.data !== undefined && typeof challenge.data !== "string") {
+    return false;
+  }
+  if (
+    challenge.format !== undefined
+    && challenge.format !== "raw"
+    && challenge.format !== "data-url"
+  ) {
+    return false;
+  }
+  if (challenge.expiresAt !== undefined && !Number.isFinite(challenge.expiresAt)) {
+    return false;
+  }
+  if (
+    challenge.extra !== undefined
+    && (!challenge.extra || typeof challenge.extra !== "object" || Array.isArray(challenge.extra))
+  ) {
+    return false;
+  }
+  if (challenge.type === "qr" && (typeof challenge.data !== "string" || !challenge.data)) {
+    return false;
+  }
+  return true;
+}
 
 /** Result returned by an adapter worker's `adapterConnect` RPC method. */
 export type AdapterWorkerConnectResult =
   | {
       ok: true;
       message?: string;
-      connected?: boolean;
-      authenticated?: boolean;
+      connected: boolean;
+      authenticated: boolean;
       challenge?: AdapterConnectChallenge;
     }
   | {
@@ -171,10 +217,51 @@ export type AdapterWorkerConnectResult =
       challenge?: AdapterConnectChallenge;
     };
 
+/** Validate an adapter Worker's private connect RPC result before the gateway
+ * turns it into the stricter public `adapter.connect` result. */
+export function isAdapterWorkerConnectResult(
+  value: unknown,
+): value is AdapterWorkerConnectResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const result = value as Record<string, unknown>;
+  if (typeof result.ok !== "boolean") {
+    return false;
+  }
+  if (
+    result.challenge !== undefined
+    && !isAdapterConnectChallenge(result.challenge)
+  ) {
+    return false;
+  }
+  if (!result.ok) {
+    return typeof result.error === "string" && result.error.trim().length > 0;
+  }
+  return (result.message === undefined || typeof result.message === "string")
+    && typeof result.connected === "boolean"
+    && typeof result.authenticated === "boolean";
+}
+
 /** Result returned by an adapter worker's `adapterDisconnect` RPC method. */
 export type AdapterWorkerDisconnectResult =
   | { ok: true; message?: string }
   | { ok: false; error: string };
+
+/** Validate an adapter Worker's private disconnect RPC result. */
+export function isAdapterWorkerDisconnectResult(
+  value: unknown,
+): value is AdapterWorkerDisconnectResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const result = value as Record<string, unknown>;
+  if (typeof result.ok !== "boolean") return false;
+  if (!result.ok) {
+    return typeof result.error === "string" && result.error.trim().length > 0;
+  }
+  return result.message === undefined || typeof result.message === "string";
+}
 
 /** Result returned by an adapter worker's `adapterSend` RPC method. */
 export type AdapterWorkerSendResult =
@@ -187,6 +274,71 @@ export type AdapterWorkerSendResult =
       /** The provider may have accepted the delivery; retrying could duplicate it. */
       ambiguous?: boolean;
     };
+
+/** Validate an adapter Worker's private send RPC result. */
+export function isAdapterWorkerSendResult(value: unknown): value is AdapterWorkerSendResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const result = value as Record<string, unknown>;
+  if (typeof result.ok !== "boolean") return false;
+  if (result.ok) {
+    return (result.messageId === undefined || typeof result.messageId === "string")
+      && (result.deduplicated === undefined || typeof result.deduplicated === "boolean");
+  }
+  return typeof result.error === "string"
+    && result.error.trim().length > 0
+    && (result.retryable === undefined || typeof result.retryable === "boolean")
+    && (result.ambiguous === undefined || typeof result.ambiguous === "boolean")
+    && !(result.retryable === true && result.ambiguous === true);
+}
+
+export type AdapterWorkerActivityResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+/** Validate an adapter Worker's private activity RPC result. */
+export function isAdapterWorkerActivityResult(
+  value: unknown,
+): value is AdapterWorkerActivityResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const result = value as Record<string, unknown>;
+  if (typeof result.ok !== "boolean") return false;
+  return result.ok
+    || (typeof result.error === "string" && result.error.trim().length > 0);
+}
+
+/** Validate one live account status returned by an adapter worker. */
+export function isAdapterAccountStatus(value: unknown): value is AdapterAccountStatus {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const status = value as Record<string, unknown>;
+  return typeof status.accountId === "string"
+    && status.accountId.trim().length > 0
+    && status.accountId === status.accountId.trim()
+    && typeof status.connected === "boolean"
+    && typeof status.authenticated === "boolean"
+    && (status.mode === undefined || typeof status.mode === "string")
+    && (
+      status.lastActivity === undefined
+      || (typeof status.lastActivity === "number" && Number.isFinite(status.lastActivity))
+    )
+    && (status.error === undefined || typeof status.error === "string")
+    && (
+      status.extra === undefined
+      || (Boolean(status.extra) && typeof status.extra === "object" && !Array.isArray(status.extra))
+    );
+}
+
+/** Validate the complete private status RPC result before persisting it. */
+export function isAdapterWorkerStatusResult(
+  value: unknown,
+): value is AdapterAccountStatus[] {
+  return Array.isArray(value) && value.every(isAdapterAccountStatus);
+}
 
 /** Request frame sent from an adapter worker to the Gateway service binding. */
 export type AdapterGatewayRequestFrame = {
@@ -241,6 +393,6 @@ export interface AdapterWorkerInterface {
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
-  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  ): Promise<AdapterWorkerActivityResult>;
   adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]>;
 }

@@ -1,33 +1,34 @@
-/**
- * DO-based authentication state store for Baileys
- * Replaces the file-based useMultiFileAuthState with Durable Object storage
- */
-
 import type {
   AuthenticationCreds,
   AuthenticationState,
   SignalDataSet,
+  SignalDataTypeMap,
   SignalKeyStore,
-  SignalKeyStoreWithTransaction,
 } from "@whiskeysockets/baileys";
 import { BufferJSON, initAuthCreds } from "@whiskeysockets/baileys";
 
-type StorageKV = DurableObjectStorage;
+const CREDS_KEY = "auth:creds";
+const AUTH_EPOCH_KEY = "auth:epoch";
+const SIGNAL_PREFIX = "signal:";
+const STORAGE_BATCH_SIZE = 128;
 
-const serializeAuthValue = (value: unknown): string => JSON.stringify(value, BufferJSON.replacer);
-const deserializeAuthValue = (value: string): unknown => JSON.parse(value, authValueReviver);
+const serializeAuthValue = (value: unknown): string =>
+  JSON.stringify(value, BufferJSON.replacer);
+
+const deserializeAuthValue = (value: string): unknown =>
+  JSON.parse(value, authValueReviver);
 
 function authValueReviver(key: string, value: unknown): unknown {
   const revived = BufferJSON.reviver(key, value);
   if (revived !== value) return revived;
 
   if (
-    value &&
-    typeof value === "object" &&
-    "type" in value &&
-    (value as { type?: unknown }).type === "Buffer" &&
-    "data" in value &&
-    Array.isArray((value as { data?: unknown }).data)
+    value
+    && typeof value === "object"
+    && "type" in value
+    && (value as { type?: unknown }).type === "Buffer"
+    && "data" in value
+    && Array.isArray((value as { data?: unknown }).data)
   ) {
     return Buffer.from((value as { data: number[] }).data);
   }
@@ -35,146 +36,155 @@ function authValueReviver(key: string, value: unknown): unknown {
   return value;
 }
 
-/**
- * Create a SignalKeyStore backed by DO storage
- */
-function createDOSignalKeyStore(storage: StorageKV): SignalKeyStoreWithTransaction {
-  const PREFIX = "signal:";
+function chunk<T>(items: readonly T[]): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += STORAGE_BATCH_SIZE) {
+    chunks.push(items.slice(index, index + STORAGE_BATCH_SIZE));
+  }
+  return chunks;
+}
 
-  const store: SignalKeyStoreWithTransaction = {
-    async get<T extends keyof import("@whiskeysockets/baileys").SignalDataTypeMap>(
-      type: T,
-      ids: string[],
-    ) {
-      const result: Record<string, unknown> = {};
-      for (const id of ids) {
-        const key = `${PREFIX}${type}:${id}`;
-        const value = await storage.get<string>(key);
-        if (value) {
+function createDOSignalKeyStore(
+  storage: DurableObjectStorage,
+  authEpoch: number,
+): SignalKeyStore {
+  return {
+    async get<T extends keyof SignalDataTypeMap>(type: T, ids: string[]) {
+      const result: { [id: string]: SignalDataTypeMap[T] } = {};
+      for (const idChunk of chunk(ids)) {
+        const storageKeys = idChunk.map((id) => `${SIGNAL_PREFIX}${type}:${id}`);
+        const values = await storage.transaction(async (txn) => {
+          if (normalizeAuthEpoch(await txn.get<number>(AUTH_EPOCH_KEY)) !== authEpoch) {
+            return new Map<string, string>();
+          }
+          return await txn.get<string>(storageKeys);
+        });
+        for (const [index, id] of idChunk.entries()) {
+          const stored = values.get(storageKeys[index]);
+          if (stored === undefined) continue;
           try {
-            result[id] = deserializeAuthValue(value);
+            result[id] = deserializeAuthValue(stored) as SignalDataTypeMap[T];
           } catch {
-            // Invalid JSON, skip
+            // Corrupt individual Signal records are ignored so Baileys can
+            // request fresh session material without discarding the account.
           }
         }
       }
-      return result as any;
+      return result;
     },
 
     async set(data: SignalDataSet): Promise<void> {
-      const puts: Record<string, string> = {};
+      const puts: Array<[string, string]> = [];
       const deletes: string[] = [];
       for (const [type, entries] of Object.entries(data)) {
         if (!entries) continue;
         for (const [id, value] of Object.entries(entries)) {
-          const key = `${PREFIX}${type}:${id}`;
-          if (value) {
-            puts[key] = serializeAuthValue(value);
-          } else {
+          const key = `${SIGNAL_PREFIX}${type}:${id}`;
+          if (value === null || value === undefined) {
             deletes.push(key);
+          } else {
+            puts.push([key, serializeAuthValue(value)]);
           }
         }
       }
-      await Promise.all([
-        Object.keys(puts).length > 0 ? storage.put(puts) : Promise.resolve(),
-        deletes.length > 0 ? storage.delete(deletes) : Promise.resolve(),
-      ]);
+
+      await storage.transaction(async (txn) => {
+        if (normalizeAuthEpoch(await txn.get<number>(AUTH_EPOCH_KEY)) !== authEpoch) {
+          return;
+        }
+        for (const putChunk of chunk(puts)) {
+          await txn.put(Object.fromEntries(putChunk));
+        }
+        for (const deleteChunk of chunk(deletes)) {
+          await txn.delete(deleteChunk);
+        }
+      });
     },
 
     async clear(): Promise<void> {
-      // List all keys with prefix and delete them
-      const entries = await storage.list({ prefix: PREFIX });
-      const keys = [...entries.keys()];
-      if (keys.length > 0) {
-        await storage.delete(keys);
-      }
-    },
-
-    // Transaction support - for atomic operations
-    isInTransaction(): boolean {
-      return false;
-    },
-
-    async transaction<T>(
-      exec: () => Promise<T>,
-    ): Promise<T> {
-      // DO storage is already transactional per operation
-      // For true transactions, we'd need to batch operations
-      return await exec();
+      await storage.transaction(async (txn) => {
+        if (normalizeAuthEpoch(await txn.get<number>(AUTH_EPOCH_KEY)) !== authEpoch) {
+          return;
+        }
+        const entries = await txn.list({ prefix: SIGNAL_PREFIX });
+        for (const keyChunk of chunk([...entries.keys()])) {
+          await txn.delete(keyChunk);
+        }
+      });
     },
   };
-
-  return store;
 }
 
-/**
- * Create an AuthenticationState backed by DO storage
- * This replaces useMultiFileAuthState for Workers/DO environment
- */
 export async function useDOAuthState(
-  storage: StorageKV,
+  storage: DurableObjectStorage,
 ): Promise<{
   state: AuthenticationState;
   saveCreds: () => Promise<void>;
+  authReset: boolean;
 }> {
-  const CREDS_KEY = "auth:creds";
-
-  // Load or initialize credentials
   let creds: AuthenticationCreds;
+  let authReset = false;
+  let authEpoch = normalizeAuthEpoch(await storage.get<number>(AUTH_EPOCH_KEY));
   const storedCreds = await storage.get<string>(CREDS_KEY);
-  
+
   if (storedCreds) {
     try {
       creds = deserializeAuthValue(storedCreds) as AuthenticationCreds;
-      console.log("[AuthStore] Loaded stored creds");
-    } catch (e) {
-      console.log("[AuthStore] Invalid stored creds, initializing new:", e);
+    } catch {
+      authEpoch = await clearAuthState(storage);
       creds = initAuthCreds();
+      authReset = true;
     }
   } else {
-    console.log("[AuthStore] No stored creds, initializing new");
     creds = initAuthCreds();
   }
 
-  // Create key store
-  const keys = createDOSignalKeyStore(storage);
-
-  // Save credentials function
-  const saveCreds = async () => {
-    await storage.put(CREDS_KEY, serializeAuthValue(creds));
-    console.log("[AuthStore] Credentials saved");
-  };
-
   return {
+    authReset,
     state: {
       creds,
-      keys,
+      keys: createDOSignalKeyStore(storage, authEpoch),
     },
-    saveCreds,
+    saveCreds: async () => {
+      await storage.transaction(async (txn) => {
+        if (normalizeAuthEpoch(await txn.get<number>(AUTH_EPOCH_KEY)) !== authEpoch) {
+          return;
+        }
+        await txn.put(CREDS_KEY, serializeAuthValue(creds));
+      });
+    },
   };
 }
 
-/**
- * Clear all auth state from storage (for logout)
- */
-export async function clearAuthState(storage: StorageKV): Promise<void> {
-  // Delete credentials
-  await storage.delete("auth:creds");
-  
-  // Delete all signal keys
-  const entries = await storage.list({ prefix: "signal:" });
-  const keys = [...entries.keys()];
-  if (keys.length > 0) {
-    await storage.delete(keys);
-  }
-  
-  console.log("[AuthStore] Auth state cleared");
+export async function clearAuthState(storage: DurableObjectStorage): Promise<number> {
+  return await storage.transaction(async (txn) => {
+    const nextEpoch = normalizeAuthEpoch(await txn.get<number>(AUTH_EPOCH_KEY)) + 1;
+    await txn.put(AUTH_EPOCH_KEY, nextEpoch);
+    await txn.delete(CREDS_KEY);
+    const entries = await txn.list({ prefix: SIGNAL_PREFIX });
+    for (const keyChunk of chunk([...entries.keys()])) {
+      await txn.delete(keyChunk);
+    }
+    return nextEpoch;
+  });
 }
 
-/**
- * Check if auth state exists
- */
-export async function hasAuthState(storage: StorageKV): Promise<boolean> {
-  const creds = await storage.get("auth:creds");
-  return creds !== undefined;
+export async function hasAuthState(storage: DurableObjectStorage): Promise<boolean> {
+  return await storage.get(CREDS_KEY) !== undefined;
+}
+
+export async function hasRegisteredAuthState(
+  storage: DurableObjectStorage,
+): Promise<boolean> {
+  const storedCreds = await storage.get<string>(CREDS_KEY);
+  if (!storedCreds) return false;
+  try {
+    return (deserializeAuthValue(storedCreds) as AuthenticationCreds).registered === true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeAuthEpoch(value: number | undefined): number {
+  return Number.isSafeInteger(value) && (value ?? -1) >= 0 ? value! : 0;
 }

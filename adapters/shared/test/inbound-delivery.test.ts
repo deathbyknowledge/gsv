@@ -20,6 +20,16 @@ class MemoryTransaction {
     this.values.set(key, value);
   }
 
+  async delete(key: string | string[]): Promise<boolean | number> {
+    if (Array.isArray(key)) {
+      return key.reduce(
+        (count, item) => count + (this.values.delete(item) ? 1 : 0),
+        0,
+      );
+    }
+    return this.values.delete(key);
+  }
+
   async getAlarm(): Promise<number | null> {
     return this.alarm.value;
   }
@@ -212,6 +222,39 @@ describe("InboundDeliveryLedger", () => {
     expect(storage.alarm.value).toBeNull();
   });
 
+  it("fences an active attempt when all pending handoffs are cleared", async () => {
+    const storage = new MemoryStorage();
+    const pending = ledger(storage);
+    await pending.enqueueAndArm("old-session", { providerMessageId: "old" }, 100);
+    let release!: () => void;
+    let markEntered!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    const send = vi.fn(async () => ({ ok: true as const }));
+    const attempt = pending.attempt("old-session", async () => {
+      markEntered();
+      await held;
+      return adapterInboundResultDisposition({
+        ok: true,
+        reply: { deliveryId: "stale-reply", text: "Do not send" },
+      }, {
+        surface: { kind: "dm", id: "old-chat" },
+        providerMessageId: "old",
+      });
+    }, send);
+
+    await entered;
+    await expect(pending.clear()).resolves.toBe(1);
+    release();
+    await expect(attempt).resolves.toEqual({ state: "completed" });
+    expect(send).not.toHaveBeenCalled();
+    await expect(pending.pendingIds()).resolves.toEqual([]);
+  });
+
   it("persists normalized responses before retrying provider delivery", async () => {
     const storage = new MemoryStorage();
     const first = ledger(storage);
@@ -364,6 +407,7 @@ describe("adapterInboundResultDisposition", () => {
     }, {
       surface,
       providerMessageId: "provider-1",
+      actorId: "provider:actor-1",
     })).toEqual({
       terminal: true,
       responses: [
@@ -371,6 +415,7 @@ describe("adapterInboundResultDisposition", () => {
           message: {
             deliveryId: "challenge-1",
             surface,
+            actorId: "provider:actor-1",
             text: "Link this account",
             replyToId: "provider-1",
           },
@@ -380,11 +425,25 @@ describe("adapterInboundResultDisposition", () => {
           message: {
             deliveryId: "reply-1",
             surface,
+            actorId: "provider:actor-1",
             text: "Done",
             replyToId: "provider-1",
           },
         },
       ],
     });
+  });
+
+  it("keeps actor identity optional for adapters without participant addressing", () => {
+    const surface = { kind: "dm" as const, id: "chat-2" };
+    const disposition = adapterInboundResultDisposition({
+      ok: true,
+      reply: { deliveryId: "reply-2", text: "Done" },
+    }, {
+      surface,
+      providerMessageId: "provider-2",
+    });
+
+    expect(disposition.responses?.[0]?.message).not.toHaveProperty("actorId");
   });
 });

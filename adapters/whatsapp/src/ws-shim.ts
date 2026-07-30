@@ -1,172 +1,216 @@
-/**
- * Shim for the 'ws' package to use native WebSocket in Workers
- * 
- * Baileys uses the 'ws' npm package which is Node.js specific.
- * This shim provides a compatible interface using the native WebSocket API.
- */
-
 import { EventEmitter } from "node:events";
 import {
   readResponseBodyBytes,
   SAFE_MATERIALIZED_MEDIA_PART_BYTES,
 } from "../../shared/src/media-body";
+import { errorFields, logWhatsApp } from "./logging";
 
-// Re-export WebSocket constants
 export const CONNECTING = 0;
 export const OPEN = 1;
 export const CLOSING = 2;
 export const CLOSED = 3;
 
+export type WebSocketOptions = {
+  origin?: string;
+  headers?: Record<string, string | string[] | number | undefined>;
+  handshakeTimeout?: number;
+  timeout?: number;
+  agent?: unknown;
+};
+
 export class WebSocket extends EventEmitter {
-  static CONNECTING = CONNECTING;
-  static OPEN = OPEN;
-  static CLOSING = CLOSING;
-  static CLOSED = CLOSED;
+  static readonly CONNECTING = CONNECTING;
+  static readonly OPEN = OPEN;
+  static readonly CLOSING = CLOSING;
+  static readonly CLOSED = CLOSED;
 
-  private ws: globalThis.WebSocket | null = null;
-  public readyState: number = CONNECTING;
+  private socket: globalThis.WebSocket | null = null;
+  private handshakeAbort: AbortController | null = null;
+  private handshakeTimer: ReturnType<typeof setTimeout> | undefined;
+  private messageTail: Promise<void> = Promise.resolve();
+  readyState = CONNECTING;
 
-  constructor(
-    url: string | URL,
-    options?: {
-      origin?: string;
-      headers?: Record<string, string>;
-      handshakeTimeout?: number;
-      timeout?: number;
-      agent?: unknown;
-    }
-  ) {
+  constructor(url: string | URL, options?: WebSocketOptions) {
     super();
-    
-    const urlString = typeof url === "string" ? url : url.toString();
-    console.log(`[ws-shim] Connecting to ${urlString}`);
-
-    try {
-      // Native WebSocket doesn't support custom headers in the constructor
-      // WhatsApp uses Origin header which we can't set in Workers
-      // But let's try anyway - the server might not strictly require it
-      this.ws = new globalThis.WebSocket(urlString);
-      
-      // Ensure binary messages are delivered as ArrayBuffer, not Blob.
-      // The worker WebSocket type in our TS libs omits binaryType.
-      (this.ws as globalThis.WebSocket & { binaryType?: string }).binaryType = "arraybuffer";
-      
-      this.ws.addEventListener("open", () => {
-        console.log(`[ws-shim] Connection opened`);
-        this.readyState = OPEN;
-        this.emit("open");
-      });
-
-      this.ws.addEventListener("close", (event) => {
-        console.log(`[ws-shim] Connection closed: code=${event.code}, reason=${event.reason}`);
-        this.readyState = CLOSED;
-        this.emit("close", event.code, event.reason);
-      });
-
-      this.ws.addEventListener("error", (event) => {
-        console.error(`[ws-shim] Connection error:`, event);
-        this.emit("error", new Error("WebSocket error"));
-      });
-
-      this.ws.addEventListener("message", (event) => {
-        // Baileys expects Buffer/Uint8Array for binary messages
-        try {
-          if (event.data instanceof ArrayBuffer) {
-            const size = event.data.byteLength;
-            if (size > SAFE_MATERIALIZED_MEDIA_PART_BYTES) {
-              this.emit("error", new Error(`WebSocket message exceeds limit (${size} bytes)`));
-              this.ws?.close(1009, "Message too large");
-              return;
-            }
-            console.log(`[ws-shim] Received ${size} bytes`);
-            this.emit("message", Buffer.from(event.data));
-          } else if (event.data instanceof Blob) {
-            // Convert Blob to ArrayBuffer
-            if (event.data.size > SAFE_MATERIALIZED_MEDIA_PART_BYTES) {
-              this.emit("error", new Error(`WebSocket message exceeds limit (${event.data.size} bytes)`));
-              this.ws?.close(1009, "Message too large");
-              return;
-            }
-            console.log(`[ws-shim] Received Blob: ${event.data.size} bytes`);
-            readResponseBodyBytes(new Response(event.data), {
-              maxBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
-              expectedBytes: event.data.size,
-              label: "WebSocket message",
-            }).then((bytes) => {
-              this.emit("message", Buffer.from(
-                bytes.buffer as ArrayBuffer,
-                bytes.byteOffset,
-                bytes.byteLength,
-              ));
-            }).catch((error) => {
-              this.emit("error", error);
-            });
-          } else if (typeof event.data === "string") {
-            // String message
-            console.log(`[ws-shim] Received string: ${event.data.length} chars`);
-            this.emit("message", event.data);
-          } else {
-            console.log(`[ws-shim] Received unknown type:`, typeof event.data);
-            this.emit("message", event.data);
-          }
-        } catch (e) {
-          console.error(`[ws-shim] Error handling message:`, e);
-        }
-      });
-
-      // Handle connection timeout
-      if (options?.handshakeTimeout || options?.timeout) {
-        const timeout = options.handshakeTimeout || options.timeout || 30000;
-        setTimeout(() => {
-          if (this.readyState === CONNECTING) {
-            console.log(`[ws-shim] Connection timeout after ${timeout}ms`);
-            this.ws?.close();
-            this.emit("error", new Error("Connection timeout"));
-          }
-        }, timeout);
-      }
-    } catch (e) {
-      console.error(`[ws-shim] Failed to create WebSocket:`, e);
-      this.readyState = CLOSED;
-      // Emit error async to allow event handlers to be attached
-      setTimeout(() => this.emit("error", e), 0);
+    this.handshakeAbort = new AbortController();
+    const timeout = options?.handshakeTimeout ?? options?.timeout;
+    if (timeout && timeout > 0) {
+      this.handshakeTimer = setTimeout(() => {
+        if (this.readyState !== CONNECTING) return;
+        this.readyState = CLOSING;
+        this.handshakeAbort?.abort(new Error("WebSocket connection timeout"));
+      }, timeout);
     }
+    void this.connect(url, options).catch((error) => {
+      if (this.readyState === CLOSED) return;
+      const wasClosing = this.readyState === CLOSING;
+      this.finishClose(wasClosing ? 1000 : 1006, wasClosing ? "" : "Connection failed");
+      if (!wasClosing) {
+        this.emit(
+          "error",
+          error instanceof Error ? error : new Error("WebSocket construction failed"),
+        );
+      }
+    });
   }
 
-  send(data: string | ArrayBuffer | Uint8Array, callback?: (err?: Error) => void): void {
+  send(
+    data: string | ArrayBuffer | Uint8Array,
+    callback?: (error?: Error) => void,
+  ): void {
     try {
-      if (this.ws && this.readyState === OPEN) {
-        this.ws.send(data);
-        callback?.();
-      } else {
+      if (!this.socket || this.readyState !== OPEN) {
         callback?.(new Error("WebSocket is not open"));
+        return;
       }
-    } catch (e) {
-      callback?.(e as Error);
+      this.socket.send(data);
+      callback?.();
+    } catch (error) {
+      callback?.(error instanceof Error ? error : new Error("WebSocket send failed"));
     }
   }
 
   close(code?: number, reason?: string): void {
+    if (this.readyState === CLOSED || this.readyState === CLOSING) return;
+    this.clearHandshakeTimer();
     this.readyState = CLOSING;
-    this.ws?.close(code, reason);
-  }
-
-  // No-op methods that 'ws' has but we don't need
-  setMaxListeners(_n: number): this {
-    return this;
-  }
-
-  ping(_data?: unknown, _mask?: boolean, _cb?: () => void): void {
-    // Native WebSocket doesn't have ping - it's handled automatically
-  }
-
-  pong(_data?: unknown, _mask?: boolean, _cb?: () => void): void {
-    // Native WebSocket doesn't have pong - it's handled automatically
+    if (this.socket) {
+      this.socket.close(code, reason);
+    } else {
+      this.handshakeAbort?.abort(new Error("WebSocket connection closed"));
+    }
   }
 
   terminate(): void {
     this.close();
   }
+
+  setMaxListeners(_count: number): this {
+    return this;
+  }
+
+  ping(_data?: unknown, _mask?: boolean, callback?: () => void): void {
+    callback?.();
+  }
+
+  pong(_data?: unknown, _mask?: boolean, callback?: () => void): void {
+    callback?.();
+  }
+
+  private async handleMessage(data: unknown): Promise<void> {
+    if (data instanceof ArrayBuffer) {
+      this.requireMessageSize(data.byteLength);
+      this.emit("message", Buffer.from(data));
+      return;
+    }
+    if (data instanceof Blob) {
+      this.requireMessageSize(data.size);
+      const bytes = await readResponseBodyBytes(new Response(data), {
+        maxBytes: SAFE_MATERIALIZED_MEDIA_PART_BYTES,
+        expectedBytes: data.size,
+        label: "WebSocket message",
+      });
+      this.emit(
+        "message",
+        Buffer.from(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength),
+      );
+      return;
+    }
+    if (typeof data === "string" || data instanceof Uint8Array) {
+      this.requireMessageSize(
+        typeof data === "string" ? new TextEncoder().encode(data).byteLength : data.byteLength,
+      );
+      this.emit("message", data);
+      return;
+    }
+    throw new Error("Unsupported WebSocket message type");
+  }
+
+  private async connect(url: string | URL, options?: WebSocketOptions): Promise<void> {
+    const response = await fetch(toFetchWebSocketUrl(url), {
+      method: "GET",
+      headers: webSocketHandshakeHeaders(options),
+      redirect: "manual",
+      signal: this.handshakeAbort?.signal,
+    });
+    if (this.readyState !== CONNECTING) {
+      response.webSocket?.close(1000, "Connection cancelled");
+      await response.body?.cancel().catch(() => undefined);
+      this.finishClose(1000, "");
+      return;
+    }
+    if (response.status !== 101 || !response.webSocket) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`WebSocket upgrade failed with HTTP ${response.status}`);
+    }
+
+    this.clearHandshakeTimer();
+    this.handshakeAbort = null;
+    this.socket = response.webSocket;
+    this.socket.binaryType = "arraybuffer";
+    this.socket.addEventListener("close", (event) => {
+      this.finishClose(event.code, event.reason);
+    });
+    this.socket.addEventListener("error", () => {
+      this.emit("error", new Error("WebSocket transport error"));
+    });
+    this.socket.addEventListener("message", (event) => {
+      this.messageTail = this.messageTail
+        .then(async () => this.handleMessage(event.data))
+        .catch((error) => {
+          logWhatsApp("warn", "websocket_message_failed", errorFields(error));
+          this.emit("error", error instanceof Error ? error : new Error("WebSocket message failed"));
+        });
+    });
+    this.socket.accept();
+    this.readyState = OPEN;
+    this.emit("upgrade", response);
+    this.emit("open");
+  }
+
+  private requireMessageSize(size: number): void {
+    if (size <= SAFE_MATERIALIZED_MEDIA_PART_BYTES) return;
+    this.close(1009, "Message too large");
+    throw new Error("WebSocket message exceeds the adapter limit");
+  }
+
+  private clearHandshakeTimer(): void {
+    if (this.handshakeTimer !== undefined) {
+      clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = undefined;
+    }
+  }
+
+  private finishClose(code: number, reason: string): void {
+    if (this.readyState === CLOSED) return;
+    this.clearHandshakeTimer();
+    this.handshakeAbort = null;
+    this.readyState = CLOSED;
+    this.emit("close", code, reason);
+  }
+}
+
+export function webSocketHandshakeHeaders(options?: WebSocketOptions): Headers {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(options?.headers ?? {})) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const entry of value) headers.append(name, entry);
+    } else {
+      headers.set(name, String(value));
+    }
+  }
+  if (options?.origin) headers.set("Origin", options.origin);
+  headers.set("Upgrade", "websocket");
+  return headers;
+}
+
+export function toFetchWebSocketUrl(value: string | URL): string {
+  const url = new URL(value.toString());
+  if (url.protocol === "wss:") url.protocol = "https:";
+  else if (url.protocol === "ws:") url.protocol = "http:";
+  else throw new Error("WebSocket URL must use ws or wss");
+  return url.toString();
 }
 
 export default WebSocket;

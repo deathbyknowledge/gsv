@@ -51,6 +51,7 @@ const MAX_RESPONSE_DELIVERY_ATTEMPTS = 10;
  */
 export class InboundDeliveryLedger<Payload> {
   private readonly active = new Set<string>();
+  private resetGeneration = 0;
 
   constructor(
     private readonly storage: DurableObjectStorage,
@@ -107,6 +108,17 @@ export class InboundDeliveryLedger<Payload> {
     });
   }
 
+  /** Drops every pending handoff and fences attempts started before the reset. */
+  async clear(): Promise<number> {
+    this.resetGeneration += 1;
+    return await this.storage.transaction(async (txn) => {
+      const records = await txn.list({ prefix: this.prefix });
+      const keys = [...records.keys()];
+      if (keys.length > 0) await txn.delete(keys);
+      return keys.length;
+    });
+  }
+
   async attempt(
     deliveryId: string,
     deliver: (payload: Payload) => Promise<InboundDeliveryDisposition>,
@@ -118,6 +130,7 @@ export class InboundDeliveryLedger<Payload> {
     }
 
     this.active.add(normalizedId);
+    const resetGeneration = this.resetGeneration;
     try {
       const key = this.recordKey(normalizedId);
       const pending = await this.storage.get<PendingInboundDelivery<Payload>>(key);
@@ -126,7 +139,7 @@ export class InboundDeliveryLedger<Payload> {
       }
 
       if (pending.state === "responses") {
-        return await this.deliverResponses(key, pending, send);
+        return await this.deliverResponses(key, pending, send, resetGeneration);
       }
 
       let disposition: InboundDeliveryDisposition;
@@ -137,6 +150,11 @@ export class InboundDeliveryLedger<Payload> {
           terminal: false,
           error: error instanceof Error ? error.message : String(error),
         };
+      }
+
+      if (resetGeneration !== this.resetGeneration) {
+        await this.storage.delete(key);
+        return { state: "completed" };
       }
 
       if (disposition.terminal) {
@@ -152,7 +170,7 @@ export class InboundDeliveryLedger<Payload> {
           createdAt: pending.createdAt,
         };
         await this.storage.put(key, responseState);
-        return await this.deliverResponses(key, responseState, send);
+        return await this.deliverResponses(key, responseState, send, resetGeneration);
       }
 
       const error = disposition.error?.slice(0, MAX_ERROR_LENGTH);
@@ -184,7 +202,12 @@ export class InboundDeliveryLedger<Payload> {
     key: string,
     pending: Extract<PendingInboundDelivery<Payload>, { state: "responses" }>,
     send: ((message: AdapterOutboundMessage) => Promise<AdapterSendResult>) | undefined,
+    resetGeneration: number,
   ): Promise<InboundDeliveryAttempt> {
+    if (resetGeneration !== this.resetGeneration) {
+      await this.storage.delete(key);
+      return { state: "completed" };
+    }
     if (!send) {
       return { state: "pending", error: "Adapter response delivery is unavailable" };
     }
@@ -206,6 +229,7 @@ export class InboundDeliveryLedger<Payload> {
 
     let retryError: string | undefined;
     for (const response of attempted.responses) {
+      if (resetGeneration !== this.resetGeneration) break;
       if (response.expiresAt !== undefined && response.expiresAt <= Date.now()) {
         console.warn(
           `[Adapter] Inbound response ${response.message.deliveryId} expired before delivery`,
@@ -228,6 +252,11 @@ export class InboundDeliveryLedger<Payload> {
       console.warn(
         `[Adapter] Inbound response ${response.message.deliveryId} was not delivered: ${delivery.error}`,
       );
+    }
+
+    if (resetGeneration !== this.resetGeneration) {
+      await this.storage.delete(key);
+      return { state: "completed" };
     }
 
     if (
@@ -260,6 +289,7 @@ export function adapterInboundResultDisposition(
   input: {
     surface: AdapterSurface;
     providerMessageId: string;
+    actorId?: string;
   },
 ): InboundDeliveryDisposition {
   if (!isTerminalAdapterInboundResult(result)) {
@@ -275,6 +305,7 @@ export function adapterInboundResultDisposition(
       message: {
         deliveryId: result.challenge.deliveryId,
         surface: input.surface,
+        ...(input.actorId ? { actorId: input.actorId } : {}),
         text: result.challenge.prompt,
         replyToId: input.providerMessageId,
       },
@@ -286,6 +317,7 @@ export function adapterInboundResultDisposition(
       message: {
         deliveryId: result.reply.deliveryId,
         surface: input.surface,
+        ...(input.actorId ? { actorId: input.actorId } : {}),
         text: result.reply.text,
         replyToId: result.reply.replyToId || input.providerMessageId,
       },

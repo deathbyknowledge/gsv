@@ -1,0 +1,146 @@
+import { DisconnectReason } from "@whiskeysockets/baileys";
+import { describe, expect, it } from "vitest";
+
+import {
+  canReplaceSupersededLifecycleAlarm,
+  disconnectPolicy,
+  earliestDeadline,
+  enqueueThenDeliverInboundBatch,
+  pairingChallengeIsCurrent,
+  pairingSessionExpired,
+  reconnectDelayMs,
+  restartDelayMs,
+  SOCKET_ROTATION_INTERVAL_MS,
+  SocketOperationQueue,
+} from "../src/lifecycle";
+import {
+  defaultWhatsAppAccountState,
+  restoreWhatsAppAccountState,
+} from "../src/types";
+
+describe("WhatsApp lifecycle policy", () => {
+  it("rotates the transport inside Cloudflare's 15 minute outbound window", () => {
+    expect(SOCKET_ROTATION_INTERVAL_MS).toBe(10 * 60 * 1000);
+  });
+
+  it("distinguishes restart, replacement, logout, and corrupt auth", () => {
+    expect(disconnectPolicy(DisconnectReason.restartRequired)).toEqual({
+      action: "restart",
+      clearAuth: false,
+    });
+    expect(disconnectPolicy(DisconnectReason.connectionReplaced)).toEqual({
+      action: "stop",
+      clearAuth: false,
+    });
+    expect(disconnectPolicy(DisconnectReason.loggedOut)).toEqual({
+      action: "logged_out",
+      clearAuth: true,
+    });
+    expect(disconnectPolicy(DisconnectReason.badSession)).toEqual({
+      action: "stop",
+      clearAuth: true,
+    });
+    expect(disconnectPolicy(503)).toEqual({ action: "reconnect", clearAuth: false });
+  });
+
+  it("caps reconnect backoff and chooses the earliest alarm deadline", () => {
+    expect(reconnectDelayMs(0, 0)).toBe(2_000);
+    expect(reconnectDelayMs(20, 0)).toBe(5 * 60 * 1000);
+    expect(reconnectDelayMs(20, 0.999999)).toBe(5 * 60 * 1000 + 999);
+    expect(earliestDeadline(undefined, 500, Number.NaN, 100, null)).toBe(100);
+    expect(earliestDeadline(undefined, null)).toBeUndefined();
+  });
+
+  it("backs off repeated restart-required disconnects after the first", () => {
+    expect(restartDelayMs(0, 0)).toBe(0);
+    expect(restartDelayMs(1, 0)).toBe(2_000);
+    expect(restartDelayMs(2, 0)).toBe(4_000);
+    expect(restartDelayMs(30, 0)).toBe(5 * 60 * 1000);
+  });
+
+  it("never reuses a QR challenge after its pairing session expires", () => {
+    expect(pairingSessionExpired(false, 1_000, 1_000)).toBe(true);
+    expect(pairingSessionExpired(false, 1_001, 1_000)).toBe(false);
+    expect(pairingSessionExpired(true, 1_000, 1_000)).toBe(false);
+    expect(pairingChallengeIsCurrent("private-qr", 1_001, 1_000)).toBe(true);
+    expect(pairingChallengeIsCurrent("private-qr", 1_000, 1_000)).toBe(false);
+    expect(pairingChallengeIsCurrent(null, 1_001, 1_000)).toBe(false);
+  });
+
+  it("replaces a completed watchdog without postponing inbound retry work", () => {
+    expect(canReplaceSupersededLifecycleAlarm(30_000, 30_000, false)).toBe(true);
+    expect(canReplaceSupersededLifecycleAlarm(10_000, 30_000, false)).toBe(false);
+    expect(canReplaceSupersededLifecycleAlarm(30_000, 30_000, true)).toBe(false);
+  });
+
+  it("serializes stale-generation writes behind invalidation", async () => {
+    const queue = new SocketOperationQueue();
+    let generation = 1;
+    let writes = 0;
+    const captured = generation;
+
+    const invalidate = queue.run(async () => {
+      generation += 1;
+    });
+    const staleWrite = queue.run(async () => {
+      if (captured === generation) writes += 1;
+    });
+    await Promise.all([invalidate, staleWrite]);
+
+    expect(writes).toBe(0);
+  });
+
+  it("durably accepts a complete provider batch before forwarding its head", async () => {
+    const events: string[] = [];
+    let transportGeneration = 1;
+
+    await enqueueThenDeliverInboundBatch(
+      async () => {
+        const accepted = ["first", "second", "third"];
+        for (const id of accepted) events.push(`enqueue:${id}`);
+        return accepted;
+      },
+      async (id) => {
+        events.push(`deliver:${id}`);
+        if (id === "first") transportGeneration += 1;
+      },
+    );
+
+    expect(transportGeneration).toBe(2);
+    expect(events).toEqual([
+      "enqueue:first",
+      "enqueue:second",
+      "enqueue:third",
+      "deliver:first",
+      "deliver:second",
+      "deliver:third",
+    ]);
+  });
+});
+
+describe("WhatsApp state upgrade", () => {
+  it("reconnects an existing registered legacy session", () => {
+    expect(restoreWhatsAppAccountState(
+      undefined,
+      "default",
+      true,
+      10_000,
+    )).toEqual({
+      ...defaultWhatsAppAccountState(),
+      accountId: "default",
+      desired: "connected",
+      status: "reconnecting",
+      authenticated: true,
+      reconnectAt: 11_000,
+    });
+  });
+
+  it("does not override an explicit v2 disconnected state", () => {
+    const stored = {
+      ...defaultWhatsAppAccountState(),
+      accountId: "default",
+      status: "logged_out" as const,
+    };
+    expect(restoreWhatsAppAccountState(stored, "legacy", true, 10_000)).toEqual(stored);
+  });
+});

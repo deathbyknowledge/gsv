@@ -1,10 +1,13 @@
 import type {
   AdapterAccountStatus,
-  AdapterConnectChallenge,
   AdapterInboundMessage,
   AdapterInboundResult,
   AdapterMedia,
   AdapterSurface,
+} from "../adapters";
+import {
+  isAdapterConnectChallenge,
+  type AdapterConnectChallenge,
 } from "../adapters";
 
 export type AdapterConnectArgs = {
@@ -28,6 +31,33 @@ export type AdapterConnectResult =
       error: string;
       challenge?: AdapterConnectChallenge;
     };
+
+/** Validate the complete public `adapter.connect` result at a client boundary. */
+export function isAdapterConnectResult(value: unknown): value is AdapterConnectResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const result = value as Record<string, unknown>;
+  if (typeof result.ok !== "boolean") {
+    return false;
+  }
+  if (
+    result.challenge !== undefined
+    && !isAdapterConnectChallenge(result.challenge)
+  ) {
+    return false;
+  }
+  if (!result.ok) {
+    return typeof result.error === "string" && result.error.trim().length > 0;
+  }
+  return typeof result.adapter === "string"
+    && result.adapter.trim().length > 0
+    && typeof result.accountId === "string"
+    && result.accountId.trim().length > 0
+    && typeof result.connected === "boolean"
+    && typeof result.authenticated === "boolean"
+    && (result.message === undefined || typeof result.message === "string");
+}
 
 export type AdapterDisconnectArgs = {
   adapter: string;
