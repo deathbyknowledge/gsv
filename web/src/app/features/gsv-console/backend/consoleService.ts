@@ -1,10 +1,12 @@
 import type { GSVClient } from "@humansandmachines/gsv/client";
 import type {
+  AdapterConnectResult,
   AiTextGenerateConfig,
   SysOAuthDevicePollResult,
   SysOAuthDeviceStartResult,
   SysOAuthListResult,
 } from "@humansandmachines/gsv/protocol";
+import { isAdapterConnectResult } from "@humansandmachines/gsv/protocol";
 import {
   buildConsoleOverviewData,
   normalizeAccountsPayload,
@@ -204,21 +206,7 @@ export type ConnectConsoleAdapterInput = {
   config?: Record<string, unknown>;
 };
 
-export type ConnectConsoleAdapterResult = {
-  ok: boolean;
-  adapter: string;
-  accountId: string;
-  connected: boolean;
-  authenticated: boolean;
-  message: string;
-  error: string;
-  challenge: {
-    type: string;
-    message: string;
-    data: string;
-    expiresAt: number | null;
-  } | null;
-};
+export type ConnectConsoleAdapterResult = AdapterConnectResult;
 
 export type AddConsoleMcpServerInput = {
   name: string;
@@ -629,8 +617,9 @@ export async function deleteConsoleMachine(
 export async function loadConsoleAdapterAccounts(
   client: Pick<GSVClient, "call">,
   adapters?: readonly string[],
+  accountId?: string,
 ): Promise<ConsoleAdapterAccount[]> {
-  const payloads = await loadAdapterPayloads(client, adapters);
+  const payloads = await loadAdapterPayloads(client, adapters, accountId);
   return payloads.flatMap((payload) => normalizeAdapterPayload(payload));
 }
 
@@ -655,23 +644,15 @@ export async function connectConsoleAdapter(
     throw new Error("account id is required");
   }
 
-  const result = await client.call("adapter.connect", {
+  const result: unknown = await client.call("adapter.connect", {
     adapter,
     accountId,
     ...(input.config && Object.keys(input.config).length > 0 ? { config: input.config } : {}),
-  }) as Record<string, unknown>;
-  const ok = result.ok === true;
-  const challenge = normalizeAdapterChallenge(result.challenge);
-  return {
-    ok,
-    adapter: stringOr(adapter, result.adapter),
-    accountId: stringOr(accountId, result.accountId),
-    connected: result.connected === true,
-    authenticated: result.authenticated === true,
-    message: stringOr(ok ? "Connected" : "Connection failed", result.message),
-    error: stringOr("", result.error),
-    challenge,
-  };
+  });
+  if (!isAdapterConnectResult(result)) {
+    throw new Error("Adapter returned an invalid connection response");
+  }
+  return result;
 }
 
 export async function disconnectConsoleAdapter(
@@ -854,7 +835,11 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-async function loadAdapterPayloads(client: Pick<GSVClient, "call">, adapters?: readonly string[]): Promise<unknown[]> {
+async function loadAdapterPayloads(
+  client: Pick<GSVClient, "call">,
+  adapters?: readonly string[],
+  accountId?: string,
+): Promise<unknown[]> {
   if (!adapters) {
     try {
       return [await client.call("adapter.list", {})];
@@ -863,14 +848,21 @@ async function loadAdapterPayloads(client: Pick<GSVClient, "call">, adapters?: r
     }
   }
 
-  return loadAdapterStatusPayloads(client, adapters);
+  return loadAdapterStatusPayloads(client, adapters, accountId);
 }
 
-async function loadAdapterStatusPayloads(client: Pick<GSVClient, "call">, adapters: readonly string[]): Promise<unknown[]> {
+async function loadAdapterStatusPayloads(
+  client: Pick<GSVClient, "call">,
+  adapters: readonly string[],
+  accountId?: string,
+): Promise<unknown[]> {
   const settled = await Promise.allSettled(
     adapters.map(async (adapter) => {
       try {
-        return await client.call("adapter.status", { adapter });
+        return await client.call("adapter.status", {
+          adapter,
+          ...(accountId ? { accountId } : {}),
+        });
       } catch {
         return { adapter, accounts: [] };
       }
@@ -878,23 +870,6 @@ async function loadAdapterStatusPayloads(client: Pick<GSVClient, "call">, adapte
   );
 
   return settled.map((result) => result.status === "fulfilled" ? result.value : { accounts: [] });
-}
-
-function normalizeAdapterChallenge(value: unknown): ConnectConsoleAdapterResult["challenge"] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
-  const type = stringOr("", record.type);
-  if (!type) {
-    return null;
-  }
-  return {
-    type,
-    message: stringOr("", record.message),
-    data: stringOr("", record.data),
-    expiresAt: typeof record.expiresAt === "number" && Number.isFinite(record.expiresAt) ? record.expiresAt : null,
-  };
 }
 
 function stringOr(fallback: string, value: unknown): string {

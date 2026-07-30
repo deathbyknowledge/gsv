@@ -28,6 +28,7 @@ const DOTICON_ALIAS: Record<string, string> = {
   repositories: "branch",
   settings: "cog",
   terminal: "powershell",
+  // Semantic fallback until GSV ships a licensed WhatsApp brand asset.
   whatsapp: "messenger",
 };
 

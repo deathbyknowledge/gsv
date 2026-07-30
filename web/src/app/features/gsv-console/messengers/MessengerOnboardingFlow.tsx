@@ -12,9 +12,13 @@ import { useConnectConsoleAdapter, useConsumeIdentityLinkCode } from "../hooks/u
 import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import { BOTFATHER_URL, DISCORD_DEVELOPER_URL, MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
 import { adapterDetailId, adapterName, deriveAccountId, iconForAdapterName } from "./messengerPresentation";
+import { WhatsAppOnboardingFlow } from "./WhatsAppOnboardingFlow";
 
 type MessengerOnboardingFlowProps = {
   adapterId: string;
+  existingAccountIds?: readonly string[];
+  forceRelink?: boolean;
+  initialAccountId?: string | null;
   onBack: () => void;
   onConnected: (detailId: string) => void;
 };
@@ -40,9 +44,40 @@ function linkedText(result: IdentityLinkMutationResult): string {
 
 export function MessengerOnboardingFlow({
   adapterId,
+  existingAccountIds = [],
+  forceRelink = false,
+  initialAccountId = null,
   onBack,
   onConnected,
 }: MessengerOnboardingFlowProps): JSX.Element {
+  if (adapterId === "whatsapp") {
+    return (
+      <WhatsAppOnboardingFlow
+        existingAccountIds={existingAccountIds}
+        forceRelink={forceRelink}
+        initialAccountId={initialAccountId}
+        onBack={onBack}
+        onConnected={onConnected}
+      />
+    );
+  }
+
+  return (
+    <BotMessengerOnboardingFlow
+      adapterId={adapterId}
+      initialAccountId={initialAccountId}
+      onBack={onBack}
+      onConnected={onConnected}
+    />
+  );
+}
+
+function BotMessengerOnboardingFlow({
+  adapterId,
+  initialAccountId,
+  onBack,
+  onConnected,
+}: Pick<MessengerOnboardingFlowProps, "adapterId" | "initialAccountId" | "onBack" | "onConnected">): JSX.Element {
   const connect = useConnectConsoleAdapter();
   const consumeLinkCode = useConsumeIdentityLinkCode();
   const [step, setStep] = useState(STEP_CREATE);
@@ -60,7 +95,7 @@ export function MessengerOnboardingFlow({
   const isTelegram = adapterId === "telegram";
   const name = adapterName(adapterId);
   const docUrl = adapterDocUrl(adapterId);
-  const botConnected = Boolean(result?.ok && result?.connected && result?.authenticated);
+  const botConnected = Boolean(result?.ok && result.connected && result.authenticated);
   const linked = linkResultText.length > 0;
   const canSubmit = token.trim().length > 0 && !connect.isPending;
   const canLinkUser = botConnected && linkCode.trim().length > 0 && !consumeLinkCode.isPending;
@@ -89,7 +124,7 @@ export function MessengerOnboardingFlow({
     }
     setFormError("");
     try {
-      const accountId = deriveAccountId(adapterId, token.trim());
+      const accountId = initialAccountId?.trim() || deriveAccountId(adapterId, token.trim());
       const next = await connect.mutateAsync({
         adapter: adapterId,
         accountId,
@@ -114,7 +149,7 @@ export function MessengerOnboardingFlow({
         );
         return;
       }
-      setFormError(next.error || next.message);
+      setFormError(next.error);
     } catch (error) {
       setFormError(errorText(error));
     }
@@ -136,7 +171,7 @@ export function MessengerOnboardingFlow({
   };
 
   const goToDetail = () => {
-    if (!result) {
+    if (!result?.ok) {
       onBack();
       return;
     }
@@ -326,7 +361,7 @@ export function MessengerOnboardingFlow({
                 <div style={stepLinksStyle}>
                   <Link href={docUrl} arrow>Read the docs</Link>
                 </div>
-                {result?.challenge ? (
+                {result?.ok && result.challenge ? (
                   <Alert
                     variant="warning"
                     text="This adapter returned an extra authentication step — open the bot detail to finish it."

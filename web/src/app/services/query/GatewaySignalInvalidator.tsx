@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/preact-query";
 import { useEffect } from "preact/hooks";
 import { useGateway } from "../gateway/GatewayProvider";
+import { ADAPTER_STATUS_QUERY_KEYS } from "./gatewaySignalQueryKeys";
 
 export function GatewaySignalInvalidator() {
   const { client } = useGateway();
@@ -51,7 +52,9 @@ export function GatewaySignalInvalidator() {
       }
 
       if (signal === "adapter.status") {
-        void queryClient.invalidateQueries({ queryKey: ["adapters"] });
+        for (const queryKey of ADAPTER_STATUS_QUERY_KEYS) {
+          void queryClient.invalidateQueries({ queryKey });
+        }
       }
     });
   }, [client, queryClient]);

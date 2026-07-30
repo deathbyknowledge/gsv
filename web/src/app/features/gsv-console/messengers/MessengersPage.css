@@ -147,6 +147,13 @@
   color: var(--text-dim);
 }
 
+.gsv-messenger-card-deploy {
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule-inner);
+  color: var(--prose-dim);
+}
+
 /* "N more messengers" → opens the dedicated per-platform page. */
 .gsv-messenger-card-more {
   display: flex;

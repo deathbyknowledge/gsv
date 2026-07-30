@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   checkConsoleOpenAiCodexOAuth,
+  connectConsoleAdapter,
   consumeIdentityLinkCode,
   createMachineNodeToken,
   createConsoleAgent,
@@ -44,6 +45,60 @@ function createMockClient(uid: number | string = 42) {
 }
 
 describe("console agent service", () => {
+  it("preserves the public adapter QR challenge contract", async () => {
+    const result = {
+      ok: true as const,
+      adapter: "whatsapp",
+      accountId: "default",
+      connected: false,
+      authenticated: false,
+      challenge: {
+        type: "qr",
+        data: "sensitive-provider-payload",
+        format: "raw" as const,
+        expiresAt: 1_800_000_000_000,
+        extra: { refreshAfter: 30_000 },
+      },
+    };
+    const call = vi.fn(async () => result);
+
+    await expect(connectConsoleAdapter({ call } as any, {
+      adapter: " whatsapp ",
+      accountId: " default ",
+    })).resolves.toEqual(result);
+    expect(call).toHaveBeenCalledWith("adapter.connect", {
+      adapter: "whatsapp",
+      accountId: "default",
+    });
+  });
+
+  it("rejects malformed connect responses without serializing QR payloads", async () => {
+    const call = vi.fn(async () => ({
+      ok: true,
+      adapter: "whatsapp",
+      accountId: "default",
+      connected: false,
+      authenticated: false,
+      challenge: {
+        type: "qr",
+        data: "do-not-expose-this-qr-payload",
+        format: "html",
+      },
+    }));
+
+    let caught: Error | null = null;
+    try {
+      await connectConsoleAdapter({ call } as any, {
+        adapter: "whatsapp",
+        accountId: "default",
+      });
+    } catch (error) {
+      caught = error as Error;
+    }
+    expect(caught?.message).toBe("Adapter returned an invalid connection response");
+    expect(caught?.message).not.toContain("do-not-expose");
+  });
+
   it("creates driver-scoped node tokens for machine provisioning", async () => {
     const create = vi.fn(async () => ({
       token: {
@@ -278,6 +333,34 @@ describe("console agent service", () => {
     expect(call).toHaveBeenCalledWith("adapter.status", { adapter: "whatsapp" });
     expect(call).toHaveBeenCalledWith("adapter.status", { adapter: "discord" });
     expect(call).toHaveBeenCalledWith("adapter.status", { adapter: "telegram" });
+  });
+
+  it("refreshes one adapter account directly during pairing", async () => {
+    const call = vi.fn(async () => ({
+      adapter: "whatsapp",
+      accounts: [{
+        accountId: "secondary",
+        connected: true,
+        authenticated: true,
+      }],
+    }));
+
+    await expect(loadConsoleAdapterAccounts(
+      { call } as any,
+      ["whatsapp"],
+      "secondary",
+    )).resolves.toEqual([
+      expect.objectContaining({
+        adapter: "whatsapp",
+        accountId: "secondary",
+        connected: true,
+        authenticated: true,
+      }),
+    ]);
+    expect(call).toHaveBeenCalledWith("adapter.status", {
+      adapter: "whatsapp",
+      accountId: "secondary",
+    });
   });
 
   it("persists selected behavior config when creating an agent", async () => {
