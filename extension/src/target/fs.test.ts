@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { bodyToBytes, bodyToText } from "@humansandmachines/gsv/protocol";
 import { BrowserFsDriver, BrowserTargetFileSystem } from "./fs";
 import type { TargetFileSystem } from "./types";
@@ -85,6 +85,29 @@ describe("BrowserFsDriver", () => {
 
     expect(response.data).toMatchObject({ ok: false, error: expect.stringContaining("Binary file") });
     expect(response.body).toBeUndefined();
+  });
+
+  it("delegates searches under runtime mounts to the runtime filesystem", async () => {
+    const search = vi.fn(async () => [{
+      path: "/proc/tabs/7/resources/https/example.com/app.js",
+      line: 1,
+      content: "needle",
+    }]);
+    const runtime = {
+      search,
+      exists: async () => true,
+      getAllPaths: async () => {
+        throw new Error("runtime paths should not be materialized");
+      },
+    } as unknown as TargetFileSystem;
+    const fs = new BrowserTargetFileSystem(runtime);
+
+    await expect(fs.search("/proc/tabs/7/resources", "needle", "*.js")).resolves.toEqual([{
+      path: "/proc/tabs/7/resources/https/example.com/app.js",
+      line: 1,
+      content: "needle",
+    }]);
+    expect(search).toHaveBeenCalledWith("/proc/tabs/7/resources", "needle", "*.js", undefined);
   });
 
   it.each(["stat", "list", "read"] as const)(

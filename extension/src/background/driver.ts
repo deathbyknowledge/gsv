@@ -42,7 +42,7 @@ export function createBrowserTargetDriver(
             }),
           };
         } else if (request.call.startsWith("fs.")) {
-          response = await fsDriver.handle(request.call, request.args, request.body);
+          response = await fsDriver.handle(request.call, request.args, request.body, context.abortSignal);
         } else {
           throw new Error(`Unsupported browser target syscall: ${request.call}`);
         }

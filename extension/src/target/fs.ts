@@ -17,6 +17,7 @@ import {
   type FsPersistenceBackend,
   type StoredFsEntry,
 } from "./fs-persistence";
+import { throwIfAborted } from "./abort";
 import type { FileStat, TargetFileSystem } from "./types";
 
 type FsReadArgs = {
@@ -262,13 +263,18 @@ export class BrowserTargetFileSystem implements TargetFileSystem {
     return this.files.has(normalized) || this.directories.has(normalized);
   }
 
-  async search(path: string, query: string, include?: string): Promise<Array<{ path: string; line: number; content: string }>> {
+  async search(path: string, query: string, include?: string, signal?: AbortSignal): Promise<Array<{ path: string; line: number; content: string }>> {
     await this.ensureLoaded();
+    throwIfAborted(signal);
     const normalized = normalizePath(path);
+    if (isRuntimeSearchPath(normalized)) {
+      return await this.runtime.search(normalized, query, include, signal);
+    }
     const matches: Array<{ path: string; line: number; content: string }> = [];
     const allPaths = await this.getAllPaths();
 
     for (const candidate of allPaths) {
+      throwIfAborted(signal);
       if (!candidate.startsWith(normalized === "/" ? "/" : `${normalized}/`) && candidate !== normalized) {
         continue;
       }
@@ -441,6 +447,14 @@ function isWritablePath(path: string): boolean {
     || path.startsWith("/home/browser/");
 }
 
+function isRuntimeSearchPath(path: string): boolean {
+  return path === "/README.txt"
+    || path === "/dev"
+    || path.startsWith("/dev/")
+    || path === "/proc"
+    || path.startsWith("/proc/");
+}
+
 function copyBytes(bytes: Uint8Array): Uint8Array {
   return new Uint8Array(bytes);
 }
@@ -448,7 +462,7 @@ function copyBytes(bytes: Uint8Array): Uint8Array {
 export class BrowserFsDriver {
   constructor(private readonly fs: TargetFileSystem) {}
 
-  async handle(call: string, args: unknown, body?: GsvBody): Promise<GsvResponse> {
+  async handle(call: string, args: unknown, body?: GsvBody, signal?: AbortSignal): Promise<GsvResponse> {
     switch (call) {
       case "fs.read":
         return await this.read(args);
@@ -459,7 +473,7 @@ export class BrowserFsDriver {
       case "fs.delete":
         return { data: await this.delete(args) };
       case "fs.search":
-        return { data: await this.search(args) };
+        return { data: await this.search(args, signal) };
       case "fs.copy":
         return { data: await this.copy(args) };
       case "fs.transfer.stat":
@@ -565,7 +579,7 @@ export class BrowserFsDriver {
     return { ok: true, path };
   }
 
-  private async search(raw: unknown): Promise<unknown> {
+  private async search(raw: unknown, signal?: AbortSignal): Promise<unknown> {
     const args = asRecord(raw) as FsSearchArgs;
     const query = typeof args.query === "string" ? args.query.trim() : "";
     if (!query) {
@@ -573,7 +587,7 @@ export class BrowserFsDriver {
     }
     const path = typeof args.path === "string" && args.path.trim() ? normalizePath(args.path) : "/";
     const include = typeof args.include === "string" && args.include.trim() ? args.include.trim() : undefined;
-    const matches = await this.fs.search(path, query, include);
+    const matches = await this.fs.search(path, query, include, signal);
     return { ok: true, matches, count: matches.length, truncated: matches.length >= MAX_SEARCH_MATCHES };
   }
 

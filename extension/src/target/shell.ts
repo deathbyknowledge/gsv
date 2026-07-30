@@ -9,7 +9,7 @@ import type {
   TargetFileSystem,
 } from "./types";
 import { commandError } from "./types";
-import { helpText } from "./commands";
+import { commandCatalog, helpText } from "./commands";
 
 type BrowserBash = InstanceType<typeof Bash>;
 
@@ -64,6 +64,9 @@ export class BrowserTargetShell {
     if (!input.trim()) {
       return { status: "failed", output: "", error: "shell.exec requires input" };
     }
+    if (input.trim() === "help") {
+      return { status: "completed", output: helpText(this.commands), exitCode: 0 };
+    }
 
     await this.ensureReady();
     try {
@@ -92,11 +95,26 @@ export class BrowserTargetShell {
   private async initialize(): Promise<void> {
     const adapter = new JustBashFileSystemAdapter(this.fs);
     const customCommands = [
-      defineCommand("help", async () => ({
-        stdout: helpText(this.commands),
-        stderr: "",
-        exitCode: 0,
-      })),
+      defineCommand("commands", async (args) => {
+        if (args.length === 0) {
+          return { stdout: helpText(this.commands), stderr: "", exitCode: 0 };
+        }
+        if (args.length === 1 && args[0] === "--json") {
+          return { stdout: commandCatalog(this.commands), stderr: "", exitCode: 0 };
+        }
+        if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
+          return {
+            stdout: "Usage: commands [--json]\n",
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        return {
+          stdout: "",
+          stderr: "Usage: commands [--json]\n",
+          exitCode: 1,
+        };
+      }),
       ...this.commands.map((command) =>
         defineCommand(command.name, async (args, ctx) => {
           const commandContext: CommandContext = {

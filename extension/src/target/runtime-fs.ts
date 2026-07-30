@@ -1,4 +1,5 @@
 import type { FileStat, TargetFileSystem } from "./types";
+import { throwIfAborted } from "./abort";
 import { basename, normalizePath } from "../shared/paths";
 import {
   activeTab,
@@ -14,11 +15,13 @@ import {
   networkRequestsSnapshot,
   networkStatusSnapshot,
 } from "./network-recorder";
+import { TabResourceStore } from "./tab-resources";
 
 type DirectoryListing = { files: string[]; directories: string[] };
 
 type RuntimeFile = {
   contentType: string;
+  size?: number;
   read: () => Promise<Uint8Array>;
 };
 
@@ -40,7 +43,8 @@ const README = [
   "GSV browser target",
   "",
   "This target exposes the current browser profile to GSV through shell.exec",
-  "and fs.*. Run `help` in shell.exec for browser-specific commands, and run",
+  "and fs.*. Run `help` or `commands` in shell.exec for browser-specific commands, and run",
+  "`commands --json` for structured discovery. Run",
   "`<command> --help` for command-specific usage.",
   "",
   "Browser commands:",
@@ -55,13 +59,14 @@ const README = [
   "  windows list",
   "  windows focus <windowId>",
   "",
-  "  page snapshot [--tab <tabId>] [selector]",
+  "  page snapshot [--tab <tabId>] [--json]",
+  "  page snapshot [--tab <tabId>] --dom [selector]",
   "  page text [--tab <tabId>] [selector]",
   "  page screenshot [--tab <tabId>]",
-  "  page click [--tab <tabId>] <selector> [index]",
-  "  page type [--tab <tabId>] <selector> <text>",
+  "  page click [--tab <tabId>] <ref|selector> [index]",
+  "  page type [--tab <tabId>] <ref|selector> <text>",
   "  page key [--tab <tabId>] <key>",
-  "  page scroll [--tab <tabId>] <up|down|top|bottom|x,y>",
+  "  page scroll [--tab <tabId>] [ref] <up|down|top|bottom|x,y>",
   "  page wait [--tab <tabId>] <selector> [--timeout ms]",
   "  page js [--tab <tabId>] <source>",
   "",
@@ -135,7 +140,14 @@ const README = [
   "Notes:",
   "  curl is enabled with full browser fetch access.",
   "  tabs open opens URLs, browser target files, or stdin in a background tab; use --active to switch to it.",
-  "  page js and page screenshot use chrome.debugger and briefly attach to the target tab.",
+  "  tab resource directories load metadata first and fetch an individual body only when that file is read.",
+  "  fs.search scoped to a tab resource directory uses Chrome resource search without reading every body.",
+  "  copy a /proc tab resource into /home/browser when a stable snapshot is needed.",
+  "  page snapshot returns a semantic accessibility outline with snapshot-scoped refs.",
+  "  use page snapshot --dom for the bounded raw-DOM debugging view.",
+  "  page click/type accept semantic refs or CSS selectors; refs remain pinned to their original tab.",
+  "  page click/type/key/scroll use Chrome input and report both delivery and observed page changes.",
+  "  page snapshot/js/screenshot and page input briefly attach chrome.debugger to the target tab.",
   "  network start uses chrome.debugger and stays attached until network stop.",
   "  media record uses tabCapture and may require clicking Grant Recording in the GSV extension UI first.",
   "  each Grant Recording click allows one media record start.",
@@ -161,6 +173,8 @@ const README = [
   "  /proc/tabs.json",
   "  /proc/tabs/<tabId>/meta.json",
   "  /proc/tabs/<tabId>/text.txt",
+  "  /proc/tabs/<tabId>/resources/index.json",
+  "  /proc/tabs/<tabId>/resources/<scheme>/<origin>/<resource>",
   "  /proc/network/status.json",
   "  /proc/network/events.jsonl",
   "  /proc/network/requests.json",
@@ -176,6 +190,7 @@ const README = [
   "  /home/browser/screenshots",
   "  /proc/network",
   "  /proc/tabs",
+  "  /proc/tabs/<tabId>/resources",
   "  /proc/windows",
   "",
   "Read-only paths:",
@@ -198,6 +213,8 @@ const README = [
 ].join("\n");
 
 export class RuntimeFileSystem implements TargetFileSystem {
+  constructor(private readonly tabResources = new TabResourceStore()) {}
+
   async read(path: string): Promise<Uint8Array> {
     const normalized = runtimePath(path);
     const file = await this.getFile(normalized);
@@ -266,12 +283,11 @@ export class RuntimeFileSystem implements TargetFileSystem {
     if (!file) {
       throw new Error(`No such file or directory: ${normalized}`);
     }
-    const bytes = await file.read();
     return {
       path: normalized,
       isFile: true,
       isDirectory: false,
-      size: bytes.byteLength,
+      size: file.size ?? (await file.read()).byteLength,
       contentType: file.contentType,
     };
   }
@@ -281,7 +297,8 @@ export class RuntimeFileSystem implements TargetFileSystem {
     return (await this.isDirectory(normalized)) || (await this.fileExists(normalized));
   }
 
-  async search(path: string, query: string, include?: string): Promise<Array<{ path: string; line: number; content: string }>> {
+  async search(path: string, query: string, include?: string, signal?: AbortSignal): Promise<Array<{ path: string; line: number; content: string }>> {
+    throwIfAborted(signal);
     const needle = query.trim();
     if (!needle) {
       return [];
@@ -289,11 +306,31 @@ export class RuntimeFileSystem implements TargetFileSystem {
 
     const root = runtimePath(path);
     const includePattern = include?.trim() || null;
+    const resourcePath = parseTabResourcePath(root);
+    if (resourcePath) {
+      if (!(await this.isDirectory(root)) && !(await this.fileExists(root))) {
+        throw new Error(`No such file or directory: ${root}`);
+      }
+      const matches = await this.tabResources.search(
+        resourcePath.tabId,
+        resourcePath.relativePath,
+        needle,
+        includePattern ?? undefined,
+        signal,
+      );
+      const mount = tabResourceMount(resourcePath.tabId);
+      return matches.map((match) => ({
+        ...match,
+        path: joinRuntimePath(mount, match.path),
+      }));
+    }
+
     const files = await this.collectFiles(root);
     const decoder = new TextDecoder();
     const matches: Array<{ path: string; line: number; content: string }> = [];
 
     for (const filePath of files) {
+      throwIfAborted(signal);
       if (!matchesInclude(filePath, root, includePattern)) {
         continue;
       }
@@ -343,6 +380,7 @@ export class RuntimeFileSystem implements TargetFileSystem {
     for (const tab of tabs) {
       paths.add(`/proc/tabs/${tab.id}`);
       paths.add(`/proc/tabs/${tab.id}/meta.json`);
+      paths.add(tabResourceMount(tab.id));
       paths.add(`/proc/tabs/${tab.id}/text.txt`);
     }
     for (const window of windows) {
@@ -394,6 +432,12 @@ export class RuntimeFileSystem implements TargetFileSystem {
       return tab ? textFile(await tabText(tab)) : null;
     }
 
+    const resourcePath = parseTabResourcePath(path);
+    if (resourcePath) {
+      const tab = await getTab(resourcePath.tabId);
+      return tab ? await this.tabResources.file(resourcePath.tabId, resourcePath.relativePath) : null;
+    }
+
     const windowMetaId = parseDynamicFile(path, "/proc/windows", "meta.json");
     if (windowMetaId !== null) {
       const window = await getWindow(windowMetaId);
@@ -420,6 +464,12 @@ export class RuntimeFileSystem implements TargetFileSystem {
     const tabFileId = parseDynamicFile(path, "/proc/tabs", "meta.json") ?? parseDynamicFile(path, "/proc/tabs", "text.txt");
     if (tabFileId !== null) {
       return await getTab(tabFileId) !== null;
+    }
+
+    const resourcePath = parseTabResourcePath(path);
+    if (resourcePath) {
+      const tab = await getTab(resourcePath.tabId);
+      return tab !== null && await this.tabResources.file(resourcePath.tabId, resourcePath.relativePath) !== null;
     }
 
     const windowFileId = parseDynamicFile(path, "/proc/windows", "meta.json");
@@ -464,9 +514,15 @@ export class RuntimeFileSystem implements TargetFileSystem {
       };
     }
 
+    const resourcePath = parseTabResourcePath(path);
+    if (resourcePath) {
+      const tab = await getTab(resourcePath.tabId);
+      return tab ? await this.tabResources.list(resourcePath.tabId, resourcePath.relativePath) : null;
+    }
+
     const tabId = parseDynamicDirectory(path, "/proc/tabs");
     if (tabId !== null) {
-      return await getTab(tabId) ? { directories: [], files: ["meta.json", "text.txt"] } : null;
+      return await getTab(tabId) ? { directories: ["resources"], files: ["meta.json", "text.txt"] } : null;
     }
 
     const windowId = parseDynamicDirectory(path, "/proc/windows");
@@ -501,7 +557,11 @@ export class RuntimeFileSystem implements TargetFileSystem {
         files.push(joinRuntimePath(directory, file));
       }
       for (const child of entries.directories) {
-        await visit(joinRuntimePath(directory, child));
+        const childPath = joinRuntimePath(directory, child);
+        if (!parseTabResourcePath(root) && isTabResourceMount(childPath)) {
+          continue;
+        }
+        await visit(childPath);
       }
     };
     await visit(root);
@@ -515,16 +575,20 @@ export function createRuntimeFileSystem(): RuntimeFileSystem {
 }
 
 function textFile(content: string): RuntimeFile {
+  const bytes = textBytes(content);
   return {
     contentType: TEXT_CONTENT_TYPE,
-    read: async () => textBytes(content),
+    size: bytes.byteLength,
+    read: async () => bytes,
   };
 }
 
 function jsonFile(content: unknown): RuntimeFile {
+  const bytes = jsonBytes(content);
   return {
     contentType: JSON_CONTENT_TYPE,
-    read: async () => jsonBytes(content),
+    size: bytes.byteLength,
+    read: async () => bytes,
   };
 }
 
@@ -616,6 +680,24 @@ function parseDynamicFile(path: string, parent: "/proc/tabs" | "/proc/windows", 
   }
   const id = path.slice(parent.length + 1, -(file.length + 1));
   return parseIdSegment(id);
+}
+
+function parseTabResourcePath(path: string): { tabId: number; relativePath: string } | null {
+  const match = path.match(/^\/proc\/tabs\/(\d+)\/resources(?:\/(.*))?$/);
+  if (!match) {
+    return null;
+  }
+  const tabId = parseIdSegment(match[1] ?? "");
+  return tabId === null ? null : { tabId, relativePath: match[2] ?? "" };
+}
+
+function tabResourceMount(tabId: number): string {
+  return `/proc/tabs/${tabId}/resources`;
+}
+
+function isTabResourceMount(path: string): boolean {
+  const parsed = parseTabResourcePath(path);
+  return parsed !== null && !parsed.relativePath;
 }
 
 function parseIdSegment(value: string): number | null {
