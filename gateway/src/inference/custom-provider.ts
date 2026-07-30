@@ -180,6 +180,9 @@ function streamOpenAIResponsesWithFetch(
       if (output.stopReason === "aborted" || output.stopReason === "error") {
         throw new Error(output.errorMessage || "Provider returned an error stop reason");
       }
+      if (output.stopReason === "pending") {
+        throw new Error("Provider response stream ended without a terminal stop reason");
+      }
       stream.push({ type: "done", reason: output.stopReason, message: output });
       stream.end();
     } catch (error) {
