@@ -59,6 +59,7 @@ type NodeTreeSnapshot = {
 
 type LayoutTreeSnapshot = {
   nodeIndex?: number[];
+  styles?: number[][];
   bounds?: number[][];
   clientRects?: number[][];
   scrollRects?: number[][];
@@ -257,6 +258,16 @@ export function isPageReference(value: string): boolean {
   return /^@s[a-z0-9]+e[1-9]\d*$/.test(value);
 }
 
+export function normalizePageReference(value: string): string | null {
+  if (isPageReference(value)) {
+    return value;
+  }
+  // Generated snapshot ids contain an eight-character session token followed
+  // by a snapshot counter. Requiring that minimum keeps ordinary CSS type
+  // selectors such as `sectione1` from being mistaken for a bare ref.
+  return /^s[a-z0-9]{9,}e[1-9]\d*$/.test(value) ? `@${value}` : null;
+}
+
 export async function captureSemanticSnapshot(
   target: chrome.debugger.DebuggerSession,
   tab: TabSummary,
@@ -421,7 +432,7 @@ export function formatSemanticSnapshot(snapshot: SemanticSnapshot): string {
   if (snapshot.truncated) {
     lines.push(`... truncated after ${snapshot.nodeCount} nodes`);
   }
-  lines.push(`refs ${snapshot.referenceCount}`);
+  lines.push(`refs ${snapshot.referenceCount} (canonical refs include the leading @; bare refs are also accepted)`);
   return `${lines.join("\n")}\n`;
 }
 
@@ -496,8 +507,12 @@ function collectDomNodeInfo(snapshot: DomSnapshotResult): Map<number, DomNodeInf
       const client = rectangleAt(layout?.clientRects?.[layoutIndex]);
       const scroll = rectangleAt(layout?.scrollRects?.[layoutIndex]);
       if (client && scroll) {
-        const horizontal = scroll.width > client.width + 1;
-        const vertical = scroll.height > client.height + 1;
+        const styleIndexes = layout?.styles?.[layoutIndex];
+        const stylesAvailable = layout?.styles !== undefined;
+        const horizontal = scroll.width > client.width + 1
+          && (!stylesAvailable || acceptsWheelInput(stringAt(strings, styleIndexes?.[0])));
+        const vertical = scroll.height > client.height + 1
+          && (!stylesAvailable || acceptsWheelInput(stringAt(strings, styleIndexes?.[1])));
         if (horizontal || vertical) {
           info.scroll = {
             horizontal,
@@ -556,6 +571,11 @@ function isReferenceable(
     || states.settable === true
     || dom?.clickable === true
     || Boolean(dom?.scroll);
+}
+
+function acceptsWheelInput(value: string): boolean {
+  const overflow = value.trim().toLowerCase();
+  return overflow === "auto" || overflow === "scroll" || overflow === "overlay";
 }
 
 function shouldRenderNode(role: string, name: string, referenceable: boolean): boolean {

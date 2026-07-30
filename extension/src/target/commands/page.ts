@@ -27,7 +27,7 @@ import {
 import {
   captureSemanticSnapshot,
   formatSemanticSnapshot,
-  isPageReference,
+  normalizePageReference,
   pageReferences,
 } from "../page-semantics";
 import { evaluatePageJavaScript } from "../page-javascript";
@@ -44,12 +44,13 @@ const PAGE_USAGE = [
   "       page snapshot [--tab <tabId>] --dom [selector]",
   "       page text [--tab <tabId>] [selector]",
   "       page screenshot [--tab <tabId>]",
-  "       page click [--tab <tabId>] <ref|selector> [index]",
-  "       page type [--tab <tabId>] <ref|selector> <text>",
+  "       page click [--tab <tabId>] <@ref|selector> [index]",
+  "       page type [--tab <tabId>] <@ref|selector> <text>",
   "       page key [--tab <tabId>] <key>",
-  "       page scroll [--tab <tabId>] [ref] <up|down|top|bottom|x,y>",
+  "       page scroll [--tab <tabId>] [@ref] <up|down|top|bottom|x,y>",
   "       page wait [--tab <tabId>] <selector> [--timeout ms]",
   "       page js [--tab <tabId>] <source>",
+  "Snapshot refs canonically start with @; the bare generated form is also accepted.",
 ].join("\n");
 
 const PAGE_SNAPSHOT_USAGE = [
@@ -58,10 +59,19 @@ const PAGE_SNAPSHOT_USAGE = [
 ].join("\n");
 const PAGE_TEXT_USAGE = "Usage: page text [--tab <tabId>] [selector]";
 const PAGE_SCREENSHOT_USAGE = "Usage: page screenshot [--tab <tabId>]";
-const PAGE_CLICK_USAGE = "Usage: page click [--tab <tabId>] <ref|selector> [index]";
-const PAGE_TYPE_USAGE = "Usage: page type [--tab <tabId>] <ref|selector> <text>";
+const PAGE_CLICK_USAGE = [
+  "Usage: page click [--tab <tabId>] <@ref|selector> [index]",
+  "Snapshot refs canonically start with @; the bare generated form is also accepted.",
+].join("\n");
+const PAGE_TYPE_USAGE = [
+  "Usage: page type [--tab <tabId>] <@ref|selector> <text>",
+  "Snapshot refs canonically start with @; the bare generated form is also accepted.",
+].join("\n");
 const PAGE_KEY_USAGE = "Usage: page key [--tab <tabId>] <key>";
-const PAGE_SCROLL_USAGE = "Usage: page scroll [--tab <tabId>] [ref] <up|down|top|bottom|x,y>";
+const PAGE_SCROLL_USAGE = [
+  "Usage: page scroll [--tab <tabId>] [@ref] <up|down|top|bottom|x,y>",
+  "Snapshot refs canonically start with @; the bare generated form is also accepted.",
+].join("\n");
 const PAGE_WAIT_USAGE = "Usage: page wait [--tab <tabId>] <selector> [--timeout ms]";
 const PAGE_JS_USAGE = "Usage: page js [--tab <tabId>] <source>";
 
@@ -288,8 +298,9 @@ async function runScroll(args: string[], ctx: CommandContext): Promise<CommandRe
   }
 
   const referenceText = parsed.value.args.length === 2 ? parsed.value.args[0] ?? "" : "";
-  if (referenceText && !isPageReference(referenceText)) {
-    return commandError(`${PAGE_SCROLL_USAGE}\nA targeted scroll requires a page snapshot ref.`);
+  const normalizedReference = referenceText ? normalizePageReference(referenceText) : null;
+  if (referenceText && !normalizedReference) {
+    return commandError(`${PAGE_SCROLL_USAGE}\nA targeted scroll requires a snapshot ref such as @s4k2e7.`);
   }
   const targetText = parsed.value.args[parsed.value.args.length - 1] ?? "";
   const target = parseScrollTarget(targetText);
@@ -297,7 +308,7 @@ async function runScroll(args: string[], ctx: CommandContext): Promise<CommandRe
     return commandError(target.error);
   }
 
-  const reference = referenceText ? pageReferences.resolve(referenceText) : null;
+  const reference = normalizedReference ? pageReferences.resolve(normalizedReference) : null;
   const tab = reference
     ? await resolveReferencedTab(parsed.value.tabId, reference.tabId, reference.ref)
     : await resolveTab(parsed.value.tabId);
@@ -529,13 +540,17 @@ async function resolveTab(tabId: number | null): Promise<TabSummary> {
 }
 
 function pageLocator(value: string, index: number): PageLocator {
-  if (!isPageReference(value)) {
+  const reference = normalizePageReference(value);
+  if (!reference) {
+    if (value.startsWith("@")) {
+      throw new Error(`Invalid page reference: ${value}. Snapshot refs look like @s4k2e7.`);
+    }
     return { kind: "selector", selector: value, index };
   }
   if (index !== 0) {
     throw new Error("Snapshot refs do not accept a selector index");
   }
-  return { kind: "reference", reference: pageReferences.resolve(value) };
+  return { kind: "reference", reference: pageReferences.resolve(reference) };
 }
 
 async function resolveLocatorTab(tabId: number | null, locator: PageLocator): Promise<TabSummary> {
