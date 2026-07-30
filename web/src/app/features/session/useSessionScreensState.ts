@@ -46,6 +46,7 @@ export function useSessionScreensState({
   const [loginValidationError, setLoginValidationError] = useState<string | null>(null);
   const [setupValidationError, setSetupValidationError] = useState<string | null>(null);
   const [loginUsername, setLoginUsername] = useState(snapshot.username);
+  const [loginUsernameTouched, setLoginUsernameTouched] = useState(false);
   const [loginPassword, setLoginPassword] = useState("");
   const [loginToken, setLoginToken] = useState("");
   const [guideMessage, setGuideMessage] = useState("");
@@ -81,11 +82,7 @@ export function useSessionScreensState({
     }));
   }, [onboarding, onboardingSnapshot.draft.account.username, snapshot.username]);
 
-  useEffect(() => {
-    if (snapshot.username && !loginUsername.trim()) {
-      setLoginUsername(snapshot.username);
-    }
-  }, [loginUsername, snapshot.username]);
+
 
   useEffect(() => {
     if (snapshot.phase === "setup-complete" || snapshot.phase === "ready") {
@@ -96,6 +93,14 @@ export function useSessionScreensState({
       setLoginToken("");
     }
   }, [snapshot.phase]);
+
+  // Sync login username from snapshot (e.g. after first-boot setup creates the
+  // account) but only if the user hasn't manually edited or cleared the field.
+  useEffect(() => {
+    if (!loginUsernameTouched && snapshot.username) {
+      setLoginUsername(snapshot.username);
+    }
+  }, [snapshot.username, loginUsernameTouched]);
 
   useEffect(() => {
     if (!guideLogRef.current) {
@@ -284,6 +289,7 @@ export function useSessionScreensState({
       onUsername: (value: string) => {
         setLoginValidationError(null);
         setLoginUsername(value);
+        setLoginUsernameTouched(true);
       },
       onPassword: (value: string) => {
         setLoginValidationError(null);

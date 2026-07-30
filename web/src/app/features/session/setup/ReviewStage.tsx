@@ -12,7 +12,7 @@ export function ReviewStage({ draft }: { draft: OnboardingDraft }) {
   const username = draft.account.username.trim();
   const agentName = draft.account.agentName.trim();
   const accountSummary = agentName
-    ? `${username} · agent ${agentName}`
+    ? `${username} · ${agentName} (agent)`
     : `${username} · default personal agent`;
 
   return (

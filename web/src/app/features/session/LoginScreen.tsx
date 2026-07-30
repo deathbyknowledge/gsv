@@ -70,7 +70,7 @@ export function LoginScreen({
                 label="USERNAME"
                 placeholder="e.g. captain"
                 value={username}
-                onChange={onUsername}
+                onChange={(value) => onUsername(value.toLowerCase())}
                 inputProps={{ autoComplete: "username", "data-session-username": true }}
               />
               <TextInput

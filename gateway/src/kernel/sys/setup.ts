@@ -73,12 +73,15 @@ function ensureSingleUserBootstrap(passwd: PasswdEntry[]): void {
 
 function parseSetupIdentity(args: SysSetupArgs): { username: string; password: string } {
   const raw = args as Record<string, unknown>;
-  const username = readRequiredString(raw.username, "username");
-  if (!USERNAME_RE.test(username)) {
-    throw new Error(
-      "username must match ^[a-z_][a-z0-9_-]{0,31}$",
-    );
+  if (typeof raw.username !== "string" || !raw.username.trim()) {
+    throw new Error("username is required");
   }
+  // Validate the raw (untrimmed) value so padded names like " alice " are
+  // rejected at the syscall boundary, not only in the web wizard.
+  if (!USERNAME_RE.test(raw.username)) {
+    throw new Error("username must match ^[a-z_][a-z0-9_-]{0,31}$");
+  }
+  const username = raw.username;
 
   const password = readRequiredString(raw.password, "password");
   if (password.length < 8) {
@@ -93,11 +96,12 @@ function parseSetupAgentName(
   value: unknown,
   username: string,
 ): string | undefined {
-  const agentName = readOptionalString(value);
-  if (!agentName) return undefined;
-  if (!USERNAME_RE.test(agentName)) {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  // Validate the raw (untrimmed) value so padded names are rejected here too.
+  if (!USERNAME_RE.test(value)) {
     throw new Error("agentName must match ^[a-z_][a-z0-9_-]{0,31}$");
   }
+  const agentName = value;
   if (agentName === username) {
     throw new Error("agentName must be different from username");
   }

@@ -223,15 +223,17 @@ export function validateSetupDetails(
 
   for (const step of steps) {
     if (step === "account") {
-      const username = draft.account.username.trim();
-      const agentName = draft.account.agentName.trim();
+      const rawUsername = draft.account.username;
+      const rawAgentName = draft.account.agentName;
+      const username = rawUsername.trim();
+      const agentName = rawAgentName.trim();
       if (!username) {
         return { message: "Username is required.", step };
       }
-      if (!isValidUsername(username)) {
+      if (!isValidUsername(rawUsername)) {
         return { message: usernameFormatError("Username"), step };
       }
-      if (agentName && !isValidUsername(agentName)) {
+      if (agentName && !isValidUsername(rawAgentName)) {
         return { message: usernameFormatError("Personal agent username"), step };
       }
       if (agentName && agentName === username) {
