@@ -52,7 +52,7 @@ export type TargetFileSystem = {
   list(path: string): Promise<{ files: string[]; directories: string[] }>;
   stat(path: string): Promise<FileStat>;
   exists(path: string): Promise<boolean>;
-  search(path: string, query: string, include?: string): Promise<Array<{ path: string; line: number; content: string }>>;
+  search(path: string, query: string, include?: string, signal?: AbortSignal): Promise<Array<{ path: string; line: number; content: string }>>;
   resolvePath(cwd: string, path: string): string;
   getAllPaths(): Promise<string[]>;
 };

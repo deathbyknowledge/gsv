@@ -53,9 +53,31 @@ Useful read-only runtime paths usually include:
 cat /proc/browser.json
 cat /proc/tabs.json
 cat /proc/tabs/<tabId>/text.txt
+cat /proc/tabs/<tabId>/resources/index.json
 cat /proc/network/status.json
 cat /proc/network/events.jsonl
 ```
+
+Each tab's `resources` directory exposes the HTML, JavaScript, CSS, images,
+fonts, and other resources currently known to Chrome. Listing the directory or
+reading `index.json` loads only resource metadata. Reading an individual file
+loads only that resource body:
+
+```bash
+find /proc/tabs/<tabId>/resources -type f
+cat /proc/tabs/<tabId>/resources/https/example.com/app~<hash>.js
+```
+
+Paths are collision-safe filesystem names; use `index.json` to map them to
+their exact URLs, frames, MIME types, and reported sizes. Resource files are
+ephemeral views of the live tab. Copy one to `/home/browser` when the task needs
+a stable snapshot. For recursive content lookup, use the normal `Search` tool
+with the browser target and a path under the tab's `resources` directory; it
+uses Chrome's resource search without reading every body. Shell `rg` reads the
+files it examines and is better reserved for a small resource directory or a
+copied snapshot. A resource body may be unavailable after eviction or
+navigation; start browser network capture before reproducing a request when an
+exact fetch/XHR response must be retained.
 
 Writable browser-local paths usually include `/tmp`, `/tmp/render`,
 `/home/browser`, `/home/browser/screenshots`, `/home/browser/network`, and
