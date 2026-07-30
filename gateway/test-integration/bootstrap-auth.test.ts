@@ -267,6 +267,76 @@ describe("gateway authentication integration", () => {
     });
   });
 
+  it("recovers credentials, configuration, and process records after Kernel eviction", async () => {
+    await setup();
+    const user = createClient({
+      username: USERNAME,
+      password: PASSWORD,
+      client: clientInfo("user", "pre-eviction-user"),
+    });
+    await user.connect();
+    const issued = await user.call<SysTokenCreateResult>("sys.token.create", {
+      kind: "user",
+      label: "survives Kernel eviction",
+    });
+    const spawned = await user.proc.spawn({
+      label: "durable process record",
+      interactive: true,
+    });
+    if (!spawned.ok) {
+      throw new Error(spawned.error);
+    }
+
+    const root = createClient({
+      username: "root",
+      password: ROOT_PASSWORD,
+      client: clientInfo("user", "pre-eviction-root"),
+    });
+    await root.connect();
+    await root.call("sys.config.set", {
+      key: "config/test/kernel_eviction",
+      value: "persisted",
+    });
+
+    user.close();
+    root.close();
+    await harness.getWorker("gsv").evictDurableObject("KERNEL", {
+      name: "singleton",
+      webSockets: "close",
+    });
+
+    const reconnectedUser = createClient({
+      username: USERNAME,
+      token: issued.token.token,
+      client: clientInfo("user", "post-eviction-user"),
+    });
+    await reconnectedUser.connect();
+    expect((await reconnectedUser.proc.list()).processes).toContainEqual(
+      expect.objectContaining({
+        pid: spawned.pid,
+        label: "durable process record",
+      }),
+    );
+
+    const reconnectedRoot = createClient({
+      username: "root",
+      password: ROOT_PASSWORD,
+      client: clientInfo("user", "post-eviction-root"),
+    });
+    await reconnectedRoot.connect();
+    expect(await reconnectedRoot.call("sys.config.get", {
+      key: "config/test/kernel_eviction",
+    })).toEqual({
+      entries: [{ key: "config/test/kernel_eviction", value: "persisted" }],
+    });
+    expect((await reconnectedRoot.call("sys.token.list", { uid: 1000 })).tokens)
+      .toContainEqual(expect.objectContaining({
+        tokenId: issued.token.tokenId,
+        uid: 1000,
+        revokedAt: null,
+      }));
+  });
+
   function createClient(options: ConstructorParameters<typeof GSVClient>[0]): GSVClient {
     const client = new GSVClient({
       url: webSocketUrl(baseUrl),
