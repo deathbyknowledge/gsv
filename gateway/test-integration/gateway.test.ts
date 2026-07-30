@@ -5,7 +5,7 @@ import {
   GsvClientError,
 } from "@humansandmachines/gsv";
 import type { TestHarness } from "wrangler";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
 
 const USERNAME = "harness-user";
@@ -17,7 +17,14 @@ describe("gateway integration", () => {
 
   beforeAll(async () => {
     harness = createGatewayTestHarness();
+  });
+
+  beforeEach(async () => {
     ({ url: baseUrl } = await harness.listen());
+  });
+
+  afterEach(async () => {
+    await harness.reset();
   });
 
   afterAll(async () => {

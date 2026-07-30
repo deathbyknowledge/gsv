@@ -7,7 +7,7 @@ import {
   type ProcAiConfigSetResult,
 } from "@humansandmachines/gsv/protocol";
 import type { TestHarness } from "wrangler";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
 import {
   INTEGRATION_REPLY,
@@ -45,51 +45,40 @@ type GatewayTestEnv = {
 describe("gateway runtime integration", () => {
   let harness: TestHarness;
   let baseUrl: URL;
-  let client: GSVClient;
   let ai: OpenAiFixture;
-  let preSetupServiceResponse: AdapterGatewayResponseFrame;
+  const clients = new Set<GSVClient>();
 
   beforeAll(async () => {
     ai = await startOpenAiFixture();
     harness = createGatewayTestHarness();
-    ({ url: baseUrl } = await harness.listen());
+  });
 
-    preSetupServiceResponse = await sendServiceFrame(harness, inboundFrame({
+  beforeEach(async () => {
+    ({ url: baseUrl } = await harness.listen());
+  });
+
+  afterEach(async () => {
+    for (const client of clients) {
+      client.close();
+    }
+    clients.clear();
+    await harness.reset();
+  });
+
+  afterAll(async () => {
+    await harness.close();
+    await ai.close();
+  });
+
+  it("runs inference, history, reset, and kill through real process boundaries", async () => {
+    const preSetupServiceResponse = await sendServiceFrame(harness, inboundFrame({
       id: "pre-setup",
       deliveryId: "pre-setup-delivery",
       messageId: "pre-setup-message",
       text: "hello before setup",
     }));
+    const client = await setupClient();
 
-    const oneShot = new GSVClient();
-    await oneShot.requestOnce(webSocketUrl(baseUrl), "sys.setup", {
-      username: USERNAME,
-      password: PASSWORD,
-      agentName: "runtime-agent",
-      timezone: "Europe/Amsterdam",
-    });
-
-    client = new GSVClient({
-      url: webSocketUrl(baseUrl),
-      username: USERNAME,
-      password: PASSWORD,
-      client: {
-        id: CLIENT_ID,
-        version: "1.0.0",
-        platform: "node",
-        role: "user",
-      },
-    });
-    await client.connect();
-  });
-
-  afterAll(async () => {
-    client?.close();
-    await harness?.close();
-    await ai?.close();
-  });
-
-  it("runs inference, history, reset, and kill through real process boundaries", async () => {
     expect(preSetupServiceResponse).toMatchObject({
       type: "res",
       id: "pre-setup",
@@ -299,6 +288,7 @@ describe("gateway runtime integration", () => {
   });
 
   it("routes reciprocal adapter ingress, durable commands, and automatic replies", async () => {
+    const client = await setupClient();
     const beforeChallenge = await processHistoryCounts(client);
     const challengeFrame = inboundFrame({
       id: "challenge",
@@ -528,6 +518,31 @@ describe("gateway runtime integration", () => {
       messageCount: 4,
     });
   });
+
+  async function setupClient(): Promise<GSVClient> {
+    const oneShot = new GSVClient();
+    await oneShot.requestOnce(webSocketUrl(baseUrl), "sys.setup", {
+      username: USERNAME,
+      password: PASSWORD,
+      agentName: "runtime-agent",
+      timezone: "Europe/Amsterdam",
+    });
+
+    const client = new GSVClient({
+      url: webSocketUrl(baseUrl),
+      username: USERNAME,
+      password: PASSWORD,
+      client: {
+        id: CLIENT_ID,
+        version: "1.0.0",
+        platform: "node",
+        role: "user",
+      },
+    });
+    clients.add(client);
+    await client.connect();
+    return client;
+  }
 });
 
 async function configureDeterministicAi(
