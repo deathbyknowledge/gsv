@@ -289,23 +289,39 @@ function assistantBlocks(text: string): AssistantBlock[] {
 
 const chatMarkdownPurifier = DOMPurify();
 
-chatMarkdownPurifier.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName !== "A") {
-    return;
+if (typeof chatMarkdownPurifier.addHook === "function") {
+  chatMarkdownPurifier.addHook("afterSanitizeAttributes", (node) => {
+    if (node.tagName !== "A") {
+      return;
+    }
+    const href = node.getAttribute("href");
+    if (href && /^https?:\/\//i.test(href)) {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noopener noreferrer");
+    }
+  });
+}
+
+function sanitizeChatMarkdown(value: string): string {
+  if (typeof chatMarkdownPurifier.sanitize === "function") {
+    return String(chatMarkdownPurifier.sanitize(value));
   }
-  const href = node.getAttribute("href");
-  if (href && /^https?:\/\//i.test(href)) {
-    node.setAttribute("target", "_blank");
-    node.setAttribute("rel", "noopener noreferrer");
-  }
-});
+  // Vitest and other non-DOM renderers cannot initialize DOMPurify. Keep the
+  // fallback inert rather than ever returning unsanitized provider text.
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
 
 function renderMarkdownHtml(value: string): string {
   try {
     const html = parseMarkdown(value, { async: false, breaks: true, gfm: true });
-    return chatMarkdownPurifier.sanitize(html);
+    return sanitizeChatMarkdown(String(html));
   } catch {
-    return chatMarkdownPurifier.sanitize(value);
+    return sanitizeChatMarkdown(value);
   }
 }
 
