@@ -773,6 +773,7 @@ describe("handleAiConfig", () => {
       model: "claude-test",
       text: "pong",
     });
+    expect(createGenerationServiceMock).toHaveBeenCalledWith({});
   });
 
   it("generates text with process snapshot config in the kernel", async () => {
@@ -924,7 +925,7 @@ describe("handleAiConfig", () => {
     }));
   });
 
-  it("does not build a routed fetch for non-custom text generation targets", async () => {
+  it("builds a routed fetch for built-in text generation targets", async () => {
     generateMock.mockImplementationOnce(async (request: any) => {
       expect(request.config).toMatchObject({
         executor: { kind: "kernel" },
@@ -951,6 +952,19 @@ describe("handleAiConfig", () => {
       };
     });
 
+    const device = makeDevice({
+      device_id: "linux-machine",
+      implements: ["net.fetch"],
+    });
+    const ctx = {
+      ...makeAiConfigContext(),
+      devices: {
+        canAccess: vi.fn(() => true),
+        get: vi.fn(() => device),
+        listForUser: vi.fn(() => [device]),
+      },
+    } as unknown as KernelContext;
+
     const result = await handleAiTextGenerate({
       messages: [{ role: "user", content: "ping" }],
       config: {
@@ -960,10 +974,14 @@ describe("handleAiConfig", () => {
           "config/ai/transport_target": "linux-machine",
         },
       },
-    }, makeAiConfigContext());
+    }, ctx, {
+      requestDevice: vi.fn(),
+    });
 
     expect(result.text).toBe("pong");
-    expect(createGenerationServiceMock).toHaveBeenCalledWith({});
+    expect(createGenerationServiceMock).toHaveBeenCalledWith({
+      fetch: expect.any(Function),
+    });
   });
 
   it("builds a routed fetch for OpenAI Codex text generation targets", async () => {

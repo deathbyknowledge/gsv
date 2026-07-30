@@ -139,6 +139,60 @@ describe("resolveGenerationOptions", () => {
 });
 
 describe("createGenerationService", () => {
+  it("passes a routed fetch to built-in provider completions", async () => {
+    const message = assistantMessage([{ type: "text", text: "pong" }]);
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    completePiAiSimpleMock.mockResolvedValueOnce(message);
+
+    await createGenerationService({ fetch: fetchImpl }).generate({
+      config: CONFIG,
+      context: CONTEXT,
+    });
+
+    expect(completePiAiSimpleMock).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "anthropic" }),
+      CONTEXT,
+      expect.objectContaining({ fetch: fetchImpl }),
+    );
+  });
+
+  it("passes a request fetch to built-in provider streams", () => {
+    const message = assistantMessage([{ type: "text", text: "pong" }]);
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const providerStream = {
+      result: vi.fn(() => Promise.resolve(message)),
+    };
+    streamPiAiSimpleMock.mockReturnValueOnce(providerStream);
+
+    const stream = createGenerationService().stream({
+      config: CONFIG,
+      context: CONTEXT,
+      fetch: fetchImpl,
+    });
+
+    expect(stream).toBe(providerStream);
+    expect(streamPiAiSimpleMock).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "anthropic" }),
+      CONTEXT,
+      expect.objectContaining({ fetch: fetchImpl }),
+    );
+  });
+
+  it("rejects a routed fetch for binding-backed Workers AI", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+
+    await expect(createGenerationService({ fetch: fetchImpl }).generate({
+      config: {
+        ...CONFIG,
+        provider: "workers-ai",
+        model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      },
+      context: CONTEXT,
+    })).rejects.toThrow(
+      "Workers AI uses a gateway binding and cannot originate model requests from a machine.",
+    );
+  });
+
   it("uses the GSV OpenAI Codex transport and forwards session affinity", async () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
     completeWithOpenAiCodexFetchMock.mockResolvedValueOnce(message);

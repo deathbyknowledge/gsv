@@ -114,7 +114,7 @@ export const AGENT_MODEL_FIELDS: readonly ConsoleSettingField[] = [
   {
     key: "config/ai/transport_target",
     label: "Origin machine",
-    description: "Where custom provider HTTP requests start: the GSV Worker or a machine with network fetch support.",
+    description: "Where model provider HTTP requests start: the GSV Worker or one of your machines. Use a machine when the provider blocks Cloudflare Worker IPs.",
     kind: "text",
     requirement: "optional",
     placeholder: "gsv",

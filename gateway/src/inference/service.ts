@@ -58,7 +58,6 @@ type ResolvedGenerationOptions = {
   baseUrl?: string;
   providerStyle?: string;
   openAiCodexAccountId?: string;
-  fetch?: typeof fetch;
   reasoning?: ThinkingLevel;
   maxTokens: number;
 };
@@ -70,8 +69,12 @@ export function createGenerationService(
 ): GenerationService {
   const stream = (request: GenerateRequest): AssistantMessageEventStream => {
     const options = resolveGenerationOptions(request);
+    const generationFetch = request.fetch ?? serviceOptions.fetch;
     const generationTimeoutMs = resolveGenerationTimeoutMs(request.config, request.options);
     if (isWorkersAiProvider(options.modelProvider)) {
+      if (generationFetch) {
+        throw new Error("Workers AI uses a gateway binding and cannot originate model requests from a machine.");
+      }
       return streamWithWorkersAi({
         modelName: options.modelName,
         context: request.context,
@@ -97,7 +100,7 @@ export function createGenerationService(
         apiKey: options.apiKey,
         baseUrl: options.baseUrl,
         providerStyle: options.providerStyle,
-        fetch: options.fetch ?? serviceOptions.fetch,
+        fetch: generationFetch,
         contextWindowTokens: request.config.contextWindowTokens,
         maxTokens: options.maxTokens,
         context: request.context,
@@ -119,7 +122,7 @@ export function createGenerationService(
     const model = resolvePiAiModel(options.modelProvider, options.modelName);
     const abort = createGenerationAbort(request.signal, generationTimeoutMs);
     const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
-      ? options.fetch ?? serviceOptions.fetch ?? fetch
+      ? generationFetch ?? fetch
       : undefined;
     if (openAiCodexFetch) {
       const result = streamWithOpenAiCodexFetch({
@@ -144,6 +147,7 @@ export function createGenerationService(
     }
     const result = streamPiAiSimple(model, request.context, {
       apiKey: options.apiKey,
+      fetch: generationFetch,
       reasoning: options.reasoning,
       maxTokens: options.maxTokens,
       signal: abort.signal,
@@ -162,8 +166,12 @@ export function createGenerationService(
 
   const generate = async (request: GenerateRequest): Promise<AssistantMessage> => {
     const options = resolveGenerationOptions(request);
+    const generationFetch = request.fetch ?? serviceOptions.fetch;
     const generationTimeoutMs = resolveGenerationTimeoutMs(request.config, request.options);
     if (isWorkersAiProvider(options.modelProvider)) {
+      if (generationFetch) {
+        throw new Error("Workers AI uses a gateway binding and cannot originate model requests from a machine.");
+      }
       return completeWithWorkersAi({
         modelName: options.modelName,
         context: request.context,
@@ -191,7 +199,7 @@ export function createGenerationService(
             apiKey: options.apiKey,
             baseUrl: options.baseUrl,
             providerStyle: options.providerStyle,
-            fetch: options.fetch ?? serviceOptions.fetch,
+            fetch: generationFetch,
             contextWindowTokens: request.config.contextWindowTokens,
             maxTokens: options.maxTokens,
             context: request.context,
@@ -214,7 +222,7 @@ export function createGenerationService(
     const model = resolvePiAiModel(options.modelProvider, options.modelName);
     const abort = createGenerationAbort(request.signal, generationTimeoutMs);
     const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
-      ? options.fetch ?? serviceOptions.fetch ?? fetch
+      ? generationFetch ?? fetch
       : undefined;
     try {
       if (openAiCodexFetch) {
@@ -240,6 +248,7 @@ export function createGenerationService(
       return await withTimeout(
         completePiAiSimple(model, request.context, {
           apiKey: options.apiKey,
+          fetch: generationFetch,
           reasoning: options.reasoning,
           maxTokens: options.maxTokens,
           signal: abort.signal,
@@ -360,7 +369,6 @@ export function resolveGenerationOptions(
     baseUrl: config.baseUrl,
     providerStyle: config.providerStyle,
     ...(openAiCodexAccountId ? { openAiCodexAccountId } : {}),
-    fetch: request.fetch,
     reasoning: resolveGenerationReasoning(config, request.options),
     maxTokens: resolveGenerationMaxTokens(config, request.options),
   };
