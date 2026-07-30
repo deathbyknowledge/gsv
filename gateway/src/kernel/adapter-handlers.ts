@@ -32,6 +32,11 @@ import type {
 import {
   cancelBinaryBody,
   consumeAdapterMediaBodyParts,
+  isAdapterWorkerActivityResult,
+  isAdapterWorkerConnectResult,
+  isAdapterWorkerDisconnectResult,
+  isAdapterWorkerSendResult,
+  isAdapterWorkerStatusResult,
   validateAdapterMediaBody,
 } from "@humansandmachines/gsv/protocol";
 import { resolveCallerOwnerUid, type KernelContext } from "./context";
@@ -143,12 +148,18 @@ export async function handleAdapterConnect(
     if (needsOwnerClaim) {
       ctx.adapters.status.setOwner(adapter, accountId, ownerUid);
     }
-    let connectResult;
+    let connectResult: unknown;
     try {
       connectResult = await service.adapterConnect(accountId, args.config);
-    } catch (error) {
-      console.error(`[adapter.connect] failed adapter=${adapter} accountId=${accountId}`, error);
-      throw error;
+    } catch {
+      console.error(`[adapter.connect] worker failed adapter=${adapter} accountId=${accountId}`);
+      return { ok: false, error: `Adapter connect failed: ${adapter}` };
+    }
+    if (!isAdapterWorkerConnectResult(connectResult)) {
+      console.error(
+        `[adapter.connect] invalid worker response adapter=${adapter} accountId=${accountId}`,
+      );
+      return { ok: false, error: `Adapter returned an invalid connect response: ${adapter}` };
     }
     if (!connectResult.ok) {
       return {
@@ -161,17 +172,16 @@ export async function handleAdapterConnect(
     const previous = ctx.adapters.status.get(adapter, accountId);
     ctx.adapters.status.upsert(adapter, accountId, {
       accountId,
-      connected: connectResult.connected ?? true,
-      authenticated: connectResult.authenticated ?? !connectResult.challenge,
+      connected: connectResult.connected,
+      authenticated: connectResult.authenticated,
       mode: previous?.mode,
       lastActivity: previous?.lastActivity,
       error: undefined,
       extra: previous?.extra,
     });
     const status = await refreshAdapterStatus(service, ctx, adapter, accountId);
-    const connected = status?.connected ?? connectResult.connected ?? true;
-    const authenticated =
-      status?.authenticated ?? connectResult.authenticated ?? !connectResult.challenge;
+    const connected = status?.connected ?? connectResult.connected;
+    const authenticated = status?.authenticated ?? connectResult.authenticated;
 
     return {
       ok: true,
@@ -212,7 +222,19 @@ export async function handleAdapterDisconnect(
 
   ctx.adapters.status.beginLifecycle(adapter, accountId);
   try {
-    const result = await service.adapterDisconnect(accountId);
+    let result: unknown;
+    try {
+      result = await service.adapterDisconnect(accountId);
+    } catch {
+      console.error(`[adapter.disconnect] worker failed adapter=${adapter} accountId=${accountId}`);
+      return { ok: false, error: `Adapter disconnect failed: ${adapter}` };
+    }
+    if (!isAdapterWorkerDisconnectResult(result)) {
+      console.error(
+        `[adapter.disconnect] invalid worker response adapter=${adapter} accountId=${accountId}`,
+      );
+      return { ok: false, error: `Adapter returned an invalid disconnect response: ${adapter}` };
+    }
     if (!result.ok) {
       return { ok: false, error: result.error };
     }
@@ -411,7 +433,7 @@ async function deliverAdapterMessage(
     replyToId: args.replyToId,
   };
 
-  let result;
+  let result: unknown;
   try {
     result = await service.adapterSend(accountId, outbound, body);
   } catch {
@@ -423,6 +445,15 @@ async function deliverAdapterMessage(
     };
   } finally {
     await cancelBinaryBody(body, "adapter.send completed");
+  }
+  if (!isAdapterWorkerSendResult(result)) {
+    console.error(`[adapter.send] invalid worker response adapter=${adapter} accountId=${accountId}`);
+    return {
+      ok: false,
+      error: `Adapter returned an invalid send response: ${adapter}`,
+      deliveryId,
+      retryable: false,
+    };
   }
   if (!result.ok) {
     if (result.ambiguous) {
@@ -553,7 +584,13 @@ export async function handleAdapterStatus(
     const refreshAccountIds = adapterStatusRefreshAccountIds(ctx, adapter, accountId);
     for (const refreshAccountId of refreshAccountIds) {
       try {
-        const statuses = await service.adapterStatus(refreshAccountId);
+        const statuses: unknown = await service.adapterStatus(refreshAccountId);
+        if (!isAdapterWorkerStatusResult(statuses)) {
+          console.error(
+            `[adapter.status] invalid worker response adapter=${adapter} accountId=${refreshAccountId}`,
+          );
+          continue;
+        }
         const allowedAccountIds = refreshAccountId ? new Set([refreshAccountId]) : null;
         for (const status of statuses) {
           if (allowedAccountIds && !allowedAccountIds.has(status.accountId.trim())) {
@@ -1509,16 +1546,21 @@ export async function setAdapterActivityForKernel(
   }
 
   try {
-    const result = await service.adapterSetActivity(accountId, surface, activity);
+    const result: unknown = await service.adapterSetActivity(accountId, surface, activity);
+    if (!isAdapterWorkerActivityResult(result)) {
+      console.warn(
+        `[adapter.activity] invalid worker response adapter=${adapter} accountId=${accountId} kind=${activity.kind} active=${activity.active}`,
+      );
+      return;
+    }
     if (!result.ok) {
       console.warn(
-        `[adapter.activity] failed adapter=${adapter} accountId=${accountId} kind=${activity.kind} active=${activity.active} error=${result.error}`,
+        `[adapter.activity] failed adapter=${adapter} accountId=${accountId} kind=${activity.kind} active=${activity.active}`,
       );
     }
-  } catch (error) {
+  } catch {
     console.warn(
       `[adapter.activity] threw adapter=${adapter} accountId=${accountId} kind=${activity.kind} active=${activity.active}`,
-      error,
     );
   }
 }
@@ -1534,13 +1576,18 @@ async function refreshAdapterStatus(
   }
 
   try {
-    const statuses = await service.adapterStatus(accountId);
-    for (const status of statuses) {
+    const statuses: unknown = await service.adapterStatus(accountId);
+    if (!isAdapterWorkerStatusResult(statuses)) {
+      console.error(`[adapter.status] invalid worker response adapter=${adapter} accountId=${accountId}`);
+      return null;
+    }
+    const accountStatuses = statuses.filter((status) => status.accountId === accountId);
+    for (const status of accountStatuses) {
       ctx.adapters.status.upsert(adapter, status.accountId, status);
     }
-    return statuses.find((status) => status.accountId === accountId) ?? null;
-  } catch (error) {
-    console.error(`[adapter.status] refresh failed adapter=${adapter} accountId=${accountId}`, error);
+    return accountStatuses[0] ?? null;
+  } catch {
+    console.error(`[adapter.status] refresh failed adapter=${adapter} accountId=${accountId}`);
     return null;
   }
 }
