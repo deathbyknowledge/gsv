@@ -112,7 +112,36 @@ page snapshot --tab <tabId>
 page text --tab <tabId>
 ```
 
-Use selector-based page commands for interaction:
+`page snapshot` returns a readable accessibility outline. Actionable elements
+and scroll regions carry snapshot-scoped refs such as `@s4k2e7`. Use those refs
+for interaction; they are pinned to the tab and document that produced them:
+
+```text
+textbox @s4k2e1 "Search or start new chat"
+scroll-region @s4k2e2 "English Mamá: Hello" [scrollable=y]
+  row @s4k2e3 "English"
+textbox @s4k2e4 "Type a message" [editable focusable]
+```
+
+```bash
+page click --tab <tabId> @s4k2e3
+page type --tab <tabId> @s4k2e4 'Draft text'
+page scroll --tab <tabId> @s4k2e2 down
+```
+
+Refs expire when their bounded snapshot is evicted, the extension restarts, the
+node disappears, or its document changes. If an action reports an unknown or
+stale ref, take a new snapshot instead of guessing which element replaced it.
+
+Page actions return compact JSON with separate `delivered` and `observed`
+sections. `delivered.receiver` identifies the element that received Chrome's
+input. `observed.semanticChanged` reports whether navigation, focus, DOM, or
+target state changed after the action. A successful delivery with no observed
+change is not proof that the intended application state changed; inspect the
+warning and snapshot again.
+
+CSS selectors remain useful as an explicit fallback when the page's semantic
+tree omits a target:
 
 ```bash
 page click --tab <tabId> 'button[type=submit]'
@@ -122,6 +151,22 @@ page wait --tab <tabId> '.result' --timeout 10000
 page screenshot --tab <tabId>
 ```
 
+Selector clicks and typing still use Chrome's input pipeline. Use
+`page snapshot --dom [selector]` for a bounded raw-DOM debugging view when
+semantic names are insufficient. Use a snapshot ref with `page scroll` to
+target nested virtualized lists; an untargeted scroll acts at the viewport
+center and may be received by whichever scrollable element is under that point.
+
+Virtualized lists expose only their currently materialized rows. To read one
+completely, record the visible semantic rows, scroll the list by its ref,
+snapshot again, and deduplicate rows until the reported scroll position stops
+changing. Use refs from the newest snapshot for row actions because frameworks
+may reuse one DOM node for different rows after scrolling.
+
+`page type` inserts text but does not submit a form or send a message. Treat
+Enter, submit buttons, and send controls as separate mutations and invoke them
+only when the task authorizes submission.
+
 Use JavaScript evaluation only when page snapshot/text/click/type/wait cannot
 express the task:
 
@@ -130,8 +175,10 @@ page js --tab <tabId> 'document.title'
 page js --tab <tabId> 'Array.from(document.querySelectorAll("button")).map((button) => button.textContent)'
 ```
 
-Prefer selector clicks to coordinates. Always pass `--tab` for work on an
-agent-opened tab so a user changing their active tab cannot redirect the task.
+Prefer semantic refs, then selectors, over coordinates. Always pass `--tab` for
+work on an agent-opened tab so a user changing their active tab cannot redirect
+selector, key, screenshot, text, wait, or JavaScript commands. Ref actions also
+validate that an explicitly supplied tab matches the ref's original tab.
 
 `tabs open` creates a background tab and returns its id. Capture that id and
 pass it to every command that operates on the new tab:
