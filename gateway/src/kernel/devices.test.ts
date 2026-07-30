@@ -1,235 +1,23 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { DeviceRegistry } from "./devices";
-import {
-  createMockSqlTables,
-  handleMockSchemaStatement,
-  mockSqlRows,
-  type MockSqlRow,
-} from "../test-support/mock-sql";
-
-function createMockSql() {
-  const { getTable } = createMockSqlTables();
-
-  function exec<T = MockSqlRow>(query: string, ...bindings: unknown[]) {
-    const q = query.trim();
-
-    const schemaResult = handleMockSchemaStatement<T>(q, getTable);
-    if (schemaResult) return schemaResult;
-
-    if (q.startsWith("INSERT OR IGNORE INTO device_access")) {
-      const table = getTable("device_access");
-      const [deviceId, gid] = bindings as [string, number];
-      const exists = table.some(
-        (r) => r.device_id === deviceId && r.gid === gid,
-      );
-      if (!exists) table.push({ device_id: deviceId, gid });
-      return mockSqlRows<T>();
-    }
-
-    if (q.startsWith("INSERT INTO devices")) {
-      const table = getTable("devices");
-      const [
-        device_id,
-        owner_uid,
-        label,
-        description,
-        implements_,
-        platform,
-        version,
-        first_seen_at,
-        last_seen_at,
-        connected_at,
-      ] = bindings as [string, number, string, string, string, string, string, number, number, number];
-      table.push({
-        device_id,
-        owner_uid,
-        label,
-        description,
-        implements: implements_,
-        platform,
-        version,
-        online: 1,
-        first_seen_at,
-        last_seen_at,
-        connected_at,
-        disconnected_at: null,
-      });
-      return mockSqlRows<T>();
-    }
-
-    if (q.startsWith("UPDATE devices SET\n          owner_uid")) {
-      const table = getTable("devices");
-      const [owner_uid, label, description, implements_, platform, version, last_seen_at, connected_at, device_id] =
-        bindings as [number, string, string, string, string, string, number, number, string];
-      const row = table.find((r) => r.device_id === device_id);
-      if (row) {
-        row.owner_uid = owner_uid;
-        row.label = label;
-        row.description = description;
-        row.implements = implements_;
-        row.platform = platform;
-        row.version = version;
-        row.online = 1;
-        row.last_seen_at = last_seen_at;
-        row.connected_at = connected_at;
-        row.disconnected_at = null;
-      }
-      return mockSqlRows<T>();
-    }
-
-    if (q.startsWith("UPDATE devices SET online = 1")) {
-      const table = getTable("devices");
-      const [connected_at, , device_id] = bindings as [number, number, string];
-      const row = table.find((r) => r.device_id === device_id);
-      if (row) {
-        row.online = 1;
-        row.connected_at = connected_at;
-        row.disconnected_at = null;
-        row.last_seen_at = connected_at;
-      }
-      return mockSqlRows<T>();
-    }
-
-    if (q.startsWith("UPDATE devices SET label")) {
-      const table = getTable("devices");
-      const [label, description, last_seen_at, device_id] = bindings as [string, string, number, string];
-      const row = table.find((r) => r.device_id === device_id);
-      if (row) {
-        row.label = label;
-        row.description = description;
-        row.last_seen_at = last_seen_at;
-      }
-      return mockSqlRows<T>();
-    }
-
-    if (q.startsWith("UPDATE devices SET online = 0")) {
-      const table = getTable("devices");
-      const [disconnected_at, last_seen_at, device_id] = bindings as [number, number, string];
-      const row = table.find((r) => r.device_id === device_id);
-      if (row) {
-        row.online = 0;
-        row.disconnected_at = disconnected_at;
-        row.last_seen_at = last_seen_at;
-      }
-      return mockSqlRows<T>();
-    }
-
-    if (q.startsWith("SELECT * FROM devices WHERE device_id")) {
-      const table = getTable("devices");
-      const [deviceId] = bindings as [string];
-      const rows = table.filter((r) => r.device_id === deviceId);
-      return mockSqlRows(rows as T[]);
-    }
-
-    if (q.startsWith("SELECT * FROM devices ORDER BY")) {
-      const table = getTable("devices");
-      const sorted = [...table].sort((a, b) =>
-        (a.device_id as string).localeCompare(b.device_id as string),
-      );
-      return mockSqlRows(sorted as T[]);
-    }
-
-    if (q.startsWith("SELECT DISTINCT d.* FROM devices")) {
-      const table = getTable("devices");
-      const accessTable = getTable("device_access");
-      const [ownerUid, ...gids] = bindings as [number, ...number[]];
-      const seen = new Set<string>();
-      const results: MockSqlRow[] = [];
-      for (const row of table) {
-        const id = row.device_id as string;
-        if (seen.has(id)) continue;
-        if (row.owner_uid === ownerUid) {
-          seen.add(id);
-          results.push(row);
-          continue;
-        }
-        for (const access of accessTable) {
-          if (access.device_id === id && gids.includes(access.gid as number)) {
-            seen.add(id);
-            results.push(row);
-            break;
-          }
-        }
-      }
-      results.sort((a, b) =>
-        (a.device_id as string).localeCompare(b.device_id as string),
-      );
-      return mockSqlRows(results as T[]);
-    }
-
-    if (q.startsWith("SELECT * FROM devices WHERE owner_uid")) {
-      const table = getTable("devices");
-      const [ownerUid] = bindings as [number];
-      const rows = table
-        .filter((r) => r.owner_uid === ownerUid)
-        .sort((a, b) =>
-          (a.device_id as string).localeCompare(b.device_id as string),
-        );
-      return mockSqlRows(rows as T[]);
-    }
-
-    if (q.startsWith("SELECT * FROM devices WHERE online")) {
-      const table = getTable("devices");
-      const rows = table
-        .filter((r) => r.online === 1)
-        .sort((a, b) => (a.device_id as string).localeCompare(b.device_id as string));
-      return mockSqlRows(rows as T[]);
-    }
-
-    if (q.startsWith("SELECT gid FROM device_access WHERE device_id = ? AND gid IN")) {
-      const table = getTable("device_access");
-      const [deviceId, ...gids] = bindings as [string, ...number[]];
-      const rows = table.filter(
-        (r) => r.device_id === deviceId && gids.includes(r.gid as number),
-      );
-      return mockSqlRows(rows as T[]);
-    }
-
-    if (q.startsWith("SELECT gid FROM device_access WHERE device_id = ? ORDER")) {
-      const table = getTable("device_access");
-      const [deviceId] = bindings as [string];
-      const rows = table
-        .filter((r) => r.device_id === deviceId)
-        .sort((a, b) => (a.gid as number) - (b.gid as number));
-      return mockSqlRows(rows as T[]);
-    }
-
-    if (q.startsWith("DELETE FROM device_access")) {
-      const table = getTable("device_access");
-      const [deviceId, gid] = bindings as [string, number | undefined];
-      for (let index = table.length - 1; index >= 0; index -= 1) {
-        const row = table[index];
-        if (row.device_id === deviceId && (gid === undefined || row.gid === gid)) {
-          table.splice(index, 1);
-        }
-      }
-      return mockSqlRows<T>();
-    }
-
-    if (q.startsWith("DELETE FROM devices")) {
-      const table = getTable("devices");
-      const [deviceId] = bindings as [string];
-      const idx = table.findIndex((r) => r.device_id === deviceId);
-      if (idx >= 0) table.splice(idx, 1);
-      return mockSqlRows<T>();
-    }
-
-    return mockSqlRows<T>();
-  }
-
-  return { exec };
-}
+import { runWithRealKernelSql } from "../test-support/real-kernel-sql";
 
 describe("DeviceRegistry", () => {
-  let registry: DeviceRegistry;
-
-  beforeEach(() => {
-    const sql = createMockSql();
-    registry = new DeviceRegistry(sql);
+  const registryTest = it.extend<{ registry: DeviceRegistry }>({
+    registry: async ({}, use) => {
+      await runWithRealKernelSql((sql) => use(new DeviceRegistry(sql)));
+    },
   });
 
-  it("registers a new device", () => {
-    const result = registry.register("macbook", 1000, 1000, ["fs.*", "proc.*"], "darwin-arm64", "0.1.0");
+  registryTest("registers a new device", ({ registry }) => {
+    const result = registry.register(
+      "macbook",
+      1000,
+      1000,
+      ["fs.*", "proc.*"],
+      "darwin-arm64",
+      "0.1.0",
+    );
     expect(result.ok).toBe(true);
 
     const device = registry.get("macbook");
@@ -242,56 +30,90 @@ describe("DeviceRegistry", () => {
     expect(device!.online).toBe(true);
   });
 
-  it("rejects invalid implements patterns", () => {
-    const result = registry.register("bad", 1000, 1000, ["not valid!"], "linux", "0.1.0");
+  registryTest("rejects invalid implements patterns", ({ registry }) => {
+    const result = registry.register(
+      "bad",
+      1000,
+      1000,
+      ["not valid!"],
+      "linux",
+      "0.1.0",
+    );
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("Invalid implements pattern");
+    if (!result.ok)
+      expect(result.error).toContain("Invalid implements pattern");
   });
 
-  it("re-registers an existing device (reconnect)", () => {
-    registry.register("server", 1000, 1000, ["fs.*"], "linux", "0.1.0");
-    registry.setDescription("server", "Linux home server");
-    registry.setOnline("server", false);
+  registryTest(
+    "re-registers an existing device (reconnect)",
+    ({ registry }) => {
+      registry.register("server", 1000, 1000, ["fs.*"], "linux", "0.1.0");
+      registry.setDescription("server", "Linux home server");
+      registry.setOnline("server", false);
 
-    const device = registry.get("server");
-    expect(device!.online).toBe(false);
+      const device = registry.get("server");
+      expect(device!.online).toBe(false);
 
-    registry.register("server", 1000, 1000, ["fs.*", "proc.*"], "linux", "0.2.0");
-    const updated = registry.get("server");
-    expect(updated!.online).toBe(true);
-    expect(updated!.version).toBe("0.2.0");
-    expect(updated!.implements).toEqual(["fs.*", "proc.*"]);
-    expect(updated!.description).toBe("Linux home server");
-    expect(updated!.label).toBe("server");
-  });
+      registry.register(
+        "server",
+        1000,
+        1000,
+        ["fs.*", "proc.*"],
+        "linux",
+        "0.2.0",
+      );
+      const updated = registry.get("server");
+      expect(updated!.online).toBe(true);
+      expect(updated!.version).toBe("0.2.0");
+      expect(updated!.implements).toEqual(["fs.*", "proc.*"]);
+      expect(updated!.description).toBe("Linux home server");
+      expect(updated!.label).toBe("server");
+    },
+  );
 
-  it("rejects registration when a device id belongs to another owner", () => {
-    registry.register("server", 1000, 1000, ["fs.*"], "linux", "0.1.0");
-    registry.setMetadata("server", { label: "Old Server", description: "Old owner note" });
+  registryTest(
+    "rejects registration when a device id belongs to another owner",
+    ({ registry }) => {
+      registry.register("server", 1000, 1000, ["fs.*"], "linux", "0.1.0");
+      registry.setMetadata("server", {
+        label: "Old Server",
+        description: "Old owner note",
+      });
 
-    const result = registry.register("server", 2000, 2000, ["fs.*"], "linux", "0.2.0");
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain("already belongs to another user");
+      const result = registry.register(
+        "server",
+        2000,
+        2000,
+        ["fs.*"],
+        "linux",
+        "0.2.0",
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error).toContain("already belongs to another user");
 
-    const updated = registry.get("server");
-    expect(updated!.owner_uid).toBe(1000);
-    expect(updated!.label).toBe("Old Server");
-    expect(updated!.description).toBe("Old owner note");
-  });
+      const updated = registry.get("server");
+      expect(updated!.owner_uid).toBe(1000);
+      expect(updated!.label).toBe("Old Server");
+      expect(updated!.description).toBe("Old owner note");
+    },
+  );
 
-  it("stores owner-authored device metadata", () => {
+  registryTest("stores owner-authored device metadata", ({ registry }) => {
     registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
 
-    expect(registry.setMetadata("macbook", {
-      label: "  Laptop  ",
-      description: "  Personal MacBook  ",
-    })).toBe(true);
+    expect(
+      registry.setMetadata("macbook", {
+        label: "  Laptop  ",
+        description: "  Personal MacBook  ",
+      }),
+    ).toBe(true);
     expect(registry.get("macbook")!.label).toBe("Laptop");
     expect(registry.get("macbook")!.description).toBe("Personal MacBook");
     expect(registry.setDescription("missing", "nope")).toBe(false);
   });
 
-  it("stores registration metadata", () => {
+  registryTest("stores registration metadata", ({ registry }) => {
     const result = registry.register(
       "browser-extension",
       1000,
@@ -311,7 +133,7 @@ describe("DeviceRegistry", () => {
     expect(device?.description).toBe("Active browser");
   });
 
-  it("marks a device disconnected", () => {
+  registryTest("marks a device disconnected", ({ registry }) => {
     registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
     registry.setOnline("macbook", false);
 
@@ -320,7 +142,7 @@ describe("DeviceRegistry", () => {
     expect(device!.disconnected_at).not.toBeNull();
   });
 
-  it("removes device records and access entries", () => {
+  registryTest("removes device records and access entries", ({ registry }) => {
     registry.register("macbook", 1000, 1000, ["fs.read"], "darwin", "0.1.0");
     registry.grantAccess("macbook", 100);
 
@@ -330,7 +152,7 @@ describe("DeviceRegistry", () => {
     expect(registry.remove("macbook")).toBe(false);
   });
 
-  it("listOnline returns only online devices", () => {
+  registryTest("listOnline returns only online devices", ({ registry }) => {
     registry.register("a", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
     registry.register("b", 1000, 1000, ["proc.*"], "linux", "0.1.0");
     registry.setOnline("b", false);
@@ -340,27 +162,33 @@ describe("DeviceRegistry", () => {
     expect(online[0].device_id).toBe("a");
   });
 
-  it("returns null for unknown device", () => {
+  registryTest("returns null for unknown device", ({ registry }) => {
     expect(registry.get("nonexistent")).toBeNull();
   });
 
-  it("creates default access for owner's gid on register", () => {
-    registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
-    const access = registry.listAccess("macbook");
-    expect(access).toEqual([1000]);
-  });
+  registryTest(
+    "creates default access for owner's gid on register",
+    ({ registry }) => {
+      registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
+      const access = registry.listAccess("macbook");
+      expect(access).toEqual([1000]);
+    },
+  );
 
-  it("canAccess grants root (uid 0) unconditionally", () => {
-    registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
-    expect(registry.canAccess("macbook", 0, [0])).toBe(true);
-  });
+  registryTest(
+    "canAccess grants root (uid 0) unconditionally",
+    ({ registry }) => {
+      registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
+      expect(registry.canAccess("macbook", 0, [0])).toBe(true);
+    },
+  );
 
-  it("canAccess grants owner", () => {
+  registryTest("canAccess grants owner", ({ registry }) => {
     registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
     expect(registry.canAccess("macbook", 1000, [1000])).toBe(true);
   });
 
-  it("canAccess grants group members", () => {
+  registryTest("canAccess grants group members", ({ registry }) => {
     registry.register("team-server", 0, 0, ["fs.*"], "linux", "0.1.0");
     registry.grantAccess("team-server", 100); // users group
 
@@ -368,13 +196,20 @@ describe("DeviceRegistry", () => {
     expect(registry.canAccess("team-server", 1001, [1001, 200])).toBe(false);
   });
 
-  it("canAccess denies non-owner non-group user", () => {
+  registryTest("canAccess denies non-owner non-group user", ({ registry }) => {
     registry.register("alice-laptop", 1001, 1001, ["fs.*"], "darwin", "0.1.0");
     expect(registry.canAccess("alice-laptop", 1000, [1000, 100])).toBe(false);
   });
 
-  it("canHandle checks implements patterns", () => {
-    registry.register("macbook", 1000, 1000, ["fs.*", "proc.exec"], "darwin", "0.1.0");
+  registryTest("canHandle checks implements patterns", ({ registry }) => {
+    registry.register(
+      "macbook",
+      1000,
+      1000,
+      ["fs.*", "proc.exec"],
+      "darwin",
+      "0.1.0",
+    );
 
     expect(registry.canHandle("macbook", "fs.read")).toBe(true);
     expect(registry.canHandle("macbook", "fs.write")).toBe(true);
@@ -383,22 +218,28 @@ describe("DeviceRegistry", () => {
     expect(registry.canHandle("macbook", "adapter.send")).toBe(false);
   });
 
-  it("findDevice finds accessible device that implements syscall", () => {
-    registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
-    registry.register("server", 0, 0, ["fs.*", "proc.*"], "linux", "0.1.0");
-    registry.grantAccess("server", 100);
+  registryTest(
+    "findDevice finds accessible device that implements syscall",
+    ({ registry }) => {
+      registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
+      registry.register("server", 0, 0, ["fs.*", "proc.*"], "linux", "0.1.0");
+      registry.grantAccess("server", 100);
 
-    const device = registry.findDevice("proc.exec", 1000, [1000, 100]);
-    expect(device).not.toBeNull();
-    expect(device!.device_id).toBe("server");
-  });
+      const device = registry.findDevice("proc.exec", 1000, [1000, 100]);
+      expect(device).not.toBeNull();
+      expect(device!.device_id).toBe("server");
+    },
+  );
 
-  it("findDevice returns null when no device matches", () => {
-    registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
-    expect(registry.findDevice("adapter.send", 1000, [1000])).toBeNull();
-  });
+  registryTest(
+    "findDevice returns null when no device matches",
+    ({ registry }) => {
+      registry.register("macbook", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
+      expect(registry.findDevice("adapter.send", 1000, [1000])).toBeNull();
+    },
+  );
 
-  it("grantAccess and revokeAccess work", () => {
+  registryTest("grantAccess and revokeAccess work", ({ registry }) => {
     registry.register("server", 0, 0, ["fs.*"], "linux", "0.1.0");
     registry.grantAccess("server", 100);
     expect(registry.listAccess("server")).toEqual([0, 100]);
@@ -407,20 +248,37 @@ describe("DeviceRegistry", () => {
     expect(registry.listAccess("server")).toEqual([0]);
   });
 
-  it("listForUser returns owned and group-accessible devices", () => {
-    registry.register("sam-laptop", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
-    registry.register("alice-laptop", 1001, 1001, ["fs.*"], "darwin", "0.1.0");
-    registry.register("team-server", 0, 0, ["fs.*", "proc.*"], "linux", "0.1.0");
-    registry.grantAccess("team-server", 100);
+  registryTest(
+    "listForUser returns owned and group-accessible devices",
+    ({ registry }) => {
+      registry.register("sam-laptop", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
+      registry.register(
+        "alice-laptop",
+        1001,
+        1001,
+        ["fs.*"],
+        "darwin",
+        "0.1.0",
+      );
+      registry.register(
+        "team-server",
+        0,
+        0,
+        ["fs.*", "proc.*"],
+        "linux",
+        "0.1.0",
+      );
+      registry.grantAccess("team-server", 100);
 
-    const samDevices = registry.listForUser(1000, [1000, 100]);
-    const ids = samDevices.map((d) => d.device_id);
-    expect(ids).toContain("sam-laptop");
-    expect(ids).toContain("team-server");
-    expect(ids).not.toContain("alice-laptop");
-  });
+      const samDevices = registry.listForUser(1000, [1000, 100]);
+      const ids = samDevices.map((d) => d.device_id);
+      expect(ids).toContain("sam-laptop");
+      expect(ids).toContain("team-server");
+      expect(ids).not.toContain("alice-laptop");
+    },
+  );
 
-  it("listForUser root sees all devices", () => {
+  registryTest("listForUser root sees all devices", ({ registry }) => {
     registry.register("a", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
     registry.register("b", 1001, 1001, ["proc.*"], "linux", "0.1.0");
 
@@ -428,12 +286,15 @@ describe("DeviceRegistry", () => {
     expect(all).toHaveLength(2);
   });
 
-  it("listForUser with no group access returns only owned", () => {
-    registry.register("mine", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
-    registry.register("not-mine", 1001, 1001, ["fs.*"], "darwin", "0.1.0");
+  registryTest(
+    "listForUser with no group access returns only owned",
+    ({ registry }) => {
+      registry.register("mine", 1000, 1000, ["fs.*"], "darwin", "0.1.0");
+      registry.register("not-mine", 1001, 1001, ["fs.*"], "darwin", "0.1.0");
 
-    const devices = registry.listForUser(1000, []);
-    expect(devices).toHaveLength(1);
-    expect(devices[0].device_id).toBe("mine");
-  });
+      const devices = registry.listForUser(1000, []);
+      expect(devices).toHaveLength(1);
+      expect(devices[0].device_id).toBe("mine");
+    },
+  );
 });

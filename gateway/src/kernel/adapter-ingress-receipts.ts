@@ -253,7 +253,10 @@ export class AdapterIngressReceiptStore {
       row.receipt_id,
       row.claim_token,
     );
-    if (cursor.rowsWritten !== 1) {
+    // Cloudflare counts writes to affected index rows as well as the table row.
+    // `claimed_at` participates in the retention index, so a successful claim
+    // can report more than one write even though the WHERE clause is unique.
+    if (cursor.rowsWritten === 0) {
       throw new Error(`Adapter ingress receipt could not be reclaimed: ${row.receipt_id}`);
     }
     this.activeClaims.delete(row.claim_token);

@@ -194,27 +194,6 @@ describe("sys.link handlers", () => {
     expect(adapters.identityLinks.list).toHaveBeenCalledWith(2001);
   });
 
-  it("consumes challenge code and creates link for caller", () => {
-    const ctx = makeContext(1000, adapters);
-    adapters.linkChallenges.consume.mockReturnValue({
-      code: "ABCD-1234",
-      adapter: "whatsapp",
-      accountId: "default",
-      actorId: "wa:+123",
-      surfaceKind: "dm",
-      surfaceId: "wa:+123",
-      createdAt: 1_700_000_000_000,
-      expiresAt: 1_700_000_600_000,
-      usedAt: 1_700_000_010_000,
-      usedByUid: 1000,
-    });
-
-    const result = handleSysLinkConsume({ code: "abcd-1234" }, ctx);
-    expect(adapters.linkChallenges.consume).toHaveBeenCalledWith("ABCD-1234", 1000);
-    expect(adapters.identityLinks.link).toHaveBeenCalled();
-    expect(result.linked).toBe(true);
-  });
-
   it("fails consume with invalid/expired code", () => {
     const ctx = makeContext(1000, adapters);
     adapters.linkChallenges.consume.mockReturnValue(null);

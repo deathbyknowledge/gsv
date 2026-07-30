@@ -121,26 +121,6 @@ describe("notification handlers", () => {
     expect(ctx.notifications?.list).toHaveBeenCalledWith(1000, { limit: 10 });
   });
 
-  it("marks notifications read and dismissed with the right signals", () => {
-    const ctx = makeContext();
-
-    const readResult = handleNotificationMarkRead({ notificationId: "notif-1" }, ctx);
-    expect(readResult.notification?.readAt).toBe(2);
-    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(
-      1000,
-      "notification.updated",
-      expect.anything(),
-    );
-
-    const dismissResult = handleNotificationDismiss({ notificationId: "notif-1" }, ctx);
-    expect(dismissResult.notification?.dismissedAt).toBe(2);
-    expect(ctx.broadcastToUserUid).toHaveBeenCalledWith(
-      1000,
-      "notification.dismissed",
-      expect.anything(),
-    );
-  });
-
   it("stores and broadcasts process notifications for the owning user", () => {
     const base = makeContext({ processId: "proc-builder" });
     const ctx = makeContext({

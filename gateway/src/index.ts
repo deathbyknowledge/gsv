@@ -80,7 +80,7 @@ export default {
 
 const RETIRED_CLI_DOWNLOAD_PATH = "/public/gsv/downloads/cli";
 
-export function isRetiredCliDownloadPath(pathname: string): boolean {
+function isRetiredCliDownloadPath(pathname: string): boolean {
   return pathname === RETIRED_CLI_DOWNLOAD_PATH
     || pathname.startsWith(`${RETIRED_CLI_DOWNLOAD_PATH}/`);
 }

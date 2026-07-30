@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["es2024"],
+    "types": ["node", "vitest/globals", "@cloudflare/workers-types"]
+  },
+  "include": [
+    "test-integration/**/*.ts",
+    "vitest.integration.config.ts"
+  ],
+  "exclude": ["alchemy", "node_modules"]
+}
