@@ -8,7 +8,10 @@ vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
 }));
 
-import { SOCKET_LEASE_REFRESH_INTERVAL_MS } from "../src/lifecycle";
+import {
+  SOCKET_LEASE_REFRESH_INTERVAL_MS,
+  SocketOperationQueue,
+} from "../src/lifecycle";
 import { defaultWhatsAppAccountState } from "../src/types";
 import { WhatsAppAccount } from "../src/whatsapp-account";
 
@@ -23,6 +26,14 @@ type HandleConnectionUpdate = (
   generation: number,
   socket: WASocket,
   update: Partial<BaileysEventMap["connection.update"]>,
+) => Promise<void>;
+
+type RememberLidPnMappings = (
+  this: WhatsAppAccount,
+  expectedSessionEpoch: number,
+  generation: number,
+  socket: WASocket,
+  mappings: BaileysEventMap["messaging-history.set"]["lidPnMappings"],
 ) => Promise<void>;
 
 const accountMethod = <T>(name: string): T =>
@@ -239,5 +250,57 @@ describe("WhatsApp account socket lease", () => {
     expect(state).toEqual(connectedState);
     expect(accountField(account, "sock")).toBe(candidate);
     await Promise.all(owned);
+  });
+});
+
+describe("WhatsApp account session identity", () => {
+  it("drops LID mappings from a superseded provider session", async () => {
+    const sessionMutations = new SocketOperationQueue();
+    let releaseMutation: () => void = () => undefined;
+    const mutationGate = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    const precedingMutation = sessionMutations.run(() => mutationGate);
+    const socket = {} as WASocket;
+    const bindLidPnMappings = vi.fn(async () => undefined);
+    const state = {
+      ...defaultWhatsAppAccountState(),
+      sessionEpoch: 4,
+    };
+    const account = fakeAccount({
+      sock: socket,
+      socketGeneration: 7,
+      sessionMutations,
+      identities: { bindLidPnMappings },
+      state,
+    });
+    const rememberMappings = accountMethod<RememberLidPnMappings>(
+      "rememberLidPnMappings",
+    );
+    const staleMapping = {
+      lid: "123456789@lid",
+      pn: "31612345678@s.whatsapp.net",
+    };
+
+    const staleWrite = rememberMappings.call(
+      account,
+      4,
+      7,
+      socket,
+      [staleMapping],
+    );
+    state.sessionEpoch = 5;
+    releaseMutation();
+    await Promise.all([precedingMutation, staleWrite]);
+
+    expect(bindLidPnMappings).not.toHaveBeenCalled();
+
+    const currentMapping = {
+      lid: "987654321@lid",
+      pn: "31687654321@s.whatsapp.net",
+    };
+    await rememberMappings.call(account, 5, 7, socket, [currentMapping]);
+    expect(bindLidPnMappings).toHaveBeenCalledOnce();
+    expect(bindLidPnMappings).toHaveBeenCalledWith([currentMapping]);
   });
 });

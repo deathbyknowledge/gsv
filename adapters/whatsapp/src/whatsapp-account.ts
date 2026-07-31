@@ -770,16 +770,23 @@ export class WhatsAppAccount extends DurableObject<Env> {
     socket.ev.on("lid-mapping.update", (mapping) => {
       this.own(
         "lid_mapping",
-        (async () => {
-          if (!this.isCurrentSocket(generation, socket)) return;
-          await this.rememberLidPnMapping(mapping);
-        })(),
+        this.rememberLidPnMappings(
+          sessionEpoch,
+          generation,
+          socket,
+          [mapping],
+        ),
       );
     });
     socket.ev.on("messaging-history.set", ({ lidPnMappings }) => {
       this.own(
         "history_mappings",
-        this.rememberLidPnMappings(generation, socket, lidPnMappings),
+        this.rememberLidPnMappings(
+          sessionEpoch,
+          generation,
+          socket,
+          lidPnMappings,
+        ),
       );
     });
     socket.ev.on("messages.upsert", (event) => {
@@ -1831,6 +1838,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private async rememberLidPnMappings(
+    expectedSessionEpoch: number,
     generation: number,
     socket: WASocket,
     mappings: LIDMapping[] | undefined,
@@ -1839,18 +1847,18 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const batchSize = 128;
     for (let index = 0; index < mappings.length; index += batchSize) {
       const batch = mappings.slice(index, index + batchSize);
-      const current = await this.socketOperations.run(async () => {
-        if (!this.isCurrentSocket(generation, socket)) return false;
+      const current = await this.sessionMutations.run(async () => {
+        if (
+          expectedSessionEpoch !== this.state.sessionEpoch
+          || !this.isCurrentSocket(generation, socket)
+        ) {
+          return false;
+        }
         await this.identities.bindLidPnMappings(batch);
-        return true;
+        return expectedSessionEpoch === this.state.sessionEpoch
+          && this.isCurrentSocket(generation, socket);
       });
       if (!current) return;
-    }
-  }
-
-  private async rememberLidPnMapping(mapping: LIDMapping): Promise<void> {
-    if (mapping.lid && mapping.pn) {
-      await this.identities.bindLidPn(mapping.lid, mapping.pn);
     }
   }
 
