@@ -589,34 +589,6 @@ export function renderManualPage(topic: string): string | null {
         "",
       ].join("\n");
 
-    case "notify":
-      return [
-        "NOTIFY(1)",
-        "",
-        "NAME",
-        "  notify - send and manage user notifications",
-        "",
-        "OVERVIEW",
-        "  `notify` creates durable user notifications and manages their read/dismissed state.",
-        "  Notifications appear in the web shell toast/panel and can be delivered by other surfaces later.",
-        "",
-        "SEND",
-        "  notify send --title \"Wiki build finished\" --body \"product-alpha is ready\" --level success",
-        "",
-        "LIST",
-        "  notify list",
-        "  notify list --unread",
-        "  notify list --dismissed",
-        "",
-        "STATE CHANGES",
-        "  notify read <notification-id>",
-        "  notify dismiss <notification-id>",
-        "",
-        "LEVELS",
-        "  info, success, warning, error",
-        "",
-      ].join("\n");
-
     default:
       return null;
   }

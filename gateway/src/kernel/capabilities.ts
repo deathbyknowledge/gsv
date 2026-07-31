@@ -19,7 +19,6 @@ const DEFAULT_CAPABILITIES: [number, string[]][] = [
     "codemode.*",
     "fs.*",
     "shell.*",
-    "notification.*",
     "net.fetch",
     "proc.*",
     "signal.*",

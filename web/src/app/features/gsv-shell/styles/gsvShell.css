@@ -1765,7 +1765,7 @@
 .gsv-shell-statusbar > div:first-child {
   width: 100%;
   border-top: 0 !important;
-  padding-right: 236px !important;
+  padding-right: 200px !important;
 }
 
 .gsv-status-actions {
@@ -1773,7 +1773,7 @@
   top: 3px;
   right: 18px;
   height: 24px;
-  max-width: min(256px, calc(100% - 220px));
+  max-width: min(220px, calc(100% - 220px));
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -1827,21 +1827,6 @@
 .gsv-status-actions .presence-toggle:hover {
   border-color: var(--accent);
   color: var(--text-hi);
-}
-
-.gsv-status-actions button i {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--error);
-  color: var(--text-hi);
-  font-size: 9px;
-  font-style: normal;
-  line-height: 17px;
 }
 
 @keyframes gsvCtrlIn {
@@ -1903,11 +1888,11 @@
 
   .gsv-status-actions {
     right: 12px;
-    max-width: min(236px, calc(100% - 180px));
+    max-width: min(200px, calc(100% - 180px));
   }
 
   .gsv-shell-statusbar > div:first-child {
-    padding-right: 216px !important;
+    padding-right: 180px !important;
   }
 
   .gsv-status-actions > span:first-child {

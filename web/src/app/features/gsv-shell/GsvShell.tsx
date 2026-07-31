@@ -16,7 +16,6 @@ import type {
   ConsoleResourceState,
 } from "../gsv-console/domain/consoleModels";
 import { useConsoleConfig, useConsoleOverview } from "../gsv-console/hooks/useConsoleData";
-import type { NotificationSurface } from "../notifications/types";
 import {
   GsvConsole,
   type SettingsRouteTarget,
@@ -39,9 +38,6 @@ import { useGsvShellState } from "./hooks/useGsvShellState";
 import "./styles/gsvShell.css";
 
 type GsvShellProps = {
-  notificationOpenSurface: NotificationSurface | null;
-  notificationUnreadCount: number;
-  onNotificationsToggle: (surface: NotificationSurface, node: HTMLButtonElement) => void;
   desktopVisible: boolean;
   sessionUsername: string;
   mobileHomeDate: string;
@@ -177,9 +173,6 @@ function shellSettingsRouteForTarget(target: SettingsRouteTarget): ShellSettings
 }
 
 export function GsvShell({
-  notificationOpenSurface,
-  notificationUnreadCount,
-  onNotificationsToggle,
   desktopVisible,
   sessionUsername,
   mobileHomeDate,
@@ -661,9 +654,6 @@ export function GsvShell({
         systemLoadTone={statusSystemTone}
         sessionUsername={sessionUsername}
         mobileHomeDate={mobileHomeDate}
-        notificationOpenSurface={notificationOpenSurface}
-        notificationUnreadCount={notificationUnreadCount}
-        onNotificationsToggle={onNotificationsToggle}
         onLockSession={onLockSession}
       />
     </div>

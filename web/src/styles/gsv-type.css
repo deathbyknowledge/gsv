@@ -90,7 +90,7 @@
 }
 
 /* Prose scale — Space Grotesk (--gsv-font-prose). For the app's running copy
- * (onboarding, console flows, chat, notifications) where Space Grotesk reads
+ * (onboarding, console flows, chat) where Space Grotesk reads
  * better than the machine mono. All >= 12px (floor); subtle 0.01em tracking. */
 
 .gsv-prose-display {

@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(18);
+    expect(KERNEL_MIGRATIONS).toHaveLength(19);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -104,6 +104,10 @@ describe("kernel schema migrations", () => {
       id: 18,
       name: "remove_conversation_registry",
     });
+    expect(KERNEL_MIGRATIONS[18]).toMatchObject({
+      id: 19,
+      name: "remove_notifications",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -167,6 +171,17 @@ describe("kernel schema migrations", () => {
     expect(normalizedStatements()).toContain(
       "ALTER TABLE processes DROP COLUMN active_conversation_id",
     );
+  });
+
+  it("removes notification storage", () => {
+    const statements = normalizedStatements();
+    expect(statements).toContain(
+      "DELETE FROM group_capabilities WHERE capability LIKE 'notification.%'",
+    );
+    expect(statements).toContain(
+      "DELETE FROM signal_watches WHERE signal LIKE 'notification.%'",
+    );
+    expect(statements).toContain("DROP TABLE notifications");
   });
 
   it("moves explicit system context overrides to the new lexical order", () => {

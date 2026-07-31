@@ -6,7 +6,7 @@ GSV uses several storage planes. The Kernel chooses the plane based on whether t
 
 | Plane | Backing Store | Used For |
 |---|---|---|
-| Kernel SQLite | Kernel Durable Object SQL | Users, groups, tokens, OAuth accounts, config, devices, routing tables, process registry, workspaces, adapter links, automation, notifications. |
+| Kernel SQLite | Kernel Durable Object SQL | Users, groups, tokens, OAuth accounts, config, devices, routing tables, process registry, workspaces, adapter links, and automation. |
 | Process SQLite | Process Durable Object SQL | Active messages, pending tool calls, message queue, HIL state, process-local metadata. |
 | R2 `STORAGE` bucket | Cloudflare R2 | Ordinary virtual filesystem files, process media, and process archives. |
 | ripgit | `RIPGIT` binding | Versioned home knowledge, workspaces, and source trees. |
@@ -48,7 +48,7 @@ Kernel SQLite is the authoritative control-plane store. Important tables include
 | `identity_links`, `surface_routes`, `link_challenges` | Adapter actor links and inbound surface routing. |
 | `run_routes` | Routes process run signals back to clients or adapter surfaces. |
 | `ipc_calls` | Durable same-owner IPC call deadlines, terminal results, and delivery outbox state. |
-| `notifications`, `signal_watches` | Notifications and process-owned signal watches. |
+| `signal_watches` | Process-owned signal watches. |
 
 ## Process SQLite
 

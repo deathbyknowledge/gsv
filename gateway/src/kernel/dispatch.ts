@@ -104,12 +104,6 @@ import {
   handleAdapterStateUpdate,
   handleAdapterStatus,
 } from "./adapter-handlers";
-import {
-  handleNotificationCreate,
-  handleNotificationDismiss,
-  handleNotificationList,
-  handleNotificationMarkRead,
-} from "./notifications";
 import { handleSignalUnwatch, handleSignalWatch } from "./signals";
 import {
   handleSchedulerAdd,
@@ -554,19 +548,6 @@ async function dispatchNative(
         break;
       case "adapter.list":
         data = handleAdapterList(frame.args, ctx);
-        break;
-
-      case "notification.create":
-        data = handleNotificationCreate(frame.args, ctx);
-        break;
-      case "notification.list":
-        data = handleNotificationList(frame.args, ctx);
-        break;
-      case "notification.mark_read":
-        data = handleNotificationMarkRead(frame.args, ctx);
-        break;
-      case "notification.dismiss":
-        data = handleNotificationDismiss(frame.args, ctx);
         break;
 
       case "signal.watch":

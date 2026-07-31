@@ -229,7 +229,7 @@ The websocket protocol is uniform: every operation is a `req` frame with a sysca
 | `fs.*` | Native on `gsv`, or routed to a driver when `args.target` names a device |
 | `shell.exec` | Native on `gsv`, routed to a driver when `args.target` names a device, or routed by `args.sessionId` for an existing shell session |
 | `proc.*` | Kernel and Process DO control plane |
-| `repo.*`, `sys.*`, `sched.*`, `notification.*`, `signal.*` | Kernel-handled |
+| `repo.*`, `sys.*`, `sched.*`, `signal.*` | Kernel-handled |
 | `adapter.*` | Service-binding / adapter control path |
 | `ai.tools`, `ai.config` | Kernel-internal process bootstrap path |
 | Other `ai.*` | Capability-gated inference and media operations |
@@ -267,9 +267,6 @@ Current role defaults from `buildSignalList()`:
 - `device.status`
 - `adapter.status`
 - `mcp.changed`
-- `notification.created`
-- `notification.updated`
-- `notification.dismissed`
 
 ### Driver connections
 

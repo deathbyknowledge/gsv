@@ -114,7 +114,6 @@ describe("CapabilityStore", () => {
         "codemode.*",
         "fs.*",
         "net.fetch",
-        "notification.*",
         "proc.*",
         "repo.apply",
         "repo.compare",

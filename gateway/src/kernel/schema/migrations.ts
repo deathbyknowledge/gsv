@@ -33,6 +33,7 @@ import { KERNEL_V017_REORDER_SYSTEM_CONTEXT } from "./v017_reorder_system_contex
 import {
   KERNEL_V018_REMOVE_CONVERSATION_REGISTRY,
 } from "./v018_remove_conversation_registry";
+import { KERNEL_V019_REMOVE_NOTIFICATIONS } from "./v019_remove_notifications";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -56,6 +57,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V016_REMOVE_PROCESS_CONTEXT,
   KERNEL_V017_REORDER_SYSTEM_CONTEXT,
   KERNEL_V018_REMOVE_CONVERSATION_REGISTRY,
+  KERNEL_V019_REMOVE_NOTIFICATIONS,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

@@ -31,9 +31,6 @@ describe("user-facing signal policy", () => {
       "device.status",
       "adapter.status",
       "mcp.changed",
-      "notification.created",
-      "notification.updated",
-      "notification.dismissed",
     ]));
   });
 });

@@ -57,7 +57,6 @@ import { OAuthStore } from "./oauth-store";
 import { McpServerStore } from "./mcp-store";
 import { SignalWatchStore, type SignalWatchRecord } from "./signal-watches";
 import { isUserProcessSignal } from "./user-signals";
-import { NotificationStore } from "./notifications";
 import { IpcCallStore, type IpcCallRecord } from "./ipc-calls";
 import {
   assertCanManageSchedule,
@@ -215,7 +214,6 @@ export class Kernel extends Host<Env> {
   private readonly runRoutes: RunRouteStore;
   private readonly signalWatches: SignalWatchStore;
   private readonly ipcCalls: IpcCallStore;
-  private readonly notifications: NotificationStore;
   private readonly schedules: ScheduleStore;
   private readonly oauth: OAuthStore;
   private readonly mcpServers: McpServerStore;
@@ -263,8 +261,6 @@ export class Kernel extends Host<Env> {
     this.signalWatches = new SignalWatchStore(sql);
 
     this.ipcCalls = new IpcCallStore(sql);
-
-    this.notifications = new NotificationStore(sql);
 
     this.schedules = new ScheduleStore(sql);
 
@@ -1569,7 +1565,6 @@ export class Kernel extends Host<Env> {
       shellSessions: this.shellSessions,
       signalWatches: this.signalWatches,
       ipcCalls: this.ipcCalls,
-      notifications: this.notifications,
       schedules: this.schedules,
       connection: options.connection ?? null,
       identity: options.identity,

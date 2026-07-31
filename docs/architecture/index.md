@@ -40,7 +40,7 @@ The Kernel is responsible for:
 
 - Authenticating users, service identities, and device drivers.
 - Maintaining users, groups, tokens, OAuth accounts, capabilities, devices,
-  adapter links, workspaces, routes, notifications, and runtime config
+  adapter links, workspaces, routes, and runtime config
   in Kernel SQLite.
 - Dispatching syscalls such as `fs.read`, `shell.exec`, `proc.spawn`,
   `repo.apply`, `sys.config.get`, `sys.oauth.start`, `sys.mcp.add`, and

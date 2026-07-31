@@ -15,9 +15,6 @@ export const USER_CONNECTION_SIGNALS = [
   "device.status",
   "adapter.status",
   "mcp.changed",
-  "notification.created",
-  "notification.updated",
-  "notification.dismissed",
 ] as const;
 
 const USER_PROCESS_SIGNAL_SET = new Set<string>(USER_PROCESS_SIGNALS);
