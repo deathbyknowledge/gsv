@@ -9,7 +9,6 @@ export type * from "./syscalls/scheduler";
 export type * from "./syscalls/adapter";
 export type * from "./syscalls/signal";
 export type * from "./syscalls/interaction-origin";
-export type * from "./syscalls/notification";
 export type * from "./syscalls/ai";
 export type * from "./syscalls/map";
 export * from "./adapters";

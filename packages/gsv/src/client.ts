@@ -206,7 +206,6 @@ export type GsvAiNamespace = GsvClientNamespaces["ai"];
 export type GsvCodeModeNamespace = GsvClientNamespaces["codemode"];
 export type GsvFsNamespace = GsvClientNamespaces["fs"];
 export type GsvNetNamespace = never;
-export type GsvNotificationNamespace = GsvClientNamespaces["notification"];
 export type GsvProcNamespace = GsvClientNamespaces["proc"];
 export type GsvRepoNamespace = GsvClientNamespaces["repo"];
 export type GsvSchedNamespace = GsvClientNamespaces["sched"];
@@ -335,10 +334,6 @@ const SYSCALL_NAMES = [
   "adapter.state.update",
   "adapter.status",
   "adapter.list",
-  "notification.create",
-  "notification.list",
-  "notification.mark_read",
-  "notification.dismiss",
   "signal.watch",
   "signal.unwatch",
 ] as const satisfies readonly NamespaceSyscall[];

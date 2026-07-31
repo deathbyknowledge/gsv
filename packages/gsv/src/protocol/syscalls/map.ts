@@ -209,16 +209,6 @@ import type {
   AdapterStatusResult,
 } from "./adapter";
 import type {
-  NotificationCreateArgs,
-  NotificationCreateResult,
-  NotificationDismissArgs,
-  NotificationDismissResult,
-  NotificationListArgs,
-  NotificationListResult,
-  NotificationMarkReadArgs,
-  NotificationMarkReadResult,
-} from "./notification";
-import type {
   SignalUnwatchArgs,
   SignalUnwatchResult,
   SignalWatchArgs,
@@ -334,11 +324,6 @@ export type SyscallDomains = {
   "adapter.send": { args: AdapterSendArgs; result: AdapterSendResult };
   "adapter.status": { args: AdapterStatusArgs; result: AdapterStatusResult };
   "adapter.list": { args: AdapterListArgs; result: AdapterListResult };
-
-  "notification.create": { args: NotificationCreateArgs; result: NotificationCreateResult };
-  "notification.list": { args: NotificationListArgs; result: NotificationListResult };
-  "notification.mark_read": { args: NotificationMarkReadArgs; result: NotificationMarkReadResult };
-  "notification.dismiss": { args: NotificationDismissArgs; result: NotificationDismissResult };
 
   "signal.watch": { args: SignalWatchArgs; result: SignalWatchResult };
   "signal.unwatch": { args: SignalUnwatchArgs; result: SignalUnwatchResult };

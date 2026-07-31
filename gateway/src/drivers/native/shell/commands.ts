@@ -6,7 +6,6 @@ import type { NetFetchDeviceTransport } from "../../../kernel/net";
 import type { RequestFrame, ResponseFrame } from "../../../protocol/frames";
 import type { ProcessIdentity } from "@humansandmachines/gsv/protocol";
 import type { FsDeviceTransport } from "../fs";
-import { buildNotifyCommands } from "../notify-shell";
 import { buildCodeModeCommand } from "./codemode";
 import { buildCoreCommands } from "./core";
 import { buildCpCommand } from "./cp";
@@ -61,7 +60,6 @@ export function buildCustomCommands(
   const message = buildMessageCommand(fs, ctx);
   const netCommands = buildNetCommands(ctx, options?.netFetchTransport);
   const oauth = buildOAuthCommand(ctx);
-  const notifyCommands = buildNotifyCommands(ctx);
   const flynn = defineCommand("flynn", async (): Promise<ExecResult> => ({
     stdout: `General Systems Vehicle ${ctx.config.get("config/server/version") ?? "0.1.6"} - Steve James.\n\n"I kept dreaming of a world I thought I'd never see. And then, one day... I got in."`,
     stderr: "",
@@ -88,7 +86,6 @@ export function buildCustomCommands(
     skills,
     wiki,
     flynn,
-    ...notifyCommands,
   ];
   discovery.registerCommands(nativeCommands);
   return nativeCommands;

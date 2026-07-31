@@ -9,7 +9,7 @@ import "../../assets.css";
  * doticons.ts (owned by a concurrent cleanup).
  *
  * `used` flags are from a manual grep audit (2026-07-13) of web/src,
- * index.html, manifest.webmanifest, and gsv-service-worker.js. A doticon file
+ * index.html, and manifest.webmanifest. A doticon file
  * is only ever requested through Icon's doticons family (`family="doticons"`,
  * a `name="doticons/…"` literal, or a direct `/icons/doticons/…` src) — app
  * names like `icon="cog"` resolve to the ROOT /icons set, not these files,

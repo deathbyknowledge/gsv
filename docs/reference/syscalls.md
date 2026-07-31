@@ -62,20 +62,6 @@ type MediaInput = {
   transcription?: string;
 };
 
-type NotificationRecord = {
-  notificationId: string;
-  title: string;
-  body?: string;
-  level: "info" | "success" | "warning" | "error";
-  createdAt: number;
-  readAt: number | null;
-  dismissedAt: number | null;
-  expiresAt: number | null;
-  actions: Array<{ kind: string; label: string; target?: string; args?: Record<string, unknown> }>;
-  source:
-    | { kind: "user" }
-    | { kind: "process"; processId: string };
-};
 ```
 
 ## Filesystem: `fs.*`
@@ -173,7 +159,7 @@ Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mcp`, `notify`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
+| `shell.exec` | `handleShellExec`; CLI `Bash` | Native runs `just-bash` over `GsvFs` with process identity env and built-in commands such as `codemode`, `mcp`, and `wiki`. Device targets run a real local shell through the CLI. Device start calls return within a runtime-owned wait budget. If the command is still running, the result includes a `sessionId`; later calls with that `sessionId` poll or write stdin. |
 
 ```ts
 type ShellSyscalls = {
@@ -1069,43 +1055,19 @@ per-surface process selections are cleared during this upgrade and are observed
 again on the next authorized inbound message. In-flight legacy replies may lose
 their route during deployment; this is an intentional security hard cutover.
 
-## Notifications and Watches
+## Signal Watches
 
 Runtime behavior:
 
 | Syscall | Handler | Behavior |
 |---|---|---|
-| `notification.create` | `handleNotificationCreate` | Creates a per-user notification with UUID, normalized actions, derived source, and expiry. Default level is `info`; default unread TTL is 30 days and custom TTL clamps to 1 second through 90 days. Broadcasts `notification.created`. |
-| `notification.list` | `handleNotificationList` | Prunes expired notifications, then lists current user notifications. Defaults include read notifications, exclude dismissed notifications, and limit to 100; limit clamps to 1-500. |
-| `notification.mark_read` | `handleNotificationMarkRead` | Marks a current-user notification read if found and resets expiry to seven days. Missing, expired, or wrong-user ids return `notification: null`. Broadcasts update when found. |
-| `notification.dismiss` | `handleNotificationDismiss` | Marks a current-user notification dismissed and expires it after three days. Missing ids return `notification: null`. Broadcasts dismissal when found. |
 | `signal.watch` | `handleSignalWatch` | App/process-originated only. Creates or upserts a durable signal watch. Requires non-empty signal; TTL defaults to 24 hours and clamps to 1 second through 30 days; `once` defaults true. Process runtimes must pass an explicit `processId` and cannot watch themselves. |
 | `signal.unwatch` | `handleSignalUnwatch` | App/process-originated only. Removes watches for the current app entrypoint or target process by `watchId` or `key`. Returns number removed. |
 
 Signal watch delivery is handled by the kernel when matching signals are emitted. Once-watches are deleted after successful handling; failed deliveries mark the watch failed.
 
 ```ts
-type NotificationAndSignalSyscalls = {
-  "notification.create": {
-    args: { title: string; body?: string; level?: "info" | "success" | "warning" | "error"; actions?: Array<{ kind: string; label: string; target?: string; args?: Record<string, unknown> }>; ttlMs?: number };
-    result: { notification: NotificationRecord };
-  };
-
-  "notification.list": {
-    args: { includeRead?: boolean; includeDismissed?: boolean; limit?: number };
-    result: { notifications: NotificationRecord[] };
-  };
-
-  "notification.mark_read": {
-    args: { notificationId: string };
-    result: { notification: NotificationRecord | null };
-  };
-
-  "notification.dismiss": {
-    args: { notificationId: string };
-    result: { notification: NotificationRecord | null };
-  };
-
+type SignalSyscalls = {
   "signal.watch": {
     args: { signal: string; processId?: string; key?: string; state?: unknown; once?: boolean; ttlMs?: number };
     result: { watchId: string; created: boolean; createdAt: number; expiresAt: number | null };

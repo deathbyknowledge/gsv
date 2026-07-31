@@ -93,7 +93,6 @@ const NATIVE_COMMAND_DESCRIPTORS: Record<string, NativeCommandDescriptor> = {
     "skills validate <skill-or-path>",
   ]),
   wiki: command("Search and maintain durable repo-backed knowledge.", "Remember, retrieve, or organize durable notes, facts, decisions, and reference material.", ["knowledge", "memory", "notes", "search", "wiki", "reference"]),
-  notify: command("Create and manage user notifications.", "Alert the user about a completed background job, warning, or actionable event.", ["notification", "alert", "remind", "background", "done"]),
   flynn: command("Print the GSV version banner.", "Inspect the GSV release banner or project easter egg.", ["version", "banner", "gsv"]),
 };
 

@@ -13,15 +13,6 @@ export function GatewaySignalInvalidator() {
         return;
       }
 
-      if (
-        signal === "notification.created" ||
-        signal === "notification.updated" ||
-        signal === "notification.dismissed"
-      ) {
-        void queryClient.invalidateQueries({ queryKey: ["notifications"] });
-        return;
-      }
-
       if (signal === "proc.changed") {
         void queryClient.invalidateQueries({ queryKey: ["processes"] });
         void queryClient.invalidateQueries({ queryKey: ["process"] });

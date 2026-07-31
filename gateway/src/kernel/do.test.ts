@@ -873,12 +873,12 @@ describe("Kernel user signal broadcasts", () => {
       ["service", service],
     ]);
 
-    kernel.broadcastToUserUid(1000, "notification.created", { id: "note-1" });
+    kernel.broadcastToUserUid(1000, "mcp.changed", { id: "mcp-1" });
 
     expect(user.send).toHaveBeenCalledWith(JSON.stringify({
       type: "sig",
-      signal: "notification.created",
-      payload: { id: "note-1" },
+      signal: "mcp.changed",
+      payload: { id: "mcp-1" },
     }));
     expect(otherUser.send).not.toHaveBeenCalled();
     expect(driver.send).not.toHaveBeenCalled();

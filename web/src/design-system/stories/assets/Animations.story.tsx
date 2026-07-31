@@ -91,12 +91,6 @@ const story: Story = {
           <TemplateEmptyState object="ASSETS" />
         </div>
       </div>
-
-      <div class="as-section">
-        <div style={{ fontSize: "9px", letterSpacing: "0.06em", color: "var(--text-dim)" }}>
-          NOTE: audio assets exist in public/notification-sounds (one .wav) but are out of scope for this tab.
-        </div>
-      </div>
     </div>
   ),
 };

@@ -23,7 +23,6 @@ import type { ShellSessionStore } from "./shell-sessions";
 import type { OAuthStore } from "./oauth-store";
 import type { McpServerStore } from "./mcp-store";
 import type { SignalWatchStore } from "./signal-watches";
-import type { NotificationStore } from "./notifications";
 import type { IpcCallStore } from "./ipc-calls";
 import type { ScheduleStore } from "./scheduler";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
@@ -43,7 +42,6 @@ export type KernelContext = {
   shellSessions: ShellSessionStore;
   signalWatches: SignalWatchStore;
   ipcCalls: IpcCallStore;
-  notifications: NotificationStore;
   schedules: ScheduleStore;
   connection: Connection | null;
   identity?: ConnectionIdentity;

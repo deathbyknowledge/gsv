@@ -7,8 +7,8 @@ import "../../assets.css";
  * referenced directly by URL path (no imports from doticons.ts / Icon.tsx).
  *
  * `used` flags are from a manual grep audit (2026-07-13) of web/src,
- * index.html, manifest.webmanifest, and gsv-service-worker.js. References
- * only from the design-system catalog itself count as UNUSED.
+ * index.html, and manifest.webmanifest. References only from the design-system
+ * catalog itself count as UNUSED.
  */
 
 // web/public/img/ — agent portraits + human orb.

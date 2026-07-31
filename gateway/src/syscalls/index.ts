@@ -19,7 +19,6 @@ type SyscallDomain =
   | "sys"
   | "ai"
   | "sched"
-  | "notification"
   | "adapter"
   | "signal"
   | "account";

@@ -199,36 +199,6 @@ describe("gateway integration", () => {
       }
       await expect(bodyToText(sent.body)).resolves.toBe(uploadContent);
 
-      const receivedSignals: Array<{ signal: string; payload: unknown }> = [];
-      const stopSignals = client.onSignal((signal, payload) => {
-        receivedSignals.push({ signal, payload });
-      });
-      const created = await client.notification.create({
-        title: "Integration notification",
-        body: "Signal and response correlation",
-      });
-      expect(receivedSignals).toContainEqual({
-        signal: "notification.created",
-        payload: { notification: created.notification },
-      });
-      expect((await client.notification.list()).notifications).toContainEqual(created.notification);
-      const markedRead = await client.notification.mark_read({
-        notificationId: created.notification.notificationId,
-      });
-      expect(markedRead.notification?.readAt).not.toBeNull();
-      const dismissed = await client.notification.dismiss({
-        notificationId: created.notification.notificationId,
-      });
-      expect(dismissed.notification?.dismissedAt).not.toBeNull();
-      expect(receivedSignals.map(({ signal }) => signal).filter((signal) =>
-        signal.startsWith("notification.")
-      )).toEqual([
-        "notification.created",
-        "notification.updated",
-        "notification.dismissed",
-      ]);
-      stopSignals();
-
       const beforeSpawn = await client.proc.list();
       const spawned = await client.proc.spawn({
         label: "integration child",
