@@ -6,6 +6,7 @@ import { whatsAppFallbackText } from "../src/inbound";
 import { errorMessage } from "../src/logging";
 import {
   defaultWhatsAppFilename,
+  isWhatsAppEncryptionPreparationFailure,
   planWhatsAppOutboundDeliveries,
 } from "../src/outbound";
 import type { AdapterMedia } from "../../shared/src/types";
@@ -39,6 +40,15 @@ describe("WhatsApp outbound behavior", () => {
     )).toBe(
       "*Heading*\n*bold* and `**literal**` docs (https://example.com)",
     );
+  });
+
+  it("recognizes a definitive pre-send encryption failure as retry-safe", () => {
+    expect(isWhatsAppEncryptionPreparationFailure(
+      new Error("All encryptions failed"),
+    )).toBe(true);
+    expect(isWhatsAppEncryptionPreparationFailure(
+      new Error("Provider returned 500 after send"),
+    )).toBe(false);
   });
 });
 

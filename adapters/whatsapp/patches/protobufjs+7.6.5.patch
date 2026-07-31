@@ -1,0 +1,13 @@
+diff --git a/node_modules/protobufjs/src/writer_buffer.js b/node_modules/protobufjs/src/writer_buffer.js
+index 09a4a91..03985cb 100644
+--- a/node_modules/protobufjs/src/writer_buffer.js
++++ b/node_modules/protobufjs/src/writer_buffer.js
+@@ -58,7 +58,7 @@ function writeStringBuffer(val, buf, pos) {
+     if (val.length < 40) // plain js is faster for short strings (probably due to redundant assertions)
+         util.utf8.write(val, buf, pos);
+     else if (buf.utf8Write)
+-        buf.utf8Write(val, pos);
++        buf.utf8Write(val, pos, buf.length - pos);
+     else
+         buf.write(val, pos);
+ }

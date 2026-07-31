@@ -5,6 +5,7 @@ import type {
   AdapterSurface,
 } from "./types";
 import { isAdapterInboundResult } from "../../../packages/gsv/src/protocol/adapters.js";
+import { shouldReplaceAlarm } from "./alarm";
 
 type PendingInboundResponse = {
   message: AdapterOutboundMessage;
@@ -71,15 +72,16 @@ export class InboundDeliveryLedger<Payload> {
     const normalizedAlarmAt = requireAlarmTime(alarmAt);
     const key = this.recordKey(normalizedId);
     await this.storage.transaction(async (txn) => {
+      const now = Date.now();
       if (!await txn.get(key)) {
         await txn.put(key, {
           state: "provider",
           payload,
-          createdAt: Date.now(),
+          createdAt: now,
         } satisfies PendingInboundDelivery<Payload>);
       }
       const currentAlarm = await txn.getAlarm();
-      if (currentAlarm === null || currentAlarm > normalizedAlarmAt) {
+      if (shouldReplaceAlarm(currentAlarm, normalizedAlarmAt, now)) {
         await txn.setAlarm(normalizedAlarmAt);
       }
     });
@@ -88,8 +90,9 @@ export class InboundDeliveryLedger<Payload> {
   async arm(alarmAt: number): Promise<void> {
     const normalizedAlarmAt = requireAlarmTime(alarmAt);
     await this.storage.transaction(async (txn) => {
+      const now = Date.now();
       const currentAlarm = await txn.getAlarm();
-      if (currentAlarm === null || currentAlarm > normalizedAlarmAt) {
+      if (shouldReplaceAlarm(currentAlarm, normalizedAlarmAt, now)) {
         await txn.setAlarm(normalizedAlarmAt);
       }
     });
@@ -98,10 +101,11 @@ export class InboundDeliveryLedger<Payload> {
   async armIfPending(alarmAt: number): Promise<boolean> {
     const normalizedAlarmAt = requireAlarmTime(alarmAt);
     return await this.storage.transaction(async (txn) => {
+      const now = Date.now();
       const pending = await txn.list({ prefix: this.prefix, limit: 1 });
       if (pending.size === 0) return false;
       const currentAlarm = await txn.getAlarm();
-      if (currentAlarm === null || currentAlarm > normalizedAlarmAt) {
+      if (shouldReplaceAlarm(currentAlarm, normalizedAlarmAt, now)) {
         await txn.setAlarm(normalizedAlarmAt);
       }
       return true;
@@ -212,9 +216,11 @@ export class InboundDeliveryLedger<Payload> {
       return { state: "pending", error: "Adapter response delivery is unavailable" };
     }
     if (pending.attempt >= MAX_RESPONSE_DELIVERY_ATTEMPTS) {
-      console.warn(
-        `[Adapter] Inbound responses stopped after ${pending.attempt} attempts`,
-      );
+      console.warn(JSON.stringify({
+        component: "adapter",
+        event: "inbound_response_retries_exhausted",
+        attempts: pending.attempt,
+      }));
       await this.storage.delete(key);
       return { state: "completed" };
     }
@@ -231,9 +237,10 @@ export class InboundDeliveryLedger<Payload> {
     for (const response of attempted.responses) {
       if (resetGeneration !== this.resetGeneration) break;
       if (response.expiresAt !== undefined && response.expiresAt <= Date.now()) {
-        console.warn(
-          `[Adapter] Inbound response ${response.message.deliveryId} expired before delivery`,
-        );
+        console.warn(JSON.stringify({
+          component: "adapter",
+          event: "inbound_response_expired",
+        }));
         continue;
       }
 
@@ -249,9 +256,10 @@ export class InboundDeliveryLedger<Payload> {
         retryError ??= delivery.error;
         continue;
       }
-      console.warn(
-        `[Adapter] Inbound response ${response.message.deliveryId} was not delivered: ${delivery.error}`,
-      );
+      console.warn(JSON.stringify({
+        component: "adapter",
+        event: "inbound_response_rejected",
+      }));
     }
 
     if (resetGeneration !== this.resetGeneration) {
@@ -267,9 +275,11 @@ export class InboundDeliveryLedger<Payload> {
       return { state: "pending", ...(detail ? { error: detail } : {}) };
     }
     if (retryError !== undefined) {
-      console.warn(
-        `[Adapter] Inbound responses stopped after ${attempted.attempt} attempts: ${retryError}`,
-      );
+      console.warn(JSON.stringify({
+        component: "adapter",
+        event: "inbound_response_retries_exhausted",
+        attempts: attempted.attempt,
+      }));
     }
     await this.storage.delete(key);
     return { state: "completed" };

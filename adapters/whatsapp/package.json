@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "patch-package",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
@@ -18,7 +19,8 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.19.1",
-    "@cloudflare/workers-types": "5.20260730.1",
+    "@cloudflare/workers-types": "5.20260731.1",
+    "patch-package": "8.0.1",
     "typescript": "5.9.3",
     "vitest": "4.1.10",
     "wrangler": "4.116.0"

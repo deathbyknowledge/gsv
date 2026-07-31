@@ -6,21 +6,53 @@ import {
   disconnectPolicy,
   earliestDeadline,
   enqueueThenDeliverInboundBatch,
+  INBOUND_RETRY_DELAY_MS,
+  nextAccountAlarmDeadline,
   pairingChallengeIsCurrent,
   pairingSessionExpired,
   reconnectDelayMs,
   restartDelayMs,
-  SOCKET_ROTATION_INTERVAL_MS,
+  socketLeaseAction,
+  SOCKET_LEASE_REFRESH_INTERVAL_MS,
   SocketOperationQueue,
 } from "../src/lifecycle";
 import {
   defaultWhatsAppAccountState,
   restoreWhatsAppAccountState,
 } from "../src/types";
+import type { WhatsAppAccountState } from "../src/types";
 
 describe("WhatsApp lifecycle policy", () => {
-  it("rotates the transport inside Cloudflare's 15 minute outbound window", () => {
-    expect(SOCKET_ROTATION_INTERVAL_MS).toBe(10 * 60 * 1000);
+  it("refreshes the transport lease inside Cloudflare's 15 minute window", () => {
+    expect(SOCKET_LEASE_REFRESH_INTERVAL_MS).toBe(10 * 60 * 1000);
+  });
+
+  it("does not refresh a healthy lease on unrelated earlier alarms", () => {
+    const healthy = {
+      hasSocket: true,
+      stateConnected: true,
+      socketAuthenticated: true,
+      webSocketOpen: true,
+    };
+
+    expect(socketLeaseAction(60_000, healthy, 10_000)).toBe("wait");
+    expect(socketLeaseAction(60_000, healthy, 60_000)).toBe("refresh");
+  });
+
+  it("recovers an unhealthy established lease without waiting for expiry", () => {
+    const healthy = {
+      hasSocket: true,
+      stateConnected: true,
+      socketAuthenticated: true,
+      webSocketOpen: true,
+    };
+
+    for (const field of Object.keys(healthy) as Array<keyof typeof healthy>) {
+      expect(socketLeaseAction(60_000, { ...healthy, [field]: false }, 10_000))
+        .toBe("recover");
+    }
+    expect(socketLeaseAction(undefined, { ...healthy, webSocketOpen: false }, 10_000))
+      .toBe("wait");
   });
 
   it("distinguishes restart, replacement, logout, and corrupt auth", () => {
@@ -51,6 +83,18 @@ describe("WhatsApp lifecycle policy", () => {
     expect(earliestDeadline(undefined, null)).toBeUndefined();
   });
 
+  it("schedules pending inbound work ahead of later lifecycle maintenance", () => {
+    expect(nextAccountAlarmDeadline(undefined, false, 1_000)).toBeUndefined();
+    expect(nextAccountAlarmDeadline(2_000, false, 1_000)).toBe(2_000);
+    expect(nextAccountAlarmDeadline(undefined, true, 1_000)).toBe(
+      1_000 + INBOUND_RETRY_DELAY_MS,
+    );
+    expect(nextAccountAlarmDeadline(2_000, true, 1_000)).toBe(2_000);
+    expect(nextAccountAlarmDeadline(60_000, true, 1_000)).toBe(
+      1_000 + INBOUND_RETRY_DELAY_MS,
+    );
+  });
+
   it("backs off repeated restart-required disconnects after the first", () => {
     expect(restartDelayMs(0, 0)).toBe(0);
     expect(restartDelayMs(1, 0)).toBe(2_000);
@@ -67,7 +111,7 @@ describe("WhatsApp lifecycle policy", () => {
     expect(pairingChallengeIsCurrent(null, 1_001, 1_000)).toBe(false);
   });
 
-  it("replaces a completed watchdog without postponing inbound retry work", () => {
+  it("replaces a completed lease alarm without postponing inbound retry work", () => {
     expect(canReplaceSupersededLifecycleAlarm(30_000, 30_000, false)).toBe(true);
     expect(canReplaceSupersededLifecycleAlarm(10_000, 30_000, false)).toBe(false);
     expect(canReplaceSupersededLifecycleAlarm(30_000, 30_000, true)).toBe(false);
@@ -142,5 +186,26 @@ describe("WhatsApp state upgrade", () => {
       status: "logged_out" as const,
     };
     expect(restoreWhatsAppAccountState(stored, "legacy", true, 10_000)).toEqual(stored);
+  });
+
+  it("drops obsolete maintenance fields from persisted v2 state", () => {
+    const stored = {
+      ...defaultWhatsAppAccountState(),
+      accountId: "default",
+      rotationAt: 42_000,
+      lastMessageAt: 41_000,
+    };
+    expect(restoreWhatsAppAccountState(
+      stored as WhatsAppAccountState & {
+        rotationAt: number;
+        lastMessageAt: number;
+      },
+      undefined,
+      false,
+      10_000,
+    )).toEqual({
+      ...defaultWhatsAppAccountState(),
+      accountId: "default",
+    });
   });
 });

@@ -52,11 +52,24 @@ local rendering. Explicit logout and forced relink advance a durable session
 epoch so late sends, inbound replies, credentials, and Signal keys from the
 old phone cannot cross into the new session.
 
-While connected, the Durable Object rotates its outbound WebSocket every ten
-minutes. Rotation retains authentication and is not a logout. This keeps the
-transport inside Cloudflare's current maximum 15-minute outbound-WebSocket
-keepalive window while leaving alarms as scheduled lifecycle events rather than
-an always-on mechanism.
+Pairing authenticates the linked device; it does not yet authorize a WhatsApp
+sender as a GSV user. After the account reports `authenticated`, send a new
+direct message from the WhatsApp account that should represent the user to the
+phone number paired with GSV. The adapter replies with a one-time link code.
+Enter that code in the web UI's **Link user** step or run `gsv auth link CODE`
+while signed in as the intended GSV user. The code expires after ten minutes.
+The message that requests the code is consumed by the linking flow, so send a
+new message after linking to start a conversation with an agent.
+
+While connected, the outbound WhatsApp WebSocket prevents the account Durable
+Object from being evicted. Cloudflare limits that keepalive effect to 15 minutes
+per outbound connection; the WebSocket itself may continue after that point.
+GSV therefore schedules an alarm ten minutes after each successful connection.
+When the alarm fires, the account closes the old transport and reconnects with
+its saved linked-device credentials, establishing a fresh outbound-connection
+lease before the 15-minute keepalive cap. The alarm is the scheduled trigger,
+not the mechanism that keeps the object alive, and this reconnect is not a
+WhatsApp logout or a new pairing.
 
 This design targets the free Workers and Durable Objects plan; it does not
 require Containers. The account alarm also arbitrates pairing expiry,
@@ -74,7 +87,30 @@ when the message replies to one of the bot's messages. If WhatsApp omits the
 quoted participant or the adapter cannot match its own JID, the metadata stays
 false so the Gateway can reject the activation conservatively.
 
+## Troubleshooting linking
+
+- If WhatsApp shows GSV under **Linked Devices** but no link code arrives,
+  confirm `gsv adapter status --adapter whatsapp --account-id ACCOUNT` reports
+  the account connected and authenticated. Send a fresh direct message from
+  the sender account to the paired GSV number; messages from the paired account
+  itself and group messages do not start the identity-link flow.
+- Pairing alone does not create an identity link. If the adapter is connected
+  but does not reply, verify that both the Gateway and WhatsApp workers are
+  deployed, that their service bindings target each other, and inspect both
+  workers' live logs for the failed inbound or reply delivery.
+- A link code is single-use and expires after ten minutes. Send another new
+  direct message for a fresh code, then enter it in the web UI or run
+  `gsv auth link CODE` while authenticated as the user to link.
+- After the code is accepted, send another message. The message used to request
+  the code is deliberately not replayed into an agent conversation.
+
 ## Development
+
+`npm ci` applies narrowly scoped patches to the pinned provider dependencies.
+The protobufjs patch supplies the explicit `Buffer.utf8Write` length required
+by the Workers runtime; the Baileys and libsignal patches route or remove direct
+console output that could expose provider session data. Re-review and regenerate
+these patches whenever one of those dependencies is upgraded.
 
 ```bash
 npm ci

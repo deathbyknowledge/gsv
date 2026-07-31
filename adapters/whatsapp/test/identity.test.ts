@@ -6,6 +6,7 @@ import {
   legacyWhatsAppInboundDeliveryId,
   messageTimestampMs,
   normalizeOutboundWhatsAppJid,
+  preferredOutboundWhatsAppJid,
   selectInboundUpsertMessages,
   WhatsAppIdentityStore,
   whatsAppDeliverySessionEpoch,
@@ -44,6 +45,18 @@ describe("WhatsApp identity", () => {
     expect(normalizeOutboundWhatsAppJid("+1 (202) 555-0123"))
       .toBe("12025550123@s.whatsapp.net");
     expect(normalizeOutboundWhatsAppJid("wa:jid:12345@lid")).toBe("12345@lid");
+  });
+
+  it("prefers phone-number addressing for direct outbound encryption", () => {
+    const pn = "12025550123@s.whatsapp.net";
+    const lid = "987654321@lid";
+
+    expect(preferredOutboundWhatsAppJid(pn, lid)).toBe(pn);
+    expect(preferredOutboundWhatsAppJid(lid, pn)).toBe(pn);
+    expect(preferredOutboundWhatsAppJid(lid)).toBe(lid);
+    expect(() => preferredOutboundWhatsAppJid("status@broadcast")).toThrow(
+      "Unsupported WhatsApp destination",
+    );
   });
 
   it("imports a legacy LID actor alias before choosing the v2 canonical id", async () => {

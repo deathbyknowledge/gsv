@@ -1,5 +1,9 @@
 import type { AdapterMedia } from "../../shared/src/types";
 
+export function isWhatsAppEncryptionPreparationFailure(error: unknown): boolean {
+  return error instanceof Error && error.message === "All encryptions failed";
+}
+
 export type WhatsAppOutboundDelivery =
   | { kind: "text"; text: string }
   | { kind: "media"; mediaIndex: number; caption: string };

@@ -1,0 +1,141 @@
+diff --git a/node_modules/libsignal/src/curve.js b/node_modules/libsignal/src/curve.js
+index 55b4b80..26457d8 100644
+--- a/node_modules/libsignal/src/curve.js
++++ b/node_modules/libsignal/src/curve.js
+@@ -40,7 +40,6 @@ function scrubPubKeyFormat(pubKey) {
+     if (pubKey.byteLength == 33) {
+         return pubKey.slice(1);
+     } else {
+-        console.error("WARNING: Expected pubkey of length 33, please report the ST and client that generated the pubkey");
+         return pubKey;
+     }
+ }
+diff --git a/node_modules/libsignal/src/queue_job.js b/node_modules/libsignal/src/queue_job.js
+index baab89c..6f9e10d 100644
+--- a/node_modules/libsignal/src/queue_job.js
++++ b/node_modules/libsignal/src/queue_job.js
+@@ -46,8 +46,6 @@ module.exports = function(bucket, awaitable) {
+         Object.defineProperty(awaitable, 'name', {writable: true});
+         if (typeof bucket === 'string') {
+             awaitable.name = bucket;
+-        } else {
+-            console.warn("Unhandled bucket type (for naming):", typeof bucket, bucket);
+         }
+     }
+     let inactive;
+diff --git a/node_modules/libsignal/src/session_builder.js b/node_modules/libsignal/src/session_builder.js
+index 30c7313..5dd7e1b 100644
+--- a/node_modules/libsignal/src/session_builder.js
++++ b/node_modules/libsignal/src/session_builder.js
+@@ -43,7 +43,6 @@ class SessionBuilder {
+             } else {
+                 const openSession = record.getOpenSession();
+                 if (openSession) {
+-                    // console.warn("Closing stale open session for new outgoing prekey bundle"); temporary fix
+                     record.closeSession(openSession);
+                 }
+             }
+@@ -71,7 +70,6 @@ class SessionBuilder {
+         }
+         const existingOpenSession = record.getOpenSession();
+         if (existingOpenSession) {
+-            console.warn("Closing open session in favor of incoming prekey bundle");
+             record.closeSession(existingOpenSession);
+         }
+         record.setSession(await this.initSession(false, preKeyPair, signedPreKeyPair,
+diff --git a/node_modules/libsignal/src/session_cipher.js b/node_modules/libsignal/src/session_cipher.js
+index 0e6df11..b4a05f1 100644
+--- a/node_modules/libsignal/src/session_cipher.js
++++ b/node_modules/libsignal/src/session_cipher.js
+@@ -140,7 +140,6 @@ class SessionCipher {
+         if (!sessions.length) {
+             throw new errors.SessionError("No sessions available");
+         }
+-        const errs = [];
+         for (const session of sessions) {
+             let plaintext;
+             try {
+@@ -150,13 +149,7 @@ class SessionCipher {
+                     session,
+                     plaintext
+                 };
+-            } catch(e) {
+-                errs.push(e);
+-            }
+-        }
+-        console.error("Failed to decrypt message with any known session...");
+-        for (const e of errs) {
+-            console.error("Session error:" + e, e.stack);
++            } catch {}
+         }
+         throw new errors.SessionError("No matching sessions found for message");
+     }
+@@ -173,14 +166,6 @@ class SessionCipher {
+             if (!await this.storage.isTrustedIdentity(this.addr.id, remoteIdentityKey)) {
+                 throw new errors.UntrustedIdentityKeyError(this.addr.id, remoteIdentityKey);
+             }
+-            if (record.isClosed(result.session)) {
+-                // It's possible for this to happen when processing a backlog of messages.
+-                // The message was, hopefully, just sent back in a time when this session
+-                // was the most current.  Simply make a note of it and continue.  If our
+-                // actual open session is for reason invalid, that must be handled via
+-                // a full SessionError response.
+-                console.warn("Decrypted message with closed session.");
+-            }
+             await this.storeRecord(record);
+             return result.plaintext;
+         });
+diff --git a/node_modules/libsignal/src/session_record.js b/node_modules/libsignal/src/session_record.js
+index 7626a39..ef67d46 100644
+--- a/node_modules/libsignal/src/session_record.js
++++ b/node_modules/libsignal/src/session_record.js
+@@ -167,14 +167,6 @@ const migrations = [{
+                     sessions[key].registrationId = data.registrationId;
+                 }
+             }
+-        } else {
+-            for (const key in sessions) {
+-                if (sessions[key].indexInfo.closed === -1) {
+-                    console.error('V1 session storage migration error: registrationId',
+-                                  data.registrationId, 'for open session version',
+-                                  data.version);
+-                }
+-            }
+         }
+     }
+ }];
+@@ -190,7 +182,6 @@ class SessionRecord {
+         let run = (data.version === undefined);
+         for (let i = 0; i < migrations.length; ++i) {
+             if (run) {
+-                console.info("Migrating session to:", migrations[i].version);
+                 migrations[i].migrate(data);
+             } else if (migrations[i].version === data.version) {
+                 run = true;
+@@ -267,18 +258,12 @@ class SessionRecord {
+
+     closeSession(session) {
+         if (this.isClosed(session)) {
+-            console.warn("Session already closed", session);
+             return;
+         }
+-        console.info("Closing session:", session);
+         session.indexInfo.closed = Date.now();
+     }
+
+     openSession(session) {
+-        if (!this.isClosed(session)) {
+-            console.warn("Session already open");
+-        }
+-        console.info("Opening session:", session);
+         session.indexInfo.closed = -1;
+     }
+
+@@ -298,7 +283,6 @@ class SessionRecord {
+                 }
+             }
+             if (oldestKey) {
+-                console.info("Removing old closed session:", oldestSession);
+                 delete this.sessions[oldestKey];
+             } else {
+                 throw new Error('Corrupt sessions object');

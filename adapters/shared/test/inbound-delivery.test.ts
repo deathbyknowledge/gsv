@@ -127,6 +127,68 @@ describe("InboundDeliveryLedger", () => {
     expect(deliver).toHaveBeenCalledWith({ providerMessageId: "original" });
   });
 
+  it("repairs missing, overdue, and later alarms without replacing an earlier future alarm", async () => {
+    const storage = new MemoryStorage();
+    const pending = ledger(storage);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+
+    try {
+      await pending.arm(1_200);
+      expect(storage.alarm.value).toBe(1_200);
+
+      storage.alarm.value = 900;
+      await pending.arm(1_300);
+      expect(storage.alarm.value).toBe(1_300);
+
+      storage.alarm.value = 1_400;
+      await pending.arm(1_250);
+      expect(storage.alarm.value).toBe(1_250);
+
+      storage.alarm.value = 1_100;
+      await pending.arm(1_200);
+      expect(storage.alarm.value).toBe(1_100);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("repairs overdue alarms using one timestamp per transactional scheduling method", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+
+    try {
+      const enqueueStorage = new MemoryStorage();
+      enqueueStorage.alarm.value = 900;
+      await ledger(enqueueStorage).enqueueAndArm(
+        "provider-enqueue-overdue",
+        { providerMessageId: "provider-enqueue-overdue" },
+        1_200,
+      );
+      expect(enqueueStorage.alarm.value).toBe(1_200);
+      expect(clock).toHaveBeenCalledTimes(1);
+
+      clock.mockClear();
+      const armStorage = new MemoryStorage();
+      armStorage.alarm.value = 900;
+      await ledger(armStorage).arm(1_300);
+      expect(armStorage.alarm.value).toBe(1_300);
+      expect(clock).toHaveBeenCalledTimes(1);
+
+      clock.mockClear();
+      const pendingStorage = new MemoryStorage();
+      pendingStorage.values.set("pending_inbound:provider-pending-overdue", {
+        state: "provider",
+        payload: { providerMessageId: "provider-pending-overdue" },
+        createdAt: 900,
+      });
+      pendingStorage.alarm.value = 900;
+      await expect(ledger(pendingStorage).armIfPending(1_400)).resolves.toBe(true);
+      expect(pendingStorage.alarm.value).toBe(1_400);
+      expect(clock).toHaveBeenCalledTimes(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("replays a durable provider payload after the Gateway transport fails", async () => {
     const storage = new MemoryStorage();
     const first = ledger(storage);
@@ -334,22 +396,62 @@ describe("InboundDeliveryLedger", () => {
     const storage = new MemoryStorage();
     const pending = ledger(storage);
     const send = vi.fn(async () => ({ ok: true as const }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await pending.enqueueAndArm("provider-7", { providerMessageId: "provider-7" }, 100);
 
-    await expect(pending.attempt("provider-7", async () =>
-      adapterInboundResultDisposition({
-        ok: true,
-        challenge: {
-          deliveryId: "challenge-7",
-          code: "CODE",
-          prompt: "Link this account",
-          expiresAt: 0,
-        },
-      }, {
-        surface: { kind: "dm", id: "chat-7" },
-        providerMessageId: "provider-7",
-      }), send)).resolves.toEqual({ state: "completed" });
-    expect(send).not.toHaveBeenCalled();
+    try {
+      await expect(pending.attempt("provider-7", async () =>
+        adapterInboundResultDisposition({
+          ok: true,
+          challenge: {
+            deliveryId: "sensitive-challenge-id",
+            code: "SENSITIVE-CODE",
+            prompt: "Link this account",
+            expiresAt: 0,
+          },
+        }, {
+          surface: { kind: "dm", id: "chat-7" },
+          providerMessageId: "provider-7",
+        }), send)).resolves.toEqual({ state: "completed" });
+      expect(send).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(JSON.stringify({
+        component: "adapter",
+        event: "inbound_response_expired",
+      }));
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("SENSITIVE");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not log provider error details for a terminal response rejection", async () => {
+    const storage = new MemoryStorage();
+    const pending = ledger(storage);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await pending.enqueueAndArm("provider-private-error", {
+      providerMessageId: "provider-private-error",
+    }, 100);
+
+    try {
+      await expect(pending.attempt("provider-private-error", async () =>
+        adapterInboundResultDisposition({
+          ok: true,
+          reply: { deliveryId: "private-reply-id", text: "Reply" },
+        }, {
+          surface: { kind: "dm", id: "private-chat-id" },
+          providerMessageId: "provider-private-error",
+        }), async () => ({
+          ok: false as const,
+          error: "authorization: Bearer private-token",
+        }))).resolves.toEqual({ state: "completed" });
+      expect(warn).toHaveBeenCalledWith(JSON.stringify({
+        component: "adapter",
+        event: "inbound_response_rejected",
+      }));
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("private-");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("does not exceed ten response attempts after a cleanup crash", async () => {

@@ -1,0 +1,43 @@
+diff --git a/node_modules/@whiskeysockets/baileys/lib/Socket/communities.js b/node_modules/@whiskeysockets/baileys/lib/Socket/communities.js
+index f437586..a4ab681 100644
+--- a/node_modules/@whiskeysockets/baileys/lib/Socket/communities.js
++++ b/node_modules/@whiskeysockets/baileys/lib/Socket/communities.js
+@@ -1,7 +1,6 @@
+ import { proto } from '../../WAProto/index.js';
+ import { WAMessageStubType } from '../Types/index.js';
+ import { generateMessageID, generateMessageIDV2, unixTimestampSeconds } from '../Utils/index.js';
+-import logger from '../Utils/logger.js';
+ import { getBinaryNodeChild, getBinaryNodeChildren, getBinaryNodeChildString, jidEncode, jidNormalizedUser } from '../WABinary/index.js';
+ import { makeBusinessSocket } from './business.js';
+ export const makeCommunitiesSocket = (config) => {
+@@ -56,16 +55,13 @@ export const makeCommunitiesSocket = (config) => {
+         return data;
+     };
+     async function parseGroupResult(node) {
+-        logger.info({ node }, 'parseGroupResult');
+         const groupNode = getBinaryNodeChild(node, 'group');
+         if (groupNode) {
+             try {
+-                logger.info({ groupNode }, 'groupNode');
+                 const metadata = await sock.groupMetadata(`${groupNode.attrs.id}@g.us`);
+                 return metadata ? metadata : Optional.empty();
+             }
+-            catch (error) {
+-                console.error('Error parsing group metadata:', error);
++            catch {
+                 return Optional.empty();
+             }
+         }
+diff --git a/node_modules/@whiskeysockets/baileys/lib/Utils/business.js b/node_modules/@whiskeysockets/baileys/lib/Utils/business.js
+index e9e043f..03a4c80 100644
+--- a/node_modules/@whiskeysockets/baileys/lib/Utils/business.js
++++ b/node_modules/@whiskeysockets/baileys/lib/Utils/business.js
+@@ -209,7 +209,7 @@ export const uploadingNecessaryImages = async (images, waUploadToServer, timeout
+             fileEncSha256B64: sha,
+             timeoutMs
+         });
+-        await fs.unlink(filePath).catch(err => console.log('Error deleting temp file ', err));
++        await fs.unlink(filePath).catch(() => undefined);
+         return { url: getUrlFromDirectPath(directPath) };
+     }));
+     return results;

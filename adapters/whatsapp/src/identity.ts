@@ -45,6 +45,26 @@ export function normalizeOutboundWhatsAppJid(
   return normalizeWhatsAppJid(withoutPrefix) ?? withoutPrefix.toLowerCase();
 }
 
+/**
+ * Chooses the stable provider address for a direct outbound conversation.
+ *
+ * Baileys performs its own PN/LID device enumeration. Sending directly to a
+ * known LID can leave it without an encryptable recipient session, while the
+ * corresponding phone-number JID lets Baileys resolve every current device.
+ */
+export function preferredOutboundWhatsAppJid(
+  jidOrPhone: string,
+  mappedPhoneJid?: string | null,
+): string {
+  const jid = normalizeOutboundWhatsAppJid(jidOrPhone);
+  if (isWhatsAppGroupJid(jid) || isWhatsAppPnJid(jid)) return jid;
+  if (isWhatsAppLidJid(jid)) {
+    const phoneJid = normalizeWhatsAppJid(mappedPhoneJid);
+    return isWhatsAppPnJid(phoneJid) ? phoneJid : jid;
+  }
+  throw new Error("Unsupported WhatsApp destination");
+}
+
 export function isWhatsAppGroupJid(jid: string | null | undefined): jid is string {
   return typeof jid === "string" && isJidGroup(jid) === true;
 }

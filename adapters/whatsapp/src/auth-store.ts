@@ -5,12 +5,19 @@ import type {
   SignalDataTypeMap,
   SignalKeyStore,
 } from "@whiskeysockets/baileys";
-import { BufferJSON, initAuthCreds } from "@whiskeysockets/baileys";
+import { BufferJSON, initAuthCreds, proto } from "@whiskeysockets/baileys";
 
 const CREDS_KEY = "auth:creds";
 const AUTH_EPOCH_KEY = "auth:epoch";
 const SIGNAL_PREFIX = "signal:";
 const STORAGE_BATCH_SIZE = 128;
+
+class StaleWhatsAppAuthStateError extends Error {
+  constructor() {
+    super("WhatsApp authentication state is stale");
+    this.name = "StaleWhatsAppAuthStateError";
+  }
+}
 
 const serializeAuthValue = (value: unknown): string =>
   JSON.stringify(value, BufferJSON.replacer);
@@ -44,6 +51,31 @@ function chunk<T>(items: readonly T[]): T[][] {
   return chunks;
 }
 
+async function assertAuthEpoch(
+  storage: DurableObjectTransaction,
+  authEpoch: number,
+): Promise<void> {
+  const currentEpoch = normalizeAuthEpoch(
+    await storage.get<number>(AUTH_EPOCH_KEY),
+  );
+  if (currentEpoch !== authEpoch) {
+    throw new StaleWhatsAppAuthStateError();
+  }
+}
+
+function deserializeSignalValue<T extends keyof SignalDataTypeMap>(
+  type: T,
+  stored: string,
+): SignalDataTypeMap[T] {
+  const value = deserializeAuthValue(stored);
+  if (type === "app-state-sync-key") {
+    if (!isRecord(value)) throw new TypeError("Invalid app state sync key");
+    const hydrated = proto.Message.AppStateSyncKeyData.fromObject(value);
+    return hydrated as unknown as SignalDataTypeMap[T];
+  }
+  return value as SignalDataTypeMap[T];
+}
+
 function createDOSignalKeyStore(
   storage: DurableObjectStorage,
   authEpoch: number,
@@ -51,19 +83,26 @@ function createDOSignalKeyStore(
   return {
     async get<T extends keyof SignalDataTypeMap>(type: T, ids: string[]) {
       const result: { [id: string]: SignalDataTypeMap[T] } = {};
-      for (const idChunk of chunk(ids)) {
-        const storageKeys = idChunk.map((id) => `${SIGNAL_PREFIX}${type}:${id}`);
-        const values = await storage.transaction(async (txn) => {
-          if (normalizeAuthEpoch(await txn.get<number>(AUTH_EPOCH_KEY)) !== authEpoch) {
-            return new Map<string, string>();
+      const idChunks = chunk(ids);
+      const values = await storage.transaction(async (txn) => {
+        await assertAuthEpoch(txn, authEpoch);
+        const entries = new Map<string, string>();
+        for (const idChunk of idChunks) {
+          const storageKeys = idChunk.map((id) => `${SIGNAL_PREFIX}${type}:${id}`);
+          for (const [key, value] of await txn.get<string>(storageKeys)) {
+            entries.set(key, value);
           }
-          return await txn.get<string>(storageKeys);
-        });
+        }
+        return entries;
+      });
+
+      for (const idChunk of idChunks) {
+        const storageKeys = idChunk.map((id) => `${SIGNAL_PREFIX}${type}:${id}`);
         for (const [index, id] of idChunk.entries()) {
           const stored = values.get(storageKeys[index]);
           if (stored === undefined) continue;
           try {
-            result[id] = deserializeAuthValue(stored) as SignalDataTypeMap[T];
+            result[id] = deserializeSignalValue(type, stored);
           } catch {
             // Corrupt individual Signal records are ignored so Baileys can
             // request fresh session material without discarding the account.
@@ -89,9 +128,7 @@ function createDOSignalKeyStore(
       }
 
       await storage.transaction(async (txn) => {
-        if (normalizeAuthEpoch(await txn.get<number>(AUTH_EPOCH_KEY)) !== authEpoch) {
-          return;
-        }
+        await assertAuthEpoch(txn, authEpoch);
         for (const putChunk of chunk(puts)) {
           await txn.put(Object.fromEntries(putChunk));
         }
@@ -103,9 +140,7 @@ function createDOSignalKeyStore(
 
     async clear(): Promise<void> {
       await storage.transaction(async (txn) => {
-        if (normalizeAuthEpoch(await txn.get<number>(AUTH_EPOCH_KEY)) !== authEpoch) {
-          return;
-        }
+        await assertAuthEpoch(txn, authEpoch);
         const entries = await txn.list({ prefix: SIGNAL_PREFIX });
         for (const keyChunk of chunk([...entries.keys()])) {
           await txn.delete(keyChunk);
@@ -124,12 +159,20 @@ export async function useDOAuthState(
 }> {
   let creds: AuthenticationCreds;
   let authReset = false;
-  let authEpoch = normalizeAuthEpoch(await storage.get<number>(AUTH_EPOCH_KEY));
-  const storedCreds = await storage.get<string>(CREDS_KEY);
+  const storedAuth = await storage.transaction(async (txn) => ({
+    authEpoch: normalizeAuthEpoch(await txn.get<number>(AUTH_EPOCH_KEY)),
+    storedCreds: await txn.get<string>(CREDS_KEY),
+  }));
+  let { authEpoch } = storedAuth;
+  const { storedCreds } = storedAuth;
 
-  if (storedCreds) {
+  if (storedCreds !== undefined) {
     try {
-      creds = deserializeAuthValue(storedCreds) as AuthenticationCreds;
+      const parsed = deserializeAuthValue(storedCreds);
+      if (!isAuthenticationCreds(parsed)) {
+        throw new TypeError("Invalid WhatsApp authentication credentials");
+      }
+      creds = parsed;
     } catch {
       authEpoch = await clearAuthState(storage);
       creds = initAuthCreds();
@@ -147,9 +190,7 @@ export async function useDOAuthState(
     },
     saveCreds: async () => {
       await storage.transaction(async (txn) => {
-        if (normalizeAuthEpoch(await txn.get<number>(AUTH_EPOCH_KEY)) !== authEpoch) {
-          return;
-        }
+        await assertAuthEpoch(txn, authEpoch);
         await txn.put(CREDS_KEY, serializeAuthValue(creds));
       });
     },
@@ -177,12 +218,96 @@ export async function hasRegisteredAuthState(
   storage: DurableObjectStorage,
 ): Promise<boolean> {
   const storedCreds = await storage.get<string>(CREDS_KEY);
-  if (!storedCreds) return false;
+  if (storedCreds === undefined) return false;
   try {
-    return (deserializeAuthValue(storedCreds) as AuthenticationCreds).registered === true;
+    const creds = deserializeAuthValue(storedCreds);
+    return isAuthenticationCreds(creds) && creds.registered;
   } catch {
     return false;
   }
+}
+
+function isAuthenticationCreds(value: unknown): value is AuthenticationCreds {
+  if (!isRecord(value)) return false;
+  if (!isKeyPair(value.noiseKey)) return false;
+  if (!isKeyPair(value.pairingEphemeralKeyPair)) return false;
+  if (!isKeyPair(value.signedIdentityKey)) return false;
+  if (!isSignedKeyPair(value.signedPreKey)) return false;
+  if (!isNonNegativeSafeInteger(value.registrationId)) return false;
+  if (typeof value.advSecretKey !== "string" || value.advSecretKey.length === 0) {
+    return false;
+  }
+  if (!Array.isArray(value.processedHistoryMessages)) return false;
+  if (!isNonNegativeSafeInteger(value.nextPreKeyId)) return false;
+  if (!isNonNegativeSafeInteger(value.firstUnuploadedPreKeyId)) return false;
+  if (!isNonNegativeSafeInteger(value.accountSyncCounter)) return false;
+  if (!isRecord(value.accountSettings)) return false;
+  if (typeof value.accountSettings.unarchiveChats !== "boolean") return false;
+  if (
+    value.accountSettings.defaultDisappearingMode !== undefined
+    && !isRecord(value.accountSettings.defaultDisappearingMode)
+  ) return false;
+  if (typeof value.registered !== "boolean") return false;
+  if (!isOptionalString(value.pairingCode)) return false;
+  if (!isOptionalString(value.lastPropHash)) return false;
+  if (value.routingInfo !== undefined && !isByteArray(value.routingInfo)) return false;
+  if (!isOptionalString(value.myAppStateKeyId)) return false;
+  if (!isOptionalString(value.platform)) return false;
+  if (
+    value.lastAccountSyncTimestamp !== undefined
+    && !isNonNegativeSafeInteger(value.lastAccountSyncTimestamp)
+  ) return false;
+  if (value.account !== undefined && !isRecord(value.account)) return false;
+  if (value.me !== undefined && !isWhatsAppContact(value.me)) return false;
+  if (value.registered && !isWhatsAppContact(value.me)) return false;
+  if (
+    value.signalIdentities !== undefined
+    && (!Array.isArray(value.signalIdentities)
+      || !value.signalIdentities.every(isSignalIdentity))
+  ) return false;
+  return true;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isByteArray(value: unknown): value is Uint8Array {
+  return value instanceof Uint8Array && value.byteLength > 0;
+}
+
+function isKeyPair(value: unknown): boolean {
+  return isRecord(value)
+    && isByteArray(value.public)
+    && isByteArray(value.private);
+}
+
+function isSignedKeyPair(value: unknown): boolean {
+  return isRecord(value)
+    && isKeyPair(value.keyPair)
+    && isByteArray(value.signature)
+    && isNonNegativeSafeInteger(value.keyId)
+    && (value.timestampS === undefined || isNonNegativeSafeInteger(value.timestampS));
+}
+
+function isWhatsAppContact(value: unknown): boolean {
+  return isRecord(value) && typeof value.id === "string" && value.id.length > 0;
+}
+
+function isSignalIdentity(value: unknown): boolean {
+  return isRecord(value)
+    && isRecord(value.identifier)
+    && typeof value.identifier.name === "string"
+    && isNonNegativeSafeInteger(value.identifier.deviceId)
+    && isByteArray(value.identifierKey);
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
 function normalizeAuthEpoch(value: number | undefined): number {

@@ -1,3 +1,5 @@
+import { errorFields, logWhatsApp } from "./logging";
+
 type BaileysLogger = {
   level: string;
   child(fields: Record<string, unknown>): BaileysLogger;
@@ -15,5 +17,22 @@ export const quietBaileysLogger: BaileysLogger = {
   debug: () => undefined,
   info: () => undefined,
   warn: () => undefined,
-  error: () => undefined,
+  error: (value, message) => {
+    const fields = baileysEncryptionFailureFields(value, message);
+    if (fields) {
+      logWhatsApp("warn", "baileys_recipient_encryption_failed", fields);
+    }
+  },
 };
+
+export function baileysEncryptionFailureFields(
+  value: unknown,
+  message?: string,
+): Record<string, string | number | boolean | null | undefined> | null {
+  if (message !== "Failed to encrypt for recipient") return null;
+  const record = value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : {};
+  const error = record.err ?? record.error ?? value;
+  return errorFields(error);
+}

@@ -5,6 +5,7 @@ import {
   type DeliveryFailureKind,
   fingerprintOutboundDelivery,
 } from "../../shared/src/delivery-ledger";
+import { shouldReplaceAlarm } from "../../shared/src/alarm";
 import {
   adapterInboundResultDisposition,
   InboundDeliveryLedger,
@@ -34,7 +35,6 @@ import type {
 import {
   extractMessageContent,
   getContentType,
-  makeCacheableSignalKeyStore,
   makeWASocket,
   proto,
   type AnyMessageContent,
@@ -65,6 +65,7 @@ import {
   normalizeOutboundWhatsAppJid,
   normalizeWhatsAppJid,
   phoneHandleFromJid,
+  preferredOutboundWhatsAppJid,
   selectInboundUpsertMessages,
   WhatsAppIdentityStore,
   whatsAppDeliverySessionEpoch,
@@ -80,12 +81,14 @@ import {
   enqueueThenDeliverInboundBatch,
   INBOUND_RETRY_BATCH_SIZE,
   INBOUND_RETRY_DELAY_MS,
+  nextAccountAlarmDeadline,
   pairingChallengeIsCurrent,
   pairingSessionExpired,
   PAIRING_WINDOW_MS,
   reconnectDelayMs,
   restartDelayMs,
-  SOCKET_ROTATION_INTERVAL_MS,
+  socketLeaseAction,
+  SOCKET_LEASE_REFRESH_INTERVAL_MS,
   SocketOperationQueue,
 } from "./lifecycle";
 import { errorFields, errorMessage, logWhatsApp } from "./logging";
@@ -98,6 +101,7 @@ import {
 } from "./media";
 import {
   defaultWhatsAppFilename,
+  isWhatsAppEncryptionPreparationFailure,
   planWhatsAppOutboundDeliveries,
 } from "./outbound";
 import type {
@@ -112,7 +116,7 @@ import {
 const STATE_KEY = "whatsapp_account:v2:state";
 const INBOUND_DELIVERY_PREFIX = "pending_inbound:";
 const MAX_MEDIA_ITEMS = 20;
-const CONNECTION_WATCHDOG_MS = 30_000;
+const CONNECTION_OPEN_TIMEOUT_MS = 30_000;
 const CONNECT_WAIT_MS = 60_000;
 const SOCKET_OPEN_WAIT_MS = 25_000;
 const SOCKET_CLOSE_WAIT_MS = 5_000;
@@ -221,7 +225,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   async getAccountStatus(accountId: string): Promise<AdapterAccountStatus> {
     await this.ensureAccount(accountId);
-    await this.scheduleLifecycleAlarm();
+    await this.scheduleNextAlarm();
     return this.adapterStatus();
   }
 
@@ -389,7 +393,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         }
         if (preparedSocketGeneration !== this.socketGeneration) {
           throw new WhatsAppPreparationError(
-            "WhatsApp transport rotated while preparing the delivery",
+            "WhatsApp transport changed while preparing the delivery",
             true,
           );
         }
@@ -474,12 +478,15 @@ export class WhatsAppAccount extends DurableObject<Env> {
         ) {
           await this.failConnectionAttemptLocked("connection_timeout");
         }
-        if (
-          this.state.rotationAt !== undefined
-          && this.state.rotationAt <= now
-          && this.state.connected
-        ) {
-          await this.rotateSocketLocked();
+        const leaseAction = this.state.desired === "connected"
+          ? socketLeaseAction(
+              this.state.leaseRefreshAt,
+              this.socketLeaseHealth(),
+              now,
+            )
+          : "wait";
+        if (leaseAction !== "wait") {
+          await this.refreshSocketLeaseLocked(leaseAction);
         } else if (
           this.state.desired === "connected"
           && !this.sock
@@ -494,10 +501,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
 
     await this.retryPendingInbound();
-    await this.scheduleLifecycleAlarm();
+    await this.scheduleNextAlarm();
   }
 
   private async loadState(): Promise<void> {
+    const now = Date.now();
     const [stored, legacyAccountId, registeredAuth] = await Promise.all([
       this.ctx.storage.get<WhatsAppAccountState>(STATE_KEY),
       this.ctx.storage.get<string>("accountId"),
@@ -507,7 +515,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       stored,
       legacyAccountId,
       !stored && registeredAuth,
-      Date.now(),
+      now,
     );
     if (stored?.version === 2 && this.state.authenticated && !registeredAuth) {
       await this.advanceProviderSessionLocked();
@@ -516,22 +524,27 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
 
     if (this.state.desired === "connected") {
-      const reconnectAt = Date.now() + 1_000;
+      const reconnectAt = now + 1_000;
       this.state.connected = false;
       this.state.status = "reconnecting";
-      this.state.rotationAt = undefined;
+      this.state.leaseRefreshAt = undefined;
       this.state.connectionDeadlineAt = undefined;
-      this.state.reconnectAt = Math.min(this.state.reconnectAt ?? reconnectAt, reconnectAt);
+      const reconnectDeadline = Math.min(
+        this.state.reconnectAt ?? reconnectAt,
+        reconnectAt,
+      );
+      this.state.reconnectAt = reconnectDeadline;
       await this.ctx.storage.transaction(async (txn) => {
         await txn.put(STATE_KEY, this.state);
         const currentAlarm = await txn.getAlarm();
-        if (currentAlarm === null || currentAlarm > reconnectAt) {
-          await txn.setAlarm(reconnectAt);
+        if (shouldReplaceAlarm(currentAlarm, reconnectDeadline, now)) {
+          await txn.setAlarm(reconnectDeadline);
         }
       });
     } else if (!stored) {
       await this.ctx.storage.put(STATE_KEY, this.state);
     }
+    await this.scheduleNextAlarm();
   }
 
   private async ensureAccount(accountId: string): Promise<void> {
@@ -549,12 +562,16 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private async persistStateAndSchedule(
     supersededDeadline?: number,
   ): Promise<void> {
+    const now = Date.now();
     const deadline = this.lifecycleDeadline();
     await this.ctx.storage.transaction(async (txn) => {
       await txn.put(STATE_KEY, this.state);
       const currentAlarm = await txn.getAlarm();
+      const pendingInbound = await txn.list({
+        prefix: INBOUND_DELIVERY_PREFIX,
+        limit: 1,
+      });
       if (currentAlarm === supersededDeadline) {
-        const pendingInbound = await txn.list({ prefix: INBOUND_DELIVERY_PREFIX, limit: 1 });
         if (canReplaceSupersededLifecycleAlarm(
           currentAlarm,
           supersededDeadline,
@@ -568,27 +585,44 @@ export class WhatsAppAccount extends DurableObject<Env> {
           return;
         }
       }
-      if (deadline === undefined) return;
-      if (currentAlarm === null || deadline < currentAlarm) {
-        await txn.setAlarm(deadline);
+      const nextDeadline = nextAccountAlarmDeadline(
+        deadline,
+        pendingInbound.size > 0,
+        now,
+      );
+      if (nextDeadline === undefined) return;
+      if (shouldReplaceAlarm(currentAlarm, nextDeadline, now)) {
+        await txn.setAlarm(nextDeadline);
       }
     });
   }
 
-  private async scheduleLifecycleAlarm(): Promise<void> {
-    const deadline = this.lifecycleDeadline();
-    if (deadline === undefined) return;
+  private async scheduleNextAlarm(): Promise<void> {
+    const now = Date.now();
+    const lifecycleDeadline = this.lifecycleDeadline();
     await this.ctx.storage.transaction(async (txn) => {
       const currentAlarm = await txn.getAlarm();
-      if (currentAlarm === null || deadline < currentAlarm) {
-        await txn.setAlarm(deadline);
+      const pendingInbound = await txn.list({
+        prefix: INBOUND_DELIVERY_PREFIX,
+        limit: 1,
+      });
+      const nextDeadline = nextAccountAlarmDeadline(
+        lifecycleDeadline,
+        pendingInbound.size > 0,
+        now,
+      );
+      if (
+        nextDeadline !== undefined
+        && shouldReplaceAlarm(currentAlarm, nextDeadline, now)
+      ) {
+        await txn.setAlarm(nextDeadline);
       }
     });
   }
 
   private lifecycleDeadline(): number | undefined {
     return earliestDeadline(
-      this.state.rotationAt,
+      this.state.leaseRefreshAt,
       this.state.reconnectAt,
       this.state.connectionDeadlineAt,
       this.state.pairingExpiresAt,
@@ -617,8 +651,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.state.authenticated = authState.creds.registered;
     this.state.status = this.state.reconnectAttempt > 0 ? "reconnecting" : "connecting";
     this.state.reconnectAt = undefined;
-    this.state.rotationAt = undefined;
-    this.state.connectionDeadlineAt = now + CONNECTION_WATCHDOG_MS;
+    this.state.leaseRefreshAt = undefined;
+    this.state.connectionDeadlineAt = now + CONNECTION_OPEN_TIMEOUT_MS;
     this.state.pairingExpiresAt = authState.creds.registered
       ? undefined
       : now + PAIRING_WINDOW_MS;
@@ -629,7 +663,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       socket = makeWASocket({
         auth: {
           creds: authState.creds,
-          keys: makeCacheableSignalKeyStore(authState.keys, quietBaileysLogger),
+          keys: authState.keys,
         },
         logger: quietBaileysLogger,
         browser: ["GSV", "Desktop", "1.0.0"],
@@ -714,7 +748,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         this.state.connected = false;
         this.state.status = this.state.desired === "connected" ? "reconnecting" : "error";
         this.state.connectionDeadlineAt = undefined;
-        this.state.rotationAt = undefined;
+        this.state.leaseRefreshAt = undefined;
         this.state.reconnectAt = this.state.desired === "connected"
           ? Date.now() + reconnectDelayMs(this.state.reconnectAttempt++)
           : undefined;
@@ -768,7 +802,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         this.sock = null;
         this.state.connected = false;
         this.state.status = "idle";
-        this.state.rotationAt = undefined;
+        this.state.leaseRefreshAt = undefined;
         this.state.reconnectAt = undefined;
         this.state.connectionDeadlineAt = undefined;
         this.state.pairingExpiresAt = undefined;
@@ -794,7 +828,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       this.state.reconnectAt = undefined;
       this.state.connectionDeadlineAt = undefined;
       this.state.pairingExpiresAt = undefined;
-      this.state.rotationAt = now + SOCKET_ROTATION_INTERVAL_MS;
+      this.state.leaseRefreshAt = now + SOCKET_LEASE_REFRESH_INTERVAL_MS;
       this.qrCode = null;
 
       this.state.selfJid = normalizeWhatsAppJid(socket.user?.id) ?? undefined;
@@ -810,7 +844,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       this.own("gateway_status", this.notifyGatewayStatus());
       logWhatsApp("info", "socket_open", {
         generation,
-        rotationInMs: SOCKET_ROTATION_INTERVAL_MS,
+        leaseRefreshInMs: SOCKET_LEASE_REFRESH_INTERVAL_MS,
       });
     }
 
@@ -820,7 +854,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.groupMetadata.clear();
     this.state.connected = false;
     this.state.lastDisconnectedAt = Date.now();
-    this.state.rotationAt = undefined;
+    this.state.leaseRefreshAt = undefined;
     this.state.connectionDeadlineAt = undefined;
     this.qrCode = null;
 
@@ -867,29 +901,50 @@ export class WhatsAppAccount extends DurableObject<Env> {
     });
   }
 
-  private async rotateSocketLocked(): Promise<void> {
+  private socketLeaseHealth(): {
+    hasSocket: boolean;
+    stateConnected: boolean;
+    socketAuthenticated: boolean;
+    webSocketOpen: boolean;
+  } {
+    const socket = this.sock;
+    return {
+      hasSocket: socket !== null,
+      stateConnected: this.state.connected,
+      socketAuthenticated: socket !== null
+        && this.authenticatedSockets.has(socket),
+      webSocketOpen: socket?.ws.isOpen === true,
+    };
+  }
+
+  private async refreshSocketLeaseLocked(
+    action: "refresh" | "recover",
+  ): Promise<void> {
+    const supersededLeaseDeadline = this.state.leaseRefreshAt;
     const oldSocket = this.sock;
-    if (!oldSocket) {
-      this.state.reconnectAt = Date.now();
-      await this.persistStateAndSchedule();
-      return;
-    }
     ++this.socketGeneration;
     this.sock = null;
+    if (oldSocket) this.authenticatedSockets.delete(oldSocket);
     this.groupMetadata.clear();
     this.state.connected = false;
     this.state.status = "reconnecting";
-    this.state.rotationAt = undefined;
+    this.state.leaseRefreshAt = undefined;
     this.state.connectionDeadlineAt = undefined;
     this.state.reconnectAt = Date.now();
-    await this.persistStateAndSchedule();
-    await withTimeout(
-      oldSocket.end(new Error("Scheduled WhatsApp transport rotation")),
-      SOCKET_CLOSE_WAIT_MS,
-      "WhatsApp rotation close timed out",
-    ).catch(() => undefined);
-    await this.startSocketLocked("rotation");
-    logWhatsApp("info", "socket_rotated");
+    await this.persistStateAndSchedule(supersededLeaseDeadline);
+    if (oldSocket) {
+      await withTimeout(
+        oldSocket.end(new Error("Refreshing WhatsApp outbound connection lease")),
+        SOCKET_CLOSE_WAIT_MS,
+        "WhatsApp lease-refresh close timed out",
+      ).catch(() => undefined);
+    }
+    await this.startSocketLocked(
+      action === "refresh" ? "lease_refresh" : "lease_recovery",
+    );
+    logWhatsApp("info", "socket_lease_renewed", {
+      previousConnectionHealthy: action === "refresh",
+    });
   }
 
   private async failConnectionAttemptLocked(reason: string): Promise<void> {
@@ -928,7 +983,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.state.status = "error";
     this.state.lastError = "WhatsApp QR pairing expired";
     this.state.disconnectReason = "pairing_expired";
-    this.state.rotationAt = undefined;
+    this.state.leaseRefreshAt = undefined;
     this.state.reconnectAt = undefined;
     this.state.connectionDeadlineAt = undefined;
     this.state.pairingExpiresAt = undefined;
@@ -960,7 +1015,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.state.connected = false;
     this.state.status = "reconnecting";
     this.state.connectionDeadlineAt = undefined;
-    this.state.rotationAt = undefined;
+    this.state.leaseRefreshAt = undefined;
     this.state.reconnectAt = Date.now() + reconnectDelayMs(this.state.reconnectAttempt++);
     this.state.lastError = errorMessage(error);
     await this.persistStateAndSchedule();
@@ -995,7 +1050,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private async logoutLocked(): Promise<void> {
     const supersededLifecycleDeadline = this.lifecycleDeadline();
     this.state.desired = "disconnected";
-    this.state.rotationAt = undefined;
+    this.state.leaseRefreshAt = undefined;
     this.state.reconnectAt = undefined;
     this.state.connectionDeadlineAt = undefined;
     this.state.pairingExpiresAt = undefined;
@@ -1085,7 +1140,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
     const supersededLifecycleDeadline = this.lifecycleDeadline();
     this.state.connected = false;
-    this.state.rotationAt = undefined;
+    this.state.leaseRefreshAt = undefined;
     this.state.reconnectAt = undefined;
     this.state.connectionDeadlineAt = undefined;
     this.state.pairingExpiresAt = undefined;
@@ -1119,7 +1174,6 @@ export class WhatsAppAccount extends DurableObject<Env> {
       APPEND_CATCH_UP_LIMIT,
       Date.now() - APPEND_CATCH_UP_MAX_AGE_MS,
     );
-
     await enqueueThenDeliverInboundBatch(
       async () => this.socketOperations.run(async () => {
         if (expectedSessionEpoch !== this.state.sessionEpoch) return [];
@@ -1302,8 +1356,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         actorId: inbound.actor?.id,
       });
       if (!disposition.terminal) return disposition;
-      this.state.lastMessageAt = Date.now();
-      this.state.lastActivity = this.state.lastMessageAt;
+      this.state.lastActivity = Date.now();
       if (!result.ok) {
         this.state.lastError = result.error
           ? errorMessage(result.error)
@@ -1376,11 +1429,31 @@ export class WhatsAppAccount extends DurableObject<Env> {
     socket: WASocket,
   ): Promise<string> {
     const jid = normalizeOutboundWhatsAppJid(input);
-    if (isWhatsAppGroupJid(jid) || isWhatsAppLidJid(jid)) return jid;
-    if (!isWhatsAppPnJid(jid)) {
+    let mappedPhoneJid = isWhatsAppLidJid(jid)
+      ? await this.identities.pnForLid(jid)
+      : null;
+    if (isWhatsAppLidJid(jid) && !mappedPhoneJid) {
+      try {
+        const providerPhoneJid = normalizeWhatsAppJid(
+          await socket.signalRepository.lidMapping.getPNForLID(jid),
+        );
+        if (isWhatsAppPnJid(providerPhoneJid)) {
+          mappedPhoneJid = providerPhoneJid;
+          try {
+            await this.identities.bindLidPn(jid, providerPhoneJid);
+          } catch (error) {
+            logWhatsApp("warn", "lid_mapping_persist_failed", errorFields(error));
+          }
+        }
+      } catch (error) {
+        logWhatsApp("warn", "pn_lookup_failed", errorFields(error));
+      }
+    }
+    try {
+      return preferredOutboundWhatsAppJid(jid, mappedPhoneJid);
+    } catch {
       throw new WhatsAppPreparationError("Unsupported WhatsApp destination", false);
     }
-    return await this.lookupLidForPn(jid, socket) ?? jid;
   }
 
   private async lookupLidForPn(
@@ -1654,8 +1727,6 @@ export class WhatsAppAccount extends DurableObject<Env> {
         lastConnectedAt: this.state.lastConnectedAt,
         lastDisconnectedAt: this.state.lastDisconnectedAt,
         disconnectReason: this.state.disconnectReason,
-        rotationAt: this.state.rotationAt,
-        reconnectAt: this.state.reconnectAt,
       },
     };
   }
@@ -1701,6 +1772,7 @@ function providerStatusCode(error: unknown): number | undefined {
 }
 
 function classifyWhatsAppSendFailure(error: unknown): DeliveryFailureKind {
+  if (isWhatsAppEncryptionPreparationFailure(error)) return "retryable";
   const status = providerStatusCode(error);
   return status === undefined
     ? "ambiguous"

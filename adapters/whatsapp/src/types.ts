@@ -20,11 +20,10 @@ export type WhatsAppAccountState = {
   selfE164?: string;
   lastConnectedAt?: number;
   lastDisconnectedAt?: number;
-  lastMessageAt?: number;
   lastActivity?: number;
   lastError?: string;
   disconnectReason?: string;
-  rotationAt?: number;
+  leaseRefreshAt?: number;
   reconnectAt?: number;
   connectionDeadlineAt?: number;
   pairingExpiresAt?: number;
@@ -61,7 +60,17 @@ export function restoreWhatsAppAccountState(
   hasRegisteredLegacyAuth: boolean,
   now: number,
 ): WhatsAppAccountState {
-  if (stored?.version === 2) return { ...defaultWhatsAppAccountState(), ...stored };
+  if (stored?.version === 2) {
+    const {
+      rotationAt: _obsoleteRotationAt,
+      lastMessageAt: _obsoleteLastMessageAt,
+      ...current
+    } = stored as WhatsAppAccountState & {
+      rotationAt?: number;
+      lastMessageAt?: number;
+    };
+    return { ...defaultWhatsAppAccountState(), ...current };
+  }
   if (!hasRegisteredLegacyAuth) {
     return { ...defaultWhatsAppAccountState(), accountId: legacyAccountId ?? "" };
   }
