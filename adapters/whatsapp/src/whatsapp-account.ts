@@ -746,18 +746,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
 
     socket.ev.on("creds.update", () => {
-      if (this.isReplacementSocket(generation, socket)) {
-        const current = this.socketReplacement;
-        if (current) current.saveCreds = saveCreds;
-        return;
-      }
-      this.own(
-        "credentials_update",
-        this.sessionMutations.run(async () => {
-          if (!this.isCurrentSocket(generation, socket)) return;
-          await saveCreds();
-        }),
-      );
+      this.handleCredentialsUpdate(generation, socket, saveCreds);
     });
     socket.ev.on("connection.update", (update) => {
       if (update.connection === "open") this.authenticatedSockets.add(socket);
@@ -1903,6 +1892,23 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private isReplacementSocket(generation: number, socket: WASocket): boolean {
     return this.socketReplacement?.generation === generation
       && this.socketReplacement.socket === socket;
+  }
+
+  private handleCredentialsUpdate(
+    generation: number,
+    socket: WASocket,
+    saveCreds: () => Promise<void>,
+  ): void {
+    if (this.isReplacementSocket(generation, socket)) {
+      const current = this.socketReplacement;
+      if (current) current.saveCreds = saveCreds;
+      return;
+    }
+    // Admit the update while the socket still owns the active generation. Once
+    // admitted, let it drain even if replacement promotion happens while the
+    // mutation queue is busy. Auth resets remain fenced by the store epoch.
+    if (!this.isCurrentSocket(generation, socket)) return;
+    this.own("credentials_update", this.sessionMutations.run(saveCreds));
   }
 
   private waitForQrOrConnection(

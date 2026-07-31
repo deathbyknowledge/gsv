@@ -28,6 +28,13 @@ type HandleConnectionUpdate = (
   update: Partial<BaileysEventMap["connection.update"]>,
 ) => Promise<void>;
 
+type HandleCredentialsUpdate = (
+  this: WhatsAppAccount,
+  generation: number,
+  socket: WASocket,
+  saveCreds: () => Promise<void>,
+) => void;
+
 type RememberLidPnMappings = (
   this: WhatsAppAccount,
   expectedSessionEpoch: number,
@@ -250,6 +257,42 @@ describe("WhatsApp account socket lease", () => {
     expect(state).toEqual(connectedState);
     expect(accountField(account, "sock")).toBe(candidate);
     await Promise.all(owned);
+  });
+
+  it("persists active credential updates admitted before promotion", async () => {
+    const sessionMutations = new SocketOperationQueue();
+    let releaseMutation: () => void = () => undefined;
+    const mutationGate = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    const precedingMutation = sessionMutations.run(() => mutationGate);
+    const oldSocket = {} as WASocket;
+    const replacementSocket = {} as WASocket;
+    const saveCreds = vi.fn(async () => undefined);
+    const owned: Promise<unknown>[] = [];
+    const account = fakeAccount({
+      sock: oldSocket,
+      socketReplacement: null,
+      socketGeneration: 7,
+      sessionMutations,
+      own: vi.fn((_event: string, promise: Promise<unknown>) => {
+        owned.push(promise);
+      }),
+    });
+    const handleCredentials = accountMethod<HandleCredentialsUpdate>(
+      "handleCredentialsUpdate",
+    );
+
+    handleCredentials.call(account, 7, oldSocket, saveCreds);
+    expect(saveCreds).not.toHaveBeenCalled();
+    Reflect.set(account, "sock", replacementSocket);
+    Reflect.set(account, "socketGeneration", 8);
+    releaseMutation();
+    await Promise.all([precedingMutation, ...owned]);
+
+    expect(saveCreds).toHaveBeenCalledOnce();
+    handleCredentials.call(account, 7, oldSocket, saveCreds);
+    expect(saveCreds).toHaveBeenCalledOnce();
   });
 });
 
