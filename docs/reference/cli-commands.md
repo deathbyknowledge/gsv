@@ -346,12 +346,19 @@ Both accept `--bundle-dir PATH` for local bundles, `--api-token` or
 `CF_API_TOKEN`, `--account-id` or `CF_ACCOUNT_ID`, and `--discord-bot-token` or
 `DISCORD_BOT_TOKEN`.
 
+Every uploaded Worker is marked with `gsv-managed-v1`,
+`gsv-instance-<name>`, and `gsv-component-<component>` tags. These tags are the
+shared ownership contract used by the CLI and browser deployer; they survive
+the second upload pass that finalizes service bindings.
+
 `destroy` tears down Workers. If no component or `--all` is supplied, it targets
 all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`
 must be combined with it. Unless `--keep-device` is passed, `destroy` also
 attempts to uninstall the local device service. A full teardown also removes the
 legacy assembler Worker when it exists; assembler remains unavailable as a
-deployable component.
+deployable component. Teardown refuses all mutations when an existing target has
+conflicting GSV tags. Untagged Workers from older releases remain removable by
+an explicit CLI teardown and produce a legacy warning.
 
 ## Version
 

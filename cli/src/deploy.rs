@@ -39,6 +39,9 @@ const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
 const SCRIPT_CHANNEL_TELEGRAM: &str = "gsv-channel-telegram";
 const RIPGIT_PAID_CPU_LIMIT_MS: u64 = 300_000;
+const WORKER_TAG_MANAGED: &str = "gsv-managed-v1";
+const WORKER_TAG_INSTANCE_PREFIX: &str = "gsv-instance-";
+const WORKER_TAG_COMPONENT_PREFIX: &str = "gsv-component-";
 const RESERVED_NON_DEFAULT_INSTANCE_NAMES: &[&str] = &[SCRIPT_RIPGIT];
 const RESERVED_INSTANCE_NAME_SUFFIXES: &[&str] = &[
     "-ripgit",
@@ -127,6 +130,71 @@ impl Default for DeployInstance {
             name: DEFAULT_DEPLOY_INSTANCE.to_string(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum WorkerTagOwnership {
+    Verified,
+    LegacyUntagged,
+    Conflicting,
+}
+
+fn worker_tags_for_component(instance: &DeployInstance, component: &str) -> Vec<String> {
+    vec![
+        WORKER_TAG_MANAGED.to_string(),
+        format!("{}{}", WORKER_TAG_INSTANCE_PREFIX, instance.name()),
+        format!("{}{}", WORKER_TAG_COMPONENT_PREFIX, component),
+    ]
+}
+
+fn worker_tag_ownership(
+    tags: &[String],
+    instance: &DeployInstance,
+    component: &str,
+) -> WorkerTagOwnership {
+    let managed_tags = tags
+        .iter()
+        .filter(|tag| tag.starts_with("gsv-managed-"))
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let instance_tags = prefixed_tag_values(tags, WORKER_TAG_INSTANCE_PREFIX);
+    let component_tags = prefixed_tag_values(tags, WORKER_TAG_COMPONENT_PREFIX);
+
+    if managed_tags.len() == 1
+        && managed_tags.contains(WORKER_TAG_MANAGED)
+        && instance_tags.len() == 1
+        && instance_tags.contains(instance.name())
+        && component_tags.len() == 1
+        && component_tags.contains(component)
+    {
+        return WorkerTagOwnership::Verified;
+    }
+
+    if tags.iter().any(|tag| tag.starts_with("gsv-")) {
+        WorkerTagOwnership::Conflicting
+    } else {
+        WorkerTagOwnership::LegacyUntagged
+    }
+}
+
+fn prefixed_tag_values<'a>(tags: &'a [String], prefix: &str) -> HashSet<&'a str> {
+    tags.iter()
+        .filter_map(|tag| tag.strip_prefix(prefix))
+        .collect()
+}
+
+fn component_for_instance_script_name(
+    instance: &DeployInstance,
+    script_name: &str,
+) -> Option<&'static str> {
+    if script_name == instance.legacy_assembler_script_name() {
+        return Some(LEGACY_COMPONENT_ASSEMBLER);
+    }
+    available_components().iter().copied().find(|component| {
+        instance
+            .script_name(component)
+            .is_some_and(|expected| expected == script_name)
+    })
 }
 
 fn normalize_instance_name(raw: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -499,6 +567,14 @@ pub struct GatewayBootstrapConfig {
 struct WorkerScriptSummary {
     id: String,
     migration_tag: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct WorkerScriptDetails {
+    migration_tag: Option<String>,
+    tags: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1334,7 +1410,7 @@ async fn list_worker_scripts(
     client: &reqwest::Client,
     account_id: &str,
     api_token: &str,
-) -> Result<HashMap<String, Option<String>>, Box<dyn std::error::Error>> {
+) -> Result<HashMap<String, WorkerScriptDetails>, Box<dyn std::error::Error>> {
     let url = cloudflare_api_url(&format!("/accounts/{}/workers/scripts", account_id));
     let response = send_cloudflare_request_with_retry(
         || {
@@ -1352,7 +1428,13 @@ async fn list_worker_scripts(
 
     let mut out = HashMap::new();
     for script in scripts {
-        out.insert(script.id, script.migration_tag);
+        out.insert(
+            script.id,
+            WorkerScriptDetails {
+                migration_tag: script.migration_tag,
+                tags: script.tags,
+            },
+        );
     }
     Ok(out)
 }
@@ -2757,7 +2839,8 @@ fn build_upload_metadata(
     let mut metadata = json!({
         "main_module": bundle.entrypoint_part_name,
         "bindings": metadata_bindings,
-        "compatibility_date": compatibility_date
+        "compatibility_date": compatibility_date,
+        "tags": worker_tags_for_component(options.instance, &bundle.component)
     });
 
     if !bundle.wrangler.compatibility_flags.is_empty() {
@@ -2959,7 +3042,7 @@ pub async fn apply_deploy(
                 account_subdomain: account_subdomain.as_deref(),
                 existing_migration_tag: existing_scripts_with_migrations
                     .get(&bundle.script_name)
-                    .and_then(|tag| tag.as_deref()),
+                    .and_then(|details| details.migration_tag.as_deref()),
                 include_migrations: true,
                 script_exists: existing_scripts_with_migrations.contains_key(&bundle.script_name),
                 uploaded_assets: uploaded_assets_by_script.get(&bundle.script_name),
@@ -3018,7 +3101,7 @@ pub async fn apply_deploy(
                     account_subdomain: account_subdomain.as_deref(),
                     existing_migration_tag: existing_scripts_with_migrations
                         .get(&bundle.script_name)
-                        .and_then(|tag| tag.as_deref()),
+                        .and_then(|details| details.migration_tag.as_deref()),
                     include_migrations: true,
                     script_exists: existing_scripts_with_migrations
                         .contains_key(&bundle.script_name),
@@ -3169,6 +3252,38 @@ pub async fn destroy_deploy(
     let selected_components: HashSet<String> = components.iter().cloned().collect();
     let client = reqwest::Client::new();
     let storage_bucket_name = instance.storage_bucket_name();
+    let existing_scripts = list_worker_scripts(&client, account_id, api_token).await?;
+    let mut legacy_untagged = Vec::new();
+
+    // Validate every existing target before the first mutation so a conflicting
+    // GSV ownership tag cannot produce a partial teardown.
+    for (_, script_name) in &scripts_to_delete {
+        let Some(details) = existing_scripts.get(script_name) else {
+            continue;
+        };
+        let component = component_for_instance_script_name(instance, script_name)
+            .ok_or_else(|| format!("Could not map Worker {} to this GSV instance", script_name))?;
+        match worker_tag_ownership(&details.tags, instance, component) {
+            WorkerTagOwnership::Verified => {}
+            WorkerTagOwnership::LegacyUntagged => legacy_untagged.push(script_name.clone()),
+            WorkerTagOwnership::Conflicting => {
+                return Err(format!(
+                    "Refusing to delete Worker '{}': its GSV management tags do not match instance '{}' and component '{}'.",
+                    script_name,
+                    instance.name(),
+                    component
+                )
+                .into());
+            }
+        }
+    }
+
+    for script_name in legacy_untagged {
+        println!(
+            "Warning: Worker {} has no GSV management tags; treating it as a legacy target because teardown was explicitly requested.",
+            script_name
+        );
+    }
 
     println!("\nDeleting workers:");
     for (component, script_name) in scripts_to_delete {
@@ -3273,15 +3388,24 @@ pub async fn print_deploy_status(
                 .ok_or_else(|| format!("Unsupported component '{}'", component))?
         };
 
-        if let Some(migration_tag) = scripts.get(&script_name) {
-            if let Some(tag) = migration_tag.as_deref() {
-                println!(
-                    "  {:<18} {:<24} deployed (migration: {})",
-                    component, script_name, tag
-                );
-            } else {
-                println!("  {:<18} {:<24} deployed", component, script_name);
+        if let Some(details) = scripts.get(&script_name) {
+            let mut notes = Vec::new();
+            if let Some(tag) = details.migration_tag.as_deref() {
+                notes.push(format!("migration: {}", tag));
             }
+            match worker_tag_ownership(&details.tags, instance, component) {
+                WorkerTagOwnership::Verified => notes.push("managed by GSV".to_string()),
+                WorkerTagOwnership::LegacyUntagged => notes.push("legacy: untagged".to_string()),
+                WorkerTagOwnership::Conflicting => {
+                    notes.push("warning: management tags do not match".to_string())
+                }
+            }
+            println!(
+                "  {:<18} {:<24} deployed ({})",
+                component,
+                script_name,
+                notes.join(", ")
+            );
         } else {
             println!("  {:<18} {:<24} missing", component, script_name);
         }
@@ -3708,6 +3832,33 @@ mod tests {
     }
 
     #[test]
+    fn worker_management_tags_scope_ownership_to_instance_and_component() {
+        let instance = DeployInstance::parse("gsv-personal").unwrap();
+        let tags = worker_tags_for_component(&instance, COMPONENT_GATEWAY);
+
+        assert_eq!(
+            tags,
+            vec![
+                "gsv-managed-v1".to_string(),
+                "gsv-instance-gsv-personal".to_string(),
+                "gsv-component-gateway".to_string(),
+            ]
+        );
+        assert_eq!(
+            worker_tag_ownership(&tags, &instance, COMPONENT_GATEWAY),
+            WorkerTagOwnership::Verified
+        );
+        assert_eq!(
+            worker_tag_ownership(&tags, &instance, COMPONENT_RIPGIT),
+            WorkerTagOwnership::Conflicting
+        );
+        assert_eq!(
+            worker_tag_ownership(&[], &instance, COMPONENT_GATEWAY),
+            WorkerTagOwnership::LegacyUntagged
+        );
+    }
+
+    #[test]
     fn full_teardown_includes_legacy_assembler_worker() {
         let components = available_components()
             .iter()
@@ -4004,6 +4155,14 @@ cpu_ms = 300000
             .any(|binding| { binding["name"] == "LOADER" && binding["type"] == "worker_loader" }));
         assert_eq!(metadata["limits"]["cpu_ms"], 300_000);
         assert_eq!(metadata["limits"]["subrequests"], 1_000);
+        assert_eq!(
+            metadata["tags"],
+            json!([
+                "gsv-managed-v1",
+                "gsv-instance-gsv",
+                "gsv-component-gateway"
+            ])
+        );
 
         let metadata_without_loader = build_upload_metadata(
             &bundle,
