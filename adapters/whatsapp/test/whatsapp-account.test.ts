@@ -122,6 +122,61 @@ describe("WhatsApp account socket lease", () => {
     );
   });
 
+  it("retires an unhealthy socket before starting its recovery", async () => {
+    const oldSocket = {
+      ws: { isOpen: false },
+      end: vi.fn(async () => undefined),
+    } as unknown as WASocket;
+    const state = {
+      ...defaultWhatsAppAccountState(),
+      desired: "connected" as const,
+      status: "connected" as const,
+      connected: true,
+      authenticated: true,
+      leaseRefreshAt: 60_000,
+    };
+    const authenticatedSockets = new WeakSet<object>();
+    authenticatedSockets.add(oldSocket);
+    const started = vi.fn(async () => undefined);
+    const owned: Promise<unknown>[] = [];
+    const account = fakeAccount({
+      sock: oldSocket,
+      socketReplacement: null,
+      socketGeneration: 7,
+      authenticatedSockets,
+      inboundDeliveries: { armIfPending: vi.fn(async () => false) },
+      socketOperations: { run: vi.fn() },
+      state,
+      persistStateAndSchedule: vi.fn(async () => undefined),
+      startSocket: started,
+      retryPendingInbound: vi.fn(async () => undefined),
+      scheduleNextAlarm: vi.fn(async () => undefined),
+      scheduleReconnectAfterFailure: vi.fn(async () => undefined),
+      own: vi.fn((_event: string, promise: Promise<unknown>) => {
+        owned.push(promise);
+      }),
+    });
+
+    await account.alarm();
+
+    const replacement = accountField<SocketReplacement>(
+      account,
+      "socketReplacement",
+    );
+    expect(accountField(account, "sock")).toBeNull();
+    expect(accountField(account, "socketGeneration")).toBe(8);
+    expect(replacement).toMatchObject({ socket: null, generation: 8 });
+    expect(state.connected).toBe(false);
+    expect(state.status).toBe("reconnecting");
+    expect(state.authenticated).toBe(true);
+    expect(authenticatedSockets.has(oldSocket)).toBe(false);
+    expect(oldSocket.end).toHaveBeenCalledOnce();
+
+    await Promise.all(owned);
+    expect(started).toHaveBeenCalledOnce();
+    expect(started).toHaveBeenCalledWith("lease_recovery", replacement);
+  });
+
   it("keeps the active socket when its replacement fails", async () => {
     const now = 1_000;
     vi.spyOn(Date, "now").mockReturnValue(now);

@@ -1057,6 +1057,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       || this.state.desired !== "connected"
     ) return;
 
+    const activeSocket = this.sock;
     const supersededLeaseDeadline = this.state.leaseRefreshAt;
     const replacement: SocketReplacement = {
       socket: null,
@@ -1066,6 +1067,23 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.socketReplacement = replacement;
     this.state.leaseRefreshAt = undefined;
     this.state.reconnectAt = undefined;
+    if (action === "recover") {
+      this.sock = null;
+      this.socketGeneration = replacement.generation;
+      this.authenticatedSockets.delete(activeSocket);
+      this.state.connected = false;
+      this.state.status = "reconnecting";
+      this.state.connectionDeadlineAt = undefined;
+      this.state.lastDisconnectedAt = Date.now();
+      this.own(
+        "unhealthy_socket_close",
+        withTimeout(
+          activeSocket.end(new Error("WhatsApp transport is unhealthy")),
+          SOCKET_CLOSE_WAIT_MS,
+          "WhatsApp unhealthy-socket close timed out",
+        ),
+      );
+    }
     this.own(
       "socket_lease_refresh",
       (async () => {
