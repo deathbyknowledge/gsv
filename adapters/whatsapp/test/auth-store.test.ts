@@ -12,7 +12,6 @@ class MemoryStorage {
   readonly values = new Map<string, unknown>();
   transactionCalls = 0;
   largestGetBatch = 0;
-  private transactionTail: Promise<void> = Promise.resolve();
 
   async get<T>(key: string): Promise<T | undefined>;
   async get<T>(key: string[]): Promise<Map<string, T>>;
@@ -58,17 +57,7 @@ class MemoryStorage {
 
   async transaction<T>(operation: (txn: MemoryStorage) => Promise<T>): Promise<T> {
     this.transactionCalls += 1;
-    let resolve!: () => void;
-    const previous = this.transactionTail;
-    this.transactionTail = new Promise<void>((done) => {
-      resolve = done;
-    });
-    await previous;
-    try {
-      return await operation(this);
-    } finally {
-      resolve();
-    }
+    return await operation(this);
   }
 }
 
@@ -110,29 +99,17 @@ describe("Durable Object WhatsApp auth", () => {
     expect(storage.values.has("signal:session:fresh")).toBe(true);
   });
 
-  it("clears stale Signal keys when stored credentials are corrupt", async () => {
+  it.each([
+    ["invalid JSON", "not-json"],
+    ["an invalid shape", JSON.stringify({ registered: true })],
+  ])("clears stale Signal keys when credentials contain %s", async (_case, stored) => {
     const storage = new MemoryStorage();
-    storage.values.set("auth:creds", "not-json");
-    storage.values.set("signal:session:stale", "serialized-stale-key");
-
-    const auth = await useDOAuthState(storage as unknown as DurableObjectStorage);
-
-    expect(auth.authReset).toBe(true);
-    expect(auth.state.creds.registered).toBe(false);
-    expect(storage.values.has("auth:creds")).toBe(false);
-    expect(storage.values.has("signal:session:stale")).toBe(false);
-    expect(storage.values.get("auth:epoch")).toBe(1);
-  });
-
-  it("resets credentials that parse but do not have the required shape", async () => {
-    const storage = new MemoryStorage();
-    storage.values.set("auth:creds", JSON.stringify({ registered: true }));
+    storage.values.set("auth:creds", stored);
     storage.values.set("signal:session:stale", "serialized-stale-key");
 
     expect(await hasRegisteredAuthState(
       storage as unknown as DurableObjectStorage,
     )).toBe(false);
-
     const auth = await useDOAuthState(storage as unknown as DurableObjectStorage);
 
     expect(auth.authReset).toBe(true);

@@ -1,39 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  baileysEncryptionFailureFields,
-  quietBaileysLogger,
-} from "../src/baileys-logger";
+import { quietBaileysLogger } from "../src/baileys-logger";
 import { errorFields, errorMessage } from "../src/logging";
 
 describe("WhatsApp Baileys logger", () => {
-  it("reports only structured fields for a recipient-encryption failure", () => {
-    const encryptionError = Object.assign(new RangeError(
-      "No session for 12025550123@s.whatsapp.net token=secret",
-    ), { statusCode: 500 });
-    encryptionError.name = "PrivateProviderError";
-    const fields = baileysEncryptionFailureFields({
-      jid: "12025550123@s.whatsapp.net",
-      err: encryptionError,
-    }, "Failed to encrypt for recipient");
-
-    expect(fields).toEqual({
-      errorType: "RangeError",
-      statusCode: 500,
-    });
-    expect(JSON.stringify(fields)).not.toContain("12025550123");
-    expect(JSON.stringify(fields)).not.toContain("secret");
-    expect(baileysEncryptionFailureFields(
-      new Error("private provider detail"),
-      "unrelated error",
-    )).toBeNull();
-  });
-
   it("emits one content-free structured warning and ignores other Baileys logs", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const encryptionError = new Error(
+    const encryptionError = Object.assign(new RangeError(
       "No session for +34 675 706 329 authorization: Bearer private-token",
-    );
+    ), { statusCode: 500 });
     encryptionError.name = "Recipient-12025550123";
 
     quietBaileysLogger.error({
@@ -49,7 +24,8 @@ describe("WhatsApp Baileys logger", () => {
     expect(JSON.parse(String(warn.mock.calls[0][0]))).toEqual({
       adapter: "whatsapp",
       event: "baileys_recipient_encryption_failed",
-      errorType: "Error",
+      errorType: "RangeError",
+      statusCode: 500,
     });
     expect(String(warn.mock.calls[0][0])).not.toMatch(
       /12025550123|675 706 329|private-token|provider detail/,
@@ -71,11 +47,16 @@ describe("WhatsApp error hygiene", () => {
     });
   });
 
-  it("redacts formatted identities and colon-delimited credentials", () => {
+  it("redacts public error details and bounds their length", () => {
     const sanitized = errorMessage(new Error(
-      "failed for +34 675-706-329 authorization: Bearer abc123 private key: xyz987",
+      `failed https://example.com/path?token=secret for +34 675-706-329 `
+      + `authorization: Bearer abc123 private key: xyz987 `
+      + `authorization=BearerSecret 12025550123@s.whatsapp.net ${"A".repeat(1_000)}`,
     ));
 
-    expect(sanitized).not.toMatch(/675|706|329|abc123|xyz987/);
+    expect(sanitized).not.toMatch(
+      /example\.com|675|706|329|abc123|xyz987|BearerSecret|12025550123/,
+    );
+    expect(sanitized.length).toBeLessThanOrEqual(500);
   });
 });

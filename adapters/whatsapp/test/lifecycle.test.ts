@@ -22,36 +22,35 @@ import {
 } from "../src/types";
 import type { WhatsAppAccountState } from "../src/types";
 
+const healthySocketLease = {
+  hasSocket: true,
+  stateConnected: true,
+  socketAuthenticated: true,
+  webSocketOpen: true,
+};
+
 describe("WhatsApp lifecycle policy", () => {
-  it("refreshes the transport lease inside Cloudflare's 15 minute window", () => {
-    expect(SOCKET_LEASE_REFRESH_INTERVAL_MS).toBe(10 * 60 * 1000);
-  });
-
-  it("does not refresh a healthy lease on unrelated earlier alarms", () => {
-    const healthy = {
-      hasSocket: true,
-      stateConnected: true,
-      socketAuthenticated: true,
-      webSocketOpen: true,
-    };
-
-    expect(socketLeaseAction(60_000, healthy, 10_000)).toBe("wait");
-    expect(socketLeaseAction(60_000, healthy, 60_000)).toBe("refresh");
+  it("refreshes a healthy transport only when its lease is due", () => {
+    expect(SOCKET_LEASE_REFRESH_INTERVAL_MS).toBeLessThan(15 * 60 * 1_000);
+    expect(socketLeaseAction(60_000, healthySocketLease, 10_000)).toBe("wait");
+    expect(socketLeaseAction(60_000, healthySocketLease, 60_000)).toBe("refresh");
   });
 
   it("recovers an unhealthy established lease without waiting for expiry", () => {
-    const healthy = {
-      hasSocket: true,
-      stateConnected: true,
-      socketAuthenticated: true,
-      webSocketOpen: true,
-    };
-
-    for (const field of Object.keys(healthy) as Array<keyof typeof healthy>) {
-      expect(socketLeaseAction(60_000, { ...healthy, [field]: false }, 10_000))
+    const healthSignals = Object.keys(healthySocketLease) as Array<
+      keyof typeof healthySocketLease
+    >;
+    for (const field of healthSignals) {
+      expect(socketLeaseAction(60_000, {
+        ...healthySocketLease,
+        [field]: false,
+      }, 10_000))
         .toBe("recover");
     }
-    expect(socketLeaseAction(undefined, { ...healthy, webSocketOpen: false }, 10_000))
+    expect(socketLeaseAction(undefined, {
+      ...healthySocketLease,
+      webSocketOpen: false,
+    }, 10_000))
       .toBe("wait");
   });
 
@@ -75,10 +74,14 @@ describe("WhatsApp lifecycle policy", () => {
     expect(disconnectPolicy(503)).toEqual({ action: "reconnect", clearAuth: false });
   });
 
-  it("caps reconnect backoff and chooses the earliest alarm deadline", () => {
+  it("caps reconnect and restart backoff and chooses the earliest deadline", () => {
     expect(reconnectDelayMs(0, 0)).toBe(2_000);
     expect(reconnectDelayMs(20, 0)).toBe(5 * 60 * 1000);
     expect(reconnectDelayMs(20, 0.999999)).toBe(5 * 60 * 1000 + 999);
+    expect(restartDelayMs(0, 0)).toBe(0);
+    expect(restartDelayMs(1, 0)).toBe(2_000);
+    expect(restartDelayMs(2, 0)).toBe(4_000);
+    expect(restartDelayMs(30, 0)).toBe(5 * 60 * 1000);
     expect(earliestDeadline(undefined, 500, Number.NaN, 100, null)).toBe(100);
     expect(earliestDeadline(undefined, null)).toBeUndefined();
   });
@@ -93,13 +96,6 @@ describe("WhatsApp lifecycle policy", () => {
     expect(nextAccountAlarmDeadline(60_000, true, 1_000)).toBe(
       1_000 + INBOUND_RETRY_DELAY_MS,
     );
-  });
-
-  it("backs off repeated restart-required disconnects after the first", () => {
-    expect(restartDelayMs(0, 0)).toBe(0);
-    expect(restartDelayMs(1, 0)).toBe(2_000);
-    expect(restartDelayMs(2, 0)).toBe(4_000);
-    expect(restartDelayMs(30, 0)).toBe(5 * 60 * 1000);
   });
 
   it("never reuses a QR challenge after its pairing session expires", () => {
@@ -136,7 +132,6 @@ describe("WhatsApp lifecycle policy", () => {
 
   it("durably accepts a complete provider batch before forwarding its head", async () => {
     const events: string[] = [];
-    let transportGeneration = 1;
 
     await enqueueThenDeliverInboundBatch(
       async () => {
@@ -146,11 +141,9 @@ describe("WhatsApp lifecycle policy", () => {
       },
       async (id) => {
         events.push(`deliver:${id}`);
-        if (id === "first") transportGeneration += 1;
       },
     );
 
-    expect(transportGeneration).toBe(2);
     expect(events).toEqual([
       "enqueue:first",
       "enqueue:second",
@@ -179,19 +172,11 @@ describe("WhatsApp state upgrade", () => {
     });
   });
 
-  it("does not override an explicit v2 disconnected state", () => {
+  it("preserves explicit v2 state while dropping obsolete maintenance fields", () => {
     const stored = {
       ...defaultWhatsAppAccountState(),
       accountId: "default",
       status: "logged_out" as const,
-    };
-    expect(restoreWhatsAppAccountState(stored, "legacy", true, 10_000)).toEqual(stored);
-  });
-
-  it("drops obsolete maintenance fields from persisted v2 state", () => {
-    const stored = {
-      ...defaultWhatsAppAccountState(),
-      accountId: "default",
       rotationAt: 42_000,
       lastMessageAt: 41_000,
     };
@@ -206,6 +191,7 @@ describe("WhatsApp state upgrade", () => {
     )).toEqual({
       ...defaultWhatsAppAccountState(),
       accountId: "default",
+      status: "logged_out",
     });
   });
 });

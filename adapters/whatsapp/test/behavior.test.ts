@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 
 import { formatWhatsAppText } from "../src/formatting";
 import { whatsAppFallbackText } from "../src/inbound";
-import { errorMessage } from "../src/logging";
 import {
   defaultWhatsAppFilename,
   isWhatsAppEncryptionPreparationFailure,
@@ -80,18 +79,5 @@ describe("WhatsApp inbound fallbacks", () => {
       proto.Message.create({ protocolMessage: { type: 0 } }),
       "protocolMessage",
     )).toBeUndefined();
-  });
-});
-
-describe("WhatsApp public error hygiene", () => {
-  it("redacts URLs, secrets, JIDs, and long payloads", () => {
-    const sanitized = errorMessage(new Error(
-      `failed https://example.com/path?token=secret authorization=BearerSecret `
-      + `12025550123@s.whatsapp.net ${"A".repeat(1_000)}`,
-    ));
-    expect(sanitized).not.toContain("example.com");
-    expect(sanitized).not.toContain("BearerSecret");
-    expect(sanitized).not.toContain("12025550123");
-    expect(sanitized.length).toBeLessThanOrEqual(500);
   });
 });

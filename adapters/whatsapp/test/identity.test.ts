@@ -117,29 +117,6 @@ describe("WhatsApp identity", () => {
     await expect(identities.pnForLid(lid)).resolves.toBeNull();
   });
 
-  it("keeps legacy and v2 delivery ids deterministic during cutover", async () => {
-    const legacy = legacyWhatsAppInboundDeliveryId(
-      "12025550123@s.whatsapp.net",
-      undefined,
-      "provider-1",
-    );
-    expect(legacy).toBe("12025550123@s.whatsapp.net::provider-1");
-    await expect(whatsAppInboundDeliveryId(
-      "12025550123@s.whatsapp.net",
-      undefined,
-      "provider-1",
-    )).resolves.toMatch(/^wa:[0-9a-f]{64}$/);
-    await expect(whatsAppInboundDeliveryId(
-      "12025550123@s.whatsapp.net",
-      "987654321@lid",
-      "provider-1",
-    )).resolves.not.toBe(await whatsAppInboundDeliveryId(
-      "12025550123@s.whatsapp.net",
-      undefined,
-      "provider-1",
-    ));
-  });
-
   it("keeps the Gateway receipt key unchanged until the provider session changes", async () => {
     const input = {
       remoteCanonicalJid: "12025550123@s.whatsapp.net",
@@ -153,6 +130,17 @@ describe("WhatsApp identity", () => {
       input.legacyParticipantJid,
       input.providerMessageId,
     );
+    expect(legacyId).toBe("987654321@lid:987654322@lid:provider-cutover");
+    expect(legacyWhatsAppInboundDeliveryId(
+      input.remoteCanonicalJid,
+      undefined,
+      input.providerMessageId,
+    )).toBe("12025550123@s.whatsapp.net::provider-cutover");
+    await expect(whatsAppInboundDeliveryId(
+      input.remoteCanonicalJid,
+      input.senderCanonicalJid,
+      input.providerMessageId,
+    )).resolves.toMatch(/^wa:[0-9a-f]{64}$/);
 
     await expect(whatsAppInboundDeliveryIdForSession(0, input))
       .resolves.toBe(legacyId);
@@ -165,6 +153,10 @@ describe("WhatsApp identity", () => {
     const replacementId = await whatsAppInboundDeliveryIdForSession(1, input);
     expect(replacementId).toMatch(/^wa-session:1:[0-9a-f]{64}$/);
     expect(replacementId).not.toBe(legacyId);
+    await expect(whatsAppInboundDeliveryIdForSession(1, {
+      ...input,
+      senderCanonicalJid: undefined,
+    })).resolves.not.toBe(replacementId);
   });
 
   it("namespaces delivery ledgers after a provider-session replacement", async () => {

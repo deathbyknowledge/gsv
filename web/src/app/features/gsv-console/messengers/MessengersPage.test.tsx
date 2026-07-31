@@ -1,5 +1,4 @@
 import type { ComponentChildren } from "preact";
-import { render } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -7,6 +6,11 @@ import type {
   ConsoleAdapterAccount,
   ConsoleResourceState,
 } from "../domain/consoleModels";
+import {
+  availableConsoleAdapter,
+  consoleAdapterAccount,
+  createTestRoot,
+} from "./messengerTestHarness";
 
 const mocks = vi.hoisted(() => ({
   detailRenders: [] as Array<{
@@ -147,63 +151,15 @@ vi.mock("./MessengerOnboardingFlow", () => ({
 
 import { MessengersPage } from "./MessengersPage";
 
-function adapterAccount(adapter: string, accountId: string): ConsoleAdapterAccount {
-  return {
-    adapter,
-    accountId,
-    connected: true,
-    authenticated: true,
-    mode: adapter === "whatsapp" ? "websocket" : "bot",
-    lastActivity: null,
-    error: "",
-    extra: {},
-  };
-}
-
-function availableAdapter(
-  adapter: string,
-  accounts: ConsoleAdapterAccount[] = [],
-): ConsoleAdapter {
-  return {
-    adapter,
-    available: true,
-    supportsConnect: true,
-    supportsDisconnect: true,
-    supportsSend: true,
-    supportsStatus: true,
-    supportsActivity: true,
-    accounts,
-  };
-}
-
-function fakeContainer(): Element {
-  return {
-    nodeType: 1,
-    namespaceURI: "http://www.w3.org/1999/xhtml",
-    firstChild: null,
-    childNodes: [],
-    insertBefore: () => {
-      throw new Error("The messenger route harness must not render DOM nodes");
-    },
-    removeChild: () => {
-      throw new Error("The messenger route harness must not render DOM nodes");
-    },
-  } as unknown as Element;
-}
-
-let container: Element | null = null;
+let root: ReturnType<typeof createTestRoot> | null = null;
 
 async function renderPage(props: {
   initialCreate?: boolean;
   initialDetailId?: string;
   onSelectionChange?: (selection: { createNew?: boolean } | null) => void;
 }): Promise<void> {
-  if (!container) {
-    container = fakeContainer();
-  }
-  await act(() => {
-    render(<MessengersPage {...props} />, container!);
-  });
+  root ??= createTestRoot("The messenger route harness");
+  await root.render(<MessengersPage {...props} />);
 }
 
 function lastOnboardingRender() {
@@ -223,16 +179,12 @@ beforeEach(() => {
   mocks.linkPanelRenders = [];
   mocks.onboardingRenders = [];
   mocks.platformRenders = [];
-  container = null;
+  root = null;
 });
 
 afterEach(async () => {
-  if (container) {
-    await act(() => {
-      render(null, container!);
-    });
-  }
-  container = null;
+  await root?.unmount();
+  root = null;
   vi.unstubAllGlobals();
 });
 
@@ -241,7 +193,7 @@ describe("MessengersPage onboarding routes", () => {
     "keeps bare %s platform onboarding open when the first account appears",
     async (adapterId) => {
       const onSelectionChange = vi.fn();
-      mocks.inventory = [availableAdapter(adapterId)];
+      mocks.inventory = [availableConsoleAdapter(adapterId)];
 
       await renderPage({ initialDetailId: adapterId, onSelectionChange });
 
@@ -257,7 +209,7 @@ describe("MessengersPage onboarding routes", () => {
 
       const accountId = `${adapterId}-first`;
       mocks.inventory = [
-        availableAdapter(adapterId, [adapterAccount(adapterId, accountId)]),
+        availableConsoleAdapter(adapterId, [consoleAdapterAccount(adapterId, accountId)]),
       ];
       await renderPage({ initialDetailId: adapterId, onSelectionChange });
 
@@ -274,14 +226,16 @@ describe("MessengersPage onboarding routes", () => {
   );
 
   it("keeps an explicit create route open when inventory gains an account", async () => {
-    mocks.inventory = [availableAdapter("telegram")];
+    mocks.inventory = [availableConsoleAdapter("telegram")];
     await renderPage({ initialCreate: true });
 
     expect(lastOnboardingRender()?.adapterId).toBe("telegram");
     const rendersBeforeAccount = mocks.onboardingRenders.length;
 
     mocks.inventory = [
-      availableAdapter("telegram", [adapterAccount("telegram", "telegram-first")]),
+      availableConsoleAdapter("telegram", [
+        consoleAdapterAccount("telegram", "telegram-first"),
+      ]),
     ];
     await renderPage({ initialCreate: true });
 
@@ -298,7 +252,7 @@ describe("MessengersPage onboarding routes", () => {
   ])(
     "does not latch a %s zero-account result before an account appears",
     async (_label, resourceState) => {
-      mocks.inventory = [availableAdapter("telegram")];
+      mocks.inventory = [availableConsoleAdapter("telegram")];
       mocks.inventoryResourceState = {
         ...mocks.inventoryResourceState,
         ...resourceState,
@@ -307,7 +261,9 @@ describe("MessengersPage onboarding routes", () => {
       const onboardingRendersBeforeAccount = mocks.onboardingRenders.length;
 
       mocks.inventory = [
-        availableAdapter("telegram", [adapterAccount("telegram", "telegram-first")]),
+        availableConsoleAdapter("telegram", [
+          consoleAdapterAccount("telegram", "telegram-first"),
+        ]),
       ];
       mocks.inventoryResourceState = {
         isError: false,
@@ -324,7 +280,7 @@ describe("MessengersPage onboarding routes", () => {
 
   it("releases implicit onboarding on Back without rewriting to create", async () => {
     const onSelectionChange = vi.fn();
-    mocks.inventory = [availableAdapter("telegram")];
+    mocks.inventory = [availableConsoleAdapter("telegram")];
     await renderPage({ initialDetailId: "telegram", onSelectionChange });
 
     const onboarding = lastOnboardingRender();
@@ -342,39 +298,13 @@ describe("MessengersPage onboarding routes", () => {
     expect(mocks.linkPanelRenders.length).toBeGreaterThan(panelRendersBeforeBack);
   });
 
-  it("releases implicit onboarding when the parent selects another route", async () => {
-    mocks.inventory = [availableAdapter("telegram")];
+  it("releases implicit onboarding into account identity-link recovery", async () => {
+    mocks.inventory = [availableConsoleAdapter("telegram")];
     await renderPage({ initialDetailId: "telegram" });
     expect(lastOnboardingRender()?.adapterId).toBe("telegram");
 
-    const account = adapterAccount("telegram", "telegram-existing");
-    mocks.inventory = [availableAdapter("telegram", [account])];
-    await renderPage({ initialDetailId: "telegram:telegram-existing" });
-
-    expect(mocks.detailRenders.at(-1)).toMatchObject({
-      accountId: "telegram-existing",
-      identityLinkCount: 0,
-    });
-  });
-
-  it("offers identity-link recovery for an existing unlinked account", async () => {
-    mocks.inventory = [
-      availableAdapter("telegram", [adapterAccount("telegram", "telegram-existing")]),
-    ];
-
-    await renderPage({});
-
-    expect(mocks.linkPanelRenders.at(-1)).toEqual({
-      errorText: undefined,
-      linkCount: 0,
-      refreshing: false,
-    });
-  });
-
-  it("routes an unlinked account detail to the identity-link recovery panel", async () => {
-    const account = adapterAccount("telegram", "telegram-existing");
-    mocks.inventory = [availableAdapter("telegram", [account])];
-
+    const account = consoleAdapterAccount("telegram", "telegram-existing");
+    mocks.inventory = [availableConsoleAdapter("telegram", [account])];
     await renderPage({ initialDetailId: "telegram:telegram-existing" });
 
     const detail = mocks.detailRenders.at(-1);

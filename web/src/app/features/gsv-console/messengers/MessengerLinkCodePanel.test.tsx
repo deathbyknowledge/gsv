@@ -1,92 +1,18 @@
 import type { ComponentChildren } from "preact";
-import { render } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-type PanelSnapshot = {
-  button: {
-    disabled: boolean;
-    label: string;
-    onClick: () => void | Promise<void>;
-  } | null;
-  input: {
-    onChange: (value: string) => void;
-    value: string;
-  } | null;
-  notice: {
-    label: string;
-    tone: string;
-  } | null;
-  text: string[];
-};
+import {
+  collectNodes,
+  collectText,
+  createTestRoot,
+  nodeWithLabel,
+} from "./messengerTestHarness";
 
 const mocks = vi.hoisted(() => ({
+  children: null as ComponentChildren,
   isPending: false,
   mutateAsync: vi.fn(),
-  snapshots: [] as PanelSnapshot[],
 }));
-
-function capturePanel(children: ComponentChildren): PanelSnapshot {
-  const snapshot: PanelSnapshot = {
-    button: null,
-    input: null,
-    notice: null,
-    text: [],
-  };
-
-  const visit = (value: unknown): void => {
-    if (Array.isArray(value)) {
-      value.forEach(visit);
-      return;
-    }
-    if (typeof value === "string" || typeof value === "number") {
-      snapshot.text.push(String(value));
-      return;
-    }
-    if (!value || typeof value !== "object") {
-      return;
-    }
-
-    const props = (value as { props?: Record<string, unknown> }).props;
-    if (!props) {
-      return;
-    }
-    if (
-      props.label === "AUTHORIZATION CODE"
-      && typeof props.onChange === "function"
-    ) {
-      snapshot.input = {
-        onChange: props.onChange as (next: string) => void,
-        value: typeof props.value === "string" ? props.value : "",
-      };
-    }
-    if (
-      props.variant === "success"
-      && typeof props.label === "string"
-      && typeof props.onClick === "function"
-    ) {
-      snapshot.button = {
-        disabled: props.disabled === true,
-        label: props.label,
-        onClick: props.onClick as () => void | Promise<void>,
-      };
-    }
-    if (
-      props.boxed === true
-      && typeof props.label === "string"
-      && typeof props.tone === "string"
-    ) {
-      snapshot.notice = {
-        label: props.label,
-        tone: props.tone,
-      };
-    }
-    visit(props.children);
-  };
-
-  visit(children);
-  return snapshot;
-}
 
 vi.mock("../hooks/useConsoleData", () => ({
   useConsumeIdentityLinkCode: () => ({
@@ -101,115 +27,57 @@ vi.mock("../../gsv-shell/unsaved/unsavedGuard", () => ({
 
 vi.mock("../../../components/ui/Surface", () => ({
   Surface: ({ children }: { children: ComponentChildren }) => {
-    mocks.snapshots.push(capturePanel(children));
+    mocks.children = children;
     return null;
   },
 }));
 
 import { MessengerLinkCodePanel } from "./MessengerLinkCodePanel";
 
-function fakeContainer(): Element {
-  return {
-    nodeType: 1,
-    namespaceURI: "http://www.w3.org/1999/xhtml",
-    firstChild: null,
-    childNodes: [],
-    insertBefore: () => {
-      throw new Error("The link-code panel harness must not render DOM nodes");
-    },
-    removeChild: () => {
-      throw new Error("The link-code panel harness must not render DOM nodes");
-    },
-  } as unknown as Element;
-}
+let root: ReturnType<typeof createTestRoot> | null = null;
 
-let container: Element | null = null;
-
-function currentPanel(): PanelSnapshot {
-  const snapshot = mocks.snapshots.at(-1);
-  if (!snapshot) {
+function currentNodes() {
+  if (!mocks.children) {
     throw new Error("The link-code panel is not rendered");
   }
-  return snapshot;
+  return collectNodes(mocks.children);
 }
 
 async function renderPanel(): Promise<void> {
-  if (!container) {
-    container = fakeContainer();
-  }
-  await act(() => {
-    render(
-      <MessengerLinkCodePanel linkCount={0} refreshing={false} />,
-      container!,
-    );
-  });
+  root ??= createTestRoot("The link-code panel harness");
+  await root.render(<MessengerLinkCodePanel linkCount={0} refreshing={false} />);
 }
 
 async function enterCode(code: string): Promise<void> {
-  const input = currentPanel().input;
-  if (!input) {
-    throw new Error("The authorization-code input is missing");
-  }
   await act(() => {
-    input.onChange(code);
+    nodeWithLabel(currentNodes(), "AUTHORIZATION CODE").props.onChange?.(code);
   });
 }
 
 async function submitCode(): Promise<void> {
-  const button = currentPanel().button;
-  if (!button) {
-    throw new Error("The link-identity button is missing");
-  }
-  expect(button.disabled).toBe(false);
+  const button = nodeWithLabel(currentNodes(), "LINK IDENTITY");
+  expect(button.props.disabled).toBe(false);
   await act(async () => {
-    await button.onClick();
+    await button.props.onClick?.();
   });
 }
 
 beforeEach(() => {
   vi.stubGlobal("document", {});
+  mocks.children = null;
   mocks.isPending = false;
   mocks.mutateAsync.mockReset();
-  mocks.snapshots = [];
-  container = null;
+  root = null;
 });
 
 afterEach(async () => {
-  if (container) {
-    await act(() => {
-      render(null, container!);
-    });
-  }
-  container = null;
+  await root?.unmount();
+  root = null;
   vi.unstubAllGlobals();
 });
 
 describe("MessengerLinkCodePanel", () => {
-  it("clears the authorization code after a successful link", async () => {
-    mocks.mutateAsync.mockResolvedValue({ link: null });
-    await renderPanel();
-    await enterCode("ABCD-EFGH");
-
-    await submitCode();
-
-    expect(mocks.mutateAsync).toHaveBeenCalledWith({ code: "ABCD-EFGH" });
-    expect(currentPanel().input?.value).toBe("");
-    expect(currentPanel().notice).toEqual({ label: "LINKED", tone: "online" });
-  });
-
-  it("retains the authorization code when linking fails", async () => {
-    mocks.mutateAsync.mockRejectedValue(new Error("Authorization code expired"));
-    await renderPanel();
-    await enterCode("RETRY-CODE");
-
-    await submitCode();
-
-    expect(currentPanel().input?.value).toBe("RETRY-CODE");
-    expect(currentPanel().notice).toEqual({ label: "ERROR", tone: "error" });
-    expect(currentPanel().text.join(" ")).toContain("Authorization code expired");
-  });
-
-  it("does not expose raw messenger identifiers in success copy", async () => {
+  it("clears successful codes without exposing raw messenger identifiers", async () => {
     const accountId = "private-account-id";
     const actorId = "private-actor-id";
     mocks.mutateAsync.mockResolvedValue({
@@ -223,14 +91,29 @@ describe("MessengerLinkCodePanel", () => {
       },
     });
     await renderPanel();
-    await enterCode("SAFE-COPY");
+    await enterCode("ABCD-EFGH");
 
     await submitCode();
 
-    const renderedText = currentPanel().text.join(" ");
-    expect(currentPanel().notice).toEqual({ label: "LINKED", tone: "online" });
+    expect(mocks.mutateAsync).toHaveBeenCalledWith({ code: "ABCD-EFGH" });
+    expect(nodeWithLabel(currentNodes(), "AUTHORIZATION CODE").props.value).toBe("");
+    expect(nodeWithLabel(currentNodes(), "LINKED").props.tone).toBe("online");
+    const renderedText = collectText(mocks.children);
     expect(renderedText).toContain("identity linked to the signed-in GSV user");
     expect(renderedText).not.toContain(accountId);
     expect(renderedText).not.toContain(actorId);
+  });
+
+  it("retains the authorization code when linking fails", async () => {
+    mocks.mutateAsync.mockRejectedValue(new Error("Authorization code expired"));
+    await renderPanel();
+    await enterCode("RETRY-CODE");
+
+    await submitCode();
+
+    expect(nodeWithLabel(currentNodes(), "AUTHORIZATION CODE").props.value)
+      .toBe("RETRY-CODE");
+    expect(nodeWithLabel(currentNodes(), "ERROR").props.tone).toBe("error");
+    expect(collectText(mocks.children)).toContain("Authorization code expired");
   });
 });

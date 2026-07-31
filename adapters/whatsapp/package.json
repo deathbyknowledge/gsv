@@ -12,13 +12,12 @@
     "bundle": "wrangler deploy --dry-run",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --minify",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types --include-runtime false"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc14"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "0.19.1",
     "@cloudflare/workers-types": "5.20260731.1",
     "patch-package": "8.0.1",
     "typescript": "5.9.3",

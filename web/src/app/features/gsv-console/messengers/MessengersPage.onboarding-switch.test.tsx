@@ -1,13 +1,19 @@
-import type { ComponentChildren, VNode } from "preact";
-import { render } from "preact";
+import type { ComponentChildren } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectConsoleAdapterResult } from "../backend/consoleService";
-import type { ConnectFlowDef, ConnectNav } from "../connect-flows/connectFlowTypes";
+import type { ConnectFlowDef } from "../connect-flows/connectFlowTypes";
 import type {
   ConsoleAdapter,
   ConsoleResourceState,
 } from "../domain/consoleModels";
+import {
+  availableConsoleAdapter,
+  createTestRoot,
+  deferred,
+  flowStepNodes,
+  nodeWithLabel,
+} from "./messengerTestHarness";
 
 const mocks = vi.hoisted(() => ({
   connectAdapter: vi.fn(),
@@ -105,66 +111,7 @@ vi.mock("../connect-flows/ConnectFlowShell", () => ({
 
 import { MessengersPage } from "./MessengersPage";
 
-type TestNodeProps = {
-  children?: ComponentChildren;
-  disabled?: boolean;
-  label?: string;
-  message?: string;
-  onChange?: (value: string) => void;
-  onClick?: () => void | Promise<void>;
-  status?: string;
-  value?: string;
-  variant?: string;
-};
-
-type Deferred<T> = {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-};
-
-const unusedNav: ConnectNav = {
-  onBack: () => undefined,
-  onNext: () => undefined,
-  goTo: () => undefined,
-  isFirst: false,
-  isLast: false,
-};
-
-function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
-    resolve = next;
-  });
-  return { promise, resolve };
-}
-
-function availableAdapter(adapter: string): ConsoleAdapter {
-  return {
-    adapter,
-    available: true,
-    supportsConnect: true,
-    supportsDisconnect: true,
-    supportsSend: true,
-    supportsStatus: true,
-    supportsActivity: true,
-    accounts: [],
-  };
-}
-
-function fakeContainer(): Element {
-  return {
-    nodeType: 1,
-    namespaceURI: "http://www.w3.org/1999/xhtml",
-    firstChild: null,
-    childNodes: [],
-    insertBefore: () => {
-      throw new Error("The onboarding switch harness must not render DOM nodes");
-    },
-    removeChild: () => {
-      throw new Error("The onboarding switch harness must not render DOM nodes");
-    },
-  } as unknown as Element;
-}
+let root: ReturnType<typeof createTestRoot> | null = null;
 
 function currentFlow(): ConnectFlowDef {
   if (!mocks.currentFlow) {
@@ -173,52 +120,13 @@ function currentFlow(): ConnectFlowDef {
   return mocks.currentFlow as ConnectFlowDef;
 }
 
-function collectNodes(value: ComponentChildren): Array<VNode<TestNodeProps>> {
-  const nodes: Array<VNode<TestNodeProps>> = [];
-  const visit = (child: ComponentChildren): void => {
-    if (Array.isArray(child)) {
-      child.forEach(visit);
-      return;
-    }
-    if (!child || typeof child !== "object" || !("props" in child)) {
-      return;
-    }
-    const node = child as VNode<TestNodeProps>;
-    nodes.push(node);
-    visit(node.props.children);
-  };
-  visit(value);
-  return nodes;
+function currentStepNodes() {
+  return flowStepNodes(currentFlow(), mocks.currentStep);
 }
-
-function currentStepNodes(): Array<VNode<TestNodeProps>> {
-  const step = currentFlow().steps[mocks.currentStep];
-  if (!step) {
-    throw new Error(`The messenger onboarding flow has no step ${mocks.currentStep}`);
-  }
-  return collectNodes(step.render(unusedNav));
-}
-
-function nodeWithLabel(
-  nodes: Array<VNode<TestNodeProps>>,
-  label: string,
-): VNode<TestNodeProps> {
-  const node = nodes.find((candidate) => candidate.props.label === label);
-  if (!node) {
-    throw new Error(`Could not find ${label}`);
-  }
-  return node;
-}
-
-let container: Element | null = null;
 
 async function renderPage(initialDetailId: string): Promise<void> {
-  if (!container) {
-    container = fakeContainer();
-  }
-  await act(() => {
-    render(<MessengersPage initialDetailId={initialDetailId} />, container!);
-  });
+  root ??= createTestRoot("The onboarding switch harness");
+  await root.render(<MessengersPage initialDetailId={initialDetailId} />);
 }
 
 async function clickStepButton(label: string): Promise<void> {
@@ -242,19 +150,15 @@ beforeEach(() => {
   mocks.currentFlow = null;
   mocks.currentStep = -1;
   mocks.inventory = [
-    availableAdapter("discord"),
-    availableAdapter("telegram"),
+    availableConsoleAdapter("discord"),
+    availableConsoleAdapter("telegram"),
   ];
-  container = null;
+  root = null;
 });
 
 afterEach(async () => {
-  if (container) {
-    await act(() => {
-      render(null, container!);
-    });
-  }
-  container = null;
+  await root?.unmount();
+  root = null;
   vi.unstubAllGlobals();
 });
 
@@ -273,10 +177,9 @@ describe("MessengersPage onboarding platform switches", () => {
     nodes = currentStepNodes();
     expect(nodeWithLabel(nodes, "ACCESS TOKEN").props.value).toBe("discord-private-token");
 
-    const connect = nodeWithLabel(nodes, "CONNECT");
     let pendingSubmit: Promise<void> | undefined;
     await act(() => {
-      pendingSubmit = connect.props.onClick?.() as Promise<void> | undefined;
+      pendingSubmit = nodeWithLabel(nodes, "CONNECT").props.onClick?.() as Promise<void>;
     });
     expect(pendingSubmit).toBeInstanceOf(Promise);
     expect(mocks.connectAdapter).toHaveBeenCalledWith(expect.objectContaining({

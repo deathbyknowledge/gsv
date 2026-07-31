@@ -1,8 +1,8 @@
-import { render } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectConsoleAdapterResult } from "../backend/consoleService";
 import type { ConsoleAdapterAccount } from "../domain/consoleModels";
+import { createTestRoot, deferred } from "./messengerTestHarness";
 
 const mocks = vi.hoisted(() => ({
   connectPending: false,
@@ -35,19 +35,6 @@ const NOW = 1_800_000_000_000;
 
 type PairingProps = Parameters<typeof useWhatsAppPairing>[0];
 type PairingResult = ReturnType<typeof useWhatsAppPairing>;
-
-type Deferred<T> = {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-};
-
-function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
-    resolve = next;
-  });
-  return { promise, resolve };
-}
 
 function challengeResult(
   accountId: string,
@@ -82,22 +69,7 @@ function connectedAccount(accountId: string): ConsoleAdapterAccount {
   };
 }
 
-function fakeContainer(): Element {
-  return {
-    nodeType: 1,
-    namespaceURI: "http://www.w3.org/1999/xhtml",
-    firstChild: null,
-    childNodes: [],
-    insertBefore: () => {
-      throw new Error("The hook harness must not render DOM nodes");
-    },
-    removeChild: () => {
-      throw new Error("The hook harness must not render DOM nodes");
-    },
-  } as unknown as Element;
-}
-
-let container: Element | null = null;
+let root: ReturnType<typeof createTestRoot> | null = null;
 let pairing: PairingResult | null = null;
 
 function Harness(props: PairingProps) {
@@ -113,22 +85,13 @@ function currentPairing(): PairingResult {
 }
 
 async function renderPairing(props: PairingProps): Promise<void> {
-  if (!container) {
-    container = fakeContainer();
-  }
-  await act(() => {
-    render(<Harness {...props} />, container!);
-  });
+  root ??= createTestRoot("The hook harness");
+  await root.render(<Harness {...props} />);
 }
 
 async function unmountPairing(): Promise<void> {
-  if (!container) {
-    return;
-  }
-  await act(() => {
-    render(null, container!);
-  });
-  container = null;
+  await root?.unmount();
+  root = null;
   pairing = null;
 }
 
@@ -149,7 +112,7 @@ beforeEach(() => {
   mocks.lastStatusOptions = null;
   mocks.mutateAsync.mockReset();
   mocks.statuses = [];
-  container = null;
+  root = null;
   pairing = null;
 });
 

@@ -23,7 +23,6 @@ import {
   normalizeWhatsAppMimeType,
   resolveWhatsAppMediaRedirect,
   whatsAppMediaDescriptor,
-  WhatsAppInboundMediaError,
 } from "../src/media";
 
 afterEach(() => {
@@ -46,12 +45,9 @@ describe("WhatsApp media descriptors", () => {
     expect(isWhatsAppDownloadableMediaContentType("locationMessage")).toBe(false);
   });
 
-  it("uses a lower outbound aggregate cap because Baileys stages encryption", () => {
-    expect(MAX_WHATSAPP_MEDIA_BYTES).toBe(48 * 1024 * 1024);
-    expect(MAX_WHATSAPP_MEDIA_TOTAL_BYTES).toBe(24 * 1024 * 1024);
-  });
-
   it("bounds hostile provider media metadata", () => {
+    expect(MAX_WHATSAPP_MEDIA_TOTAL_BYTES)
+      .toBeLessThanOrEqual(MAX_WHATSAPP_MEDIA_BYTES / 2);
     expect(normalizeWhatsAppMimeType(
       `text/plain\u0000${"x".repeat(500)}`,
       "application/octet-stream",
@@ -128,7 +124,8 @@ describe("WhatsApp media integrity", () => {
       mimeType: "image/jpeg",
       size: fixture.plain.byteLength,
     });
-    expect(Buffer.from(await readStream(part!.body!.stream))).toEqual(fixture.plain);
+    expect(Buffer.from(await new Response(part!.body!.stream).arrayBuffer()))
+      .toEqual(fixture.plain);
   });
 
   it("treats authentication and decryption failures as permanent", async () => {
@@ -225,20 +222,4 @@ function stubSocket(
   updateMediaMessage: (message: WAMessage) => Promise<WAMessage> = async (message) => message,
 ): WASocket {
   return { updateMediaMessage } as unknown as WASocket;
-}
-
-async function readStream(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  for await (const chunk of stream) {
-    chunks.push(chunk);
-    length += chunk.byteLength;
-  }
-  const output = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return output;
 }

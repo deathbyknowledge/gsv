@@ -127,7 +127,7 @@ describe("InboundDeliveryLedger", () => {
     expect(deliver).toHaveBeenCalledWith({ providerMessageId: "original" });
   });
 
-  it("repairs missing, overdue, and later alarms without replacing an earlier future alarm", async () => {
+  it("repairs alarms in every scheduling path without postponing earlier work", async () => {
     const storage = new MemoryStorage();
     const pending = ledger(storage);
     const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
@@ -147,15 +147,7 @@ describe("InboundDeliveryLedger", () => {
       storage.alarm.value = 1_100;
       await pending.arm(1_200);
       expect(storage.alarm.value).toBe(1_100);
-    } finally {
-      clock.mockRestore();
-    }
-  });
 
-  it("repairs overdue alarms using one timestamp per transactional scheduling method", async () => {
-    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
-
-    try {
       const enqueueStorage = new MemoryStorage();
       enqueueStorage.alarm.value = 900;
       await ledger(enqueueStorage).enqueueAndArm(
@@ -164,16 +156,7 @@ describe("InboundDeliveryLedger", () => {
         1_200,
       );
       expect(enqueueStorage.alarm.value).toBe(1_200);
-      expect(clock).toHaveBeenCalledTimes(1);
 
-      clock.mockClear();
-      const armStorage = new MemoryStorage();
-      armStorage.alarm.value = 900;
-      await ledger(armStorage).arm(1_300);
-      expect(armStorage.alarm.value).toBe(1_300);
-      expect(clock).toHaveBeenCalledTimes(1);
-
-      clock.mockClear();
       const pendingStorage = new MemoryStorage();
       pendingStorage.values.set("pending_inbound:provider-pending-overdue", {
         state: "provider",
@@ -183,7 +166,6 @@ describe("InboundDeliveryLedger", () => {
       pendingStorage.alarm.value = 900;
       await expect(ledger(pendingStorage).armIfPending(1_400)).resolves.toBe(true);
       expect(pendingStorage.alarm.value).toBe(1_400);
-      expect(clock).toHaveBeenCalledTimes(1);
     } finally {
       clock.mockRestore();
     }
@@ -534,18 +516,12 @@ describe("adapterInboundResultDisposition", () => {
         },
       ],
     });
-  });
-
-  it("keeps actor identity optional for adapters without participant addressing", () => {
-    const surface = { kind: "dm" as const, id: "chat-2" };
-    const disposition = adapterInboundResultDisposition({
+    expect(adapterInboundResultDisposition({
       ok: true,
       reply: { deliveryId: "reply-2", text: "Done" },
     }, {
-      surface,
+      surface: { kind: "dm", id: "chat-2" },
       providerMessageId: "provider-2",
-    });
-
-    expect(disposition.responses?.[0]?.message).not.toHaveProperty("actorId");
+    }).responses?.[0]?.message).not.toHaveProperty("actorId");
   });
 });

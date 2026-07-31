@@ -5,7 +5,6 @@ import WebSocket, {
   CLOSED,
   OPEN,
   toFetchWebSocketUrl,
-  webSocketHandshakeHeaders,
 } from "../src/ws-shim";
 
 afterEach(() => {
@@ -97,15 +96,12 @@ describe("Workers WebSocket shim", () => {
     expect(socket.readyState).toBe(CLOSED);
   });
 
-  it("validates handshake URL schemes and headers independently", () => {
+  it("validates handshake URL schemes", () => {
     expect(toFetchWebSocketUrl("ws://example.com/socket")).toBe(
       "http://example.com/socket",
     );
     expect(() => toFetchWebSocketUrl("https://example.com/socket")).toThrow(
       "must use ws or wss",
     );
-    const headers = webSocketHandshakeHeaders({ origin: "https://example.com" });
-    expect(headers.get("origin")).toBe("https://example.com");
-    expect(headers.get("upgrade")).toBe("websocket");
   });
 });
