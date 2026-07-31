@@ -4,6 +4,7 @@ import {
   captureSemanticSnapshot,
   formatSemanticSnapshot,
   isPageReference,
+  normalizePageReference,
   PageReferenceStore,
 } from "./page-semantics";
 
@@ -32,6 +33,8 @@ describe("semantic page snapshots", () => {
     const refs = collectRefs(snapshot.nodes);
     expect(refs).toHaveLength(3);
     expect(refs.every(isPageReference)).toBe(true);
+    expect(normalizePageReference(refs[0]!.slice(1))).toBe(refs[0]);
+    expect(normalizePageReference("sectione1")).toBeNull();
     expect(refs.map((ref) => ref.match(/e(\d+)$/)?.[1])).toEqual(["1", "2", "3"]);
     expect(store.resolve(refs[1]!)).toMatchObject({
       tabId: 42,
@@ -103,7 +106,7 @@ function fixtureResponse(method: string): object {
   }
   if (method === "DOMSnapshot.captureSnapshot") {
     return {
-      strings: ["input", "type", "text", "div", "#text"],
+      strings: ["input", "type", "text", "div", "#text", "visible", "auto"],
       documents: [{
         nodes: {
           backendNodeId: [101, 102, 103, 104],
@@ -113,9 +116,10 @@ function fixtureResponse(method: string): object {
         },
         layout: {
           nodeIndex: [0, 1, 2, 3],
+          styles: [[5, 5], [5, 5], [5, 6], [5, 5]],
           bounds: [[0, 0, 200, 40], [0, 40, 300, 60], [300, 0, 500, 600], [320, 40, 420, 20]],
           clientRects: [[0, 0, 200, 40], [0, 40, 300, 60], [300, 0, 500, 600], [320, 40, 420, 20]],
-          scrollRects: [[0, 0, 200, 40], [0, 40, 300, 60], [300, 0, 500, 2400], [320, 40, 420, 20]],
+          scrollRects: [[0, 0, 200, 40], [0, 40, 300, 600], [300, 0, 500, 2400], [320, 40, 420, 20]],
         },
       }],
     };
@@ -141,7 +145,7 @@ function passwordFixtureResponse(method: string): object {
   }
   if (method === "DOMSnapshot.captureSnapshot") {
     return {
-      strings: ["input", "type", "password"],
+      strings: ["input", "type", "password", "visible"],
       documents: [{
         nodes: {
           backendNodeId: [201],
@@ -151,6 +155,7 @@ function passwordFixtureResponse(method: string): object {
         },
         layout: {
           nodeIndex: [0],
+          styles: [[3, 3]],
           bounds: [[0, 0, 200, 40]],
           clientRects: [[0, 0, 200, 40]],
           scrollRects: [[0, 0, 200, 40]],

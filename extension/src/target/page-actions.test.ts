@@ -143,6 +143,123 @@ describe("CDP page actions", () => {
       },
     });
   });
+
+  it("repeats native wheel input until a targeted scroll reaches the bottom", async () => {
+    const fixture = stubCdp({
+      states: [
+        elementState({ scrollTop: 300, scrollHeight: 2400, clientHeight: 600 }),
+        elementState({ scrollTop: 810, scrollHeight: 2400, clientHeight: 600 }),
+        elementState({ scrollTop: 1320, scrollHeight: 2400, clientHeight: 600 }),
+        elementState({ scrollTop: 1800, scrollHeight: 2400, clientHeight: 600 }),
+      ],
+    });
+    const { store, reference } = referencedElement();
+
+    const result = await scrollPage(42, "bottom", reference, undefined, store);
+
+    expect(inputMethods(fixture.sendCommand).filter(([method]) => method === "Input.dispatchMouseEvent"))
+      .toEqual([
+        ["Input.dispatchMouseEvent", "mouseWheel"],
+        ["Input.dispatchMouseEvent", "mouseWheel"],
+        ["Input.dispatchMouseEvent", "mouseWheel"],
+      ]);
+    expect(result).toMatchObject({
+      delivered: {
+        accepted: true,
+        events: 3,
+        delta: { x: 0, y: 1530 },
+      },
+      observed: {
+        status: "changed",
+        scroll: {
+          after: { y: 1800, maxY: 1800 },
+          boundaryReached: true,
+        },
+      },
+    });
+    expect(result).not.toHaveProperty("warning");
+  });
+
+  it("does not dispatch wheel input when the target is already at the requested boundary", async () => {
+    const fixture = stubCdp({
+      states: [elementState({ scrollTop: 0, scrollHeight: 2400, clientHeight: 600 })],
+    });
+    const { store, reference } = referencedElement();
+
+    const result = await scrollPage(42, "top", reference, undefined, store);
+
+    expect(inputMethods(fixture.sendCommand)).toEqual([]);
+    expect(fixture.sendCommand).not.toHaveBeenCalledWith(
+      { tabId: 42 },
+      "DOM.scrollIntoViewIfNeeded",
+      expect.anything(),
+    );
+    expect(fixture.sendCommand).not.toHaveBeenCalledWith(
+      { tabId: 42 },
+      "DOM.getNodeForLocation",
+      expect.anything(),
+    );
+    expect(result).toMatchObject({
+      delivered: {
+        method: "none",
+        accepted: false,
+        skipped: "already-at-boundary",
+        events: 0,
+        delta: { x: 0, y: 0 },
+      },
+      observed: {
+        status: "no-change-detected",
+        semanticChanged: false,
+        scroll: {
+          before: { y: 0, maxY: 1800 },
+          after: { y: 0, maxY: 1800 },
+          changed: false,
+          boundaryReached: true,
+        },
+      },
+    });
+    expect(result).not.toHaveProperty("warning");
+  });
+
+  it("observes selection-only key effects separately from delivery", async () => {
+    stubCdp({
+      states: [
+        elementState({ editable: true, valueLength: 5 }),
+        elementState({ editable: true, valueLength: 5 }),
+      ],
+      role: "textbox",
+      name: "Message",
+      selections: ["document:1:5:1:5:true", "document:1:0:1:5:false"],
+    });
+
+    const result = await sendPageKey(42, "Control+a");
+
+    expect(result).toMatchObject({
+      delivered: { accepted: true, key: "a", modifiers: ["control"] },
+      observed: {
+        status: "changed",
+        selectionChanged: true,
+        mutationCount: 0,
+      },
+    });
+    expect(result).not.toHaveProperty("warning");
+  });
+
+  it("reports accepted key delivery when no state change is detected", async () => {
+    stubCdp({
+      states: [elementState({ editable: true }), elementState({ editable: true })],
+      role: "textbox",
+      name: "Message",
+    });
+
+    const result = await sendPageKey(42, "Backspace");
+
+    expect(result).toMatchObject({
+      delivered: { accepted: true, key: "Backspace" },
+      observed: { status: "no-change-detected", semanticChanged: false },
+      warning: expect.stringContaining("Chrome accepted the key input"),
+    });
+  });
 });
 
 function referencedElement(role = "row", name = "English"): {
@@ -208,6 +325,7 @@ function stubCdp(options: {
   mutations?: number;
   role?: string;
   name?: string;
+  selections?: Array<string | null>;
 } = {}) {
   const receiverId = options.receiverId ?? 101;
   const states = options.states ?? [elementState(), elementState()];
@@ -288,7 +406,16 @@ function stubCdp(options: {
         }
         observationIndex += 1;
         if (expression.includes("new MutationObserver")) {
-          return { result: { value: { url: "https://web.whatsapp.test/", focus: null, mutations: 0 } } };
+          return {
+            result: {
+              value: {
+                url: "https://web.whatsapp.test/",
+                focus: { tag: "div", role: "row", name: "English" },
+                mutations: 0,
+                selection: options.selections?.[0] ?? null,
+              },
+            },
+          };
         }
         if (expression.includes("record?.observer?.disconnect")) {
           return {
@@ -297,6 +424,7 @@ function stubCdp(options: {
                 url: "https://web.whatsapp.test/",
                 focus: { tag: "div", role: "row", name: "English" },
                 mutations: options.mutations ?? 0,
+                selection: options.selections?.[1] ?? options.selections?.[0] ?? null,
               },
             },
           };

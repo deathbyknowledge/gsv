@@ -26,7 +26,15 @@ describe("semantic page automation flow", () => {
     expect(chat).toMatchObject({ role: "row" });
     expect(messages).toMatchObject({ role: "scroll-region", scroll: { vertical: true } });
 
-    const clickResult = await pageCommand.run(["click", "--tab", "42", chat!.ref!], context());
+    const newerSnapshotResult = await pageCommand.run(["snapshot", "--tab", "42", "--json"], context());
+    expect(newerSnapshotResult.exitCode).toBe(0);
+    const newerSnapshot = JSON.parse(newerSnapshotResult.stdout) as { nodes: SnapshotNode[] };
+    expect(findNode(newerSnapshot.nodes, "English")?.ref).not.toBe(chat?.ref);
+
+    const clickResult = await pageCommand.run(
+      ["click", "--tab", "42", chat!.ref!.slice(1)],
+      context(),
+    );
     expect(clickResult.exitCode).toBe(0);
     expect(JSON.parse(clickResult.stdout)).toMatchObject({
       action: "click",
@@ -38,7 +46,7 @@ describe("semantic page automation flow", () => {
     });
 
     const scrollResult = await pageCommand.run(
-      ["scroll", "--tab", "42", messages!.ref!, "up"],
+      ["scroll", "--tab", "42", messages!.ref!.slice(1), "top"],
       context(),
     );
     expect(scrollResult.exitCode).toBe(0);
@@ -47,13 +55,15 @@ describe("semantic page automation flow", () => {
       delivered: {
         method: "cdp",
         target: { ref: messages!.ref, role: "generic" },
-        delta: { x: 0, y: -510 },
+        events: 2,
+        delta: { x: 0, y: -1020 },
       },
       observed: {
         scroll: {
           before: { y: 900, maxY: 1800 },
-          after: { y: 390, maxY: 1800 },
+          after: { y: 0, maxY: 1800 },
           changed: true,
+          boundaryReached: true,
         },
       },
     });
@@ -213,7 +223,7 @@ function accessibilityTree(): object {
 
 function domSnapshot(): object {
   return {
-    strings: ["input", "div", "#text", "role", "row"],
+    strings: ["input", "div", "#text", "role", "row", "visible", "auto"],
     documents: [{
       nodes: {
         backendNodeId: [101, 102, 103, 104, 105],
@@ -223,6 +233,7 @@ function domSnapshot(): object {
       },
       layout: {
         nodeIndex: [0, 1, 2, 3, 4],
+        styles: [[5, 5], [5, 6], [5, 5], [5, 6], [5, 5]],
         bounds: [[0, 0, 300, 40], [0, 40, 300, 560], [0, 40, 300, 60], [320, 0, 480, 600], [340, 40, 420, 24]],
         clientRects: [[0, 0, 300, 40], [0, 40, 300, 560], [0, 40, 300, 60], [320, 0, 480, 600], [340, 40, 420, 24]],
         scrollRects: [[0, 0, 300, 40], [0, 40, 300, 1800], [0, 40, 300, 60], [320, 0, 480, 2400], [340, 40, 420, 24]],

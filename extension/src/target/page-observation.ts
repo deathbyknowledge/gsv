@@ -25,6 +25,7 @@ export type ObservationPoint = {
   url: string;
   focus: ObservationFocus | null;
   mutations: number | null;
+  selection?: string | null;
 };
 
 export type ObservationSession = {
@@ -64,6 +65,33 @@ export async function beginPageObservation(
         name
       };
     };
+    const selection = () => {
+      const element = document.activeElement;
+      if (element && typeof element.selectionStart === "number") {
+        return ["control", element.selectionStart, element.selectionEnd, element.selectionDirection].join(":");
+      }
+      const selected = globalThis.getSelection?.();
+      if (!selected || selected.rangeCount === 0) return null;
+      const path = (node) => {
+        const parts = [];
+        let current = node;
+        while (current && current !== document && parts.length < 16) {
+          const parent = current.parentNode;
+          if (!parent) break;
+          parts.push(Array.prototype.indexOf.call(parent.childNodes, current));
+          current = parent;
+        }
+        return parts.reverse().join(".");
+      };
+      return [
+        "document",
+        path(selected.anchorNode),
+        selected.anchorOffset,
+        path(selected.focusNode),
+        selected.focusOffset,
+        selected.isCollapsed
+      ].join(":");
+    };
     const record = { mutations: 0, observer: null };
     record.observer = new MutationObserver((entries) => { record.mutations += entries.length; });
     record.observer.observe(document, {
@@ -73,7 +101,7 @@ export async function beginPageObservation(
       characterData: true
     });
     globalThis[key] = record;
-    return { url: location.href, focus: focus(), mutations: 0 };
+    return { url: location.href, focus: focus(), mutations: 0, selection: selection() };
   })()`);
   return { key, before };
 }
@@ -94,6 +122,32 @@ export async function endPageObservation(
         || element?.getAttribute?.("placeholder")
         || element?.getAttribute?.("title")
         || undefined;
+      const selection = (() => {
+        if (element && typeof element.selectionStart === "number") {
+          return ["control", element.selectionStart, element.selectionEnd, element.selectionDirection].join(":");
+        }
+        const selected = globalThis.getSelection?.();
+        if (!selected || selected.rangeCount === 0) return null;
+        const path = (node) => {
+          const parts = [];
+          let current = node;
+          while (current && current !== document && parts.length < 16) {
+            const parent = current.parentNode;
+            if (!parent) break;
+            parts.push(Array.prototype.indexOf.call(parent.childNodes, current));
+            current = parent;
+          }
+          return parts.reverse().join(".");
+        };
+        return [
+          "document",
+          path(selected.anchorNode),
+          selected.anchorOffset,
+          path(selected.focusNode),
+          selected.focusOffset,
+          selected.isCollapsed
+        ].join(":");
+      })();
       return {
         url: location.href,
         focus: element ? {
@@ -101,12 +155,13 @@ export async function endPageObservation(
           role: element.getAttribute?.("role") || undefined,
           name
         } : null,
-        mutations: typeof record?.mutations === "number" ? record.mutations : null
+        mutations: typeof record?.mutations === "number" ? record.mutations : null,
+        selection
       };
     })()`);
   } catch {
     // A navigation or tab close can destroy the observed execution context.
-    return { url: session.before.url, focus: null, mutations: null };
+    return { url: session.before.url, focus: null, mutations: null, selection: null };
   }
 }
 
@@ -119,17 +174,21 @@ export function summarizeActionObservation(
 ): Record<string, unknown> & { semanticChanged: boolean } {
   const urlChanged = before.url !== after.url;
   const focusChanged = JSON.stringify(before.focus) !== JSON.stringify(after.focus);
+  const selectionChanged = (before.selection ?? null) !== (after.selection ?? null);
   const targetStateChanged = JSON.stringify(relevantState(beforeState)) !== JSON.stringify(relevantState(afterState));
   const mutationCount = after.mutations;
   const semanticChanged = documentChanged
     || urlChanged
     || focusChanged
+    || selectionChanged
     || targetStateChanged
     || (typeof mutationCount === "number" && mutationCount > 0);
   return {
     documentChanged,
+    status: semanticChanged ? "changed" : "no-change-detected",
     urlChanged,
     focusChanged,
+    selectionChanged,
     mutationCount,
     targetAttached: afterState !== null,
     targetStateChanged,

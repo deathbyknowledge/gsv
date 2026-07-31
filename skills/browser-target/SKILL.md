@@ -113,8 +113,9 @@ page text --tab <tabId>
 ```
 
 `page snapshot` returns a readable accessibility outline. Actionable elements
-and scroll regions carry snapshot-scoped refs such as `@s4k2e7`. Use those refs
-for interaction; they are pinned to the tab and document that produced them:
+and scroll regions carry snapshot-scoped refs such as `@s4k2e7`. The leading
+`@` is part of the canonical ref; commands also accept the bare generated form
+`s4k2e7`. Refs are pinned to the tab and document that produced them:
 
 ```text
 textbox @s4k2e1 "Search or start new chat"
@@ -127,18 +128,24 @@ textbox @s4k2e4 "Type a message" [editable focusable]
 page click --tab <tabId> @s4k2e3
 page type --tab <tabId> @s4k2e4 'Draft text'
 page scroll --tab <tabId> @s4k2e2 down
+page scroll --tab <tabId> @s4k2e2 top
 ```
 
+Taking another snapshot does not itself expire refs from recent snapshots.
 Refs expire when their bounded snapshot is evicted, the extension restarts, the
-node disappears, or its document changes. If an action reports an unknown or
-stale ref, take a new snapshot instead of guessing which element replaced it.
+node disappears, its semantics change, or its document navigates. If an action
+reports an unknown or stale ref, take a new snapshot instead of guessing which
+element replaced it. Prefer the newest refs for virtualized rows because a
+framework may reuse a node for different content.
 
 Page actions return compact JSON with separate `delivered` and `observed`
-sections. `delivered.receiver` identifies the element that received Chrome's
-input. `observed.semanticChanged` reports whether navigation, focus, DOM, or
-target state changed after the action. A successful delivery with no observed
-change is not proof that the intended application state changed; inspect the
-warning and snapshot again.
+sections. `delivered.accepted` means Chrome accepted the CDP input, and
+`delivered.receiver` identifies the hit-tested or focused receiver.
+`observed.status` is `changed` or `no-change-detected`; observation covers
+navigation, focus, selection, DOM mutations, and target state. Accepted input
+with no detected change may be a no-op or an effect outside the observer;
+inspect the warning and snapshot again rather than treating it as a transport
+failure.
 
 CSS selectors remain useful as an explicit fallback when the page's semantic
 tree omits a target:
@@ -156,6 +163,11 @@ Selector clicks and typing still use Chrome's input pipeline. Use
 semantic names are insufficient. Use a snapshot ref with `page scroll` to
 target nested virtualized lists; an untargeted scroll acts at the viewport
 center and may be received by whichever scrollable element is under that point.
+Targeted `top` and `bottom` repeat native wheel input and report
+`observed.scroll.boundaryReached`; check that field instead of assuming an
+accepted wheel event reached the boundary. If the target is already there, the
+action reports `delivered.skipped=already-at-boundary` with zero events and
+does not dispatch input.
 
 Virtualized lists expose only their currently materialized rows. To read one
 completely, record the visible semantic rows, scroll the list by its ref,

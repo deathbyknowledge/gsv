@@ -14,6 +14,7 @@ import {
   viewportCenter,
   type InputPoint,
   type PageScrollTarget,
+  type ScrollState,
 } from "./page-input";
 import {
   beginPageObservation as beginObservation,
@@ -30,6 +31,8 @@ import {
 } from "./page-semantics";
 
 const ACTION_SETTLE_MS = 100;
+const BOUNDARY_SCROLL_STEP_SETTLE_MS = 16;
+const MAX_BOUNDARY_SCROLL_EVENTS = 240;
 
 type RemoteObject = {
   objectId?: string;
@@ -146,7 +149,13 @@ export async function clickPageElement(
     const element = await resolveElement(target, tabId, locator);
     await validateElementReference(target, element);
     const document = await currentDocumentIdentity(target);
-    const requested = await summarizeElement(target, tabId, element.backendNodeId, store);
+    const requested = await summarizeElement(
+      target,
+      tabId,
+      element.backendNodeId,
+      store,
+      element.reference,
+    );
     throwIfAborted(signal);
     await sendDebuggerCommand(target, "DOM.scrollIntoViewIfNeeded", {
       backendNodeId: element.backendNodeId,
@@ -210,13 +219,14 @@ export async function clickPageElement(
       action: "click",
       delivered: {
         method: "cdp",
+        accepted: true,
         requested,
         receiver,
         point: roundedPoint(point),
       },
       observed,
       ...(observed.semanticChanged ? {} : {
-        warning: "No page, focus, or target-state change was observed after the click.",
+        warning: "Chrome accepted the click input, but no observable page state change was detected. The page may have handled a no-op or an effect outside the observer.",
       }),
     };
   });
@@ -233,7 +243,13 @@ export async function typePageText(
     const selected = await resolveElement(target, tabId, locator);
     await validateElementReference(target, selected);
     const document = await currentDocumentIdentity(target);
-    const requested = await summarizeElement(target, tabId, selected.backendNodeId, store);
+    const requested = await summarizeElement(
+      target,
+      tabId,
+      selected.backendNodeId,
+      store,
+      selected.reference,
+    );
     const editable = await resolveEditableElement(target, selected);
     const beforeState = await readElementState(target, editable.backendNodeId);
     if (!beforeState.editable) {
@@ -281,6 +297,7 @@ export async function typePageText(
       action: "type",
       delivered: {
         method: "cdp",
+        accepted: true,
         requested,
         receiver,
         point: roundedPoint(point),
@@ -288,7 +305,7 @@ export async function typePageText(
       },
       observed,
       ...(afterState?.valueLength === beforeState.valueLength ? {
-        warning: "The editable value length did not change after text input.",
+        warning: "Chrome accepted the text input, but the editable value length did not change. Replacing a selection with equal-length text can produce this result.",
       } : {}),
     };
   });
@@ -329,6 +346,7 @@ export async function sendPageKey(
       action: "key",
       delivered: {
         method: "cdp",
+        accepted: true,
         key: key.key,
         code: key.code,
         modifiers: key.modifierNames,
@@ -336,7 +354,7 @@ export async function sendPageKey(
       },
       observed,
       ...(observed.semanticChanged ? {} : {
-        warning: "No page, focus, or target-state change was observed after the key input.",
+        warning: "Chrome accepted the key input for the reported receiver, but no observable page state change was detected. The page may have handled a no-op or an effect outside the observer.",
       }),
     };
   });
@@ -355,15 +373,51 @@ export async function scrollPage(
       : null;
     if (element) {
       await validateElementReference(target, element);
+    }
+
+    const beforeState = element
+      ? await readElementState(target, element.backendNodeId)
+      : await readPageScrollState(target);
+    if (scrollBoundaryReached(scrollTarget, beforeState)) {
+      const targetSummary = element
+        ? await summarizeElement(
+            target,
+            tabId,
+            element.backendNodeId,
+            store,
+            element.reference,
+          ).catch(() => detachedSummary(element))
+        : { role: "document", tag: "document" };
+      const position = scrollSummary(beforeState);
+      return {
+        action: "scroll",
+        delivered: {
+          method: "none",
+          accepted: false,
+          skipped: "already-at-boundary",
+          target: targetSummary,
+          events: 0,
+          delta: { x: 0, y: 0 },
+        },
+        observed: {
+          status: "no-change-detected",
+          targetAttached: true,
+          semanticChanged: false,
+          scroll: {
+            before: position,
+            after: position,
+            changed: false,
+            boundaryReached: true,
+          },
+        },
+      };
+    }
+    if (element) {
       await sendDebuggerCommand(target, "DOM.scrollIntoViewIfNeeded", {
         backendNodeId: element.backendNodeId,
       });
     }
     const document = await currentDocumentIdentity(target);
-
-    const beforeState = element
-      ? await readElementState(target, element.backendNodeId)
-      : await readPageScrollState(target);
     const point = element
       ? await clickablePoint(target, element.backendNodeId)
       : await viewportCenter(target);
@@ -372,19 +426,38 @@ export async function scrollPage(
       const receiver = await summarizeElement(target, tabId, receiverId, store);
       throw new Error(`Scroll target is occluded by ${formatElement(receiver)}`);
     }
-    const deltas = scrollDeltas(scrollTarget, beforeState);
     const observation = await beginObservation(target);
     let afterObservation: ObservationPoint | null = null;
+    let aggregateDelta: InputPoint = { x: 0, y: 0 };
+    let dispatchedEvents = 0;
     try {
-      throwIfAborted(signal);
-      await sendDebuggerCommand(target, "Input.dispatchMouseEvent", {
-        type: "mouseWheel",
-        x: point.x,
-        y: point.y,
-        deltaX: deltas.x,
-        deltaY: deltas.y,
-        pointerType: "mouse",
-      });
+      let currentState: ScrollState = beforeState;
+      do {
+        throwIfAborted(signal);
+        const deltas = scrollDeltas(boundaryDirection(scrollTarget) ?? scrollTarget, currentState);
+        await dispatchWheel(target, point, deltas);
+        aggregateDelta = {
+          x: aggregateDelta.x + deltas.x,
+          y: aggregateDelta.y + deltas.y,
+        };
+        dispatchedEvents += 1;
+
+        if (!boundaryDirection(scrollTarget) || scrollBoundaryReached(scrollTarget, currentState)) {
+          break;
+        }
+        await abortableDelay(BOUNDARY_SCROLL_STEP_SETTLE_MS, signal);
+        const nextState = element
+          ? await readElementState(target, element.backendNodeId).catch(() => null)
+          : await readPageScrollState(target).catch(() => null);
+        if (!nextState || !scrollChanged(currentState, nextState)) {
+          break;
+        }
+        currentState = nextState;
+        if (scrollBoundaryReached(scrollTarget, currentState)) {
+          break;
+        }
+      } while (dispatchedEvents < MAX_BOUNDARY_SCROLL_EVENTS);
+
       await abortableDelay(ACTION_SETTLE_MS, signal);
       afterObservation = await endObservation(target, observation);
     } finally {
@@ -399,16 +472,25 @@ export async function scrollPage(
     const documentChanged = await hasDocumentChanged(target, document.documentId).catch(() => true);
     const observed = actionObservation(observation.before, afterObservation, beforeState, afterState, documentChanged);
     const changed = scrollChanged(beforeState, afterState);
+    const boundaryReached = scrollBoundaryReached(scrollTarget, afterState);
     return {
       action: "scroll",
       delivered: {
         method: "cdp",
+        accepted: true,
         target: element
-          ? await summarizeElement(target, tabId, element.backendNodeId, store).catch(() => detachedSummary(element))
+          ? await summarizeElement(
+              target,
+              tabId,
+              element.backendNodeId,
+              store,
+              element.reference,
+            ).catch(() => detachedSummary(element))
           : { role: "document", tag: "document" },
         receiver: await summarizeElement(target, tabId, receiverId, store).catch(() => ({ tag: "unknown" })),
         point: roundedPoint(point),
-        delta: { x: Math.round(deltas.x), y: Math.round(deltas.y) },
+        events: dispatchedEvents,
+        delta: { x: Math.round(aggregateDelta.x), y: Math.round(aggregateDelta.y) },
       },
       observed: {
         ...observed,
@@ -416,13 +498,60 @@ export async function scrollPage(
           before: scrollSummary(beforeState),
           after: scrollSummary(afterState),
           changed,
+          ...(boundaryReached === null ? {} : { boundaryReached }),
         },
       },
-      ...(changed ? {} : {
-        warning: "No scroll-position change was observed; the target may be at its limit or the wheel receiver may be different.",
-      }),
+      ...scrollWarning(changed, boundaryReached, scrollTarget, dispatchedEvents),
     };
   });
+}
+
+async function dispatchWheel(
+  target: chrome.debugger.DebuggerSession,
+  point: InputPoint,
+  deltas: InputPoint,
+): Promise<void> {
+  await sendDebuggerCommand(target, "Input.dispatchMouseEvent", {
+    type: "mouseWheel",
+    x: point.x,
+    y: point.y,
+    deltaX: deltas.x,
+    deltaY: deltas.y,
+    pointerType: "mouse",
+  });
+}
+
+function boundaryDirection(target: PageScrollTarget): "up" | "down" | null {
+  if (target === "top") return "up";
+  if (target === "bottom") return "down";
+  return null;
+}
+
+function scrollBoundaryReached(target: PageScrollTarget, state: ScrollState | null): boolean | null {
+  if (!state || (target !== "top" && target !== "bottom")) {
+    return null;
+  }
+  const maxY = Math.max(0, state.scrollHeight - state.clientHeight);
+  return target === "top" ? state.scrollTop <= 1 : state.scrollTop >= maxY - 1;
+}
+
+function scrollWarning(
+  changed: boolean,
+  boundaryReached: boolean | null,
+  target: PageScrollTarget,
+  events: number,
+): { warning?: string } {
+  if (boundaryReached === true || (changed && boundaryReached === null)) {
+    return {};
+  }
+  if (boundaryReached === false) {
+    return {
+      warning: `Chrome accepted ${events} wheel event(s), but the target did not reach ${String(target)}. The receiver may be different or the event limit was reached.`,
+    };
+  }
+  return {
+    warning: "Chrome accepted the wheel input, but no scroll-position change was observed. The target may be at its limit or the receiver may be different.",
+  };
 }
 
 async function withDebugger<T>(
@@ -655,13 +784,18 @@ async function summarizeElement(
   tabId: number,
   backendNodeId: number,
   store: PageReferenceStore,
+  preferredReference?: PageElementReference,
 ): Promise<ElementSummary> {
   const [element, semantic] = await Promise.all([
     describeNode(target, { backendNodeId }),
     semanticNode(target, backendNodeId).catch(() => ({ role: "", name: "", states: {} })),
   ]);
-  const ref = store.referenceFor(tabId, backendNodeId);
-  const reference = ref ? store.resolve(ref) : undefined;
+  const preferred = preferredReference?.tabId === tabId
+    && preferredReference.backendNodeId === backendNodeId
+    ? preferredReference
+    : undefined;
+  const ref = preferred?.ref ?? store.referenceFor(tabId, backendNodeId);
+  const reference = preferred ?? (ref ? store.resolve(ref) : undefined);
   return {
     ...(ref ? { ref } : {}),
     tag: element.tag,
