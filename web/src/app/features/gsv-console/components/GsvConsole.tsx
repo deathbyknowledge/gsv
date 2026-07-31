@@ -19,6 +19,7 @@ import { MachinesPage } from "../machines/MachinesPage";
 import { MessengersPage } from "../messengers/MessengersPage";
 import { ConsoleAgentPage } from "../pages/ConsoleAgentPage";
 import { ConsoleConfigPage, type ConsoleConfigDetail } from "../pages/ConsoleConfigPage";
+import { Dialog } from "../../../components/ui/Dialog";
 import { ConsoleCrewPage } from "../pages/ConsoleCrewPage";
 import { ConsoleOverviewPage, type ConsoleOverviewTarget } from "../pages/ConsoleOverviewPage";
 import { RuntimePage } from "../runtime/RuntimePage";
@@ -98,7 +99,7 @@ function listKindForSurface(surface: SettingsListSurface): ConsoleListKind {
 
 function settingsRouteLabel(route: SettingsRoute): string {
   if (route.view === "overview") {
-    return "SETTINGS";
+    return "OVERVIEW";
   }
   if (route.view === "crew") {
     return "CREW";
@@ -159,7 +160,7 @@ function libraryPageName(path: string): string {
 
 function settingsRouteTail(route: SettingsRoute): string {
   if (route.view === "overview") {
-    return "GSV · CONTROL";
+    return "";
   }
   if (route.view === "crew" || route.view === "agent") {
     return "GSV · CREW";
@@ -312,6 +313,14 @@ export function GsvConsole({
       navigateSettingsRoute({ view: "crew" });
       return;
     }
+    if (surface === "crew-instructions") {
+      navigateSettingsRoute({ view: "crew", select: "context" });
+      return;
+    }
+    if (surface === "crew-permissions") {
+      navigateSettingsRoute({ view: "crew", select: "permissions" });
+      return;
+    }
     if (surface === "tasks") {
       navigateSettingsRoute({ view: "list", kind: "tasks" });
       return;
@@ -331,7 +340,12 @@ export function GsvConsole({
     onOpenSurface?.(surface);
   };
 
-  const inNestedSettings = activeSurface === "settings" && settingsRoute.view !== "overview";
+  // The config surface (models / overrides) renders as a Dialog floating over
+  // the overview, so for the shell breadcrumb it is NOT a nested page — the
+  // trail stays at GSV → OVERVIEW and the dialog supplies its own title/back.
+  const inNestedSettings = activeSurface === "settings"
+    && settingsRoute.view !== "overview"
+    && settingsRoute.view !== "config";
   const inSettingsListDetail = activeSurface === "settings" && hasSettingsListDetail(settingsRoute);
   // Library drives its own internal route; surface its non-index views as a
   // detail crumb so the breadcrumb (and header back-arrow) own the path back to
@@ -350,7 +364,7 @@ export function GsvConsole({
     ? [
         { label: "GSV", onClick: onBackToDesktop, notLast: true },
         {
-          label: "SETTINGS",
+          label: "OVERVIEW",
           onClick: inNestedSettings ? () => guardedSettingsNavigate({ view: "overview" }) : undefined,
           notLast: inNestedSettings,
         },
@@ -366,12 +380,6 @@ export function GsvConsole({
           // the editor no longer renders its own breadcrumb.
           { label: "CREW", onClick: () => guardedSettingsNavigate({ view: "crew" }), notLast: true },
           { label: settingsRouteLabel(settingsRoute) },
-        ] : settingsRoute.view === "config" && settingsConfigDetail ? [
-          // Config detail: SETTINGS → MODELS/RUNTIME → [detail]. The parent crumb
-          // exits the detail (back to the list); the breadcrumb owns the path
-          // back, so the detail renders no in-page back button.
-          { label: settingsRouteLabel(settingsRoute), onClick: settingsConfigDetail.onExit, notLast: true },
-          { label: settingsConfigDetail.label },
         ] : settingsRoute.view === "list" && settingsRoute.kind === "library" && libraryDetail ? [
           // Library sub-view inside settings: LIBRARY (→ index) → [page/view].
           { label: shellSurfaceLabel("library"), onClick: goLibraryIndex, notLast: true },
@@ -446,7 +454,9 @@ export function GsvConsole({
       />
       <div class="gsv-console-stage">
         {activeSurface === "settings" ? (
-          settingsRoute.view === "overview" ? (
+          // The config surface renders as a Dialog over the overview (below), so
+          // the overview is the base for both views.
+          settingsRoute.view === "overview" || settingsRoute.view === "config" ? (
             <ConsoleOverviewPage
               onOpenAgent={openSettingsAgent}
               onOpenListCreate={openSettingsListCreate}
@@ -460,15 +470,10 @@ export function GsvConsole({
               initialDetailLabel: settingsRoute.detailLabel,
               onSelectionChange: (selection) => handleSettingsListSelectionChange(settingsRoute.kind, selection),
             })
-          ) : settingsRoute.view === "config" ? (
-            <ConsoleConfigPage
-              kind={settingsRoute.kind}
-              select={settingsRoute.select}
-              onClearSelect={() => navigateSettingsRoute({ view: "config", kind: settingsRoute.kind })}
-              onDetailChange={setSettingsConfigDetail}
-            />
           ) : settingsRoute.view === "crew" ? (
             <ConsoleCrewPage
+              select={settingsRoute.select}
+              onExitSection={settingsRoute.select ? backToSettingsCrew : undefined}
               onManageAgent={openSettingsAgent}
               // Route through the unsaved guard: NEW AGENT unmounts the in-body
               // defaults editor, so a dirty draft must prompt before it's dropped.
@@ -522,6 +527,41 @@ export function GsvConsole({
         ) : (
           null
         )}
+        {activeSurface === "settings" && settingsRoute.view === "config" ? (
+          // Models / overrides host the full config flow (list + create/edit
+          // details) inside one Dialog, floating over the overview. Every entry
+          // point routes here (view: "config"), so they all open this dialog.
+          // The dialog title/back derive from the config page's reported detail:
+          // no detail → the list (close only); a detail → its label + a back to
+          // the list. Backdrop click / ✕ / Escape all return to the overview.
+          <div
+            class="gsv-dialog-scrim"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                guardedSettingsNavigate({ view: "overview" });
+              }
+            }}
+          >
+            <Dialog
+              title={settingsConfigDetail
+                ? settingsConfigDetail.label
+                : settingsRoute.kind === "models" ? "MODELS" : "RUNTIME"}
+              width={880}
+              fill
+              flushBody
+              onBack={settingsConfigDetail ? settingsConfigDetail.onExit : undefined}
+              onClose={() => guardedSettingsNavigate({ view: "overview" })}
+            >
+              <ConsoleConfigPage
+                kind={settingsRoute.kind}
+                select={settingsRoute.select}
+                embedded
+                onClearSelect={() => navigateSettingsRoute({ view: "config", kind: settingsRoute.kind })}
+                onDetailChange={setSettingsConfigDetail}
+              />
+            </Dialog>
+          </div>
+        ) : null}
       </div>
     </section>
   );

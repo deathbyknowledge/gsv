@@ -128,7 +128,9 @@ export function useGsvShellState({
     return initialTab ? upsertTab(persistedTabs, initialTab) : persistedTabs;
   });
   const [activeTabKey, setActiveTabKey] = useState<string | null>(() => initialTab?.key ?? null);
-  const [manualRailCollapsed, setManualRailCollapsed] = useState(false);
+  // Default the desktop rail to its collapsed icon form; the menu button (or a
+  // divider drag) expands it on demand.
+  const [manualRailCollapsed, setManualRailCollapsed] = useState(true);
   const [selectedObjectId, setSelectedObjectId] = useState<DesktopObjectId | null>(null);
   const [pickerId, setPickerId] = useState<PickerId | null>(null);
   const [gsvOpen, setGsvOpen] = useState(false);
@@ -140,6 +142,10 @@ export function useGsvShellState({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   // Set while dragging the rail divider, so the trailing click doesn't also toggle.
   const railDraggedRef = useRef(false);
+  // The screen a newly-opened surface was launched from, so closing it returns
+  // there instead of the desktop (e.g. terminal opened from the overview closes
+  // back to the overview). Null → close falls back to the desktop.
+  const closeReturnRouteRef = useRef<ShellRoute | null>(null);
 
   useEffect(() => {
     const node = rootRef.current;
@@ -206,6 +212,7 @@ export function useGsvShellState({
     }
 
     if (route.surface === "desktop") {
+      closeReturnRouteRef.current = null;
       setActiveSurface("desktop");
       setActiveTabKey(null);
       setSelectedObjectId(null);
@@ -229,17 +236,29 @@ export function useGsvShellState({
 
   useEffect(() => {
     const onPopState = () => {
+      // Browser history navigation invalidates the "opened from" memory — the
+      // stored origin no longer reflects how we reached the current screen.
+      closeReturnRouteRef.current = null;
       activateRoute(shellRouteFromLocation(window.location), "none");
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
+  // Remember the screen we're leaving so closing the one we open returns here
+  // (shared by every cross-surface open — plain surfaces and settings routes).
+  const recordCloseOrigin = (targetSurface: ShellSurfaceId): void => {
+    const origin = activePageTab ? shellRouteForTab(activePageTab) : null;
+    closeReturnRouteRef.current = origin && origin.surface !== targetSurface ? origin : null;
+  };
+
   const openSurface = (surface: ShellSurfaceId): void => {
     if (surface === "desktop") {
       activateRoute({ surface: "desktop" });
       return;
     }
+
+    recordCloseOrigin(surface);
 
     if (surface === "settings") {
       activateRoute({ surface: "settings", settingsRoute: { view: "overview" } });
@@ -250,6 +269,7 @@ export function useGsvShellState({
   };
 
   const openSettingsRoute = (route: ShellSettingsRoute): void => {
+    recordCloseOrigin("settings");
     activateRoute({ surface: "settings", settingsRoute: route });
   };
 
@@ -325,14 +345,21 @@ export function useGsvShellState({
   };
 
   /** Close the active screen: drop it from the (now-invisible) tab stack and
-   *  return to the desktop. With the tab UI removed, a predictable "back to
-   *  home" beats jumping to some other previously-opened screen. */
+   *  return to the screen it was opened from (e.g. terminal opened from the
+   *  overview closes back to the overview), falling back to the desktop when
+   *  there is no recorded origin. */
   const closeActiveScreen = (): void => {
     if (activeTabKey) {
       const key = activeTabKey;
       setOpenTabs((current) => current.filter((tab) => tab.key !== key));
     }
-    activateRoute({ surface: "desktop" });
+    const back = closeReturnRouteRef.current;
+    closeReturnRouteRef.current = null;
+    // Guard against a stale origin that resolves to the screen being closed
+    // (e.g. reached via browser Back) — returning there would just remove and
+    // re-add the same tab. Fall back to the desktop in that case.
+    const backTab = back ? shellTabForRoute(back) : null;
+    activateRoute(backTab && backTab.key !== activeTabKey ? back! : { surface: "desktop" });
   };
 
   const openControlMenu = (): void => {

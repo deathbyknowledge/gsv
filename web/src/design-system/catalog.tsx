@@ -68,8 +68,14 @@ import chatSwipeRow from "./stories/ChatSwipeRow.story";
 import tabs from "./stories/Tabs.story";
 import popoverMenu from "./stories/PopoverMenu.story";
 import confirmModal from "./stories/ConfirmModal.story";
+import dialog from "./stories/Dialog.story";
 import agentCard from "./stories/AgentCard.story";
 import crewTile from "./stories/CrewTile.story";
+import listCard from "./stories/ListCard.story";
+import dataCard from "./stories/DataCard.story";
+import controlPanelCall from "./stories/ControlPanelCall.story";
+import shipSection from "./stories/ShipSection.story";
+import shipRoomsParked from "./stories/ShipRoomsParked.story";
 import agentEditor from "./stories/AgentEditor.story";
 import agentToolsPanel from "./stories/AgentToolsPanel.story";
 import contextSectionsEditor from "./stories/ContextSectionsEditor.story";
@@ -134,8 +140,14 @@ const STORIES: Story[] = [
   // Composite
   popoverMenu,
   confirmModal,
+  dialog,
   agentCard,
   crewTile,
+  listCard,
+  dataCard,
+  controlPanelCall,
+  shipSection,
+  shipRoomsParked,
   agentEditor,
   agentToolsPanel,
   contextSectionsEditor,

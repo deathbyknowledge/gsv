@@ -1,0 +1,63 @@
+/* ControlPanelCall — compact "open terminal" CTA, sized like the collapsed chat.
+   The terminal glyph carries the shell-tab accent glow. */
+.gsv-cpc {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 200px;
+  height: 56px;
+  padding: 0 14px;
+  border: 1px solid var(--border-raised);
+  background: var(--panel-2, #0a0820);
+  color: inherit;
+  font: inherit;
+  font-family: var(--gsv-font-mono);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.gsv-cpc[disabled] {
+  cursor: default;
+}
+
+.gsv-cpc:not([disabled]):hover {
+  border-color: var(--accent);
+  background: var(--node-bg, #100d2c);
+}
+
+/* Terminal glyph — accent colour + the shell-tab glow. */
+.gsv-cpc-glyph {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent-bright);
+  filter: drop-shadow(0 0 6px var(--accent-bright));
+}
+
+.gsv-cpc-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.gsv-cpc-title {
+  color: var(--text-title);
+  letter-spacing: 0.06em;
+}
+
+.gsv-cpc-sub {
+  color: var(--text-muted);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.gsv-cpc-chevron {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  filter: drop-shadow(0 0 3px rgba(150, 140, 255, 0.5));
+}

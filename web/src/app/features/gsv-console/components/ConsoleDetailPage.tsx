@@ -33,6 +33,9 @@ type ConsoleDetailPageProps = {
   /** Footer alignment for regular/primary actions. Defaults to the end. */
   actionsAlignment?: "center" | "end";
   blurb: string;
+  /** Hosted inside a Dialog whose title bar already names this detail: drop the
+   *  redundant title header and move the status label under the description. */
+  embedded?: boolean;
   children?: ComponentChildren;
   /** Destructive action (FORGET / REMOVE / DISCONNECT / KILL). Rendered at the
    *  bottom-left of the page footer, opposite the regular/primary `actions`
@@ -64,6 +67,7 @@ export function ConsoleDetailPage({
   blurb,
   children,
   dangerAction,
+  embedded = false,
   icon,
   onBack,
   onPrimary,
@@ -93,14 +97,18 @@ export function ConsoleDetailPage({
         </button>
       ) : null}
       {/* Row 2 — full-width page header (title + status), like the list pages.
-          Status carries its tone color + dot, matching the list rows. */}
-      <SectionHeader
-        className="gsv-console-detail-header"
-        title={title}
-        divider
-        headingLevel={2}
-        actions={statusLabel ? <StatusMeta tone={tone} label={statusLabel} /> : undefined}
-      />
+          Status carries its tone color + dot, matching the list rows. Skipped
+          when embedded: the host Dialog's title bar already names the detail,
+          and the status label moves under the description below. */}
+      {embedded ? null : (
+        <SectionHeader
+          className="gsv-console-detail-header"
+          title={title}
+          divider
+          headingLevel={2}
+          actions={statusLabel ? <StatusMeta tone={tone} label={statusLabel} /> : undefined}
+        />
+      )}
 
       {/* Row 3 — action bar: icon tile + description, with the action below.
           Back navigation lives in the breadcrumb, so there is no BACK button. */}
@@ -109,15 +117,22 @@ export function ConsoleDetailPage({
           <span class="gsv-console-detail-icon">
             <Icon name={icon} size={30} />
           </span>
-          <p class="gsv-console-detail-desc gsv-prose">
-            {descPrimary}
-            {descSecondary ? (
-              <>
-                <br />
-                {descSecondary}
-              </>
+          <div class="gsv-console-detail-bar-text">
+            <p class="gsv-console-detail-desc gsv-prose">
+              {descPrimary}
+              {descSecondary ? (
+                <>
+                  <br />
+                  {descSecondary}
+                </>
+              ) : null}
+            </p>
+            {embedded && statusLabel ? (
+              <span class="gsv-console-detail-bar-status">
+                <StatusMeta tone={tone} label={statusLabel} />
+              </span>
             ) : null}
-          </p>
+          </div>
         </div>
       </div>
 

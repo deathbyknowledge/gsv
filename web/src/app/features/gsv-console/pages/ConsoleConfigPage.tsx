@@ -97,6 +97,9 @@ type ConsoleConfigPageProps = {
   /** Reports the open detail (or null on the list) so the breadcrumb owns the
    *  path back — replaces the in-page back button. */
   onDetailChange?: (detail: ConsoleConfigDetail | null) => void;
+  /** Hosted inside a Dialog (rather than as a routed page): drops the redundant
+   *  index section header, since the dialog's own title bar supplies it. */
+  embedded?: boolean;
 };
 
 function modelSelectionFromParam(select: string | undefined): ModelSelection | null {
@@ -211,7 +214,7 @@ const GSV_TRANSPORT_TARGET_OPTION: SelectOption = {
 };
 const MODEL_PROFILE_STEP_LABELS = ["TYPE", "NAME", "CONNECT", "OPTIONS"] as const;
 
-export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange }: ConsoleConfigPageProps) {
+export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange, embedded }: ConsoleConfigPageProps) {
   const config = useConsoleConfig();
   const accounts = useConsoleAccounts();
   const targets = useConsoleTargets();
@@ -229,6 +232,7 @@ export function ConsoleConfigPage({ kind, select, onClearSelect, onDetailChange 
             kind={kind}
             targets={toolTargetsForConsoleTargets(targets.targets)}
             select={select}
+            embedded={embedded}
             onClearSelect={onClearSelect}
             onDetailChange={onDetailChange}
           />
@@ -244,6 +248,7 @@ function ConsoleSettingsPanel({
   kind,
   targets,
   select,
+  embedded,
   onClearSelect,
   onDetailChange,
 }: {
@@ -252,6 +257,7 @@ function ConsoleSettingsPanel({
   kind: ConsoleConfigKind;
   targets: readonly AgentToolTarget[];
   select?: string;
+  embedded?: boolean;
   onClearSelect?: () => void;
   onDetailChange?: (detail: ConsoleConfigDetail | null) => void;
 }) {
@@ -263,9 +269,9 @@ function ConsoleSettingsPanel({
   };
 
   if (kind === "models") {
-    return <ModelSettingsPage config={config} targets={targets} viewer={viewer} select={select} onClearSelect={onClearSelect} onDetailChange={onDetailChange} />;
+    return <ModelSettingsPage config={config} targets={targets} viewer={viewer} select={select} embedded={embedded} onClearSelect={onClearSelect} onDetailChange={onDetailChange} />;
   }
-  return <RuntimeSettingsPage config={config} targets={targets} viewer={viewer} onDetailChange={onDetailChange} />;
+  return <RuntimeSettingsPage config={config} targets={targets} viewer={viewer} embedded={embedded} onDetailChange={onDetailChange} />;
 }
 
 function ModelSettingsPage({
@@ -273,6 +279,7 @@ function ModelSettingsPage({
   targets,
   viewer,
   select,
+  embedded,
   onClearSelect,
   onDetailChange,
 }: {
@@ -280,6 +287,7 @@ function ModelSettingsPage({
   targets: readonly AgentToolTarget[];
   viewer: SettingsViewer;
   select?: string;
+  embedded?: boolean;
   onClearSelect?: () => void;
   onDetailChange?: (detail: ConsoleConfigDetail | null) => void;
 }) {
@@ -379,6 +387,7 @@ function ModelSettingsPage({
         config={config}
         editable={canEditAi}
         effectiveValues={effectiveValues}
+        embedded={embedded}
         profiles={profiles}
         scopeLabel={scopeLabel}
         selection={selection}
@@ -400,7 +409,7 @@ function ModelSettingsPage({
 
   return (
     <section class="gsv-console-settings-index">
-      <SectionHeader title="MODELS" headingLevel={2} divider />
+      {embedded ? null : <SectionHeader title="MODELS" headingLevel={2} divider />}
       <SettingsListPanel
         title="DEFAULT AGENT MODEL"
         meta={scopeLabel}
@@ -418,14 +427,6 @@ function ModelSettingsPage({
         action={{ label: "NEW MODEL", onClick: canEditAi ? () => setSelection({ kind: "new-profile" }) : undefined }}
         rows={profiles.map((profile) => profileRow(profile, () => setSelection({ kind: "profile", id: profile.id })))}
       />
-      <SettingsListPanel
-        title="TOOL MODELS"
-        meta={`${TOOL_MODEL_GROUPS.length} STACKS`}
-        emptyLabel="NO TOOL MODELS"
-        fitContent
-        headingLevel={3}
-        rows={TOOL_MODEL_GROUPS.map((group) => toolModelRow(group, effectiveValues, () => setSelection({ kind: "tool", id: group.id })))}
-      />
     </section>
   );
 }
@@ -434,6 +435,7 @@ function ModelSettingsDetail({
   config,
   editable,
   effectiveValues,
+  embedded,
   profiles,
   scopeLabel,
   selection,
@@ -450,6 +452,7 @@ function ModelSettingsDetail({
   config: readonly ConsoleConfigEntry[];
   editable: boolean;
   effectiveValues: Record<string, string>;
+  embedded?: boolean;
   profiles: readonly ConsoleModelProfile[];
   scopeLabel: string;
   selection: ModelSelection;
@@ -474,6 +477,7 @@ function ModelSettingsDetail({
   if (selection.kind === "default") {
     return (
       <ConsoleDetailPage
+        embedded={embedded}
         icon="stars"
         title="DEFAULT AGENT MODEL"
         typeLabel="GSV · MODELS"
@@ -512,6 +516,7 @@ function ModelSettingsDetail({
     const group = TOOL_MODEL_GROUPS.find((candidate) => candidate.id === selection.id) ?? TOOL_MODEL_GROUPS[0];
     return (
       <ConsoleDetailPage
+        embedded={embedded}
         icon={toolModelIcon(group.id)}
         title={group.title.toUpperCase()}
         typeLabel="GSV · TOOL MODEL"
@@ -562,6 +567,7 @@ function ModelSettingsDetail({
         />
       ) : undefined}
       actionsAlignment={isNewProfile ? "center" : undefined}
+      embedded={embedded}
       icon="stars"
       title={title}
       typeLabel="GSV · MODEL"
@@ -626,11 +632,13 @@ function RuntimeSettingsPage({
   config,
   targets,
   viewer,
+  embedded,
   onDetailChange,
 }: {
   config: readonly ConsoleConfigEntry[];
   targets: readonly AgentToolTarget[];
   viewer: SettingsViewer;
+  embedded?: boolean;
   onDetailChange?: (detail: ConsoleConfigDetail | null) => void;
 }) {
   const saveConfig = useSaveConsoleConfigEntries();
@@ -659,6 +667,7 @@ function RuntimeSettingsPage({
     if (selection.id === TOOL_APPROVAL_RUNTIME_ID) {
       return (
         <ConsoleDetailPage
+          embedded={embedded}
           icon="cog"
           title="TOOL APPROVAL"
           typeLabel="GSV · RUNTIME"
@@ -681,6 +690,7 @@ function RuntimeSettingsPage({
     const group = RUNTIME_SETTING_GROUPS.find((candidate) => candidate.id === selection.id) ?? RUNTIME_SETTING_GROUPS[0];
     return (
       <ConsoleDetailPage
+        embedded={embedded}
         icon={group.id === "shell" ? "terminal" : "cog"}
         title={group.title.toUpperCase()}
         typeLabel="GSV · RUNTIME"
@@ -706,7 +716,7 @@ function RuntimeSettingsPage({
 
   return (
     <section class="gsv-console-settings-index">
-      <SectionHeader title="RUNTIME" headingLevel={2} divider />
+      {embedded ? null : <SectionHeader title="RUNTIME" headingLevel={2} divider />}
       <SettingsListPanel
         title="TOOL APPROVAL"
         meta={canEditRuntime ? "SYSTEM FALLBACK" : "ROOT REQUIRED"}

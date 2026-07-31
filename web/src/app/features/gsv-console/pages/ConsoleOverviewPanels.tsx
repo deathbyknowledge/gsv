@@ -1,22 +1,25 @@
-import type { ComponentChildren, JSX } from "preact";
-import { AddAction } from "../../../components/ui/AddAction";
 import { AsciiPlanet } from "../../../components/ui/AsciiPlanet";
-import { CrewAddTile, CrewTile } from "../../../components/ui/CrewTile";
-import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
+import { ControlPanelCall } from "../../../components/ui/ControlPanelCall";
+import { DataCard, type DataCardRow } from "../../../components/ui/DataCard";
+import { ListCard, type ListCardRow } from "../../../components/ui/ListCard";
 import { OBJECT_GLYPH_ICON } from "../../../components/ui/objectGlyph";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
-import { StatusDot, type StatusTone } from "../../../components/ui/StatusDot";
-import { Surface } from "../../../components/ui/Surface";
+import type { StatusTone } from "../../../components/ui/StatusDot";
 import type { TagTone } from "../../../components/ui/Tag";
 import {
-  RUNTIME_SETTING_GROUPS,
-  TOOL_MODEL_GROUPS,
   configValueForKey,
   effectiveAiValuesForViewer,
   modelDisplayName,
   modelProfilesForConfig,
   viewerAccountForSettings,
 } from "../domain/consoleSettings";
+import {
+  type AgentApprovalAction,
+  behaviorForAccount,
+  parseApprovalPolicy,
+} from "../domain/consoleAgentBehavior";
+import { overrideConfigCount } from "../domain/consoleAi";
+import { useConsoleAgentContext } from "../hooks/useConsoleData";
 import type { ConsoleListKind } from "../domain/consoleListTypes";
 import {
   avatarForAccount,
@@ -45,6 +48,7 @@ import {
   iconForAdapterName,
   messengerFamilies,
 } from "../messengers/messengerPresentation";
+import { iconForTarget } from "../machines/machinePresentation";
 
 type OverviewRow = {
   id: string;
@@ -65,32 +69,16 @@ type CrewCard = {
   name: string;
   meta: string;
   imageSrc: string;
-  cover: boolean;
   tone: StatusTone;
   statusLabel: string;
 };
 
 type OverviewSurface = Exclude<ShellSurfaceId, "desktop">;
-export type ConsoleOverviewTarget = OverviewSurface | "models" | "model-default" | "new-agent" | "overrides" | "tasks";
+export type ConsoleOverviewTarget = OverviewSurface | "models" | "model-default" | "new-agent" | "overrides" | "crew-instructions" | "crew-permissions" | "tasks";
 export type OpenSurface = (surface: ConsoleOverviewTarget) => void;
 export type OpenAgent = (accountUid: number) => void;
 export type OpenListDetail = (kind: ConsoleListKind, detailId: string, detailLabel?: string) => void;
 export type OpenListCreate = (kind: ConsoleListKind) => void;
-
-const DASHBOARD_ROW_LIMIT = 5;
-const DEEP_CELL_ROW_LIMIT = 6;
-const OVERVIEW_ROW_STYLE: JSX.CSSProperties = {
-  minHeight: "44px",
-  padding: "13px 16px",
-};
-const OVERVIEW_STATE_ROW_STYLE: JSX.CSSProperties = {
-  minHeight: "55px",
-  padding: "15px 16px",
-};
-
-function listRowStatus(tone: StatusTone): ListRowStatus {
-  return tone;
-}
 
 function isRunningProcess(process: ConsoleProcess): boolean {
   return process.state === "running" || process.activeRunId !== null;
@@ -112,9 +100,27 @@ function clampLabel(value: string, fallback: string): string {
   return trimmed.length > 0 ? trimmed : fallback;
 }
 
+/** OverviewRow → the ListCard row model, wiring an optional click target. */
+function toListCardRow(row: OverviewRow, onClick?: () => void): ListCardRow {
+  return {
+    id: row.id,
+    label: row.label,
+    sub: row.meta,
+    icon: row.icon,
+    status: row.tone,
+    statusLabel: row.statusLabel,
+    tag: row.tag?.label,
+    tagTone: row.tag?.tone,
+    onClick,
+  };
+}
+
 function targetRow(target: ConsoleTarget): OverviewRow {
   return {
     id: target.deviceId,
+    // computer glyph for native mac / windows / linux; chrome doticon for
+    // browser targets (iconForTarget keys off target.kind).
+    icon: iconForTarget(target),
     label: clampLabel(target.label, target.deviceId),
     tone: target.online ? "online" : "idle",
     statusLabel: target.online ? "ONLINE" : "IDLE",
@@ -154,22 +160,24 @@ function integrationRow(server: ConsoleMcpServer): OverviewRow {
 function accountStatus(account: ConsoleAccount, processes: readonly ConsoleProcess[]): Pick<CrewCard, "meta" | "statusLabel" | "tone"> {
   const ownedProcesses = processes.filter((process) => process.uid === account.uid || process.username === account.username);
   const running = ownedProcesses.some(isRunningProcess);
-  const queued = ownedProcesses.some(isQueuedProcess);
+  const queuedCount = ownedProcesses.filter(isQueuedProcess).length;
   const unknown = ownedProcesses.some((process) => process.state === "unknown");
+  const openCount = ownedProcesses.length;
 
-  if (queued) {
-    return { meta: "queued", statusLabel: "QUEUED", tone: "update" };
+  if (queuedCount > 0) {
+    return { meta: `${queuedCount} queued`, statusLabel: "QUEUED", tone: "update" };
   }
   if (running) {
-    return { meta: "running", statusLabel: "RUNNING", tone: "live" };
+    const openLabel = openCount === 1 ? "1 open task" : `${openCount} open tasks`;
+    return { meta: openLabel, statusLabel: "RUNNING", tone: "live" };
   }
   if (unknown) {
     return { meta: "needs review", statusLabel: "UNKNOWN", tone: "warn" };
   }
   return {
-    meta: account.runnable ? "runnable" : account.relation,
+    meta: account.runnable ? "idle" : account.relation,
     statusLabel: account.runnable ? "IDLE" : "ACCOUNT",
-    tone: account.runnable ? "idle" : "idle",
+    tone: "idle",
   };
 }
 
@@ -178,12 +186,11 @@ function crewCards(
   processes: readonly ConsoleProcess[],
   config: readonly ConsoleConfigEntry[],
 ): CrewCard[] {
-  const ordered = orderedCrewAccounts(accounts).filter(isConsoleAgentAccount).slice(0, 3);
+  const ordered = orderedCrewAccounts(accounts).filter(isConsoleAgentAccount);
   return ordered.map((account) => ({
     id: String(account.uid),
     accountUid: account.uid,
     imageSrc: avatarForAccount(account, config, accounts),
-    cover: true,
     name: account.displayName,
     ...accountStatus(account, processes),
   }));
@@ -214,10 +221,6 @@ function formatTokenLabel(value: string): string {
     .join(" ") || "Unknown";
 }
 
-function rowLimit<T>(rows: readonly T[], limit = DASHBOARD_ROW_LIMIT): readonly T[] {
-  return rows.slice(0, limit);
-}
-
 function processPriority(process: ConsoleProcess): number {
   if (process.state === "running") return 0;
   if (isQueuedProcess(process)) return 1;
@@ -233,87 +236,6 @@ function sortProcessesForOverview(processes: readonly ConsoleProcess[]): Console
   );
 }
 
-function shipInventoryLabel(data: ConsoleOverviewData): string {
-  if (data.targets.length > 0) {
-    const online = data.targets.filter((target) => target.online).length;
-    return `${online}/${data.targets.length} TARGETS`;
-  }
-  if (data.processes.length > 0) {
-    return `${data.processes.length} ${data.processes.length === 1 ? "PROCESS" : "PROCESSES"}`;
-  }
-  if (data.accounts.length > 0) {
-    const runnable = data.accounts.filter((account) => account.runnable).length;
-    return `${runnable}/${data.accounts.length} CREW`;
-  }
-  return "NO INVENTORY";
-}
-
-function MiniHeading({
-  title,
-  meta,
-  metaWord,
-  onClick,
-  showChevron = Boolean(onClick),
-}: {
-  title: string;
-  meta?: string;
-  metaWord?: string;
-  onClick?: () => void;
-  showChevron?: boolean;
-}) {
-  return (
-    <SectionHeader
-      chevron={showChevron}
-      className="gsv-settings-mini-heading"
-      density="compact"
-      divider
-      meta={meta}
-      metaWord={metaWord}
-      onClick={onClick}
-      title={title}
-    />
-  );
-}
-
-function MiniRow({ row, showIcon = true, onClick }: { row: OverviewRow; showIcon?: boolean; onClick?: () => void }) {
-  const hasIcon = showIcon && Boolean(row.icon);
-
-  return (
-    <ListRow
-      chevron={Boolean(onClick)}
-      className="gsv-settings-mini-row"
-      icon={hasIcon ? row.icon : undefined}
-      iconTitle={row.label}
-      label={row.label}
-      onClick={onClick}
-      status={listRowStatus(row.tone)}
-      statusDotPlacement={hasIcon ? "trailing" : "leading"}
-      statusLabel={row.statusLabel}
-      style={OVERVIEW_ROW_STYLE}
-      sub={row.meta}
-      tag={row.tag?.label}
-      tagTone={row.tag?.tone}
-    />
-  );
-}
-
-function EmptyRow({ label }: { label: string }) {
-  return (
-    <div class="gsv-settings-empty-row gsv-sublabel">
-      <StatusDot tone="idle" size={7} />
-      <span>{label}</span>
-    </div>
-  );
-}
-
-function AddRow({ label, onClick }: { label: string; onClick?: () => void }) {
-  return (
-    <div class="gsv-settings-add-action">
-      <AddAction label={label} onClick={onClick} variant="row" />
-    </div>
-  );
-}
-
 /** Model name without the trailing parameter-size tokens (e.g. "120B", "A12B",
  *  "8x7B", "70M"). Pure version numbers like the "3" in "Nemotron 3" are kept. */
 function modelCoreName(value: string): string {
@@ -326,44 +248,10 @@ function modelCoreName(value: string): string {
   return kept.join(" ") || full;
 }
 
-function modelValueForGroup(values: Record<string, string>, groupId: string): string {
-  const group = TOOL_MODEL_GROUPS.find((candidate) => candidate.id === groupId);
-  const modelField = group?.fields.find((field) => field.key.endsWith("/model"));
-  return modelField ? values[modelField.key] ?? "" : "";
-}
-
-function overviewModelRows(
-  values: Record<string, string>,
-  otherConfigured: number,
-  otherTotal: number,
-  profileCount: number,
-): OverviewRow[] {
-  const agentModel = values["config/ai/model"] ?? "";
-  const provider = (values["config/ai/provider"] ?? "").trim();
-  return [
-    {
-      id: "default-agent-model",
-      icon: "stars",
-      // Inverted: the model name is the primary (white) label, the provider name
-      // is the dim (blue) sub beneath it.
-      label: modelCoreName(agentModel) || "Not configured",
-      meta: provider ? formatTokenLabel(provider) : "Default Model",
-      tone: agentModel ? "online" : "idle",
-      statusLabel: agentModel ? "DEFAULT" : "EMPTY",
-    },
-    {
-      // Collapsed: "Other Models" with the configured count on the right and the
-      // saved model count as the dim sub line.
-      id: "other-models",
-      icon: "stars",
-      label: "Other Models",
-      meta: profileCount === 0
-        ? "No saved models"
-        : `${profileCount} saved model${profileCount === 1 ? "" : "s"}`,
-      tone: otherConfigured > 0 ? "online" : "idle",
-      statusLabel: `${otherConfigured}/${otherTotal}`,
-    },
-  ];
+function permissionLabel(permission: AgentApprovalAction): string {
+  if (permission === "auto") return "ALWAYS ALLOW";
+  if (permission === "deny") return "ALWAYS DENY";
+  return "ASK FIRST";
 }
 
 function processOverviewRow(process: ConsoleProcess): OverviewRow {
@@ -377,108 +265,123 @@ function processOverviewRow(process: ConsoleProcess): OverviewRow {
   };
 }
 
-function SplitCells({
-  className = "",
-  left,
-  right,
-}: {
-  className?: string;
-  left: ComponentChildren;
-  right: ComponentChildren;
-}) {
-  return (
-    <div class={`gsv-settings-split${className ? ` ${className}` : ""}`}>
-      <div>{left}</div>
-      <div>{right}</div>
-    </div>
-  );
-}
+// ---------------------------------------------------------------------------
+// SPECS + SETTINGS — Data display cards
+// ---------------------------------------------------------------------------
 
-function ActionSectionHeader({
-  meta,
-  onClick,
-  title,
-}: {
-  meta?: string;
-  onClick?: () => void;
-  title: string;
-}) {
+function SpecsCard({ config }: { config: readonly ConsoleConfigEntry[] }) {
+  const instanceName = configValueForKey(config, "config/server/name") || "gsv";
+  const version = configValueForKey(config, "config/server/version");
+  const timezone = configValueForKey(config, "config/server/timezone") || "UTC";
+  const versionValue = version ? `${instanceName} v${version}` : instanceName;
+
   return (
-    <SectionHeader
-      chevron={Boolean(onClick)}
-      className="gsv-settings-action-header"
-      divider
-      meta={meta}
-      onClick={onClick}
-      title={title}
+    <DataCard
+      className="gsv-settings-datacard"
+      variant="white"
+      collapse={{ id: "specs", at: "tablet" }}
+      title="SPECS"
+      rows={[
+        { label: "CURRENT VERSION", value: versionValue },
+        { label: "TIMEZONE", value: timezone.toUpperCase() },
+      ]}
     />
   );
 }
 
-function ShipPanel({
+function SettingsCard({
+  accounts,
   config,
-  data,
   onOpenSurface,
 }: {
+  accounts: readonly ConsoleAccount[];
   config: readonly ConsoleConfigEntry[];
-  data: ConsoleOverviewData;
   onOpenSurface?: OpenSurface;
 }) {
-  const runtimeFields = RUNTIME_SETTING_GROUPS.flatMap((group) => group.fields);
-  const configured = runtimeFields.filter((field) =>
-    field.kind !== "readonly" && configValueForKey(config, field.key).trim().length > 0
-  ).length;
-  const networkEnabled = configValueForKey(config, "config/shell/network_enabled") === "true";
-  const instanceName = configValueForKey(config, "config/server/name") || "gsv";
-  const timezone = configValueForKey(config, "config/server/timezone") || "UTC";
+  const viewer = viewerAccountForSettings(accounts);
+  const modelValues = effectiveAiValuesForViewer(config, viewer?.uid);
+  const profiles = modelProfilesForConfig(config, viewer?.uid);
+  const chatModel = modelCoreName(modelValues["config/ai/model"] ?? "") || "Not configured";
+  const savedModels = `${profiles.length} saved model${profiles.length === 1 ? "" : "s"}`;
+  const behavior = viewer ? behaviorForAccount(config, viewer.uid, viewer.uid) : null;
+  const permission = behavior?.permission ?? "ask";
+  // AGENT PERMISSIONS counts the saved approval-policy rules (owned by the CREW
+  // permissions editor); RUNTIME counts the config-level overrides (owned by the
+  // overrides config surface) — two distinct things, each with its own row + CTA.
+  const permissionRules = behavior ? parseApprovalPolicy(behavior.approval).rules.length : 0;
+  const runtimeOverrides = overrideConfigCount(config);
+
+  // Real global-instruction state (context.d files), mirroring CrewDefaultsPanel
+  // — never the misleading hardcoded "UNDEFINED". Query self-disables with no
+  // viewer / while loading, in which case we show a neutral placeholder.
+  const context = useConsoleAgentContext(viewer?.username ?? "");
+  const contextFilesCount = context.resource.isLoading || context.resource.isUnavailable || context.resource.isError
+    ? null
+    : context.files.length;
+  const instructionsValue = contextFilesCount == null
+    ? "—"
+    : `${contextFilesCount} FILE${contextFilesCount === 1 ? "" : "S"}`;
+
+  const openModels = onOpenSurface ? () => onOpenSurface("models") : undefined;
+  const openCrewPermissions = onOpenSurface ? () => onOpenSurface("crew-permissions") : undefined;
+  const openCrewInstructions = onOpenSurface ? () => onOpenSurface("crew-instructions") : undefined;
+  const openOverrides = onOpenSurface ? () => onOpenSurface("overrides") : undefined;
+
+  const rows: DataCardRow[] = [
+    { label: "CHAT MODEL", value: chatModel, description: savedModels, linkLabel: "manage", onLink: openModels },
+    {
+      label: "AGENT PERMISSIONS",
+      value: permissionLabel(permission),
+      description: `${permissionRules} rule${permissionRules === 1 ? "" : "s"}`,
+      linkLabel: "manage",
+      onLink: openCrewPermissions,
+    },
+    // Instructions live on the CREW page (GLOBAL INSTRUCTIONS / context.d), so
+    // the CTA opens there directly — an "elsewhere" jump, not an in-place edit.
+    { label: "AGENT INSTRUCTIONS", value: instructionsValue, linkLabel: "edit files", linkExternal: true, onLink: openCrewInstructions },
+    // System / runtime config (tool-approval fallback, network defaults, server
+    // runtime) — its own entry point to the overrides config surface.
+    {
+      label: "RUNTIME",
+      value: runtimeOverrides === 0 ? "DEFAULTS" : `${runtimeOverrides} OVERRIDE${runtimeOverrides === 1 ? "" : "S"}`,
+      linkLabel: "manage",
+      onLink: openOverrides,
+    },
+  ];
 
   return (
-    <section class="gsv-settings-block gsv-settings-ship-block">
-      <SectionHeader title="THE SHIP" divider />
-      <div class="gsv-settings-ship-visual">
-        <div class="gsv-settings-ship-orbit">
-          <AsciiPlanet variant="moon" formDuration={3.4} label="GSV ship scan" />
-        </div>
-        <span class="gsv-settings-scan gsv-sublabel">{shipInventoryLabel(data)}</span>
-        <span class="gsv-settings-ship-id gsv-sublabel">GSV</span>
-      </div>
-      <SplitCells
-        left={(
-          <div class="gsv-settings-mini-cell">
-            <MiniHeading title="INSTANCE" />
-            <ListRow
-              label={instanceName}
-              status="none"
-              style={OVERVIEW_STATE_ROW_STYLE}
-              tag={timezone}
-              tagTone="info"
-            />
-          </div>
-        )}
-        right={(
-          <div class="gsv-settings-mini-cell">
-            <MiniHeading
-              title="RUNTIME"
-              onClick={onOpenSurface ? () => onOpenSurface("overrides") : undefined}
-            />
-            <ListRow
-              chevron={Boolean(onOpenSurface)}
-              className="gsv-settings-overrides-state"
-              label={`${configured} SETTINGS`}
-              onClick={onOpenSurface ? () => onOpenSurface("overrides") : undefined}
-              status="none"
-              style={OVERVIEW_STATE_ROW_STYLE}
-              tag={networkEnabled ? "NETWORK ON" : "NETWORK OFF"}
-              tagTone={networkEnabled ? "online" : "idle"}
-            />
-          </div>
-        )}
-      />
-    </section>
+    <DataCard
+      className="gsv-settings-datacard"
+      variant="white"
+      collapse={{ id: "settings", at: "tablet" }}
+      title="SETTINGS"
+      rows={rows}
+    />
   );
 }
 
-function CrewPanel({
+// ---------------------------------------------------------------------------
+// SHIP STAGE (ascii moon + control panel) — labels stripped
+// ---------------------------------------------------------------------------
+
+function ShipStage({ onOpenTerminal }: { onOpenTerminal?: () => void }) {
+  return (
+    <div class="gsv-settings-ship-visual">
+      <div class="gsv-settings-ship-orbit">
+        <AsciiPlanet variant="moon" formDuration={3.4} label="GSV ship" />
+      </div>
+      <div class="gsv-settings-ship-controlpanel">
+        <ControlPanelCall onOpen={onOpenTerminal} />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CREW + TASKS list cards
+// ---------------------------------------------------------------------------
+
+function CrewListCard({
   accounts,
   config,
   onOpenAgent,
@@ -492,51 +395,41 @@ function CrewPanel({
   processes: readonly ConsoleProcess[];
 }) {
   const cards = crewCards(accounts, processes, config);
-  const agentCount = accounts.filter(isConsoleAgentAccount).length;
+  const agentCount = cards.length;
   const crewMeta = `${agentCount} AGENT${agentCount === 1 ? "" : "S"}`;
+  const openCrew = onOpenSurface ? () => onOpenSurface("crew") : undefined;
+  const rows: ListCardRow[] = cards.map((card) => ({
+    id: card.id,
+    label: card.name,
+    sub: card.meta,
+    avatarSrc: card.imageSrc,
+    status: card.tone,
+    statusLabel: card.statusLabel,
+    onClick: onOpenAgent ? () => onOpenAgent(card.accountUid) : openCrew,
+  }));
 
   return (
-    <section class="gsv-settings-block gsv-settings-crew-block">
-      <ActionSectionHeader
-        title="CREW"
-        meta={crewMeta}
-        onClick={onOpenSurface ? () => onOpenSurface("crew") : undefined}
-      />
-      <div class="gsv-settings-crew-grid">
-        {cards.length === 0 ? <EmptyRow label="NO CREW ACCOUNTS" /> : cards.map((card) => (
-          <CrewTile
-            cover={card.cover}
-            imageSrc={card.imageSrc}
-            key={card.id}
-            name={card.name}
-            onClick={onOpenAgent
-              ? () => onOpenAgent(card.accountUid)
-              : onOpenSurface
-                ? () => onOpenSurface("crew")
-                : undefined}
-            statusLabel={card.statusLabel}
-            tone={card.tone}
-          />
-        ))}
-        <CrewAddTile
-          label="NEW AGENT"
-          onClick={onOpenSurface ? () => onOpenSurface("new-agent") : undefined}
-        />
-      </div>
-    </section>
+    <ListCard
+      className="gsv-settings-listcard"
+      collapse={{ id: "crew", at: "mobile" }}
+      title="CREW"
+      meta={crewMeta}
+      onOpen={openCrew}
+      rows={rows}
+      emptyLabel="NO CREW ACCOUNTS"
+      addLabel="NEW AGENT"
+      onAdd={onOpenSurface ? () => onOpenSurface("new-agent") : undefined}
+      onViewAll={openCrew}
+    />
   );
 }
 
-function ModelsTasksPanel({
-  accounts,
-  config,
+function TasksListCard({
   counts,
   onOpenListDetail,
   onOpenSurface,
   processes,
 }: {
-  accounts: readonly ConsoleAccount[];
-  config: readonly ConsoleConfigEntry[];
   counts: ConsoleOverviewCounts | null;
   onOpenListDetail?: OpenListDetail;
   onOpenSurface?: OpenSurface;
@@ -545,25 +438,12 @@ function ModelsTasksPanel({
   const running = counts?.activeProcesses ?? processes.filter(isRunningProcess).length;
   const queued = counts?.queuedProcesses ?? processes.filter(isQueuedProcess).length;
   const errored = processes.filter((process) => process.state === "unknown").length;
-  const viewer = viewerAccountForSettings(accounts);
-  const modelValues = effectiveAiValuesForViewer(config, viewer?.uid);
-  const profiles = modelProfilesForConfig(config, viewer?.uid);
-  const defaultModelSet = (modelValues["config/ai/model"] ?? "").trim().length > 0;
-  const otherModelsTotal = TOOL_MODEL_GROUPS.length;
-  const otherModelsConfigured = TOOL_MODEL_GROUPS.filter(
-    (group) => modelValueForGroup(modelValues, group.id).trim().length > 0,
-  ).length;
-  const modelRows = overviewModelRows(modelValues, otherModelsConfigured, otherModelsTotal, profiles.length);
-  const configuredModels = (defaultModelSet ? 1 : 0) + otherModelsConfigured;
-  const totalModels = 1 + otherModelsTotal;
-  const visibleProcesses = rowLimit(sortProcessesForOverview(processes), DEEP_CELL_ROW_LIMIT);
-  const openModels = onOpenSurface ? () => onOpenSurface("models") : undefined;
-  const openDefaultModel = onOpenSurface ? () => onOpenSurface("model-default") : undefined;
   const openTasks = onOpenSurface ? () => onOpenSurface("tasks") : undefined;
-  const openTaskDetail = (process: ConsoleProcess) => (
-    onOpenListDetail
-      ? () => onOpenListDetail("tasks", process.pid, process.label)
-      : openTasks
+  const rows: ListCardRow[] = sortProcessesForOverview(processes).map((process) =>
+    toListCardRow(
+      processOverviewRow(process),
+      onOpenListDetail ? () => onOpenListDetail("tasks", process.pid, process.label) : openTasks,
+    ),
   );
   const taskMeta = processes.length === 0
     ? "NO TASKS"
@@ -575,48 +455,22 @@ function ModelsTasksPanel({
       ]);
 
   return (
-    <SplitCells
-      className="gsv-settings-model-task-split"
-      left={(
-        <Surface class="gsv-settings-deep-cell" flush>
-          <MiniHeading
-            title="MODELS"
-            meta={`${configuredModels}/${totalModels}`}
-            metaWord="CONFIGURED"
-            onClick={openModels}
-          />
-          <div class="gsv-settings-overview-list">
-            {rowLimit(modelRows, DEEP_CELL_ROW_LIMIT).map((row) => (
-              <MiniRow
-                key={row.id}
-                row={row}
-                onClick={row.id === "default-agent-model" ? openDefaultModel : openModels}
-              />
-            ))}
-          </div>
-        </Surface>
-      )}
-      right={(
-        <Surface class="gsv-settings-deep-cell" flush>
-          <MiniHeading
-            title="TASKS"
-            meta={taskMeta}
-            onClick={openTasks}
-          />
-          <div class="gsv-settings-overview-list">
-            {visibleProcesses.length === 0 ? <EmptyRow label="NO TASKS" /> : visibleProcesses.map((process) => (
-              <MiniRow
-                key={process.pid}
-                row={processOverviewRow(process)}
-                onClick={openTaskDetail(process)}
-              />
-            ))}
-          </div>
-        </Surface>
-      )}
+    <ListCard
+      className="gsv-settings-listcard"
+      collapse={{ id: "tasks", at: "mobile" }}
+      title="TASKS"
+      meta={taskMeta}
+      onOpen={openTasks}
+      rows={rows}
+      emptyLabel="NO TASKS"
+      onViewAll={openTasks}
     />
   );
 }
+
+// ---------------------------------------------------------------------------
+// FLEET (machines / messengers / integrations)
+// ---------------------------------------------------------------------------
 
 function FleetPanel({
   adapters,
@@ -635,60 +489,73 @@ function FleetPanel({
   onOpenSurface?: OpenSurface;
   targets: readonly ConsoleTarget[];
 }) {
-  const targetRows = sortTargets(targets).map(targetRow);
-  const adapterRows = messengerFamilies(adapters, adapterInventory).map(familyRow);
-  const integrationRows = sortMcpServers(integrations).map(integrationRow);
   const openList = (surface: ConsoleOverviewTarget) => onOpenSurface ? () => onOpenSurface(surface) : undefined;
-  const openDetail = (kind: ConsoleListKind, row: OverviewRow, surface: ConsoleOverviewTarget) => (
+  const rowClick = (kind: ConsoleListKind, row: OverviewRow, surface: ConsoleOverviewTarget) => (
     onOpenListDetail ? () => onOpenListDetail(kind, row.id, row.label) : openList(surface)
   );
-  const openCreate = (kind: ConsoleListKind, surface: ConsoleOverviewTarget) => (
+  const addClick = (kind: ConsoleListKind, surface: ConsoleOverviewTarget) => (
     onOpenListCreate ? () => onOpenListCreate(kind) : openList(surface)
   );
 
+  const machineRows = sortTargets(targets).map((target) => {
+    const row = targetRow(target);
+    return toListCardRow(row, rowClick("machines", row, "machines"));
+  });
+  const messengerRows = messengerFamilies(adapters, adapterInventory).map((family) => {
+    const row = familyRow(family);
+    return toListCardRow(row, rowClick("messengers", row, "messengers"));
+  });
+  const integrationRows = sortMcpServers(integrations).map((server) => {
+    const row = integrationRow(server);
+    return toListCardRow(row, rowClick("integrations", row, "integrations"));
+  });
+
   return (
-    <section class="gsv-settings-block gsv-settings-fleet-block">
+    <section class="gsv-settings-fleet-block">
       {/* FLEET is a grouping label (machines / messengers / integrations) with
           no page of its own — not clickable. */}
-      <ActionSectionHeader title="FLEET" />
-      <MiniHeading
+      <SectionHeader title="FLEET" className="gsv-settings-action-header" divider />
+      <ListCard
+        className="gsv-settings-fleet-section"
+        collapse={{ id: "machines", at: "mobile" }}
         title="MACHINES"
-        onClick={openList("machines")}
+        meta={String(machineRows.length)}
+        onOpen={openList("machines")}
+        rows={machineRows}
+        emptyLabel="NO MACHINES"
+        addLabel="NEW MACHINE"
+        onAdd={addClick("machines", "machines")}
+        footer={false}
       />
-      <div class="gsv-settings-section-rows">
-        {targetRows.length === 0 ? <EmptyRow label="NO MACHINES" /> : rowLimit(targetRows, 3).map((row) => (
-          <MiniRow key={row.id} row={row} showIcon={false} onClick={openDetail("machines", row, "machines")} />
-        ))}
-        <AddRow label="CONNECT NEW MACHINE" onClick={openCreate("machines", "machines")} />
-      </div>
-      <SplitCells
-        left={(
-          <div class="gsv-settings-mini-cell">
-            <MiniHeading
-              title="MESSENGERS"
-              onClick={openList("messengers")}
-            />
-            {rowLimit(adapterRows, 3).map((row) => (
-              <MiniRow key={row.id} row={row} onClick={openDetail("messengers", row, "messengers")} />
-            ))}
-          </div>
-        )}
-        right={(
-          <div class="gsv-settings-mini-cell">
-            <MiniHeading
-              title="INTEGRATIONS"
-              onClick={openList("integrations")}
-            />
-            {integrationRows.length === 0 ? <EmptyRow label="NO INTEGRATIONS" /> : rowLimit(integrationRows, 2).map((row) => (
-              <MiniRow key={row.id} row={row} onClick={openDetail("integrations", row, "integrations")} />
-            ))}
-            <AddRow label="NEW INTEGRATION" onClick={openCreate("integrations", "integrations")} />
-          </div>
-        )}
+      <ListCard
+        className="gsv-settings-fleet-section"
+        collapse={{ id: "messengers", at: "mobile" }}
+        title="MESSENGERS"
+        meta={String(messengerRows.length)}
+        onOpen={openList("messengers")}
+        rows={messengerRows}
+        emptyLabel="NO MESSENGERS"
+        footer={false}
+      />
+      <ListCard
+        className="gsv-settings-fleet-section"
+        collapse={{ id: "integrations", at: "mobile" }}
+        title="INTEGRATIONS"
+        meta={String(integrationRows.length)}
+        onOpen={openList("integrations")}
+        rows={integrationRows}
+        emptyLabel="NO INTEGRATIONS"
+        addLabel="NEW INTEGRATION"
+        onAdd={addClick("integrations", "integrations")}
+        footer={false}
       />
     </section>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
 
 export function SettingsOverviewDashboard({
   counts,
@@ -705,42 +572,53 @@ export function SettingsOverviewDashboard({
   onOpenListDetail?: OpenListDetail;
   onOpenSurface?: OpenSurface;
 }) {
+  const openTerminal = onOpenSurface ? () => onOpenSurface("terminal") : undefined;
+
   return (
     <div class="gsv-settings-overview-frame">
-      <div class="gsv-settings-overview" aria-label="GSV settings overview">
-        <div class="gsv-settings-left">
-        <ShipPanel
-          config={data.config}
-          data={data}
-          onOpenSurface={onOpenSurface}
-        />
-        <CrewPanel
-          accounts={data.accounts}
-          config={data.config}
-          onOpenAgent={onOpenAgent}
-          onOpenSurface={onOpenSurface}
-          processes={data.processes}
-        />
-        <ModelsTasksPanel
-          accounts={data.accounts}
-          config={data.config}
-          counts={counts}
-          onOpenListDetail={onOpenListDetail}
-          onOpenSurface={onOpenSurface}
-          processes={data.processes}
-        />
-      </div>
-      <div class="gsv-settings-right">
-        <FleetPanel
-          adapters={data.adapters}
-          adapterInventory={data.adapterInventory}
-          integrations={data.mcpServers}
-          onOpenListCreate={onOpenListCreate}
-          onOpenListDetail={onOpenListDetail}
-          onOpenSurface={onOpenSurface}
-          targets={data.targets}
-        />
-      </div>
+      <div class="gsv-settings-overview" aria-label="GSV overview">
+        <section class="gsv-settings-ship-block">
+          <SectionHeader title="THE SHIP" className="gsv-settings-action-header" divider />
+          <div class="gsv-settings-ship-body">
+            <div class="gsv-settings-ship-rail">
+              <SpecsCard config={data.config} />
+              <SettingsCard
+                accounts={data.accounts}
+                config={data.config}
+                onOpenSurface={onOpenSurface}
+              />
+            </div>
+            <ShipStage onOpenTerminal={openTerminal} />
+            {/* FILES / LIBRARY / REPOS "ship rooms" section parked in the design
+                catalog ("Ship rooms (parked)") until the real wiring lands. */}
+            <div class="gsv-settings-ship-lists">
+              <CrewListCard
+                accounts={data.accounts}
+                config={data.config}
+                onOpenAgent={onOpenAgent}
+                onOpenSurface={onOpenSurface}
+                processes={data.processes}
+              />
+              <TasksListCard
+                counts={counts}
+                onOpenListDetail={onOpenListDetail}
+                onOpenSurface={onOpenSurface}
+                processes={data.processes}
+              />
+            </div>
+          </div>
+        </section>
+        <div class="gsv-settings-fleet-column">
+          <FleetPanel
+            adapters={data.adapters}
+            adapterInventory={data.adapterInventory}
+            integrations={data.mcpServers}
+            onOpenListCreate={onOpenListCreate}
+            onOpenListDetail={onOpenListDetail}
+            onOpenSurface={onOpenSurface}
+            targets={data.targets}
+          />
+        </div>
       </div>
     </div>
   );

@@ -26,7 +26,7 @@ export type ShellSettingsRoute =
   | { view: "overview" }
   | { view: "list"; kind: ShellSettingsListKind; detailId?: string; detailLabel?: string; createNew?: boolean }
   | { view: "config"; kind: "models" | "overrides"; select?: string }
-  | { view: "crew" }
+  | { view: "crew"; select?: string }
   | { view: "agent"; accountUid: number | null; createNew?: boolean };
 
 export type ShellPageTab = {
@@ -120,7 +120,7 @@ export const SYSTEM_DOCK_ITEMS: SystemDockItem[] = [
   },
   {
     id: "settings",
-    label: "SETTINGS",
+    label: "OVERVIEW",
     icon: "cog",
     description: "Crew, machines, integrations, access, and system configuration.",
   },
@@ -142,7 +142,7 @@ export function getDesktopObject(objects: readonly DesktopObject[], id: DesktopO
 export function shellSurfaceLabel(surface: ShellSurfaceId): string {
   switch (surface) {
     case "settings":
-      return "SETTINGS";
+      return "OVERVIEW";
     case "crew":
       return "CREW";
     case "agent":
@@ -184,7 +184,7 @@ export function shellTabForSurface(surface: ShellPageSurfaceId): ShellPageTab {
       title,
       kind: "settings",
       icon: "cog",
-      type: "GSV · SETTINGS",
+      type: "GSV · OVERVIEW",
       settingsRoute: { view: "overview" },
     };
   }

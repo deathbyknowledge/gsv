@@ -1,7 +1,8 @@
 /* Container wrapper: the overview grid resizes itself at the breakpoints below,
    and an element can't query its own width — so the `panel` container lives on
    this frame, letting the grid reflow off the PANEL width (not the viewport)
-   when the chat is dragged wider. */
+   when the chat is dragged wider. It's also the `panel` container the Collapsible
+   drawers query. */
 .gsv-settings-overview-frame {
   container-type: inline-size;
   container-name: panel;
@@ -11,62 +12,119 @@
   flex-direction: column;
 }
 
+/* Top-level regions: THE SHIP (wide) | FLEET (narrow). */
 .gsv-settings-overview {
   flex: 1 0 auto;
   min-height: 100%;
   margin-bottom: 88px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 2.3fr) minmax(0, 1fr);
   border: 1px solid var(--border-raised);
   background: var(--panel);
   box-shadow: inset 0 0 0 1px #060414, 0 0 30px rgba(80, 70, 180, 0.1);
 }
 
-.gsv-settings-left,
-.gsv-settings-right {
+.gsv-settings-ship-block,
+.gsv-settings-fleet-column {
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-.gsv-settings-left {
+.gsv-settings-ship-block {
   border-right: 1px solid var(--rule-section);
 }
 
-.gsv-settings-block {
-  min-width: 0;
-  border-bottom: 1px solid var(--rule-section);
+.gsv-settings-action-header.gsv-section-header {
+  min-height: 44px;
 }
 
-.gsv-settings-left .gsv-settings-block:last-child,
-.gsv-settings-right .gsv-settings-block:last-child {
+/* THE SHIP body — desktop: SPECS/SETTINGS rail (left, spanning) + stacked
+   stage / rooms / lists on the right. grid-template-areas lets the narrow
+   layouts reorder the rail below the image with no DOM change. */
+.gsv-settings-ship-body {
   flex: 1;
-  border-bottom: 0;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  /* The rail hugs the SPECS/SETTINGS cards (now content-width); the stage /
+     rooms / lists column takes all remaining space. */
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto 1fr;
+  grid-template-areas:
+    "rail stage"
+    "rail rooms"
+    "rail lists";
+}
+
+.gsv-settings-ship-rail {
+  grid-area: rail;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--rule-section);
 }
 
 .gsv-settings-ship-visual {
+  grid-area: stage;
+}
+
+.gsv-settings-ship-rooms {
+  grid-area: rooms;
+}
+
+.gsv-settings-ship-lists {
+  grid-area: lists;
+}
+
+/* ---- Data display cards (SPECS / SETTINGS) — layout only; chrome in DataCard.css ---- */
+.gsv-settings-datacard {
+  flex: 0 0 auto;
+}
+
+.gsv-settings-ship-rail .gsv-settings-datacard {
+  border-bottom: 1px solid var(--rule-section);
+  /* The rail column is content-sized to the widest card; both cards fill it so
+     they sit flush against the divider (no ragged gap from per-card hugging),
+     and the stage / rooms / lists column fills the rest of the width. */
+  width: auto;
+  max-width: 320px;
+}
+
+.gsv-settings-ship-rail .gsv-settings-datacard:last-child {
+  border-bottom: 0;
+}
+
+/* The last card (SETTINGS) grows to fill the remaining rail height so its
+   terminal viewport background runs to the bottom of the column instead of
+   leaving a bare panel gap. Its collapse-body + dc-body both stretch. */
+.gsv-settings-ship-rail .gsv-settings-datacard:last-child {
+  flex: 1 1 auto;
+}
+
+.gsv-settings-ship-rail .gsv-settings-datacard:last-child > .gsv-collapse-body {
+  flex: 1;
+}
+
+/* ---- SHIP STAGE (ascii moon + control panel) ---- */
+.gsv-settings-ship-visual {
   position: relative;
-  height: 182px;
+  height: 200px;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-bottom: 1px solid var(--border);
-  background:
-    radial-gradient(120% 120% at 50% 38%, #171441, #08061a 75%);
+  border-bottom: 1px solid var(--rule-section);
+  background: radial-gradient(120% 120% at 50% 38%, #171441, #08061a 75%);
   box-shadow: inset 0 0 40px rgba(80, 70, 180, 0.18);
 }
 
-.gsv-settings-ship-visual::before,
-.gsv-settings-ship-visual::after {
+.gsv-settings-ship-visual::before {
   content: "";
   position: absolute;
   inset: 8px;
   pointer-events: none;
-}
-
-.gsv-settings-ship-visual::before {
   background:
     linear-gradient(var(--bracket), var(--bracket)) left top / 9px 1px no-repeat,
     linear-gradient(var(--bracket), var(--bracket)) left top / 1px 9px no-repeat,
@@ -78,55 +136,55 @@
     linear-gradient(var(--bracket), var(--bracket)) right bottom / 1px 9px no-repeat;
 }
 
-.gsv-settings-ship-visual::after {
-  display: none;
-}
-
 .gsv-settings-ship-orbit {
   transform: scale(1.12);
   transform-origin: center;
   opacity: 0.98;
 }
 
-.gsv-settings-scan,
-.gsv-settings-ship-id {
-  /* size from .gsv-sublabel (12px); tracking kept */
+.gsv-settings-ship-controlpanel {
   position: absolute;
-  color: #8f89ca;
-  letter-spacing: 0.1em;
+  top: 14px;
+  right: 14px;
 }
 
-.gsv-settings-scan {
-  left: 12px;
-  bottom: 10px;
+/* ---- SHIP ROOMS (FILES / LIBRARY / REPOS) — layout only; chrome in ShipSection.css ---- */
+.gsv-settings-ship-rooms {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid var(--rule-section);
 }
 
-.gsv-settings-ship-id {
-  top: 10px;
-  right: 12px;
+.gsv-settings-room {
+  min-width: 0;
+  border-right: 1px solid var(--rule-inner);
 }
 
-.gsv-settings-split {
-  position: relative;
+.gsv-settings-room:last-child {
+  border-right: 0;
+}
+
+/* ---- CREW + TASKS list cards (styling lives in ListCard.css) ---- */
+.gsv-settings-ship-lists {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 260px;
+}
+
+.gsv-settings-listcard {
   min-width: 0;
 }
 
-.gsv-settings-split > div {
-  min-width: 0;
+.gsv-settings-ship-lists > .gsv-settings-listcard > .gsv-collapse-body {
+  flex: 1;
 }
 
-.gsv-settings-split > div:first-child {
+.gsv-settings-ship-lists > .gsv-settings-listcard:first-child {
   border-right: 1px solid var(--rule-section);
 }
 
-.gsv-settings-mini-heading.gsv-section-header {
-  min-height: 32px;
-}
-
-/* Section-header chevrons are a hover/focus affordance only. (List-row chevron
-   reveal now lives in ListRow.css, design-system-wide.) The AddAction
+/* ---- Section-header affordances shared across the overview ---- */
+/* Section-header chevrons are a hover/focus affordance only. The AddAction
    "connect new" arrow is a separate element and stays visible. */
 .gsv-settings-overview .gsv-section-header-chevron {
   opacity: 0;
@@ -139,8 +197,7 @@
 }
 
 /* Truncation priority: the section title is the protected element — it never
-   shrinks; the meta string yields and ellipsizes instead. (Overview titles are
-   short fixed strings, so flex-shrink:0 won't overflow.) */
+   shrinks; the meta string yields and ellipsizes instead. */
 .gsv-settings-overview .gsv-section-header-title {
   flex-shrink: 0 !important;
 }
@@ -153,176 +210,119 @@
   white-space: nowrap;
 }
 
-.gsv-settings-terminal-state {
-  min-height: 55px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 15px 16px;
-  color: #a8a2dc;
-  font-size: 0.8125rem; /* size from .gsv-label (13px) */
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.gsv-settings-terminal-state {
-  justify-content: space-between;
-}
-
-.gsv-settings-terminal-state .gsv-cb {
-  min-width: 0;
-}
-
-.gsv-settings-crew-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  min-width: 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.gsv-settings-crew-block {
-  border-bottom: 0;
-}
-
-.gsv-settings-crew-grid > .gsv-crew-tile {
-  align-items: flex-start;
-  justify-content: flex-start;
-  gap: 9px;
-  min-height: 118px;
-  padding: 13px 11px;
-  border-right: 1px solid var(--rule-inner);
-}
-
-.gsv-settings-crew-grid > .gsv-crew-tile:last-child {
-  border-right: 0;
-}
-
-.gsv-settings-crew-grid > .gsv-crew-tile .gsv-crew-tile-portrait {
-  width: 100%;
-}
-
-.gsv-settings-crew-grid > .gsv-crew-tile.is-add {
-  align-items: center;
-  justify-content: center;
-}
-
-.gsv-settings-deep-cell {
-  position: relative;
-  min-height: 100%;
+/* ---- FLEET ---- */
+.gsv-settings-fleet-block {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  container-type: inline-size;
 }
 
-/* When a deep cell (e.g. MODELS) gets narrow, drop the trailing meta word —
-   "5/6 CONFIGURED" collapses to "5/6", keeping the count and the title. */
-@container (max-width: 220px) {
-  .gsv-settings-deep-cell .gsv-section-header-metaword {
-    display: none;
-  }
-}
-
-.gsv-settings-model-task-split {
-  flex: 1;
-  min-height: 300px;
-}
-
-.gsv-settings-model-task-split > div {
-  display: flex;
-}
-
-.gsv-settings-overview-list {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.gsv-settings-section-rows {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.gsv-settings-fleet-block > .gsv-settings-split {
+.gsv-settings-fleet-block > .gsv-settings-fleet-section + .gsv-settings-fleet-section {
   border-top: 1px solid var(--border);
 }
 
-.gsv-settings-mini-row,
-.gsv-settings-add-action,
-.gsv-settings-empty-row {
-  min-height: 44px;
-  min-width: 0;
-}
+/* ---------------------------------------------------------------------------
+   Responsive layout. Container queries fire off the PANEL width.
+   Desktop > 900px · Tablet 561–900px · Mobile <= 560px.
+   (Drawer collapse itself lives in Collapsible.css.)
+   --------------------------------------------------------------------------- */
 
-.gsv-settings-mini-row,
-.gsv-settings-add-action,
-.gsv-settings-empty-row {
-  border-bottom: 1px solid var(--rule-inner) !important;
-}
-
-.gsv-settings-add-action .aa {
-  border: 0 !important;
-  background: transparent !important;
-}
-
-.gsv-settings-mini-row:last-child,
-.gsv-settings-add-action:last-child,
-.gsv-settings-empty-row:last-child {
-  border-bottom: 0 !important;
-}
-
-.gsv-settings-empty-row {
-  /* size from .gsv-sublabel (12px); tracking + transform kept */
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 13px 16px;
-  color: #7d78b8;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.gsv-settings-fleet-block {
-  flex: none;
-}
-
-@container panel (max-width: 760px) {
+/* --- TABLET + MOBILE (<= 900) --- */
+@container panel (max-width: 900px) {
+  /* FLEET drops below THE SHIP. Pack rows to the top so the min-height:100%
+     stretch leaves its slack at the very bottom (filled by the panel bg) rather
+     than inflating the auto rail/rooms rows and the SETTINGS card between
+     sections. */
   .gsv-settings-overview {
     grid-template-columns: minmax(0, 1fr);
+    align-content: start;
   }
 
-  .gsv-settings-left {
+  .gsv-settings-ship-block {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule-section);
+  }
+
+  /* Reorder: image first, then the SPECS/SETTINGS rail, then rooms, then lists. */
+  .gsv-settings-ship-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas:
+      "stage"
+      "rail"
+      "rooms"
+      "lists";
+  }
+
+  /* iPad: SPECS + SETTINGS sit side by side, each filling half the row width
+     (the desktop content-hug + 320px cap is lifted). Divider becomes vertical. */
+  .gsv-settings-ship-rail {
+    flex-direction: row;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule-section);
+  }
+
+  .gsv-settings-ship-rail .gsv-settings-datacard {
+    flex: 1 1 0;
+    width: auto;
+    max-width: none;
+    border-bottom: 0;
+    border-right: 1px solid var(--rule-section);
+  }
+
+  .gsv-settings-ship-rail .gsv-settings-datacard:last-child {
+    flex: 1 1 0;
     border-right: 0;
   }
 
-  .gsv-settings-left .gsv-settings-block:last-child {
-    border-bottom: 1px solid var(--rule-section);
-  }
-}
-
-@container panel (max-width: 540px) {
-  .gsv-settings-split,
-  .gsv-settings-crew-grid {
+  /* (2) FILES / LIBRARY / REPOS — each takes a full row. */
+  .gsv-settings-ship-rooms {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .gsv-settings-split > div:first-child,
-  .gsv-settings-crew-grid > .gsv-crew-tile {
+  .gsv-settings-room {
     border-right: 0;
     border-bottom: 1px solid var(--rule-inner);
   }
 
+  .gsv-settings-room:last-child {
+    border-bottom: 0;
+  }
+
+  /* (3) CREW + TASKS — each full width. */
+  .gsv-settings-ship-lists {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .gsv-settings-ship-lists > .gsv-settings-listcard:first-child {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule-section);
+  }
+}
+
+/* --- MOBILE only (<= 560) --- */
+@container panel (max-width: 560px) {
   .gsv-settings-ship-visual {
-    height: 150px;
+    height: 168px;
   }
 
-  .gsv-settings-ship-orbit {
-    transform: scale(0.88);
+  /* Mobile: SPECS + SETTINGS stack full-width again. */
+  .gsv-settings-ship-rail {
+    flex-direction: column;
   }
 
-  .gsv-settings-deep-cell {
-    min-height: 150px;
+  .gsv-settings-ship-rail .gsv-settings-datacard {
+    flex: 0 0 auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule-section);
+  }
+
+  /* Don't let SETTINGS (the last card) grow to fill — overrides the desktop
+     `:last-child { flex: 1 1 auto }` fill so the stacked cards hug content. */
+  .gsv-settings-ship-rail .gsv-settings-datacard:last-child {
+    flex: 0 0 auto;
+    border-bottom: 0;
   }
 }

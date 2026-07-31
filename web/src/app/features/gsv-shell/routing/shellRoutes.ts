@@ -76,7 +76,8 @@ function settingsRouteFromParts(parts: readonly string[]): ShellSettingsRoute {
     return { view: "overview" };
   }
   if (section === "crew") {
-    return { view: "crew" };
+    const select = parts[2] ? decodeSegment(parts[2]) : undefined;
+    return select ? { view: "crew", select } : { view: "crew" };
   }
   if (section === "models" || section === "overrides") {
     const select = parts[2] ? decodeSegment(parts[2]) : undefined;
@@ -195,7 +196,7 @@ function formatSettingsRoute(route: ShellSettingsRoute | undefined): string {
     return "/settings";
   }
   if (route.view === "crew") {
-    return "/settings/crew";
+    return route.select ? `/settings/crew/${encodeSegment(route.select)}` : "/settings/crew";
   }
   if (route.view === "config") {
     const base = `/settings/${route.kind}`;

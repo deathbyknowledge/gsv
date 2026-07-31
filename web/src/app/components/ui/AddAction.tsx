@@ -20,8 +20,9 @@ const PlusGlyph = () => (
   </svg>
 );
 
-/** AddAction — ported from AddAction.dc.html. Dashed "add new" affordance in two
- *  variants: a full-width row (with hover + chevron) and a stacked tile. */
+/** AddAction — ported from AddAction.dc.html. "Add new" affordance in two
+ *  variants: a full-width row (leading "+" + action-coloured underlined CTA
+ *  label, the settled CTA standard) and a stacked dashed tile. */
 export function AddAction({ variant = "row", label, width, onClick }: AddActionProps) {
   const text = label ?? (variant === "tile" ? "NEW AGENT" : "CONNECT NEW MACHINE");
   const rowStyle: JSX.CSSProperties = {
@@ -66,11 +67,13 @@ export function AddAction({ variant = "row", label, width, onClick }: AddActionP
       <span style={{ display: "flex", color: "var(--accent)" }}>
         <PlusGlyph />
       </span>
-      <span class="gsv-label" style={{ letterSpacing: ".04em", color: "var(--text-title)" }}>{text}</span>
-      <span style={{ marginLeft: "auto" }}>
-        <svg width="9" height="12" viewBox="0 0 9 12" aria-hidden="true" style={{ display: "block", filter: "drop-shadow(0 0 3px rgba(150,140,255,.5))" }}>
-          <path d="M0 0 L9 6 L0 12 Z" fill="var(--accent)" />
-        </svg>
+      {/* CTA standard: action-coloured, underlined label on the row background —
+          no trailing chevron (matches ShipSection's .gsv-ss-cta / the ListCard add row). */}
+      <span
+        class="gsv-label"
+        style={{ letterSpacing: ".04em", color: "var(--accent)", textDecoration: "underline", textUnderlineOffset: "2px" }}
+      >
+        {text}
       </span>
     </>
   );
