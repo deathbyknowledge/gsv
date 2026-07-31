@@ -39,7 +39,6 @@ const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
 const SCRIPT_CHANNEL_TELEGRAM: &str = "gsv-channel-telegram";
 const GATEWAY_ENTRYPOINT: &str = "GatewayEntrypoint";
-const GATEWAY_WORKER_LOADER_BINDING: &str = "LOADER";
 const RIPGIT_PAID_CPU_LIMIT_MS: u64 = 300_000;
 
 #[derive(Debug, Clone, Copy)]
@@ -3011,18 +3010,6 @@ fn build_upload_metadata(
                 "type": "worker_loader"
             }));
         }
-        if bundle.component == COMPONENT_GATEWAY
-            && !bundle
-                .wrangler
-                .worker_loaders
-                .iter()
-                .any(|loader| loader.binding == GATEWAY_WORKER_LOADER_BINDING)
-        {
-            metadata_bindings.push(json!({
-                "name": GATEWAY_WORKER_LOADER_BINDING,
-                "type": "worker_loader"
-            }));
-        }
     }
 
     if let Some(ai) = &bundle.wrangler.ai {
@@ -4681,13 +4668,14 @@ cpu_ms = 300000
     }
 
     #[test]
-    fn free_safe_configs_receive_paid_metadata_only_at_the_deployer_boundary() {
+    fn canonical_configs_are_filtered_for_free_deploys() {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let gateway_path = manifest_dir.join("../gateway/wrangler.jsonc");
         let gateway_config =
             parse_wrangler_config(&gateway_path, &fs::read_to_string(&gateway_path).unwrap())
                 .unwrap();
-        assert!(gateway_config.worker_loaders.is_empty());
+        assert_eq!(gateway_config.worker_loaders.len(), 1);
+        assert_eq!(gateway_config.worker_loaders[0].binding, "LOADER");
 
         let ripgit_path = manifest_dir.join("../ripgit/wrangler.toml");
         let ripgit_config =
@@ -4696,8 +4684,9 @@ cpu_ms = 300000
         assert!(ripgit_config.limits.is_none());
 
         let instance = DeployInstance::default();
-        let gateway = prepared_test_bundle(COMPONENT_GATEWAY, Vec::new());
-        let gateway_metadata = build_upload_metadata(
+        let mut gateway = prepared_test_bundle(COMPONENT_GATEWAY, Vec::new());
+        gateway.wrangler = gateway_config;
+        let free_gateway_metadata = build_upload_metadata(
             &gateway,
             UploadMetadataOptions {
                 instance: &instance,
@@ -4708,19 +4697,16 @@ cpu_ms = 300000
                 script_exists: false,
                 uploaded_assets: None,
                 keep_assets: false,
-                include_worker_loaders: true,
+                include_worker_loaders: false,
                 include_paid_limits: false,
             },
         )
         .unwrap();
-        assert!(gateway_metadata["bindings"]
+        assert!(!free_gateway_metadata["bindings"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|binding| {
-                binding["name"] == GATEWAY_WORKER_LOADER_BINDING
-                    && binding["type"] == "worker_loader"
-            }));
+            .any(|binding| binding["type"] == "worker_loader"));
 
         let ripgit = prepared_test_bundle(COMPONENT_RIPGIT, Vec::new());
         let paid_ripgit_metadata = build_upload_metadata(
