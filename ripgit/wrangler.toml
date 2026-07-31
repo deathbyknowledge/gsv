@@ -24,6 +24,3 @@ new_sqlite_classes = ["Repository"]
 [observability.logs]
 enabled = true
 invocation_logs = true
-
-[limits]
-cpu_ms = 300_000

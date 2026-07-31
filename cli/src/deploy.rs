@@ -38,6 +38,7 @@ const SCRIPT_RIPGIT: &str = "ripgit";
 const SCRIPT_CHANNEL_WHATSAPP: &str = "gsv-channel-whatsapp";
 const SCRIPT_CHANNEL_DISCORD: &str = "gsv-channel-discord";
 const SCRIPT_CHANNEL_TELEGRAM: &str = "gsv-channel-telegram";
+const RIPGIT_PAID_CPU_LIMIT_MS: u64 = 300_000;
 const RESERVED_NON_DEFAULT_INSTANCE_NAMES: &[&str] = &[SCRIPT_RIPGIT];
 const RESERVED_INSTANCE_NAME_SUFFIXES: &[&str] = &[
     "-ripgit",
@@ -470,6 +471,7 @@ struct UploadMetadataOptions<'a> {
     uploaded_assets: Option<&'a UploadedAssets>,
     keep_assets: bool,
     include_worker_loaders: bool,
+    include_paid_limits: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -497,11 +499,6 @@ pub struct GatewayBootstrapConfig {
 struct WorkerScriptSummary {
     id: String,
     migration_tag: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WorkersAccountSettings {
-    default_usage_model: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1360,14 +1357,6 @@ async fn list_worker_scripts(
     Ok(out)
 }
 
-fn workers_paid_from_usage_model(usage_model: Option<&str>) -> Option<bool> {
-    match usage_model.map(|value| value.trim().to_ascii_lowercase()) {
-        Some(value) if value == "standard" || value == "unbound" => Some(true),
-        Some(value) if value == "bundled" => Some(false),
-        _ => None,
-    }
-}
-
 fn subscription_is_active(state: Option<&str>) -> bool {
     matches!(
         state
@@ -1395,37 +1384,8 @@ fn workers_paid_from_subscriptions(subscriptions: &[CloudflareSubscription]) -> 
         let Some(rate_plan_id) = rate_plan.id.as_deref() else {
             return false;
         };
-        let normalized = rate_plan_id.trim().to_ascii_lowercase();
-        normalized == "workers_paid"
-            || (normalized.starts_with("workers_") && !normalized.contains("free"))
+        rate_plan_id.trim().eq_ignore_ascii_case("workers_paid")
     })
-}
-
-async fn fetch_workers_paid_from_account_settings(
-    client: &reqwest::Client,
-    account_id: &str,
-    api_token: &str,
-) -> Result<Option<bool>, Box<dyn std::error::Error>> {
-    let url = cloudflare_api_url(&format!(
-        "/accounts/{}/workers/account-settings",
-        account_id
-    ));
-    let response = send_cloudflare_request_with_retry(
-        || {
-            client
-                .get(&url)
-                .bearer_auth(api_token)
-                .header("Content-Type", "application/json")
-                .send()
-        },
-        "Fetch Workers account settings",
-    )
-    .await?;
-    let settings: WorkersAccountSettings =
-        parse_cloudflare_response(response, "Fetch Workers account settings").await?;
-    Ok(workers_paid_from_usage_model(
-        settings.default_usage_model.as_deref(),
-    ))
 }
 
 async fn fetch_workers_paid_from_subscriptions(
@@ -1450,38 +1410,37 @@ async fn fetch_workers_paid_from_subscriptions(
     Ok(workers_paid_from_subscriptions(&subscriptions))
 }
 
-async fn resolve_codemode_enabled(
+async fn resolve_workers_paid(
     client: &reqwest::Client,
     account_id: &str,
     api_token: &str,
-    preference: CodeModePreference,
-) -> bool {
-    match preference {
-        CodeModePreference::On => return true,
-        CodeModePreference::Off => return false,
-        CodeModePreference::Auto => {}
-    }
-
-    match fetch_workers_paid_from_account_settings(client, account_id, api_token).await {
-        Ok(Some(enabled)) => return enabled,
-        Ok(None) => {}
-        Err(error) => {
-            println!(
-                "Warning: could not determine the Workers plan from account settings ({}). Checking account subscriptions.",
-                error
-            );
-        }
-    }
-
+) -> Option<bool> {
+    // default_usage_model describes billing behavior, not plan entitlement.
+    // Only an account-scoped Workers Paid subscription proves paid features are safe.
     match fetch_workers_paid_from_subscriptions(client, account_id, api_token).await {
-        Ok(enabled) => enabled,
+        Ok(enabled) => Some(enabled),
         Err(error) => {
             println!(
-                "Warning: could not read the Workers plan from account subscriptions ({}). CodeMode availability will be probed during gateway upload.",
+                "Warning: could not verify the Workers plan from account subscriptions ({}). Paid-only custom limits and automatic CodeMode will be omitted; use --codemode on to opt into Worker Loader explicitly.",
                 error
             );
-            true
+            None
         }
+    }
+}
+
+fn codemode_enabled_for_plan(
+    deploying_gateway: bool,
+    preference: CodeModePreference,
+    workers_paid: Option<bool>,
+) -> bool {
+    if !deploying_gateway {
+        return false;
+    }
+    match preference {
+        CodeModePreference::On => true,
+        CodeModePreference::Off => false,
+        CodeModePreference::Auto => workers_paid == Some(true),
     }
 }
 
@@ -2825,8 +2784,16 @@ fn build_upload_metadata(
         metadata["observability"] = observability.clone();
     }
 
-    if let Some(limits) = &bundle.wrangler.limits {
-        metadata["limits"] = serde_json::to_value(limits)?;
+    let paid_limits = paid_limits_for_bundle(bundle);
+    if options.include_paid_limits {
+        if let Some(limits) = paid_limits.as_ref() {
+            metadata["limits"] = serde_json::to_value(limits)?;
+        }
+    } else if paid_limits.is_some() {
+        println!(
+            "Omitting paid-only custom Worker limits for {}.",
+            bundle.script_name
+        );
     }
 
     if let Some(uploaded_assets) = options.uploaded_assets {
@@ -2841,6 +2808,17 @@ fn build_upload_metadata(
     }
 
     Ok(metadata)
+}
+
+fn paid_limits_for_bundle(bundle: &PreparedBundle) -> Option<WranglerLimits> {
+    // Checked-in Worker configs stay Free-safe. Paid limits are restored only
+    // here, at the account-aware upload boundary.
+    bundle.wrangler.limits.clone().or_else(|| {
+        (bundle.component == COMPONENT_RIPGIT).then_some(WranglerLimits {
+            cpu_ms: Some(RIPGIT_PAID_CPU_LIMIT_MS),
+            subrequests: None,
+        })
+    })
 }
 
 pub async fn apply_deploy(
@@ -2864,6 +2842,9 @@ pub async fn apply_deploy(
         apply_instance_names_to_bundle(bundle, instance)?;
     }
     prepared.sort_by_key(|bundle| deploy_order(&bundle.component));
+    let deploying_gateway = components
+        .iter()
+        .any(|component| component == COMPONENT_GATEWAY);
 
     let selected_components: HashSet<String> = components.iter().cloned().collect();
     let ripgit_script_name = instance
@@ -2876,19 +2857,26 @@ pub async fn apply_deploy(
         existing_scripts_with_migrations.keys().cloned().collect();
     let ripgit_available = selected_components.contains(COMPONENT_RIPGIT)
         || existing_scripts.contains(&ripgit_script_name);
-    if selected_components.contains(COMPONENT_GATEWAY) && !ripgit_available {
+    if deploying_gateway && !ripgit_available {
         return Err(
             "Deploying `gateway` requires the `ripgit` worker. Include `--component ripgit` or deploy ripgit first."
                 .into(),
         );
     }
     let mut available_scripts = existing_scripts.clone();
-    let mut codemode_enabled = if selected_components.contains(COMPONENT_GATEWAY) {
-        resolve_codemode_enabled(&client, account_id, api_token, codemode_preference).await
+    let workers_plan_required = (deploying_gateway
+        && codemode_preference == CodeModePreference::Auto)
+        || prepared
+            .iter()
+            .any(|bundle| paid_limits_for_bundle(bundle).is_some());
+    let workers_paid = if workers_plan_required {
+        resolve_workers_paid(&client, account_id, api_token).await
     } else {
-        false
+        None
     };
-    if selected_components.contains(COMPONENT_GATEWAY) {
+    let mut codemode_enabled =
+        codemode_enabled_for_plan(deploying_gateway, codemode_preference, workers_paid);
+    if deploying_gateway {
         println!(
             "CodeMode: {}",
             if codemode_enabled {
@@ -2977,6 +2965,7 @@ pub async fn apply_deploy(
                 uploaded_assets: uploaded_assets_by_script.get(&bundle.script_name),
                 keep_assets: false,
                 include_worker_loaders: bundle.component != COMPONENT_GATEWAY || codemode_enabled,
+                include_paid_limits: workers_paid == Some(true),
             },
         )?;
         let source_map_for_upload = bundle.source_map.as_ref().and_then(|(name, bytes)| {
@@ -3036,6 +3025,7 @@ pub async fn apply_deploy(
                     uploaded_assets: uploaded_assets_by_script.get(&bundle.script_name),
                     keep_assets: false,
                     include_worker_loaders: false,
+                    include_paid_limits: workers_paid == Some(true),
                 },
             )?;
             let fallback_source_map = bundle.source_map.as_ref().and_then(|(name, bytes)| {
@@ -3116,6 +3106,7 @@ pub async fn apply_deploy(
                 uploaded_assets: None,
                 keep_assets: bundle.manifest.assets_dir.is_some(),
                 include_worker_loaders: bundle.component != COMPONENT_GATEWAY || codemode_enabled,
+                include_paid_limits: workers_paid == Some(true),
             },
         )?;
         let source_map_for_upload = bundle.source_map.as_ref().and_then(|(name, bytes)| {
@@ -3830,12 +3821,7 @@ cpu_ms = 300000
     }
 
     #[test]
-    fn workers_plan_detection_handles_usage_models_and_subscriptions() {
-        assert_eq!(workers_paid_from_usage_model(Some("standard")), Some(true));
-        assert_eq!(workers_paid_from_usage_model(Some("unbound")), Some(true));
-        assert_eq!(workers_paid_from_usage_model(Some("bundled")), Some(false));
-        assert_eq!(workers_paid_from_usage_model(None), None);
-
+    fn workers_plan_detection_requires_an_active_account_scoped_paid_subscription() {
         let subscriptions = vec![
             CloudflareSubscription {
                 rate_plan: Some(CloudflareRatePlan {
@@ -3854,6 +3840,24 @@ cpu_ms = 300000
         ];
         assert!(workers_paid_from_subscriptions(&subscriptions));
 
+        let wrong_scope = vec![CloudflareSubscription {
+            rate_plan: Some(CloudflareRatePlan {
+                id: Some("workers_paid".to_string()),
+                scope: Some("zone".to_string()),
+            }),
+            state: Some("Paid".to_string()),
+        }];
+        assert!(!workers_paid_from_subscriptions(&wrong_scope));
+
+        let free_plan = vec![CloudflareSubscription {
+            rate_plan: Some(CloudflareRatePlan {
+                id: Some("free".to_string()),
+                scope: Some("account".to_string()),
+            }),
+            state: Some("Paid".to_string()),
+        }];
+        assert!(!workers_paid_from_subscriptions(&free_plan));
+
         let cancelled = vec![CloudflareSubscription {
             rate_plan: Some(CloudflareRatePlan {
                 id: Some("workers_paid".to_string()),
@@ -3862,6 +3866,35 @@ cpu_ms = 300000
             state: Some("Cancelled".to_string()),
         }];
         assert!(!workers_paid_from_subscriptions(&cancelled));
+    }
+
+    #[test]
+    fn codemode_auto_is_enabled_only_for_a_verified_paid_gateway() {
+        assert!(codemode_enabled_for_plan(
+            true,
+            CodeModePreference::Auto,
+            Some(true),
+        ));
+        assert!(!codemode_enabled_for_plan(
+            true,
+            CodeModePreference::Auto,
+            Some(false),
+        ));
+        assert!(!codemode_enabled_for_plan(
+            true,
+            CodeModePreference::Auto,
+            None,
+        ));
+        assert!(codemode_enabled_for_plan(
+            true,
+            CodeModePreference::On,
+            None,
+        ));
+        assert!(!codemode_enabled_for_plan(
+            false,
+            CodeModePreference::On,
+            Some(true),
+        ));
     }
 
     #[test]
@@ -3960,6 +3993,7 @@ cpu_ms = 300000
                 uploaded_assets: None,
                 keep_assets: false,
                 include_worker_loaders: true,
+                include_paid_limits: true,
             },
         )
         .unwrap();
@@ -3984,6 +4018,7 @@ cpu_ms = 300000
                 uploaded_assets: None,
                 keep_assets: false,
                 include_worker_loaders: false,
+                include_paid_limits: false,
             },
         )
         .unwrap();
@@ -3992,6 +4027,80 @@ cpu_ms = 300000
             .unwrap()
             .iter()
             .any(|binding| binding["type"] == "worker_loader"));
+        assert!(metadata_without_loader.get("limits").is_none());
+    }
+
+    #[test]
+    fn ripgit_paid_cpu_limit_is_added_only_for_verified_paid_deploys() {
+        let instance = DeployInstance::default();
+        let bundle = PreparedBundle {
+            bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
+            component: COMPONENT_RIPGIT.to_string(),
+            manifest: BundleManifest {
+                component: COMPONENT_RIPGIT.to_string(),
+                worker: WorkerManifest {
+                    entrypoint: "worker/index.js".to_string(),
+                    source_map: None,
+                    wrangler_config: None,
+                },
+                assets_dir: None,
+            },
+            wrangler: WranglerConfig {
+                name: SCRIPT_RIPGIT.to_string(),
+                compatibility_date: Some("2026-03-18".to_string()),
+                ..WranglerConfig::default()
+            },
+            script_name: SCRIPT_RIPGIT.to_string(),
+            entrypoint_part_name: "worker/index.js".to_string(),
+            entrypoint_bytes: Vec::new(),
+            additional_modules: Vec::new(),
+            source_map: None,
+        };
+
+        let paid_metadata = build_upload_metadata(
+            &bundle,
+            UploadMetadataOptions {
+                instance: &instance,
+                selected_components: &HashSet::new(),
+                available_scripts: &HashSet::new(),
+                account_subdomain: None,
+                existing_migration_tag: None,
+                include_migrations: false,
+                script_exists: false,
+                uploaded_assets: None,
+                keep_assets: false,
+                include_worker_loaders: false,
+                include_paid_limits: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(paid_metadata["limits"]["cpu_ms"], RIPGIT_PAID_CPU_LIMIT_MS);
+
+        let free_metadata = build_upload_metadata(
+            &bundle,
+            UploadMetadataOptions {
+                instance: &instance,
+                selected_components: &HashSet::new(),
+                available_scripts: &HashSet::new(),
+                account_subdomain: None,
+                existing_migration_tag: None,
+                include_migrations: false,
+                script_exists: false,
+                uploaded_assets: None,
+                keep_assets: false,
+                include_worker_loaders: false,
+                include_paid_limits: false,
+            },
+        )
+        .unwrap();
+        assert!(free_metadata.get("limits").is_none());
+
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let ripgit_path = manifest_dir.join("../ripgit/wrangler.toml");
+        let ripgit_config =
+            parse_wrangler_config(&ripgit_path, &fs::read_to_string(&ripgit_path).unwrap())
+                .unwrap();
+        assert!(ripgit_config.limits.is_none());
     }
 
     #[test]
@@ -4193,6 +4302,7 @@ cpu_ms = 300000
                 uploaded_assets: None,
                 keep_assets: false,
                 include_worker_loaders: true,
+                include_paid_limits: true,
             },
         )
         .unwrap();
