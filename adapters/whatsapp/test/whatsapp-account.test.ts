@@ -8,189 +8,397 @@ vi.mock("cloudflare:workers", () => ({
   DurableObject: class {},
 }));
 
-import { SOCKET_LEASE_REFRESH_INTERVAL_MS } from "../src/lifecycle";
+import {
+  SOCKET_LEASE_REFRESH_INTERVAL_MS,
+  SocketOperationQueue,
+} from "../src/lifecycle";
 import { defaultWhatsAppAccountState } from "../src/types";
 import { WhatsAppAccount } from "../src/whatsapp-account";
 
-type LeaseHarness = {
-  sock: WASocket | null;
-  socketGeneration: number;
-  authenticatedSockets: WeakSet<object>;
-  groupMetadata: { clear(): void };
-  state: ReturnType<typeof defaultWhatsAppAccountState>;
-  qrCode: string | null;
-  inboundDeliveries: { armIfPending(deadline: number): Promise<boolean> };
-  socketOperations: { run<T>(operation: () => Promise<T>): Promise<T> };
-  identities: { bindLidPn(lid: string, pn: string): Promise<void> };
-  persistStateAndSchedule(supersededDeadline?: number): Promise<void>;
-  startSocketLocked(source: string): Promise<void>;
-  socketLeaseHealth(): {
-    hasSocket: boolean;
-    stateConnected: boolean;
-    socketAuthenticated: boolean;
-    webSocketOpen: boolean;
-  };
-  refreshSocketLeaseLocked(action: "refresh" | "recover"): Promise<void>;
-  failConnectionAttemptLocked(reason: string): Promise<void>;
-  retryPendingInbound(): Promise<void>;
-  scheduleNextAlarm(): Promise<void>;
-  scheduleReconnectAfterFailure(error: unknown): Promise<void>;
-  isCurrentSocket(generation: number, socket: WASocket): boolean;
-  resolvePairingWaiters(result: {
-    connected?: boolean;
-    qr?: string;
-    expiresAt?: number;
-  }): void;
-  notifyGatewayStatus(): Promise<void>;
-  own(event: string, promise: Promise<unknown>): void;
+type SocketReplacement = {
+  socket: WASocket | null;
+  generation: number;
+  saveCreds: (() => Promise<void>) | null;
 };
 
-type AlarmMethod = (this: LeaseHarness) => Promise<void>;
-type RefreshLeaseMethod = (
-  this: LeaseHarness,
-  action: "refresh" | "recover",
-) => Promise<void>;
-type ConnectionUpdateMethod = (
-  this: LeaseHarness,
+type HandleConnectionUpdate = (
+  this: WhatsAppAccount,
   generation: number,
   socket: WASocket,
   update: Partial<BaileysEventMap["connection.update"]>,
 ) => Promise<void>;
-type IsCurrentSocketMethod = (
-  this: LeaseHarness,
+
+type HandleCredentialsUpdate = (
+  this: WhatsAppAccount,
   generation: number,
   socket: WASocket,
-) => boolean;
-type SocketLeaseHealthMethod = (this: LeaseHarness) => {
-  hasSocket: boolean;
-  stateConnected: boolean;
-  socketAuthenticated: boolean;
-  webSocketOpen: boolean;
-};
+  saveCreds: () => Promise<void>,
+) => void;
+
+type RememberLidPnMappings = (
+  this: WhatsAppAccount,
+  expectedSessionEpoch: number,
+  generation: number,
+  socket: WASocket,
+  mappings: BaileysEventMap["messaging-history.set"]["lidPnMappings"],
+) => Promise<void>;
 
 const accountMethod = <T>(name: string): T =>
   Reflect.get(WhatsAppAccount.prototype, name) as T;
+
+const accountField = <T>(account: WhatsAppAccount, name: string): T =>
+  Reflect.get(account, name) as T;
+
+function fakeAccount(fields: Record<string, unknown>): WhatsAppAccount {
+  return Object.assign(Object.create(WhatsAppAccount.prototype), fields);
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("WhatsApp account socket lease", () => {
-  it("refreshes a due lease through the alarm and fences the old socket", async () => {
+  it("starts one replacement without closing or blocking the active socket", async () => {
+    const oldSocket = {
+      ws: { isOpen: true },
+      end: vi.fn(async () => undefined),
+    } as unknown as WASocket;
+    const state = {
+      ...defaultWhatsAppAccountState(),
+      desired: "connected" as const,
+      status: "connected" as const,
+      connected: true,
+      authenticated: true,
+      leaseRefreshAt: 1_000,
+    };
+    let releasePersist: (() => void) | undefined;
+    const persist = new Promise<void>((resolve) => {
+      releasePersist = resolve;
+    });
+    const started = vi.fn(async () => undefined);
+    const owned: Promise<unknown>[] = [];
+    const authenticatedSockets = new WeakSet<object>();
+    authenticatedSockets.add(oldSocket);
+    const socketOperations = { run: vi.fn() };
+    const account = fakeAccount({
+      sock: oldSocket,
+      socketReplacement: null,
+      socketGeneration: 7,
+      authenticatedSockets,
+      inboundDeliveries: { armIfPending: vi.fn(async () => false) },
+      socketOperations,
+      state,
+      persistStateAndSchedule: vi.fn(() => persist),
+      startSocket: started,
+      retryPendingInbound: vi.fn(async () => undefined),
+      scheduleNextAlarm: vi.fn(async () => undefined),
+      scheduleReconnectAfterFailure: vi.fn(async () => undefined),
+      own: vi.fn((_event: string, promise: Promise<unknown>) => {
+        owned.push(promise);
+      }),
+    });
+
+    await account.alarm();
+    await account.alarm();
+
+    expect(accountField(account, "sock")).toBe(oldSocket);
+    expect(accountField(account, "socketReplacement")).toMatchObject({
+      socket: null,
+      generation: 8,
+    });
+    expect(state.connected).toBe(true);
+    expect(state.status).toBe("connected");
+    expect(oldSocket.end).not.toHaveBeenCalled();
+    expect(owned).toHaveLength(1);
+    expect(started).not.toHaveBeenCalled();
+    expect(socketOperations.run).not.toHaveBeenCalled();
+
+    releasePersist?.();
+    await Promise.all(owned);
+    expect(started).toHaveBeenCalledTimes(1);
+    expect(started).toHaveBeenCalledWith(
+      "lease_refresh",
+      accountField(account, "socketReplacement"),
+    );
+  });
+
+  it("retires an unhealthy socket before starting its recovery", async () => {
+    const oldSocket = {
+      ws: { isOpen: false },
+      end: vi.fn(async () => undefined),
+    } as unknown as WASocket;
+    const state = {
+      ...defaultWhatsAppAccountState(),
+      desired: "connected" as const,
+      status: "connected" as const,
+      connected: true,
+      authenticated: true,
+      leaseRefreshAt: 60_000,
+    };
+    const authenticatedSockets = new WeakSet<object>();
+    authenticatedSockets.add(oldSocket);
+    const started = vi.fn(async () => undefined);
+    const owned: Promise<unknown>[] = [];
+    const account = fakeAccount({
+      sock: oldSocket,
+      socketReplacement: null,
+      socketGeneration: 7,
+      authenticatedSockets,
+      inboundDeliveries: { armIfPending: vi.fn(async () => false) },
+      socketOperations: { run: vi.fn() },
+      state,
+      persistStateAndSchedule: vi.fn(async () => undefined),
+      startSocket: started,
+      retryPendingInbound: vi.fn(async () => undefined),
+      scheduleNextAlarm: vi.fn(async () => undefined),
+      scheduleReconnectAfterFailure: vi.fn(async () => undefined),
+      own: vi.fn((_event: string, promise: Promise<unknown>) => {
+        owned.push(promise);
+      }),
+    });
+
+    await account.alarm();
+
+    const replacement = accountField<SocketReplacement>(
+      account,
+      "socketReplacement",
+    );
+    expect(accountField(account, "sock")).toBeNull();
+    expect(accountField(account, "socketGeneration")).toBe(8);
+    expect(replacement).toMatchObject({ socket: null, generation: 8 });
+    expect(state.connected).toBe(false);
+    expect(state.status).toBe("reconnecting");
+    expect(state.authenticated).toBe(true);
+    expect(authenticatedSockets.has(oldSocket)).toBe(false);
+    expect(oldSocket.end).toHaveBeenCalledOnce();
+
+    await Promise.all(owned);
+    expect(started).toHaveBeenCalledOnce();
+    expect(started).toHaveBeenCalledWith("lease_recovery", replacement);
+  });
+
+  it("keeps the active socket when its replacement fails", async () => {
     const now = 1_000;
     vi.spyOn(Date, "now").mockReturnValue(now);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-
-    const events: string[] = [];
-    const oldSocket = {
-      ws: { isOpen: true },
-      end: vi.fn(async () => {
-        events.push("old_closed");
-      }),
-    } as unknown as WASocket;
-    const freshSocket = {
-      ws: { isOpen: true },
-      user: undefined,
-    } as unknown as WASocket;
+    const oldSocket = { ws: { isOpen: true } } as unknown as WASocket;
+    const candidate = { ws: { isOpen: false } } as unknown as WASocket;
     const authenticatedSockets = new WeakSet<object>();
     authenticatedSockets.add(oldSocket);
-    let scheduledDeadline: number | undefined;
-
-    const refreshLease = accountMethod<RefreshLeaseMethod>(
-      "refreshSocketLeaseLocked",
-    );
-    const handleConnectionUpdate = accountMethod<ConnectionUpdateMethod>(
-      "handleConnectionUpdate",
-    );
-    const isCurrentSocket = accountMethod<IsCurrentSocketMethod>(
-      "isCurrentSocket",
-    );
-    const socketLeaseHealth = accountMethod<SocketLeaseHealthMethod>(
-      "socketLeaseHealth",
-    );
-
-    const harness: LeaseHarness = {
+    const state = {
+      ...defaultWhatsAppAccountState(),
+      desired: "connected" as const,
+      status: "connected" as const,
+      connected: true,
+      authenticated: true,
+    };
+    const replacement: SocketReplacement = {
+      socket: candidate,
+      generation: 8,
+      saveCreds: null,
+    };
+    const account = fakeAccount({
       sock: oldSocket,
+      socketReplacement: replacement,
       socketGeneration: 7,
       authenticatedSockets,
       groupMetadata: { clear: vi.fn() },
-      state: {
-        ...defaultWhatsAppAccountState(),
-        accountId: "primary",
-        desired: "connected",
-        status: "connected",
-        connected: true,
-        authenticated: true,
-        leaseRefreshAt: now,
-      },
-      qrCode: null,
-      inboundDeliveries: {
-        armIfPending: vi.fn(async () => false),
-      },
-      socketOperations: {
-        run: async (operation) => operation(),
-      },
-      identities: {
-        bindLidPn: vi.fn(async () => undefined),
-      },
+      state,
       persistStateAndSchedule: vi.fn(async () => undefined),
-      startSocketLocked: async (source) => {
-        expect(source).toBe("lease_refresh");
-        expect(events).toEqual(["old_closed"]);
-        events.push("fresh_started");
-        harness.socketGeneration += 1;
-        harness.sock = freshSocket;
-        harness.authenticatedSockets.add(freshSocket);
-      },
-      socketLeaseHealth() {
-        return socketLeaseHealth.call(harness);
-      },
-      async refreshSocketLeaseLocked(action) {
-        await refreshLease.call(harness, action);
-        await handleConnectionUpdate.call(
-          harness,
-          harness.socketGeneration,
-          freshSocket,
-          { connection: "open" },
-        );
-      },
-      failConnectionAttemptLocked: vi.fn(async () => undefined),
-      retryPendingInbound: vi.fn(async () => undefined),
-      scheduleNextAlarm: vi.fn(async () => {
-        scheduledDeadline = harness.state.leaseRefreshAt;
-      }),
-      scheduleReconnectAfterFailure: vi.fn(async () => undefined),
-      isCurrentSocket(generation, socket) {
-        return isCurrentSocket.call(harness, generation, socket);
-      },
-      resolvePairingWaiters: vi.fn(),
       notifyGatewayStatus: vi.fn(async () => undefined),
-      own: vi.fn((_event, promise) => {
+      own: vi.fn((_event: string, promise: Promise<unknown>) => {
         void promise;
       }),
-    };
+    });
 
-    const alarm = WhatsAppAccount.prototype.alarm as unknown as AlarmMethod;
-    await alarm.call(harness);
-
-    expect(events).toEqual(["old_closed", "fresh_started"]);
-    expect(oldSocket.end).toHaveBeenCalledTimes(1);
-    expect(harness.sock).toBe(freshSocket);
-    expect(harness.state.connected).toBe(true);
-    expect(harness.state.leaseRefreshAt).toBe(
-      now + SOCKET_LEASE_REFRESH_INTERVAL_MS,
-    );
-    expect(scheduledDeadline).toBe(now + SOCKET_LEASE_REFRESH_INTERVAL_MS);
-    expect(harness.socketGeneration).toBe(9);
-
-    const connectedState = { ...harness.state };
-    await handleConnectionUpdate.call(
-      harness,
-      7,
-      oldSocket,
+    await accountMethod<HandleConnectionUpdate>("handleConnectionUpdate").call(
+      account,
+      8,
+      candidate,
       { connection: "close" },
     );
-    expect(harness.state).toEqual(connectedState);
-    expect(harness.sock).toBe(freshSocket);
+
+    expect(accountField(account, "sock")).toBe(oldSocket);
+    expect(accountField(account, "socketReplacement")).toBeNull();
+    expect(state.connected).toBe(true);
+    expect(state.status).toBe("connected");
+    expect(state.reconnectAt).toBeUndefined();
+    expect(state.leaseRefreshAt).toBeGreaterThanOrEqual(now + 2_000);
+    expect(state.leaseRefreshAt).toBeLessThan(now + 3_000);
+
+    authenticatedSockets.delete(oldSocket);
+    await accountMethod<HandleConnectionUpdate>("handleConnectionUpdate").call(
+      account,
+      7,
+      oldSocket,
+      {
+        connection: "close",
+        lastDisconnect: {
+          error: { output: { statusCode: 440 } } as unknown as Error,
+          date: new Date(now),
+        },
+      },
+    );
+    expect(state.desired).toBe("connected");
+    expect(state.status).toBe("reconnecting");
+    expect(state.reconnectAt).toBeGreaterThan(now);
+  });
+
+  it("promotes the replacement and ignores the displaced socket", async () => {
+    const now = 1_000;
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const oldSocket = {
+      ws: { isOpen: false },
+      end: vi.fn(async () => undefined),
+    } as unknown as WASocket;
+    const candidate = {
+      ws: { isOpen: true },
+      user: {},
+    } as unknown as WASocket;
+    const authenticatedSockets = new WeakSet<object>();
+    authenticatedSockets.add(candidate);
+    const state = {
+      ...defaultWhatsAppAccountState(),
+      desired: "connected" as const,
+      status: "connected" as const,
+      connected: true,
+      authenticated: true,
+      leaseRefreshAt: now,
+    };
+    const replacement: SocketReplacement = {
+      socket: candidate,
+      generation: 8,
+      saveCreds: null,
+    };
+    const owned: Promise<unknown>[] = [];
+    const account = fakeAccount({
+      sock: oldSocket,
+      socketReplacement: replacement,
+      socketGeneration: 7,
+      authenticatedSockets,
+      groupMetadata: { clear: vi.fn() },
+      identities: { bindLidPn: vi.fn(async () => undefined) },
+      socketOperations: { run: <T>(operation: () => Promise<T>) => operation() },
+      state,
+      persistStateAndSchedule: vi.fn(async () => undefined),
+      resolvePairingWaiters: vi.fn(),
+      notifyGatewayStatus: vi.fn(async () => undefined),
+      own: vi.fn((_event: string, promise: Promise<unknown>) => {
+        owned.push(promise);
+      }),
+    });
+    const handleUpdate = accountMethod<HandleConnectionUpdate>("handleConnectionUpdate");
+
+    await handleUpdate.call(account, 8, candidate, { connection: "open" });
+    expect(accountField(account, "sock")).toBe(candidate);
+    expect(accountField(account, "socketGeneration")).toBe(8);
+    expect(accountField(account, "socketReplacement")).toBeNull();
+    expect(state.connected).toBe(true);
+    expect(state.status).toBe("connected");
+    expect(state.leaseRefreshAt).toBe(
+      now + SOCKET_LEASE_REFRESH_INTERVAL_MS,
+    );
+    expect(oldSocket.end).toHaveBeenCalledTimes(1);
+
+    const connectedState = { ...state };
+    await handleUpdate.call(account, 7, oldSocket, {
+      connection: "close",
+      lastDisconnect: {
+        error: { output: { statusCode: 440 } } as unknown as Error,
+        date: new Date(now),
+      },
+    });
+    expect(state).toEqual(connectedState);
+    expect(accountField(account, "sock")).toBe(candidate);
+    await Promise.all(owned);
+  });
+
+  it("persists active credential updates admitted before promotion", async () => {
+    const sessionMutations = new SocketOperationQueue();
+    let releaseMutation: () => void = () => undefined;
+    const mutationGate = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    const precedingMutation = sessionMutations.run(() => mutationGate);
+    const oldSocket = {} as WASocket;
+    const replacementSocket = {} as WASocket;
+    const saveCreds = vi.fn(async () => undefined);
+    const owned: Promise<unknown>[] = [];
+    const account = fakeAccount({
+      sock: oldSocket,
+      socketReplacement: null,
+      socketGeneration: 7,
+      sessionMutations,
+      own: vi.fn((_event: string, promise: Promise<unknown>) => {
+        owned.push(promise);
+      }),
+    });
+    const handleCredentials = accountMethod<HandleCredentialsUpdate>(
+      "handleCredentialsUpdate",
+    );
+
+    handleCredentials.call(account, 7, oldSocket, saveCreds);
+    expect(saveCreds).not.toHaveBeenCalled();
+    Reflect.set(account, "sock", replacementSocket);
+    Reflect.set(account, "socketGeneration", 8);
+    releaseMutation();
+    await Promise.all([precedingMutation, ...owned]);
+
+    expect(saveCreds).toHaveBeenCalledOnce();
+    handleCredentials.call(account, 7, oldSocket, saveCreds);
+    expect(saveCreds).toHaveBeenCalledOnce();
+  });
+});
+
+describe("WhatsApp account session identity", () => {
+  it("drops LID mappings from a superseded provider session", async () => {
+    const sessionMutations = new SocketOperationQueue();
+    let releaseMutation: () => void = () => undefined;
+    const mutationGate = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    const precedingMutation = sessionMutations.run(() => mutationGate);
+    const socket = {} as WASocket;
+    const bindLidPnMappings = vi.fn(async () => undefined);
+    const state = {
+      ...defaultWhatsAppAccountState(),
+      sessionEpoch: 4,
+    };
+    const account = fakeAccount({
+      sock: socket,
+      socketGeneration: 7,
+      sessionMutations,
+      identities: { bindLidPnMappings },
+      state,
+    });
+    const rememberMappings = accountMethod<RememberLidPnMappings>(
+      "rememberLidPnMappings",
+    );
+    const staleMapping = {
+      lid: "123456789@lid",
+      pn: "31612345678@s.whatsapp.net",
+    };
+
+    const staleWrite = rememberMappings.call(
+      account,
+      4,
+      7,
+      socket,
+      [staleMapping],
+    );
+    state.sessionEpoch = 5;
+    releaseMutation();
+    await Promise.all([precedingMutation, staleWrite]);
+
+    expect(bindLidPnMappings).not.toHaveBeenCalled();
+
+    const currentMapping = {
+      lid: "987654321@lid",
+      pn: "31687654321@s.whatsapp.net",
+    };
+    await rememberMappings.call(account, 5, 7, socket, [currentMapping]);
+    expect(bindLidPnMappings).toHaveBeenCalledOnce();
+    expect(bindLidPnMappings).toHaveBeenCalledWith([currentMapping]);
   });
 });

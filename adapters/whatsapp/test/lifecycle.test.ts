@@ -60,7 +60,7 @@ describe("WhatsApp lifecycle policy", () => {
       clearAuth: false,
     });
     expect(disconnectPolicy(DisconnectReason.connectionReplaced)).toEqual({
-      action: "stop",
+      action: "reconnect",
       clearAuth: false,
     });
     expect(disconnectPolicy(DisconnectReason.loggedOut)).toEqual({
