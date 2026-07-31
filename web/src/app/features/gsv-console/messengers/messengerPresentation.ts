@@ -34,6 +34,45 @@ function extraTimestamp(adapter: ConsoleAdapterAccount, key: string): number | n
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function whatsAppPhoneLabel(value: string): string {
+  const trimmed = value.trim();
+  if (/^\+\d{5,20}$/.test(trimmed)) {
+    return trimmed;
+  }
+  const jid = trimmed.replace(/^wa:jid:/i, "");
+  const match = jid.match(/^(\d+)(?::\d+)?@(?:s\.whatsapp\.net|c\.us|hosted)$/i);
+  return match ? `+${match[1]}` : "";
+}
+
+function isWhatsAppJid(value: string): boolean {
+  return /^wa:jid:/i.test(value.trim()) || /@[^\s@]+$/i.test(value.trim());
+}
+
+export function whatsappAccountIdLabel(accountId: string): string {
+  const normalized = accountId.trim();
+  return isWhatsAppJid(normalized) ? "WhatsApp account" : normalized;
+}
+
+export function whatsappAccountPhone(adapter: ConsoleAdapterAccount): string {
+  if (adapter.adapter !== "whatsapp") {
+    return "";
+  }
+  return whatsAppPhoneLabel(extraString(adapter, "selfE164"))
+    || whatsAppPhoneLabel(extraString(adapter, "selfJid"))
+    || whatsAppPhoneLabel(adapter.accountId);
+}
+
+export function messengerIdentityLabel(adapter: string, actorId: string): string {
+  if (adapter !== "whatsapp") {
+    return actorId;
+  }
+  const phone = whatsAppPhoneLabel(actorId);
+  if (phone) {
+    return phone;
+  }
+  return /@g\.us$/i.test(actorId.trim()) ? "WhatsApp group" : "WhatsApp user";
+}
+
 export function actionableAdapterError(adapter: string, error: string): string {
   const value = error.trim();
   if (!value || adapter !== "whatsapp") {
@@ -104,7 +143,8 @@ export function parseAdapterDetailId(id: string): { adapter: string; accountId: 
 
 export function adapterLabel(adapter: ConsoleAdapterAccount): string {
   if (adapter.adapter === "whatsapp") {
-    return extraString(adapter, "selfE164") || adapter.accountId;
+    return whatsappAccountPhone(adapter)
+      || whatsappAccountIdLabel(adapter.accountId);
   }
   return adapter.accountId;
 }
@@ -112,11 +152,12 @@ export function adapterLabel(adapter: ConsoleAdapterAccount): string {
 export function adapterSub(adapter: ConsoleAdapterAccount): string {
   if (adapter.adapter === "whatsapp") {
     const label = adapterLabel(adapter);
+    const localId = isWhatsAppJid(adapter.accountId) ? "" : adapter.accountId;
     return compactText([
-      label === adapter.accountId ? "WhatsApp account" : `local id ${adapter.accountId}`,
+      label === localId ? "WhatsApp account" : localId ? `local id ${localId}` : "",
       adapter.lastActivity !== null ? `active ${formatAge(adapter.lastActivity)}` : "",
       actionableAdapterError(adapter.adapter, adapter.error),
-    ], `WhatsApp / ${adapter.accountId}`);
+    ], "WhatsApp account");
   }
   return compactText([
     formatTokenLabel(adapter.adapter),

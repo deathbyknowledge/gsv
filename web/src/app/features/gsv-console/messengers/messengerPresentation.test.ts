@@ -5,8 +5,10 @@ import {
   actionableAdapterError,
   adapterDetailSections,
   adapterLabel,
+  adapterSub,
   canDisconnectAdapter,
   iconForAdapterName,
+  messengerIdentityLabel,
   messengerAccountNoun,
   messengerFamilies,
 } from "./messengerPresentation";
@@ -41,6 +43,28 @@ describe("messenger presentation", () => {
       .flatMap((section) => section.rows.map((row) => row.sub));
     expect(rowValues).toContain("+31612345678");
     expect(rowValues).not.toContain("31612345678:1@s.whatsapp.net");
+  });
+
+  it("turns WhatsApp JIDs into human-readable labels", () => {
+    expect(messengerIdentityLabel("whatsapp", "wa:jid:31612345678@s.whatsapp.net"))
+      .toBe("+31612345678");
+    expect(messengerIdentityLabel("whatsapp", "wa:jid:123456789@lid"))
+      .toBe("WhatsApp user");
+    expect(messengerIdentityLabel("telegram", "telegram:123"))
+      .toBe("telegram:123");
+
+    expect(adapterLabel({
+      ...whatsappAccount,
+      accountId: "31612345678:1@s.whatsapp.net",
+      extra: {},
+    })).toBe("+31612345678");
+    const opaqueAccount = {
+      ...whatsappAccount,
+      accountId: "opaque@lid",
+      extra: {},
+    };
+    expect(adapterLabel(opaqueAccount)).toBe("WhatsApp account");
+    expect(adapterSub(opaqueAccount)).not.toContain("opaque@lid");
   });
 
   it("turns common WhatsApp failures into recovery guidance", () => {

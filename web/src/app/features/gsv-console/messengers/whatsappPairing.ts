@@ -47,20 +47,30 @@ export type WhatsAppQrSource =
   | { kind: "raw"; value: string }
   | { kind: "data-url"; value: string };
 
+export function isWhatsAppQrImageDataUrl(value: string): boolean {
+  const match = value.match(
+    /^data:image\/(?:png|jpeg|webp|gif);base64,([a-z0-9+/]+={0,2})$/i,
+  );
+  return Boolean(match && match[1].length % 4 === 0);
+}
+
 export function whatsappQrSource(challenge: AdapterConnectChallenge | null): WhatsAppQrSource | null {
   if (challenge?.type !== "qr" || !challenge.data) {
     return null;
   }
   if (challenge.format === "data-url") {
-    return /^data:image\//i.test(challenge.data)
+    return isWhatsAppQrImageDataUrl(challenge.data)
       ? { kind: "data-url", value: challenge.data }
       : null;
   }
   if (challenge.format === "raw") {
     return { kind: "raw", value: challenge.data };
   }
-  if (/^data:image\//i.test(challenge.data)) {
+  if (isWhatsAppQrImageDataUrl(challenge.data)) {
     return { kind: "data-url", value: challenge.data };
+  }
+  if (/^data:/i.test(challenge.data)) {
+    return null;
   }
   return { kind: "raw", value: challenge.data };
 }

@@ -15,4 +15,10 @@ describe("WhatsApp QR rendering", () => {
     await expect(renderWhatsAppQrImageUrl({ kind: "data-url", value: imageUrl }))
       .resolves.toBe(imageUrl);
   });
+
+  it("rejects unsupported image data without echoing it", async () => {
+    const imageUrl = "data:image/svg+xml,<svg onload='alert(1)'></svg>";
+    await expect(renderWhatsAppQrImageUrl({ kind: "data-url", value: imageUrl }))
+      .rejects.toThrow("Unsupported WhatsApp QR image data");
+  });
 });

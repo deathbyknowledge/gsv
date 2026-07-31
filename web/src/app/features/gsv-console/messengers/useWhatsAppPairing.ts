@@ -3,7 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import type { ConnectConsoleAdapterResult } from "../backend/consoleService";
 import type { ConsoleAdapterAccount } from "../domain/consoleModels";
 import { useConnectConsoleAdapter, useConsoleAdapters } from "../hooks/useConsoleData";
-import { actionableAdapterError } from "./messengerPresentation";
+import {
+  actionableAdapterError,
+  whatsappAccountPhone,
+} from "./messengerPresentation";
 import {
   isFreshWhatsAppPairingStatus,
   qrSecondsRemaining,
@@ -56,6 +59,7 @@ export function useWhatsAppPairing({
   const forcePendingRef = useRef(forceRelink);
   const requestPendingRef = useRef(false);
   const autoRefreshedChallengeRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
   const [pairingScopeVersion, setPairingScopeVersion] = useState<number | null>(null);
   const [pairingStartedState, setPairingStarted] = useState(false);
   const [challengeState, setChallenge] = useState<AdapterConnectChallenge | null>(null);
@@ -69,6 +73,14 @@ export function useWhatsAppPairing({
   const challenge = pairingStateIsCurrent ? challengeState : null;
   const result = pairingStateIsCurrent ? resultState : null;
   const error = pairingStateIsCurrent ? errorState : "";
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    accountScopeRef.current = {
+      ...accountScopeRef.current,
+      version: accountScopeRef.current.version + 1,
+    };
+  }, []);
 
   useEffect(() => {
     forcePendingRef.current = forceRelink;
@@ -109,9 +121,7 @@ export function useWhatsAppPairing({
     });
   const paired = Boolean(result?.connected && result.authenticated)
     || livePairingConfirmed;
-  const pairedPhone = typeof liveAccount?.extra.selfE164 === "string"
-    ? liveAccount.extra.selfE164
-    : "";
+  const pairedPhone = liveAccount ? whatsappAccountPhone(liveAccount) : "";
   const qrSource = useMemo(() => whatsappQrSource(challenge), [challenge]);
   const expiresAt = challenge && challengeIssuedAt
     ? whatsappQrExpiresAt(challenge, challengeIssuedAt)
@@ -142,7 +152,8 @@ export function useWhatsAppPairing({
 
   const pair = useCallback(async (): Promise<WhatsAppPairingOutcome> => {
     if (
-      whatsappAccountIdError(normalizedAccountId)
+      !mountedRef.current
+      || whatsappAccountIdError(normalizedAccountId)
       || connect.isPending
       || requestPendingRef.current
     ) {
@@ -151,7 +162,8 @@ export function useWhatsAppPairing({
     const requestAccountId = normalizedAccountId;
     const requestScopeVersion = accountScopeRef.current.version;
     const requestIsCurrent = () =>
-      accountScopeRef.current.accountId === requestAccountId
+      mountedRef.current
+      && accountScopeRef.current.accountId === requestAccountId
       && accountScopeRef.current.version === requestScopeVersion;
     const attemptStartedAt = Date.now();
     requestPendingRef.current = true;
@@ -164,6 +176,9 @@ export function useWhatsAppPairing({
     setResult(null);
     setError("");
     const useForce = forcePendingRef.current;
+    if (useForce) {
+      forcePendingRef.current = false;
+    }
     try {
       const next = await connect.mutateAsync({
         adapter: "whatsapp",
@@ -177,7 +192,6 @@ export function useWhatsAppPairing({
         setError(actionableAdapterError("whatsapp", next.error));
         return "error";
       }
-      forcePendingRef.current = false;
       if (next.connected && next.authenticated) {
         setResult(next);
         return "paired";

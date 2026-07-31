@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_WHATSAPP_QR_TTL_MS,
   initialWhatsAppAccountId,
+  isWhatsAppQrImageDataUrl,
   isFreshWhatsAppPairingStatus,
   nextWhatsAppAccountId,
   qrSecondsRemaining,
@@ -63,6 +64,18 @@ describe("WhatsApp pairing model", () => {
       value: "data:image/png;base64,AAAA",
     });
     expect(whatsappQrSource({ type: "qr", data: "not-an-image", format: "data-url" })).toBeNull();
+    expect(whatsappQrSource({
+      type: "qr",
+      data: "data:image/svg+xml,<svg onload='alert(1)'></svg>",
+    })).toBeNull();
+  });
+
+  it("only accepts base64 raster image data URLs", () => {
+    expect(isWhatsAppQrImageDataUrl("data:image/png;base64,AAAA")).toBe(true);
+    expect(isWhatsAppQrImageDataUrl("data:image/jpeg;base64,/9j/AA==")).toBe(true);
+    expect(isWhatsAppQrImageDataUrl("data:image/svg+xml;base64,PHN2Zz4=")).toBe(false);
+    expect(isWhatsAppQrImageDataUrl("data:image/png,not-base64")).toBe(false);
+    expect(isWhatsAppQrImageDataUrl("data:image/png;base64,AAA")).toBe(false);
   });
 
   it("honors declared expiry and only falls back when expiry metadata is missing", () => {

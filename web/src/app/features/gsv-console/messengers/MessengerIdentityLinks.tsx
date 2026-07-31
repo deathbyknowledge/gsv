@@ -16,8 +16,10 @@ import type {
 } from "../domain/consoleModels";
 import { useRemoveIdentityLink } from "../hooks/useConsoleData";
 import {
+  adapterLabel,
   adapterName,
   iconForAdapterName,
+  messengerIdentityLabel,
 } from "./messengerPresentation";
 import "./MessengerIdentity.css";
 
@@ -106,7 +108,7 @@ export function MessengerIdentityLinks({
               <div class="gsv-messenger-identity-row" key={linkKey(link)}>
                 <ListRow
                   icon={iconForAdapterName(link.adapter)}
-                  label={link.actorId}
+                  label={messengerIdentityLabel(link.adapter, link.actorId)}
                   status="online"
                   statusDotPlacement="trailing"
                   statusLabel="LINKED"
@@ -142,7 +144,10 @@ export function MessengerIdentityLinks({
             <div class="gsv-console-confirm-wrap" onClick={(event) => event.stopPropagation()}>
               <ConfirmModal
                 title="CONFIRM UNLINK"
-                message={`Unlink ${confirmUnlink.actorId} from ${messenger.accountId}?`}
+                message={`Unlink ${messengerIdentityLabel(
+                  confirmUnlink.adapter,
+                  confirmUnlink.actorId,
+                )} from ${adapterLabel(messenger)}?`}
                 note="Future messages from this external identity will not resolve to the linked GSV account."
                 confirmLabel={removeLink.isPending ? "REMOVING" : "UNLINK"}
                 onCancel={() => setConfirmUnlink(null)}

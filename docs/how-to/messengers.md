@@ -15,7 +15,10 @@ and [iOS announcement](https://about.fb.com/news/2026/03/whatsapp-new-features-s
 2. In GSV, open **Messengers**, choose **WhatsApp**, and give this connection a stable account ID such as `personal`.
 3. Start pairing. Display GSV's QR code on a computer or another screen so the phone can scan it.
 4. On the phone that owns the second WhatsApp account, open **Settings → Linked Devices → Link a Device** and scan the code.
-5. Wait for GSV to show the account as authenticated, then finish linking the WhatsApp identity to the GSV user or agent that should receive its messages.
+5. Wait for GSV to show the account as authenticated. Pairing connects the GSV number, but does not yet identify the person who will message it.
+6. Switch to the personal WhatsApp account that should represent you and send a new direct message to the WhatsApp number paired with GSV. GSV replies with a one-time link code.
+7. Enter the code in GSV's **Link user** step. The code links that WhatsApp sender to the GSV user currently signed in. It expires after ten minutes.
+8. Send another message to begin chatting. The first message requested the code and is not forwarded to an agent.
 
 The QR payload is a short-lived pairing credential. Treat it like a password:
 do not paste it into chat, save it, log it, or share a screenshot. GSV renders
@@ -37,12 +40,16 @@ a new QR scan.
 ### Connection lifecycle
 
 The adapter keeps an outbound WhatsApp WebSocket in its account Durable Object.
-Cloudflare currently lets an
-[outbound connection prevent eviction for at most 15 minutes](https://developers.cloudflare.com/changelog/post/2026-06-19-outbound-connections-keep-dos-alive/),
-so GSV supervises and rotates the transport on a ten-minute alarm.
-That internal stop/start keeps the saved linked-device credentials: it is not a
-WhatsApp logout and does not require another scan. An explicit **Log out** or a
-forced re-pair is different and removes those credentials.
+An active outbound connection now prevents eviction, but Cloudflare limits that
+[keepalive effect to 15 minutes per connection](https://developers.cloudflare.com/changelog/post/2026-06-19-outbound-connections-keep-dos-alive/).
+The connection can continue after 15 minutes, but it no longer keeps the object
+resident. GSV schedules an alarm for ten minutes after each successful
+connection; the alarm closes the current transport and reconnects with the
+saved linked-device credentials, establishing a fresh connection lease before
+the cap. The alarm does not keep the object alive by itself. This internal
+reconnect is not a WhatsApp logout and does not require another scan. An
+explicit **Log out** or a forced re-pair is different and removes those
+credentials.
 
 WhatsApp uses the unofficial open-source Baileys client rather than an official
 WhatsApp Business API integration. WhatsApp protocol changes or linked-device
@@ -53,8 +60,12 @@ running another client that repeatedly replaces the same linked session.
 
 - **The QR expired:** run Connect again to obtain a fresh code. Never reuse a saved QR payload.
 - **The phone says linked but GSV is still waiting:** check `gsv adapter status --adapter whatsapp --account-id personal`, wait for one reconnect cycle, then retry normal Connect.
+- **The account is paired but no link code arrives:** pairing only connects the GSV number. Confirm adapter status is connected and authenticated, then send a fresh direct message from the personal sender account to the paired GSV number. Do not send it from the paired account itself or in a group.
+- **The direct message gets no reply:** verify that both the Gateway and `channel-whatsapp` workers are deployed and their service bindings target each other. Inspect both workers' live logs: the inbound message reaches the Gateway before the adapter sends the link-code reply.
+- **GSV rejects the link code:** codes are single-use and expire after ten minutes. Send another new direct message, then enter the new code while signed in as the GSV user you want to link. CLI users can run `gsv auth link CODE`.
+- **The code was accepted but the original message got no agent answer:** send another message. The message that generated the code is used only for identity linking and is not replayed to an agent.
 - **The account was logged out or replaced:** remove stale linked-device entries in WhatsApp, then use the confirmed force re-pair flow once.
-- **It reconnects every ten minutes:** brief transport rotation is expected. It should not remove the linked device or ask for a new QR.
+- **It reconnects every ten minutes:** the brief connection-lease refresh is expected. It should not remove the linked device or ask for a new QR.
 - **Several accounts do not stay connected on Workers Free:** the limiting resource is Durable Object duration, not the roughly 144 ten-minute alarms per day. Treat one continuously connected WhatsApp account as the Free-plan baseline and use Workers Paid for more always-resident accounts.
 
 The Workers Free plan supports the SQLite-backed Durable Objects used by GSV;

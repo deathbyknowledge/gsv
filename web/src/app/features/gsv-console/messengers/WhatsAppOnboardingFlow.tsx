@@ -11,7 +11,13 @@ import { ConnectFlowShell } from "../connect-flows/ConnectFlowShell";
 import type { ConnectFlowDef } from "../connect-flows/connectFlowTypes";
 import { useConsumeIdentityLinkCode } from "../hooks/useConsoleData";
 import { MESSENGER_CAPABILITIES, adapterDocUrl } from "./messengerDocs";
-import { adapterDetailId, adapterName, iconForAdapterName } from "./messengerPresentation";
+import {
+  adapterDetailId,
+  adapterName,
+  iconForAdapterName,
+  messengerIdentityLabel,
+  whatsappAccountIdLabel,
+} from "./messengerPresentation";
 import { useWhatsAppPairing } from "./useWhatsAppPairing";
 import { WhatsAppQrCode } from "./WhatsAppQrCode";
 import {
@@ -42,7 +48,10 @@ function errorText(error: unknown): string {
 
 function linkedText(result: IdentityLinkMutationResult): string {
   return result.link
-    ? `${adapterName(result.link.adapter)} / ${result.link.actorId}`
+    ? `${adapterName(result.link.adapter)} / ${messengerIdentityLabel(
+      result.link.adapter,
+      result.link.actorId,
+    )}`
     : "Messenger identity";
 }
 
@@ -102,6 +111,8 @@ export function WhatsAppOnboardingFlow({
     result,
     secondsRemaining,
   } = pairing;
+  const pairedAccountLabel = pairedPhone
+    || whatsappAccountIdLabel(normalizedAccountId);
 
   useUnsavedGuard(
     () => !linked && (pairingStarted || accountId !== initialId || linkCode.trim() !== ""),
@@ -276,7 +287,7 @@ export function WhatsAppOnboardingFlow({
               variant={paired ? "success" : formError || qrRenderError ? "error" : "attention"}
               title={paired ? "ACCOUNT PAIRED" : formError || qrRenderError ? "QR CODE NEEDS ATTENTION" : "SCAN IN LINKED DEVICES"}
               text={paired
-                ? `${pairedPhone || normalizedAccountId} is connected to GSV.`
+                ? `${pairedAccountLabel} is connected to GSV.`
                 : formError || (qrRenderError ? "GSV could not render this QR code safely. Refresh it to try again." : "Keep this page open while you scan. GSV will continue automatically when WhatsApp confirms the link.")}
             />
             {qrSource && !paired ? (

@@ -1,9 +1,15 @@
 import { useEffect, useState } from "preact/hooks";
-import type { WhatsAppQrSource } from "./whatsappPairing";
+import {
+  isWhatsAppQrImageDataUrl,
+  type WhatsAppQrSource,
+} from "./whatsappPairing";
 import "./WhatsAppPairing.css";
 
 export async function renderWhatsAppQrImageUrl(source: WhatsAppQrSource): Promise<string> {
   if (source.kind === "data-url") {
+    if (!isWhatsAppQrImageDataUrl(source.value)) {
+      throw new Error("Unsupported WhatsApp QR image data");
+    }
     return source.value;
   }
   const { default: QRCode } = await import("qrcode");
@@ -27,7 +33,11 @@ export function WhatsAppQrCode({
   source: WhatsAppQrSource;
   onRenderError?: () => void;
 }) {
-  const [imageUrl, setImageUrl] = useState(source.kind === "data-url" ? source.value : "");
+  const [imageUrl, setImageUrl] = useState(
+    source.kind === "data-url" && isWhatsAppQrImageDataUrl(source.value)
+      ? source.value
+      : "",
+  );
 
   useEffect(() => {
     let active = true;
@@ -51,7 +61,14 @@ export function WhatsAppQrCode({
   return (
     <div class="gsv-whatsapp-qr-frame" aria-live="polite">
       {imageUrl ? (
-        <img src={imageUrl} alt="WhatsApp linked-device QR code" />
+        <img
+          src={imageUrl}
+          alt="WhatsApp linked-device QR code"
+          onError={() => {
+            setImageUrl("");
+            onRenderError?.();
+          }}
+        />
       ) : (
         <div class="gsv-whatsapp-qr-loading gsv-sublabel">GENERATING SECURE QR CODE</div>
       )}
