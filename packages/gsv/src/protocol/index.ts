@@ -7,6 +7,7 @@ export type * from "./syscalls/repositories";
 export type * from "./syscalls/proc";
 export type * from "./syscalls/scheduler";
 export type * from "./syscalls/adapter";
+export { isAdapterConnectResult } from "./syscalls/adapter";
 export type * from "./syscalls/signal";
 export type * from "./syscalls/interaction-origin";
 export type * from "./syscalls/ai";

@@ -11,12 +11,92 @@ import type { ConsoleAdapter, ConsoleAdapterAccount } from "../domain/consoleMod
 export function iconForAdapterName(adapter: string): string {
   if (adapter === "telegram") return "telegram";
   if (adapter === "discord") return "discord";
-  if (adapter === "whatsapp") return "doticons/messenger";
+  if (adapter === "whatsapp") return "doticons/whatsapp";
   return "chat";
 }
 
 export function adapterName(adapter: string): string {
   return formatTokenLabel(adapter);
+}
+
+export function messengerAccountNoun(adapter: string, count = 1): string {
+  const noun = adapter === "whatsapp" ? "account" : "bot";
+  return count === 1 ? noun : `${noun}s`;
+}
+
+function extraString(adapter: ConsoleAdapterAccount, key: string): string {
+  const value = adapter.extra[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function extraTimestamp(adapter: ConsoleAdapterAccount, key: string): number | null {
+  const value = adapter.extra[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function whatsAppPhoneLabel(value: string): string {
+  const trimmed = value.trim();
+  if (/^\+\d{5,20}$/.test(trimmed)) {
+    return trimmed;
+  }
+  const jid = trimmed.replace(/^wa:jid:/i, "");
+  const match = jid.match(/^(\d+)(?::\d+)?@(?:s\.whatsapp\.net|c\.us|hosted)$/i);
+  return match ? `+${match[1]}` : "";
+}
+
+function isWhatsAppJid(value: string): boolean {
+  return /^wa:jid:/i.test(value.trim()) || /@[^\s@]+$/i.test(value.trim());
+}
+
+export function whatsappAccountIdLabel(accountId: string): string {
+  const normalized = accountId.trim();
+  return isWhatsAppJid(normalized) ? "WhatsApp account" : normalized;
+}
+
+export function whatsappAccountPhone(adapter: ConsoleAdapterAccount): string {
+  if (adapter.adapter !== "whatsapp") {
+    return "";
+  }
+  return whatsAppPhoneLabel(extraString(adapter, "selfE164"))
+    || whatsAppPhoneLabel(extraString(adapter, "selfJid"))
+    || whatsAppPhoneLabel(adapter.accountId);
+}
+
+export function messengerIdentityLabel(adapter: string, actorId: string): string {
+  if (adapter !== "whatsapp") {
+    return actorId;
+  }
+  const phone = whatsAppPhoneLabel(actorId);
+  if (phone) {
+    return phone;
+  }
+  return /@g\.us$/i.test(actorId.trim()) ? "WhatsApp group" : "WhatsApp user";
+}
+
+export function actionableAdapterError(adapter: string, error: string): string {
+  const value = error.trim();
+  if (!value || adapter !== "whatsapp") {
+    return value;
+  }
+  if (/logged[\s_-]*out|not[\s_-]*authorized|\b401\b/i.test(value)) {
+    return "WhatsApp signed this linked device out. Relink the account with a fresh QR code.";
+  }
+  if (/connection[\s_-]*replaced|replaced.*connection|\b440\b/i.test(value)) {
+    return "WhatsApp replaced this session. Reconnect it, or relink if another linked device took over.";
+  }
+  if (/restart[\s_-]*required|\b515\b/i.test(value)) {
+    return "WhatsApp requested a connection restart. Reconnect the account to resume messaging.";
+  }
+  if (/qr.*(?:expired|invalid)|(?:expired|invalid).*qr/i.test(value)) {
+    return "The WhatsApp QR code expired. Refresh it and scan the new code in Linked Devices.";
+  }
+  if (/rate[\s_-]*limit|too many requests|\b429\b/i.test(value)) {
+    return "WhatsApp is temporarily rate limiting this account. Wait a few minutes before reconnecting.";
+  }
+  if (/timed?[\s_-]*out|network|socket|connection.*(?:closed|lost)/i.test(value)) {
+    return "The WhatsApp connection was interrupted. Reconnect the account to resume messaging.";
+  }
+  return value;
 }
 
 export function adapterFamilySub(adapter: ConsoleAdapter): string {
@@ -62,10 +142,23 @@ export function parseAdapterDetailId(id: string): { adapter: string; accountId: 
 }
 
 export function adapterLabel(adapter: ConsoleAdapterAccount): string {
+  if (adapter.adapter === "whatsapp") {
+    return whatsappAccountPhone(adapter)
+      || whatsappAccountIdLabel(adapter.accountId);
+  }
   return adapter.accountId;
 }
 
 export function adapterSub(adapter: ConsoleAdapterAccount): string {
+  if (adapter.adapter === "whatsapp") {
+    const label = adapterLabel(adapter);
+    const localId = isWhatsAppJid(adapter.accountId) ? "" : adapter.accountId;
+    return compactText([
+      label === localId ? "WhatsApp account" : localId ? `local id ${localId}` : "",
+      adapter.lastActivity !== null ? `active ${formatAge(adapter.lastActivity)}` : "",
+      actionableAdapterError(adapter.adapter, adapter.error),
+    ], "WhatsApp account");
+  }
   return compactText([
     formatTokenLabel(adapter.adapter),
     adapter.mode ? `mode ${adapter.mode}` : "",
@@ -88,7 +181,40 @@ export function statusForAdapter(adapter: ConsoleAdapterAccount): string {
   return "DISCONNECTED";
 }
 
+export function canDisconnectAdapter(adapter: ConsoleAdapterAccount): boolean {
+  return adapter.adapter === "whatsapp"
+    ? adapter.connected || adapter.authenticated
+    : adapter.connected;
+}
+
 export function adapterDetailSections(adapter: ConsoleAdapterAccount): ConsoleDetailSection[] {
+  if (adapter.adapter === "whatsapp") {
+    const phone = extraString(adapter, "selfE164");
+    const connectedAt = extraTimestamp(adapter, "lastConnectedAt");
+    const disconnectedAt = extraTimestamp(adapter, "lastDisconnectedAt");
+    const disconnectReason = extraString(adapter, "disconnectReason");
+    return [
+      {
+        title: "WHATSAPP ACCOUNT",
+        meta: statusForAdapter(adapter),
+        metaTone: toneForAdapter(adapter),
+        rows: liveRows([
+          detailRow("phone", "PHONE NUMBER", phone),
+          detailRow("account", "LOCAL ACCOUNT ID", adapter.accountId),
+          detailRow("status", "CONNECTION", statusForAdapter(adapter), {
+            status: listRowStatusForTone(toneForAdapter(adapter)),
+            statusLabel: statusForAdapter(adapter),
+          }),
+          detailRow("authenticated", "LINKED DEVICE AUTH", adapter.authenticated),
+          detailRow("last-activity", "LAST ACTIVITY", adapter.lastActivity === null ? "" : formatAge(adapter.lastActivity)),
+          detailRow("last-connected", "LAST CONNECTED", connectedAt === null ? "" : formatAge(connectedAt)),
+          detailRow("last-disconnected", "LAST DISCONNECTED", disconnectedAt === null ? "" : formatAge(disconnectedAt)),
+          detailRow("disconnect-reason", "DISCONNECT REASON", disconnectReason),
+          detailRow("error", "RECOVERY", actionableAdapterError(adapter.adapter, adapter.error)),
+        ]),
+      },
+    ];
+  }
   const extraRows = Object.entries(adapter.extra)
     .filter(([, value]) => value !== null && value !== undefined && value !== "")
     .map(([key, value]) => detailRow(`extra-${key}`, formatTokenLabel(key), String(value)));
@@ -150,13 +276,15 @@ export function familyStatusFromAccounts(
   // CONNECTED across the card grid, overview, and desktop objects.
   if (!available) {
     return {
-      status: total > 0 ? "attention" : "not-enabled",
-      tone: total > 0 ? "warn" : "idle",
-      label: total > 0 ? "UNAVAILABLE" : "NOT ENABLED",
+      status: "attention",
+      tone: "warn",
+      label: "UNAVAILABLE",
       connectedCount,
       disconnectedCount,
       total,
-      tooltip: total > 0 ? "Adapter worker unavailable — status may be stale" : null,
+      tooltip: total > 0
+        ? "Adapter worker unavailable — status may be stale"
+        : "Adapter worker unavailable — deploy it to connect an account",
     };
   }
 
@@ -207,9 +335,10 @@ export function familyStatusFromAccounts(
   };
 }
 
-/** Messenger platforms GSV supports, in display order. These are ALWAYS shown
- *  (as "NOT ENABLED" when no bot is connected) — there is no empty state. */
-export const SUPPORTED_MESSENGER_ADAPTERS = ["telegram", "discord"] as const;
+/** Messenger platforms GSV supports, in display order. These are always shown;
+ *  availability distinguishes a deployed adapter with no accounts from an
+ *  adapter Worker that is absent. */
+export const SUPPORTED_MESSENGER_ADAPTERS = ["telegram", "discord", "whatsapp"] as const;
 
 export interface MessengerFamily {
   adapter: string;
@@ -221,14 +350,17 @@ export interface MessengerFamily {
  *  each with its aggregated family status. Always returns one entry per platform. */
 export function messengerFamilies(
   accounts: readonly ConsoleAdapterAccount[],
-  inventory: readonly ConsoleAdapter[] = [],
+  inventory?: readonly ConsoleAdapter[],
 ): MessengerFamily[] {
-  const availableByAdapter = new Map(inventory.map((entry) => [entry.adapter, entry.available]));
+  const availableByAdapter = new Map(
+    (inventory ?? []).map((entry) => [entry.adapter, entry.available]),
+  );
+  const hasInventory = inventory !== undefined;
   return SUPPORTED_MESSENGER_ADAPTERS.map((adapter) => {
     const own = accounts.filter((account) => account.adapter === adapter);
-    // Absent inventory entry → assume available so we don't falsely flag
-    // platforms when callers don't supply availability info.
-    const available = availableByAdapter.get(adapter) ?? true;
+    // Legacy callers that omit inventory have no availability signal. Once a
+    // real inventory is supplied, an absent binding means the Worker is absent.
+    const available = availableByAdapter.get(adapter) ?? !hasInventory;
     return { adapter, accounts: own, status: familyStatusFromAccounts(own, available) };
   });
 }

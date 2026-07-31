@@ -9,6 +9,7 @@ import {
   handleAdapterSend,
   handleAdapterStateUpdate,
   handleAdapterStatus,
+  setAdapterActivityForKernel,
 } from "./adapter-handlers";
 import { sendFrameToProcess } from "../shared/utils";
 import {
@@ -707,6 +708,54 @@ describe("adapter lifecycle handlers", () => {
     ]);
   });
 
+  it("ignores malformed live status without persisting or exposing it", async () => {
+    const privatePayload = "private-status-payload";
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const cached = {
+      adapter: "whatsapp",
+      accountId: "primary",
+      connected: false,
+      authenticated: false,
+      mode: "websocket",
+      lastActivity: 123,
+      error: null,
+      extra: null,
+      updatedAt: 456,
+    };
+    const status = {
+      upsert: vi.fn(),
+      list: vi.fn(() => [cached]),
+      listAll: vi.fn(() => [cached]),
+    };
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: {
+        adapterStatus: vi.fn(async () => [{
+          accountId: "primary",
+          connected: true,
+          authenticated: "yes",
+          privatePayload,
+        }]),
+      },
+    }, status, { identity: userIdentity(0) });
+
+    const result = await handleAdapterStatus(
+      { adapter: "whatsapp", accountId: "primary" },
+      ctx,
+    );
+
+    expect(status.upsert).not.toHaveBeenCalled();
+    expect(result.accounts).toEqual([expect.objectContaining({
+      accountId: "primary",
+      connected: false,
+      authenticated: false,
+    })]);
+    expect(JSON.stringify(result)).not.toContain(privatePayload);
+    expect(errorLog).toHaveBeenCalledWith(
+      JSON.stringify({ component: "adapter", event: "status_invalid_response" }),
+    );
+    errorLog.mockRestore();
+  });
+
   it("adapter.status uses owning human links for agent process callers", async () => {
     const rows = [
       {
@@ -849,6 +898,37 @@ describe("adapter lifecycle handlers", () => {
     expect(status.upsert).toHaveBeenCalled();
   });
 
+  it("does not let an account-scoped status refresh mutate another account", async () => {
+    const status = {
+      get: vi.fn(() => ({ ownerUid: 1000 })),
+      upsert: vi.fn(),
+    };
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: {
+        adapterConnect: vi.fn(async () => ({
+          ok: true as const,
+          connected: true,
+          authenticated: true,
+        })),
+        adapterStatus: vi.fn(async () => [
+          { accountId: "primary", connected: true, authenticated: true },
+          { accountId: "other", connected: true, authenticated: true },
+        ]),
+      },
+    }, status, { identity: userIdentity() });
+
+    await expect(handleAdapterConnect(
+      { adapter: "whatsapp", accountId: "primary" },
+      ctx,
+    )).resolves.toMatchObject({ ok: true, accountId: "primary" });
+
+    expect(status.upsert).not.toHaveBeenCalledWith(
+      "whatsapp",
+      "other",
+      expect.anything(),
+    );
+  });
+
   it("adapter.connect returns error when binding does not implement connect", async () => {
     const service = {
       start: vi.fn(async () => ({ ok: true as const })),
@@ -876,6 +956,38 @@ describe("adapter lifecycle handlers", () => {
     if (!result.ok) {
       expect(result.error).toContain("does not implement connect");
     }
+  });
+
+  it.each([
+    ["missing result discriminator", { connected: true }],
+    ["missing connection state", { ok: true, message: "Connected" }],
+    ["empty failure error", { ok: false, error: "" }],
+    ["malformed QR challenge", {
+      ok: true,
+      challenge: { type: "qr", format: "raw", data: "" },
+    }],
+  ])("adapter.connect rejects a %s without exposing worker data", async (_label, workerResult) => {
+    const privatePayload = "private-pairing-payload-must-not-leak";
+    const adapterConnect = vi.fn(async () => ({ ...workerResult, privatePayload }));
+    const ctx = makeContext(
+      { CHANNEL_WHATSAPP: { adapterConnect } },
+      {
+        get: vi.fn(() => ({ ownerUid: 1000 })),
+        upsert: vi.fn(),
+      },
+      { identity: userIdentity() },
+    );
+
+    const result = await handleAdapterConnect(
+      { adapter: "whatsapp", accountId: "default" },
+      ctx,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Adapter returned an invalid connect response: whatsapp",
+    });
+    expect(JSON.stringify(result)).not.toContain(privatePayload);
   });
 
   it.each([
@@ -975,7 +1087,7 @@ describe("adapter lifecycle handlers", () => {
     expect(endLifecycle).toHaveBeenCalledWith("discord", "default");
   });
 
-  it("retains a new ownership claim when the adapter outcome is unknown", async () => {
+  it("retains a new ownership claim and sanitizes interrupted adapter RPCs", async () => {
     const setOwner = vi.fn();
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const ctx = makeContext(
@@ -995,8 +1107,11 @@ describe("adapter lifecycle handlers", () => {
     );
 
     await expect(handleAdapterConnect({ adapter: "discord", accountId: "default" }, ctx))
-      .rejects.toThrow("rpc interrupted");
+      .resolves.toEqual({ ok: false, error: "Adapter connect failed: discord" });
     expect(setOwner).toHaveBeenCalledWith("discord", "default", 1000);
+    expect(errorLog).toHaveBeenCalledWith(
+      JSON.stringify({ component: "adapter", event: "connect_worker_failed" }),
+    );
     errorLog.mockRestore();
   });
 
@@ -1025,6 +1140,42 @@ describe("adapter lifecycle handlers", () => {
     expect(adapterDisconnect).toHaveBeenCalledTimes(1);
     expect(beginLifecycle).toHaveBeenCalledTimes(1);
     expect(endLifecycle).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects malformed disconnect results without exposing worker data", async () => {
+    const privatePayload = "private-disconnect-payload";
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const status = {
+      upsert: vi.fn(),
+      get: vi.fn(() => ({ ownerUid: 1000 })),
+      beginLifecycle: vi.fn(),
+      endLifecycle: vi.fn(),
+    };
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: {
+        adapterDisconnect: vi.fn(async () => ({
+          ok: true as const,
+          message: 42,
+          privatePayload,
+        })),
+      },
+    }, status, { identity: userIdentity() });
+
+    const result = await handleAdapterDisconnect(
+      { adapter: "whatsapp", accountId: "default" },
+      ctx,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Adapter returned an invalid disconnect response: whatsapp",
+    });
+    expect(JSON.stringify(result)).not.toContain(privatePayload);
+    expect(status.upsert).not.toHaveBeenCalled();
+    expect(errorLog).toHaveBeenCalledWith(
+      JSON.stringify({ component: "adapter", event: "disconnect_invalid_response" }),
+    );
+    errorLog.mockRestore();
   });
 
   it("returns an error when adapter binding is missing", async () => {
@@ -1205,12 +1356,7 @@ describe("adapter lifecycle handlers", () => {
     expect(vi.mocked(ctx.runRoutes.setAdapterRoute).mock.calls.map(([route]) => route.runId)).toEqual([
       deliveredRunIds[0],
     ]);
-    expect(adapterSetActivity).toHaveBeenCalledTimes(1);
-    expect(adapterSetActivity).toHaveBeenCalledWith(
-      "bot",
-      { kind: "dm", id: "chat-42" },
-      { kind: "typing", active: true },
-    );
+    expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
   it("replays completed commands across actor alias normalization", async () => {
@@ -1377,7 +1523,7 @@ describe("adapter lifecycle handlers", () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
-  it("removes route and typing state when Process reports an already-recorded run", async () => {
+  it("removes the route without re-entering the adapter for an already-recorded run", async () => {
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     const ctx = makeContext({
       CHANNEL_TELEGRAM: { adapterSetActivity },
@@ -1456,11 +1602,7 @@ describe("adapter lifecycle handlers", () => {
         key: "var/media/1000/pid-1/replayed",
       },
     }));
-    expect(adapterSetActivity).toHaveBeenLastCalledWith(
-      "bot",
-      { kind: "dm", id: "chat-1" },
-      { kind: "typing", active: false },
-    );
+    expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
   it("adapter.inbound returns a reminder when a confirmation is pending", async () => {
@@ -1814,24 +1956,7 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
       frame.call === "proc.media.write"
     ))).toHaveLength(1);
-    expect(adapterSetActivity).toHaveBeenNthCalledWith(
-      1,
-      "primary",
-      { kind: "dm", id: "dm-1" },
-      { kind: "typing", active: true },
-    );
-    expect(adapterSetActivity).toHaveBeenNthCalledWith(
-      2,
-      "primary",
-      { kind: "dm", id: "dm-1" },
-      { kind: "typing", active: false },
-    );
-    expect(adapterSetActivity).toHaveBeenNthCalledWith(
-      3,
-      "primary",
-      { kind: "dm", id: "dm-1" },
-      { kind: "typing", active: true },
-    );
+    expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
   it("rejects a bare decision replying to an unverified old HIL prompt", async () => {
@@ -2002,11 +2127,7 @@ describe("adapter lifecycle handlers", () => {
         replyToId: "msg-2",
       },
     });
-    expect(service.adapterSetActivity).toHaveBeenCalledWith(
-      "primary",
-      { kind: "dm", id: "dm-1" },
-      { kind: "typing", active: true },
-    );
+    expect(service.adapterSetActivity).not.toHaveBeenCalled();
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(2);
   });
 
@@ -2366,6 +2487,69 @@ describe("adapter lifecycle handlers", () => {
     );
     expect(getReader).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("rejects malformed send results without treating string flags as outcomes", async () => {
+    const privatePayload = "private-send-payload";
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: {
+        adapterSend: vi.fn(async () => ({
+          ok: false as const,
+          error: "provider failure",
+          ambiguous: "yes",
+          privatePayload,
+        })),
+      },
+    }, { upsert: vi.fn() });
+
+    const result = await handleAdapterSend({
+      adapter: "whatsapp",
+      accountId: "primary",
+      deliveryId: "invalid-worker-result",
+      surface: { kind: "dm", id: "dm-1" },
+      text: "hello",
+    }, ctx);
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Adapter returned an invalid send response: whatsapp",
+      deliveryId: "invalid-worker-result",
+      retryable: false,
+    });
+    expect(JSON.stringify(result)).not.toContain(privatePayload);
+    expect(errorLog).toHaveBeenCalledWith(
+      JSON.stringify({ component: "adapter", event: "send_invalid_response" }),
+    );
+    errorLog.mockRestore();
+  });
+
+  it("sanitizes malformed activity results at the gateway boundary", async () => {
+    const privatePayload = "private-activity-payload";
+    const warningLog = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const ctx = makeContext({
+      CHANNEL_WHATSAPP: {
+        adapterSetActivity: vi.fn(async () => ({
+          ok: false as const,
+          error: 42,
+          privatePayload,
+        })),
+      },
+    }, { upsert: vi.fn() });
+
+    await setAdapterActivityForKernel(
+      ctx.env,
+      "whatsapp",
+      "primary",
+      { kind: "dm", id: "dm-1" },
+      { kind: "typing", active: true },
+    );
+
+    expect(warningLog).toHaveBeenCalledWith(
+      JSON.stringify({ component: "adapter", event: "activity_invalid_response" }),
+    );
+    expect(JSON.stringify(warningLog.mock.calls)).not.toContain(privatePayload);
+    warningLog.mockRestore();
   });
 
   it("accepts twenty outbound attachments and rejects a twenty-first", async () => {

@@ -1,6 +1,7 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { Button } from "../../../components/ui/Button";
 import { Icon } from "../../../components/ui/Icon";
+import { Link } from "../../../components/ui/Link";
 import { ListRow, type ListRowStatus } from "../../../components/ui/ListRow";
 import { SectionHeader } from "../../../components/ui/SectionHeader";
 import { CardListTemplate } from "../card-template/CardListTemplate";
@@ -32,7 +33,9 @@ import {
 import { useConsoleListSelection } from "../hooks/useConsoleListSelection";
 import { MessengerDetailPage } from "./MessengerDetailPage";
 import { linksForMessengerAccount } from "./MessengerIdentityLinks";
+import { MessengerLinkCodePanel } from "./MessengerLinkCodePanel";
 import { MessengerOnboardingFlow } from "./MessengerOnboardingFlow";
+import { adapterDocUrl } from "./messengerDocs";
 import {
   SUPPORTED_MESSENGER_ADAPTERS,
   adapterDetailId,
@@ -41,6 +44,7 @@ import {
   adapterSub,
   familyStatus,
   iconForAdapterName,
+  messengerAccountNoun,
   parseAdapterDetailId,
   statusForAdapter,
   toneForAdapter,
@@ -54,9 +58,26 @@ type MessengersPageProps = {
   onSelectionChange?: (selection: ConsoleListSelection | null) => void;
 };
 
+type MessengerOnboardingSession = {
+  accountId: string | null;
+  adapterId: string;
+  forceRelink: boolean;
+  route: "create" | "implicit-platform";
+};
+
+function onboardingSessionKey(session: MessengerOnboardingSession): string {
+  return [
+    session.route,
+    session.adapterId,
+    session.accountId ?? "new",
+    session.forceRelink ? "relink" : "connect",
+  ].join(":");
+}
+
 const PLATFORM_BLURB: Record<string, string> = {
   telegram: "Message your GSV from Telegram — check files, approve tasks, and stay in control from anywhere.",
   discord: "Bring your GSV into Discord — check files, approve tasks, and stay in control from anywhere.",
+  whatsapp: "Message your GSV through a dedicated WhatsApp account linked with a QR code.",
 };
 
 function platformBlurb(adapter: string): string {
@@ -67,7 +88,7 @@ function placeholderAdapter(adapter: string): ConsoleAdapter {
   return {
     adapter,
     available: false,
-    supportsConnect: true,
+    supportsConnect: false,
     supportsDisconnect: false,
     supportsSend: false,
     supportsStatus: false,
@@ -88,7 +109,7 @@ function resourceWithLocalEmptyState<T>(resource: ConsoleResourceState<T>): Cons
 
 function linkedIdentityCountLabel(count: number): string {
   if (count === 0) {
-    return "";
+    return "No linked identities";
   }
   return `${count} linked ${count === 1 ? "identity" : "identities"}`;
 }
@@ -108,7 +129,7 @@ function PlatformStatusBadge({ adapter }: { adapter: ConsoleAdapter }) {
   ) : badge;
 }
 
-const MAX_CARD_BOTS = 2;
+const MAX_CARD_ACCOUNTS = 2;
 
 export function MessengerCard({
   adapter,
@@ -124,9 +145,11 @@ export function MessengerCard({
   onOpenPlatform: (adapter: ConsoleAdapter) => void;
 }) {
   const platform = adapterName(adapter.adapter).toUpperCase();
-  const bots = adapter.accounts;
-  const visible = bots.slice(0, MAX_CARD_BOTS);
-  const extra = bots.length - visible.length;
+  const accounts = adapter.accounts;
+  const visible = accounts.slice(0, MAX_CARD_ACCOUNTS);
+  const extra = accounts.length - visible.length;
+  const accountNoun = messengerAccountNoun(adapter.adapter, accounts.length);
+  const canConnect = adapter.available && adapter.supportsConnect;
 
   return (
     <article class="gsv-messenger-card">
@@ -143,10 +166,10 @@ export function MessengerCard({
       <div class="gsv-messenger-card-body">
         <p class="gsv-messenger-card-blurb gsv-prose-sm">{platformBlurb(adapter.adapter)}</p>
 
-        {bots.length > 0 ? (
+        {accounts.length > 0 ? (
           <div class="gsv-messenger-card-bots">
             <div class="gsv-messenger-card-bots-label gsv-sublabel">
-              {bots.length} {bots.length === 1 ? "BOT" : "BOTS"}
+              {accounts.length} {accountNoun.toUpperCase()}
             </div>
             {visible.map((account) => (
               <ListRow
@@ -169,15 +192,30 @@ export function MessengerCard({
             ) : null}
           </div>
         ) : (
-          <div class="gsv-messenger-card-hint gsv-label">No bot connected yet.</div>
+          <div class="gsv-messenger-card-hint gsv-label">
+            {adapter.available
+              ? `No ${messengerAccountNoun(adapter.adapter)} connected yet.`
+              : `The ${adapterName(adapter.adapter)} adapter worker is not deployed.`}
+          </div>
         )}
+        {!adapter.available ? (
+          <p class="gsv-messenger-card-deploy gsv-prose-sm">
+            Deploy the channel-{adapter.adapter} component, then refresh this page. {" "}
+            <Link href={adapterDocUrl(adapter.adapter)} arrow>Deployment guide</Link>
+          </p>
+        ) : null}
       </div>
 
       <footer class="gsv-messenger-card-foot">
         <Button
-          variant={bots.length > 0 ? "secondary" : "primary"}
+          variant={accounts.length > 0 ? "secondary" : "primary"}
           block
-          label={bots.length > 0 ? `CONNECT ANOTHER ${platform}` : `CONNECT ${platform}`}
+          label={!canConnect
+            ? `${platform} UNAVAILABLE`
+            : accounts.length > 0
+              ? `CONNECT ANOTHER ${platform}`
+              : `CONNECT ${platform}`}
+          disabled={!canConnect}
           onClick={() => onConnect(adapter)}
         />
       </footer>
@@ -227,7 +265,7 @@ function MessengersRoster({
   );
 }
 
-/** Dedicated per-platform page listing every bot for one messenger — opened
+/** Dedicated per-platform page listing every account for one messenger — opened
  *  from a card's "N more messengers" affordance. Reuses the standard
  *  ConsoleDetailPage chrome (header + back + primary action). */
 function MessengerPlatformPage({
@@ -246,6 +284,8 @@ function MessengerPlatformPage({
   const info = familyStatus(adapter);
   const platform = adapterName(adapter.adapter).toUpperCase();
   const total = adapter.accounts.length;
+  const accountNoun = messengerAccountNoun(adapter.adapter, total);
+  const canConnect = adapter.available && adapter.supportsConnect;
 
   return (
     <ConsoleDetailPage
@@ -254,14 +294,16 @@ function MessengerPlatformPage({
       typeLabel="GSV · MESSENGER"
       statusLabel={info.label}
       tone={info.tone}
-      blurb={`${info.connectedCount} of ${total} ${total === 1 ? "bot" : "bots"} connected.`}
+      blurb={adapter.available
+        ? `${info.connectedCount} of ${total} ${accountNoun} connected.`
+        : `${adapterName(adapter.adapter)} adapter worker unavailable. Deploy channel-${adapter.adapter} to connect it.`}
       parentLabel="MESSENGERS"
-      primaryLabel={`CONNECT ANOTHER ${platform}`}
-      onPrimary={() => onConnect(adapter)}
+      primaryLabel={canConnect ? `CONNECT ANOTHER ${platform}` : `${platform} UNAVAILABLE`}
+      onPrimary={canConnect ? () => onConnect(adapter) : undefined}
       onBack={onBack}
     >
       <section class="gsv-messenger-platform">
-        <SectionHeader title="BOTS" meta={String(total)} divider />
+        <SectionHeader title={accountNoun.toUpperCase()} meta={String(total)} divider />
         <div class="gsv-messenger-platform-rows">
           {adapter.accounts.map((account) => (
             <ListRow
@@ -294,6 +336,8 @@ function renderMessengerDetail(
   disconnecting: boolean,
   disconnectError: string | undefined,
   onReconnect: (account: ConsoleAdapterAccount) => void,
+  onRelink: (account: ConsoleAdapterAccount) => void,
+  onLinkIdentity: () => void,
 ) {
   const parsed = parseAdapterDetailId(id);
   const account = parsed
@@ -313,6 +357,8 @@ function renderMessengerDetail(
       disconnecting={disconnecting}
       disconnectError={disconnectError}
       onReconnect={onReconnect}
+      onRelink={onRelink}
+      onLinkIdentity={onLinkIdentity}
     />
   ) : null;
 }
@@ -327,7 +373,7 @@ export function MessengersPage({
   const accounts = useConsoleAccounts({ enabled: true });
   const identityLinks = useConsoleIdentityLinks({ enabled: true });
   const disconnectAdapter = useDisconnectConsoleAdapter();
-  const [preferredAdapter, setPreferredAdapter] = useState<string | null>(null);
+  const [onboarding, setOnboarding] = useState<MessengerOnboardingSession | null>(null);
   const { selectedDetail, selectDetail } = useConsoleListSelection({
     initialCreate,
     initialDetailId,
@@ -336,27 +382,121 @@ export function MessengersPage({
     onSelectionChange,
   });
 
+  useEffect(() => {
+    const platform = selectedDetail?.kind === "messengers" && !selectedDetail.createNew
+      ? SUPPORTED_MESSENGER_ADAPTERS.find((id) => id === selectedDetail.id) ?? null
+      : null;
+    if (onboarding) {
+      const routeStillActive = onboarding.route === "create"
+        ? selectedDetail?.createNew === true
+        : platform === onboarding.adapterId;
+      if (!routeStillActive) {
+        setOnboarding(null);
+      }
+      return;
+    }
+    if (
+      !platform
+      || adapters.resource.isLoading
+      || adapters.resource.isRefreshing
+      || adapters.resource.isError
+      || adapters.resource.isUnavailable
+    ) {
+      return;
+    }
+    const target = supportedAdapters(adapters.adapters).find(
+      (entry) => entry.adapter === platform,
+    );
+    if (
+      !target
+      || target.accounts.length > 0
+      || !target.available
+      || !target.supportsConnect
+    ) {
+      return;
+    }
+
+    // A bare platform route doubles as the first-account entry point. Pin that
+    // decision locally before adapter.connect refreshes the inventory, without
+    // rewriting browser history to /new and trapping the Back action.
+    setOnboarding({
+      accountId: null,
+      adapterId: platform,
+      forceRelink: false,
+      route: "implicit-platform",
+    });
+  }, [
+    adapters.adapters,
+    adapters.resource.isError,
+    adapters.resource.isLoading,
+    adapters.resource.isRefreshing,
+    adapters.resource.isUnavailable,
+    onboarding,
+    selectedDetail,
+  ]);
+
+  const closeOnboarding = () => {
+    setOnboarding(null);
+    selectDetail(null);
+  };
+
+  const completeOnboarding = (id: string) => {
+    setOnboarding(null);
+    selectDetail({ kind: "messengers", id });
+  };
+
   const openCreate = (adapter: ConsoleAdapter) => {
-    setPreferredAdapter(adapter.adapter);
+    if (!adapter.available || !adapter.supportsConnect) {
+      return;
+    }
+    setOnboarding({
+      adapterId: adapter.adapter,
+      accountId: null,
+      forceRelink: false,
+      route: "create",
+    });
     selectDetail({ kind: "messengers", id: NEW_DETAIL_ID, createNew: true, label: `New ${adapterName(adapter.adapter)}` });
   };
 
-  const openDetail = (account: ConsoleAdapterAccount) =>
+  const openDetail = (account: ConsoleAdapterAccount) => {
+    setOnboarding(null);
     selectDetail({ kind: "messengers", id: adapterDetailId(account), label: `${adapterName(account.adapter)} · ${adapterLabel(account)}` });
+  };
 
-  const openPlatform = (adapter: ConsoleAdapter) =>
-    selectDetail({ kind: "messengers", id: adapter.adapter, label: `${adapterName(adapter.adapter)} · all bots` });
+  const openPlatform = (adapter: ConsoleAdapter) => {
+    setOnboarding(null);
+    selectDetail({
+      kind: "messengers",
+      id: adapter.adapter,
+      label: `${adapterName(adapter.adapter)} · all ${messengerAccountNoun(adapter.adapter, 2)}`,
+    });
+  };
 
   const reconnect = (account: ConsoleAdapterAccount) => {
-    setPreferredAdapter(account.adapter);
+    setOnboarding({
+      adapterId: account.adapter,
+      accountId: account.accountId,
+      forceRelink: false,
+      route: "create",
+    });
     selectDetail({ kind: "messengers", id: NEW_DETAIL_ID, createNew: true, label: `Reconnect ${adapterName(account.adapter)}` });
+  };
+
+  const relink = (account: ConsoleAdapterAccount) => {
+    setOnboarding({
+      adapterId: account.adapter,
+      accountId: account.accountId,
+      forceRelink: true,
+      route: "create",
+    });
+    selectDetail({ kind: "messengers", id: NEW_DETAIL_ID, createNew: true, label: `Relink ${adapterName(account.adapter)}` });
   };
 
   const disconnect = (account: ConsoleAdapterAccount) => {
     void disconnectAdapter.mutateAsync({
       adapter: account.adapter,
       accountId: account.accountId,
-    }).then(() => selectDetail(null));
+    }).then(() => closeOnboarding());
   };
 
   return (
@@ -370,11 +510,25 @@ export function MessengersPage({
           const identityLinksRefreshing = identityLinks.resource.isLoading || identityLinks.resource.isRefreshing;
 
           if (selectedDetail?.kind === "messengers" && selectedDetail.createNew) {
+            const explicitOnboarding = onboarding?.route === "create"
+              ? onboarding
+              : {
+                accountId: null,
+                adapterId: "telegram",
+                forceRelink: false,
+                route: "create" as const,
+              };
             return (
               <MessengerOnboardingFlow
-                adapterId={preferredAdapter ?? "telegram"}
-                onBack={() => selectDetail(null)}
-                onConnected={(id) => selectDetail({ kind: "messengers", id })}
+                key={onboardingSessionKey(explicitOnboarding)}
+                adapterId={explicitOnboarding.adapterId}
+                existingAccountIds={data
+                  .find((entry) => entry.adapter === explicitOnboarding.adapterId)
+                  ?.accounts.map((account) => account.accountId) ?? []}
+                forceRelink={explicitOnboarding.forceRelink}
+                initialAccountId={explicitOnboarding.accountId}
+                onBack={closeOnboarding}
+                onConnected={completeOnboarding}
               />
             );
           }
@@ -384,14 +538,32 @@ export function MessengersPage({
             if (platform) {
               const target = supportedAdapters(data).find((entry) => entry.adapter === platform);
               if (target) {
-                // No bots yet → straight to the connect flow; otherwise the
-                // dedicated full-list page for the platform.
-                if (target.accounts.length === 0) {
+                if (onboarding?.route === "implicit-platform" && onboarding.adapterId === platform) {
                   return (
                     <MessengerOnboardingFlow
+                      key={onboardingSessionKey(onboarding)}
                       adapterId={platform}
-                      onBack={() => selectDetail(null)}
-                      onConnected={(id) => selectDetail({ kind: "messengers", id })}
+                      existingAccountIds={[]}
+                      onBack={closeOnboarding}
+                      onConnected={completeOnboarding}
+                    />
+                  );
+                }
+                // No accounts yet → straight to the connect flow; otherwise the
+                // dedicated full-list page for the platform.
+                if (target.accounts.length === 0 && target.available && target.supportsConnect) {
+                  return (
+                    <MessengerOnboardingFlow
+                      key={onboardingSessionKey({
+                        accountId: null,
+                        adapterId: platform,
+                        forceRelink: false,
+                        route: "implicit-platform",
+                      })}
+                      adapterId={platform}
+                      existingAccountIds={[]}
+                      onBack={closeOnboarding}
+                      onConnected={completeOnboarding}
                     />
                   );
                 }
@@ -399,7 +571,7 @@ export function MessengersPage({
                   <MessengerPlatformPage
                     adapter={target}
                     identityLinks={identityLinks.links}
-                    onBack={() => selectDetail(null)}
+                    onBack={closeOnboarding}
                     onConnect={openCreate}
                     onOpenDetail={openDetail}
                   />
@@ -414,11 +586,13 @@ export function MessengersPage({
               identityLinksError,
               identityLinksRefreshing,
               selectedDetail.id,
-              () => selectDetail(null),
+              closeOnboarding,
               disconnect,
               disconnectAdapter.isPending,
               disconnectAdapter.error?.message,
               reconnect,
+              relink,
+              closeOnboarding,
             );
             if (detail) {
               return detail;
@@ -426,14 +600,21 @@ export function MessengersPage({
           }
 
           return (
-            <MessengersRoster
-              adapters={data}
-              identityLinks={identityLinks.links}
-              onConnect={openCreate}
-              onOpenDetail={openDetail}
-              onOpenPlatform={openPlatform}
-              refreshing={adapters.resource.isRefreshing}
-            />
+            <>
+              <MessengerLinkCodePanel
+                errorText={identityLinksError}
+                linkCount={identityLinks.links.length}
+                refreshing={identityLinksRefreshing}
+              />
+              <MessengersRoster
+                adapters={data}
+                identityLinks={identityLinks.links}
+                onConnect={openCreate}
+                onOpenDetail={openDetail}
+                onOpenPlatform={openPlatform}
+                refreshing={adapters.resource.isRefreshing}
+              />
+            </>
           );
         }}
       />

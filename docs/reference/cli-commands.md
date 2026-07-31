@@ -259,6 +259,19 @@ Link commands bind adapter identities, such as WhatsApp or Discord actors, to
 GSV users. Use a one-time `CODE` from an adapter flow or provide the adapter,
 account, and actor identifiers manually.
 
+WhatsApp setup has two separate links: QR pairing authenticates the adapter as
+a linked device, then a direct message identifies its sender. After the adapter
+reports authenticated, send a new direct message from the personal WhatsApp
+account to the number paired with GSV. Enter the one-time reply while logged in
+as the intended GSV user:
+
+```bash
+gsv auth link CODE
+```
+
+The code expires after ten minutes. The message that generated it is not sent
+to an agent, so send another message after the command succeeds.
+
 ### Auth Tokens
 
 ```bash
@@ -298,9 +311,10 @@ With `--local`, commands edit `~/.config/gsv/config.toml`. Supported local keys:
 `gateway.session_expires_at_ms`, `cloudflare.account_id`,
 `cloudflare.api_token`, `release.channel`, `r2.account_id`,
 `r2.access_key_id`, `r2.secret_access_key`, `r2.bucket`,
-`session.default_key`, `device.id`, `device.token`, `device.workspace`,
-`channels.whatsapp.url`, and `channels.whatsapp.token`. `release.channel` must
-be `stable` or `dev`; token and secret values are masked on local `get`.
+`session.default_key`, `device.id`, `device.token`, and `device.workspace`.
+`release.channel` must be `stable` or `dev`; token and secret values are masked
+on local `get`. Adapter workers use Cloudflare service bindings rather than
+locally configured WhatsApp URLs or tokens.
 
 ## Adapter Commands
 
@@ -311,12 +325,34 @@ gsv adapter status --adapter ID [--account-id ACCOUNT]
 ```
 
 Adapters are long-lived external account bridges. `--account-id` defaults to
-`default` for connect/disconnect. `--config-json` must be a JSON object and is
-passed to the adapter implementation, for example:
+`default` for connect/disconnect. A normal WhatsApp connect displays a private
+Linked Devices QR challenge in a supported terminal:
 
 ```bash
-gsv adapter connect --adapter whatsapp --config-json '{"pairing":true}'
+gsv adapter connect --adapter whatsapp --account-id personal
+gsv adapter status --adapter whatsapp --account-id personal
 ```
+
+Treat that QR like a password. If terminal rendering fails, the CLI hides the
+underlying payload. `--config-json` must be a JSON object and is passed to the
+adapter implementation. WhatsApp accepts `{"force":true}` only as destructive
+recovery: it clears the existing linked-device authentication and starts a new
+QR pairing. Routine reconnects and the ten-minute connection-lease refresh do not use it.
+
+Cloudflare lets an active outbound connection prevent Durable Object eviction
+for at most 15 minutes. Ten minutes after each successful WhatsApp connection,
+the account alarm closes that transport and reconnects with the stored
+linked-device credentials. The reconnect establishes a fresh outbound
+connection lease before Cloudflare's per-connection keepalive cap; the alarm
+does not extend the old lease or keep the object alive by itself.
+
+If the account is paired but a direct message gets no link-code reply, first
+confirm `gsv adapter status` reports connected and authenticated. Send a fresh
+DM from the sender account to the paired GSV number, not from the paired account
+itself or from a group. If it still gets no reply, verify that the Gateway and
+`channel-whatsapp` workers are deployed with both service bindings and inspect
+both workers' live logs. For an expired or already-used code, send a new DM and
+run `gsv auth link` with the new code.
 
 ## Infrastructure Commands
 
@@ -327,16 +363,16 @@ gsv infra destroy [-c COMPONENT ... | --all] [--delete-bucket] [--purge-bucket]
 ```
 
 `--codemode` defaults to `auto`. Auto mode enables the gateway's Worker Loader
-binding on Workers Paid accounts and omits it on Workers Free accounts. If plan
-detection is unavailable to the API token, deploy probes the binding during the
-gateway upload and retries without it only when Cloudflare identifies the Worker
-Loader or Dynamic Workers capability as unsupported. Use `on` to require CodeMode
-or `off` to omit the binding explicitly.
+binding only when the account is positively identified as Workers Paid. Free and
+unknown plans omit it, keeping the default deployment Free-safe. Use `on` to
+require CodeMode explicitly or `off` to omit the binding explicitly.
 
 Valid components are `ripgit`, `gateway`, `channel-whatsapp`,
 `channel-discord`, and `channel-telegram`. When no deploy/upgrade component is
 supplied, all components are selected. Deploying `gateway` requires `ripgit` to
-be selected or already deployed.
+be selected or already deployed. Deploying or upgrading an adapter also
+reconciles the adapter-to-gateway and gateway-to-adapter service bindings when a
+gateway already exists. This applies to both the default and named instances.
 
 `deploy` fetches release bundles and applies Cloudflare Workers. `upgrade` does
 the same but auto-refreshes mutable refs such as `latest`, `stable`, and `dev`.
@@ -349,7 +385,9 @@ all components. `--delete-bucket` removes the shared R2 bucket; `--purge-bucket`
 must be combined with it. Unless `--keep-device` is passed, `destroy` also
 attempts to uninstall the local device service. A full teardown also removes the
 legacy assembler Worker when it exists; assembler remains unavailable as a
-deployable component.
+deployable component. Cloudflare removes service bindings associated with a
+destroyed adapter worker, and later gateway upgrades also omit bindings whose
+target worker is absent.
 
 ## Version
 

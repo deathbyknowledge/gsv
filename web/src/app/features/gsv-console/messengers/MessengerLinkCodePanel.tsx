@@ -24,7 +24,7 @@ function linkNotice(link: ConsoleIdentityLink | null): Notice {
   return {
     label: "LINKED",
     text: link
-      ? `${adapterName(link.adapter)} / ${link.actorId}`
+      ? `${adapterName(link.adapter)} identity linked to the signed-in GSV user.`
       : "Identity linked",
     tone: "online",
   };
@@ -66,17 +66,17 @@ export function MessengerLinkCodePanel({
   return (
     <Surface class="gsv-messenger-link-code-panel" level={2}>
       <SectionHeader
-        title="IDENTITY LINK"
+        title="LINK MESSENGER IDENTITY"
         meta={refreshing ? "SYNCING" : `${linkCount} ${linkCount === 1 ? "LINK" : "LINKS"}`}
         divider
       />
       <div class="gsv-messenger-link-code-body">
         <TextInput
           key={`messenger-link-code-${resetKey}`}
-          label="LINK CODE"
-          description="Adapter-issued authorization code."
+          label="AUTHORIZATION CODE"
+          description="Message a connected messenger to receive a code. It identifies the messenger automatically and links its sender to the signed-in GSV user."
           requirement="required"
-          placeholder="ABC123"
+          placeholder="ABCD-EFGH"
           value={code}
           clearable
           onChange={setCode}
@@ -93,7 +93,7 @@ export function MessengerLinkCodePanel({
         />
         <Button
           variant="success"
-          label={consumeCode.isPending ? "REDEEMING" : "REDEEM"}
+          label={consumeCode.isPending ? "LINKING" : "LINK IDENTITY"}
           disabled={!canSubmit}
           onClick={submit}
         />

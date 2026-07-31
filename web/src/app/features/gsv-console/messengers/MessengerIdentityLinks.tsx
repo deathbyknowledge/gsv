@@ -16,8 +16,10 @@ import type {
 } from "../domain/consoleModels";
 import { useRemoveIdentityLink } from "../hooks/useConsoleData";
 import {
+  adapterLabel,
   adapterName,
   iconForAdapterName,
+  messengerIdentityLabel,
 } from "./messengerPresentation";
 import "./MessengerIdentity.css";
 
@@ -63,12 +65,14 @@ export function MessengerIdentityLinks({
   errorText,
   links,
   messenger,
+  onLinkIdentity,
   refreshing,
 }: {
   accounts: readonly ConsoleAccount[];
   errorText?: string;
   links: readonly ConsoleIdentityLink[];
   messenger: ConsoleAdapterAccount;
+  onLinkIdentity?: () => void;
   refreshing: boolean;
 }) {
   const removeLink = useRemoveIdentityLink();
@@ -76,6 +80,14 @@ export function MessengerIdentityLinks({
   const meta = refreshing
     ? "SYNCING"
     : `${links.length} ${links.length === 1 ? "LINK" : "LINKS"}`;
+  const actions = errorText || onLinkIdentity ? (
+    <div class="gsv-messenger-identity-actions">
+      {errorText ? <StatusMeta tone="error" label="ERROR" /> : null}
+      {onLinkIdentity ? (
+        <Button variant="secondary" label="LINK IDENTITY" onClick={onLinkIdentity} />
+      ) : null}
+    </div>
+  ) : undefined;
 
   const unlink = async (link: ConsoleIdentityLink) => {
     await removeLink.mutateAsync({
@@ -92,7 +104,7 @@ export function MessengerIdentityLinks({
         <SectionHeader
           title="LINKED IDENTITIES"
           meta={errorText ? undefined : meta}
-          actions={errorText ? <StatusMeta tone="error" label="ERROR" /> : undefined}
+          actions={actions}
           divider
         />
         <div class="gsv-messenger-identity-list">
@@ -106,7 +118,7 @@ export function MessengerIdentityLinks({
               <div class="gsv-messenger-identity-row" key={linkKey(link)}>
                 <ListRow
                   icon={iconForAdapterName(link.adapter)}
-                  label={link.actorId}
+                  label={messengerIdentityLabel(link.adapter, link.actorId)}
                   status="online"
                   statusDotPlacement="trailing"
                   statusLabel="LINKED"
@@ -142,7 +154,10 @@ export function MessengerIdentityLinks({
             <div class="gsv-console-confirm-wrap" onClick={(event) => event.stopPropagation()}>
               <ConfirmModal
                 title="CONFIRM UNLINK"
-                message={`Unlink ${confirmUnlink.actorId} from ${messenger.accountId}?`}
+                message={`Unlink ${messengerIdentityLabel(
+                  confirmUnlink.adapter,
+                  confirmUnlink.actorId,
+                )} from ${adapterLabel(messenger)}?`}
                 note="Future messages from this external identity will not resolve to the linked GSV account."
                 confirmLabel={removeLink.isPending ? "REMOVING" : "UNLINK"}
                 onCancel={() => setConfirmUnlink(null)}

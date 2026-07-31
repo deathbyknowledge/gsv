@@ -40,26 +40,6 @@ pub struct CliConfig {
     /// Default session settings
     #[serde(default)]
     pub session: SessionConfig,
-
-    /// Channel settings
-    #[serde(default)]
-    pub channels: ChannelsConfig,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct ChannelsConfig {
-    /// WhatsApp adapter settings
-    #[serde(default)]
-    pub whatsapp: WhatsAppChannelConfig,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct WhatsAppChannelConfig {
-    /// WhatsApp adapter worker URL (e.g., https://gsv-channel-whatsapp.example.workers.dev)
-    pub url: Option<String>,
-
-    /// Auth token for WhatsApp adapter
-    pub token: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -308,24 +288,6 @@ impl CliConfig {
     pub fn r2_mount_path(&self) -> PathBuf {
         self.gsv_home().join("r2")
     }
-
-    /// Get WhatsApp channel URL (config -> env var)
-    pub fn whatsapp_url(&self) -> Option<String> {
-        self.channels
-            .whatsapp
-            .url
-            .clone()
-            .or_else(|| std::env::var("WHATSAPP_CHANNEL_URL").ok())
-    }
-
-    /// Get WhatsApp channel auth token
-    pub fn whatsapp_token(&self) -> Option<String> {
-        self.channels
-            .whatsapp
-            .token
-            .clone()
-            .or_else(|| std::env::var("WHATSAPP_CHANNEL_TOKEN").ok())
-    }
 }
 
 /// Generate a sample config file content
@@ -374,9 +336,5 @@ default_key = "agent:main:cli:dm:main"
 # token = "your-device-token"
 # workspace = "/Users/you/projects"
 
-[channels.whatsapp]
-# WhatsApp channel worker URL
-# url = "https://gsv-channel-whatsapp.example.workers.dev"
-# token = "your-whatsapp-channel-token"
 "#
 }

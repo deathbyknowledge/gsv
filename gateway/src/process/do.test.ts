@@ -7256,6 +7256,7 @@ describe("Process DO — mechanical", () => {
           { type: "toolCall", id: "call-hil-2", name: "Read", arguments: { path: "/root/secret.txt" } },
         ]);
         await process.processToolCalls("run-hil-2");
+        process.sendSignal = vi.fn(async () => {});
         return process.store.getPendingHilForRun("run-hil-2").requestId;
       });
 
@@ -7286,6 +7287,14 @@ describe("Process DO — mechanical", () => {
         const toolResult = process.store.getMessages().at(-1);
         expect(toolResult.role).toBe("toolResult");
         expect(JSON.parse(toolResult.toolCalls).outcome).toBe("denied");
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.run.started",
+          expect.objectContaining({
+            pid,
+            runId: "run-hil-2",
+            reason: "proc.hil.resume",
+          }),
+        );
       });
     });
 
@@ -7330,6 +7339,7 @@ describe("Process DO — mechanical", () => {
           resolve,
           timeoutId: setTimeout(() => {}, 60_000),
         });
+        process.sendSignal = vi.fn(async () => {});
 
         await expect(process.handleProcHil({ requestId, decision: "deny" })).resolves.toMatchObject({
           ok: true,
@@ -7338,6 +7348,13 @@ describe("Process DO — mechanical", () => {
         });
 
         expect(resolve).toHaveBeenCalledWith(false);
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.run.started",
+          expect.objectContaining({
+            runId,
+            reason: "proc.hil.resume",
+          }),
+        );
         expect(process.store.getResults(runId)).toMatchObject([
           {
             id: "call-codemode-other",
@@ -7471,6 +7488,7 @@ describe("Process DO — mechanical", () => {
           createdAt: Date.now(),
         });
         process.schedule = vi.fn(async () => ({ id: "recovery-tick" }));
+        process.sendSignal = vi.fn(async () => {});
 
         await expect(process.handleProcHil({
           requestId: "approval-lost",
@@ -7497,6 +7515,13 @@ describe("Process DO — mechanical", () => {
           "tick",
           { runId, generation: 0 },
           { idempotent: true },
+        );
+        expect(process.sendSignal).toHaveBeenCalledWith(
+          "proc.run.started",
+          expect.objectContaining({
+            runId,
+            reason: "proc.hil.resume",
+          }),
         );
       });
     });

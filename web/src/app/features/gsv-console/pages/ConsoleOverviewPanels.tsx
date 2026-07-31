@@ -42,6 +42,7 @@ import {
 } from "../runtime/runtimePresentation";
 import {
   type MessengerFamily,
+  iconForAdapterName,
   messengerFamilies,
 } from "../messengers/messengerPresentation";
 
@@ -123,7 +124,7 @@ function targetRow(target: ConsoleTarget): OverviewRow {
 function familyRow(family: MessengerFamily): OverviewRow {
   return {
     id: family.adapter,
-    icon: family.adapter === "telegram" ? "telegram" : "discord",
+    icon: iconForAdapterName(family.adapter),
     label: formatTokenLabel(family.adapter),
     tone: family.status.tone,
     statusLabel: family.status.label,

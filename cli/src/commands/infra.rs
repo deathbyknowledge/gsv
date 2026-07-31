@@ -428,18 +428,19 @@ async fn apply_deploy(
     let deploying_gateway = components.iter().any(|c| c == "gateway");
     let deploying_discord = components.iter().any(|c| c == "channel-discord");
     let deploying_telegram = components.iter().any(|c| c == "channel-telegram");
+    let prepared_components = deploy::components_for_binding_reconciliation(&components);
 
     let bundle_version = if bundle_dir.is_some() {
         deploy::local_bundle_version_label(&version)
     } else {
         deploy::resolve_release_tag(&version).await?
     };
-    println!("Preparing components: {}", components.join(", "));
+    println!("Preparing components: {}", prepared_components.join(", "));
     if let Some(dir) = bundle_dir {
         println!("Using local bundles from {}", dir.display());
-        deploy::install_bundles_from_dir(cfg, &dir, &version, &components, force_fetch)?;
+        deploy::install_bundles_from_dir(cfg, &dir, &version, &prepared_components, force_fetch)?;
     } else {
-        deploy::fetch_bundles(cfg, &version, &components, force_fetch).await?;
+        deploy::fetch_bundles(cfg, &version, &prepared_components, force_fetch).await?;
     }
 
     println!();

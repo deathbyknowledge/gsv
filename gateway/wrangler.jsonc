@@ -81,10 +81,17 @@
 			"entrypoint": "DiscordChannel"
 		},
 		{
+			"binding": "CHANNEL_WHATSAPP",
+			"service": "gsv-channel-whatsapp",
+			"entrypoint": "WhatsAppChannelEntrypoint"
+		},
+		{
 			"binding": "RIPGIT",
 			"service": "ripgit"
 		}
 	],
+	// CodeMode requires Workers Paid. The CLI omits this binding for Free or
+	// unverified plans; direct Wrangler deployments retain full capabilities.
 	"worker_loaders": [
 		{
 			"binding": "LOADER"

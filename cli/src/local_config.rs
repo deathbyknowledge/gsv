@@ -127,8 +127,6 @@ pub(crate) fn run_local_config(
                 "device.workspace" | "node.workspace" => {
                     cfg.device.workspace = Some(PathBuf::from(value.clone()))
                 }
-                "channels.whatsapp.url" => cfg.channels.whatsapp.url = Some(value.clone()),
-                "channels.whatsapp.token" => cfg.channels.whatsapp.token = Some(value.clone()),
                 _ => {
                     eprintln!("Unknown config key: {}", key);
                     return Ok(());

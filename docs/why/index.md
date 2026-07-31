@@ -4,7 +4,7 @@ An AI assistant lives on one box. Your life doesn't.
 
 You've got a laptop, maybe a home server, a phone. Today's self-hosted agents make you pick *one* of those to run the brain, then keep that machine awake forever. Turn it off and your assistant goes dark. Every other device you own just sits there.
 
-GSV is a different shape. It's a **personal AI computer** — or, for the technically inclined, *a distributed OS with AI in the kernel* — that ties all your machines into one system. The brain runs on the edge (Cloudflare), so it stays awake even when every device you own is asleep, and it acts across all of them at once: read a log on your home server and push from your laptop in the same breath.
+GSV is a different shape. It's a **personal AI computer** — or, for the technically inclined, *a distributed OS with AI in the kernel* — that ties all your machines into one system. The brain runs on the edge (Cloudflare), so it remains reachable even when every device you own is asleep, and it acts across all of them at once: read a log on your home server and push from your laptop in the same breath.
 
 Not a chatbot. Not an agent pinned to a single host. A computer.
 
@@ -14,7 +14,7 @@ Most tools give you one brain in one place. GSV connects your laptop, server, an
 
 ## Always on
 
-Because the brain lives on the edge rather than on a box in your closet, GSV keeps working when your devices are off. Hand it the admin you'd rather not do — email, scheduling, travel — and it gets through it with nothing left running at home.
+Because the brain lives on the edge rather than on a box in your closet, GSV remains reachable when your devices are off. Durable state survives hibernation and cold starts; work that needs an offline device waits until that device reconnects.
 
 ## Yours
 
@@ -27,7 +27,8 @@ Two things we keep straight, because you'll check:
 
 ## What it costs
 
-From about **$5/mo** for Cloudflare infra, plus your own model costs. That's it.
+The baseline can run within **Cloudflare Workers Free**, plus your own model
+costs. Workers Paid is optional for CodeMode and additional runtime capacity.
 
 ## Where we are
 

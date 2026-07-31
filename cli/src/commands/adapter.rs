@@ -1,3 +1,5 @@
+use std::io::IsTerminal;
+
 use gsv::kernel_client::{GatewayAuth, KernelClient};
 use qrcode::{render::unicode, QrCode};
 use serde::Deserialize;
@@ -43,18 +45,14 @@ pub(crate) async fn run_adapter(
                 )
                 .await?;
 
-            match serde_json::from_value::<AdapterConnectPayload>(payload.clone()) {
-                Ok(result) => {
-                    if !result.ok {
-                        return Err(result
-                            .error
-                            .unwrap_or_else(|| "adapter.connect failed".to_string())
-                            .into());
-                    }
-                    print_adapter_connect(&result);
-                }
-                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            let result = parse_adapter_connect_payload(payload)?;
+            if !result.ok {
+                return Err(result
+                    .error
+                    .unwrap_or_else(|| "adapter.connect failed".to_string())
+                    .into());
             }
+            print_adapter_connect(&result);
         }
         AdapterAction::Disconnect {
             adapter,
@@ -70,18 +68,14 @@ pub(crate) async fn run_adapter(
                 )
                 .await?;
 
-            match serde_json::from_value::<AdapterDisconnectPayload>(payload.clone()) {
-                Ok(result) => {
-                    if !result.ok {
-                        return Err(result
-                            .error
-                            .unwrap_or_else(|| "adapter.disconnect failed".to_string())
-                            .into());
-                    }
-                    print_adapter_disconnect(&result);
-                }
-                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
+            let result = parse_adapter_disconnect_payload(payload)?;
+            if !result.ok {
+                return Err(result
+                    .error
+                    .unwrap_or_else(|| "adapter.disconnect failed".to_string())
+                    .into());
             }
+            print_adapter_disconnect(&result);
         }
         AdapterAction::Status {
             adapter,
@@ -92,12 +86,8 @@ pub(crate) async fn run_adapter(
                 args["accountId"] = json!(account_id);
             }
             let payload = client.request_ok("adapter.status", Some(args)).await?;
-            match serde_json::from_value::<AdapterStatusPayload>(payload.clone()) {
-                Ok(result) => {
-                    print_adapter_status(&result);
-                }
-                Err(_) => println!("{}", serde_json::to_string_pretty(&payload)?),
-            }
+            let result = parse_adapter_status_payload(payload)?;
+            print_adapter_status(&result);
         }
     }
 
@@ -151,13 +141,104 @@ struct AdapterChallengePayload {
     challenge_type: String,
     message: Option<String>,
     data: Option<String>,
+    format: Option<AdapterChallengeFormat>,
     expires_at: Option<i64>,
 }
+
+#[derive(Debug, Deserialize, Clone, Copy, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum AdapterChallengeFormat {
+    Raw,
+    DataUrl,
+}
+
+fn parse_adapter_connect_payload(
+    payload: Value,
+) -> Result<AdapterConnectPayload, Box<dyn std::error::Error>> {
+    let result: AdapterConnectPayload = serde_json::from_value(payload)
+        .map_err(|_| "adapter.connect returned an invalid response shape")?;
+    let challenge_valid = result.challenge.as_ref().is_none_or(|challenge| {
+        !challenge.challenge_type.trim().is_empty()
+            && (challenge.challenge_type != "qr"
+                || challenge
+                    .data
+                    .as_deref()
+                    .is_some_and(|data| !data.is_empty()))
+    });
+    let shape_valid = if result.ok {
+        result
+            .adapter
+            .as_deref()
+            .is_some_and(|adapter| !adapter.trim().is_empty())
+            && result
+                .account_id
+                .as_deref()
+                .is_some_and(|account_id| !account_id.trim().is_empty())
+            && result.connected.is_some()
+            && result.authenticated.is_some()
+            && result.error.is_none()
+            && challenge_valid
+    } else {
+        result
+            .error
+            .as_deref()
+            .is_some_and(|error| !error.trim().is_empty())
+            && challenge_valid
+    };
+    if !shape_valid {
+        return Err("adapter.connect returned an invalid response shape".into());
+    }
+    Ok(result)
+}
+
+fn parse_adapter_disconnect_payload(
+    payload: Value,
+) -> Result<AdapterDisconnectPayload, Box<dyn std::error::Error>> {
+    let result: AdapterDisconnectPayload = serde_json::from_value(payload)
+        .map_err(|_| "adapter.disconnect returned an invalid response shape")?;
+    let valid = if result.ok {
+        result
+            .adapter
+            .as_deref()
+            .is_some_and(|adapter| !adapter.trim().is_empty())
+            && result
+                .account_id
+                .as_deref()
+                .is_some_and(|account_id| !account_id.trim().is_empty())
+            && result.error.is_none()
+    } else {
+        result
+            .error
+            .as_deref()
+            .is_some_and(|error| !error.trim().is_empty())
+    };
+    if !valid {
+        return Err("adapter.disconnect returned an invalid response shape".into());
+    }
+    Ok(result)
+}
+
+fn parse_adapter_status_payload(
+    payload: Value,
+) -> Result<AdapterStatusPayload, Box<dyn std::error::Error>> {
+    let result: AdapterStatusPayload = serde_json::from_value(payload)
+        .map_err(|_| "adapter.status returned an invalid response shape")?;
+    if result.adapter.trim().is_empty()
+        || result
+            .accounts
+            .iter()
+            .any(|account| account.account_id.trim().is_empty())
+    {
+        return Err("adapter.status returned an invalid response shape".into());
+    }
+    Ok(result)
+}
+
 fn print_adapter_connect(result: &AdapterConnectPayload) {
     let adapter = result.adapter.as_deref().unwrap_or("<unknown>");
     let account_id = result.account_id.as_deref().unwrap_or("<unknown>");
     println!(
-        "Connected adapter {}:{} (connected={} authenticated={})",
+        "Adapter {}:{} connected={} authenticated={}",
         adapter,
         account_id,
         result.connected.unwrap_or(false),
@@ -179,13 +260,41 @@ fn print_adapter_connect(result: &AdapterConnectPayload) {
         }
         if let Some(data) = challenge.data.as_deref() {
             if challenge.challenge_type == "qr" {
-                if let Some(rendered) = render_terminal_qr(data) {
+                if let Some(rendered) =
+                    render_qr_challenge(challenge, data, std::io::stdout().is_terminal())
+                {
                     println!("\n{}", rendered);
                 } else {
-                    println!("challenge.data: {}", data);
+                    eprintln!(
+                        "Unable to render the QR challenge safely; its private pairing payload was hidden. Retry in an interactive UTF-8 terminal or use the web UI."
+                    );
                 }
             } else {
-                println!("challenge.data: {}", data);
+                println!("challenge.data: available (hidden)");
+            }
+        }
+    }
+}
+
+fn render_qr_challenge(
+    challenge: &AdapterChallengePayload,
+    data: &str,
+    output_is_terminal: bool,
+) -> Option<String> {
+    if !output_is_terminal {
+        return None;
+    }
+
+    match challenge.format {
+        Some(AdapterChallengeFormat::DataUrl) => None,
+        Some(AdapterChallengeFormat::Raw) => render_terminal_qr(data),
+        None => {
+            // Compatibility for older adapters that predate explicit challenge
+            // formats. New responses must set `format` at the protocol boundary.
+            if data.trim().starts_with("data:") {
+                None
+            } else {
+                render_terminal_qr(data)
             }
         }
     }
@@ -211,6 +320,125 @@ fn render_terminal_qr(data: &str) -> Option<String> {
             .light_color(unicode::Dense1x2::Light)
             .build(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn qr_challenge(format: Option<AdapterChallengeFormat>) -> AdapterChallengePayload {
+        AdapterChallengePayload {
+            challenge_type: "qr".to_string(),
+            message: None,
+            data: None,
+            format,
+            expires_at: None,
+        }
+    }
+
+    #[test]
+    fn qr_rendering_respects_explicit_and_legacy_formats() {
+        let raw = qr_challenge(Some(AdapterChallengeFormat::Raw));
+        assert!(render_qr_challenge(&raw, "private-pairing-payload", true).is_some());
+        assert!(render_qr_challenge(&raw, "private-pairing-payload", false).is_none());
+
+        let image = qr_challenge(Some(AdapterChallengeFormat::DataUrl));
+        assert!(render_qr_challenge(&image, "private-pairing-payload", true).is_none());
+
+        let legacy = qr_challenge(None);
+        assert!(render_qr_challenge(&legacy, "data:image/png;base64,cHJpdmF0ZQ==", true).is_none());
+        assert!(render_qr_challenge(&legacy, "", true).is_none());
+    }
+
+    #[test]
+    fn malformed_connect_payload_error_never_echoes_challenge_data() {
+        let private_payload = "private-pairing-payload-must-not-leak";
+        let error = parse_adapter_connect_payload(json!({
+            "ok": "not-a-boolean",
+            "challenge": {
+                "type": "qr",
+                "data": private_payload,
+                "format": "raw"
+            }
+        }))
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(error, "adapter.connect returned an invalid response shape");
+        assert!(!error.contains(private_payload));
+    }
+
+    #[test]
+    fn connect_payload_validation_matches_the_public_protocol_union() {
+        for invalid in [
+            json!({
+                "ok": true,
+                "accountId": "default",
+                "connected": true,
+                "authenticated": true
+            }),
+            json!({
+                "ok": true,
+                "adapter": "whatsapp",
+                "accountId": "default",
+                "connected": true
+            }),
+            json!({ "ok": false, "error": "" }),
+            json!({
+                "ok": true,
+                "adapter": "whatsapp",
+                "accountId": "default",
+                "connected": false,
+                "authenticated": false,
+                "challenge": { "type": "qr", "format": "raw" }
+            }),
+        ] {
+            assert_eq!(
+                parse_adapter_connect_payload(invalid)
+                    .unwrap_err()
+                    .to_string(),
+                "adapter.connect returned an invalid response shape"
+            );
+        }
+
+        assert!(parse_adapter_connect_payload(json!({
+            "ok": true,
+            "adapter": "whatsapp",
+            "accountId": "default",
+            "connected": false,
+            "authenticated": false,
+            "challenge": { "type": "qr", "data": "secret", "format": "raw" }
+        }))
+        .is_ok());
+    }
+
+    #[test]
+    fn malformed_disconnect_and_status_payloads_are_not_echoed() {
+        let private_payload = "private-worker-payload-must-not-leak";
+        let disconnect_error = parse_adapter_disconnect_payload(json!({
+            "ok": "invalid",
+            "privatePayload": private_payload,
+        }))
+        .unwrap_err()
+        .to_string();
+        let status_error = parse_adapter_status_payload(json!({
+            "adapter": "whatsapp",
+            "accounts": [{ "accountId": "", "privatePayload": private_payload }],
+        }))
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(
+            disconnect_error,
+            "adapter.disconnect returned an invalid response shape",
+        );
+        assert_eq!(
+            status_error,
+            "adapter.status returned an invalid response shape"
+        );
+        assert!(!disconnect_error.contains(private_payload));
+        assert!(!status_error.contains(private_payload));
+    }
 }
 
 fn print_adapter_disconnect(result: &AdapterDisconnectPayload) {

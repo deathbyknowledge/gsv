@@ -2,6 +2,7 @@
 export const ADAPTER_DOC_URLS: Record<string, string> = {
   telegram: "https://docs.gsv.space/how-to/messengers#telegram",
   discord: "https://docs.gsv.space/how-to/messengers#discord",
+  whatsapp: "https://docs.gsv.space/how-to/messengers#whatsapp",
 };
 
 const ADAPTERS_ROOT_URL = "https://docs.gsv.space/how-to/messengers";

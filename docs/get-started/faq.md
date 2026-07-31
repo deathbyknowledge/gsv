@@ -8,7 +8,7 @@ GSV is a personal AI computer, or for technical readers, a distributed OS with A
 
 ### How is this different from a single-box agent?
 
-Most self-hosted assistants run as one agent on one host you pick and keep running: a laptop, a VPS, a container. That's one brain in one place. GSV is distributed, so it's one mind across every device you own, not stuck on any single one. The brain runs on the edge and stays awake, so it's reachable even when your machines are asleep, and it can act across all of them at once. Where the brain runs is the core difference.
+Most self-hosted assistants run as one agent on one host you pick and keep running: a laptop, a VPS, a container. That's one brain in one place. GSV is distributed, so it's one mind across every device you own, not stuck on any single one. The brain runs on the edge and remains reachable even when your machines are asleep; durable state survives hibernation and cold starts. Where the brain runs is the core difference.
 
 See [Architecture Overview](/architecture/) for a deeper look at how the pieces fit together.
 
@@ -20,15 +20,31 @@ Today, GSV is for people who run more than one machine and want an AI that spans
 
 ### What does it cost?
 
-About $5/month for infrastructure (a Cloudflare Workers Paid plan), plus your own model costs. You can bring your own API keys, so you pay your model provider directly for what you use. You can also use models through Cloudflare. There's no GSV subscription on top of that today.
+GSV can run within Cloudflare's Workers Free plan, plus whatever your chosen
+model provider charges. There is no GSV subscription today. Workers Paid is
+optional for paid-only capabilities such as Worker Loaders/CodeMode and for
+usage beyond the Free limits.
 
-### Why do I need a paid Cloudflare plan?
+One continuously connected WhatsApp account is the intended Free-plan baseline.
+Its outbound WebSocket keeps one 128 MB Durable Object resident for much of the
+day, using about 11,060 GB-s of the current 13,000 GB-s daily allowance. That is
+an estimate rather than a capacity guarantee because other active Durable
+Objects count too. Several always-connected accounts can exceed the duration
+allowance even when request counts remain low. Cloudflare publishes the current numbers in its
+[Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/).
 
-GSV's brain runs as an always-on process on Cloudflare's edge, which requires the Workers Paid plan (~$5/mo). We'd rather tell you this upfront than surprise you. It's the one hard requirement, and it's what makes the always-on, runs-in-your-own-account model work.
+### Do I need a paid Cloudflare plan?
+
+No. GSV uses SQLite-backed Durable Objects, which Cloudflare supports on Workers
+Free. Containers are not part of the supported deployment. Choose Workers Paid
+when you want CodeMode or need more runtime capacity; the deployer automatically
+omits the paid-only Worker Loader binding on Free accounts.
 
 ### What do I need to run it?
 
-A Cloudflare account on the Workers Paid plan and at least one device to connect. If you don't want to go through Cloudflares Workers AI, you can also bring your own API keys.
+A Cloudflare account and at least one device to connect. The Free plan is enough
+for the baseline deployment. If you do not want to use Cloudflare Workers AI,
+you can bring your own model-provider keys.
 
 ## Open, private, yours
 
@@ -58,7 +74,11 @@ Connecting a device is a quick per-device step. See the [Connect Devices](/how-t
 
 ### Does it keep running when my devices are off?
 
-The brain stays awake on the edge even when every device is asleep, so it's always reachable and can act on anything that doesn't need an offline machine. Work that requires a specific device, say a file that only lives on your sleeping laptop, waits until that device is back online. So it's always awake, not magically able to use hardware that's powered down.
+The gateway remains reachable on the edge even when every device is asleep.
+Durable state survives hibernation, eviction, and cold starts, and adapter
+connections are recreated when needed. Work that requires a specific device,
+such as a file that exists only on a sleeping laptop, waits until that device is
+back online.
 
 ### Which models can I use?
 
@@ -69,6 +89,12 @@ See [Bring Your Own Model](/how-to/bring-your-own-model) for setup instructions.
 ### Can I use it from WhatsApp, Telegram, or Discord?
 
 GSV is designed to be reachable from the messengers you already use, so you can talk to it from wherever you are.
+
+WhatsApp needs a second number, but not necessarily a second phone: current
+WhatsApp versions support two accounts on one compatible Android or iOS phone.
+Pairing uses a private Linked Devices QR code. The adapter is built on the
+unofficial Baileys client, so WhatsApp protocol changes can occasionally require
+a GSV update or fresh link.
 
 See [Messengers](/how-to/messengers) for how to connect each one.
 

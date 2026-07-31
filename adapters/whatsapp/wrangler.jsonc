@@ -2,16 +2,17 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gsv-channel-whatsapp",
   "main": "src/index.ts",
-  // Use latest compatibility date for full Node.js crypto support (ncrypto)
-  "compatibility_date": "2025-09-21",
+  "compatibility_date": "2026-07-30",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
   },
-  // Alias packages to our shims
   "alias": {
-    "ws": "./src/ws-shim.ts",
-    "axios": "./src/axios-shim.ts"
+    "ws": "./src/ws-shim.ts"
   },
   "durable_objects": {
     "bindings": [

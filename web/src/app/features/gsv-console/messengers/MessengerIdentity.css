@@ -38,6 +38,13 @@
   margin-top: 0;
 }
 
+.gsv-messenger-identity-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .gsv-messenger-identity-list {
   min-width: 0;
   display: grid;

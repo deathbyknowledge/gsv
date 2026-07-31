@@ -942,7 +942,24 @@ type AdapterMedia = {
   duration?: number;
   transcription?: string;
 };
+
+type AdapterConnectChallenge = {
+  type: string;
+  message?: string;
+  data?: string;
+  format?: "raw" | "data-url";
+  /** Absolute Unix time in milliseconds. */
+  expiresAt?: number;
+  extra?: Record<string, unknown>;
+};
 ```
+
+For a QR challenge, `data` is required and is a private, short-lived
+authentication credential. `format: "raw"` means the caller renders the QR
+locally from provider text; `format: "data-url"` means `data` is an already
+rendered image. Callers must not log the value, echo it in malformed-response
+errors, or print it when safe rendering is unavailable. `expiresAt` lets a
+client discard and refresh a stale challenge without attempting to reuse it.
 
 Runtime behavior:
 
@@ -957,6 +974,11 @@ Runtime behavior:
 | `adapter.status` | `handleAdapterStatus` | Attempts live status refresh, swallowing live errors, then returns last known local statuses sorted newest first and optionally filtered by account id. |
 
 Adapter status intentionally remains useful when a live adapter service is unavailable; stale local state may be returned.
+Every private adapter-worker RPC result is validated before the gateway persists
+or publishes it. In particular, a successful `adapterConnect` response must state
+both `connected` and `authenticated` explicitly; the gateway never infers
+authentication from a missing field. Malformed worker results are rejected or
+ignored with payload-free diagnostics.
 
 ```ts
 type AdapterSyscalls = {

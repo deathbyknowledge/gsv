@@ -91,6 +91,7 @@ export const consoleAgentContextQueryKey = ["gsv-console", "agent-context"] as c
 
 type ConsoleQueryOptions = {
   enabled?: boolean;
+  refetchInterval?: number | false;
 };
 
 type ConsoleOverviewHookOptions = ConsoleQueryOptions & LoadConsoleOverviewOptions;
@@ -98,7 +99,6 @@ type ConsoleOverviewHookOptions = ConsoleQueryOptions & LoadConsoleOverviewOptio
 const CONSOLE_OVERVIEW_SIGNALS = new Set([
   "proc.changed",
   "device.status",
-  "adapter.status",
   "mcp.changed",
 ]);
 
@@ -193,14 +193,22 @@ export function useConsoleAccounts(options: ConsoleQueryOptions = {}) {
   };
 }
 
-export function useConsoleAdapters(options: ConsoleQueryOptions & { adapters?: readonly string[] } = {}) {
+export function useConsoleAdapters(options: ConsoleQueryOptions & {
+  accountId?: string;
+  adapters?: readonly string[];
+} = {}) {
   const { client, connected } = useGateway();
   const adapters = options.adapters;
+  const accountId = options.accountId?.trim() || undefined;
   const enabled = connected && (options.enabled ?? true);
   const query = useQuery<ConsoleAdapterAccount[]>({
-    queryKey: [...consoleAdaptersQueryKey, { adapters: adapters ? [...adapters] : "discover" }],
+    queryKey: [
+      ...consoleAdaptersQueryKey,
+      { accountId: accountId ?? "all", adapters: adapters ? [...adapters] : "discover" },
+    ],
     enabled,
-    queryFn: () => loadConsoleAdapterAccounts(client, adapters),
+    queryFn: () => loadConsoleAdapterAccounts(client, adapters, accountId),
+    refetchInterval: options.refetchInterval,
   });
 
   return {
@@ -218,6 +226,7 @@ export function useConsoleAdapterInventory(options: ConsoleQueryOptions & { adap
     queryKey: [...consoleAdapterInventoryQueryKey, { adapters: adapters ? [...adapters] : "discover" }],
     enabled,
     queryFn: () => loadConsoleAdapters(client, adapters),
+    refetchInterval: options.refetchInterval,
   });
 
   return {

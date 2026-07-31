@@ -82,7 +82,7 @@ describe("buildDesktopObjectsFromConsole", () => {
       kind: "machines",
       detailId: "hank-linux",
     });
-    expect(objects.find((object) => object.id === "messengers")?.children).toHaveLength(2);
+    expect(objects.find((object) => object.id === "messengers")?.children).toHaveLength(3);
     expect(objects.find((object) => object.id === "messengers")?.children[0]?.route).toEqual({
       kind: "messengers",
       detailId: "telegram",
@@ -91,8 +91,16 @@ describe("buildDesktopObjectsFromConsole", () => {
       kind: "messengers",
       detailId: "discord",
     });
-    expect(objects.find((object) => object.id === "messengers")?.children[0]?.statusLabel).toBe("NOT ENABLED");
+    expect(objects.find((object) => object.id === "messengers")?.children[2]?.route).toEqual({
+      kind: "messengers",
+      detailId: "whatsapp",
+    });
+    expect(objects.find((object) => object.id === "messengers")?.children[0]?.statusLabel).toBe("UNAVAILABLE");
     expect(objects.find((object) => object.id === "messengers")?.children[1]?.statusLabel).toBe("CONNECTED");
+    expect(objects.find((object) => object.id === "messengers")?.children[2]).toMatchObject({
+      statusLabel: "UNAVAILABLE",
+      blurb: expect.stringContaining("deploy it"),
+    });
     expect(objects.find((object) => object.id === "integrations")?.children[0]?.route).toEqual({
       kind: "integrations",
       detailId: "custom-mcp",

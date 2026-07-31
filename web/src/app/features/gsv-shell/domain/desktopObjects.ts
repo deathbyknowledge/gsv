@@ -11,6 +11,7 @@ import type {
   ShellStatus,
 } from "./shellModel";
 import {
+  messengerAccountNoun,
   messengerFamilies,
   type MessengerFamily,
 } from "../../gsv-console/messengers/messengerPresentation";
@@ -156,7 +157,10 @@ function familyToChild(family: MessengerFamily): DesktopChildObject {
 function familyBlurb(family: MessengerFamily): string {
   switch (family.status.status) {
     case "not-enabled":
-      return "Not enabled. Connect a bot to start messaging.";
+      {
+        const noun = messengerAccountNoun(family.adapter);
+        return `Not enabled. Connect ${noun === "account" ? "an" : "a"} ${noun} to start messaging.`;
+      }
     case "connected":
       return `${family.status.connectedCount} connected.`;
     case "disconnected":
