@@ -20,15 +20,24 @@ Today, GSV is for people who run more than one machine and want an AI that spans
 
 ### What does it cost?
 
-About $5/month for infrastructure (a Cloudflare Workers Paid plan), plus your own model costs. You can bring your own API keys, so you pay your model provider directly for what you use. You can also use models through Cloudflare. There's no GSV subscription on top of that today.
+GSV can run within Cloudflare's Workers Free plan, plus your own model costs.
+You can bring your own API keys, so you pay your model provider directly for
+what you use. You can also use models through Cloudflare. There's no GSV
+subscription on top of that today. Workers Paid is optional for CodeMode and
+usage beyond the Free limits.
 
-### Why do I need a paid Cloudflare plan?
+### Do I need a paid Cloudflare plan?
 
-GSV's brain runs as an always-on process on Cloudflare's edge, which requires the Workers Paid plan (~$5/mo). We'd rather tell you this upfront than surprise you. It's the one hard requirement, and it's what makes the always-on, runs-in-your-own-account model work.
+No. GSV uses SQLite-backed Durable Objects, which Cloudflare supports on Workers
+Free. Containers are not part of the supported deployment. Choose Workers Paid
+when you want CodeMode or need more runtime capacity; the default deploy mode
+automatically omits paid-only configuration on Free accounts.
 
 ### What do I need to run it?
 
-A Cloudflare account on the Workers Paid plan and at least one device to connect. If you don't want to go through Cloudflares Workers AI, you can also bring your own API keys.
+A Cloudflare account and at least one device to connect. Workers Free supports
+the baseline. If you don't want to use Cloudflare Workers AI, you can also bring
+your own API keys.
 
 ## Open, private, yours
 

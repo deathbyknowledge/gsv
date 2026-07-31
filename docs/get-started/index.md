@@ -6,19 +6,22 @@ Get a GSV running in your own Cloudflare account and have your first conversatio
 
 You'll need:
 
-- A **Cloudflare account on the Workers Paid plan** (~$5/mo). GSV's brain runs on Cloudflare's edge, inside your own account — your keys, your data.
+- A **Cloudflare account**. Workers Free supports the baseline GSV deployment;
+  Workers Paid is optional for CodeMode and additional runtime capacity.
 - **R2 object storage** enabled. The free tier is enough to start.
 - A **model**. Cloudflare's own models work out of the box; you can swap in another provider's key later. For everyday use we recommend bringing your own provider key — see Bring your own model.
 
-Running cost is **~$5/mo for infrastructure, plus whatever your model usage costs.**
+Infrastructure can fit within Cloudflare's Free limits, plus whatever your model
+usage costs.
 
 > GSV runs in *your* Cloudflare account — not on our servers. Full self-hosting off Cloudflare (on your own metal) is on the roadmap, not shipped yet.
 
 ## 1. Set up Cloudflare
 
 1. Create an account at [cloudflare.com](https://cloudflare.com).
-2. In the left sidebar: **Build → Workers Plans → Purchase Workers Paid.**
-3. Enable storage: **Build → Storage & databases → R2 Object Storage → Overview → Get free subscription.**
+2. Enable storage: **Build → Storage & databases → R2 Object Storage → Overview → Get free subscription.**
+3. Optionally choose Workers Paid if you want CodeMode or expect to exceed the
+   Free runtime limits. Containers are not required.
 
 ## 2. Deploy GSV
 

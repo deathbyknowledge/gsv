@@ -15,7 +15,7 @@
 
 **GSV is an open-source, user-owned personal intelligence system.** It gives you one intelligence layer with durable memory, processes, permissions, and the ability to act across all your machines while remaining under your control.
 
-Most personal AI agents run on one host you pick and keep alive — a laptop, VPS, or container. GSV instead deploys a lightweight, always-reachable control plane into your own Cloudflare account and turns your laptop, server, phone, and browser into one computer. Your GSV control plane and state remain in infrastructure you control; the model provider you configure necessarily receives the inference data routed to it. From about $5/month in infrastructure plus model usage.
+Most personal AI agents run on one host you pick and keep alive — a laptop, VPS, or container. GSV instead deploys a lightweight, always-reachable control plane into your own Cloudflare account and turns your laptop, server, phone, and browser into one computer. Your GSV control plane and state remain in infrastructure you control; the model provider you configure necessarily receives the inference data routed to it. The baseline can fit within Workers Free, plus model usage; Workers Paid adds CodeMode and more runtime capacity.
 
 ## What you can do
 
@@ -30,7 +30,7 @@ Under the hood, GSV is a distributed operating environment: agents are durable p
 
 ## Quick Start
 
-**Prerequisites:** a [Cloudflare account](https://dash.cloudflare.com/sign-up) on the Workers Paid plan ($5/month), plus any credentials required by your chosen model provider. Model usage is billed separately by that provider.
+**Prerequisites:** a [Cloudflare account](https://dash.cloudflare.com/sign-up), plus any credentials required by your chosen model provider. The baseline deployment supports Workers Free; Workers Paid is optional for CodeMode and additional runtime capacity. Model usage is billed separately by that provider.
 
 ### 1. Deploy
 

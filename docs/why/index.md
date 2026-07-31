@@ -27,7 +27,8 @@ Two things we keep straight, because you'll check:
 
 ## What it costs
 
-From about **$5/mo** for Cloudflare infra, plus your own model costs. That's it.
+The baseline can run within **Cloudflare Workers Free**, plus your own model
+costs. Workers Paid is optional for CodeMode and additional runtime capacity.
 
 ## Where we are
 

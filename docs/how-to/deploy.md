@@ -15,10 +15,11 @@ The supported baseline uses Workers, R2, and
 [SQLite-backed Durable Objects](https://developers.cloudflare.com/durable-objects/platform/pricing/).
 It does not use Cloudflare Containers and can run within the
 [Workers Free limits](https://developers.cloudflare.com/workers/platform/limits/).
-The deployer checks the account plan before building upload metadata: Free and
-unknown plans omit CodeMode's Worker Loader binding and ripgit's paid-only
-300,000 ms CPU limit. A verified Workers Paid account receives both
-automatically.
+The deployer checks the account plan before building upload metadata. With the
+default `--codemode auto`, Free and unknown plans omit CodeMode's Worker Loader
+binding and ripgit's paid-only 300,000 ms CPU limit; a verified Workers Paid
+account receives both. Explicit `--codemode on` or `off` overrides only the
+Worker Loader choice.
 
 The equivalent CLI deployment is:
 
