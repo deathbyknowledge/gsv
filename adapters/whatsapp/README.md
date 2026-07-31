@@ -65,11 +65,13 @@ While connected, the outbound WhatsApp WebSocket prevents the account Durable
 Object from being evicted. Cloudflare limits that keepalive effect to 15 minutes
 per outbound connection; the WebSocket itself may continue after that point.
 GSV therefore schedules an alarm ten minutes after each successful connection.
-When the alarm fires, the account closes the old transport and reconnects with
-its saved linked-device credentials, establishing a fresh outbound-connection
-lease before the 15-minute keepalive cap. The alarm is the scheduled trigger,
-not the mechanism that keeps the object alive, and this reconnect is not a
-WhatsApp logout or a new pairing.
+When the alarm fires, the account opens a replacement with its saved
+linked-device credentials while the current transport keeps handling messages.
+Only after the replacement authenticates does it become active and close the
+old transport, establishing a fresh outbound-connection lease before the
+15-minute keepalive cap. The alarm is the scheduled trigger, not the mechanism
+that keeps the object alive, and this reconnect is not a WhatsApp logout or a
+new pairing.
 
 This design targets the free Workers and Durable Objects plan; it does not
 require Containers. The account alarm also arbitrates pairing expiry,

@@ -21,7 +21,7 @@ export function disconnectPolicy(statusCode: number | undefined): DisconnectPoli
     case DisconnectReason.loggedOut:
       return { action: "logged_out", clearAuth: true };
     case DisconnectReason.connectionReplaced:
-      return { action: "stop", clearAuth: false };
+      return { action: "reconnect", clearAuth: false };
     case DisconnectReason.badSession:
     case DisconnectReason.multideviceMismatch:
     case DisconnectReason.forbidden:
