@@ -65,12 +65,14 @@ export function MessengerIdentityLinks({
   errorText,
   links,
   messenger,
+  onLinkIdentity,
   refreshing,
 }: {
   accounts: readonly ConsoleAccount[];
   errorText?: string;
   links: readonly ConsoleIdentityLink[];
   messenger: ConsoleAdapterAccount;
+  onLinkIdentity?: () => void;
   refreshing: boolean;
 }) {
   const removeLink = useRemoveIdentityLink();
@@ -78,6 +80,14 @@ export function MessengerIdentityLinks({
   const meta = refreshing
     ? "SYNCING"
     : `${links.length} ${links.length === 1 ? "LINK" : "LINKS"}`;
+  const actions = errorText || onLinkIdentity ? (
+    <div class="gsv-messenger-identity-actions">
+      {errorText ? <StatusMeta tone="error" label="ERROR" /> : null}
+      {onLinkIdentity ? (
+        <Button variant="secondary" label="LINK IDENTITY" onClick={onLinkIdentity} />
+      ) : null}
+    </div>
+  ) : undefined;
 
   const unlink = async (link: ConsoleIdentityLink) => {
     await removeLink.mutateAsync({
@@ -94,7 +104,7 @@ export function MessengerIdentityLinks({
         <SectionHeader
           title="LINKED IDENTITIES"
           meta={errorText ? undefined : meta}
-          actions={errorText ? <StatusMeta tone="error" label="ERROR" /> : undefined}
+          actions={actions}
           divider
         />
         <div class="gsv-messenger-identity-list">

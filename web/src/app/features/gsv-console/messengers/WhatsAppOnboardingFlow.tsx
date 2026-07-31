@@ -397,22 +397,33 @@ export function WhatsAppOnboardingFlow({
               </>
             )}
             <div class="gsv-cf-footer">
-              <Button
-                variant="secondary"
-                label="VIEW ACCOUNT"
-                disabled={consumeLinkCode.isPending}
-                onClick={openDetail}
-              />
-              <span class="gsv-cf-footer-spacer" />
               {linked ? (
-                <Button variant="primary" label="DONE" onClick={onBack} />
+                <>
+                  <Button
+                    variant="secondary"
+                    label="VIEW ACCOUNT"
+                    disabled={consumeLinkCode.isPending}
+                    onClick={openDetail}
+                  />
+                  <span class="gsv-cf-footer-spacer" />
+                  <Button variant="primary" label="DONE" onClick={onBack} />
+                </>
               ) : (
-                <Button
-                  variant="primary"
-                  label={consumeLinkCode.isPending ? "LINKING" : "LINK USER"}
-                  disabled={!paired || !linkCode.trim() || consumeLinkCode.isPending}
-                  onClick={() => void submitLinkCode()}
-                />
+                <>
+                  <Button
+                    variant="secondary"
+                    label="BACK"
+                    disabled={consumeLinkCode.isPending}
+                    onClick={goBack}
+                  />
+                  <span class="gsv-cf-footer-spacer" />
+                  <Button
+                    variant="primary"
+                    label={consumeLinkCode.isPending ? "LINKING" : "LINK USER"}
+                    disabled={!paired || !linkCode.trim() || consumeLinkCode.isPending}
+                    onClick={() => void submitLinkCode()}
+                  />
+                </>
               )}
             </div>
           </>

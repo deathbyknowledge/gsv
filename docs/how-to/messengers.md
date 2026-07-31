@@ -2,6 +2,12 @@
 
 Once a messenger is connected, you can talk to GSV from it just like you do on the desktop — anything you can ask GSV, you can ask from anywhere.
 
+Connecting a bot or phone account and linking your messenger identity are
+separate steps. If you leave setup after the connection succeeds but before
+entering the authorization code, do not create another account. Return to
+**Messengers** and use **Link messenger identity**. Message the connected bot
+or account again if the previous one-time code has expired.
+
 ## WhatsApp
 
 WhatsApp connects as a linked device. You need a second WhatsApp account and

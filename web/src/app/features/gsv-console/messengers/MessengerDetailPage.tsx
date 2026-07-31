@@ -28,6 +28,7 @@ type MessengerDetailPageProps = {
   disconnectError?: string;
   disconnecting?: boolean;
   onDisconnect?: (adapter: ConsoleAdapterAccount) => void;
+  onLinkIdentity?: () => void;
   onReconnect?: (adapter: ConsoleAdapterAccount) => void;
   onRelink?: (adapter: ConsoleAdapterAccount) => void;
   onBack: () => void;
@@ -43,6 +44,7 @@ export function MessengerDetailPage({
   disconnecting = false,
   onBack,
   onDisconnect,
+  onLinkIdentity,
   onReconnect,
   onRelink,
 }: MessengerDetailPageProps) {
@@ -93,6 +95,7 @@ export function MessengerDetailPage({
           errorText={identityLinksError}
           links={identityLinks}
           messenger={adapter}
+          onLinkIdentity={onLinkIdentity}
           refreshing={identityLinksRefreshing}
         />
       </ConsoleDetailPage>
