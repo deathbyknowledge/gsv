@@ -528,11 +528,6 @@ struct WorkerScriptSummary {
 }
 
 #[derive(Debug, Deserialize)]
-struct WorkersAccountSettings {
-    default_usage_model: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 struct CloudflareSubscription {
     rate_plan: Option<CloudflareRatePlan>,
     state: Option<String>,
@@ -618,38 +613,42 @@ fn adapter_deployment_for_default_script(script: &str) -> Option<&'static Adapte
 }
 
 pub fn components_for_binding_reconciliation(components: &[String]) -> Vec<String> {
-    let mut prepared = components.to_vec();
-    let includes_adapter = components
-        .iter()
-        .any(|component| adapter_deployment(component).is_some());
-    let includes_gateway = components
-        .iter()
-        .any(|component| component == COMPONENT_GATEWAY);
-    if includes_adapter && !includes_gateway {
-        prepared.push(COMPONENT_GATEWAY.to_string());
-    }
-    prepared
+    // Adapter-only deploys reconcile the existing gateway through Cloudflare's
+    // script settings API, so they do not need the gateway bundle.
+    components.to_vec()
 }
 
-fn deployment_components_for_binding_reconciliation(
+fn validate_adapter_gateway_dependency(
     components: &[String],
     instance: &DeployInstance,
     existing_scripts: &HashSet<String>,
-) -> Vec<String> {
-    let mut deployment = components.to_vec();
-    let includes_adapter = components
-        .iter()
-        .any(|component| adapter_deployment(component).is_some());
-    let includes_gateway = components
-        .iter()
-        .any(|component| component == COMPONENT_GATEWAY);
-    let gateway_script = instance
-        .script_name(COMPONENT_GATEWAY)
-        .expect("gateway is a supported deployment component");
-    if includes_adapter && !includes_gateway && existing_scripts.contains(&gateway_script) {
-        deployment.push(COMPONENT_GATEWAY.to_string());
+) -> Result<(), Box<dyn std::error::Error>> {
+    let selected_adapters = selected_adapter_deployments(components);
+    if selected_adapters.is_empty()
+        || components
+            .iter()
+            .any(|component| component == COMPONENT_GATEWAY)
+    {
+        return Ok(());
     }
-    deployment
+
+    let gateway_script_name = instance
+        .script_name(COMPONENT_GATEWAY)
+        .ok_or("Unsupported gateway component")?;
+    if existing_scripts.contains(&gateway_script_name) {
+        return Ok(());
+    }
+
+    let adapter_components = selected_adapters
+        .iter()
+        .map(|adapter| adapter.component)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "Deploying adapter component(s) {} requires gateway worker '{}'. Include --component gateway or deploy that instance's gateway first.",
+        adapter_components, gateway_script_name
+    )
+    .into())
 }
 
 fn base_release_url(tag: &str) -> String {
@@ -1435,15 +1434,225 @@ async fn list_worker_scripts(
     Ok(out)
 }
 
-fn workers_paid_from_usage_model(usage_model: Option<&str>) -> Option<bool> {
-    match usage_model.map(|value| value.trim().to_ascii_lowercase()) {
-        // Bundled and Unbound are deprecated usage models retained by some
-        // paid/enterprise accounts; they do not identify a Workers Free plan.
-        Some(value) if value == "standard" || value == "unbound" || value == "bundled" => {
-            Some(true)
-        }
-        _ => None,
+fn selected_adapter_deployments(components: &[String]) -> Vec<&'static AdapterDeploymentSpec> {
+    components
+        .iter()
+        .filter_map(|component| adapter_deployment(component))
+        .collect()
+}
+
+fn gateway_adapter_binding_patch(
+    settings: &Value,
+    components: &[String],
+    instance: &DeployInstance,
+) -> Result<Option<Vec<Value>>, Box<dyn std::error::Error>> {
+    let mut desired_bindings = BTreeMap::new();
+    for adapter in selected_adapter_deployments(components) {
+        let service = instance
+            .script_name(adapter.component)
+            .ok_or_else(|| format!("Unsupported adapter component '{}'", adapter.component))?;
+        desired_bindings.insert(
+            adapter.gateway_binding.to_string(),
+            json!({
+                "name": adapter.gateway_binding,
+                "type": "service",
+                "service": service,
+                "entrypoint": adapter.adapter_entrypoint
+            }),
+        );
     }
+
+    if desired_bindings.is_empty() {
+        return Ok(None);
+    }
+
+    let existing_bindings = settings
+        .get("bindings")
+        .and_then(Value::as_array)
+        .ok_or("Cloudflare script settings are missing the bindings array")?;
+    let mut patch_bindings = Vec::with_capacity(
+        existing_bindings
+            .len()
+            .saturating_add(desired_bindings.len()),
+    );
+    let mut seen_names = HashSet::new();
+    let mut changed = false;
+
+    // The bindings field is replaced as a unit. Inherit every unrelated
+    // binding so secrets and externally managed resources are preserved
+    // without reading or resending their values.
+    for (index, binding) in existing_bindings.iter().enumerate() {
+        let name = binding
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "Cloudflare script settings contain a binding without a name at index {}",
+                    index
+                )
+            })?;
+        if !seen_names.insert(name.to_string()) {
+            return Err(format!(
+                "Cloudflare script settings contain duplicate binding name '{}'",
+                name
+            )
+            .into());
+        }
+
+        if let Some(desired) = desired_bindings.remove(name) {
+            let matches = binding.get("type") == desired.get("type")
+                && binding.get("service") == desired.get("service")
+                && binding.get("entrypoint") == desired.get("entrypoint")
+                && binding.get("environment").is_none_or(Value::is_null);
+            if matches {
+                patch_bindings.push(json!({ "name": name, "type": "inherit" }));
+            } else {
+                patch_bindings.push(desired);
+                changed = true;
+            }
+        } else {
+            patch_bindings.push(json!({ "name": name, "type": "inherit" }));
+        }
+    }
+
+    if !desired_bindings.is_empty() {
+        changed = true;
+        patch_bindings.extend(desired_bindings.into_values());
+    }
+
+    Ok(changed.then_some(patch_bindings))
+}
+
+fn writable_version_annotations(
+    settings: &Value,
+) -> Result<Option<Value>, Box<dyn std::error::Error>> {
+    let Some(annotations) = settings.get("annotations") else {
+        return Ok(None);
+    };
+    if annotations.is_null() {
+        return Ok(None);
+    }
+    let annotations = annotations
+        .as_object()
+        .ok_or("Cloudflare script settings contain malformed version annotations")?;
+    let mut writable = serde_json::Map::new();
+    for name in ["workers/message", "workers/tag"] {
+        let Some(value) = annotations.get(name) else {
+            continue;
+        };
+        if value.is_null() {
+            continue;
+        }
+        if !value.is_string() {
+            return Err(format!(
+                "Cloudflare script settings contain a non-string '{}' annotation",
+                name
+            )
+            .into());
+        }
+        writable.insert(name.to_string(), value.clone());
+    }
+    Ok((!writable.is_empty()).then_some(Value::Object(writable)))
+}
+
+fn worker_script_binding_settings(bindings: &[Value], annotations: Option<&Value>) -> Value {
+    let mut settings = json!({ "bindings": bindings });
+    if let Some(annotations) = annotations {
+        settings["annotations"] = annotations.clone();
+    }
+    settings
+}
+
+async fn fetch_worker_script_settings(
+    client: &reqwest::Client,
+    account_id: &str,
+    api_token: &str,
+    script_name: &str,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let url = cloudflare_api_url(&format!(
+        "/accounts/{}/workers/scripts/{}/settings",
+        account_id, script_name
+    ));
+    let response = send_cloudflare_request_with_retry(
+        || client.get(&url).bearer_auth(api_token).send(),
+        &format!("Fetch script settings for {}", script_name),
+    )
+    .await?;
+    parse_cloudflare_response(
+        response,
+        &format!("Fetch script settings for {}", script_name),
+    )
+    .await
+}
+
+async fn patch_worker_script_bindings(
+    client: &reqwest::Client,
+    account_id: &str,
+    api_token: &str,
+    script_name: &str,
+    bindings: &[Value],
+    annotations: Option<&Value>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let url = cloudflare_api_url(&format!(
+        "/accounts/{}/workers/scripts/{}/settings",
+        account_id, script_name
+    ));
+    let settings_text = worker_script_binding_settings(bindings, annotations).to_string();
+    let response = send_cloudflare_request_with_retry(
+        || async {
+            // The Script And Version Settings API expects one JSON multipart
+            // part named `settings`, matching Cloudflare's generated clients.
+            let settings_part =
+                multipart::Part::text(settings_text.clone()).mime_str("application/json")?;
+            client
+                .patch(&url)
+                .bearer_auth(api_token)
+                .multipart(multipart::Form::new().part("settings", settings_part))
+                .send()
+                .await
+        },
+        &format!("Update script bindings for {}", script_name),
+    )
+    .await?;
+    let _: Value = parse_cloudflare_response(
+        response,
+        &format!("Update script bindings for {}", script_name),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn reconcile_existing_gateway_adapter_bindings(
+    client: &reqwest::Client,
+    account_id: &str,
+    api_token: &str,
+    gateway_script_name: &str,
+    components: &[String],
+    instance: &DeployInstance,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let settings =
+        fetch_worker_script_settings(client, account_id, api_token, gateway_script_name).await?;
+    let Some(bindings) = gateway_adapter_binding_patch(&settings, components, instance)? else {
+        println!(
+            "Adapter bindings already current for {}",
+            gateway_script_name
+        );
+        return Ok(());
+    };
+    let annotations = writable_version_annotations(&settings)?;
+
+    patch_worker_script_bindings(
+        client,
+        account_id,
+        api_token,
+        gateway_script_name,
+        &bindings,
+        annotations.as_ref(),
+    )
+    .await?;
+    println!("Updated adapter bindings for {}", gateway_script_name);
+    Ok(())
 }
 
 fn subscription_is_active(state: Option<&str>) -> bool {
@@ -1478,33 +1687,6 @@ fn workers_paid_from_subscriptions(subscriptions: &[CloudflareSubscription]) -> 
     })
 }
 
-async fn fetch_workers_paid_from_account_settings(
-    client: &reqwest::Client,
-    account_id: &str,
-    api_token: &str,
-) -> Result<Option<bool>, Box<dyn std::error::Error>> {
-    let url = cloudflare_api_url(&format!(
-        "/accounts/{}/workers/account-settings",
-        account_id
-    ));
-    let response = send_cloudflare_request_with_retry(
-        || {
-            client
-                .get(&url)
-                .bearer_auth(api_token)
-                .header("Content-Type", "application/json")
-                .send()
-        },
-        "Fetch Workers account settings",
-    )
-    .await?;
-    let settings: WorkersAccountSettings =
-        parse_cloudflare_response(response, "Fetch Workers account settings").await?;
-    Ok(workers_paid_from_usage_model(
-        settings.default_usage_model.as_deref(),
-    ))
-}
-
 async fn fetch_workers_paid_from_subscriptions(
     client: &reqwest::Client,
     account_id: &str,
@@ -1532,22 +1714,13 @@ async fn resolve_workers_paid(
     account_id: &str,
     api_token: &str,
 ) -> Option<bool> {
-    match fetch_workers_paid_from_account_settings(client, account_id, api_token).await {
-        Ok(Some(enabled)) => return Some(enabled),
-        Ok(None) => {}
-        Err(error) => {
-            println!(
-                "Warning: could not determine the Workers plan from account settings ({}). Checking account subscriptions.",
-                error
-            );
-        }
-    }
-
+    // default_usage_model describes billing behavior, not the account's plan.
+    // Only the account-scoped Workers Paid subscription proves entitlement.
     match fetch_workers_paid_from_subscriptions(client, account_id, api_token).await {
         Ok(enabled) => Some(enabled),
         Err(error) => {
             println!(
-                "Warning: could not read the Workers plan from account subscriptions ({}). Paid-only custom limits and CodeMode will be omitted; use --codemode on to opt in explicitly.",
+                "Warning: could not verify the Workers plan from account subscriptions ({}). Paid-only custom limits and automatic CodeMode will be omitted; use --codemode on to opt into Worker Loader explicitly.",
                 error
             );
             None
@@ -2972,17 +3145,9 @@ pub async fn apply_deploy(
         list_worker_scripts(&client, account_id, api_token).await?;
     let existing_scripts: HashSet<String> =
         existing_scripts_with_migrations.keys().cloned().collect();
+    validate_adapter_gateway_dependency(components, instance, &existing_scripts)?;
 
-    let deployment_components =
-        deployment_components_for_binding_reconciliation(components, instance, &existing_scripts);
-    if deployment_components.len() > components.len() {
-        println!(
-            "Including gateway ({}) to reconcile adapter service bindings.",
-            gateway_script_name
-        );
-    }
-
-    let mut prepared = deployment_components
+    let mut prepared = components
         .iter()
         .map(|component| load_prepared_bundle(cfg, version, component))
         .collect::<Result<Vec<_>, _>>()?;
@@ -2990,7 +3155,7 @@ pub async fn apply_deploy(
         apply_instance_names_to_bundle(bundle, instance)?;
     }
     prepared.sort_by_key(|bundle| deploy_order(&bundle.component));
-    let deploying_gateway = deployment_components
+    let deploying_gateway = components
         .iter()
         .any(|component| component == COMPONENT_GATEWAY);
 
@@ -3273,13 +3438,32 @@ pub async fn apply_deploy(
         println!("Updated bindings for {}", bundle.script_name);
     }
 
-    let gateway_script_name = prepared
+    let selected_adapters = selected_adapter_deployments(components);
+    if !deploying_gateway
+        && !selected_adapters.is_empty()
+        && existing_scripts.contains(&gateway_script_name)
+    {
+        reconcile_existing_gateway_adapter_bindings(
+            &client,
+            account_id,
+            api_token,
+            &gateway_script_name,
+            components,
+            instance,
+        )
+        .await?;
+    }
+
+    let deployed_gateway_script_name = prepared
         .iter()
         .find(|bundle| bundle.component == COMPONENT_GATEWAY)
         .map(|bundle| bundle.script_name.clone());
 
     let gateway_url = if selected_components.contains(COMPONENT_GATEWAY) {
-        match (gateway_script_name.as_deref(), account_subdomain.as_deref()) {
+        match (
+            deployed_gateway_script_name.as_deref(),
+            account_subdomain.as_deref(),
+        ) {
             (Some(script_name), Some(subdomain)) => Some(workers_dev_url(script_name, subdomain)),
             _ => None,
         }
@@ -3837,13 +4021,10 @@ mod tests {
     }
 
     #[test]
-    fn adapter_changes_prepare_gateway_bundle_for_binding_reconciliation() {
+    fn adapter_only_preparation_does_not_add_the_gateway_bundle() {
         assert_eq!(
             components_for_binding_reconciliation(&[COMPONENT_CHANNEL_WHATSAPP.to_string()]),
-            vec![
-                COMPONENT_CHANNEL_WHATSAPP.to_string(),
-                COMPONENT_GATEWAY.to_string(),
-            ]
+            vec![COMPONENT_CHANNEL_WHATSAPP.to_string()]
         );
         assert_eq!(
             components_for_binding_reconciliation(&[
@@ -3862,42 +4043,263 @@ mod tests {
     }
 
     #[test]
-    fn adapter_only_updates_redeploy_the_existing_instance_gateway() {
-        let whatsapp = vec![COMPONENT_CHANNEL_WHATSAPP.to_string()];
-        let default_instance = DeployInstance::default();
-        assert_eq!(
-            deployment_components_for_binding_reconciliation(
-                &whatsapp,
-                &default_instance,
-                &HashSet::from([SCRIPT_GATEWAY.to_string()]),
-            ),
-            vec![
+    fn default_instance_adapter_requires_its_gateway() {
+        let whatsapp = [COMPONENT_CHANNEL_WHATSAPP.to_string()];
+        let instance = DeployInstance::default();
+
+        let error = validate_adapter_gateway_dependency(&whatsapp, &instance, &HashSet::new())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("gateway worker 'gsv'"));
+
+        validate_adapter_gateway_dependency(
+            &whatsapp,
+            &instance,
+            &HashSet::from([SCRIPT_GATEWAY.to_string()]),
+        )
+        .unwrap();
+        validate_adapter_gateway_dependency(
+            &[
                 COMPONENT_CHANNEL_WHATSAPP.to_string(),
                 COMPONENT_GATEWAY.to_string(),
-            ]
-        );
+            ],
+            &instance,
+            &HashSet::new(),
+        )
+        .unwrap();
+    }
 
+    #[test]
+    fn named_instance_adapter_requires_the_matching_gateway() {
+        let whatsapp = [COMPONENT_CHANNEL_WHATSAPP.to_string()];
+        let instance = DeployInstance::parse("gsv-personal").unwrap();
+
+        let error = validate_adapter_gateway_dependency(
+            &whatsapp,
+            &instance,
+            &HashSet::from([SCRIPT_GATEWAY.to_string()]),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("gateway worker 'gsv-personal'"));
+
+        validate_adapter_gateway_dependency(
+            &whatsapp,
+            &instance,
+            &HashSet::from(["gsv-personal".to_string()]),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn adapter_binding_patch_inherits_unrelated_bindings_and_replaces_the_selected_adapter() {
         let named_instance = DeployInstance::parse("gsv-personal").unwrap();
-        assert_eq!(
-            deployment_components_for_binding_reconciliation(
-                &whatsapp,
-                &named_instance,
-                &HashSet::from(["gsv-personal".to_string()]),
-            ),
-            vec![
-                COMPONENT_CHANNEL_WHATSAPP.to_string(),
-                COMPONENT_GATEWAY.to_string(),
+        let settings = json!({
+            "bindings": [
+                {
+                    "name": "KERNEL",
+                    "type": "durable_object_namespace",
+                    "class_name": "Kernel"
+                },
+                {
+                    "name": "AUTH_TOKEN",
+                    "type": "secret_text"
+                },
+                {
+                    "name": "CHANNEL_WHATSAPP",
+                    "type": "service",
+                    "service": "stale-channel-whatsapp",
+                    "entrypoint": "OldEntrypoint"
+                }
             ]
-        );
+        });
 
         assert_eq!(
-            deployment_components_for_binding_reconciliation(
-                &whatsapp,
+            gateway_adapter_binding_patch(
+                &settings,
+                &[COMPONENT_CHANNEL_WHATSAPP.to_string()],
                 &named_instance,
-                &HashSet::from([SCRIPT_GATEWAY.to_string()]),
-            ),
-            whatsapp
+            )
+            .unwrap(),
+            Some(vec![
+                json!({ "name": "KERNEL", "type": "inherit" }),
+                json!({ "name": "AUTH_TOKEN", "type": "inherit" }),
+                json!({
+                    "name": "CHANNEL_WHATSAPP",
+                    "type": "service",
+                    "service": "gsv-personal-channel-whatsapp",
+                    "entrypoint": "WhatsAppChannelEntrypoint"
+                }),
+            ])
         );
+    }
+
+    #[test]
+    fn adapter_binding_patch_adds_a_missing_binding_without_replacing_existing_settings() {
+        let settings = json!({
+            "bindings": [
+                { "name": "ASSETS", "type": "assets" },
+                { "name": "API_KEY", "type": "secret_text" }
+            ]
+        });
+
+        assert_eq!(
+            gateway_adapter_binding_patch(
+                &settings,
+                &[COMPONENT_CHANNEL_WHATSAPP.to_string()],
+                &DeployInstance::default(),
+            )
+            .unwrap(),
+            Some(vec![
+                json!({ "name": "ASSETS", "type": "inherit" }),
+                json!({ "name": "API_KEY", "type": "inherit" }),
+                json!({
+                    "name": "CHANNEL_WHATSAPP",
+                    "type": "service",
+                    "service": "gsv-channel-whatsapp",
+                    "entrypoint": "WhatsAppChannelEntrypoint"
+                }),
+            ])
+        );
+    }
+
+    #[test]
+    fn adapter_binding_patch_is_a_noop_when_the_selected_binding_is_current() {
+        let settings = json!({
+            "bindings": [
+                { "name": "KERNEL", "type": "durable_object_namespace" },
+                {
+                    "name": "CHANNEL_WHATSAPP",
+                    "type": "service",
+                    "service": "gsv-channel-whatsapp",
+                    "entrypoint": "WhatsAppChannelEntrypoint"
+                }
+            ]
+        });
+
+        assert_eq!(
+            gateway_adapter_binding_patch(
+                &settings,
+                &[COMPONENT_CHANNEL_WHATSAPP.to_string()],
+                &DeployInstance::default(),
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn adapter_binding_patch_requires_the_explicit_entrypoint() {
+        for binding in [
+            json!({
+                "name": "CHANNEL_WHATSAPP",
+                "type": "service",
+                "service": "gsv-channel-whatsapp"
+            }),
+            json!({
+                "name": "CHANNEL_WHATSAPP",
+                "type": "service",
+                "service": "gsv-channel-whatsapp",
+                "entrypoint": null
+            }),
+        ] {
+            assert_eq!(
+                gateway_adapter_binding_patch(
+                    &json!({ "bindings": [binding] }),
+                    &[COMPONENT_CHANNEL_WHATSAPP.to_string()],
+                    &DeployInstance::default(),
+                )
+                .unwrap(),
+                Some(vec![json!({
+                    "name": "CHANNEL_WHATSAPP",
+                    "type": "service",
+                    "service": "gsv-channel-whatsapp",
+                    "entrypoint": "WhatsAppChannelEntrypoint"
+                })])
+            );
+        }
+    }
+
+    #[test]
+    fn adapter_binding_patch_rejects_ambiguous_existing_bindings() {
+        let duplicate = json!({
+            "bindings": [
+                { "name": "CHANNEL_WHATSAPP", "type": "service" },
+                { "name": "CHANNEL_WHATSAPP", "type": "service" }
+            ]
+        });
+        let missing_name = json!({ "bindings": [{ "type": "secret_text" }] });
+
+        for settings in [duplicate, missing_name] {
+            gateway_adapter_binding_patch(
+                &settings,
+                &[COMPONENT_CHANNEL_WHATSAPP.to_string()],
+                &DeployInstance::default(),
+            )
+            .unwrap_err();
+        }
+
+        assert_eq!(
+            gateway_adapter_binding_patch(
+                &json!({}),
+                &[COMPONENT_RIPGIT.to_string()],
+                &DeployInstance::default(),
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn adapter_binding_patch_can_reconcile_multiple_selected_adapters() {
+        let settings = json!({ "bindings": [] });
+        let patch = gateway_adapter_binding_patch(
+            &settings,
+            vec![
+                COMPONENT_CHANNEL_TELEGRAM.to_string(),
+                COMPONENT_CHANNEL_WHATSAPP.to_string(),
+            ]
+            .as_slice(),
+            &DeployInstance::default(),
+        );
+        let bindings = patch.unwrap().unwrap();
+
+        assert_eq!(bindings.len(), 2);
+        assert_eq!(bindings[0]["name"], "CHANNEL_TELEGRAM");
+        assert_eq!(bindings[1]["name"], "CHANNEL_WHATSAPP");
+    }
+
+    #[test]
+    fn binding_settings_patch_preserves_only_writable_version_annotations() {
+        let current = json!({
+            "annotations": {
+                "workers/message": "gateway release",
+                "workers/tag": "v0.4.1",
+                "workers/triggered_by": "upload"
+            }
+        });
+        let annotations = writable_version_annotations(&current).unwrap().unwrap();
+        let bindings = vec![json!({
+            "name": "CHANNEL_WHATSAPP",
+            "type": "service",
+            "service": "gsv-channel-whatsapp",
+            "entrypoint": "WhatsAppChannelEntrypoint"
+        })];
+
+        assert_eq!(
+            worker_script_binding_settings(&bindings, Some(&annotations)),
+            json!({
+                "bindings": bindings,
+                "annotations": {
+                    "workers/message": "gateway release",
+                    "workers/tag": "v0.4.1"
+                }
+            })
+        );
+        writable_version_annotations(&json!({
+            "annotations": { "workers/tag": 42 }
+        }))
+        .unwrap_err();
     }
 
     #[test]
@@ -4065,12 +4467,7 @@ cpu_ms = 300000
     }
 
     #[test]
-    fn workers_plan_detection_handles_usage_models_and_subscriptions() {
-        assert_eq!(workers_paid_from_usage_model(Some("standard")), Some(true));
-        assert_eq!(workers_paid_from_usage_model(Some("unbound")), Some(true));
-        assert_eq!(workers_paid_from_usage_model(Some("bundled")), Some(true));
-        assert_eq!(workers_paid_from_usage_model(None), None);
-
+    fn workers_plan_detection_requires_an_active_account_scoped_paid_subscription() {
         let subscriptions = vec![
             CloudflareSubscription {
                 rate_plan: Some(CloudflareRatePlan {
@@ -4088,6 +4485,24 @@ cpu_ms = 300000
             },
         ];
         assert!(workers_paid_from_subscriptions(&subscriptions));
+
+        let wrong_scope = vec![CloudflareSubscription {
+            rate_plan: Some(CloudflareRatePlan {
+                id: Some("workers_paid".to_string()),
+                scope: Some("zone".to_string()),
+            }),
+            state: Some("Paid".to_string()),
+        }];
+        assert!(!workers_paid_from_subscriptions(&wrong_scope));
+
+        let free_plan = vec![CloudflareSubscription {
+            rate_plan: Some(CloudflareRatePlan {
+                id: Some("free".to_string()),
+                scope: Some("account".to_string()),
+            }),
+            state: Some("Paid".to_string()),
+        }];
+        assert!(!workers_paid_from_subscriptions(&free_plan));
 
         let cancelled = vec![CloudflareSubscription {
             rate_plan: Some(CloudflareRatePlan {
@@ -4120,6 +4535,11 @@ cpu_ms = 300000
         assert!(!codemode_enabled_for_plan(
             true,
             CodeModePreference::Auto,
+            None,
+        ));
+        assert!(codemode_enabled_for_plan(
+            true,
+            CodeModePreference::On,
             None,
         ));
         assert!(!codemode_enabled_for_plan(

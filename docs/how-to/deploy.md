@@ -17,9 +17,13 @@ Worker Loader binding is paid-only; automatic deployment omits it on Free
 accounts while leaving the rest of GSV available.
 
 For WhatsApp, budget the Free plan for one continuously connected account. Its
-[outbound WebSocket makes the account Durable Object non-hibernateable for up to
-15 minutes at a time](https://developers.cloudflare.com/changelog/post/2026-06-19-outbound-connections-keep-dos-alive/),
-and the adapter rotates the transport every ten minutes.
+[outbound WebSocket prevents account Durable Object eviction for at most 15
+minutes per connection](https://developers.cloudflare.com/changelog/post/2026-06-19-outbound-connections-keep-dos-alive/).
+The connection itself can continue after that cap, but it stops preventing
+eviction. Ten minutes after each successful connection, an alarm closes the old
+transport and reconnects with the saved credentials. That reconnect establishes
+a fresh outbound-connection lease before the cap; the alarm is only its
+scheduled trigger and does not keep the object alive by itself.
 That is roughly 144 alarm requests and writes per day, but resident duration is
 the tighter limit: one continuously resident 128 MB object is about 11,060 GB-s
 against Cloudflare's current 13,000 GB-s daily Free allowance. This is an
@@ -44,6 +48,12 @@ The deployer also refreshes an existing gateway's service binding, including
 for named GSV instances, so the adapter worker is reachable without public
 adapter URLs or adapter tokens.
 
+Deployment installs the transport but does not identify a WhatsApp sender. Pair
+the linked device, send a direct message from the personal WhatsApp account to
+the paired GSV number, and enter the returned link code in the web UI or with
+`gsv auth link CODE`. Send one more message after linking; the code-request
+message is not forwarded to an agent.
+
 ## Update
 
 To update to the latest version of GSV, go back to [deploy.gsv.space](https://deploy.gsv.space) and run through the deploy flow again. It will update your existing instance in place — your data and configuration are preserved.
@@ -54,9 +64,9 @@ From the CLI:
 gsv infra upgrade --all
 ```
 
-Routine WhatsApp upgrades and the adapter's ten-minute transport rotation keep
-the saved linked-device authentication. They are not logout operations and do
-not require scanning a new QR.
+Routine WhatsApp upgrades and the adapter's ten-minute lease-refresh reconnect
+keep the saved linked-device authentication. They are not logout operations and
+do not require scanning a new QR.
 
 ## Remove
 
