@@ -751,7 +751,7 @@ describe("adapter lifecycle handlers", () => {
     })]);
     expect(JSON.stringify(result)).not.toContain(privatePayload);
     expect(errorLog).toHaveBeenCalledWith(
-      "[adapter.status] invalid worker response adapter=whatsapp accountId=primary",
+      JSON.stringify({ component: "adapter", event: "status_invalid_response" }),
     );
     errorLog.mockRestore();
   });
@@ -1110,7 +1110,7 @@ describe("adapter lifecycle handlers", () => {
       .resolves.toEqual({ ok: false, error: "Adapter connect failed: discord" });
     expect(setOwner).toHaveBeenCalledWith("discord", "default", 1000);
     expect(errorLog).toHaveBeenCalledWith(
-      "[adapter.connect] worker failed adapter=discord accountId=default",
+      JSON.stringify({ component: "adapter", event: "connect_worker_failed" }),
     );
     errorLog.mockRestore();
   });
@@ -1173,7 +1173,7 @@ describe("adapter lifecycle handlers", () => {
     expect(JSON.stringify(result)).not.toContain(privatePayload);
     expect(status.upsert).not.toHaveBeenCalled();
     expect(errorLog).toHaveBeenCalledWith(
-      "[adapter.disconnect] invalid worker response adapter=whatsapp accountId=default",
+      JSON.stringify({ component: "adapter", event: "disconnect_invalid_response" }),
     );
     errorLog.mockRestore();
   });
@@ -1356,12 +1356,7 @@ describe("adapter lifecycle handlers", () => {
     expect(vi.mocked(ctx.runRoutes.setAdapterRoute).mock.calls.map(([route]) => route.runId)).toEqual([
       deliveredRunIds[0],
     ]);
-    expect(adapterSetActivity).toHaveBeenCalledTimes(1);
-    expect(adapterSetActivity).toHaveBeenCalledWith(
-      "bot",
-      { kind: "dm", id: "chat-42" },
-      { kind: "typing", active: true },
-    );
+    expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
   it("replays completed commands across actor alias normalization", async () => {
@@ -1528,7 +1523,7 @@ describe("adapter lifecycle handlers", () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
-  it("removes route and typing state when Process reports an already-recorded run", async () => {
+  it("removes the route without re-entering the adapter for an already-recorded run", async () => {
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     const ctx = makeContext({
       CHANNEL_TELEGRAM: { adapterSetActivity },
@@ -1607,11 +1602,7 @@ describe("adapter lifecycle handlers", () => {
         key: "var/media/1000/pid-1/replayed",
       },
     }));
-    expect(adapterSetActivity).toHaveBeenLastCalledWith(
-      "bot",
-      { kind: "dm", id: "chat-1" },
-      { kind: "typing", active: false },
-    );
+    expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
   it("adapter.inbound returns a reminder when a confirmation is pending", async () => {
@@ -1965,24 +1956,7 @@ describe("adapter lifecycle handlers", () => {
     expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
       frame.call === "proc.media.write"
     ))).toHaveLength(1);
-    expect(adapterSetActivity).toHaveBeenNthCalledWith(
-      1,
-      "primary",
-      { kind: "dm", id: "dm-1" },
-      { kind: "typing", active: true },
-    );
-    expect(adapterSetActivity).toHaveBeenNthCalledWith(
-      2,
-      "primary",
-      { kind: "dm", id: "dm-1" },
-      { kind: "typing", active: false },
-    );
-    expect(adapterSetActivity).toHaveBeenNthCalledWith(
-      3,
-      "primary",
-      { kind: "dm", id: "dm-1" },
-      { kind: "typing", active: true },
-    );
+    expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
   it("rejects a bare decision replying to an unverified old HIL prompt", async () => {
@@ -2153,11 +2127,7 @@ describe("adapter lifecycle handlers", () => {
         replyToId: "msg-2",
       },
     });
-    expect(service.adapterSetActivity).toHaveBeenCalledWith(
-      "primary",
-      { kind: "dm", id: "dm-1" },
-      { kind: "typing", active: true },
-    );
+    expect(service.adapterSetActivity).not.toHaveBeenCalled();
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(2);
   });
 
@@ -2549,7 +2519,7 @@ describe("adapter lifecycle handlers", () => {
     });
     expect(JSON.stringify(result)).not.toContain(privatePayload);
     expect(errorLog).toHaveBeenCalledWith(
-      "[adapter.send] invalid worker response adapter=whatsapp accountId=primary",
+      JSON.stringify({ component: "adapter", event: "send_invalid_response" }),
     );
     errorLog.mockRestore();
   });
@@ -2576,7 +2546,7 @@ describe("adapter lifecycle handlers", () => {
     );
 
     expect(warningLog).toHaveBeenCalledWith(
-      "[adapter.activity] invalid worker response adapter=whatsapp accountId=primary kind=typing active=true",
+      JSON.stringify({ component: "adapter", event: "activity_invalid_response" }),
     );
     expect(JSON.stringify(warningLog.mock.calls)).not.toContain(privatePayload);
     warningLog.mockRestore();

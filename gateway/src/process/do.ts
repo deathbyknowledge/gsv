@@ -1890,6 +1890,7 @@ export class Process extends Host<Env> {
       }
       this.store.clearPendingHil();
       this.resolveCodeModeApproval(args.requestId, args.decision === "approve");
+      await this.announceRun(pendingHil.runId, "proc.hil.resume");
       return {
         ok: true,
         pid,
@@ -1922,6 +1923,7 @@ export class Process extends Host<Env> {
           args.decision === "deny" ? "denied" : "failed",
         );
         await this.scheduleTick(pendingHil.runId);
+        await this.announceRun(pendingHil.runId, "proc.hil.resume");
       }
       if (outerCodeMode && args.decision === "deny") {
         return {
@@ -2000,6 +2002,7 @@ export class Process extends Host<Env> {
 
     if (!nextPendingHil) {
       await this.resumeResolvedToolRun(pendingHil.runId);
+      await this.announceRun(pendingHil.runId, "proc.hil.resume");
     }
 
     return {

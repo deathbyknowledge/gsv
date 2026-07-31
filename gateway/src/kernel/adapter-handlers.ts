@@ -152,13 +152,11 @@ export async function handleAdapterConnect(
     try {
       connectResult = await service.adapterConnect(accountId, args.config);
     } catch {
-      console.error(`[adapter.connect] worker failed adapter=${adapter} accountId=${accountId}`);
+      logAdapterBoundaryFailure("error", "connect_worker_failed");
       return { ok: false, error: `Adapter connect failed: ${adapter}` };
     }
     if (!isAdapterWorkerConnectResult(connectResult)) {
-      console.error(
-        `[adapter.connect] invalid worker response adapter=${adapter} accountId=${accountId}`,
-      );
+      logAdapterBoundaryFailure("error", "connect_invalid_response");
       return { ok: false, error: `Adapter returned an invalid connect response: ${adapter}` };
     }
     if (!connectResult.ok) {
@@ -226,13 +224,11 @@ export async function handleAdapterDisconnect(
     try {
       result = await service.adapterDisconnect(accountId);
     } catch {
-      console.error(`[adapter.disconnect] worker failed adapter=${adapter} accountId=${accountId}`);
+      logAdapterBoundaryFailure("error", "disconnect_worker_failed");
       return { ok: false, error: `Adapter disconnect failed: ${adapter}` };
     }
     if (!isAdapterWorkerDisconnectResult(result)) {
-      console.error(
-        `[adapter.disconnect] invalid worker response adapter=${adapter} accountId=${accountId}`,
-      );
+      logAdapterBoundaryFailure("error", "disconnect_invalid_response");
       return { ok: false, error: `Adapter returned an invalid disconnect response: ${adapter}` };
     }
     if (!result.ok) {
@@ -447,7 +443,7 @@ async function deliverAdapterMessage(
     await cancelBinaryBody(body, "adapter.send completed");
   }
   if (!isAdapterWorkerSendResult(result)) {
-    console.error(`[adapter.send] invalid worker response adapter=${adapter} accountId=${accountId}`);
+    logAdapterBoundaryFailure("error", "send_invalid_response");
     return {
       ok: false,
       error: `Adapter returned an invalid send response: ${adapter}`,
@@ -586,9 +582,7 @@ export async function handleAdapterStatus(
       try {
         const statuses: unknown = await service.adapterStatus(refreshAccountId);
         if (!isAdapterWorkerStatusResult(statuses)) {
-          console.error(
-            `[adapter.status] invalid worker response adapter=${adapter} accountId=${refreshAccountId}`,
-          );
+          logAdapterBoundaryFailure("error", "status_invalid_response");
           continue;
         }
         const allowedAccountIds = refreshAccountId ? new Set([refreshAccountId]) : null;
@@ -1128,15 +1122,6 @@ async function deliverAdapterHilDecision(input: {
   }
 
   const nextPendingHil = normalizeAdapterHilRequest(data?.pendingHil);
-  if (!nextPendingHil && data?.resumed) {
-    await setAdapterActivityForKernel(
-      ctx.env,
-      adapter,
-      accountId,
-      message.surface,
-      { kind: "typing", active: true },
-    );
-  }
   if (nextPendingHil) {
     return {
       ok: true,
@@ -1236,63 +1221,44 @@ async function deliverAdapterInboundToProcess(input: {
     },
     replyToId: message.messageId,
   });
-  await setAdapterActivityForKernel(
-    ctx.env,
-    adapter,
-    accountId,
-    message.surface,
-    { kind: "typing", active: true },
-  );
-
-  let response: ProcessAdapterDeliverResponseFrame | null;
-  try {
-    response = await sendFrameToProcess(pid, {
-      type: "req",
-      id: crypto.randomUUID(),
-      call: "proc.adapter.deliver",
-      args: {
-        runId,
-        pid,
-        message: message.text?.trim() || "",
-        media,
-        origin,
-      },
-    } as ProcessAdapterDeliverRequestFrame);
-  } catch (error) {
-    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
-    throw error;
-  }
+  // Adapter ingress is itself an RPC from the adapter. Calling activity back
+  // into a stateful adapter here would re-enter its Durable Object before this
+  // request can return. Process lifecycle signals own typing activity.
+  const response: ProcessAdapterDeliverResponseFrame | null = await sendFrameToProcess(pid, {
+    type: "req",
+    id: crypto.randomUUID(),
+    call: "proc.adapter.deliver",
+    args: {
+      runId,
+      pid,
+      message: message.text?.trim() || "",
+      media,
+      origin,
+    },
+  } as ProcessAdapterDeliverRequestFrame);
 
   if (!response || response.type !== "res") {
-    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
     throw new Error("No response from process");
   }
   if (!response.ok) {
-    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
     throw new Error(response.error.message);
   }
 
   const data = (response as ProcessAdapterDeliverResponseFrame & { ok: true }).data;
   if (!data.ok) {
     ctx.runRoutes.delete(runId);
-    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
     await rollbackAdapterMedia(pid, media);
     return { ok: false, error: data.error };
   }
   const queued = data.queued === true;
   if (data.runId !== runId) {
     ctx.runRoutes.delete(runId);
-    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
     await rollbackAdapterMedia(pid, media);
     return { ok: false, error: "proc.adapter.deliver admitted an unexpected run" };
   }
   if (data.replayed === "recorded") {
     ctx.runRoutes.delete(runId);
-    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
     await rollbackAdapterMedia(pid, media);
-  }
-  if (queued) {
-    await stopAdapterTyping(ctx, adapter, accountId, message.surface);
   }
 
   return {
@@ -1330,21 +1296,6 @@ function normalizeAdapterIngressRecovery(value: unknown): AdapterIngressRecovery
     }
   }
   throw new Error("Invalid adapter ingress recovery checkpoint");
-}
-
-async function stopAdapterTyping(
-  ctx: KernelContext,
-  adapter: string,
-  accountId: string,
-  surface: AdapterSurface,
-): Promise<void> {
-  await setAdapterActivityForKernel(
-    ctx.env,
-    adapter,
-    accountId,
-    surface,
-    { kind: "typing", active: false },
-  );
 }
 
 async function storeAdapterInboundMedia(
@@ -1548,20 +1499,14 @@ export async function setAdapterActivityForKernel(
   try {
     const result: unknown = await service.adapterSetActivity(accountId, surface, activity);
     if (!isAdapterWorkerActivityResult(result)) {
-      console.warn(
-        `[adapter.activity] invalid worker response adapter=${adapter} accountId=${accountId} kind=${activity.kind} active=${activity.active}`,
-      );
+      logAdapterBoundaryFailure("warn", "activity_invalid_response");
       return;
     }
     if (!result.ok) {
-      console.warn(
-        `[adapter.activity] failed adapter=${adapter} accountId=${accountId} kind=${activity.kind} active=${activity.active}`,
-      );
+      logAdapterBoundaryFailure("warn", "activity_rejected");
     }
   } catch {
-    console.warn(
-      `[adapter.activity] threw adapter=${adapter} accountId=${accountId} kind=${activity.kind} active=${activity.active}`,
-    );
+    logAdapterBoundaryFailure("warn", "activity_worker_failed");
   }
 }
 
@@ -1578,7 +1523,7 @@ async function refreshAdapterStatus(
   try {
     const statuses: unknown = await service.adapterStatus(accountId);
     if (!isAdapterWorkerStatusResult(statuses)) {
-      console.error(`[adapter.status] invalid worker response adapter=${adapter} accountId=${accountId}`);
+      logAdapterBoundaryFailure("error", "status_invalid_response");
       return null;
     }
     const accountStatuses = statuses.filter((status) => status.accountId === accountId);
@@ -1587,8 +1532,20 @@ async function refreshAdapterStatus(
     }
     return accountStatuses[0] ?? null;
   } catch {
-    console.error(`[adapter.status] refresh failed adapter=${adapter} accountId=${accountId}`);
+    logAdapterBoundaryFailure("error", "status_refresh_failed");
     return null;
+  }
+}
+
+function logAdapterBoundaryFailure(
+  level: "warn" | "error",
+  event: string,
+): void {
+  const message = JSON.stringify({ component: "adapter", event });
+  if (level === "error") {
+    console.error(message);
+  } else {
+    console.warn(message);
   }
 }
 

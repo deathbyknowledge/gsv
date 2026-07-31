@@ -1414,6 +1414,25 @@ describe("Kernel adapter route replies", () => {
     };
   }
 
+  it("starts adapter typing from the process lifecycle signal", async () => {
+    const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.env = { CHANNEL_TELEGRAM: { adapterSetActivity } };
+
+    await expect(kernel.deliverSignalToAdapter(route, {
+      type: "sig",
+      signal: "proc.run.started",
+      payload: { runId: route.runId },
+    })).resolves.toEqual({ state: "delivered" });
+
+    expect(adapterSetActivity).toHaveBeenCalledTimes(1);
+    expect(adapterSetActivity).toHaveBeenCalledWith(
+      route.destination.accountId,
+      route.destination.surface,
+      { kind: "typing", active: true },
+    );
+  });
+
   it("permanently drops an automatic reply after destination authorization is revoked", async () => {
     const adapterSend = vi.fn(async () => ({ ok: true as const }));
     const kernel = Object.create(Kernel.prototype) as any;
