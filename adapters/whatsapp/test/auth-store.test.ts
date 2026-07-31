@@ -138,6 +138,29 @@ describe("Durable Object WhatsApp auth", () => {
     expect(restored.state.creds.me?.id).toBe("12025550123@s.whatsapp.net");
   });
 
+  it("merges credential changes from overlapping socket snapshots", async () => {
+    const storage = new MemoryStorage();
+    const seeded = await useDOAuthState(storage as unknown as DurableObjectStorage);
+    seeded.state.creds.me = { id: "12025550123@s.whatsapp.net" };
+    seeded.state.creds.registered = true;
+    seeded.state.creds.accountSyncCounter = 1;
+    seeded.state.creds.lastAccountSyncTimestamp = 100;
+    await seeded.saveCreds();
+
+    const active = await useDOAuthState(storage as unknown as DurableObjectStorage);
+    const replacement = await useDOAuthState(storage as unknown as DurableObjectStorage);
+    active.state.creds.accountSyncCounter = 2;
+    await active.saveCreds();
+    replacement.state.creds.lastAccountSyncTimestamp = 200;
+    await replacement.saveCreds();
+
+    const restored = await useDOAuthState(
+      storage as unknown as DurableObjectStorage,
+    );
+    expect(restored.state.creds.accountSyncCounter).toBe(2);
+    expect(restored.state.creds.lastAccountSyncTimestamp).toBe(200);
+  });
+
   it("hydrates persisted app state keys as Baileys protobuf values", async () => {
     const storage = new MemoryStorage();
     const auth = await useDOAuthState(storage as unknown as DurableObjectStorage);

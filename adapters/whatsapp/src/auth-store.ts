@@ -181,6 +181,7 @@ export async function useDOAuthState(
   } else {
     creds = initAuthCreds();
   }
+  let localBaseline = cloneAuthenticationCreds(creds);
 
   return {
     authReset,
@@ -189,12 +190,71 @@ export async function useDOAuthState(
       keys: createDOSignalKeyStore(storage, authEpoch),
     },
     saveCreds: async () => {
+      const desired = cloneAuthenticationCreds(creds);
       await storage.transaction(async (txn) => {
         await assertAuthEpoch(txn, authEpoch);
-        await txn.put(CREDS_KEY, serializeAuthValue(creds));
+        const latest = storedAuthenticationCreds(
+          await txn.get<string>(CREDS_KEY),
+          localBaseline,
+        );
+        await txn.put(
+          CREDS_KEY,
+          serializeAuthValue(mergeCredentialChanges(localBaseline, desired, latest)),
+        );
       });
+      // Keep this socket's own baseline, not the merged durable value. Another
+      // overlapping socket may have changed fields that are absent from this
+      // socket's in-memory snapshot; treating those as local removals on the
+      // next save would reintroduce the stale-snapshot race.
+      localBaseline = desired;
     },
   };
+}
+
+function storedAuthenticationCreds(
+  stored: string | undefined,
+  fallback: AuthenticationCreds,
+): AuthenticationCreds {
+  if (stored !== undefined) {
+    try {
+      const parsed = deserializeAuthValue(stored);
+      if (isAuthenticationCreds(parsed)) return parsed;
+    } catch {
+      // A valid local snapshot can repair a corrupt credential record below.
+    }
+  }
+  return cloneAuthenticationCreds(fallback);
+}
+
+/** Merge only this socket's changes onto the latest durable credential record. */
+function mergeCredentialChanges(
+  baseline: AuthenticationCreds,
+  desired: AuthenticationCreds,
+  latest: AuthenticationCreds,
+): AuthenticationCreds {
+  const merged = cloneAuthenticationCreds(latest);
+  const baselineRecord = baseline as unknown as Record<string, unknown>;
+  const desiredRecord = desired as unknown as Record<string, unknown>;
+  const mergedRecord = merged as unknown as Record<string, unknown>;
+  const keys = new Set([...Object.keys(baselineRecord), ...Object.keys(desiredRecord)]);
+
+  for (const key of keys) {
+    if (serializedField(baselineRecord[key]) === serializedField(desiredRecord[key])) continue;
+    if (Object.hasOwn(desiredRecord, key)) {
+      mergedRecord[key] = desiredRecord[key];
+    } else {
+      delete mergedRecord[key];
+    }
+  }
+  return merged;
+}
+
+function cloneAuthenticationCreds(creds: AuthenticationCreds): AuthenticationCreds {
+  return deserializeAuthValue(serializeAuthValue(creds)) as AuthenticationCreds;
+}
+
+function serializedField(value: unknown): string {
+  return serializeAuthValue({ value });
 }
 
 export async function clearAuthState(storage: DurableObjectStorage): Promise<number> {
