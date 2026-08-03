@@ -66,7 +66,7 @@ async function runMessageCommand(
     case "-h":
       return completed(messageUsage());
     case "current":
-      return showCurrentReplyDestination(rest, ctx);
+      return await showCurrentReplyDestination(rest, ctx);
     case "destinations":
       return await listDestinations(rest, ctx);
     case "attach":
@@ -236,16 +236,26 @@ async function rollbackStagedReplyMedia(pid: string, keys: string[]): Promise<vo
   } as RequestFrame<"proc.media.delete">)));
 }
 
-function showCurrentReplyDestination(args: string[], ctx: KernelContext): ExecResult {
+async function showCurrentReplyDestination(
+  args: string[],
+  ctx: KernelContext,
+): Promise<ExecResult> {
   const json = parseOnlyFlags(args, new Set(["--json"])).has("--json");
   const route = currentRunRoute(ctx);
   const current = describeCurrentRoute(route);
+  const destinationId = route?.kind === "adapter"
+    ? await adapterMessageDestinationId(route.destination, resolveCallerOwnerUid(ctx))
+    : undefined;
   if (json) {
-    return completed(`${JSON.stringify(current, null, 2)}\n`);
+    return completed(`${JSON.stringify({
+      ...current,
+      ...(destinationId ? { destinationId } : {}),
+    }, null, 2)}\n`);
   }
   return completed([
     `automatic reply: ${current.label}`,
     `transport: ${current.transport}`,
+    ...(destinationId ? [`destination: ${destinationId}`] : []),
     "Explicit `message send` commands create additional outbound messages.",
     "Return the current answer normally unless an additional or cross-channel message was requested.",
     "",

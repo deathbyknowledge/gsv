@@ -61,6 +61,29 @@ process as `ipc.reply` or `ipc.timeout`.
 The target pid is sufficient: IPC cannot select another history inside the
 target process.
 
+## Master Control and delegation
+
+Master Control is a dedicated, locked agent account owned by each human. It is
+provisioned lazily and uses the same account, process, tool, permission, and IPC
+mechanisms as every other agent. A parentless interactive `proc.spawn` defaults
+to this account, while non-interactive background work retains the personal
+agent default. An unrouted linked adapter DM enters a deterministic, durable
+Master Control process for its owner; shared surfaces retain their independent
+routing.
+
+The account home deliberately starts with only
+`context.d/00-master-control.md` and `context.d/10-commitments.md`. Commitments
+are concise, model-maintained text rather than a Kernel schema. For substantial
+work, the controller uses `proc delegate --as ACCOUNT`, which creates a
+non-interactive worker process and a bounded `proc.ipc.call`. Acceptance returns
+immediately; completion or timeout later re-enters Master Control as a process
+event. Worker processes keep the selected agent account's own context.
+
+During an adapter turn, `message current --json` exposes the current surface as
+an opaque GSV destination id. Master Control can store that id with a commitment
+and use `message send --to DESTINATION` if a worker result merits a later update.
+Provider account, actor, and surface identifiers remain hidden.
+
 ## History, compaction, and branching
 
 The Process Durable Object owns active history, compaction policy, archive

@@ -1,7 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "./context";
 import type { ConnectionIdentity, ProcessIdentity } from "@humansandmachines/gsv/protocol";
-import { ensurePersonalAgent, handleAccountCreate, handleAccountList } from "./agents";
+import {
+  ensureMasterControlAgent,
+  ensurePersonalAgent,
+  handleAccountCreate,
+  handleAccountList,
+  masterControlUsername,
+} from "./agents";
+import {
+  MASTER_CONTROL_COMMITMENTS_CONTEXT,
+  MASTER_CONTROL_CONTEXT,
+} from "../prompts/master-control";
 import {
   LEGACY_BOOT_CONTEXT_TEMPLATE,
   LEGACY_DEFAULT_USER_CONTEXT_TEMPLATE,
@@ -324,6 +334,16 @@ describe("handleAccountCreate", () => {
     );
   });
 
+  it("reserves Master Control account names for the system", async () => {
+    const { ctxFor } = createCtx();
+    const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
+
+    await expect(handleAccountCreate({
+      kind: "agent",
+      username: masterControlUsername(1000),
+    }, ctx)).rejects.toThrow(/reserved system username/i);
+  });
+
   it("requires root to create a human account", async () => {
     const { ctxFor } = createCtx();
     const ctx = ctxFor(userIdentity(1000, "alice", ["account.create"]));
@@ -462,6 +482,50 @@ describe("handleAccountCreate", () => {
     for (const path of customPaths) {
       expect(ops).not.toContainEqual(expect.objectContaining({ path }));
     }
+  });
+});
+
+describe("ensureMasterControlAgent", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("creates an isolated controller account with only controller context", async () => {
+    const state = createCtx();
+    const ctx = state.ctxFor(
+      userIdentity(1000, "alice", ["account.create"]),
+      { ripgit: true },
+    );
+
+    const result = await ensureMasterControlAgent(ctx, ctx.identity!.process);
+
+    expect(result).toMatchObject({
+      created: true,
+      identity: {
+        username: masterControlUsername(1000),
+        home: `/home/${masterControlUsername(1000)}`,
+      },
+    });
+    expect(state.shadow.get(masterControlUsername(1000))).toBe("!");
+    expect(state.groups.find((group) => group.name === masterControlUsername(1000))?.members)
+      .toContain("alice");
+
+    const ops = state.ripgitApplyBodies
+      .filter((body) => body.owner === masterControlUsername(1000))
+      .flatMap((body) => body.ops);
+    const contextFiles = ops.filter((op) => op.type === "put" && op.path.startsWith("context.d/"));
+    expect(contextFiles.map((op) => op.path)).toEqual([
+      "context.d/.dir",
+      "context.d/00-master-control.md",
+      "context.d/10-commitments.md",
+    ]);
+    const controller = contextFiles.find((op) => op.path === "context.d/00-master-control.md");
+    const commitments = contextFiles.find((op) => op.path === "context.d/10-commitments.md");
+    expect(new TextDecoder().decode(new Uint8Array(controller?.contentBytes ?? [])))
+      .toBe(MASTER_CONTROL_CONTEXT);
+    expect(new TextDecoder().decode(new Uint8Array(commitments?.contentBytes ?? [])))
+      .toBe(MASTER_CONTROL_COMMITMENTS_CONTEXT);
+    expect(ops).not.toContainEqual(expect.objectContaining({ path: "context.d/00-style.md" }));
+    expect(ops).not.toContainEqual(expect.objectContaining({ path: "context.d/15-memory.md" }));
+    expect(ops).not.toContainEqual(expect.objectContaining({ path: "context.d/20-open-loops.md" }));
   });
 });
 

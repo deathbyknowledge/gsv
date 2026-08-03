@@ -2799,6 +2799,7 @@ describe("native administration shell commands", () => {
     const { adapterSend } = enableTelegramMessaging(ctx);
 
     const current = await handleShellExec({ input: "message current" }, ctx);
+    const currentJson = await handleShellExec({ input: "message current --json" }, ctx);
     const duplicate = await handleShellExec({
       input: 'message send --to here --message "duplicate reply"',
     }, ctx);
@@ -2809,6 +2810,11 @@ describe("native administration shell commands", () => {
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
     expect(current.stdout).toContain("automatic reply: Telegram direct message");
     expect(current.stdout).toContain("create additional outbound messages");
+    const destinationId = JSON.parse(currentJson.stdout).destinationId as string;
+    expect(destinationId).toMatch(/^message-destination:[0-9a-f]{64}$/);
+    expect(current.stdout).toContain(`destination: ${destinationId}`);
+    expect(current.stdout).not.toContain("chat-42");
+    expect(currentJson.stdout).not.toContain("chat-42");
     expect(duplicate.status).toBe("failed");
     expect(duplicate.stderr).toContain("automatic reply destination");
     expect(duplicate.stderr).toContain("--also");
