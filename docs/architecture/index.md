@@ -57,8 +57,13 @@ is allowed to do something and where the request should go.
 Agents are durable processes, not sessions. Each task has its own process,
 created with `proc.spawn` or `proc.fork`. A process has a PID, uid/gid identity,
 parent, profile, current working directory, optional workspace, state, and
-persistent message history. A personal agent is a run-as account, not a default
-process.
+persistent message history.
+
+Each human also has a lazily provisioned Master Control account. Parentless
+interaction processes run as that account, and unrouted private adapter messages
+converge on one durable Master Control process per owner. Personal and custom
+agent accounts are worker identities selected explicitly or through delegation;
+Master Control does not introduce a second process runtime.
 
 Process state lives in a Process Durable Object with its own SQLite database.
 That database stores active messages, pending tool calls, queued messages,

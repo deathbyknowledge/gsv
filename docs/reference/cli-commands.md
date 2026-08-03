@@ -78,8 +78,11 @@ sched remove <id>
 sched run <id> [--force]
 ```
 
-`proc spawn` always creates a fresh process. Its prompt is fire-and-forget, and
-any answer remains in that child process's history. Unknown options are
+`proc spawn` always creates a fresh process. A parentless interactive spawn
+defaults to the owner's Master Control account; `--non-interactive` defaults to
+the personal agent, and a child inherits its parent unless `--as` selects
+another owned agent account. Its prompt is fire-and-forget, and any answer
+remains in that child process's history. Unknown options are
 rejected; use `--` before a positional prompt that begins with `-`. Use
 `--non-interactive` for scheduled background work. `proc delegate` creates a
 bounded child and reports the result to its caller as a process event; it
@@ -92,7 +95,9 @@ shell, `proc self` prints the current process id and the shell exports it as
 with an error there.
 
 `message current` reports where the current run's final answer is delivered
-automatically. `message attach` adds one or more GSV filesystem files to that
+automatically. For an adapter run, both text and JSON output include an opaque
+destination id suitable for a later `message send --to`; raw provider ids stay
+hidden. `message attach` adds one or more GSV filesystem files to that
 same final answer for native clients and adapter origins; it does not create an
 extra message. Existing files in the current process's `/var/media` directory
 are reused, while other readable files are staged there. Return the answer

@@ -96,8 +96,9 @@ The inbound path looks like this:
    process route.
 7. Media is streamed into process-owned storage, and the Kernel creates the run
    reply route before admitting the message.
-8. The message is delivered to the routed process, or to a newly created
-   personal-agent process when the surface has no route yet.
+8. The message is delivered to the routed process. An unrouted DM enters the
+   owner's durable Master Control process; an unrouted shared surface starts a
+   personal-agent process.
 9. The process runs the normal agent loop and emits `proc.run.*` signals.
 
 The important point is that inbound adapter traffic does not create a special
@@ -120,7 +121,8 @@ state lives. The agent normally returns its final answer without calling an
 explicit send operation.
 
 The `message` shell command is the explicit path for an additional or
-cross-channel message. `message current` describes the automatic route,
+cross-channel message. `message current` describes the automatic route and
+includes its opaque destination id when the route is an adapter surface,
 `message destinations` lists authorized observed surfaces, `message attach`
 registers files on the run's automatic final response, and `message send --to ...`
 sends text or one filesystem attachment as an extra message. An explicit
@@ -217,8 +219,11 @@ After an actor is linked and addresses GSV on a surface, the Kernel can route
 that observed destination to a specific process. The key includes adapter,
 account, actor, surface kind, surface id, and optional thread id.
 
-That means inbound adapter traffic can continue in its routed task process,
-move to another existing process, or start a new process under an agent account.
+That means inbound adapter traffic can continue in its routed process or move
+to another existing process. When no route exists, a linked DM converges on the
+owner's single Master Control process; group, channel, and thread traffic starts
+an independent personal-agent process. Explicit `/use` process selection remains
+available.
 
 This is what lets GSV keep one durable process model while still supporting
 multiple external surfaces. Actor scope is important: two linked GSV users can

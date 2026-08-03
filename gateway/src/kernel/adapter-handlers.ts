@@ -48,6 +48,7 @@ import type {
 import { sendFrameToProcess } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
 import { ensurePersonalAgent } from "./agents";
+import { ensureMasterControlProcess } from "./master-control";
 import { canOwnerRunAsAccount } from "./account-access";
 import { isLocked } from "../auth/shadow";
 import type { AdapterStatusRecord } from "./adapter-status";
@@ -1589,6 +1590,10 @@ async function resolveAdapterRoute(
       return routedPid;
     }
     ctx.adapters.surfaceRoutes.clearRoute(routeKey);
+  }
+
+  if (surface.kind === "dm") {
+    return ensureMasterControlProcess(uid, ctx);
   }
 
   const personalAgent = await ensurePersonalAgent(ctx, userIdentity);

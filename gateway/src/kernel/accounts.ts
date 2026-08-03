@@ -82,6 +82,8 @@ export interface CreateAccountInput {
   capabilities?: string[];
   /** Extra context.d files seeded into the home (idempotent per file). */
   contextFiles?: { name: string; text: string }[];
+  /** Whether to seed the ordinary agent context. Defaults to true for agents. */
+  seedPromptContext?: boolean;
   /**
    * Create a separate, capability-less group used purely to authorize run-as.
    * Humans join this group (not the cap gid), so they may run as the account
@@ -199,7 +201,7 @@ export async function createAccount(
 
   await ensureAccountHomeLayout(env, identity, {
     userContextUsername,
-    seedPromptContext: input.kind === "agent",
+    seedPromptContext: input.seedPromptContext ?? (input.kind === "agent"),
     seedBootContext: input.personalAgentOf != null,
     cleanupGeneratedPromptContext: input.kind !== "agent",
   });

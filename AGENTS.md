@@ -37,6 +37,8 @@ GSV is Linux-inspired because familiar, orthogonal semantics reduce instruction 
 
 Processes have identities, histories, permissions, queues, pending work, and lifecycles. Subagents and subprocesses are not special chat records. Preserve process invariants across normal completion, interruption, restart, and teardown.
 
+Master Control is an ordinary user-owned agent account and durable process, not a second orchestration runtime. It receives top-level private interaction, keeps natural-language commitments in its own `context.d`, and delegates bounded work through the existing process and IPC primitives.
+
 ### Prefer fewer mechanisms
 
 - Consolidate duplicate paths and delete obsolete ones when behavior remains clear.
