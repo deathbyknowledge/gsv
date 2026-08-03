@@ -34,14 +34,15 @@ import {
   createAccount,
   isUsernameAvailable,
   normalizeAccountName,
-  seedContextFile,
 } from "./accounts";
 import { canOwnerRunAsAccount } from "./account-access";
 import { ensureAccountHomeLayout } from "./account-home";
 import {
   MASTER_CONTROL_COMMITMENTS_CONTEXT,
   MASTER_CONTROL_CONTEXT,
+  MASTER_CONTROL_VOICE_CONTEXT,
 } from "../prompts/master-control";
+import { ensurePersonalMemory } from "./personal-memory";
 
 /**
  * Curated, tasteful default names for the personal agent. The first available
@@ -197,6 +198,8 @@ export async function ensurePersonalAgent(
     return { identity: human, created: false };
   }
 
+  await ensurePersonalMemory(ctx, human);
+
   const existingUid = auth.getPersonalAgentUid(human.uid);
   if (existingUid !== null) {
     const entry = auth.getPasswdByUid(existingUid);
@@ -255,7 +258,6 @@ export async function ensureMasterControlAgent(
       seedPromptContext: false,
       cleanupGeneratedPromptContext: true,
     });
-    await seedMasterControlContext(ctx, identity);
     return { identity, created: false };
   }
 
@@ -271,25 +273,13 @@ export async function ensureMasterControlAgent(
     shared: true,
     crossMemberOwner: true,
     seedPromptContext: false,
-    contextFiles: masterControlContextFiles(),
+    contextFiles: [
+      { name: "00-master-control.md", text: MASTER_CONTROL_CONTEXT },
+      { name: "05-voice.md", text: MASTER_CONTROL_VOICE_CONTEXT },
+      { name: "10-commitments.md", text: MASTER_CONTROL_COMMITMENTS_CONTEXT },
+    ],
   });
   return { identity: created.identity, created: true };
-}
-
-function masterControlContextFiles(): AccountContextFile[] {
-  return [
-    { name: "00-master-control.md", text: MASTER_CONTROL_CONTEXT },
-    { name: "10-commitments.md", text: MASTER_CONTROL_COMMITMENTS_CONTEXT },
-  ];
-}
-
-async function seedMasterControlContext(
-  ctx: KernelContext,
-  identity: ProcessIdentity,
-): Promise<void> {
-  for (const file of masterControlContextFiles()) {
-    await seedContextFile(ctx.env, identity, file.name, file.text);
-  }
 }
 
 /**

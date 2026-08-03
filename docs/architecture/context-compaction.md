@@ -40,6 +40,11 @@ Each process has an `auto-compact` or `fail` policy, a pressure threshold, and a
 while retaining the newest 80 stored messages. The policy is exposed through
 `proc.history.policy.get` and `proc.history.policy.set`.
 
+Master Control is the user's long-lived conversational process, so its default
+is deliberately earlier and smaller: it compacts at `0.65` while retaining the
+newest 24 stored messages. It uses the same preflight auto-compaction path as
+every other process.
+
 - `auto-compact` generates a summary and compacts the old prefix before the
   model call.
 - `fail` ends the run with a visible system error and leaves the process
@@ -69,6 +74,24 @@ A successful compaction:
 
 The process then rebuilds context before calling the model. Summary or archive
 failure stops the run explicitly; GSV does not install a content-free summary.
+Successful installation clears the old pressure estimate because it no longer
+describes the live history.
+
+## Master Control continuation memory
+
+Ordinary process compaction asks for a concise operational summary. Master
+Control uses a continuation prompt for the relationship instead. It preserves
+the user's current intentions, explicit facts and corrections, decisions,
+constraints, prior user-facing statements, still-relevant outcomes, and
+promises that have not been closed. It drops completed worker mechanics,
+process identifiers, intermediate attempts, and tool chatter.
+
+Master Control uses the same bounded transcript selection and exact archive as
+ordinary processes; only its policy and summary prompt differ.
+
+This continuation record is conversational working memory, not autobiographical
+memory. Stable standing facts belong in the human owner's `context.d`, and
+durable retrievable knowledge belongs in the human-owned Personal wiki.
 
 ## Archives and restoration
 

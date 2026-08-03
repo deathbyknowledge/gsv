@@ -5881,8 +5881,8 @@ describe("Process DO — mechanical", () => {
 
     });
 
-    it("can generate the compaction summary from selected messages", async () => {
-      const pid = "mech-conversation-compact-generated";
+    it("uses continuation-oriented summaries for Master Control", async () => {
+      const pid = "proc:master-control:9101";
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const models: string[] = [];
 
@@ -5922,6 +5922,7 @@ describe("Process DO — mechanical", () => {
           },
           async generateText(request: any) {
             models.push(request.config.model);
+            expect(request.context.systemPrompt).toContain("one ongoing relationship");
             expect(request.options).toMatchObject({
               maxTokens: 768,
               reasoning: "off",
@@ -6439,6 +6440,25 @@ describe("Process DO — mechanical", () => {
           overflow: "auto-compact",
           compactAtPressure: 0.82,
           keepLast: 42,
+        },
+      });
+    });
+
+    it("uses a lower-pressure, short-tail history policy for Master Control", async () => {
+      const pid = "proc:master-control:9102";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const response = (await stub.recvFrame(
+        makeReq("proc.history.policy.get", {}),
+      )) as ResponseOkFrame;
+      expect(response.data).toMatchObject({
+        ok: true,
+        pid,
+        policy: {
+          overflow: "auto-compact",
+          compactAtPressure: 0.65,
+          keepLast: 24,
+          updatedAt: 0,
         },
       });
     });

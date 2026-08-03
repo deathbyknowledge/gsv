@@ -10,6 +10,7 @@ import {
   LEGACY_DEFAULT_USER_CONTEXT_TEMPLATE,
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V1,
   LEGACY_MEMORY_CONTEXT_TEMPLATE_V2,
+  LEGACY_MEMORY_CONTEXT_TEMPLATE_V3,
   LEGACY_OPEN_LOOPS_CONTEXT,
   LEGACY_STYLE_CONTEXT,
 } from "../prompts/agent-home";
@@ -93,6 +94,7 @@ export async function ensureAccountHomeLayout(
       [
         renderLegacyMemoryContextV1(identity.username),
         renderLegacyMemoryContextV2(identity.username),
+        LEGACY_MEMORY_CONTEXT_TEMPLATE_V3,
       ],
     );
     maybeDeleteGeneratedTextFile(
@@ -140,6 +142,7 @@ export async function ensureAccountHomeLayout(
         renderMemoryContext(identity.username),
         renderLegacyMemoryContextV1(identity.username),
         renderLegacyMemoryContextV2(identity.username),
+        LEGACY_MEMORY_CONTEXT_TEMPLATE_V3,
       ],
     );
     maybeDeleteGeneratedTextFile(
