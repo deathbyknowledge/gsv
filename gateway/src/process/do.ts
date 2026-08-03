@@ -22,7 +22,10 @@ import type {
 } from "../protocol/frames";
 import type { ArgsOf, ResultOf, SyscallName, ToolDefinition } from "../syscalls";
 import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../syscalls/codemode";
-import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../prompts/compaction";
+import {
+  COMPACTION_SUMMARY_SYSTEM_PROMPT,
+  MASTER_CONTROL_COMPACTION_SUMMARY_SYSTEM_PROMPT,
+} from "../prompts/compaction";
 import type {
   AiConfigResult,
   AiTextGenerateConfig,
@@ -754,19 +757,23 @@ function formatCompactionSummaryMessage(input: {
   ].join("\n");
 }
 
-function defaultHistoryPolicy(): ProcHistoryContextPolicy {
+function defaultHistoryPolicy(pid?: string): ProcHistoryContextPolicy {
+  const masterControl = pid?.startsWith("proc:master-control:") === true;
   return {
     overflow: "auto-compact",
-    compactAtPressure: 0.9,
-    keepLast: 80,
+    compactAtPressure: masterControl ? 0.65 : 0.9,
+    keepLast: masterControl ? 24 : 80,
     updatedAt: 0,
   };
 }
 
-function buildCompactionSummaryContext(messages: MessageRecord[]): Context {
+function buildCompactionSummaryContext(
+  messages: MessageRecord[],
+  systemPrompt = COMPACTION_SUMMARY_SYSTEM_PROMPT,
+): Context {
   const transcript = renderCompactionTranscriptWindow(messages, COMPACTION_SUMMARY_WINDOW_CHARS);
   return {
-    systemPrompt: COMPACTION_SUMMARY_SYSTEM_PROMPT,
+    systemPrompt,
     messages: [
       {
         role: "user",
@@ -2660,7 +2667,7 @@ export class Process extends Host<Env> {
   }
 
   private getHistoryContextPolicy(): ProcHistoryContextPolicy {
-    const fallback = defaultHistoryPolicy();
+    const fallback = defaultHistoryPolicy(this.pid);
     const raw = this.store.getValue("historyPolicy");
     if (!raw) {
       return fallback;
@@ -2852,6 +2859,7 @@ export class Process extends Host<Env> {
             archivePath: archivedTo,
             summaryMessageId,
           });
+          this.store.deleteContextState();
         });
         installed = true;
       } finally {
@@ -2901,7 +2909,12 @@ export class Process extends Host<Env> {
       throw new Error("AI config unavailable");
     }
 
-    const context = buildCompactionSummaryContext(messages);
+    const context = buildCompactionSummaryContext(
+      messages,
+      this.pid.startsWith("proc:master-control:")
+        ? MASTER_CONTROL_COMPACTION_SUMMARY_SYSTEM_PROMPT
+        : COMPACTION_SUMMARY_SYSTEM_PROMPT,
+    );
     const generationOptions: AiTextGenerateOptions = {
       maxTokens: 768,
       reasoning: "off",
