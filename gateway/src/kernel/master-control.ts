@@ -4,6 +4,7 @@ import { sendFrameToProcess } from "../shared/utils";
 import { accountIdentity } from "./accounts";
 import {
   ensureMasterControlAgent,
+  ensurePersonalAgent,
   masterControlUsername,
   MASTER_CONTROL_DISPLAY_NAME,
 } from "./agents";
@@ -36,6 +37,7 @@ export async function ensureMasterControlProcess(
     throw new Error(`Master Control owner does not exist: uid=${ownerUid}`);
   }
   const ownerIdentity = accountIdentity(ctx.auth, owner);
+  await ensurePersonalAgent(ctx, ownerIdentity);
   const controller = await ensureMasterControlAgent(ctx, ownerIdentity);
   ctx.procs.spawn(pid, controller.identity, {
     ownerUid,

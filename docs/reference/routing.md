@@ -122,10 +122,13 @@ adapter account, surface, and optional thread:
 adapter + accountId + actorId + surface.kind + surface.id + threadId -> uid + pid
 ```
 
-When no route exists, the first admitted message creates a process that runs as
-the user's personal agent and binds that surface to its PID. Later messages
-reuse the route. Selecting `/use personal` creates and routes to a new
-personal-agent process; selecting an existing PID updates the route.
+When no route exists, a DM converges on the owner's durable Master Control
+process. A shared surface creates a process that runs as the user's personal
+agent. Later messages reuse the route. Selecting `/use personal` creates and
+routes to a new personal-agent process; selecting an existing PID updates the
+route. The Master Control rollout clears only legacy DM routes that point at
+the owner's personal-agent process; account links, custom-agent routes, process
+history, and shared-surface routes remain intact.
 
 Human-in-the-loop replies are routed specially. If the target process has a
 pending HIL request, its adapter DM prompt includes `hil[requestId]`. Only an
