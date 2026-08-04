@@ -20,7 +20,7 @@
     "tsx": "^4.19.0",
     "typescript": "^5.5.2",
     "vitest": "^4.1.9",
-    "wrangler": "^4.115.0"
+    "wrangler": "^4.118.0"
   },
   "dependencies": {
     "@cloudflare/codemode": "^0.3.4",

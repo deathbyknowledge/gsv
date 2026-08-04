@@ -26,6 +26,15 @@ describe("IpcCallStore", () => {
         targetRunId: "run-target",
         status: "pending",
       });
+      expect(calls.findPendingByTargetRun({
+        uid: 1000,
+        targetPid: "proc-target",
+        targetRunId: "run-target",
+      })).toMatchObject({
+        callId,
+        sourcePid: "proc-source",
+        sourceRunId: "run-source",
+      });
       calls.cancelBySourceRun({
         uid: 1000,
         sourcePid: "proc-source",
@@ -38,6 +47,11 @@ describe("IpcCallStore", () => {
         runId: "run-target",
         response: { text: "completed before cancellation" },
       })).toHaveLength(1);
+      expect(calls.findPendingByTargetRun({
+        uid: 1000,
+        targetPid: "proc-target",
+        targetRunId: "run-target",
+      })).toBeNull();
       calls.cancelBySourceRun({
         uid: 1000,
         sourcePid: "proc-source",

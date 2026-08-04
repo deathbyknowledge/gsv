@@ -681,7 +681,7 @@ function clampContext(context: number | undefined): number {
   return Math.max(0, Math.min(20, Math.trunc(context)));
 }
 
-function registerRepo(
+export function registerRepo(
   ctx: KernelContext,
   repo: Pick<RipgitRepoRef, "owner" | "repo">,
   description?: string,

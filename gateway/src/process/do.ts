@@ -22,7 +22,10 @@ import type {
 } from "../protocol/frames";
 import type { ArgsOf, ResultOf, SyscallName, ToolDefinition } from "../syscalls";
 import type { CodeModeExecArgs, CodeModeRunArgs, CodeModeRunResult } from "../syscalls/codemode";
-import { COMPACTION_SUMMARY_SYSTEM_PROMPT } from "../prompts/compaction";
+import {
+  COMPACTION_SUMMARY_SYSTEM_PROMPT,
+  MASTER_CONTROL_COMPACTION_SUMMARY_SYSTEM_PROMPT,
+} from "../prompts/compaction";
 import type {
   AiConfigResult,
   AiTextGenerateConfig,
@@ -692,9 +695,13 @@ function formatIpcReplyMessage(signal: string, payload: unknown): string {
     ? record.error.trim()
     : null;
   const response = "response" in record ? record.response : undefined;
-  const responseText = response && typeof response === "object" && !Array.isArray(response)
-    ? (response as Record<string, unknown>).text
+  const responseRecord = response && typeof response === "object" && !Array.isArray(response)
+    ? response as Record<string, unknown>
     : null;
+  const responseText = responseRecord?.text;
+  const responseMedia = parseStoredProcessMedia(
+    JSON.stringify(responseRecord?.media ?? null) ?? null,
+  );
   const renderedResponse = renderJsonBlock(response);
 
   const lines = [
@@ -710,8 +717,11 @@ function formatIpcReplyMessage(signal: string, payload: unknown): string {
   }
   if (typeof responseText === "string" && responseText.trim().length > 0) {
     lines.push("", "Result:", responseText.trim());
-  } else if (renderedResponse) {
+  } else if (renderedResponse && responseMedia.length === 0) {
     lines.push("", "Response:", "```json", renderedResponse, "```");
+  }
+  if (responseMedia.length > 0) {
+    lines.push("", "Attachments:", ...responseMedia.map((item) => `- ${describeStoredProcessMedia(item)}`));
   }
   return lines.join("\n");
 }
@@ -754,19 +764,23 @@ function formatCompactionSummaryMessage(input: {
   ].join("\n");
 }
 
-function defaultHistoryPolicy(): ProcHistoryContextPolicy {
+function defaultHistoryPolicy(pid?: string): ProcHistoryContextPolicy {
+  const masterControl = pid?.startsWith("proc:master-control:") === true;
   return {
     overflow: "auto-compact",
-    compactAtPressure: 0.9,
-    keepLast: 80,
+    compactAtPressure: masterControl ? 0.65 : 0.9,
+    keepLast: masterControl ? 24 : 80,
     updatedAt: 0,
   };
 }
 
-function buildCompactionSummaryContext(messages: MessageRecord[]): Context {
+function buildCompactionSummaryContext(
+  messages: MessageRecord[],
+  systemPrompt = COMPACTION_SUMMARY_SYSTEM_PROMPT,
+): Context {
   const transcript = renderCompactionTranscriptWindow(messages, COMPACTION_SUMMARY_WINDOW_CHARS);
   return {
-    systemPrompt: COMPACTION_SUMMARY_SYSTEM_PROMPT,
+    systemPrompt,
     messages: [
       {
         role: "user",
@@ -2660,7 +2674,7 @@ export class Process extends Host<Env> {
   }
 
   private getHistoryContextPolicy(): ProcHistoryContextPolicy {
-    const fallback = defaultHistoryPolicy();
+    const fallback = defaultHistoryPolicy(this.pid);
     const raw = this.store.getValue("historyPolicy");
     if (!raw) {
       return fallback;
@@ -2852,6 +2866,7 @@ export class Process extends Host<Env> {
             archivePath: archivedTo,
             summaryMessageId,
           });
+          this.store.deleteContextState();
         });
         installed = true;
       } finally {
@@ -2901,7 +2916,12 @@ export class Process extends Host<Env> {
       throw new Error("AI config unavailable");
     }
 
-    const context = buildCompactionSummaryContext(messages);
+    const context = buildCompactionSummaryContext(
+      messages,
+      this.pid.startsWith("proc:master-control:")
+        ? MASTER_CONTROL_COMPACTION_SUMMARY_SYSTEM_PROMPT
+        : COMPACTION_SUMMARY_SYSTEM_PROMPT,
+    );
     const generationOptions: AiTextGenerateOptions = {
       maxTokens: 768,
       reasoning: "off",
@@ -4914,6 +4934,7 @@ export class Process extends Host<Env> {
     seq: number,
     event: AssistantMessageEvent,
   ): Promise<void> {
+    if (!this.interactive) return;
     await this.sendSignal("proc.run.stream", {
       pid: this.pid,
       runId,

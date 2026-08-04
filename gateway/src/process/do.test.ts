@@ -2972,6 +2972,27 @@ describe("Process DO — mechanical", () => {
       expect(outputSignal?.payload.text).toBe("hello");
     });
 
+    it("does not relay provider stream events from noninteractive workers", async () => {
+      const pid = "mech-background-stream";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const sendSignal = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.store.setValue("interactive", "0");
+        process.sendSignal = vi.fn();
+
+        await process.emitRunStreamEvent("run-background", 1, {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "opaque work",
+          partial: {},
+        });
+        return process.sendSignal;
+      });
+
+      expect(sendSignal).not.toHaveBeenCalled();
+    });
+
     it("retries streamed reasoning-only model turns with monotonic stream sequence numbers", async () => {
       const pid = "mech-chat-stream-retry";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -5277,7 +5298,18 @@ describe("Process DO — mechanical", () => {
           runId: "target-run",
           deadlineAt: Date.now() + 30_000,
           status: "completed",
-          response: { text: "busy result", usage: null },
+          response: {
+            text: "busy result",
+            usage: null,
+            media: [{
+              type: "video",
+              mimeType: "video/mp4",
+              key: `home/worker/.gsv/media/archived-media:${"a".repeat(64)}`,
+              path: `/home/worker/.gsv/media/archived-media:${"a".repeat(64)}`,
+              filename: "clip.mp4",
+              size: 1234,
+            }],
+          },
         },
       });
 
@@ -5288,6 +5320,8 @@ describe("Process DO — mechanical", () => {
         expect(messages[0].role).toBe("system");
         expect(messages[0].content).toContain(`Delegated task from process \`${targetPid}\` finished.`);
         expect(messages[0].content).toContain("busy result");
+        expect(messages[0].content).toContain("Attachments:");
+        expect(messages[0].content).toContain(`/home/worker/.gsv/media/archived-media:${"a".repeat(64)}`);
         expect(process.currentRun).toMatchObject({
           runId: "active-source-run",
           pendingRuntimeEvents: 1,
@@ -5881,8 +5915,8 @@ describe("Process DO — mechanical", () => {
 
     });
 
-    it("can generate the compaction summary from selected messages", async () => {
-      const pid = "mech-conversation-compact-generated";
+    it("uses continuation-oriented summaries for Master Control", async () => {
+      const pid = "proc:master-control:9101";
       const stub = await initProcess(pid, ROOT_IDENTITY);
       const models: string[] = [];
 
@@ -5922,6 +5956,7 @@ describe("Process DO — mechanical", () => {
           },
           async generateText(request: any) {
             models.push(request.config.model);
+            expect(request.context.systemPrompt).toContain("one ongoing relationship");
             expect(request.options).toMatchObject({
               maxTokens: 768,
               reasoning: "off",
@@ -6439,6 +6474,25 @@ describe("Process DO — mechanical", () => {
           overflow: "auto-compact",
           compactAtPressure: 0.82,
           keepLast: 42,
+        },
+      });
+    });
+
+    it("uses a lower-pressure, short-tail history policy for Master Control", async () => {
+      const pid = "proc:master-control:9102";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const response = (await stub.recvFrame(
+        makeReq("proc.history.policy.get", {}),
+      )) as ResponseOkFrame;
+      expect(response.data).toMatchObject({
+        ok: true,
+        pid,
+        policy: {
+          overflow: "auto-compact",
+          compactAtPressure: 0.65,
+          keepLast: 24,
+          updatedAt: 0,
         },
       });
     });

@@ -190,7 +190,9 @@ function makeContext(options?: {
     } as unknown as KernelContext["adapters"],
     runRoutes: null as never,
     schedules: options?.schedules,
-    ipcCalls: options?.ipcCalls,
+    ipcCalls: options?.ipcCalls ?? {
+      findPendingByTargetRun: vi.fn(() => null),
+    } as unknown as KernelContext["ipcCalls"],
     connection: null,
     identity: {
       role: "user",
@@ -1431,7 +1433,11 @@ describe("proc native command", () => {
       uid: IDENTITY.uid,
     }));
     const callId = createdCall.callId;
-    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(callId, createdCall.deadlineAt);
+    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(
+      callId,
+      createdCall.deadlineAt,
+      { terminateTargetOnTimeout: true },
+    );
   });
 
   it("rejects delegation from a top-level shell before spawning", async () => {
@@ -2799,6 +2805,7 @@ describe("native administration shell commands", () => {
     const { adapterSend } = enableTelegramMessaging(ctx);
 
     const current = await handleShellExec({ input: "message current" }, ctx);
+    const currentJson = await handleShellExec({ input: "message current --json" }, ctx);
     const duplicate = await handleShellExec({
       input: 'message send --to here --message "duplicate reply"',
     }, ctx);
@@ -2809,6 +2816,11 @@ describe("native administration shell commands", () => {
     expect(current).toMatchObject({ status: "completed", exitCode: 0 });
     expect(current.stdout).toContain("automatic reply: Telegram direct message");
     expect(current.stdout).toContain("create additional outbound messages");
+    const destinationId = JSON.parse(currentJson.stdout).destinationId as string;
+    expect(destinationId).toMatch(/^message-destination:[0-9a-f]{64}$/);
+    expect(current.stdout).toContain(`destination: ${destinationId}`);
+    expect(current.stdout).not.toContain("chat-42");
+    expect(currentJson.stdout).not.toContain("chat-42");
     expect(duplicate.status).toBe("failed");
     expect(duplicate.stderr).toContain("automatic reply destination");
     expect(duplicate.stderr).toContain("--also");
@@ -3209,7 +3221,7 @@ describe("native administration shell commands", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it("schedules an event into the caller process", async () => {
+  it("returns a delegated schedule to the IPC caller", async () => {
     const wake = vi.fn(async () => "wake-here");
     const setWakeScheduleId = vi.fn();
     const create = vi.fn((input) => ({
@@ -3234,9 +3246,14 @@ describe("native administration shell commands", () => {
         runCount: 0,
       },
     }));
-    const caller = {
+    const worker = {
       processId: "task:shell",
       uid: IDENTITY.uid,
+      ownerUid: IDENTITY.uid,
+    };
+    const controller = {
+      processId: "proc:master-control",
+      uid: 2000,
       ownerUid: IDENTITY.uid,
     };
 
@@ -3247,14 +3264,21 @@ describe("native administration shell commands", () => {
       makeContext({
         capabilities: ["sched.add", "proc.send"],
         procs: {
-          get: vi.fn((pid: string) => pid === caller.processId ? caller : null),
+          get: vi.fn((pid: string) => [worker, controller].find((proc) => proc.processId === pid) ?? null),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
         } as Partial<KernelContext["procs"]>,
+        ipcCalls: {
+          findPendingByTargetRun: vi.fn(() => ({
+            sourcePid: controller.processId,
+            sourceRunId: null,
+          })),
+        } as unknown as KernelContext["ipcCalls"],
         schedules: {
           create,
           setWakeScheduleId,
         } as unknown as KernelContext["schedules"],
         scheduleScheduleWake: wake,
+        processRunId: "run-worker",
       }),
     );
 
@@ -3265,7 +3289,7 @@ describe("native administration shell commands", () => {
       expression: { kind: "every", everyMs: 120_000 },
       target: {
         kind: "process.event",
-        pid: "task:shell",
+        pid: "proc:master-control",
         message: "Send a niche animal fact.",
       },
     }));

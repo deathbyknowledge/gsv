@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(19);
+    expect(KERNEL_MIGRATIONS).toHaveLength(20);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -108,6 +108,10 @@ describe("kernel schema migrations", () => {
       id: 19,
       name: "remove_notifications",
     });
+    expect(KERNEL_MIGRATIONS[19]).toMatchObject({
+      id: 20,
+      name: "route_personal_dms_to_master_control",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -182,6 +186,16 @@ describe("kernel schema migrations", () => {
       "DELETE FROM signal_watches WHERE signal LIKE 'notification.%'",
     );
     expect(statements).toContain("DROP TABLE notifications");
+  });
+
+  it("moves legacy personal-agent DMs to Master Control without clearing custom routes", () => {
+    const statement = normalizedStatements().find((candidate) => (
+      candidate.startsWith("DELETE FROM surface_routes WHERE surface_kind = 'dm'")
+    ));
+
+    expect(statement).toContain("JOIN personal_agents ON personal_agents.agent_uid = processes.uid");
+    expect(statement).toContain("processes.process_id = surface_routes.pid");
+    expect(statement).toContain("personal_agents.owner_uid = surface_routes.uid");
   });
 
   it("moves explicit system context overrides to the new lexical order", () => {

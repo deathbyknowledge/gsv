@@ -9,7 +9,7 @@ GSV uses several storage planes. The Kernel chooses the plane based on whether t
 | Kernel SQLite | Kernel Durable Object SQL | Users, groups, tokens, OAuth accounts, config, devices, routing tables, process registry, workspaces, adapter links, and automation. |
 | Process SQLite | Process Durable Object SQL | Active messages, pending tool calls, message queue, HIL state, process-local metadata. |
 | R2 `STORAGE` bucket | Cloudflare R2 | Ordinary virtual filesystem files, process media, and process archives. |
-| ripgit | `RIPGIT` binding | Versioned home knowledge, workspaces, and source trees. |
+| ripgit | `RIPGIT` binding | Versioned home context and skills, personal wikis, workspaces, and source trees. |
 
 ## Virtual Filesystem Mapping
 
@@ -20,9 +20,9 @@ The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual fi
 | `/sys/*`, `/proc/*`, `/dev/*` | Kernel SQLite and live registries | Virtual control-plane files. |
 | `/etc/passwd`, `/etc/shadow`, `/etc/group` | Kernel auth tables | Overlaid on top of regular `/etc` storage. |
 | `/home` | Account-home namespace | Virtual ancestor that exists without an R2 marker and lists only account homes the caller may manage. |
-| `~/context.d/*` | ripgit home repo, with R2 fallback | User-global prompt context, including seeded constitution and user files. |
-| `~/skills.d/*` | ripgit home repo, with R2 fallback | User-global reusable process skills. |
-| `~/knowledge/*` | ripgit home repo | Durable knowledge databases. |
+| `~/context.d/*` | ripgit home repo, with R2 fallback | Account context. Human account context is shared with its owned agents; agent account context is role-local. |
+| `~/skills.d/*` | ripgit home repo, with R2 fallback | Reusable process skills layered from the owner and run-as agent. |
+| `/src/repos/{human}/personal/*` | ripgit Personal wiki repo plus R2 overlay | Human-owned durable personal memory shared by all owned agents. |
 | Other home files | R2 | Stored as ordinary objects with uid/gid/mode metadata. |
 | `/src/repos/{owner}/{repo}` | ripgit repo plus R2 overlay | Visible source repositories. Writable repos stage process-local edits in R2 until explicit `rgit commit`. |
 | `/workspaces/{workspaceId}` | ripgit workspace repo | Mutable, versioned task workspace. |
@@ -86,7 +86,8 @@ ripgit stores versioned content. It is used anywhere history, diffs, search, or 
 
 | Repository | Ref Helper | Mounted At | Purpose |
 |---|---|---|---|
-| `{username}/home` | `accountHomeRepoRef(username)` | `~/context.d`, `~/skills.d`, `~/knowledge` | Home context, account-local skills, and knowledge databases. |
+| `{username}/home` | `accountHomeRepoRef(username)` | `~/context.d`, `~/skills.d` | Account context and account-local skills. |
+| `{human}/personal` | repo manifest `wiki.json` | Wiki app, `/src/repos/{human}/personal` | Shared durable personal memory for the human and their owned agents. |
 | Wiki repos, for example `root/gsv-manual` or `{owner}/{wiki}` | repo manifest `wiki.json` | Wiki app, `/src/repos/{owner}/{wiki}`, `repo.*` | Durable markdown knowledge databases. |
 | Registered source repos, for example `{owner}/{repo}` | repository config | `/src/repos/{owner}/{repo}`, `repo.*`, `rgit` | Source inspection and generic repo operations. |
 | `{username}/{workspaceId}` | `workspaceRepoRef(workspaceId, username)` | `/workspaces/{workspaceId}` | Task workspace files and checkpoints. |

@@ -32,7 +32,7 @@ import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import { sendFrameToProcess } from "../shared/utils";
 import { raceWithAbort } from "../shared/abort";
 import { resolveUserPath } from "../fs";
-import { ensurePersonalAgent } from "./agents";
+import { ensureMasterControlAgent, ensurePersonalAgent } from "./agents";
 import { accountIdentity } from "./accounts";
 import { canOwnerDelegateRunAs } from "./account-access";
 import {
@@ -85,6 +85,7 @@ export async function handleProcSpawn(
   const label = typeof args.label === "string" && args.label.trim().length > 0
     ? args.label.trim()
     : undefined;
+  const interactive = args.interactive ?? true;
 
   const callerOwnerUid = resolveCallerOwnerUid(ctx);
   const parentPid = args.parentPid ?? ctx.processId;
@@ -113,7 +114,9 @@ export async function handleProcSpawn(
   // The spawning human owns the process. The run-as identity is, in order of
   // precedence: an explicit `runAs` account, the parent's identity (so children
   // of an agent also run as that agent), or — for a parentless spawn — the
-  // caller's personal agent (processes run as an agent, not the human).
+  // caller's Master Control account for interaction or personal agent for
+  // non-interactive background work. Delegated children inherit or select a
+  // worker account explicitly.
   const ownerUid = parent ? parent.ownerUid : callerOwnerUid;
   const inheritParentIdentity = parent && (
     parentIsCurrentCaller ||
@@ -139,16 +142,21 @@ export async function handleProcSpawn(
     }
     baseIdentity = resolved.identity;
   } else if (!parent) {
-    const agent = await ensurePersonalAgent(ctx, identity.process);
-    baseIdentity = agent.identity;
+    const owner = ctx.auth.getPasswdByUid(ownerUid);
+    if (!owner) {
+      return { ok: false, error: `Process owner does not exist: uid=${ownerUid}` };
+    }
+    const ownerIdentity = accountIdentity(ctx.auth, owner);
+    const provision = interactive
+      ? await ensureMasterControlAgent(ctx, ownerIdentity)
+      : await ensurePersonalAgent(ctx, ownerIdentity);
+    baseIdentity = provision.identity;
   }
 
   const spawnIdentity: ProcessIdentity = {
     ...baseIdentity,
     cwd: resolveSpawnCwd(args.cwd, baseIdentity),
   };
-
-  const interactive = args.interactive ?? true;
 
   try {
     ctx.procs.spawn(pid, spawnIdentity, {
@@ -526,6 +534,7 @@ export async function handleProcIpcSend(
 export async function handleProcIpcCall(
   args: ProcIpcCallArgs,
   ctx: KernelContext,
+  options: { terminateTargetOnTimeout?: boolean } = {},
 ): Promise<ProcIpcCallResult> {
   const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.call");
   if (!resolved.ok) return resolved;
@@ -545,7 +554,13 @@ export async function handleProcIpcCall(
   });
 
   try {
-    await ctx.scheduleIpcCallTimeout(callId, deadlineAt);
+    if (options.terminateTargetOnTimeout) {
+      await ctx.scheduleIpcCallTimeout(callId, deadlineAt, {
+        terminateTargetOnTimeout: true,
+      });
+    } else {
+      await ctx.scheduleIpcCallTimeout(callId, deadlineAt);
+    }
   } catch (error) {
     ctx.ipcCalls.remove(callId);
     return { ok: false, error: formatError(error) };

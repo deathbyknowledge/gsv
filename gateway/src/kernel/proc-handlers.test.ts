@@ -23,6 +23,46 @@ const IDENTITY: ProcessIdentity = {
   cwd: "/home/sam",
 };
 
+const MASTER_CONTROL_ACCOUNT = {
+  username: `_gsv_mc_${IDENTITY.uid}`,
+  uid: 2000,
+  gid: 2000,
+  gecos: "Master Control",
+  home: `/home/_gsv_mc_${IDENTITY.uid}`,
+  shell: "/bin/init",
+};
+
+function makeMasterControlAuth() {
+  return {
+    getPasswdByUsername: vi.fn((username: string) => (
+      username === MASTER_CONTROL_ACCOUNT.username ? MASTER_CONTROL_ACCOUNT : null
+    )),
+    getPasswdByUid: vi.fn((uid: number) => {
+      if (uid === IDENTITY.uid) {
+        return {
+          username: IDENTITY.username,
+          uid: IDENTITY.uid,
+          gid: IDENTITY.gid,
+          gecos: IDENTITY.username,
+          home: IDENTITY.home,
+          shell: "/bin/init",
+        };
+      }
+      return uid === MASTER_CONTROL_ACCOUNT.uid ? MASTER_CONTROL_ACCOUNT : null;
+    }),
+    getShadowByUsername: vi.fn((username: string) => (
+      username === MASTER_CONTROL_ACCOUNT.username ? { username, hash: "!" } : null
+    )),
+    getGroupByGid: vi.fn((gid: number) => (
+      gid === MASTER_CONTROL_ACCOUNT.gid
+        ? { name: MASTER_CONTROL_ACCOUNT.username, gid, members: [IDENTITY.username] }
+        : null
+    )),
+    getPersonalAgentUid: vi.fn(() => null),
+    resolveGids: vi.fn((_username: string, gid: number) => [gid]),
+  };
+}
+
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
 // A parent process record (owned by the caller) used by parented-spawn tests,
@@ -634,14 +674,6 @@ describe("proc handlers", () => {
   });
 
   it("spawns a fresh top-level process when explicit cwd is requested", async () => {
-    const personalAgent = {
-      username: "sam-agent",
-      uid: 2000,
-      gid: 2000,
-      gecos: "sam agent",
-      home: "/home/sam-agent",
-      shell: "/bin/init",
-    };
     const ctx = {
       env: {
         STORAGE: makeStorageBucket(),
@@ -650,12 +682,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
-      auth: {
-        isPersonalAgentUid: vi.fn(() => false),
-        getPersonalAgentUid: vi.fn((uid: number) => uid === IDENTITY.uid ? personalAgent.uid : null),
-        getPasswdByUid: vi.fn((uid: number) => uid === personalAgent.uid ? personalAgent : null),
-        resolveGids: vi.fn((_username: string, gid: number) => [gid]),
-      },
+      auth: makeMasterControlAuth(),
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
@@ -675,8 +702,8 @@ describe("proc handlers", () => {
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        uid: personalAgent.uid,
-        username: personalAgent.username,
+        uid: MASTER_CONTROL_ACCOUNT.uid,
+        username: MASTER_CONTROL_ACCOUNT.username,
         cwd: "/src/repos/sam/demo-a/tools/demo-tool",
       }),
       expect.objectContaining({
@@ -698,14 +725,6 @@ describe("proc handlers", () => {
   });
 
   it("spawns a fresh top-level process when requested without explicit cwd", async () => {
-    const personalAgent = {
-      username: "sam-agent",
-      uid: 2000,
-      gid: 2000,
-      gecos: "sam agent",
-      home: "/home/sam-agent",
-      shell: "/bin/init",
-    };
     const ctx = {
       env: {
         STORAGE: makeStorageBucket(),
@@ -714,12 +733,7 @@ describe("proc handlers", () => {
         process: IDENTITY,
         capabilities: ["*"],
       },
-      auth: {
-        getPersonalAgentUid: vi.fn((uid: number) => uid === IDENTITY.uid ? personalAgent.uid : null),
-        getPasswdByUid: vi.fn((uid: number) => uid === personalAgent.uid ? personalAgent : null),
-        isPersonalAgentUid: vi.fn((uid: number) => uid === personalAgent.uid),
-        resolveGids: vi.fn((_username: string, gid: number) => [gid]),
-      },
+      auth: makeMasterControlAuth(),
       procs: {
         get: vi.fn(() => null),
         spawn: vi.fn(),
@@ -730,13 +744,13 @@ describe("proc handlers", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      cwd: "/home/sam-agent",
+      cwd: MASTER_CONTROL_ACCOUNT.home,
     });
     expect(ctx.procs.spawn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        uid: personalAgent.uid,
-        username: personalAgent.username,
+        uid: MASTER_CONTROL_ACCOUNT.uid,
+        username: MASTER_CONTROL_ACCOUNT.username,
       }),
       expect.objectContaining({
         ownerUid: IDENTITY.uid,
