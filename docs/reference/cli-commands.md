@@ -337,14 +337,13 @@ Treat that QR like a password. If terminal rendering fails, the CLI hides the
 underlying payload. `--config-json` must be a JSON object and is passed to the
 adapter implementation. WhatsApp accepts `{"force":true}` only as destructive
 recovery: it clears the existing linked-device authentication and starts a new
-QR pairing. Routine reconnects and the ten-minute connection-lease refresh do not use it.
+QR pairing. Routine transport recovery does not use it.
 
 Cloudflare lets an active outbound connection prevent Durable Object eviction
-for at most 15 minutes. Ten minutes after each successful WhatsApp connection,
-the account alarm closes that transport and reconnects with the stored
-linked-device credentials. The reconnect establishes a fresh outbound
-connection lease before Cloudflare's per-connection keepalive cap; the alarm
-does not extend the old lease or keep the object alive by itself.
+for at most 15 minutes. The account schedules an alarm every 30 seconds so an
+incoming event reaches the Durable Object before Cloudflare's minimum idle
+eviction window. Routine residency maintenance therefore keeps the same
+WhatsApp provider session; only an unhealthy transport reconnects.
 
 If the account is paired but a direct message gets no link-code reply, first
 confirm `gsv adapter status` reports connected and authenticated. Send a fresh

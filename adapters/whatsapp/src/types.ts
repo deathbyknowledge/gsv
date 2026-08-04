@@ -23,7 +23,7 @@ export type WhatsAppAccountState = {
   lastActivity?: number;
   lastError?: string;
   disconnectReason?: string;
-  leaseRefreshAt?: number;
+  residencyAlarmAt?: number;
   reconnectAt?: number;
   connectionDeadlineAt?: number;
   pairingExpiresAt?: number;
@@ -63,10 +63,12 @@ export function restoreWhatsAppAccountState(
   if (stored?.version === 2) {
     const {
       rotationAt: _obsoleteRotationAt,
+      leaseRefreshAt: _obsoleteLeaseRefreshAt,
       lastMessageAt: _obsoleteLastMessageAt,
       ...current
     } = stored as WhatsAppAccountState & {
       rotationAt?: number;
+      leaseRefreshAt?: number;
       lastMessageAt?: number;
     };
     return { ...defaultWhatsAppAccountState(), ...current };

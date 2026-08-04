@@ -49,13 +49,12 @@ The adapter keeps an outbound WhatsApp WebSocket in its account Durable Object.
 An active outbound connection now prevents eviction, but Cloudflare limits that
 [keepalive effect to 15 minutes per connection](https://developers.cloudflare.com/changelog/post/2026-06-19-outbound-connections-keep-dos-alive/).
 The connection can continue after 15 minutes, but it no longer keeps the object
-resident. GSV schedules an alarm for ten minutes after each successful
-connection; the alarm closes the current transport and reconnects with the
-saved linked-device credentials, establishing a fresh connection lease before
-the cap. The alarm does not keep the object alive by itself. This internal
-reconnect is not a WhatsApp logout and does not require another scan. An
-explicit **Log out** or a forced re-pair is different and removes those
-credentials.
+resident. GSV therefore schedules an account alarm every 30 seconds. Each alarm
+is an incoming Durable Object event inside Cloudflare's minimum 70-second idle
+eviction window, so the object remains resident without periodically opening a
+second WhatsApp session. Baileys pings WhatsApp separately and reconnects only
+when the provider transport is unhealthy. An explicit **Log out** or a forced
+re-pair is different and removes the linked-device credentials.
 
 WhatsApp uses the unofficial open-source Baileys client rather than an official
 WhatsApp Business API integration. WhatsApp protocol changes or linked-device
@@ -71,8 +70,8 @@ running another client that repeatedly replaces the same linked session.
 - **GSV rejects the link code:** codes are single-use and expire after ten minutes. Send another new direct message, then enter the new code while signed in as the GSV user you want to link. CLI users can run `gsv auth link CODE`.
 - **The code was accepted but the original message got no agent answer:** send another message. The message that generated the code is used only for identity linking and is not replayed to an agent.
 - **The account was logged out or replaced:** remove stale linked-device entries in WhatsApp, then use the confirmed force re-pair flow once.
-- **It reconnects every ten minutes:** the brief connection-lease refresh is expected. It should not remove the linked device or ask for a new QR.
-- **Several accounts do not stay connected on Workers Free:** the limiting resource is Durable Object duration, not the roughly 144 ten-minute alarms per day. Treat one continuously connected WhatsApp account as the Free-plan baseline and use Workers Paid for more always-resident accounts.
+- **It reconnects repeatedly while idle:** this is not routine maintenance. Inspect the adapter's structured `socket_closed` logs and provider status code.
+- **Several accounts do not stay connected on Workers Free:** the limiting resource is Durable Object duration, not the roughly 2,880 residency alarms per day. Treat one continuously connected WhatsApp account as the Free-plan baseline and use Workers Paid for more always-resident accounts.
 
 The Workers Free plan supports the SQLite-backed Durable Objects used by GSV;
 Containers are not required. One continuously resident 128 MB account consumes
