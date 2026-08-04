@@ -45,6 +45,7 @@ import {
   type ManagedTelegramPeerState,
 } from "./managed-peer-state";
 import {
+  type ManagedTelegramFetch,
   ManagedTelegramDeliveryError,
   sendManagedTelegramLink,
   sendManagedTelegramText,
@@ -60,6 +61,8 @@ export interface ManagedTelegramPeerEnv {
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CLAIM_SIGNING_KEY?: string;
   GSV_ACCOUNT_ORIGIN?: string;
+  /** Test-only provider override; production calls Telegram directly. */
+  TELEGRAM_API?: Fetcher;
 }
 
 type ManagedResponseContext =
@@ -131,7 +134,11 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     this.assertPeerDestination(state, surface, actorId);
     this.assertActiveInstallation(state, installation.installationId);
     try {
-      await setManagedTelegramTyping(this.botToken(), state.surfaceId);
+      await setManagedTelegramTyping(
+        this.botToken(),
+        state.surfaceId,
+        this.telegramFetch(),
+      );
     } catch {
       console.warn(JSON.stringify({
         component: "managed_telegram",
@@ -196,38 +203,64 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       canonicalOrigin: parseCanonicalOrigin(input.canonicalOrigin),
       linkedAt: Date.now(),
     };
-    return await this.ctx.storage.transaction(async (txn) => {
-      const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
-      if (!state) throw new Error("Managed Telegram peer is not initialized");
-      const existing = state.claim?.activatedRoute;
-      if (existing && state.claim?.operationId === operationId && (
-        existing.installationId !== route.installationId
-        || existing.localUid !== route.localUid
-        || existing.canonicalOrigin !== route.canonicalOrigin
-      )) {
+    const result: ActivateManagedTelegramClaimResult =
+      await this.ctx.storage.transaction(async (txn) => {
+        const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
+        if (!state) throw new Error("Managed Telegram peer is not initialized");
+        const existing = state.claim?.activatedRoute;
+        if (existing && state.claim?.operationId === operationId && (
+          existing.installationId !== route.installationId
+          || existing.localUid !== route.localUid
+          || existing.canonicalOrigin !== route.canonicalOrigin
+        )) {
+          throw new Error(
+            "Managed Telegram claim was already used with different input",
+          );
+        }
+        const activated = activateManagedTelegramClaimState(state, {
+          claimId: parsed.claimId,
+          expiresAt: parsed.expiresAt,
+          operationId,
+          route: existing && state.claim?.operationId === operationId
+            ? existing
+            : route,
+        });
+        await txn.put(STATE_KEY, activated.state);
+        const activeRoute = activated.state.activeRoute;
+        if (!activeRoute) {
+          throw new Error("Managed Telegram route activation failed");
+        }
+        return {
+          state: "active",
+          claimId: activated.claim.claimId,
+          actorId: activated.state.actorId,
+          surfaceId: activated.state.surfaceId,
+          route: activeRoute,
+        };
+      });
+    const confirmation = await this.deliverMessage({
+      deliveryId: `managed-activated:${result.claimId}`,
+      surface: { kind: "dm", id: result.surfaceId },
+      actorId: result.actorId,
+      text: `Connected to ${result.route.canonicalOrigin}`,
+    }, {
+      kind: "installation",
+      installationId: result.route.installationId,
+    });
+    if (!confirmation.ok) {
+      console.warn(JSON.stringify({
+        component: "managed_telegram",
+        event: "activation_confirmation_failed",
+        retryable: confirmation.retryable === true,
+        ambiguous: confirmation.ambiguous === true,
+      }));
+      if (confirmation.retryable) {
         throw new Error(
-          "Managed Telegram claim was already used with different input",
+          "Managed Telegram activation confirmation should be retried",
         );
       }
-      const activated = activateManagedTelegramClaimState(state, {
-        claimId: parsed.claimId,
-        expiresAt: parsed.expiresAt,
-        operationId,
-        route: existing && state.claim?.operationId === operationId
-          ? existing
-          : route,
-      });
-      await txn.put(STATE_KEY, activated.state);
-      const activeRoute = activated.state.activeRoute;
-      if (!activeRoute) throw new Error("Managed Telegram route activation failed");
-      return {
-        state: "active",
-        claimId: activated.claim.claimId,
-        actorId: activated.state.actorId,
-        surfaceId: activated.state.surfaceId,
-        route: activeRoute,
-      };
-    });
+    }
+    return result;
   }
 
   async alarm(): Promise<void> {
@@ -447,6 +480,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
             current.surfaceId,
             message.text,
             replyToMessageId,
+            this.telegramFetch(),
           );
       const messageId = String(sent.message_id);
       await this.deliveries.succeed(message.deliveryId, claim.attemptId, messageId);
@@ -493,7 +527,7 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       buttonText: "Connect your GSV",
       url,
       replyToMessageId,
-    });
+    }, this.telegramFetch());
   }
 
   private assertDeliveryContext(
@@ -568,6 +602,13 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
     return parseAccountOrigin(
       this.env.GSV_ACCOUNT_ORIGIN ?? "https://accounts.gsv.space",
     );
+  }
+
+  private telegramFetch(): ManagedTelegramFetch {
+    const binding = this.env.TELEGRAM_API;
+    return binding
+      ? (input, init) => binding.fetch(input, init)
+      : fetch;
   }
 }
 

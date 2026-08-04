@@ -26,9 +26,16 @@ export type RecordedOutboundMessage = {
   message: AdapterOutboundMessage;
 };
 
+export type RecordedTelegramApiCall = {
+  method: string;
+  payload: Record<string, unknown>;
+  messageId: number;
+};
+
 interface Env {
   GATEWAY: Fetcher & AdapterGatewayInterface & ManagedGatewayProvisioningInterface;
   INTEGRATION_STATE: DurableObjectNamespace<IntegrationState>;
+  MANAGED_TELEGRAM?: AdapterWorkerInterface;
 }
 
 export class IntegrationState extends DurableObject<Env> {
@@ -66,6 +73,23 @@ export class IntegrationState extends DurableObject<Env> {
       await txn.put(`handoff:${token}`, true);
       return provision;
     });
+  }
+
+  async recordTelegramApiCall(
+    method: string,
+    payload: Record<string, unknown>,
+  ): Promise<number> {
+    return await this.ctx.storage.transaction(async (txn) => {
+      const calls = await txn.get<RecordedTelegramApiCall[]>("telegram_api") ?? [];
+      const messageId = calls.length + 1;
+      calls.push({ method, payload, messageId });
+      await txn.put("telegram_api", calls);
+      return messageId;
+    });
+  }
+
+  async listTelegramApiCalls(): Promise<RecordedTelegramApiCall[]> {
+    return await this.ctx.storage.get<RecordedTelegramApiCall[]>("telegram_api") ?? [];
   }
 }
 
@@ -123,6 +147,25 @@ export default class TestDependencies
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
+    if (request.method === "POST" && /^\/bot[^/]+\/[^/]+$/.test(url.pathname)) {
+      const method = url.pathname.slice(url.pathname.lastIndexOf("/") + 1);
+      const payload = await request.json<Record<string, unknown>>();
+      const messageId = await this.integrationState().recordTelegramApiCall(
+        method,
+        payload,
+      );
+      return Response.json({
+        ok: true,
+        result: method === "sendChatAction"
+          ? true
+          : {
+              message_id: messageId,
+              date: Math.floor(Date.now() / 1000),
+              chat: { id: payload.chat_id, type: "private" },
+            },
+      });
+    }
+
     if (url.pathname === "/__test/service-frame" && request.method === "POST") {
       const input = await request.json<{
         installation: AdapterInstallationContext;
@@ -148,6 +191,28 @@ export default class TestDependencies
       return Response.json(await this.integrationState().listOutbound(
         installationId,
         accountId,
+      ));
+    }
+
+    if (url.pathname === "/__test/telegram-api" && request.method === "GET") {
+      return Response.json(await this.integrationState().listTelegramApiCalls());
+    }
+
+    if (url.pathname === "/__test/telegram-send" && request.method === "POST") {
+      if (!this.env.MANAGED_TELEGRAM) {
+        return Response.json({ ok: false, error: "binding unavailable" }, {
+          status: 503,
+        });
+      }
+      const input = await request.json<{
+        installationId: string;
+        accountId: string;
+        message: AdapterOutboundMessage;
+      }>();
+      return Response.json(await this.env.MANAGED_TELEGRAM.adapterSend(
+        { installationId: input.installationId },
+        input.accountId,
+        input.message,
       ));
     }
 

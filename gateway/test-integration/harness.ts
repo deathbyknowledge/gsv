@@ -10,9 +10,11 @@ import {
 const GATEWAY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ACCOUNT_ROOT = resolve(GATEWAY_ROOT, "../account-service");
 const INFERENCE_ROOT = resolve(GATEWAY_ROOT, "../inference-service");
+const TELEGRAM_ROOT = resolve(GATEWAY_ROOT, "../adapters/telegram");
 const DEPENDENCY_WORKER = "gsv-test-dependencies";
 const ACCOUNT_WORKER = "gsv-accounts-integration";
 const INFERENCE_WORKER = "gsv-inference-integration";
+const TELEGRAM_WORKER = "gsv-managed-telegram-integration";
 const DEPENDENCY_CONFIG_PATH = resolve(
   GATEWAY_ROOT,
   "test-integration/fixtures/wrangler.jsonc",
@@ -23,6 +25,7 @@ function integrationGatewayConfig(options: {
   managed?: boolean;
   directoryService?: string;
   managedInferenceService?: string;
+  managedTelegramService?: string;
 } = {}): Unstable_RawConfig {
   const config = unstable_readConfig(
     { config: resolve(GATEWAY_ROOT, "wrangler.jsonc") },
@@ -48,7 +51,13 @@ function integrationGatewayConfig(options: {
     services: [
       { binding: "AI", service: DEPENDENCY_WORKER },
       { binding: "CHANNEL_DISCORD", service: DEPENDENCY_WORKER },
-      { binding: "CHANNEL_TELEGRAM", service: DEPENDENCY_WORKER },
+      {
+        binding: "CHANNEL_TELEGRAM",
+        service: options.managedTelegramService ?? DEPENDENCY_WORKER,
+        ...(options.managedTelegramService
+          ? { entrypoint: "ManagedTelegramChannel" }
+          : {}),
+      },
       { binding: "CHANNEL_WHATSAPP", service: DEPENDENCY_WORKER },
       { binding: "RIPGIT", service: DEPENDENCY_WORKER },
       ...(options.managed
@@ -95,7 +104,10 @@ function integrationInferenceConfig(accountService: string): Unstable_RawConfig 
   };
 }
 
-function integrationAccountConfig(gatewayService: string): Unstable_RawConfig {
+function integrationAccountConfig(
+  gatewayService: string,
+  managedTelegramService?: string,
+): Unstable_RawConfig {
   const config = unstable_readConfig(
     { config: resolve(ACCOUNT_ROOT, "wrangler.jsonc") },
     { hideWarnings: true },
@@ -116,16 +128,62 @@ function integrationAccountConfig(gatewayService: string): Unstable_RawConfig {
       ...database,
       migrations_dir: resolve(ACCOUNT_ROOT, "migrations"),
     })),
-    services: [{
-      binding: "GATEWAY",
-      service: gatewayService,
-      entrypoint: "GatewayEntrypoint",
-    }],
+    services: [
+      {
+        binding: "GATEWAY",
+        service: gatewayService,
+        entrypoint: "GatewayEntrypoint",
+      },
+      ...(managedTelegramService
+        ? [{
+            binding: "MANAGED_TELEGRAM",
+            service: managedTelegramService,
+            entrypoint: "ManagedTelegramChannel",
+          }]
+        : []),
+    ],
+  };
+}
+
+function integrationManagedTelegramConfig(
+  gatewayService: string,
+): Unstable_RawConfig {
+  const config = unstable_readConfig(
+    { config: resolve(TELEGRAM_ROOT, "wrangler.managed.jsonc") },
+    { hideWarnings: true },
+  );
+  return {
+    name: TELEGRAM_WORKER,
+    main: resolve(TELEGRAM_ROOT, "src/managed.ts"),
+    compatibility_date: config.compatibility_date,
+    compatibility_flags: config.compatibility_flags,
+    observability: config.observability,
+    vars: {
+      ...config.vars,
+      TELEGRAM_BOT_TOKEN: "integration-telegram-bot-token",
+      TELEGRAM_WEBHOOK_SECRET: "integration-telegram-webhook-secret",
+      TELEGRAM_CLAIM_SIGNING_KEY:
+        "integration-telegram-claim-signing-key-with-more-than-32-bytes",
+    },
+    durable_objects: config.durable_objects,
+    migrations: config.migrations,
+    services: [
+      {
+        binding: "GATEWAY",
+        service: gatewayService,
+        entrypoint: "GatewayEntrypoint",
+      },
+      {
+        binding: "TELEGRAM_API",
+        service: DEPENDENCY_WORKER,
+      },
+    ],
   };
 }
 
 function integrationDependencyConfig(
   gatewayService: string,
+  managedTelegramService?: string,
 ): Unstable_RawConfig {
   const config = unstable_readConfig(
     { config: DEPENDENCY_CONFIG_PATH },
@@ -139,11 +197,20 @@ function integrationDependencyConfig(
     observability: config.observability,
     durable_objects: config.durable_objects,
     migrations: config.migrations,
-    services: [{
-      binding: "GATEWAY",
-      service: gatewayService,
-      entrypoint: "GatewayEntrypoint",
-    }],
+    services: [
+      {
+        binding: "GATEWAY",
+        service: gatewayService,
+        entrypoint: "GatewayEntrypoint",
+      },
+      ...(managedTelegramService
+        ? [{
+            binding: "MANAGED_TELEGRAM",
+            service: managedTelegramService,
+            entrypoint: "ManagedTelegramChannel",
+          }]
+        : []),
+    ],
   };
 }
 
@@ -198,6 +265,36 @@ export function createManagedAccountTestHarness(): TestHarness {
       },
       {
         config: integrationInferenceConfig(ACCOUNT_WORKER),
+      },
+    ],
+  });
+}
+
+export function createManagedTelegramTestHarness(): TestHarness {
+  const gatewayService = "gsv-managed-telegram-gateway";
+  return createTestHarness({
+    root: GATEWAY_ROOT,
+    workers: [
+      {
+        config: integrationGatewayConfig({
+          name: gatewayService,
+          managed: true,
+          directoryService: ACCOUNT_WORKER,
+          managedInferenceService: INFERENCE_WORKER,
+          managedTelegramService: TELEGRAM_WORKER,
+        }),
+      },
+      {
+        config: integrationDependencyConfig(gatewayService, TELEGRAM_WORKER),
+      },
+      {
+        config: integrationAccountConfig(gatewayService, TELEGRAM_WORKER),
+      },
+      {
+        config: integrationInferenceConfig(ACCOUNT_WORKER),
+      },
+      {
+        config: integrationManagedTelegramConfig(gatewayService),
       },
     ],
   });

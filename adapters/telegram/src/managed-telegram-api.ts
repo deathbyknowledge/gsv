@@ -15,6 +15,10 @@ type TelegramApiFailure = {
 type TelegramApiResponse<T> = TelegramApiSuccess<T> | TelegramApiFailure;
 
 export type TelegramSentMessage = { message_id: number };
+export type ManagedTelegramFetch = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
 
 export class ManagedTelegramDeliveryError extends Error {
   constructor(
@@ -33,12 +37,14 @@ export async function sendManagedTelegramText(
   chatId: string,
   markdown: string,
   replyToMessageId?: number,
+  fetcher: ManagedTelegramFetch = fetch,
 ): Promise<TelegramSentMessage> {
   return await sendTelegramMarkdownMessage(
     (method, payload) => callManagedTelegramApi<TelegramSentMessage>(
       botToken,
       method,
       payload,
+      fetcher,
     ),
     chatId,
     markdown,
@@ -55,6 +61,7 @@ export async function sendManagedTelegramLink(
     url: string;
     replyToMessageId?: number;
   },
+  fetcher: ManagedTelegramFetch = fetch,
 ): Promise<TelegramSentMessage> {
   return await callManagedTelegramApi<TelegramSentMessage>(
     botToken,
@@ -69,23 +76,26 @@ export async function sendManagedTelegramLink(
         inline_keyboard: [[{ text: input.buttonText, url: input.url }]],
       },
     },
+    fetcher,
   );
 }
 
 export async function setManagedTelegramTyping(
   botToken: string,
   chatId: string,
+  fetcher: ManagedTelegramFetch = fetch,
 ): Promise<void> {
   await callManagedTelegramApi<boolean>(botToken, "sendChatAction", {
     chat_id: chatId,
     action: "typing",
-  });
+  }, fetcher);
 }
 
 async function callManagedTelegramApi<T>(
   botToken: string,
   method: string,
   payload: Record<string, unknown> | FormData,
+  fetcher: ManagedTelegramFetch,
 ): Promise<T> {
   const token = botToken.trim();
   if (!token) {
@@ -97,7 +107,7 @@ async function callManagedTelegramApi<T>(
   const formData = typeof FormData !== "undefined" && payload instanceof FormData;
   let response: Response;
   try {
-    response = await fetch(`${TELEGRAM_API_BASE}/bot${token}/${method}`, {
+    response = await fetcher(`${TELEGRAM_API_BASE}/bot${token}/${method}`, {
       method: "POST",
       headers: formData
         ? undefined
