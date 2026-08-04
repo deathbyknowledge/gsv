@@ -335,6 +335,54 @@ describe("InboundDeliveryLedger", () => {
     expect(send.mock.calls[0]?.[0]).toEqual(send.mock.calls[1]?.[0]);
   });
 
+  it("persists response authorization context across provider retries", async () => {
+    const storage = new MemoryStorage();
+    const first = new InboundDeliveryLedger<
+      { providerMessageId: string },
+      { installationId: string }
+    >(
+      storage as unknown as DurableObjectStorage,
+      "managed_inbound:",
+    );
+    await first.enqueueAndArm("provider-context", {
+      providerMessageId: "provider-context",
+    }, 100);
+    const send = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false as const,
+        error: "provider unavailable",
+        retryable: true,
+      })
+      .mockResolvedValueOnce({ ok: true as const });
+
+    await expect(first.attempt("provider-context", async () => ({
+      terminal: true,
+      responses: [{
+        message: {
+          deliveryId: "reply-context",
+          surface: { kind: "dm", id: "chat-context" },
+          text: "Bound reply",
+        },
+        context: { installationId: "inst_original" },
+      }],
+    }), send)).resolves.toMatchObject({ state: "pending" });
+
+    const restarted = new InboundDeliveryLedger<
+      { providerMessageId: string },
+      { installationId: string }
+    >(
+      storage as unknown as DurableObjectStorage,
+      "managed_inbound:",
+    );
+    await expect(restarted.attempt(
+      "provider-context",
+      async () => ({ terminal: true }),
+      send,
+    )).resolves.toEqual({ state: "completed" });
+    expect(send.mock.calls[0]?.[1]).toEqual({ installationId: "inst_original" });
+    expect(send.mock.calls[1]?.[1]).toEqual({ installationId: "inst_original" });
+  });
+
   it("attempts every response in a retry round", async () => {
     const storage = new MemoryStorage();
     const pending = ledger(storage);

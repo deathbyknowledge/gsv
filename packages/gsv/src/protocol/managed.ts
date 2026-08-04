@@ -119,6 +119,65 @@ export interface ManagedGatewayTelegramInterface {
   ): Promise<UnlinkManagedTelegramActorResult>;
 }
 
+export type ManagedTelegramPeerRoute = {
+  installationId: string;
+  localUid: number;
+  canonicalOrigin: string;
+  linkedAt: number;
+};
+
+export type ManagedTelegramClaim = {
+  claimId: string;
+  actorId: string;
+  surfaceId: string;
+  actorName?: string;
+  actorHandle?: string;
+  expiresAt: number;
+  activeRoute?: ManagedTelegramPeerRoute;
+};
+
+export type ManagedTelegramClaimInspection =
+  | { ok: true; claim: ManagedTelegramClaim }
+  | { ok: false; reason: "invalid" | "expired" | "used" };
+
+export type SuspendManagedTelegramClaimInput = {
+  operationId: string;
+  claimToken: string;
+};
+
+export type SuspendManagedTelegramClaimResult = {
+  claim: ManagedTelegramClaim;
+  previousRoute?: ManagedTelegramPeerRoute;
+};
+
+export type ActivateManagedTelegramClaimInput = {
+  operationId: string;
+  claimToken: string;
+  installationId: string;
+  localUid: number;
+  canonicalOrigin: string;
+};
+
+export type ActivateManagedTelegramClaimResult = {
+  state: "active";
+  claimId: string;
+  actorId: string;
+  surfaceId: string;
+  route: ManagedTelegramPeerRoute;
+};
+
+export interface ManagedTelegramControlInterface {
+  inspectManagedTelegramClaim(
+    claimToken: string,
+  ): Promise<ManagedTelegramClaimInspection>;
+  suspendManagedTelegramClaim(
+    input: SuspendManagedTelegramClaimInput,
+  ): Promise<SuspendManagedTelegramClaimResult>;
+  activateManagedTelegramClaim(
+    input: ActivateManagedTelegramClaimInput,
+  ): Promise<ActivateManagedTelegramClaimResult>;
+}
+
 export type ManagedEntitlementState =
   | "trialing"
   | "active"

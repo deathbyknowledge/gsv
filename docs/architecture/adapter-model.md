@@ -76,6 +76,15 @@ This gives GSV:
 Trust is established at deploy time. If the binding exists, that adapter worker
 is part of the trusted deployment.
 
+The managed Telegram bot uses a second, platform-owned adapter deployment. Its
+coordination atom is one private Telegram peer, not one installation and not the
+global bot. A peer Durable Object owns the exclusive installation route,
+short-lived account-link claim, inbound handoff, and outbound delivery ledger.
+The account service may suspend and replace that route through a private,
+idempotent control contract; an installation cannot administer the shared bot.
+The existing standalone Telegram deployment and its per-account Durable Objects
+remain the user-owned bot-token path.
+
 The protocol source of truth is `packages/gsv/src/protocol/adapters.ts`.
 Gateway-to-adapter bindings expose lifecycle, status, activity, and send
 operations; adapters call the Gateway's single `serviceFrame` entrypoint for
@@ -95,6 +104,13 @@ account name, so upgrading a standalone Telegram, Discord, WhatsApp, or test
 adapter reaches its existing Durable Object and provider session. Adapter
 alarms and retries recover the persisted installation context before calling
 the Gateway, so they do not depend on a browser hostname.
+
+Managed Telegram adds a second authorization check before this common path. The
+peer route selects the installation, then the destination Kernel's local
+identity link selects and authorizes the UID. Replies durably carry the
+installation that produced them; the peer rechecks that route immediately
+before provider delivery, so a queued old-installation reply cannot cross a
+relink boundary.
 
 ## Inbound flow
 

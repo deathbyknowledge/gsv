@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "dev:managed": "wrangler dev --config wrangler.managed.jsonc",
     "deploy": "wrangler deploy --minify",
+    "deploy:managed": "wrangler deploy --config wrangler.managed.jsonc --minify",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
