@@ -6,6 +6,7 @@ import type {
 import type {
   ManagedEntitlementProjection,
   ManagedGatewayDataLifecycleInterface,
+  ManagedGatewayExportInterface,
   ManagedGatewayLifecycleInterface,
   ManagedGatewayProvisioningInterface,
   ManagedGatewayTelegramInterface,
@@ -22,6 +23,7 @@ import type {
   ManagedInstallationResourceInventory,
   DeleteManagedInstallationResourceBatchInput,
   DeleteManagedInstallationResourceBatchResult,
+  ExportManagedInstallationInput,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame } from "./protocol/frames";
 import { buildOAuthClientMetadata } from "./oauth-http";
@@ -330,6 +332,7 @@ export class GatewayEntrypoint
   implements
     GatewayAdapterInterface,
     ManagedGatewayDataLifecycleInterface,
+    ManagedGatewayExportInterface,
     ManagedGatewayLifecycleInterface,
     ManagedGatewayProvisioningInterface,
     ManagedGatewayTelegramInterface
@@ -385,6 +388,15 @@ export class GatewayEntrypoint
     const installationId = parseInstallationId(installationIdValue);
     const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
     return await kernel.inspectManagedInstallationResources(installationId);
+  }
+
+  async exportManagedInstallation(
+    input: ExportManagedInstallationInput,
+  ): Promise<Response> {
+    this.assertManagedDataLifecycle();
+    const installationId = parseInstallationId(input?.installationId);
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    return await kernel.exportManagedInstallation({ ...input, installationId });
   }
 
   async deleteManagedInstallationResourceBatch(

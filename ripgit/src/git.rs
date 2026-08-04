@@ -170,7 +170,11 @@ pub fn handle_receive_pack(sql: &SqlStorage, body: &[u8]) -> Result<Response> {
 /// the pack bytes (which stay in memory as the request body), delta chains are
 /// resolved iteratively, and the result is stored in permanent tables then
 /// dropped. Only one resolved object exists in memory at a time.
-pub(crate) fn process_pack_streaming(sql: &SqlStorage, pack_data: &[u8], bulk_mode: bool) -> Result<()> {
+pub(crate) fn process_pack_streaming(
+    sql: &SqlStorage,
+    pack_data: &[u8],
+    bulk_mode: bool,
+) -> Result<()> {
     // --- Build lightweight index ---
     let (index, offset_to_idx) = pack::build_index(pack_data).map_err(|e| Error::RustError(e.0))?;
 
@@ -494,6 +498,67 @@ pub fn handle_upload_pack(sql: &SqlStorage, body: &[u8]) -> Result<Response> {
     })
 }
 
+/// Build a standard Git bundle containing every object reachable from every
+/// stored ref. The bundle is self-contained (it has no prerequisite commits)
+/// and can be cloned or fetched by ordinary Git tooling.
+pub fn handle_bundle(sql: &SqlStorage) -> Result<Response> {
+    #[derive(serde::Deserialize)]
+    struct RefRow {
+        name: String,
+        commit_hash: String,
+    }
+
+    let refs: Vec<RefRow> = sql
+        .exec("SELECT name, commit_hash FROM refs ORDER BY name", None)?
+        .to_array()?;
+    for reference in &refs {
+        if !is_bundle_ref_name(&reference.name) || !is_hex_object_id(&reference.commit_hash) {
+            return Err(Error::RustError(
+                "repository contains an invalid export ref".into(),
+            ));
+        }
+    }
+
+    let wants: Vec<String> = refs
+        .iter()
+        .map(|reference| reference.commit_hash.clone())
+        .collect();
+    let objects = store::collect_objects(sql, &wants, &HashSet::new())?;
+    let mut body = Vec::new();
+    body.extend_from_slice(b"# v2 git bundle\n");
+    for reference in &refs {
+        body.extend_from_slice(reference.commit_hash.as_bytes());
+        body.push(b' ');
+        body.extend_from_slice(reference.name.as_bytes());
+        body.push(b'\n');
+    }
+    body.push(b'\n');
+    pack::generate_into(&objects, |chunk| body.extend_from_slice(chunk));
+
+    let content_length = body.len().to_string();
+    let mut response = Response::from_bytes(body)?;
+    response
+        .headers_mut()
+        .set("Content-Type", "application/x-git-bundle")?;
+    response
+        .headers_mut()
+        .set("Content-Length", &content_length)?;
+    response.headers_mut().set("Cache-Control", "no-store")?;
+    Ok(response)
+}
+
+fn is_bundle_ref_name(value: &str) -> bool {
+    value.starts_with("refs/")
+        && value.len() > "refs/".len()
+        && value
+            .bytes()
+            .all(|byte| byte > b' ' && byte != 0x7f && byte != 0)
+}
+
+fn is_hex_object_id(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 #[derive(Debug, Default)]
 struct UploadRequest {
     wants: Vec<String>,
@@ -687,7 +752,10 @@ async fn fetch_advertised_refs(remote_base: &str) -> Result<AdvertisedRefs> {
 
 fn build_remote_upload_pack_request(want_hash: &str) -> Vec<u8> {
     let mut body = Vec::new();
-    pkt_line_bytes(&mut body, format!("want {} ofs-delta\n", want_hash).as_bytes());
+    pkt_line_bytes(
+        &mut body,
+        format!("want {} ofs-delta\n", want_hash).as_bytes(),
+    );
     body.extend_from_slice(b"0000");
     pkt_line_bytes(&mut body, b"done\n");
     body

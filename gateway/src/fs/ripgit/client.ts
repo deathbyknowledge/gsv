@@ -11,6 +11,11 @@ export type RipgitRepoRef = {
   branch?: string;
 };
 
+export type RipgitBundle = {
+  size: number;
+  body: ReadableStream<Uint8Array>;
+};
+
 export type RipgitApplyOp =
   | {
       type: "put";
@@ -284,6 +289,43 @@ export class RipgitClient {
       throw new Error(await this.readError(response, `delete '${repo.owner}/${repo.repo}'`));
     }
     return true;
+  }
+
+  async exportBundle(repo: RipgitRepoRef, actor: string): Promise<RipgitBundle> {
+    const response = await this.binding.fetch(
+      this.makeUrl(
+        `/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/bundle`,
+      ),
+      {
+        headers: {
+          ...this.makeInternalHeaders(),
+          "X-Ripgit-Actor-Name": actor,
+        },
+      },
+    );
+    if (!response.ok) {
+      throw new Error(await this.readError(response, `export '${repo.owner}/${repo.repo}'`));
+    }
+    if (!response.body) {
+      throw new Error(`ripgit export '${repo.owner}/${repo.repo}' returned no body`);
+    }
+    const contentType = response.headers.get("content-type")?.split(";", 1)[0];
+    const contentLengthHeader = response.headers.get("content-length");
+    const contentLength = contentLengthHeader && /^\d+$/.test(contentLengthHeader)
+      ? Number(contentLengthHeader)
+      : Number.NaN;
+    if (
+      contentType !== "application/x-git-bundle"
+      || !Number.isSafeInteger(contentLength)
+      || contentLength < 1
+    ) {
+      await response.body.cancel("ripgit export metadata is invalid").catch(() => undefined);
+      throw new Error(`ripgit export '${repo.owner}/${repo.repo}' returned invalid metadata`);
+    }
+    return {
+      size: contentLength,
+      body: response.body as ReadableStream<Uint8Array>,
+    };
   }
 
   async search(

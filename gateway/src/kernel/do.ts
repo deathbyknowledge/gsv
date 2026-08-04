@@ -36,6 +36,7 @@ import type {
   RecoverManagedInstallationResult,
   DeleteManagedInstallationResourceBatchInput,
   DeleteManagedInstallationResourceBatchResult,
+  ExportManagedInstallationInput,
   ProvisionInstallationInput,
   ProvisionInstallationResult,
   ScheduleRecord,
@@ -147,6 +148,7 @@ import { registerRepo } from "./repo-registry";
 import { listInstallationRepos } from "./repo-registry";
 import { ManagedLifecycleStore } from "./managed-lifecycle-store";
 import { RipgitClient } from "../fs/ripgit/client";
+import { createManagedInstallationExport } from "../managed/installation-export";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -510,6 +512,32 @@ export class Kernel extends Host<Env> {
       repositories: listInstallationRepos(this.config, this.auth),
       storage,
     };
+  }
+
+  async exportManagedInstallation(
+    input: ExportManagedInstallationInput,
+  ): Promise<Response> {
+    this.assertManagedLifecycleMode();
+    this.assertManagedLifecycleInstallation(input.installationId);
+    if (this.managedResourcesDeleted) {
+      throw new Error("Managed installation resources were deleted");
+    }
+    const identity = this.installationIdentity.get();
+    if (!identity) {
+      throw new Error("Managed installation identity is unavailable");
+    }
+    return createManagedInstallationExport({
+      input,
+      identity,
+      kernelSql: this.ctx.storage.sql,
+      processes: this.procs.list(),
+      repositories: listInstallationRepos(this.config, this.auth),
+      storage: this.installationStorage,
+      ripgit: this.installationEnv.RIPGIT
+        ? new RipgitClient(this.installationEnv.RIPGIT)
+        : null,
+      process: (processId) => getProcessByPid(identity.installationId, processId),
+    });
   }
 
   async deleteManagedInstallationResourceBatch(

@@ -23,6 +23,7 @@ export type AuthRateLimitOperation =
   | "installation_reservation"
   | "installation_provision"
   | "installation_handoff"
+  | "installation_export"
   | "installation_delete"
   | "installation_recover"
   | "telegram_claim_inspect"
@@ -46,6 +47,7 @@ const DEFAULT_RATE_LIMIT_POLICIES: Record<AuthRateLimitOperation, RateLimitPolic
   installation_reservation: { windowMs: 30 * 60_000, ipLimit: 10, subjectLimit: 5 },
   installation_provision: { windowMs: 5 * 60_000, ipLimit: 20, subjectLimit: 10 },
   installation_handoff: { windowMs: 5 * 60_000, ipLimit: 30, subjectLimit: 10 },
+  installation_export: { windowMs: 60 * 60_000, ipLimit: 10, subjectLimit: 3 },
   installation_delete: { windowMs: 30 * 60_000, ipLimit: 10, subjectLimit: 5 },
   installation_recover: { windowMs: 10 * 60_000, ipLimit: 20, subjectLimit: 10 },
   telegram_claim_inspect: { windowMs: 5 * 60_000, ipLimit: 60, subjectLimit: 30 },

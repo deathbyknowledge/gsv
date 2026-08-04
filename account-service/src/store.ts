@@ -557,6 +557,37 @@ export class AccountStore {
     return rows.results.map(reservationFromRow);
   }
 
+  async recordInstallationExportRequested(input: {
+    principalId: string;
+    installationId: string;
+    now?: number;
+  }): Promise<void> {
+    const principalId = parseOpaqueId(input.principalId, "principalId");
+    const installationId = parseOpaqueId(input.installationId, "installationId");
+    const now = input.now ?? nowMs();
+    if (!Number.isSafeInteger(now) || now < 0) {
+      throw new Error("export timestamp is invalid");
+    }
+    const result = await this.db.prepare(
+      `INSERT INTO audit_events (
+         id, principal_id, installation_id, action, outcome,
+         created_at, metadata_json
+       )
+       SELECT ?, ?, id, 'installation.export_requested', 'succeeded', ?, '{}'
+       FROM installations
+       WHERE id = ? AND owner_principal_id = ? AND state != 'deleted'`,
+    ).bind(
+      `audit_${crypto.randomUUID()}`,
+      principalId,
+      now,
+      installationId,
+      principalId,
+    ).run();
+    if ((result.meta.changes ?? 0) !== 1) {
+      throw new Error("installation is unavailable");
+    }
+  }
+
   async listActiveInstallationMemberships(
     principalIdValue: string,
   ): Promise<ActiveInstallationMembership[]> {

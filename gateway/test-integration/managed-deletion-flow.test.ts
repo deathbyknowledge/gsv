@@ -24,7 +24,7 @@ type AccountWorker = FetchWorker & {
 type AccountApi = {
   projectEntitlement(input: {
     installationId: string;
-    state: "active" | "retained";
+    state: "active" | "restricted" | "retained";
     planKey: string;
     inferenceBudgetMicrounits: number;
     inferencePeriodStartsAt: number;
@@ -111,6 +111,23 @@ describe("managed installation deletion integration", () => {
       },
     });
 
+    const recoverableExport = await account.fetch(
+      `https://accounts.gsv.space/api/installations/${fixture.installationId}/export`,
+      {
+        method: "POST",
+        headers: accountHeaders(fixture.accountCookie),
+        body: "{}",
+      },
+    );
+    expect(recoverableExport.status, await recoverableExport.clone().text()).toBe(200);
+    const recoverableArchive = parseTar(
+      new Uint8Array(await recoverableExport.arrayBuffer()),
+    );
+    expect(archiveJson(
+      recoverableArchive,
+      "gsv-installation-export/completion.json",
+    )).toMatchObject({ installationId: fixture.installationId });
+
     const recovered = await account.fetch(
       `https://accounts.gsv.space/api/installations/${fixture.installationId}/deletion/recover`,
       {
@@ -161,6 +178,148 @@ describe("managed installation deletion integration", () => {
     } finally {
       restoredSocket.close(1000, "test complete");
     }
+  });
+
+  it("streams a complete installation export while entitlement is restricted", async () => {
+    const account = harness.getWorker<AccountEnv>("gsv-accounts-integration");
+    const gateway = harness.getWorker("gsv-managed-account");
+    const fixture = await provisionInstallation(account);
+    const installationCookie = await enterInstallation(
+      account,
+      gateway,
+      fixture.accountCookie,
+      fixture.installationId,
+      fixture.handle,
+    );
+    const socket = await openManagedOwnerSocket(
+      gateway,
+      fixture.handle,
+      installationCookie,
+      "export-live",
+    );
+    const pid = await runManagedInference(socket);
+    await expectManagedRpcOk(socket, "export-write", "fs.write", {
+      path: "/tmp/export-proof.txt",
+      content: "private installation export proof",
+    });
+    socket.close(1000, "export fixture ready");
+
+    const now = Date.now();
+    const accountApi = await account.getExport() as unknown as AccountApi;
+    await accountApi.projectEntitlement({
+      installationId: fixture.installationId,
+      state: "restricted",
+      planKey: "integration-export",
+      inferenceBudgetMicrounits: 0,
+      inferencePeriodStartsAt: now,
+      inferencePeriodEndsAt: now + 30 * DAY_MS,
+      storageLimitBytes: 10_000_000_000,
+      effectiveAt: now,
+      version: 2,
+    });
+
+    const response = await account.fetch(
+      `https://accounts.gsv.space/api/installations/${fixture.installationId}/export`,
+      {
+        method: "POST",
+        headers: accountHeaders(fixture.accountCookie),
+        body: "{}",
+      },
+    );
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/x-tar");
+    expect(response.headers.get("x-gsv-export-format")).toBe("1");
+    expect(response.headers.get("cache-control")).toContain("no-store");
+
+    const archive = parseTar(new Uint8Array(await response.arrayBuffer()));
+    const root = "gsv-installation-export";
+    const manifest = archiveJson<ExportManifest>(archive, `${root}/manifest.json`);
+    expect(manifest).toMatchObject({
+      format: "gsv-installation-export",
+      version: 1,
+      installation: {
+        installationId: fixture.installationId,
+        handle: fixture.handle,
+      },
+      containsCredentialsAndPrivateData: true,
+      completionRecord: "completion.json",
+    });
+    expect(archive.has(`${root}/kernel/catalog.json`)).toBe(true);
+
+    const encodedPid = Buffer.from(pid).toString("base64url");
+    expect(archiveJson(archive, `${root}/processes/${encodedPid}/record.json`))
+      .toMatchObject({ processId: pid });
+    const processCatalog = archiveJson<ExportSqlCatalog>(
+      archive,
+      `${root}/processes/${encodedPid}/catalog.json`,
+    );
+    expect(processCatalog.tables).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "sqlite_sequence",
+        restoreMode: "sqlite-sequence",
+      }),
+    ]));
+    expect(processCatalog.schemaObjects).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "index", tableName: "messages" }),
+    ]));
+    expect(archiveTextByPrefix(archive, `${root}/processes/${encodedPid}/tables/`))
+      .toContain("synthetic managed response");
+
+    const storageMetadata = archiveJsonByPrefix<ExportedStorageMetadata>(
+      archive,
+      `${root}/storage/metadata/`,
+    );
+    const proof = storageMetadata.find((entry) => (
+      entry.value.key.includes("export-proof.txt")
+    ));
+    expect(proof).toBeDefined();
+    expect(new TextDecoder().decode(
+      archive.get(`${root}/storage/objects/${proof!.value.archiveKey}`),
+    )).toContain("private installation export proof");
+
+    expect(manifest.resources.repositories.map((repository) => (
+      `${repository.owner}/${repository.repo}`
+    ))).toEqual(expect.arrayContaining(["owner/home", "root/home"]));
+    for (const repository of manifest.resources.repositories) {
+      const bundle = new TextDecoder().decode(archive.get(`${root}/${repository.bundle}`));
+      expect(bundle).toMatch(/^# v2 git bundle\n/);
+      expect(bundle).toContain("\nPACK ");
+    }
+
+    const completion = archiveJson<ExportCompletion>(
+      archive,
+      `${root}/completion.json`,
+    );
+    expect(completion).toMatchObject({
+      format: "gsv-installation-export-completion",
+      version: 1,
+      installationId: fixture.installationId,
+      resources: {
+        processes: { count: 1 },
+        repositories: { count: manifest.resources.repositories.length },
+      },
+    });
+    expect(completion.resources.kernel.rows).toBeGreaterThan(0);
+    expect(completion.resources.processes.rows).toBeGreaterThan(0);
+    expect(completion.resources.storage.objects).toBeGreaterThan(0);
+
+    const accountEnv = await account.getEnv();
+    const audit = await accountEnv.ACCOUNT_DB.prepare(
+      `SELECT action, outcome, metadata_json
+       FROM audit_events
+       WHERE installation_id = ? AND action = 'installation.export_requested'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+    ).bind(fixture.installationId).first<{
+      action: string;
+      outcome: string;
+      metadata_json: string;
+    }>();
+    expect(audit).toEqual({
+      action: "installation.export_requested",
+      outcome: "succeeded",
+      metadata_json: "{}",
+    });
   });
 
   it("deletes every retained resource owner in bounded, retryable batches", async () => {
@@ -586,4 +745,101 @@ function webSocketClosed(socket: HarnessWebSocket): Promise<void> {
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+type ExportManifest = {
+  format: string;
+  version: number;
+  installation: { installationId: string; handle: string };
+  containsCredentialsAndPrivateData: boolean;
+  completionRecord: string;
+  resources: {
+    repositories: Array<{ owner: string; repo: string; bundle: string }>;
+  };
+};
+
+type ExportedStorageMetadata = {
+  key: string;
+  archiveKey: string;
+};
+
+type ExportSqlCatalog = {
+  tables: Array<{ name: string; restoreMode: string }>;
+  schemaObjects: Array<{ type: string; tableName: string }>;
+};
+
+type ExportCompletion = {
+  format: string;
+  version: number;
+  installationId: string;
+  resources: {
+    kernel: { rows: number };
+    processes: { count: number; rows: number };
+    repositories: { count: number };
+    storage: { objects: number };
+  };
+};
+
+function parseTar(bytes: Uint8Array): Map<string, Uint8Array> {
+  const files = new Map<string, Uint8Array>();
+  let offset = 0;
+  let paxPath: string | null = null;
+  while (offset + 512 <= bytes.byteLength) {
+    const header = bytes.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const name = tarHeaderText(header, 0, 100);
+    const prefix = tarHeaderText(header, 345, 155);
+    const path = prefix ? `${prefix}/${name}` : name;
+    const size = Number.parseInt(tarHeaderText(header, 124, 12).trim() || "0", 8);
+    const type = String.fromCharCode(header[156] ?? 0);
+    const bodyStart = offset + 512;
+    const body = bytes.slice(bodyStart, bodyStart + size);
+    if (type === "x") {
+      const match = /(?:^|\n)\d+ path=([^\n]*)\n/.exec(new TextDecoder().decode(body));
+      paxPath = match?.[1] ?? null;
+    } else {
+      files.set(paxPath ?? path, body);
+      paxPath = null;
+    }
+    offset = bodyStart + Math.ceil(size / 512) * 512;
+  }
+  return files;
+}
+
+function archiveJson<T = Record<string, unknown>>(
+  archive: Map<string, Uint8Array>,
+  path: string,
+): T {
+  const bytes = archive.get(path);
+  if (!bytes) throw new Error(`Archive entry ${path} was not found`);
+  return JSON.parse(new TextDecoder().decode(bytes)) as T;
+}
+
+function archiveJsonByPrefix<T>(
+  archive: Map<string, Uint8Array>,
+  prefix: string,
+): Array<{ path: string; value: T }> {
+  return [...archive.entries()]
+    .filter(([path]) => path.startsWith(prefix) && path.endsWith(".json"))
+    .map(([path]) => ({ path, value: archiveJson<T>(archive, path) }));
+}
+
+function archiveTextByPrefix(
+  archive: Map<string, Uint8Array>,
+  prefix: string,
+): string {
+  return [...archive.entries()]
+    .filter(([path]) => path.startsWith(prefix))
+    .map(([, bytes]) => new TextDecoder().decode(bytes))
+    .join("\n");
+}
+
+function tarHeaderText(
+  header: Uint8Array,
+  offset: number,
+  length: number,
+): string {
+  const field = header.subarray(offset, offset + length);
+  const end = field.indexOf(0);
+  return new TextDecoder().decode(end === -1 ? field : field.subarray(0, end));
 }

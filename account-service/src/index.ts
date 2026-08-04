@@ -7,6 +7,7 @@ import type {
   ManagedEntitlementService,
   ManagedGatewayLifecycleInterface,
   ManagedGatewayDataLifecycleInterface,
+  ManagedGatewayExportInterface,
   ManagedGatewayProvisioningInterface,
   ManagedGatewayTelegramInterface,
   ManagedTelegramControlInterface,
@@ -60,6 +61,8 @@ import {
   BillingTerminationStore,
 } from "./billing/termination";
 import { BillingWebhookProcessor } from "./billing/webhooks";
+import { InstallationExportHttp } from "./installation-export/http";
+import { InstallationExportService } from "./installation-export/service";
 
 type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & BillingProductEnvironment
 & StripeBillingEnvironment & {
@@ -67,7 +70,8 @@ type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & BillingProductEnvironment
   GATEWAY: ManagedGatewayProvisioningInterface
     & ManagedGatewayTelegramInterface
     & ManagedGatewayLifecycleInterface
-    & ManagedGatewayDataLifecycleInterface;
+    & ManagedGatewayDataLifecycleInterface
+    & ManagedGatewayExportInterface;
   MANAGED_TELEGRAM: ManagedTelegramControlInterface
     & ManagedTelegramDataLifecycleInterface;
   MANAGED_INFERENCE: ManagedInferenceDataLifecycleInterface;
@@ -107,6 +111,8 @@ export default class AccountService
     if (authResponse) return authResponse;
     const installationResponse = await this.installationHttp().handle(request);
     if (installationResponse) return installationResponse;
+    const exportResponse = await this.installationExportHttp().handle(request);
+    if (exportResponse) return exportResponse;
     const lifecycleResponse = await this.lifecycleHttp().handle(request);
     if (lifecycleResponse) {
       if (request.method === "POST" && lifecycleResponse.ok) {
@@ -255,6 +261,20 @@ export default class AccountService
         new ManagedTelegramLinkOperationStore(this.env.ACCOUNT_DB),
         this.authService(accountOrigin),
         this.env.MANAGED_TELEGRAM,
+        this.env.GATEWAY,
+      ),
+      this.abuseProtection(accountOrigin),
+      accountOrigin,
+    );
+  }
+
+  private installationExportHttp(): InstallationExportHttp {
+    const accountOrigin = parseAccountOrigin(this.env.GSV_ACCOUNT_ORIGIN);
+    return new InstallationExportHttp(
+      new InstallationExportService(
+        this.store(),
+        new InstallationLifecycleStore(this.env.ACCOUNT_DB),
+        this.authService(accountOrigin),
         this.env.GATEWAY,
       ),
       this.abuseProtection(accountOrigin),

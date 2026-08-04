@@ -234,6 +234,12 @@ impl DurableObject for Repository {
                 let body = req.bytes().await?;
                 git::handle_upload_pack(&self.sql, &body)
             }
+            (Method::Get, "bundle") => {
+                if let Some(resp) = check_write_access(&req, &actor, owner) {
+                    return resp;
+                }
+                git::handle_bundle(&self.sql)
+            }
             (Method::Delete, "") => {
                 if let Some(resp) = check_write_access(&req, &actor, owner) {
                     return resp;

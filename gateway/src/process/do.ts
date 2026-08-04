@@ -219,6 +219,13 @@ import {
 } from "../installation/identity";
 import { createInstallationStorage } from "../installation/storage";
 import { createInstallationRipgit } from "../installation/ripgit";
+import {
+  captureSqlExportCatalog,
+  readSqlExportPage,
+  type SqlExportCatalog,
+  type SqlExportPage,
+  type SqlExportTable,
+} from "../managed/sql-export";
 
 type RunState = {
   runId: string;
@@ -990,6 +997,41 @@ export class Process extends Host<Env> {
       return true;
     } finally {
       releaseLifecycle();
+    }
+  }
+
+  getManagedExportCatalog(input: {
+    installationId: string;
+    processId: string;
+  }): SqlExportCatalog {
+    this.assertManagedExportIdentity(input);
+    return captureSqlExportCatalog(this.ctx.storage.sql);
+  }
+
+  getManagedExportTablePage(input: {
+    installationId: string;
+    processId: string;
+    table: SqlExportTable;
+    afterRowId: number | null;
+  }): SqlExportPage {
+    this.assertManagedExportIdentity(input);
+    return readSqlExportPage(
+      this.ctx.storage.sql,
+      input.table,
+      input.afterRowId,
+    );
+  }
+
+  private assertManagedExportIdentity(input: {
+    installationId: string;
+    processId: string;
+  }): void {
+    if (
+      !this.isInitialized()
+      || this.installationId !== parseInstallationId(input.installationId)
+      || this.pid !== input.processId
+    ) {
+      throw new Error("managed export identity does not match Process");
     }
   }
 

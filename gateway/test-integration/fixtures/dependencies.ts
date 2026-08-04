@@ -293,6 +293,31 @@ export default class TestDependencies
       });
     }
 
+    if (request.method === "GET" && /^\/[^/]+\/[^/]+\/bundle$/.test(url.pathname)) {
+      if (request.headers.get("x-ripgit-actor-name") !== "root") {
+        return new Response("Forbidden", { status: 403 });
+      }
+      const bytes = new TextEncoder().encode([
+        "# v2 git bundle",
+        `${"1".repeat(40)} refs/heads/main`,
+        "",
+        `PACK integration fixture ${url.pathname}`,
+      ].join("\n"));
+      const splitAt = Math.floor(bytes.byteLength / 2);
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes.slice(0, splitAt));
+          controller.enqueue(bytes.slice(splitAt));
+          controller.close();
+        },
+      }), {
+        headers: {
+          "content-length": String(bytes.byteLength),
+          "content-type": "application/x-git-bundle",
+        },
+      });
+    }
+
     if (request.method === "DELETE" && /^\/[^/]+\/[^/]+$/.test(url.pathname)) {
       await this.integrationState().recordDeletedRepository(url.pathname);
       return Response.json({ ok: true });

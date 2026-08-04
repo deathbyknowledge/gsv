@@ -390,6 +390,60 @@ retention, and eventual deletion. Deployment-owned immutable web assets, if
 stored outside Workers static assets, must use a separate explicit global
 namespace that is never mounted into an installation filesystem.
 
+## Installation export
+
+The managed account service exposes an owner-only installation export. Starting
+an export requires an authenticated platform session with recent passkey
+verification, exact account-origin validation, and a rate-limit decision. It is
+available while an installation is active, payment-restricted, cancelled,
+retained, or in its recoverable deletion window. Billing state must not gate
+data portability. Export is rejected after irreversible teardown starts.
+
+The account service records a content-free `installation.export_requested`
+audit event, then asks the trusted Gateway service binding to address the Kernel
+by `installationId`. The browser never supplies a hostname, Kernel name,
+repository identity, R2 prefix, or Process object address to the export RPC.
+
+Version 1 is an uncompressed, streaming USTAR/PAX archive. It contains:
+
+- a versioned manifest, safety notice, and final completion record;
+- the Kernel's application SQLite schema, secondary schema objects, sequence
+  state, and rows as a catalog plus bounded, ordered JSON pages;
+- each registered Process record and its corresponding complete SQLite catalog
+  and pages;
+- a self-contained standard Git bundle for every installation repository;
+- every installation-logical R2 object as exact bytes plus its R2 metadata; and
+- the immutable installation identity needed to interpret those resources.
+
+The archive intentionally includes local credentials, provider configuration,
+private files, histories, and other secrets owned by the installation. It uses
+`Cache-Control: no-store`, attachment disposition, MIME sniffing protection,
+and a sandbox content policy, but the downloaded file must be handled like a
+password-manager or full-device backup. Global platform-account, billing,
+abuse-control, and provider-webhook records are not installation runtime state
+and are not included.
+
+Archive paths encode untrusted object and process identifiers rather than
+placing them into paths verbatim. Repository streams require an authenticated
+internal actor. SQL export captures a table schema, row-count, and rowid
+high-water mark before paging and fails if that bounded row set cannot be read
+as declared. R2 is accessed only through the installation-scoped bucket. Git
+bundles are generated inside the installation-scoped ripgit object.
+
+The format provides resource-level capture rather than a globally atomic
+snapshot across independent Durable Objects, R2, and ripgit. Resources are
+serialized in deterministic order where the backing service supports it. A
+successful archive ends with `completion.json`, whose counts and byte totals
+describe the resources actually serialized. Its absence means the stream was
+cancelled, interrupted, or failed and the archive must be treated as
+incomplete. Browser cancellation propagates to the active entry body and
+unread sources so a disconnected download does not continue unbounded work.
+
+The export contract is versioned independently of an eventual importer.
+Automated restore and migration tooling must validate the manifest and require
+the completion record; implementing and exercising that restore path remains a
+Phase 9 release gate.
+
 ## Process routing
 
 The Kernel registry continues to expose an opaque PID such as `proc:<uuid>`.
@@ -1084,8 +1138,13 @@ retry; retention teardown is gated on attempted start, seven-day, and one-day
 warnings. Production activation of the sending domain remains an external
 release gate. Explicit deletion also records provider cancellation atomically,
 retries it independently of data teardown, and prevents late provider events
-from restoring entitlement to deleting or deleted installations. Installation
-export remains incomplete.
+from restoring entitlement to deleting or deleted installations. The
+recent-passkey, owner-only installation export now streams Kernel and Process
+SQL, exact R2 objects and metadata, and self-contained Git bundles through the
+Account and Gateway service-binding chain. A real multi-Worker flow proves it
+remains available after payment restriction and emits a final completion
+record. Automated restore validation, production topology, and the remaining
+Phase 8 and 9 product and release gates are still incomplete.
 
 ### Phase 0: executable specification
 
@@ -1209,7 +1268,9 @@ and standalone bot linking remains functional.
 
 Exit: checkout and webhook replay are idempotent, no browser redirect grants
 service, payment failure follows the specified grace policy, and deletion can
-enumerate and complete every installation-owned resource.
+enumerate and complete every installation-owned resource. A restricted owner
+can download a complete, explicitly versioned installation archive without
+billing-provider availability.
 
 ### Phase 8: managed product surfaces
 

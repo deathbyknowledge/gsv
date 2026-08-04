@@ -250,6 +250,17 @@ export interface ManagedGatewayDataLifecycleInterface {
   ): Promise<DeleteManagedInstallationResourceBatchResult>;
 }
 
+export type ExportManagedInstallationInput = {
+  installationId: string;
+  requestedAt: number;
+};
+
+export interface ManagedGatewayExportInterface {
+  exportManagedInstallation(
+    input: ExportManagedInstallationInput,
+  ): Promise<Response>;
+}
+
 export type PrepareManagedInstallationDeletionInput = {
   installationId: string;
   operationId: string;
