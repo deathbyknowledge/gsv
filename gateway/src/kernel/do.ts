@@ -136,6 +136,7 @@ import {
 import { readManagedSessionCookie } from "../managed/session-cookie";
 import { ManagedTelegramLinkStore } from "./managed-telegram-links";
 import { ManagedEntitlementStore } from "./managed-entitlement-store";
+import { registerRepo } from "./repo-registry";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -815,6 +816,7 @@ export class Kernel extends Host<Env> {
           if (!canWriteRepo(repoRef, repoCtx)) {
             return { ok: false, status: 403, message: "Forbidden" };
           }
+          registerRepo(this.config, { owner, repo });
         } else if (!canReadRepo(repoRef, repoCtx)) {
           return { ok: false, status: 403, message: "Forbidden" };
         }

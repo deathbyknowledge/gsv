@@ -18,6 +18,43 @@ const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 const TEST_INSTALLATION_ID = "singleton";
 const TEST_INSTALLATION_CONTEXT = { installationId: TEST_INSTALLATION_ID };
 
+describe("Kernel Git HTTP authorization", () => {
+  it("registers repositories authorized for a Git write", async () => {
+    const values = new Map<string, string>();
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.auth = {
+      authenticate: vi.fn(async () => ({
+        ok: true,
+        identity: {
+          uid: 1000,
+          gid: 1000,
+          gids: [1000],
+          username: "alice",
+          home: "/home/alice",
+        },
+      })),
+      authenticateToken: vi.fn(),
+    };
+    kernel.caps = { resolve: vi.fn(() => []) };
+    kernel.config = {
+      get: (key: string) => values.get(key) ?? null,
+      set: (key: string, value: string) => values.set(key, value),
+    };
+    kernel.buildKernelContext = ({ identity }: { identity: unknown }) => ({ identity });
+
+    await expect(kernel.authorizeGitHttp({
+      owner: "alice",
+      repo: "from-push",
+      write: true,
+      username: "alice",
+      credential: "secret",
+    })).resolves.toMatchObject({ ok: true, username: "alice" });
+
+    expect(values.get("repos/alice/from-push/created_at")).toBeDefined();
+    expect(values.get("repos/alice/from-push/updated_at")).toBeDefined();
+  });
+});
+
 describe("Kernel frame bodies", () => {
   it("passes request cancellation to Agents SDK MCP calls", async () => {
     const callTool = vi.fn(async () => ({ content: [] }));

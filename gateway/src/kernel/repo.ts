@@ -31,6 +31,12 @@ import { RipgitClient, type RipgitApplyOp, type RipgitRepoRef } from "../fs/ripg
 import { accountHomeRepoRef } from "../fs/ripgit/repos";
 import { isRepoPublic, repoVisibilityConfigKey, setRepoVisibility } from "./repo-visibility";
 import { canOwnerDelegateRunAs } from "./account-access";
+import {
+  parseRegisteredRepoKey,
+  registerRepo,
+  repoConfigKey,
+  unregisterRepo,
+} from "./repo-registry";
 
 const TEXT_DECODER = new TextDecoder();
 const STRICT_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
@@ -103,7 +109,7 @@ export async function handleRepoCreate(
   const refs = await ripgit.refs(repo);
   const currentHead = refs.heads?.[ref] ?? null;
   if (currentHead) {
-    registerRepo(ctx, repo, args.description);
+    registerRepo(ctx.config, repo, args.description);
     return { repo: repoSlug(repo), ref, head: currentHead, created: false };
   }
 
@@ -116,7 +122,7 @@ export async function handleRepoCreate(
     [],
     { allowEmpty: true },
   );
-  registerRepo(ctx, repo, args.description);
+  registerRepo(ctx.config, repo, args.description);
   return { repo: repoSlug(repo), ref, head: result.head ?? null, created: true };
 }
 
@@ -309,7 +315,7 @@ export async function handleRepoApply(
       allowEmpty: args.allowEmpty === true,
     },
   );
-  registerRepo(ctx, repo);
+  registerRepo(ctx.config, repo);
   return {
     ok: true,
     repo: repoSlug(repo),
@@ -342,7 +348,7 @@ export async function handleRepoImport(
     remoteUrl || undefined,
     remoteRef,
   );
-  registerRepo(ctx, repo);
+  registerRepo(ctx.config, repo);
   const result: RepoImportResult = {
     repo: repoSlug(repo),
     ref,
@@ -367,7 +373,7 @@ export async function handleRepoDelete(
   assertCanWriteRepo(repo, ctx);
   const actor = requireIdentity(ctx).process;
   await requireRipgitClient(ctx).deleteRepository(repo, actor.username);
-  unregisterRepo(ctx, repo);
+  unregisterRepo(ctx.config, repo);
   return {
     deleted: true,
     repo: repoSlug(repo),
@@ -679,51 +685,6 @@ function clampContext(context: number | undefined): number {
     return 3;
   }
   return Math.max(0, Math.min(20, Math.trunc(context)));
-}
-
-function registerRepo(
-  ctx: KernelContext,
-  repo: Pick<RipgitRepoRef, "owner" | "repo">,
-  description?: string,
-): void {
-  const now = String(Date.now());
-  const createdKey = repoConfigKey(repo, "created_at");
-  if (ctx.config.get(createdKey) === null) {
-    ctx.config.set(createdKey, now);
-  }
-  ctx.config.set(repoConfigKey(repo, "updated_at"), now);
-  if (typeof description === "string" && description.trim().length > 0) {
-    ctx.config.set(repoConfigKey(repo, "description"), description.trim());
-  }
-}
-
-function unregisterRepo(
-  ctx: KernelContext,
-  repo: Pick<RipgitRepoRef, "owner" | "repo">,
-): void {
-  for (const field of ["created_at", "updated_at", "description"]) {
-    ctx.config.delete(repoConfigKey(repo, field));
-  }
-  ctx.config.delete(repoVisibilityConfigKey(repo));
-}
-
-function repoConfigKey(repo: Pick<RipgitRepoRef, "owner" | "repo">, field: string): string {
-  return `repos/${repo.owner}/${repo.repo}/${field}`;
-}
-
-function parseRegisteredRepoKey(key: string): { owner: string; repo: string; field: string } | null {
-  const parts = key.split("/");
-  if (parts.length !== 4 || parts[0] !== "repos") {
-    return null;
-  }
-  if (!/^[A-Za-z0-9._-]+$/.test(parts[1]) || !/^[A-Za-z0-9._-]+$/.test(parts[2])) {
-    return null;
-  }
-  return {
-    owner: parts[1],
-    repo: parts[2],
-    field: parts[3],
-  };
 }
 
 function parseOptionalNumber(value: string | null): number | undefined {
