@@ -8,6 +8,8 @@ import {
   type HarnessWebSocket,
 } from "./managed-rpc";
 
+const DAY_MS = 24 * 60 * 60_000;
+
 type AccountEnv = {
   ACCOUNT_DB: D1Database;
   GATEWAY: ManagedGatewayDataLifecycleInterface;
@@ -205,6 +207,8 @@ describe("managed installation deletion integration", () => {
     });
     const accountEnv = await account.getEnv();
     const billingAccountId = `billing_retention_${randomUUID()}`;
+    const subscriptionId = `subscription_retention_${randomUUID()}`;
+    const retentionEndsAt = now - 1;
     await accountEnv.ACCOUNT_DB.batch([
       accountEnv.ACCOUNT_DB.prepare(
         `INSERT INTO billing_accounts (
@@ -230,14 +234,14 @@ describe("managed installation deletion integration", () => {
          ) VALUES (?, ?, ?, ?, 'founding-monthly', 'retained', 'cancelled', ?,
                    ?, ?, ?, 0, ?, NULL, ?, 1, ?, ?, ?, ?)`,
       ).bind(
-        `subscription_retention_${randomUUID()}`,
+        subscriptionId,
         billingAccountId,
         fixture.installationId,
         `sub_retention_${randomUUID()}`,
         now,
         "d".repeat(64),
         now - 30 * 24 * 60 * 60_000,
-        now - 1,
+        retentionEndsAt,
         now - 1,
         now - 1,
         now,
@@ -252,6 +256,13 @@ describe("managed installation deletion integration", () => {
         now,
         now,
       ),
+      ...retentionNotificationStatements(accountEnv.ACCOUNT_DB, {
+        subscriptionId,
+        installationId: fixture.installationId,
+        principalId: fixture.principalId,
+        retentionEndsAt,
+        now,
+      }),
     ]);
 
     let deletionState: string | null = null;
@@ -312,6 +323,49 @@ describe("managed installation deletion integration", () => {
     expect(retiredRoute.status).toBe(404);
   });
 });
+
+function retentionNotificationStatements(
+  db: D1Database,
+  input: {
+    subscriptionId: string;
+    installationId: string;
+    principalId: string;
+    retentionEndsAt: number;
+    now: number;
+  },
+): D1PreparedStatement[] {
+  return ([
+    ["retention_started", input.retentionEndsAt - 30 * DAY_MS,
+      input.retentionEndsAt - 7 * DAY_MS],
+    ["retention_7_days", input.retentionEndsAt - 7 * DAY_MS,
+      input.retentionEndsAt - DAY_MS],
+    ["retention_1_day", input.retentionEndsAt - DAY_MS,
+      input.retentionEndsAt],
+  ] as const).map(([kind, scheduledAt, expiresAt], index) => db.prepare(
+    `INSERT INTO lifecycle_notification_outbox (
+       id, installation_id, principal_id, kind, source_id, lifecycle_key,
+       deadline_at, scheduled_at, expires_at, state, attempt,
+       next_attempt_at, lease_nonce, lease_until, provider_message_id,
+       last_error_code, created_at, updated_at, sent_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent', 1, ?, NULL, NULL,
+               ?, NULL, ?, ?, ?)`,
+  ).bind(
+    `notification_${kind}_${input.subscriptionId}_${input.retentionEndsAt}`,
+    input.installationId,
+    input.principalId,
+    kind,
+    input.subscriptionId,
+    String(input.retentionEndsAt),
+    input.retentionEndsAt,
+    scheduledAt,
+    expiresAt,
+    scheduledAt,
+    `integration-retention-warning-${index + 1}`,
+    input.now,
+    input.now,
+    input.now,
+  ));
+}
 
 async function provisionInstallation(account: AccountWorker): Promise<{
   accountCookie: string;

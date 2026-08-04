@@ -393,6 +393,16 @@ export class BillingStore {
          AND s.retention_ends_at IS NOT NULL
          AND s.retention_ends_at <= ?
          AND i.state = 'retained'
+         AND 3 = (
+           SELECT COUNT(DISTINCT n.kind)
+           FROM lifecycle_notification_outbox n
+           WHERE n.source_id = s.id
+             AND n.lifecycle_key = CAST(s.retention_ends_at AS TEXT)
+             AND n.kind IN (
+               'retention_started', 'retention_7_days', 'retention_1_day'
+             )
+             AND n.state IN ('sent', 'permanent_failure')
+         )
        ORDER BY s.retention_ends_at, s.installation_id
        LIMIT ?`,
     ).bind(now, limit).all<{

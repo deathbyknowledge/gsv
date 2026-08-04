@@ -32,6 +32,11 @@ export type RecordedTelegramApiCall = {
   messageId: number;
 };
 
+export type RecordedEmail = {
+  to: unknown;
+  subject: string;
+};
+
 interface Env {
   GATEWAY: Fetcher & AdapterGatewayInterface & ManagedGatewayProvisioningInterface;
   INTEGRATION_STATE: DurableObjectNamespace<IntegrationState>;
@@ -100,6 +105,35 @@ export class IntegrationState extends DurableObject<Env> {
 
   async listDeletedRepositories(): Promise<string[]> {
     return await this.ctx.storage.get<string[]>("deleted_repositories") ?? [];
+  }
+
+  async recordEmail(email: RecordedEmail): Promise<number> {
+    const emails = await this.ctx.storage.get<RecordedEmail[]>("emails") ?? [];
+    emails.push(email);
+    await this.ctx.storage.put("emails", emails);
+    return emails.length;
+  }
+
+  async listEmails(): Promise<RecordedEmail[]> {
+    return await this.ctx.storage.get<RecordedEmail[]>("emails") ?? [];
+  }
+}
+
+export class TestEmailService extends WorkerEntrypoint<Env> {
+  async send(message: {
+    to?: unknown;
+    subject?: unknown;
+  }): Promise<{ messageId: string }> {
+    if (typeof message.subject !== "string") {
+      throw Object.assign(new Error("email subject is required"), {
+        code: "E_FIELD_MISSING",
+      });
+    }
+    const sequence = await integrationState(this.env).recordEmail({
+      to: message.to,
+      subject: message.subject,
+    });
+    return { messageId: `integration-email-${sequence}` };
   }
 }
 
@@ -210,6 +244,10 @@ export default class TestDependencies
 
     if (url.pathname === "/__test/deleted-repositories" && request.method === "GET") {
       return Response.json(await this.integrationState().listDeletedRepositories());
+    }
+
+    if (url.pathname === "/__test/emails" && request.method === "GET") {
+      return Response.json(await this.integrationState().listEmails());
     }
 
     if (url.pathname === "/__test/telegram-send" && request.method === "POST") {
@@ -332,9 +370,13 @@ export default class TestDependencies
   }
 
   private integrationState(): DurableObjectStub<IntegrationState> {
-    const id = this.env.INTEGRATION_STATE.idFromName(
-      LEGACY_STANDALONE_INSTALLATION_ID,
-    );
-    return this.env.INTEGRATION_STATE.get(id);
+    return integrationState(this.env);
   }
+}
+
+function integrationState(env: Env): DurableObjectStub<IntegrationState> {
+  const id = env.INTEGRATION_STATE.idFromName(
+    LEGACY_STANDALONE_INSTALLATION_ID,
+  );
+  return env.INTEGRATION_STATE.get(id);
 }

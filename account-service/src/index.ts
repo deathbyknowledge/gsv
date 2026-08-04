@@ -36,6 +36,8 @@ import { ManagedInstallationService } from "./installations/service";
 import { InstallationLifecycleHttp } from "./lifecycle/http";
 import { InstallationLifecycleService } from "./lifecycle/service";
 import { InstallationLifecycleStore } from "./lifecycle/store";
+import { LifecycleNotificationService } from "./notifications/service";
+import { LifecycleNotificationStore } from "./notifications/store";
 import { ManagedTelegramLinkHttp } from "./telegram/http";
 import { ManagedTelegramLinkService } from "./telegram/service";
 import { ManagedTelegramLinkOperationStore } from "./telegram/store";
@@ -102,13 +104,27 @@ export default class AccountService
     const installationResponse = await this.installationHttp().handle(request);
     if (installationResponse) return installationResponse;
     const lifecycleResponse = await this.lifecycleHttp().handle(request);
-    if (lifecycleResponse) return lifecycleResponse;
+    if (lifecycleResponse) {
+      if (request.method === "POST" && lifecycleResponse.ok) {
+        this.deferNotificationSync();
+      }
+      return lifecycleResponse;
+    }
     const telegramResponse = await this.telegramHttp().handle(request);
     if (telegramResponse) return telegramResponse;
     if (isBillingPath(url.pathname)) {
       try {
         const billingResponse = await this.billingHttp().handle(request);
-        if (billingResponse) return billingResponse;
+        if (billingResponse) {
+          if (
+            request.method === "POST"
+            && url.pathname === "/api/billing/webhooks/stripe"
+            && billingResponse.ok
+          ) {
+            this.deferNotificationSync();
+          }
+          return billingResponse;
+        }
       } catch {
         return json({ error: "Billing temporarily unavailable" }, 503);
       }
@@ -126,6 +142,8 @@ export default class AccountService
       this.store().expireReservations(),
     ]);
     await this.billingReconciler().advanceDue(now);
+    const notifications = this.notificationService();
+    await notifications.sync(now);
     const lifecycle = this.lifecycleService();
     for (const candidate of await new BillingStore(this.env.ACCOUNT_DB)
       .listRetentionDeletionDue(now)) {
@@ -136,6 +154,7 @@ export default class AccountService
       });
     }
     await lifecycle.advanceActionable(now);
+    await notifications.sync(now);
   }
 
   async resolveHostname(hostname: string): Promise<InstallationDirectoryResult> {
@@ -319,6 +338,22 @@ export default class AccountService
     return new GatewayEntitlementProjector(
       new EntitlementStore(this.env.ACCOUNT_DB),
       this.env.GATEWAY,
+    );
+  }
+
+  private notificationService(
+    accountOrigin = parseAccountOrigin(this.env.GSV_ACCOUNT_ORIGIN),
+  ): LifecycleNotificationService {
+    return new LifecycleNotificationService(
+      new LifecycleNotificationStore(this.env.ACCOUNT_DB),
+      new CloudflareTransactionalMailer(this.env.EMAIL, this.env.GSV_EMAIL_FROM),
+      accountOrigin,
+    );
+  }
+
+  private deferNotificationSync(): void {
+    this.ctx.waitUntil(
+      this.notificationService().sync().then(() => undefined).catch(() => undefined),
     );
   }
 

@@ -148,6 +148,11 @@ function integrationAccountConfig(
           ? { entrypoint: "ManagedTelegramChannel" }
           : {}),
       },
+      {
+        binding: "EMAIL",
+        service: DEPENDENCY_WORKER,
+        entrypoint: "TestEmailService",
+      },
     ],
   };
 }

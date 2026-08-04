@@ -1,7 +1,12 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import type { LifecycleNotificationMailer } from "../email/mailer";
+import { LifecycleNotificationService } from "../notifications/service";
+import { LifecycleNotificationStore } from "../notifications/store";
 import { AccountStore } from "../store";
 import { BillingStore } from "./store";
+
+const DAY_MS = 24 * 60 * 60_000;
 
 describe("billing retention cleanup inventory", () => {
   it("returns only retained installations whose retention deadline passed", async () => {
@@ -35,7 +40,7 @@ describe("billing retention cleanup inventory", () => {
       providerCustomerId: `cus_${suffix}`,
     });
     const now = Date.now();
-    const retentionEndsAt = now + 10_000;
+    const retentionEndsAt = now + 30 * DAY_MS;
     for (const [index, installation] of [retained, stillActive].entries()) {
       await billing.reconcileSubscription({
         account,
@@ -69,8 +74,24 @@ describe("billing retention cleanup inventory", () => {
       });
     }
 
+    let message = 0;
+    const mailer: LifecycleNotificationMailer = {
+      async sendLifecycleNotification() {
+        message += 1;
+        return { messageId: `message_${message}` };
+      },
+    };
+    const notifications = new LifecycleNotificationService(
+      new LifecycleNotificationStore(env.ACCOUNT_DB),
+      mailer,
+      "https://accounts.gsv.space",
+    );
+
     await expect(billing.listRetentionDeletionDue(retentionEndsAt - 1))
       .resolves.toEqual([]);
+    await notifications.sync(now);
+    await notifications.sync(retentionEndsAt - 7 * DAY_MS);
+    await notifications.sync(retentionEndsAt - DAY_MS);
     await expect(billing.listRetentionDeletionDue(retentionEndsAt))
       .resolves.toEqual([{
         installationId: retained.installationId,

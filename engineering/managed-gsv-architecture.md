@@ -1073,8 +1073,11 @@ the explicit merchant mode remains a production release choice. Recoverable
 explicit deletion, retention expiry, cross-service suspension and recovery,
 exact resource inventory, and bounded teardown across Process, ripgit, R2,
 inference, Telegram, Kernel, and Account state are implemented and covered by a
-real multi-Worker lifecycle flow. Notification and export work remain
-incomplete.
+real multi-Worker lifecycle flow. A leased D1 notification outbox now delivers
+payment, restriction, retention, recovery, and deletion notices with bounded
+retry; retention teardown is gated on attempted start, seven-day, and one-day
+warnings. Production activation of the sending domain remains an external
+release gate. Installation export remains incomplete.
 
 ### Phase 0: executable specification
 
