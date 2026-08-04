@@ -64,6 +64,7 @@ export type KernelContext = {
   failIpcCallsByTarget: (uid: number, targetPid: string, error: string) => void;
   scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
   cancelScheduleWake: (wakeScheduleId: string) => Promise<void>;
+  assertScheduledWorkAllowed: () => void;
   runSchedules: (
     args: SchedulerRunArgs,
     identity?: ConnectionIdentity,

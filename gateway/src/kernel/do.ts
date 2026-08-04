@@ -28,6 +28,7 @@ import type {
   ProcessIdentity,
   LinkManagedTelegramActorInput,
   LinkManagedTelegramActorResult,
+  ManagedEntitlementProjection,
   ProvisionInstallationInput,
   ProvisionInstallationResult,
   ScheduleRecord,
@@ -134,6 +135,7 @@ import {
 } from "./managed-provisioning";
 import { readManagedSessionCookie } from "../managed/session-cookie";
 import { ManagedTelegramLinkStore } from "./managed-telegram-links";
+import { ManagedEntitlementStore } from "./managed-entitlement-store";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -230,6 +232,7 @@ export class Kernel extends Host<Env> {
   private readonly auth: AuthStore;
   private readonly managedProvisioning: ManagedProvisioningStore;
   private readonly managedTelegramLinks: ManagedTelegramLinkStore;
+  private readonly managedEntitlement: ManagedEntitlementStore;
   private readonly caps: CapabilityStore;
   private readonly config: ConfigStore;
   private readonly devices: DeviceRegistry;
@@ -270,6 +273,10 @@ export class Kernel extends Host<Env> {
     // name fallback having been initialized by an RPC entry point.
     const durableObjectName = ctx.id.name ?? `do_${ctx.id.toString()}`;
     this.installationIdentity = new InstallationIdentityStore(sql, durableObjectName);
+    this.managedEntitlement = new ManagedEntitlementStore(
+      sql,
+      this.installationIdentity.installationId,
+    );
     this.installationStorage = createInstallationStorage(
       env.STORAGE,
       this.installationIdentity.installationId,
@@ -379,6 +386,19 @@ export class Kernel extends Host<Env> {
     const ctx = this.buildKernelContext({});
     await ensureKernelBootstrapped(ctx);
     return await this.managedProvisioning.provision(input, ctx);
+  }
+
+  async applyManagedEntitlement(
+    input: ManagedEntitlementProjection,
+  ): Promise<ManagedEntitlementProjection> {
+    if (!isManagedKernelEnv(this.env)) {
+      throw new Error("Managed entitlements are not enabled");
+    }
+    return await this.ctx.blockConcurrencyWhile(async () => {
+      const result = this.managedEntitlement.project(input);
+      await this.reconcileManagedScheduleWakes();
+      return result.projection;
+    });
   }
 
   async linkManagedTelegramActor(
@@ -1723,6 +1743,7 @@ export class Kernel extends Host<Env> {
       cancelScheduleWake: async (wakeScheduleId) => {
         await this.cancelSchedule(wakeScheduleId);
       },
+      assertScheduledWorkAllowed: this.assertScheduledWorkAllowed.bind(this),
       runSchedules: this.runSchedules.bind(this),
       addMcpServerConnection: this.addMcpServerConnection.bind(this),
       removeMcpServerConnection: this.removeMcpServer.bind(this),
@@ -2241,6 +2262,31 @@ export class Kernel extends Host<Env> {
     }
   }
 
+  private isScheduledWorkAllowed(): boolean {
+    return !isManagedKernelEnv(this.env) || this.managedEntitlement.allowsScheduledWork();
+  }
+
+  private assertScheduledWorkAllowed(): void {
+    if (!this.isScheduledWorkAllowed()) {
+      throw new Error("installation entitlement does not allow scheduled work");
+    }
+  }
+
+  private async reconcileManagedScheduleWakes(): Promise<void> {
+    if (!this.managedEntitlement.allowsScheduledWork()) {
+      await Promise.all(this.schedules.listWithWake().map(async (record) => {
+        await this.cancelSchedule(record.wakeScheduleId!).catch(() => {});
+        this.schedules.setWakeScheduleId(record.id, null);
+      }));
+      return;
+    }
+
+    await Promise.all(this.schedules.listEnabledWithoutWake().map(async (record) => {
+      const wakeId = await this.scheduleScheduleWake(record.id, record.state.nextRunAtMs!);
+      this.schedules.setWakeScheduleId(record.id, wakeId);
+    }));
+  }
+
   private async scheduleScheduleWake(scheduleId: string, dueAtMs: number): Promise<string> {
     const wakeAt = new Date(Math.ceil(Math.max(Date.now() + 1_000, dueAtMs) / 1_000) * 1_000);
     const sched = await this.schedule(
@@ -2745,13 +2791,25 @@ export class Kernel extends Host<Env> {
       return;
     }
 
+    if (!this.isScheduledWorkAllowed()) {
+      if (record) {
+        this.schedules.setWakeScheduleId(record.id, null);
+      }
+      return;
+    }
+
     const result = await this.runSchedules({ id: scheduleId, mode: "due" });
     if (result.ran !== 0) {
       return;
     }
 
     const current = this.schedules.getStored(scheduleId);
-    if (current?.enabled && current.state.nextRunAtMs !== null && current.state.nextRunAtMs > Date.now()) {
+    if (
+      this.isScheduledWorkAllowed()
+      && current?.enabled
+      && current.state.nextRunAtMs !== null
+      && current.state.nextRunAtMs > Date.now()
+    ) {
       const nextWakeId = await this.scheduleScheduleWake(current.id, current.state.nextRunAtMs);
       this.schedules.setWakeScheduleId(current.id, nextWakeId);
     }
@@ -2790,6 +2848,12 @@ export class Kernel extends Host<Env> {
     record: ScheduleRecord,
     mode: "due" | "force",
   ): Promise<ScheduleRunResult> {
+    if (!this.isScheduledWorkAllowed()) {
+      return skippedScheduleResult(
+        record.id,
+        "installation entitlement does not allow scheduled work",
+      );
+    }
     const now = Date.now();
     const scheduledAtMs = record.state.nextRunAtMs;
 
@@ -2868,10 +2932,15 @@ export class Kernel extends Host<Env> {
       countOneShotAttempt: oneShotAttemptNumber !== null,
     });
 
-    if (updated?.enabled && updated.state.nextRunAtMs !== null && mode !== "force") {
+    if (
+      updated?.enabled
+      && updated.state.nextRunAtMs !== null
+      && mode !== "force"
+      && this.isScheduledWorkAllowed()
+    ) {
       const wakeId = await this.scheduleScheduleWake(updated.id, updated.state.nextRunAtMs);
       this.schedules.setWakeScheduleId(updated.id, wakeId);
-    } else if (updated && !updated.enabled) {
+    } else if (updated && (!updated.enabled || mode !== "force")) {
       this.schedules.setWakeScheduleId(updated.id, null);
     }
 

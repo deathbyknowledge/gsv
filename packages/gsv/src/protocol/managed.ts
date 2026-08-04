@@ -210,6 +210,12 @@ export interface ManagedEntitlementReader {
   ): Promise<ManagedEntitlementProjection | null>;
 }
 
+export interface ManagedGatewayLifecycleInterface {
+  applyManagedEntitlement(
+    input: ManagedEntitlementProjection,
+  ): Promise<ManagedEntitlementProjection>;
+}
+
 export type ManagedInferenceActor = {
   localUid: number;
   processId?: string;

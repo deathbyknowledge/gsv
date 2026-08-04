@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(22);
+    expect(KERNEL_MIGRATIONS).toHaveLength(23);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -120,6 +120,10 @@ describe("kernel schema migrations", () => {
       id: 22,
       name: "add_managed_telegram_links",
     });
+    expect(KERNEL_MIGRATIONS[22]).toMatchObject({
+      id: 23,
+      name: "add_managed_entitlement",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -162,6 +166,7 @@ describe("kernel schema migrations", () => {
       "managed_principal_memberships",
       "managed_login_sessions",
       "managed_telegram_link_operations",
+      "managed_entitlement",
     ]);
   });
 
@@ -187,6 +192,13 @@ describe("kernel schema migrations", () => {
     expect(operations).toContain("action TEXT NOT NULL CHECK (action IN ('link', 'unlink'))");
     expect(operations).toContain("actor_id TEXT NOT NULL");
     expect(operations).toContain("local_uid INTEGER NOT NULL");
+  });
+
+  it("stores one versioned managed entitlement per Kernel", () => {
+    const entitlement = createTableStatement("managed_entitlement");
+    expect(entitlement).toContain("record_id INTEGER PRIMARY KEY CHECK (record_id = 1)");
+    expect(entitlement).toContain("installation_id TEXT NOT NULL UNIQUE");
+    expect(entitlement).toContain("version INTEGER NOT NULL CHECK (version >= 1)");
   });
 
   it("keeps the processes baseline on the post-profile schema", () => {

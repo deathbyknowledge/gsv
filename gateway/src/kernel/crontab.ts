@@ -144,6 +144,9 @@ async function replaceCronFile(
 ): Promise<void> {
   const store = ctx.schedules;
   const now = Date.now();
+  if (input.jobs.length > 0) {
+    ctx.assertScheduledWorkAllowed();
+  }
   for (const job of input.jobs) {
     const process = processIdentityForUser(ctx, job.user);
     const capabilities = ctx.caps.resolve(process.gids);

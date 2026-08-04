@@ -170,6 +170,7 @@ function makeSchedulerContext(overrides: Partial<KernelContext> = {}): KernelCon
     procs: {
       get: vi.fn(),
     },
+    assertScheduledWorkAllowed: vi.fn(),
     ...overrides,
   } as unknown as KernelContext;
 }
@@ -690,6 +691,7 @@ describe("scheduler", () => {
       },
       schedules: store,
       scheduleScheduleWake: wake,
+      assertScheduledWorkAllowed: vi.fn(),
     } as unknown as KernelContext;
 
     const result = await handleSchedulerAdd({
@@ -1009,6 +1011,67 @@ describe("scheduler", () => {
     await handleSchedulerRun(args, ctx);
 
     expect(runSchedules).toHaveBeenCalledWith(args, ctx.identity, USER_IDENTITY.uid);
+  });
+
+  it("rejects new enabled schedules when managed work is restricted", async () => {
+    const create = vi.fn();
+    const ctx = makeSchedulerContext({
+      schedules: { create } as unknown as ScheduleStore,
+      assertScheduledWorkAllowed: vi.fn(() => {
+        throw new Error("installation entitlement does not allow scheduled work");
+      }),
+    });
+
+    await expect(handleSchedulerAdd({
+      name: "restricted work",
+      expression: { kind: "after", afterMs: 60_000 },
+      target: { kind: "process.spawn", prompt: "Do not run." },
+    }, ctx)).rejects.toThrow("entitlement does not allow scheduled work");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a stale schedule wake reaches a restricted Kernel", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-restricted-${crypto.randomUUID()}`,
+    );
+    const state = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as unknown as {
+        schedules: ScheduleStore;
+        ctx: DurableObjectState;
+        isScheduledWorkAllowed: () => boolean;
+        runScheduleRecord: (
+          record: ScheduleRecord,
+          mode: "due" | "force",
+        ) => Promise<ScheduleRunResult>;
+      };
+      k.isScheduledWorkAllowed = () => false;
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "restricted wake",
+        enabled: true,
+        expression: { kind: "every", everyMs: 60_000 },
+        target: { kind: "process.spawn", prompt: "Do not run." },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1,
+        schedule.id,
+      );
+      const result = await k.runScheduleRecord(k.schedules.get(schedule.id)!, "due");
+      return { result, stored: k.schedules.get(schedule.id) };
+    });
+
+    expect(state.result).toMatchObject({
+      status: "skipped",
+      error: "installation entitlement does not allow scheduled work",
+    });
+    expect(state.stored?.state.runCount).toBe(0);
+    expect(state.stored?.state.runningAtMs).toBeNull();
   });
 
   it("rejects update and remove of another owner's schedule", async () => {
@@ -1716,25 +1779,40 @@ describe("scheduler", () => {
 
     await prepareScheduleTargetProcess(process, installationId, pid);
 
-    const { scheduleId, nextRunAtMs } = await runInDurableObject(kernel, (instance: Kernel) => {
-      const k = instance as unknown as { schedules: ScheduleStore };
-      const now = Date.now();
-      const schedule = k.schedules.create({
-        ownerUid: USER_IDENTITY.uid,
-        creator: schedulePrincipal(),
-        runAs: schedulePrincipal(),
-        name: "manual pulse",
-        enabled: true,
-        expression: { kind: "every", everyMs: 60_000, anchorMs: now + 60_000 },
-        target: {
-          kind: "process.event",
-          pid,
-          message: "Run early.",
-        },
-        now,
-      });
-      return { scheduleId: schedule.id, nextRunAtMs: schedule.state.nextRunAtMs };
-    });
+    const { scheduleId, nextRunAtMs, wakeId } = await runInDurableObject(
+      kernel,
+      async (instance: Kernel) => {
+        const k = instance as unknown as {
+          schedules: ScheduleStore;
+          scheduleScheduleWake: (scheduleId: string, dueAtMs: number) => Promise<string>;
+        };
+        const now = Date.now();
+        const schedule = k.schedules.create({
+          ownerUid: USER_IDENTITY.uid,
+          creator: schedulePrincipal(),
+          runAs: schedulePrincipal(),
+          name: "manual pulse",
+          enabled: true,
+          expression: { kind: "every", everyMs: 60_000, anchorMs: now + 60_000 },
+          target: {
+            kind: "process.event",
+            pid,
+            message: "Run early.",
+          },
+          now,
+        });
+        const wakeId = await k.scheduleScheduleWake(
+          schedule.id,
+          schedule.state.nextRunAtMs!,
+        );
+        k.schedules.setWakeScheduleId(schedule.id, wakeId);
+        return {
+          scheduleId: schedule.id,
+          nextRunAtMs: schedule.state.nextRunAtMs,
+          wakeId,
+        };
+      },
+    );
 
     const runResult = await runInDurableObject(kernel, (instance: Kernel) =>
       (instance as unknown as {
@@ -1747,10 +1825,11 @@ describe("scheduler", () => {
       results: [{ scheduleId, status: "ok" }],
     });
     const schedule = await runInDurableObject(kernel, (instance: Kernel) =>
-      (instance as unknown as { schedules: ScheduleStore }).schedules.get(scheduleId),
+      (instance as unknown as { schedules: ScheduleStore }).schedules.getStored(scheduleId),
     );
     expect(schedule?.state.nextRunAtMs).toBe(nextRunAtMs);
     expect(schedule?.enabled).toBe(true);
+    expect(schedule?.wakeScheduleId).toBe(wakeId);
 
     const messages = await runInDurableObject(process, (instance: Process) =>
       (instance as unknown as {
@@ -1758,6 +1837,11 @@ describe("scheduler", () => {
       }).store.getMessages(),
     );
     expect(messages[0].content).toContain("Run early.");
+    await runInDurableObject(kernel, async (instance: Kernel) => {
+      await (instance as unknown as {
+        cancelSchedule: (id: string) => Promise<void>;
+      }).cancelSchedule(wakeId);
+    });
   });
 
   it("skips a due schedule that is already running", async () => {

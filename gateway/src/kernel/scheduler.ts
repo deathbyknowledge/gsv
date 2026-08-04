@@ -86,7 +86,7 @@ type CronFileScheduleRow = {
   schedule_id: string;
 };
 
-type StoredScheduleRecord = ScheduleRecord & {
+export type StoredScheduleRecord = ScheduleRecord & {
   wakeScheduleId: string | null;
   oneShotOccurrenceId: string | null;
   oneShotAttemptCount: number;
@@ -214,6 +214,24 @@ export class ScheduleStore {
        ORDER BY next_run_at ASC, schedule_id ASC`,
       ...bindings,
     ).toArray().map((row) => publicRecord(toRecord(row)));
+  }
+
+  listWithWake(): StoredScheduleRecord[] {
+    return this.sql.exec<ScheduleRow>(
+      `SELECT * FROM schedules
+       WHERE wake_schedule_id IS NOT NULL
+       ORDER BY schedule_id`,
+    ).toArray().map(toRecord);
+  }
+
+  listEnabledWithoutWake(): StoredScheduleRecord[] {
+    return this.sql.exec<ScheduleRow>(
+      `SELECT * FROM schedules
+       WHERE enabled = 1
+         AND next_run_at IS NOT NULL
+         AND wake_schedule_id IS NULL
+       ORDER BY next_run_at, schedule_id`,
+    ).toArray().map(toRecord);
   }
 
   update(id: string, patch: {
@@ -572,6 +590,9 @@ export async function handleSchedulerAdd(
   assertSchedulableAtExpression(expression, args.enabled !== false, now);
   const target = normalizeScheduleTarget(args.target);
   validateScheduleTargetAccess(target, ctx);
+  if (args.enabled !== false) {
+    ctx.assertScheduledWorkAllowed();
+  }
 
   const principal = principalFromContext(ctx);
   const ownerUid = resolveCallerOwnerUid(ctx);
@@ -615,6 +636,9 @@ export async function handleSchedulerUpdate(
   }
   if (args.patch.expression !== undefined || args.patch.enabled === true) {
     assertSchedulableAtExpression(nextExpression, nextEnabled, now);
+  }
+  if (nextEnabled) {
+    ctx.assertScheduledWorkAllowed();
   }
 
   const patch = {

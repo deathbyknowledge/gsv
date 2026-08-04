@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { TestHarness } from "wrangler";
 import { createManagedAccountTestHarness } from "./harness";
 import {
+  expectManagedRpc,
   expectManagedRpcOk,
   type HarnessWebSocket,
 } from "./managed-rpc";
@@ -93,7 +94,7 @@ describe("managed account to Kernel integration", () => {
     const accountApi = await account.getExport() as unknown as {
       projectEntitlement(input: {
         installationId: string;
-        state: "trialing";
+        state: "trialing" | "active" | "restricted";
         planKey: string;
         inferenceBudgetMicrounits: number;
         inferencePeriodStartsAt: number;
@@ -159,7 +160,97 @@ describe("managed account to Kernel integration", () => {
       handle,
     );
     expect(secondCookie).not.toBe(firstCookie);
-    await connectAsManagedOwner(gateway, handle, secondCookie, "second-entry");
+    const socket = await openManagedOwnerSocket(
+      gateway,
+      handle,
+      secondCookie,
+      "second-entry",
+    );
+    try {
+      const added = await expectManagedRpcOk(socket, "schedule-add", "sched.add", {
+        name: "managed lifecycle check",
+        expression: { kind: "after", afterMs: 60_000 },
+        target: { kind: "process.spawn", prompt: "Run the lifecycle check." },
+      });
+      const scheduleId = (added.data as { schedule: { id: string } }).schedule.id;
+
+      await accountApi.projectEntitlement({
+        installationId: reservationBody.installation.installationId,
+        state: "restricted",
+        planKey: "integration-trial",
+        inferenceBudgetMicrounits: 0,
+        inferencePeriodStartsAt: Date.now(),
+        inferencePeriodEndsAt: Date.now() + 30 * 24 * 60 * 60_000,
+        storageLimitBytes: 10_000_000_000,
+        effectiveAt: Date.now(),
+        version: 2,
+      });
+
+      const restrictedRun = await expectManagedRpcOk(
+        socket,
+        "schedule-restricted-run",
+        "sched.run",
+        { id: scheduleId, mode: "force" },
+      );
+      expect(restrictedRun.data).toMatchObject({
+        ran: 0,
+        results: [{
+          status: "skipped",
+          error: "installation entitlement does not allow scheduled work",
+        }],
+      });
+      await expect(expectManagedRpc(
+        socket,
+        "schedule-restricted-add",
+        "sched.add",
+        {
+          name: "blocked schedule",
+          expression: { kind: "after", afterMs: 60_000 },
+          target: { kind: "process.spawn", prompt: "Do not run." },
+        },
+      )).resolves.toMatchObject({
+        ok: false,
+        error: { message: "installation entitlement does not allow scheduled work" },
+      });
+
+      await accountApi.projectEntitlement({
+        installationId: reservationBody.installation.installationId,
+        state: "active",
+        planKey: "integration-trial",
+        inferenceBudgetMicrounits: 5_000_000,
+        inferencePeriodStartsAt: Date.now(),
+        inferencePeriodEndsAt: Date.now() + 30 * 24 * 60 * 60_000,
+        storageLimitBytes: 10_000_000_000,
+        effectiveAt: Date.now(),
+        version: 3,
+      });
+      const restoredRun = await expectManagedRpcOk(
+        socket,
+        "schedule-restored-run",
+        "sched.run",
+        { id: scheduleId, mode: "force" },
+      );
+      expect(restoredRun.data).toMatchObject({
+        ran: 1,
+        results: [{ status: "ok" }],
+      });
+      const restoredResult = (restoredRun.data as {
+        results: Array<{ summary?: string }>;
+      }).results[0];
+      const spawnedPid = restoredResult?.summary?.replace(/^spawned process /, "");
+      if (!spawnedPid || spawnedPid === restoredResult?.summary) {
+        throw new Error("Restored schedule did not report its process");
+      }
+      await expectManagedRpcOk(socket, "schedule-process-kill", "proc.kill", {
+        pid: spawnedPid,
+        archive: false,
+      });
+      await expectManagedRpcOk(socket, "schedule-remove", "sched.remove", {
+        id: scheduleId,
+      });
+    } finally {
+      socket.close(1000, "test complete");
+    }
   });
 });
 
@@ -213,6 +304,19 @@ async function connectAsManagedOwner(
   id: string,
   runInference = false,
 ): Promise<void> {
+  const socket = await openManagedOwnerSocket(gateway, handle, cookie, id);
+  if (runInference) {
+    await runManagedInference(socket);
+  }
+  socket.close(1000, "test complete");
+}
+
+async function openManagedOwnerSocket(
+  gateway: FetchWorker,
+  handle: string,
+  cookie: string,
+  id: string,
+): Promise<HarnessWebSocket> {
   const response = await gateway.fetch(`https://${handle}.gsv.space/ws`, {
     headers: {
       Upgrade: "websocket",
@@ -232,10 +336,7 @@ async function connectAsManagedOwner(
       role: "user",
     },
   });
-  if (runInference) {
-    await runManagedInference(socket);
-  }
-  socket.close(1000, "test complete");
+  return socket;
 }
 
 async function runManagedInference(socket: HarnessWebSocket): Promise<void> {

@@ -212,6 +212,7 @@ function makeContext(options?: {
     serverVersion: "0.4.1",
     scheduleIpcCallTimeout: options?.scheduleIpcCallTimeout,
     scheduleScheduleWake: options?.scheduleScheduleWake,
+    assertScheduledWorkAllowed: vi.fn(),
   } as KernelContext;
 }
 

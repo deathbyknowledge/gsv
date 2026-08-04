@@ -5,6 +5,7 @@ import type {
   LoginHandoffVerificationResult,
   ManagedEntitlementReader,
   ManagedEntitlementService,
+  ManagedGatewayLifecycleInterface,
   ManagedGatewayProvisioningInterface,
   ManagedGatewayTelegramInterface,
   ManagedTelegramControlInterface,
@@ -25,6 +26,7 @@ import {
   EntitlementStore,
   type EntitlementProjection,
 } from "./entitlements/store";
+import { GatewayEntitlementProjector } from "./entitlements/projector";
 import { json } from "./http";
 import { ManagedInstallationHttp } from "./installations/http";
 import { ManagedInstallationService } from "./installations/service";
@@ -50,7 +52,9 @@ import { BillingWebhookProcessor } from "./billing/webhooks";
 type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & BillingProductEnvironment
 & StripeBillingEnvironment & {
   ENVIRONMENT: string;
-  GATEWAY: ManagedGatewayProvisioningInterface & ManagedGatewayTelegramInterface;
+  GATEWAY: ManagedGatewayProvisioningInterface
+    & ManagedGatewayTelegramInterface
+    & ManagedGatewayLifecycleInterface;
   MANAGED_TELEGRAM: ManagedTelegramControlInterface;
   ASSETS?: Fetcher;
   TURNSTILE_SECRET?: string;
@@ -141,7 +145,7 @@ export default class AccountService
   async projectEntitlement(
     input: EntitlementProjection,
   ): Promise<EntitlementProjection> {
-    return await new EntitlementStore(this.env.ACCOUNT_DB).project(input);
+    return await this.entitlementProjector().project(input);
   }
 
   private store(): AccountStore {
@@ -241,7 +245,7 @@ export default class AccountService
     const provider = new StripeBillingProvider(providerConfig);
     const reconciler = new BillingReconciler(
       store,
-      new EntitlementStore(this.env.ACCOUNT_DB),
+      this.entitlementProjector(),
       new BillingPlanCatalog([product.plan]),
       product.policy,
     );
@@ -261,9 +265,16 @@ export default class AccountService
     const product = billingProductConfig(this.env);
     return new BillingReconciler(
       new BillingStore(this.env.ACCOUNT_DB),
-      new EntitlementStore(this.env.ACCOUNT_DB),
+      this.entitlementProjector(),
       new BillingPlanCatalog([product.plan]),
       product.policy,
+    );
+  }
+
+  private entitlementProjector(): GatewayEntitlementProjector {
+    return new GatewayEntitlementProjector(
+      new EntitlementStore(this.env.ACCOUNT_DB),
+      this.env.GATEWAY,
     );
   }
 

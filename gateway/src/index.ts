@@ -4,6 +4,8 @@ import type {
   GatewayAdapterInterface,
 } from "./adapter-interface";
 import type {
+  ManagedEntitlementProjection,
+  ManagedGatewayLifecycleInterface,
   ManagedGatewayProvisioningInterface,
   ManagedGatewayTelegramInterface,
   LinkManagedTelegramActorInput,
@@ -319,6 +321,7 @@ export class GatewayEntrypoint
   extends WorkerEntrypoint<Env>
   implements
     GatewayAdapterInterface,
+    ManagedGatewayLifecycleInterface,
     ManagedGatewayProvisioningInterface,
     ManagedGatewayTelegramInterface
 {
@@ -335,6 +338,17 @@ export class GatewayEntrypoint
     );
     await kernel.ensureInstallationIdentity(input.installation);
     return await kernel.provisionManagedInstallation(input);
+  }
+
+  async applyManagedEntitlement(
+    input: ManagedEntitlementProjection,
+  ): Promise<ManagedEntitlementProjection> {
+    if (getStandaloneServiceInstallationId(this.env)) {
+      throw new Error("Managed entitlements are not enabled");
+    }
+    const installationId = parseInstallationId(input?.installationId);
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    return await kernel.applyManagedEntitlement(input);
   }
 
   async linkManagedTelegramActor(

@@ -43,6 +43,9 @@ import {
 import {
   KERNEL_V022_ADD_MANAGED_TELEGRAM_LINKS,
 } from "./v022_add_managed_telegram_links";
+import {
+  KERNEL_V023_ADD_MANAGED_ENTITLEMENT,
+} from "./v023_add_managed_entitlement";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -70,6 +73,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V020_ADD_INSTALLATION_IDENTITY,
   KERNEL_V021_ADD_MANAGED_IDENTITY,
   KERNEL_V022_ADD_MANAGED_TELEGRAM_LINKS,
+  KERNEL_V023_ADD_MANAGED_ENTITLEMENT,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

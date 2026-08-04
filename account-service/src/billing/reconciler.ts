@@ -1,4 +1,4 @@
-import { EntitlementStore } from "../entitlements/store";
+import type { EntitlementProjector } from "../entitlements/projector";
 import { sha256Hex } from "../security/tokens";
 import {
   deriveBillingLifecycle,
@@ -16,7 +16,7 @@ import {
 export class BillingReconciler {
   constructor(
     private readonly billing: BillingStore,
-    private readonly entitlements: EntitlementStore,
+    private readonly entitlements: EntitlementProjector,
     private readonly plans: BillingPlanCatalog,
     private readonly policy: BillingLifecyclePolicy,
   ) {}
