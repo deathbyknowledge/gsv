@@ -7,6 +7,7 @@ import type {
 import {
   hostnameForHandle,
   installationIdentity,
+  normalizeEmail,
   nowMs,
   parseBaseDomain,
   parseHandle,
@@ -366,16 +367,4 @@ function parseProvisionVersion(value: number): number {
     throw new Error("provisionVersion is invalid");
   }
   return value;
-}
-
-function normalizeEmail(value: string): string {
-  const normalized = value.trim().toLowerCase();
-  if (
-    normalized.length < 3
-    || normalized.length > 254
-    || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)
-  ) {
-    throw new Error("email is invalid");
-  }
-  return normalized;
 }

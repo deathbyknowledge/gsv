@@ -7,6 +7,8 @@
   "vars": {
     "GSV_ACCOUNT_ORIGIN": "https://accounts.gsv.space",
     "GSV_BASE_DOMAIN": "gsv.space",
+    "GSV_EMAIL_FROM": "noreply@gsv.space",
+    "GSV_RP_NAME": "GSV",
     "ENVIRONMENT": "test"
   },
   "d1_databases": [

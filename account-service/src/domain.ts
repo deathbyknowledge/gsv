@@ -35,6 +35,21 @@ export function parseOpaqueId(value: unknown, field: string): string {
   return value;
 }
 
+export function normalizeEmail(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error("email is invalid");
+  }
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized.length < 3
+    || normalized.length > 254
+    || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)
+  ) {
+    throw new Error("email is invalid");
+  }
+  return normalized;
+}
+
 export function parseHandle(value: unknown): string {
   if (typeof value !== "string" || value !== value.toLowerCase() || !HANDLE_PATTERN.test(value)) {
     throw new Error("handle is invalid");

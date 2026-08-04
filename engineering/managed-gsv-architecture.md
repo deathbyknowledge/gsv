@@ -549,6 +549,14 @@ Transactional email is part of the authentication availability path. Delivery,
 bounces, suppression, retry behavior, and provider maturity need monitoring and
 a documented fallback plan.
 
+Production signup remains closed until `gsv.space` is activated as an Email
+Sending domain for `noreply@gsv.space` and the account Worker has a
+`TURNSTILE_SECRET` Worker secret for a hostname-restricted production widget.
+The Turnstile site key belongs in the later public account UI; the secret stays
+only in the account Worker. Neither value is needed by deterministic local
+tests, and no billing-provider credential is needed before the concrete billing
+adapter in Phase 7.
+
 ## Billing and entitlements
 
 Billing belongs to the managed control plane, not the Kernel. External customer,
@@ -874,15 +882,20 @@ by this program.
 Current implementation status as of 2026-08-04: phases 0 through 3 are complete
 for the existing runtime on the managed-service branch. Kernel, Process, R2,
 ripgit, and user-owned adapter state now share one installation boundary with
-explicit standalone compatibility. Phase 4 foundation is in progress: the
-account-service D1 schema, atomic handle reservation, active-host directory,
-resumable private Kernel provisioning, managed public-setup rejection, and the
-one-time host-session handoff boundary are implemented. Platform credentials,
-real handoff issuance, account recovery, abuse controls, transactional email,
-and audit recording remain before the Phase 4 exit gate. The shared-bot peer
-ownership recheck is a Phase 6 managed Telegram gate because that global peer
-directory does not exist before then. Managed production hosting remains
-disabled while Phases 4 through 9 are incomplete.
+explicit standalone compatibility. Phase 4 is in progress. The account-service
+D1 schema, atomic handle reservation, active-host directory, resumable private
+Kernel provisioning, managed public-setup rejection, and one-time host-session
+handoff boundary are implemented. The account service now also implements
+short bootstrap sessions, host-only platform sessions, discoverable passkeys,
+hashed one-time recovery codes, complete session and credential revocation
+during recovery, recent-auth checks, transactional verification and security
+notification email, atomic handoff auditing, exact-origin mutation checks, D1
+rate limits, and fail-closed Turnstile verification. The remaining Phase 4 work
+is the authenticated public reservation and provisioning flow, clean-instance
+account-to-Kernel E2E, and production activation of email and Turnstile. The
+shared-bot peer ownership recheck is a Phase 6 managed Telegram gate because
+that global peer directory does not exist before then. Managed production
+hosting remains disabled while Phases 4 through 9 are incomplete.
 
 ### Phase 0: executable specification
 

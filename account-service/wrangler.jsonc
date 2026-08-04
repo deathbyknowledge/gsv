@@ -10,11 +10,22 @@
       "zone_name": "gsv.space"
     }
   ],
+  "triggers": {
+    "crons": ["17 * * * *"]
+  },
   "vars": {
     "GSV_ACCOUNT_ORIGIN": "https://accounts.gsv.space",
     "GSV_BASE_DOMAIN": "gsv.space",
+    "GSV_EMAIL_FROM": "noreply@gsv.space",
+    "GSV_RP_NAME": "GSV",
     "ENVIRONMENT": "production"
   },
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": ["noreply@gsv.space"]
+    }
+  ],
   "d1_databases": [
     {
       "binding": "ACCOUNT_DB",
