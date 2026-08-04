@@ -79,6 +79,8 @@ import type {
   ProcToolResultOutcome,
   ProcResetResult,
   ProcKillResult,
+  PrepareManagedInstallationDeletionInput,
+  RecoverManagedInstallationInput,
 } from "@humansandmachines/gsv/protocol";
 import { REQUEST_CANCEL_SIGNAL } from "@humansandmachines/gsv/protocol";
 import type { AdapterSurface } from "../adapter-interface";
@@ -316,6 +318,7 @@ const ABORTED_RUN_IDS_KEY = "abortedRunIds";
 const DELIVERY_NOTICE_IDS_KEY = "deliveryNoticeIds";
 const PROCESS_RESET_AT_KEY = "processResetAt";
 const PENDING_RUN_FINISHES_KEY = "pendingRunFinishes";
+const MANAGED_DELETION_OPERATION_KEY = "managedDeletionOperation";
 const IPC_TOMBSTONE_LIMIT = 256;
 const DELIVERY_NOTICE_TOMBSTONE_LIMIT = 256;
 const SHELL_SESSION_TARGET_KEY_PREFIX = "shellSessionTarget:";
@@ -907,6 +910,7 @@ export class Process extends Host<Env> {
     }
     if (
       recoveredRun
+      && !this.isManagedDeletionSuspended()
       && !this.store.getPendingHilForRun(recoveredRun.runId)
       && recoveredRun.pendingMediaMessageId === undefined
     ) {
@@ -935,6 +939,57 @@ export class Process extends Host<Env> {
       this.store.setValue("currentRun", JSON.stringify(state));
     } else {
       this.store.deleteValue("currentRun");
+    }
+  }
+
+  async suspendManagedInstallation(
+    input: PrepareManagedInstallationDeletionInput,
+  ): Promise<boolean> {
+    if (!this.isInitialized() || this.installationId !== input.installationId) {
+      throw new Error("managed deletion installation does not match Process");
+    }
+    const operationId = parseManagedLifecycleOperationId(input.operationId);
+    const releaseLifecycle = await this.acquireLifecycleTransition();
+    try {
+      const existing = this.managedDeletionOperationId();
+      if (existing) {
+        if (existing !== operationId) {
+          throw new Error("Process is suspended for a different managed deletion");
+        }
+        return false;
+      }
+      this.store.setValue(MANAGED_DELETION_OPERATION_KEY, operationId);
+      this.pauseForManagedDeletion();
+      return true;
+    } finally {
+      releaseLifecycle();
+    }
+  }
+
+  async resumeManagedInstallation(
+    input: RecoverManagedInstallationInput,
+  ): Promise<boolean> {
+    if (!this.isInitialized() || this.installationId !== input.installationId) {
+      throw new Error("managed recovery installation does not match Process");
+    }
+    const operationId = parseManagedLifecycleOperationId(input.operationId);
+    const releaseLifecycle = await this.acquireLifecycleTransition();
+    try {
+      const existing = this.managedDeletionOperationId();
+      if (!existing) return false;
+      if (existing !== operationId) {
+        throw new Error("Process is suspended for a different managed deletion");
+      }
+      this.store.deleteValue(MANAGED_DELETION_OPERATION_KEY);
+      const current = this.currentRun;
+      if (current) {
+        this.ctx.waitUntil(this.scheduleTick(current.runId));
+      } else {
+        this.promoteNextQueuedRun();
+      }
+      return true;
+    } finally {
+      releaseLifecycle();
     }
   }
 
@@ -3567,6 +3622,9 @@ export class Process extends Host<Env> {
    * Each tick resets the subrequest counter.
    */
   private async scheduleTick(runId: string): Promise<void> {
+    if (this.isManagedDeletionSuspended()) {
+      return;
+    }
     const run = this.currentRun;
     if (!run || run.runId !== runId) {
       return;
@@ -3869,6 +3927,9 @@ export class Process extends Host<Env> {
   }
 
   async tick(input: { runId: string; generation: number }): Promise<void> {
+    if (this.isManagedDeletionSuspended()) {
+      return;
+    }
     const { runId, generation } = input;
     const run = this.currentRun;
     if (
@@ -6646,7 +6707,7 @@ export class Process extends Host<Env> {
   }
 
   private claimNextQueuedRun(): QueuedMessage | null {
-    if (this.currentRun) {
+    if (this.currentRun || this.isManagedDeletionSuspended()) {
       return null;
     }
     const next = this.store.dequeue();
@@ -6680,6 +6741,46 @@ export class Process extends Host<Env> {
       })));
     return next.runId;
   }
+
+  private managedDeletionOperationId(): string | null {
+    return this.store.getValue(MANAGED_DELETION_OPERATION_KEY);
+  }
+
+  private isManagedDeletionSuspended(): boolean {
+    return this.managedDeletionOperationId() !== null;
+  }
+
+  private pauseForManagedDeletion(): void {
+    this.lifecycleEpoch += 1;
+    const reason = "Installation entered its recoverable deletion window";
+    const error = new Error(reason);
+    this.abortTaskTitleGeneration(error);
+    this.abortMediaUploads(error);
+    const activeRun = this.currentRun;
+    this.cancelPendingRequests(null, reason);
+    this.rejectCodeModeWaiters(null, reason);
+    if (activeRun) {
+      this.rememberAbortedRun(activeRun.runId);
+      this.ingestToolResults(activeRun.runId, this.store.getResults(activeRun.runId), {
+        interruptPending: reason,
+      });
+      this.emitRunFinished(activeRun, {
+        status: "aborted",
+        reason: "installation.deleting",
+        text: null,
+      });
+    }
+    this.currentRun = null;
+    this.store.clearPendingToolCalls();
+    this.store.clearPendingHil();
+  }
+}
+
+function parseManagedLifecycleOperationId(value: string): string {
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/.test(value)) {
+    throw new Error("managed deletion operation is invalid");
+  }
+  return value;
 }
 
 async function rejectProcessInstallationRoute(

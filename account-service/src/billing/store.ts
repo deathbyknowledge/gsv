@@ -77,6 +77,11 @@ export type BillingSessionOperation = {
   updatedAt: number;
 };
 
+export type RetentionDeletionCandidate = {
+  installationId: string;
+  retentionEndsAt: number;
+};
+
 type BillingAccountRow = {
   id: string;
   principal_id: string;
@@ -372,6 +377,32 @@ export class BillingStore {
        LIMIT 100`,
     ).bind(now, now).all<SubscriptionRow>();
     return rows.results.map(subscriptionFromRow);
+  }
+
+  async listRetentionDeletionDue(
+    nowValue = Date.now(),
+    limitValue = 100,
+  ): Promise<RetentionDeletionCandidate[]> {
+    const now = timestamp(nowValue, "retention timestamp");
+    const limit = listLimit(limitValue);
+    const rows = await this.db.prepare(
+      `SELECT s.installation_id, s.retention_ends_at
+       FROM subscriptions s
+       JOIN installations i ON i.id = s.installation_id
+       WHERE s.state = 'retained'
+         AND s.retention_ends_at IS NOT NULL
+         AND s.retention_ends_at <= ?
+         AND i.state = 'retained'
+       ORDER BY s.retention_ends_at, s.installation_id
+       LIMIT ?`,
+    ).bind(now, limit).all<{
+      installation_id: string;
+      retention_ends_at: number;
+    }>();
+    return rows.results.map((row) => ({
+      installationId: row.installation_id,
+      retentionEndsAt: row.retention_ends_at,
+    }));
   }
 
   async beginSessionOperation(input: {
@@ -859,6 +890,13 @@ function sessionOperationFromRow(
 function timestamp(value: number, field: string): number {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${field} is invalid`);
+  }
+  return value;
+}
+
+function listLimit(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 100) {
+    throw new Error("billing list limit is invalid");
   }
   return value;
 }

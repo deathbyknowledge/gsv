@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(23);
+    expect(KERNEL_MIGRATIONS).toHaveLength(24);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -124,6 +124,10 @@ describe("kernel schema migrations", () => {
       id: 23,
       name: "add_managed_entitlement",
     });
+    expect(KERNEL_MIGRATIONS[23]).toMatchObject({
+      id: 24,
+      name: "add_managed_lifecycle",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -167,6 +171,8 @@ describe("kernel schema migrations", () => {
       "managed_login_sessions",
       "managed_telegram_link_operations",
       "managed_entitlement",
+      "managed_installation_lifecycle",
+      "managed_resource_lifecycle",
     ]);
   });
 
@@ -199,6 +205,16 @@ describe("kernel schema migrations", () => {
     expect(entitlement).toContain("record_id INTEGER PRIMARY KEY CHECK (record_id = 1)");
     expect(entitlement).toContain("installation_id TEXT NOT NULL UNIQUE");
     expect(entitlement).toContain("version INTEGER NOT NULL CHECK (version >= 1)");
+  });
+
+  it("stores a recoverable managed deletion and retry progress", () => {
+    const lifecycle = createTableStatement("managed_installation_lifecycle");
+    const resources = createTableStatement("managed_resource_lifecycle");
+    expect(lifecycle).toContain("record_id INTEGER PRIMARY KEY CHECK (record_id = 1)");
+    expect(lifecycle).toContain("state TEXT NOT NULL CHECK (state = 'deleting')");
+    expect(lifecycle).toContain("operation_id TEXT NOT NULL");
+    expect(resources).toContain("PRIMARY KEY (operation_id, resource_kind, resource_id)");
+    expect(resources).toContain("'process_suspended', 'repository_deleted'");
   });
 
   it("keeps the processes baseline on the post-profile schema", () => {

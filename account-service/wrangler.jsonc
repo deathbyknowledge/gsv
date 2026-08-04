@@ -50,6 +50,11 @@
       "binding": "MANAGED_TELEGRAM",
       "service": "gsv-managed-telegram",
       "entrypoint": "ManagedTelegramChannel"
+    },
+    {
+      "binding": "MANAGED_INFERENCE",
+      "service": "gsv-inference",
+      "entrypoint": "InferenceService"
     }
   ],
   "assets": {

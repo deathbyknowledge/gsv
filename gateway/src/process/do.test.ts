@@ -250,6 +250,54 @@ async function initProcess(pid: string, identity: ProcessIdentity, opts?: { regi
 // ---------------------------------------------------------------------------
 
 describe("Process DO — mechanical", () => {
+  it("suspends active work without dropping queued input and resumes it", async () => {
+    const pid = `mech-managed-suspend-${crypto.randomUUID()}`;
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+    await runInDurableObject(stub, (instance: Process) => {
+      const process = instance as any;
+      process.currentRun = { runId: "run-active" };
+      process.store.enqueue("run-queued-one", "queued one");
+      process.store.enqueue("run-queued-two", "queued two");
+    });
+    const input = {
+      installationId: LEGACY_STANDALONE_INSTALLATION_ID,
+      operationId: "deletion_process_test",
+      recoverableUntil: Date.now() + 60_000,
+    };
+
+    await expect(stub.suspendManagedInstallation(input)).resolves.toBe(true);
+    await expect(stub.suspendManagedInstallation(input)).resolves.toBe(false);
+    const suspended = await runInDurableObject(stub, (instance: Process) => {
+      const process = instance as any;
+      return {
+        currentRun: process.currentRun,
+        queueSize: process.store.queueSize(),
+        operationId: process.store.getValue("managedDeletionOperation"),
+      };
+    });
+    expect(suspended).toEqual({
+      currentRun: null,
+      queueSize: 2,
+      operationId: input.operationId,
+    });
+
+    await expect(stub.resumeManagedInstallation({
+      installationId: input.installationId,
+      operationId: input.operationId,
+    })).resolves.toBe(true);
+    const resumed = await runInDurableObject(stub, (instance: Process) => {
+      const process = instance as any;
+      return {
+        currentRun: process.currentRun,
+        queueSize: process.store.queueSize(),
+        operationId: process.store.getValue("managedDeletionOperation"),
+      };
+    });
+    expect(resumed.currentRun).toMatchObject({ runId: "run-queued-one" });
+    expect(resumed.queueSize).toBe(1);
+    expect(resumed.operationId).toBeNull();
+  });
+
   it("records terminal adapter delivery outcomes in process history", async () => {
     const pid = "mech-delivery-notice";
     const stub = await initProcess(pid, ROOT_IDENTITY);

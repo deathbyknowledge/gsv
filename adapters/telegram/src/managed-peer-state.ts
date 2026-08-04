@@ -20,6 +20,11 @@ export type ManagedTelegramPeerState = {
   actorName?: string;
   actorHandle?: string;
   activeRoute?: ManagedTelegramPeerRoute;
+  deletionSuspension?: {
+    installationId: string;
+    operationId: string;
+    previousRoute: ManagedTelegramPeerRoute;
+  };
   claim?: ManagedTelegramPeerClaimState;
 };
 
@@ -42,8 +47,87 @@ export function bindManagedTelegramPeerIdentity(
     ...(actorName ? { actorName } : {}),
     ...(actorHandle ? { actorHandle } : {}),
     ...(state?.activeRoute ? { activeRoute: state.activeRoute } : {}),
+    ...(state?.deletionSuspension
+      ? { deletionSuspension: state.deletionSuspension }
+      : {}),
     ...(state?.claim ? { claim: state.claim } : {}),
   };
+}
+
+export function suspendManagedTelegramInstallationRouteState(
+  state: ManagedTelegramPeerState,
+  input: { installationId: string; operationId: string },
+): { state: ManagedTelegramPeerState; suspended: boolean } {
+  const existing = state.deletionSuspension;
+  if (existing) {
+    if (
+      existing.installationId === input.installationId
+      && existing.operationId === input.operationId
+    ) {
+      return { state, suspended: true };
+    }
+    if (existing.installationId === input.installationId) {
+      throw new Error("Managed Telegram route is suspended by another deletion");
+    }
+  }
+  if (state.activeRoute?.installationId !== input.installationId) {
+    return { state, suspended: false };
+  }
+  const nextState: ManagedTelegramPeerState = {
+    ...state,
+    deletionSuspension: {
+      installationId: input.installationId,
+      operationId: input.operationId,
+      previousRoute: state.activeRoute,
+    },
+  };
+  delete nextState.activeRoute;
+  return { state: nextState, suspended: true };
+}
+
+export function recoverManagedTelegramInstallationRouteState(
+  state: ManagedTelegramPeerState,
+  input: { installationId: string; operationId: string },
+): { state: ManagedTelegramPeerState; recovered: boolean } {
+  const suspension = state.deletionSuspension;
+  if (!suspension) return { state, recovered: false };
+  if (
+    suspension.installationId !== input.installationId
+    || suspension.operationId !== input.operationId
+  ) {
+    throw new Error("Managed Telegram route suspension does not match");
+  }
+  const nextState: ManagedTelegramPeerState = {
+    ...state,
+    ...(!state.activeRoute ? { activeRoute: suspension.previousRoute } : {}),
+  };
+  delete nextState.deletionSuspension;
+  return { state: nextState, recovered: !state.activeRoute };
+}
+
+export function deleteManagedTelegramInstallationRouteState(
+  state: ManagedTelegramPeerState,
+  input: { installationId: string; operationId: string },
+): { state: ManagedTelegramPeerState; deleted: boolean } {
+  const suspension = state.deletionSuspension;
+  if (
+    suspension?.installationId === input.installationId
+    && suspension.operationId !== input.operationId
+  ) {
+    throw new Error("Managed Telegram route suspension does not match");
+  }
+  const activeMatches = state.activeRoute?.installationId === input.installationId;
+  const suspensionMatches = suspension?.installationId === input.installationId;
+  const claimMatches = state.claim?.previousRoute?.installationId === input.installationId
+    || state.claim?.activatedRoute?.installationId === input.installationId;
+  if (!activeMatches && !suspensionMatches && !claimMatches) {
+    return { state, deleted: false };
+  }
+  const nextState = { ...state };
+  if (activeMatches) delete nextState.activeRoute;
+  if (suspensionMatches) delete nextState.deletionSuspension;
+  if (claimMatches) delete nextState.claim;
+  return { state: nextState, deleted: true };
 }
 
 export function issueManagedTelegramClaim(

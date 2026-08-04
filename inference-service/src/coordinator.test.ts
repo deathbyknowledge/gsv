@@ -135,6 +135,45 @@ describe("managed inference budget coordinator", () => {
     expect(exhausted.status).toBe(429);
     await expect(exhausted.json()).resolves.toMatchObject({ code: "monthly_budget" });
   });
+
+  it("suspends active inference, blocks new work, and can recover", async () => {
+    const installationId = installation("lifecycle");
+    const stub = coordinator(installationId);
+    const active = await stub.run(
+      request(installationId, "request_before_suspend"),
+      entitlement(installationId),
+    );
+    const lifecycle = {
+      installationId,
+      operationId: "deletion_inference_test",
+      recoverableUntil: Date.now() + 60_000,
+    };
+
+    await expect(stub.suspendInstallation(lifecycle)).resolves.toEqual({ suspended: true });
+    expect((await events(active)).at(-1)).toMatchObject({
+      type: "error",
+      reason: "aborted",
+    });
+    const blocked = await stub.run(
+      request(installationId, "request_while_suspended"),
+      entitlement(installationId),
+    );
+    expect(blocked.status).toBe(409);
+    await expect(blocked.json()).resolves.toMatchObject({
+      code: "installation_suspended",
+    });
+
+    await expect(stub.recoverInstallation({
+      installationId,
+      operationId: lifecycle.operationId,
+    })).resolves.toEqual({ recovered: true });
+    const recovered = await stub.run(
+      request(installationId, "request_after_recovery"),
+      entitlement(installationId),
+    );
+    expect(recovered.status).toBe(200);
+    await events(recovered);
+  });
 });
 
 function coordinator(installationId: string): DurableObjectStub<BudgetCoordinator> {

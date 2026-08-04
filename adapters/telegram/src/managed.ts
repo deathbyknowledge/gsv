@@ -4,6 +4,8 @@ import type {
   ActivateManagedTelegramClaimResult,
   ManagedTelegramClaimInspection,
   ManagedTelegramControlInterface,
+  ManagedTelegramDataLifecycleInterface,
+  ManagedTelegramInstallationRouteLifecycleInput,
   SuspendManagedTelegramClaimInput,
   SuspendManagedTelegramClaimResult,
 } from "../../../packages/gsv/src/protocol/managed.js";
@@ -63,13 +65,25 @@ type ManagedTelegramPeerStub = {
   activateClaim(
     input: ActivateManagedTelegramClaimInput,
   ): Promise<ActivateManagedTelegramClaimResult>;
+  suspendInstallationRoute(
+    input: ManagedTelegramInstallationRouteLifecycleInput,
+  ): Promise<{ suspended: boolean }>;
+  recoverInstallationRoute(
+    input: ManagedTelegramInstallationRouteLifecycleInput,
+  ): Promise<{ recovered: boolean }>;
+  deleteInstallationRoute(
+    input: ManagedTelegramInstallationRouteLifecycleInput,
+  ): Promise<{ deleted: boolean }>;
 };
 
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
 export class ManagedTelegramChannel
   extends WorkerEntrypoint<Env>
-  implements AdapterWorkerInterface, ManagedTelegramControlInterface
+  implements
+    AdapterWorkerInterface,
+    ManagedTelegramControlInterface,
+    ManagedTelegramDataLifecycleInterface
 {
   readonly adapterId = "telegram";
 
@@ -188,6 +202,24 @@ export class ManagedTelegramChannel
     const peer = this.peerForClaim(input.claimToken);
     if (!peer) throw new Error("Managed Telegram claim is invalid");
     return await peer.activateClaim(input);
+  }
+
+  async suspendManagedTelegramInstallationRoute(
+    input: ManagedTelegramInstallationRouteLifecycleInput,
+  ): Promise<{ suspended: boolean }> {
+    return await this.peerForSurface(input.surfaceId).suspendInstallationRoute(input);
+  }
+
+  async recoverManagedTelegramInstallationRoute(
+    input: ManagedTelegramInstallationRouteLifecycleInput,
+  ): Promise<{ recovered: boolean }> {
+    return await this.peerForSurface(input.surfaceId).recoverInstallationRoute(input);
+  }
+
+  async deleteManagedTelegramInstallationRoute(
+    input: ManagedTelegramInstallationRouteLifecycleInput,
+  ): Promise<{ deleted: boolean }> {
+    return await this.peerForSurface(input.surfaceId).deleteInstallationRoute(input);
   }
 
   private peerForSurface(surfaceId: string): ManagedTelegramPeerStub {

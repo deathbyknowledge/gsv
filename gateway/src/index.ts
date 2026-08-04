@@ -5,6 +5,7 @@ import type {
 } from "./adapter-interface";
 import type {
   ManagedEntitlementProjection,
+  ManagedGatewayDataLifecycleInterface,
   ManagedGatewayLifecycleInterface,
   ManagedGatewayProvisioningInterface,
   ManagedGatewayTelegramInterface,
@@ -14,6 +15,13 @@ import type {
   ProvisionInstallationResult,
   UnlinkManagedTelegramActorInput,
   UnlinkManagedTelegramActorResult,
+  PrepareManagedInstallationDeletionInput,
+  PrepareManagedInstallationDeletionResult,
+  RecoverManagedInstallationInput,
+  RecoverManagedInstallationResult,
+  ManagedInstallationResourceInventory,
+  DeleteManagedInstallationResourceBatchInput,
+  DeleteManagedInstallationResourceBatchResult,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame } from "./protocol/frames";
 import { buildOAuthClientMetadata } from "./oauth-http";
@@ -321,6 +329,7 @@ export class GatewayEntrypoint
   extends WorkerEntrypoint<Env>
   implements
     GatewayAdapterInterface,
+    ManagedGatewayDataLifecycleInterface,
     ManagedGatewayLifecycleInterface,
     ManagedGatewayProvisioningInterface,
     ManagedGatewayTelegramInterface
@@ -349,6 +358,48 @@ export class GatewayEntrypoint
     const installationId = parseInstallationId(input?.installationId);
     const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
     return await kernel.applyManagedEntitlement(input);
+  }
+
+  async prepareManagedInstallationDeletion(
+    input: PrepareManagedInstallationDeletionInput,
+  ): Promise<PrepareManagedInstallationDeletionResult> {
+    this.assertManagedDataLifecycle();
+    const installationId = parseInstallationId(input?.installationId);
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    return await kernel.prepareManagedInstallationDeletion(input);
+  }
+
+  async recoverManagedInstallation(
+    input: RecoverManagedInstallationInput,
+  ): Promise<RecoverManagedInstallationResult> {
+    this.assertManagedDataLifecycle();
+    const installationId = parseInstallationId(input?.installationId);
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    return await kernel.recoverManagedInstallation(input);
+  }
+
+  async inspectManagedInstallationResources(
+    installationIdValue: string,
+  ): Promise<ManagedInstallationResourceInventory> {
+    this.assertManagedDataLifecycle();
+    const installationId = parseInstallationId(installationIdValue);
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    return await kernel.inspectManagedInstallationResources(installationId);
+  }
+
+  async deleteManagedInstallationResourceBatch(
+    input: DeleteManagedInstallationResourceBatchInput,
+  ): Promise<DeleteManagedInstallationResourceBatchResult> {
+    this.assertManagedDataLifecycle();
+    const installationId = parseInstallationId(input?.installationId);
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
+    return await kernel.deleteManagedInstallationResourceBatch(input);
+  }
+
+  private assertManagedDataLifecycle(): void {
+    if (getStandaloneServiceInstallationId(this.env)) {
+      throw new Error("Managed installation lifecycle is not enabled");
+    }
   }
 
   async linkManagedTelegramActor(

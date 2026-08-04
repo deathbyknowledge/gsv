@@ -269,6 +269,24 @@ export class BudgetLedger {
     );
   }
 
+  settleAborted(attemptId: string, now: number): BudgetSettlement {
+    return this.settle(attemptId, "aborted", 0, {
+      cacheHitInputTokens: 0,
+      cacheMissInputTokens: 0,
+      outputTokens: 0,
+    }, now);
+  }
+
+  settleAllActiveAmbiguous(now: number): BudgetSettlement[] {
+    const attempts = this.storage.sql.exec<{ attempt_id: string }>(
+      `SELECT attempt_id
+       FROM provider_attempts
+       WHERE state IN ('admitted', 'running')
+       ORDER BY deadline_at, attempt_id`,
+    ).toArray();
+    return attempts.map((attempt) => this.settleAmbiguous(attempt.attempt_id, now));
+  }
+
   settleExpired(now: number): BudgetSettlement[] {
     const attempts = this.storage.sql.exec<{ attempt_id: string }>(
       `SELECT attempt_id

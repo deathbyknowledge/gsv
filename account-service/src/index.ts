@@ -6,9 +6,12 @@ import type {
   ManagedEntitlementReader,
   ManagedEntitlementService,
   ManagedGatewayLifecycleInterface,
+  ManagedGatewayDataLifecycleInterface,
   ManagedGatewayProvisioningInterface,
   ManagedGatewayTelegramInterface,
   ManagedTelegramControlInterface,
+  ManagedTelegramDataLifecycleInterface,
+  ManagedInferenceDataLifecycleInterface,
 } from "@humansandmachines/gsv/protocol";
 import { provisionReservedInstallation, type ProvisionReservedInstallationInput } from "./provisioning";
 import { AccountStore, type InstallationReservation } from "./store";
@@ -30,6 +33,9 @@ import { GatewayEntitlementProjector } from "./entitlements/projector";
 import { json } from "./http";
 import { ManagedInstallationHttp } from "./installations/http";
 import { ManagedInstallationService } from "./installations/service";
+import { InstallationLifecycleHttp } from "./lifecycle/http";
+import { InstallationLifecycleService } from "./lifecycle/service";
+import { InstallationLifecycleStore } from "./lifecycle/store";
 import { ManagedTelegramLinkHttp } from "./telegram/http";
 import { ManagedTelegramLinkService } from "./telegram/service";
 import { ManagedTelegramLinkOperationStore } from "./telegram/store";
@@ -54,8 +60,11 @@ type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & BillingProductEnvironment
   ENVIRONMENT: string;
   GATEWAY: ManagedGatewayProvisioningInterface
     & ManagedGatewayTelegramInterface
-    & ManagedGatewayLifecycleInterface;
-  MANAGED_TELEGRAM: ManagedTelegramControlInterface;
+    & ManagedGatewayLifecycleInterface
+    & ManagedGatewayDataLifecycleInterface;
+  MANAGED_TELEGRAM: ManagedTelegramControlInterface
+    & ManagedTelegramDataLifecycleInterface;
+  MANAGED_INFERENCE: ManagedInferenceDataLifecycleInterface;
   ASSETS?: Fetcher;
   TURNSTILE_SECRET?: string;
   GSV_TURNSTILE_SITE_KEY?: string;
@@ -92,6 +101,8 @@ export default class AccountService
     if (authResponse) return authResponse;
     const installationResponse = await this.installationHttp().handle(request);
     if (installationResponse) return installationResponse;
+    const lifecycleResponse = await this.lifecycleHttp().handle(request);
+    if (lifecycleResponse) return lifecycleResponse;
     const telegramResponse = await this.telegramHttp().handle(request);
     if (telegramResponse) return telegramResponse;
     if (isBillingPath(url.pathname)) {
@@ -109,11 +120,22 @@ export default class AccountService
   }
 
   async scheduled(): Promise<void> {
+    const now = Date.now();
     await Promise.all([
       this.abuseProtection().deleteExpiredBuckets(),
       this.store().expireReservations(),
-      this.billingReconciler().advanceDue(),
     ]);
+    await this.billingReconciler().advanceDue(now);
+    const lifecycle = this.lifecycleService();
+    for (const candidate of await new BillingStore(this.env.ACCOUNT_DB)
+      .listRetentionDeletionDue(now)) {
+      await lifecycle.startRetentionDeletion({
+        installationId: candidate.installationId,
+        retentionEndsAt: candidate.retentionEndsAt,
+        now,
+      });
+    }
+    await lifecycle.advanceActionable(now);
   }
 
   async resolveHostname(hostname: string): Promise<InstallationDirectoryResult> {
@@ -210,6 +232,28 @@ export default class AccountService
       ),
       this.abuseProtection(accountOrigin),
       accountOrigin,
+    );
+  }
+
+  private lifecycleHttp(): InstallationLifecycleHttp {
+    const accountOrigin = parseAccountOrigin(this.env.GSV_ACCOUNT_ORIGIN);
+    return new InstallationLifecycleHttp(
+      this.lifecycleService(accountOrigin),
+      this.abuseProtection(accountOrigin),
+      accountOrigin,
+    );
+  }
+
+  private lifecycleService(
+    accountOrigin = parseAccountOrigin(this.env.GSV_ACCOUNT_ORIGIN),
+  ): InstallationLifecycleService {
+    return new InstallationLifecycleService(
+      new InstallationLifecycleStore(this.env.ACCOUNT_DB),
+      this.authService(accountOrigin),
+      this.env.GATEWAY,
+      this.env.MANAGED_INFERENCE,
+      this.env.MANAGED_TELEGRAM,
+      new ManagedTelegramLinkOperationStore(this.env.ACCOUNT_DB),
     );
   }
 

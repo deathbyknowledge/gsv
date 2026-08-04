@@ -4,6 +4,7 @@ import type {
   ActivateManagedTelegramClaimResult,
   ManagedTelegramClaimInspection,
   ManagedTelegramPeerRoute,
+  ManagedTelegramInstallationRouteLifecycleInput,
   SuspendManagedTelegramClaimInput,
   SuspendManagedTelegramClaimResult,
 } from "../../../packages/gsv/src/protocol/managed.js";
@@ -41,6 +42,9 @@ import {
   bindManagedTelegramPeerIdentity,
   issueManagedTelegramClaim,
   publicManagedTelegramClaim,
+  deleteManagedTelegramInstallationRouteState,
+  recoverManagedTelegramInstallationRouteState,
+  suspendManagedTelegramInstallationRouteState,
   suspendManagedTelegramClaimState,
   type ManagedTelegramPeerState,
 } from "./managed-peer-state";
@@ -261,6 +265,48 @@ export class ManagedTelegramPeer extends DurableObject<ManagedTelegramPeerEnv> {
       }
     }
     return result;
+  }
+
+  async suspendInstallationRoute(
+    input: ManagedTelegramInstallationRouteLifecycleInput,
+  ): Promise<{ suspended: boolean }> {
+    const parsed = parseInstallationRouteLifecycleInput(input);
+    return await this.ctx.storage.transaction(async (txn) => {
+      const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
+      if (!state) return { suspended: false };
+      assertLifecyclePeer(state, parsed);
+      const result = suspendManagedTelegramInstallationRouteState(state, parsed);
+      if (result.state !== state) await txn.put(STATE_KEY, result.state);
+      return { suspended: result.suspended };
+    });
+  }
+
+  async recoverInstallationRoute(
+    input: ManagedTelegramInstallationRouteLifecycleInput,
+  ): Promise<{ recovered: boolean }> {
+    const parsed = parseInstallationRouteLifecycleInput(input);
+    return await this.ctx.storage.transaction(async (txn) => {
+      const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
+      if (!state) return { recovered: false };
+      assertLifecyclePeer(state, parsed);
+      const result = recoverManagedTelegramInstallationRouteState(state, parsed);
+      if (result.state !== state) await txn.put(STATE_KEY, result.state);
+      return { recovered: result.recovered };
+    });
+  }
+
+  async deleteInstallationRoute(
+    input: ManagedTelegramInstallationRouteLifecycleInput,
+  ): Promise<{ deleted: boolean }> {
+    const parsed = parseInstallationRouteLifecycleInput(input);
+    return await this.ctx.storage.transaction(async (txn) => {
+      const state = await txn.get<ManagedTelegramPeerState>(STATE_KEY);
+      if (!state) return { deleted: false };
+      assertLifecyclePeer(state, parsed);
+      const result = deleteManagedTelegramInstallationRouteState(state, parsed);
+      if (result.state !== state) await txn.put(STATE_KEY, result.state);
+      return { deleted: result.deleted };
+    });
   }
 
   async alarm(): Promise<void> {
@@ -620,6 +666,28 @@ function parseOpaqueId(value: unknown, field: string): string {
     throw new Error(`${field} is invalid`);
   }
   return value;
+}
+
+function parseInstallationRouteLifecycleInput(
+  input: ManagedTelegramInstallationRouteLifecycleInput,
+): ManagedTelegramInstallationRouteLifecycleInput {
+  return {
+    installationId: parseManagedInstallation({
+      installationId: input?.installationId,
+    }).installationId,
+    operationId: parseOpaqueId(input?.operationId, "operationId"),
+    actorId: parseOpaqueId(input?.actorId, "actorId"),
+    surfaceId: parseOpaqueId(input?.surfaceId, "surfaceId"),
+  };
+}
+
+function assertLifecyclePeer(
+  state: ManagedTelegramPeerState,
+  input: ManagedTelegramInstallationRouteLifecycleInput,
+): void {
+  if (state.actorId !== input.actorId || state.surfaceId !== input.surfaceId) {
+    throw new Error("Managed Telegram lifecycle peer identity mismatch");
+  }
 }
 
 function parseManagedInstallation(

@@ -1011,7 +1011,7 @@ add interfaces or test doubles early, but it must not depend on an unproven
 isolation boundary. Protected prompt and seeded context content are not changed
 by this program.
 
-Current implementation status as of 2026-08-04: phases 0 through 4 are complete
+Current implementation status as of 2026-08-05: phases 0 through 4 are complete
 for the existing runtime on the managed-service branch. Kernel, Process, R2,
 ripgit, and user-owned adapter state now share one installation boundary with
 explicit standalone compatibility. The account-service
@@ -1069,8 +1069,12 @@ lifecycle routes are wired through the account service, and the dedicated
 account UI never treats a browser return as payment proof. The adapter can run
 in either direct-merchant or Stripe Managed Payments mode without changing GSV's
 provider-neutral contracts. No merchant credential is committed or wired, and
-the explicit merchant mode remains a production release choice. Notification,
-export, and bounded deletion work remains incomplete.
+the explicit merchant mode remains a production release choice. Recoverable
+explicit deletion, retention expiry, cross-service suspension and recovery,
+exact resource inventory, and bounded teardown across Process, ripgit, R2,
+inference, Telegram, Kernel, and Account state are implemented and covered by a
+real multi-Worker lifecycle flow. Notification and export work remain
+incomplete.
 
 ### Phase 0: executable specification
 
@@ -1319,4 +1323,4 @@ No product-content telemetry is required to compute these measures.
   month, and no permanent free hosted tier.
 - 2026-08-04: Use Stripe hosted Checkout and customer portal as the first
   replaceable billing adapter; require an explicit direct-versus-Managed-
-  Payments merchant mode instead of embedding that choice in entitlements.
+Payments merchant mode instead of embedding that choice in entitlements.

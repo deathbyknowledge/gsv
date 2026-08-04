@@ -3,8 +3,11 @@ import type {
   ManagedEntitlementReader,
   ManagedInferenceAbort,
   ManagedInferenceAbortResult,
+  ManagedInferenceDataLifecycleInterface,
   ManagedInferenceRequest,
   ManagedInferenceService,
+  PrepareManagedInstallationDeletionInput,
+  RecoverManagedInstallationInput,
 } from "@humansandmachines/gsv/protocol";
 import { BudgetCoordinator, inferenceErrorResponse } from "./coordinator";
 import {
@@ -23,9 +26,9 @@ type InferenceServiceEnv = ProviderEnvironment & {
   MANAGED_MAX_ATTEMPTS?: string;
 };
 
-export default class InferenceService
+export class InferenceService
   extends WorkerEntrypoint<InferenceServiceEnv>
-  implements ManagedInferenceService
+  implements ManagedInferenceService, ManagedInferenceDataLifecycleInterface
 {
   async fetch(): Promise<Response> {
     return new Response("Not Found", { status: 404 });
@@ -49,8 +52,28 @@ export default class InferenceService
     return await this.coordinator(input.installationId).abort(input.logicalRequestId);
   }
 
+  async suspendManagedInferenceInstallation(
+    input: PrepareManagedInstallationDeletionInput,
+  ): Promise<{ suspended: true }> {
+    return await this.coordinator(input.installationId).suspendInstallation(input);
+  }
+
+  async recoverManagedInferenceInstallation(
+    input: RecoverManagedInstallationInput,
+  ): Promise<{ recovered: boolean }> {
+    return await this.coordinator(input.installationId).recoverInstallation(input);
+  }
+
+  async deleteManagedInferenceInstallation(
+    input: RecoverManagedInstallationInput,
+  ): Promise<{ deleted: true }> {
+    return await this.coordinator(input.installationId).deleteInstallation(input);
+  }
+
   private coordinator(installationId: string): DurableObjectStub<BudgetCoordinator> {
     const id = this.env.BUDGET_COORDINATOR.idFromName(installationId);
     return this.env.BUDGET_COORDINATOR.get(id);
   }
 }
+
+export default InferenceService;

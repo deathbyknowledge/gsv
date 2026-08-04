@@ -76,6 +76,25 @@ export class ManagedTelegramLinkOperationStore {
     );
   }
 
+  async listInstallationPeers(
+    installationIdValue: string,
+  ): Promise<Array<{ actorId: string; surfaceId: string }>> {
+    const installationId = parseOpaqueId(installationIdValue, "installationId");
+    const rows = await this.db.prepare(
+      `SELECT DISTINCT actor_id, surface_id
+       FROM managed_telegram_link_operations
+       WHERE target_installation_id = ? OR previous_installation_id = ?
+       ORDER BY actor_id, surface_id`,
+    ).bind(installationId, installationId).all<{
+      actor_id: string;
+      surface_id: string;
+    }>();
+    return rows.results.map((row) => ({
+      actorId: row.actor_id,
+      surfaceId: row.surface_id,
+    }));
+  }
+
   async begin(input: {
     operationId: string;
     claimTokenHash: string;

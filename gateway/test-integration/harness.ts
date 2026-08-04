@@ -65,9 +65,10 @@ function integrationGatewayConfig(options: {
             binding: "INSTALLATION_DIRECTORY",
             service: options.directoryService ?? DEPENDENCY_WORKER,
           }, ...(options.managedInferenceService
-            ? [{
+              ? [{
                 binding: "MANAGED_INFERENCE",
                 service: options.managedInferenceService,
+                entrypoint: "InferenceService",
               }]
             : [])]
         : []),
@@ -106,6 +107,7 @@ function integrationInferenceConfig(accountService: string): Unstable_RawConfig 
 
 function integrationAccountConfig(
   gatewayService: string,
+  managedInferenceService: string,
   managedTelegramService?: string,
 ): Unstable_RawConfig {
   const config = unstable_readConfig(
@@ -134,13 +136,18 @@ function integrationAccountConfig(
         service: gatewayService,
         entrypoint: "GatewayEntrypoint",
       },
-      ...(managedTelegramService
-        ? [{
-            binding: "MANAGED_TELEGRAM",
-            service: managedTelegramService,
-            entrypoint: "ManagedTelegramChannel",
-          }]
-        : []),
+      {
+        binding: "MANAGED_INFERENCE",
+        service: managedInferenceService,
+        entrypoint: "InferenceService",
+      },
+      {
+        binding: "MANAGED_TELEGRAM",
+        service: managedTelegramService ?? DEPENDENCY_WORKER,
+        ...(managedTelegramService
+          ? { entrypoint: "ManagedTelegramChannel" }
+          : {}),
+      },
     ],
   };
 }
@@ -261,7 +268,7 @@ export function createManagedAccountTestHarness(): TestHarness {
         config: integrationDependencyConfig("gsv-managed-account"),
       },
       {
-        config: integrationAccountConfig("gsv-managed-account"),
+        config: integrationAccountConfig("gsv-managed-account", INFERENCE_WORKER),
       },
       {
         config: integrationInferenceConfig(ACCOUNT_WORKER),
@@ -288,7 +295,11 @@ export function createManagedTelegramTestHarness(): TestHarness {
         config: integrationDependencyConfig(gatewayService, TELEGRAM_WORKER),
       },
       {
-        config: integrationAccountConfig(gatewayService, TELEGRAM_WORKER),
+        config: integrationAccountConfig(
+          gatewayService,
+          INFERENCE_WORKER,
+          TELEGRAM_WORKER,
+        ),
       },
       {
         config: integrationInferenceConfig(ACCOUNT_WORKER),

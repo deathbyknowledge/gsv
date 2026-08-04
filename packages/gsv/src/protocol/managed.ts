@@ -178,6 +178,25 @@ export interface ManagedTelegramControlInterface {
   ): Promise<ActivateManagedTelegramClaimResult>;
 }
 
+export type ManagedTelegramInstallationRouteLifecycleInput = {
+  installationId: string;
+  operationId: string;
+  actorId: string;
+  surfaceId: string;
+};
+
+export interface ManagedTelegramDataLifecycleInterface {
+  suspendManagedTelegramInstallationRoute(
+    input: ManagedTelegramInstallationRouteLifecycleInput,
+  ): Promise<{ suspended: boolean }>;
+  recoverManagedTelegramInstallationRoute(
+    input: ManagedTelegramInstallationRouteLifecycleInput,
+  ): Promise<{ recovered: boolean }>;
+  deleteManagedTelegramInstallationRoute(
+    input: ManagedTelegramInstallationRouteLifecycleInput,
+  ): Promise<{ deleted: boolean }>;
+}
+
 export type ManagedEntitlementState =
   | "trialing"
   | "active"
@@ -215,6 +234,84 @@ export interface ManagedGatewayLifecycleInterface {
     input: ManagedEntitlementProjection,
   ): Promise<ManagedEntitlementProjection>;
 }
+
+export interface ManagedGatewayDataLifecycleInterface {
+  prepareManagedInstallationDeletion(
+    input: PrepareManagedInstallationDeletionInput,
+  ): Promise<PrepareManagedInstallationDeletionResult>;
+  recoverManagedInstallation(
+    input: RecoverManagedInstallationInput,
+  ): Promise<RecoverManagedInstallationResult>;
+  inspectManagedInstallationResources(
+    installationId: string,
+  ): Promise<ManagedInstallationResourceInventory>;
+  deleteManagedInstallationResourceBatch(
+    input: DeleteManagedInstallationResourceBatchInput,
+  ): Promise<DeleteManagedInstallationResourceBatchResult>;
+}
+
+export type PrepareManagedInstallationDeletionInput = {
+  installationId: string;
+  operationId: string;
+  recoverableUntil: number;
+};
+
+export type PrepareManagedInstallationDeletionResult = {
+  installationId: string;
+  operationId: string;
+  recoverableUntil: number;
+  prepared: boolean;
+  suspendedProcesses: number;
+};
+
+export type RecoverManagedInstallationInput = {
+  installationId: string;
+  operationId: string;
+};
+
+export type RecoverManagedInstallationResult = {
+  installationId: string;
+  operationId: string;
+  recovered: true;
+  resumedProcesses: number;
+};
+
+export type ManagedInstallationResourceInventory = {
+  version: 1;
+  installationId: string;
+  processIds: string[];
+  repositories: Array<{ owner: string; repo: string }>;
+  storage: {
+    objectCount: number;
+    bytes: number;
+  };
+};
+
+export type DeleteManagedInstallationResourceBatchInput = {
+  installationId: string;
+  operationId: string;
+  recoverableUntil: number;
+  limit?: number;
+};
+
+export type ManagedInstallationDeletionStage =
+  | "processes"
+  | "repositories"
+  | "storage"
+  | "kernel"
+  | "complete";
+
+export type DeleteManagedInstallationResourceBatchResult = {
+  installationId: string;
+  operationId: string;
+  stage: ManagedInstallationDeletionStage;
+  deleted: {
+    processes: number;
+    repositories: number;
+    storageObjects: number;
+  };
+  complete: boolean;
+};
 
 export type ManagedInferenceActor = {
   localUid: number;
@@ -276,6 +373,18 @@ export type ManagedInferenceStreamEvent =
       reason: "aborted" | "error";
       error: AiAssistantMessage;
     };
+
+export interface ManagedInferenceDataLifecycleInterface {
+  suspendManagedInferenceInstallation(
+    input: PrepareManagedInstallationDeletionInput,
+  ): Promise<{ suspended: true }>;
+  recoverManagedInferenceInstallation(
+    input: RecoverManagedInstallationInput,
+  ): Promise<{ recovered: boolean }>;
+  deleteManagedInferenceInstallation(
+    input: RecoverManagedInstallationInput,
+  ): Promise<{ deleted: true }>;
+}
 
 export interface ManagedInferenceService {
   run(input: ManagedInferenceRequest): Promise<Response>;

@@ -29,6 +29,13 @@ import type {
   LinkManagedTelegramActorInput,
   LinkManagedTelegramActorResult,
   ManagedEntitlementProjection,
+  ManagedInstallationResourceInventory,
+  PrepareManagedInstallationDeletionInput,
+  PrepareManagedInstallationDeletionResult,
+  RecoverManagedInstallationInput,
+  RecoverManagedInstallationResult,
+  DeleteManagedInstallationResourceBatchInput,
+  DeleteManagedInstallationResourceBatchResult,
   ProvisionInstallationInput,
   ProvisionInstallationResult,
   ScheduleRecord,
@@ -81,7 +88,7 @@ import { dispatch, type DispatchDeps } from "./dispatch";
 import { bindStreamToAbort } from "../shared/streams";
 import { raceWithAbort } from "../shared/abort";
 import type { KernelContext } from "./context";
-import { sendFrameToProcess } from "../shared/utils";
+import { getProcessByPid, sendFrameToProcess } from "../shared/utils";
 import { stableOpaqueId } from "../shared/stable-id";
 import {
   MAX_MESSAGE_MEDIA_ITEMS,
@@ -137,12 +144,17 @@ import { readManagedSessionCookie } from "../managed/session-cookie";
 import { ManagedTelegramLinkStore } from "./managed-telegram-links";
 import { ManagedEntitlementStore } from "./managed-entitlement-store";
 import { registerRepo } from "./repo-registry";
+import { listInstallationRepos } from "./repo-registry";
+import { ManagedLifecycleStore } from "./managed-lifecycle-store";
+import { RipgitClient } from "../fs/ripgit/client";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
 const MAX_ONE_SHOT_SCHEDULE_DELIVERY_ATTEMPTS = 10;
 const MAX_ADAPTER_SIGNAL_DELIVERY_ATTEMPTS = 10;
+const DEFAULT_MANAGED_RESOURCE_BATCH_LIMIT = 25;
+const MAX_MANAGED_RESOURCE_BATCH_LIMIT = 100;
 
 type AdapterSignalDeliveryOutcome =
   | { state: "delivered" }
@@ -234,6 +246,7 @@ export class Kernel extends Host<Env> {
   private readonly managedProvisioning: ManagedProvisioningStore;
   private readonly managedTelegramLinks: ManagedTelegramLinkStore;
   private readonly managedEntitlement: ManagedEntitlementStore;
+  private readonly managedLifecycle: ManagedLifecycleStore;
   private readonly caps: CapabilityStore;
   private readonly config: ConfigStore;
   private readonly devices: DeviceRegistry;
@@ -263,6 +276,10 @@ export class Kernel extends Host<Env> {
     string,
     { expiresAt: number; reason: string }
   >();
+  private managedResourcesDeleted: {
+    operationId: string;
+    recoverableUntil: number;
+  } | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -276,6 +293,10 @@ export class Kernel extends Host<Env> {
     this.installationIdentity = new InstallationIdentityStore(sql, durableObjectName);
     this.managedEntitlement = new ManagedEntitlementStore(
       sql,
+      this.installationIdentity.installationId,
+    );
+    this.managedLifecycle = new ManagedLifecycleStore(
+      ctx.storage,
       this.installationIdentity.installationId,
     );
     this.installationStorage = createInstallationStorage(
@@ -380,6 +401,7 @@ export class Kernel extends Host<Env> {
     if (!isManagedKernelEnv(this.env)) {
       throw new Error("Managed provisioning is not enabled");
     }
+    this.assertManagedWorkAllowed();
     const identity = await this.installationIdentity.ensure(input.installation);
     if (identity.installationId !== input.installation.installationId) {
       throw new Error("Provisioning installation identity mismatch");
@@ -402,10 +424,197 @@ export class Kernel extends Host<Env> {
     });
   }
 
+  async prepareManagedInstallationDeletion(
+    input: PrepareManagedInstallationDeletionInput,
+  ): Promise<PrepareManagedInstallationDeletionResult> {
+    this.assertManagedLifecycleEnabled();
+    if (!this.managedLifecycle.get() && input.recoverableUntil <= Date.now()) {
+      throw new Error("managed deletion recovery deadline is invalid");
+    }
+    const record = this.managedLifecycle.begin(input);
+    await this.stopManagedInstallationActivity();
+
+    const completed = this.managedLifecycle.completedResources(
+      record.operationId,
+      "process_suspended",
+    );
+    const pending = this.procs.list()
+      .map((process) => process.processId)
+      .sort()
+      .filter((processId) => !completed.has(processId))
+      .slice(0, DEFAULT_MANAGED_RESOURCE_BATCH_LIMIT);
+    const suspended = await Promise.all(pending.map(async (processId) => {
+      const process = await getProcessByPid(record.installationId, processId);
+      await process.suspendManagedInstallation(input);
+      return processId;
+    }));
+    for (const processId of suspended) {
+      this.managedLifecycle.markResource(
+        record.operationId,
+        "process_suspended",
+        processId,
+      );
+    }
+    const allProcesses = this.procs.list().map((process) => process.processId);
+    const preparedProcesses = this.managedLifecycle.completedResources(
+      record.operationId,
+      "process_suspended",
+    );
+    return {
+      installationId: record.installationId,
+      operationId: record.operationId,
+      recoverableUntil: record.recoverableUntil,
+      prepared: allProcesses.every((processId) => preparedProcesses.has(processId)),
+      suspendedProcesses: suspended.length,
+    };
+  }
+
+  async recoverManagedInstallation(
+    input: RecoverManagedInstallationInput,
+  ): Promise<RecoverManagedInstallationResult> {
+    this.assertManagedLifecycleEnabled();
+    this.assertManagedLifecycleInstallation(input.installationId);
+    const record = this.managedLifecycle.requireDeletion(input.operationId);
+    if (Date.now() >= record.recoverableUntil) {
+      throw new Error("managed deletion recovery window has ended");
+    }
+    let resumedProcesses = 0;
+    for (const processRecord of this.procs.list()) {
+      const process = await getProcessByPid(record.installationId, processRecord.processId);
+      if (await process.resumeManagedInstallation(input)) {
+        resumedProcesses += 1;
+      }
+    }
+    this.managedLifecycle.recover(input.operationId);
+    await this.reconcileManagedScheduleWakes();
+    return {
+      installationId: record.installationId,
+      operationId: record.operationId,
+      recovered: true,
+      resumedProcesses,
+    };
+  }
+
+  async inspectManagedInstallationResources(
+    installationId: string,
+  ): Promise<ManagedInstallationResourceInventory> {
+    this.assertManagedLifecycleEnabled();
+    this.assertManagedLifecycleInstallation(installationId);
+    const storage = await inspectInstallationStorage(this.installationStorage);
+    return {
+      version: 1,
+      installationId,
+      processIds: this.procs.list()
+        .map((process) => process.processId)
+        .sort(),
+      repositories: listInstallationRepos(this.config, this.auth),
+      storage,
+    };
+  }
+
+  async deleteManagedInstallationResourceBatch(
+    input: DeleteManagedInstallationResourceBatchInput,
+  ): Promise<DeleteManagedInstallationResourceBatchResult> {
+    this.assertManagedLifecycleMode();
+    this.assertManagedLifecycleInstallation(input.installationId);
+    if (this.managedResourcesDeleted) {
+      if (
+        this.managedResourcesDeleted.operationId !== input.operationId
+        || this.managedResourcesDeleted.recoverableUntil !== input.recoverableUntil
+      ) {
+        throw new Error("managed deletion operation is unavailable");
+      }
+      return this.managedDeletionBatchResult(
+        input,
+        "complete",
+        { processes: 0, repositories: 0, storageObjects: 0 },
+        true,
+      );
+    }
+    const record = this.managedLifecycle.get() ?? this.managedLifecycle.begin({
+      installationId: input.installationId,
+      operationId: input.operationId,
+      recoverableUntil: input.recoverableUntil,
+    });
+    if (record.operationId !== input.operationId) {
+      throw new Error("managed deletion operation is unavailable");
+    }
+    if (Date.now() < record.recoverableUntil) {
+      throw new Error("managed deletion is still recoverable");
+    }
+    await this.stopManagedInstallationActivity();
+    const limit = managedResourceBatchLimit(input.limit);
+    const deleted = { processes: 0, repositories: 0, storageObjects: 0 };
+
+    const processes = this.procs.list().slice(0, limit);
+    if (processes.length > 0) {
+      for (const process of processes) {
+        const response = await sendFrameToProcess(record.installationId, process.processId, {
+          type: "req",
+          id: crypto.randomUUID(),
+          call: "proc.kill",
+          args: { pid: process.processId, archive: false },
+        });
+        if (
+          !response
+          || response.type !== "res"
+          || !response.ok
+          || (response.data as { ok?: unknown } | undefined)?.ok !== true
+        ) {
+          throw new Error("managed Process deletion did not complete");
+        }
+        this.procs.kill(process.processId);
+        deleted.processes += 1;
+      }
+      return this.managedDeletionBatchResult(record, "processes", deleted, false);
+    }
+
+    const deletedRepos = this.managedLifecycle.completedResources(
+      record.operationId,
+      "repository_deleted",
+    );
+    const repositories = listInstallationRepos(this.config, this.auth)
+      .filter((repo) => !deletedRepos.has(`${repo.owner}/${repo.repo}`))
+      .slice(0, limit);
+    if (repositories.length > 0) {
+      if (!this.installationEnv.RIPGIT) {
+        throw new Error("RIPGIT binding is required for managed deletion");
+      }
+      const ripgit = new RipgitClient(this.installationEnv.RIPGIT);
+      for (const repo of repositories) {
+        await ripgit.deleteRepository(repo, "root");
+        this.managedLifecycle.markResource(
+          record.operationId,
+          "repository_deleted",
+          `${repo.owner}/${repo.repo}`,
+        );
+        deleted.repositories += 1;
+      }
+      return this.managedDeletionBatchResult(record, "repositories", deleted, false);
+    }
+
+    const objects = await this.installationStorage.list({ limit });
+    if (objects.objects.length > 0) {
+      await this.installationStorage.delete(objects.objects.map((object) => object.key));
+      deleted.storageObjects = objects.objects.length;
+      return this.managedDeletionBatchResult(record, "storage", deleted, false);
+    }
+
+    await this.stopManagedInstallationActivity();
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.managedResourcesDeleted = {
+      operationId: record.operationId,
+      recoverableUntil: record.recoverableUntil,
+    };
+    return this.managedDeletionBatchResult(record, "complete", deleted, true);
+  }
+
   async linkManagedTelegramActor(
     input: LinkManagedTelegramActorInput,
   ): Promise<LinkManagedTelegramActorResult> {
     this.assertManagedTelegramInstallation(input.installationId);
+    this.assertManagedWorkAllowed();
     return this.managedTelegramLinks.link(input);
   }
 
@@ -424,6 +633,7 @@ export class Kernel extends Host<Env> {
     if (!isManagedKernelEnv(this.env)) {
       throw new Error("Managed sessions are not enabled");
     }
+    this.assertManagedWorkAllowed();
     return await this.managedProvisioning.createLoginSession(input);
   }
 
@@ -440,6 +650,71 @@ export class Kernel extends Host<Env> {
     if (!identity || identity.installationId !== installationId) {
       throw new Error("Managed Telegram installation identity mismatch");
     }
+  }
+
+  private assertManagedLifecycleEnabled(): void {
+    this.assertManagedLifecycleMode();
+    if (this.managedResourcesDeleted) {
+      throw new Error("Managed installation resources were deleted");
+    }
+  }
+
+  private assertManagedLifecycleMode(): void {
+    if (!isManagedKernelEnv(this.env)) {
+      throw new Error("Managed installation lifecycle is not enabled");
+    }
+  }
+
+  private assertManagedLifecycleInstallation(installationId: string): void {
+    if (installationId !== this.installationIdentity.installationId) {
+      throw new Error("managed lifecycle installation does not match Kernel");
+    }
+  }
+
+  private isManagedDeletionActive(): boolean {
+    return isManagedKernelEnv(this.env)
+      && (this.managedResourcesDeleted !== null || this.managedLifecycle.get() !== null);
+  }
+
+  private assertManagedWorkAllowed(): void {
+    if (this.isManagedDeletionActive()) {
+      throw new Error("Installation is pending deletion");
+    }
+  }
+
+  private async stopManagedInstallationActivity(): Promise<void> {
+    const error = new Error("Installation is pending deletion");
+    for (const request of this.activeRequests.values()) {
+      request.controller.abort(error);
+    }
+    for (const route of this.routes.list()) {
+      this.cancelRoute(route.id);
+    }
+    for (const [connectionId, connection] of this.connections) {
+      connection.close(1000, error.message);
+      this.closeFrameBodyChannel(connectionId);
+    }
+    this.connections.clear();
+    for (const [requestId, resolve] of this.pendingKernelResponses) {
+      resolve(errFrame(requestId, 409, error.message));
+    }
+    this.pendingKernelResponses.clear();
+    await this.reconcileManagedScheduleWakes();
+  }
+
+  private managedDeletionBatchResult(
+    record: { installationId: string; operationId: string },
+    stage: DeleteManagedInstallationResourceBatchResult["stage"],
+    deleted: DeleteManagedInstallationResourceBatchResult["deleted"],
+    complete: boolean,
+  ): DeleteManagedInstallationResourceBatchResult {
+    return {
+      installationId: record.installationId,
+      operationId: record.operationId,
+      stage,
+      deleted,
+      complete,
+    };
   }
 
   async onRequest(request: Request): Promise<Response> {
@@ -554,6 +829,10 @@ export class Kernel extends Host<Env> {
   }
 
   async onConnect(connection: Connection, context: ConnectionContext): Promise<void> {
+    if (this.isManagedDeletionActive()) {
+      connection.close(1000, "Installation is pending deletion");
+      return;
+    }
     const token = readManagedSessionCookie(context.request.headers.get("cookie"));
     const preauthenticatedIdentity = token && isManagedKernelEnv(this.env)
       ? await this.managedProvisioning.authenticateLoginSession(token)
@@ -707,6 +986,7 @@ export class Kernel extends Host<Env> {
     args: NetFetchArgs,
     options: ProcessNetFetchOptions = {},
   ): Promise<ResponseOkFrame<"net.fetch">> {
+    this.assertManagedWorkAllowed();
     let controller: AbortController | null = null;
     const origin: RouteOrigin = { type: "process", id: processId };
     try {
@@ -779,6 +1059,9 @@ export class Kernel extends Host<Env> {
   }
 
   async authorizeGitHttp(input: AuthorizeGitHttpInput): Promise<AuthorizeGitHttpResult> {
+    if (this.isManagedDeletionActive()) {
+      return { ok: false, status: 409, message: "Installation is pending deletion" };
+    }
     const owner = input.owner.trim();
     const repo = input.repo.trim();
     const username = input.username?.trim() ?? "";
@@ -1594,6 +1877,9 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleProcessReq(processId: string, frame: RequestFrame): Promise<ResponseFrame | null> {
+    if (this.isManagedDeletionActive()) {
+      return errFrame(frame.id, 409, "Installation is pending deletion");
+    }
     const ctx = this.buildProcessContext(processId, frame.runId);
     if (!ctx) {
       return errFrame(frame.id, 404, "Unknown process");
@@ -1654,6 +1940,9 @@ export class Kernel extends Host<Env> {
   }
 
   private async handleServiceReq(frame: RequestFrame): Promise<ResponseFrame> {
+    if (this.isManagedDeletionActive()) {
+      return errFrame(frame.id, 409, "Installation is pending deletion");
+    }
     if (frame.call === "sys.connect" || frame.call === "sys.setup" || frame.call === "sys.setup.assist") {
       return errFrame(frame.id, 400, `${frame.call} is not supported via serviceFrame`);
     }
@@ -1791,6 +2080,10 @@ export class Kernel extends Host<Env> {
     ctx: KernelContext,
     signal?: AbortSignal,
   ): Promise<ResponseFrame> {
+    if (this.isManagedDeletionActive()) {
+      await cancelUnlockedBody(frame.body, "Installation is pending deletion");
+      return errFrame(frame.id, 409, "Installation is pending deletion");
+    }
     if (isInternalOnlySyscall(frame.call)) {
       await cancelUnlockedBody(frame.body, "Dispatched request rejected");
       return errFrame(frame.id, 403, `Permission denied: ${frame.call}`);
@@ -2265,7 +2558,11 @@ export class Kernel extends Host<Env> {
   }
 
   private isScheduledWorkAllowed(): boolean {
-    return !isManagedKernelEnv(this.env) || this.managedEntitlement.allowsScheduledWork();
+    return !isManagedKernelEnv(this.env)
+      || (
+        !this.isManagedDeletionActive()
+        && this.managedEntitlement.allowsScheduledWork()
+      );
   }
 
   private assertScheduledWorkAllowed(): void {
@@ -2275,7 +2572,7 @@ export class Kernel extends Host<Env> {
   }
 
   private async reconcileManagedScheduleWakes(): Promise<void> {
-    if (!this.managedEntitlement.allowsScheduledWork()) {
+    if (!this.isScheduledWorkAllowed()) {
       await Promise.all(this.schedules.listWithWake().map(async (record) => {
         await this.cancelSchedule(record.wakeScheduleId!).catch(() => {});
         this.schedules.setWakeScheduleId(record.id, null);
@@ -2318,6 +2615,12 @@ export class Kernel extends Host<Env> {
 
     try {
       const state = connection.state as ConnectionState | undefined;
+
+      if (this.isManagedDeletionActive()) {
+        this.sendError(connection, frame.id, 409, "Installation is pending deletion");
+        connection.close(1000, "Installation is pending deletion");
+        return;
+      }
 
       if (frame.call === "sys.connect") {
         if (state && state.step !== "pending") {
@@ -3475,8 +3778,48 @@ function sameRouteOrigin(left: RouteOrigin, right: RouteOrigin): boolean {
   return left.type === right.type && left.id === right.id;
 }
 
-function isManagedKernelEnv(env: Env): boolean {
-  return Boolean((env as Env & { INSTALLATION_DIRECTORY?: unknown }).INSTALLATION_DIRECTORY);
+function isManagedKernelEnv(env: Env | undefined): boolean {
+  return Boolean(
+    (env as (Env & { INSTALLATION_DIRECTORY?: unknown }) | undefined)
+      ?.INSTALLATION_DIRECTORY,
+  );
+}
+
+function managedResourceBatchLimit(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_MANAGED_RESOURCE_BATCH_LIMIT;
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_MANAGED_RESOURCE_BATCH_LIMIT) {
+    throw new Error(
+      `managed resource batch limit must be between 1 and ${MAX_MANAGED_RESOURCE_BATCH_LIMIT}`,
+    );
+  }
+  return value;
+}
+
+async function inspectInstallationStorage(
+  storage: R2Bucket,
+): Promise<ManagedInstallationResourceInventory["storage"]> {
+  let cursor: string | undefined;
+  let objectCount = 0;
+  let bytes = 0;
+  do {
+    const page = await storage.list({
+      limit: 1_000,
+      ...(cursor ? { cursor } : {}),
+    });
+    objectCount += page.objects.length;
+    for (const object of page.objects) {
+      bytes += object.size;
+      if (!Number.isSafeInteger(bytes)) {
+        throw new Error("managed installation storage size exceeds the supported range");
+      }
+    }
+    if (!page.truncated) break;
+    cursor = page.cursor;
+    if (!cursor) {
+      throw new Error("R2 returned a truncated installation inventory without a cursor");
+    }
+  } while (cursor);
+  return { objectCount, bytes };
 }
 
 function normalizeRequestCancelReason(reason: string | undefined): string {

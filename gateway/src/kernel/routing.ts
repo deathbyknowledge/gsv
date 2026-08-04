@@ -125,6 +125,29 @@ export class RoutingTable {
     };
   }
 
+  list(): RouteEntry[] {
+    return [...this.sql.exec<{
+      id: string;
+      call: string;
+      origin_type: string;
+      origin_id: string;
+      device_id: string;
+      driver_connection_id: string | null;
+      created_at: number;
+      expires_at: number | null;
+      schedule_id: string | null;
+    }>("SELECT * FROM routing_table ORDER BY created_at, id")].map((row) => ({
+      id: row.id,
+      call: row.call as SyscallName,
+      origin: { type: row.origin_type as RouteOrigin["type"], id: row.origin_id },
+      deviceId: row.device_id,
+      driverConnectionId: row.driver_connection_id,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      scheduleId: row.schedule_id,
+    }));
+  }
+
   failForDevice(deviceId: string): FailedDeviceRoute[] {
     const rows = [...this.sql.exec<{
       id: string;

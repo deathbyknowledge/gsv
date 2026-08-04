@@ -91,6 +91,16 @@ export class IntegrationState extends DurableObject<Env> {
   async listTelegramApiCalls(): Promise<RecordedTelegramApiCall[]> {
     return await this.ctx.storage.get<RecordedTelegramApiCall[]>("telegram_api") ?? [];
   }
+
+  async recordDeletedRepository(path: string): Promise<void> {
+    const repositories = await this.ctx.storage.get<string[]>("deleted_repositories") ?? [];
+    repositories.push(path);
+    await this.ctx.storage.put("deleted_repositories", repositories);
+  }
+
+  async listDeletedRepositories(): Promise<string[]> {
+    return await this.ctx.storage.get<string[]>("deleted_repositories") ?? [];
+  }
 }
 
 export default class TestDependencies
@@ -198,6 +208,10 @@ export default class TestDependencies
       return Response.json(await this.integrationState().listTelegramApiCalls());
     }
 
+    if (url.pathname === "/__test/deleted-repositories" && request.method === "GET") {
+      return Response.json(await this.integrationState().listDeletedRepositories());
+    }
+
     if (url.pathname === "/__test/telegram-send" && request.method === "POST") {
       if (!this.env.MANAGED_TELEGRAM) {
         return Response.json({ ok: false, error: "binding unavailable" }, {
@@ -239,6 +253,11 @@ export default class TestDependencies
           : "https://example.invalid/gsv-manual",
         remote_ref: typeof input.remoteRef === "string" ? input.remoteRef : "main",
       });
+    }
+
+    if (request.method === "DELETE" && /^\/[^/]+\/[^/]+$/.test(url.pathname)) {
+      await this.integrationState().recordDeletedRepository(url.pathname);
+      return Response.json({ ok: true });
     }
 
     await request.body?.cancel("Unhandled test dependency request").catch(() => {});

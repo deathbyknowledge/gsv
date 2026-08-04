@@ -6,6 +6,8 @@ import {
   type ManagedEntitlementProjection,
   type ManagedInferencePartialMessage,
   type ManagedInferenceStreamEvent,
+  type PrepareManagedInstallationDeletionInput,
+  type RecoverManagedInstallationInput,
 } from "@humansandmachines/gsv/protocol";
 import type {
   AssistantMessage,
@@ -48,6 +50,7 @@ const AMBIGUITY_GRACE_MS = 15_000;
 export class BudgetCoordinator extends DurableObject<InferenceCoordinatorEnvironment> {
   private readonly ledger: BudgetLedger;
   private readonly active = new Map<string, ActiveAttempt>();
+  private deleted = false;
 
   constructor(
     ctx: DurableObjectState,
@@ -63,6 +66,13 @@ export class BudgetCoordinator extends DurableObject<InferenceCoordinatorEnviron
     rawEntitlement: ManagedEntitlementProjection | null,
   ): Promise<Response> {
     try {
+      if (this.deleted || this.lifecycleRecord()) {
+        throw new InferenceBoundaryError(
+          "Managed inference is suspended for this installation",
+          409,
+          "installation_suspended",
+        );
+      }
       const now = Date.now();
       const request = parseInferenceRequest(rawRequest);
       const entitlement = parseCurrentEntitlement(
@@ -139,6 +149,73 @@ export class BudgetCoordinator extends DurableObject<InferenceCoordinatorEnviron
     return { aborted: true };
   }
 
+  async suspendInstallation(
+    input: PrepareManagedInstallationDeletionInput,
+  ): Promise<{ suspended: true }> {
+    const parsed = parseLifecycleInput(input);
+    const existing = this.lifecycleRecord();
+    if (existing) {
+      if (
+        existing.installationId !== parsed.installationId
+        || existing.operationId !== parsed.operationId
+        || existing.recoverableUntil !== parsed.recoverableUntil
+      ) {
+        throw new Error("managed inference suspension conflicts with the active operation");
+      }
+    } else {
+      if (parsed.recoverableUntil <= Date.now()) {
+        throw new Error("managed inference recovery deadline is invalid");
+      }
+      this.ctx.storage.sql.exec(
+        `INSERT INTO managed_inference_lifecycle (
+           record_id, installation_id, operation_id, recoverable_until, created_at
+         ) VALUES (1, ?, ?, ?, ?)`,
+        parsed.installationId,
+        parsed.operationId,
+        parsed.recoverableUntil,
+        Date.now(),
+      );
+    }
+    this.abortAndSettleActive();
+    await this.scheduleNextAlarm();
+    return { suspended: true };
+  }
+
+  async recoverInstallation(
+    input: RecoverManagedInstallationInput,
+  ): Promise<{ recovered: boolean }> {
+    const parsed = parseLifecycleIdentity(input);
+    const existing = this.lifecycleRecord();
+    if (!existing) return { recovered: false };
+    assertLifecycleMatches(existing, parsed);
+    if (Date.now() >= existing.recoverableUntil) {
+      throw new Error("managed inference recovery window has ended");
+    }
+    this.ctx.storage.sql.exec(
+      "DELETE FROM managed_inference_lifecycle WHERE record_id = 1",
+    );
+    return { recovered: true };
+  }
+
+  async deleteInstallation(
+    input: RecoverManagedInstallationInput,
+  ): Promise<{ deleted: true }> {
+    const parsed = parseLifecycleIdentity(input);
+    if (this.deleted) return { deleted: true };
+    const existing = this.lifecycleRecord();
+    if (existing) {
+      assertLifecycleMatches(existing, parsed);
+      if (Date.now() < existing.recoverableUntil) {
+        throw new Error("managed inference deletion is still recoverable");
+      }
+    }
+    this.abortAndSettleActive();
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.deleted = true;
+    return { deleted: true };
+  }
+
   async alarm(): Promise<void> {
     const now = Date.now();
     for (const active of this.active.values()) {
@@ -155,6 +232,39 @@ export class BudgetCoordinator extends DurableObject<InferenceCoordinatorEnviron
       throw new Error("Inference inspection is test-only");
     }
     return this.ledger.snapshot();
+  }
+
+  private lifecycleRecord(): {
+    installationId: string;
+    operationId: string;
+    recoverableUntil: number;
+  } | null {
+    const row = this.ctx.storage.sql.exec<{
+      installation_id: string;
+      operation_id: string;
+      recoverable_until: number;
+    }>(
+      `SELECT installation_id, operation_id, recoverable_until
+       FROM managed_inference_lifecycle
+       WHERE record_id = 1`,
+    ).toArray()[0];
+    return row ? {
+      installationId: row.installation_id,
+      operationId: row.operation_id,
+      recoverableUntil: row.recoverable_until,
+    } : null;
+  }
+
+  private abortAndSettleActive(): void {
+    const now = Date.now();
+    for (const attempt of this.active.values()) {
+      attempt.controller.abort(new DOMException(
+        "Managed inference suspended",
+        "AbortError",
+      ));
+      this.ledger.settleAborted(attempt.attemptId, now);
+    }
+    this.ledger.settleAllActiveAmbiguous(now);
   }
 
   private async execute(input: {
@@ -378,4 +488,48 @@ export function inferenceErrorResponse(error: unknown): Response {
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseLifecycleInput(
+  input: PrepareManagedInstallationDeletionInput,
+): PrepareManagedInstallationDeletionInput {
+  const identity = parseLifecycleIdentity(input);
+  if (
+    !Number.isSafeInteger(input.recoverableUntil)
+    || input.recoverableUntil < 0
+  ) {
+    throw new Error("managed inference recovery deadline is invalid");
+  }
+  return { ...identity, recoverableUntil: input.recoverableUntil };
+}
+
+function parseLifecycleIdentity(
+  input: RecoverManagedInstallationInput,
+): RecoverManagedInstallationInput {
+  return {
+    installationId: parseLifecycleId(input?.installationId, "installationId"),
+    operationId: parseLifecycleId(input?.operationId, "operationId"),
+  };
+}
+
+function parseLifecycleId(value: unknown, field: string): string {
+  if (
+    typeof value !== "string"
+    || !/^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/.test(value)
+  ) {
+    throw new Error(`managed inference ${field} is invalid`);
+  }
+  return value;
+}
+
+function assertLifecycleMatches(
+  record: { installationId: string; operationId: string },
+  input: RecoverManagedInstallationInput,
+): void {
+  if (
+    record.installationId !== input.installationId
+    || record.operationId !== input.operationId
+  ) {
+    throw new Error("managed inference lifecycle operation does not match");
+  }
 }

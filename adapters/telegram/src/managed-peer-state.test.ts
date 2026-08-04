@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   activateManagedTelegramClaimState,
   bindManagedTelegramPeerIdentity,
+  deleteManagedTelegramInstallationRouteState,
   issueManagedTelegramClaim,
+  recoverManagedTelegramInstallationRouteState,
+  suspendManagedTelegramInstallationRouteState,
   suspendManagedTelegramClaimState,
   type ManagedTelegramPeerState,
 } from "./managed-peer-state";
@@ -107,6 +110,64 @@ describe("managed Telegram peer state", () => {
       operationId: "operation_1",
       route: { ...NEW_ROUTE, installationId: "inst_other" },
     })).toThrow("different input");
+  });
+
+  it("suspends an installation route and restores it only when still unclaimed", () => {
+    const initial: ManagedTelegramPeerState = {
+      ...bindManagedTelegramPeerIdentity(undefined, inbound("123")),
+      activeRoute: OLD_ROUTE,
+    };
+    const suspended = suspendManagedTelegramInstallationRouteState(initial, {
+      installationId: OLD_ROUTE.installationId,
+      operationId: "deletion_1",
+    });
+    expect(suspended.suspended).toBe(true);
+    expect(suspended.state.activeRoute).toBeUndefined();
+
+    const recovered = recoverManagedTelegramInstallationRouteState(suspended.state, {
+      installationId: OLD_ROUTE.installationId,
+      operationId: "deletion_1",
+    });
+    expect(recovered.recovered).toBe(true);
+    expect(recovered.state.activeRoute).toEqual(OLD_ROUTE);
+
+    const relinked = recoverManagedTelegramInstallationRouteState({
+      ...suspended.state,
+      activeRoute: NEW_ROUTE,
+    }, {
+      installationId: OLD_ROUTE.installationId,
+      operationId: "deletion_1",
+    });
+    expect(relinked.recovered).toBe(false);
+    expect(relinked.state.activeRoute).toEqual(NEW_ROUTE);
+    expect(relinked.state.deletionSuspension).toBeUndefined();
+  });
+
+  it("scrubs every stale route reference during final deletion", () => {
+    const state: ManagedTelegramPeerState = {
+      ...bindManagedTelegramPeerIdentity(undefined, inbound("123")),
+      deletionSuspension: {
+        installationId: OLD_ROUTE.installationId,
+        operationId: "deletion_1",
+        previousRoute: OLD_ROUTE,
+      },
+      claim: {
+        claimId: "claim_1234567890abcdef",
+        expiresAt: 11_000,
+        status: "used",
+        previousRoute: OLD_ROUTE,
+        activatedRoute: OLD_ROUTE,
+      },
+    };
+
+    const deleted = deleteManagedTelegramInstallationRouteState(state, {
+      installationId: OLD_ROUTE.installationId,
+      operationId: "deletion_1",
+    });
+    expect(deleted.deleted).toBe(true);
+    expect(deleted.state.activeRoute).toBeUndefined();
+    expect(deleted.state.deletionSuspension).toBeUndefined();
+    expect(deleted.state.claim).toBeUndefined();
   });
 });
 
