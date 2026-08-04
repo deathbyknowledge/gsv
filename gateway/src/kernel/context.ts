@@ -55,6 +55,7 @@ export type KernelContext = {
   preauthenticatedIdentity?: ProcessIdentity;
   processId?: string;
   processRunId?: string;
+  requestId?: string;
   requestSignal?: AbortSignal;
   callerOwnerUid?: number;
   serverVersion: string;

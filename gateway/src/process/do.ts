@@ -105,6 +105,12 @@ import type {
 } from "@earendil-works/pi-ai";
 import { createGenerationService } from "../inference/service";
 import {
+  isManagedGeneration,
+  managedInferenceFromEnv,
+  managedLogicalRequestId,
+  type ManagedGenerationIdentity,
+} from "../inference/managed";
+import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
   formatProviderContextOverflowMessage,
@@ -859,7 +865,7 @@ function fitCompactionRecord(message: MessageRecord, maxChars: number): string |
 
 export class Process extends Host<Env> {
   private readonly store: ProcessStore;
-  private readonly generation = createGenerationService();
+  private readonly generation: ReturnType<typeof createGenerationService>;
   private installationRipgit: {
     installationId: InstallationId;
     client: RipgitClient;
@@ -887,6 +893,10 @@ export class Process extends Host<Env> {
     super(ctx, env);
     runProcessSqlMigrations(ctx.storage);
     this.store = new ProcessStore(ctx.storage.sql);
+    const managedInference = managedInferenceFromEnv(env);
+    this.generation = createGenerationService({
+      ...(managedInference ? { managedInference } : {}),
+    });
     const recoveredRun = this.currentRun;
     if (
       recoveredRun?.pendingMediaMessageId !== undefined
@@ -3023,6 +3033,11 @@ export class Process extends Host<Env> {
           context,
           options: generationOptions,
           sessionAffinityKey: `${this.pid}:compaction`,
+          managedPurposeKey: [
+            messages[0]?.id ?? 0,
+            messages.at(-1)?.id ?? 0,
+            messages.length,
+          ].join(":"),
           signal,
         });
         const summary = generated.trim();
@@ -4429,8 +4444,13 @@ export class Process extends Host<Env> {
     streamSeq?: StreamSeqCounter;
   }): Promise<AssistantMessage | null> {
     const executor = options.config.executor;
+    const managed = await this.buildManagedGenerationIdentity(
+      options.config,
+      "run",
+      options.runId,
+    );
     if (executor.kind === "process" && executor.pid === this.pid) {
-      return await this.generateAssistantResponseLocally(options);
+      return await this.generateAssistantResponseLocally(options, managed);
     }
     const result = await this.kernelRpc(
       "ai.text.generate",
@@ -4441,6 +4461,7 @@ export class Process extends Host<Env> {
         target: executor.kind === "device" ? executor.target : undefined,
       }),
       this.runAbortSignal(options.runId),
+      managed?.logicalRequestId,
     );
     return result.message as unknown as AssistantMessage;
   }
@@ -4452,7 +4473,7 @@ export class Process extends Host<Env> {
     context: Context;
     sessionAffinityKey?: string;
     streamSeq?: StreamSeqCounter;
-  }): Promise<AssistantMessage | null> {
+  }, managed?: ManagedGenerationIdentity): Promise<AssistantMessage | null> {
     const routedFetch = this.createGenerationFetch(options.config, options.runId);
     const signal = this.runAbortSignal(options.runId);
     const stream = options.config.generationStreaming !== "off" &&
@@ -4464,6 +4485,7 @@ export class Process extends Host<Env> {
         ...(routedFetch ? { fetch: routedFetch } : {}),
         sessionAffinityKey: options.sessionAffinityKey,
         signal,
+        ...(managed ? { managed } : {}),
       })
       : null;
 
@@ -4474,6 +4496,7 @@ export class Process extends Host<Env> {
         ...(routedFetch ? { fetch: routedFetch } : {}),
         sessionAffinityKey: options.sessionAffinityKey,
         signal,
+        ...(managed ? { managed } : {}),
       });
     }
 
@@ -4503,9 +4526,16 @@ export class Process extends Host<Env> {
     context: Context;
     options: AiTextGenerateOptions;
     sessionAffinityKey: string;
+    managedPurposeKey?: string;
     signal?: AbortSignal;
   }): Promise<string> {
     const executor = options.config.executor;
+    const managed = await this.buildManagedGenerationIdentity(
+      options.config,
+      "compaction",
+      this.currentRun?.runId,
+      options.managedPurposeKey,
+    );
     if (executor.kind !== "process" || executor.pid !== this.pid) {
       const result = await this.kernelRpc(
         "ai.text.generate",
@@ -4516,6 +4546,7 @@ export class Process extends Host<Env> {
           target: executor.kind === "device" ? executor.target : undefined,
         }),
         options.signal,
+        managed?.logicalRequestId,
       );
       return result.text ?? "";
     }
@@ -4527,7 +4558,38 @@ export class Process extends Host<Env> {
       ...(routedFetch ? { fetch: routedFetch } : {}),
       sessionAffinityKey: options.sessionAffinityKey,
       signal: options.signal,
+      ...(managed ? { managed } : {}),
     });
+  }
+
+  private async buildManagedGenerationIdentity(
+    config: Pick<AiConfigResult, "provider" | "model">,
+    purpose: "run" | "compaction",
+    runId?: string,
+    purposeKey?: string,
+  ): Promise<ManagedGenerationIdentity | undefined> {
+    if (!isManagedGeneration(config)) return undefined;
+    const { lastMessageId } = this.store.messageStats();
+    return {
+      installationId: this.installationId,
+      logicalRequestId: await managedLogicalRequestId([
+        "process",
+        this.installationId,
+        this.pid,
+        purpose,
+        runId,
+        this.store.getHistoryGeneration(),
+        lastMessageId,
+        config.provider.trim().toLowerCase(),
+        config.model.trim().toLowerCase(),
+        purposeKey,
+      ]),
+      actor: {
+        localUid: this.identity.uid,
+        processId: this.pid,
+        ...(runId ? { runId } : {}),
+      },
+    };
   }
 
   private buildAiTextGenerateArgs(options: {
@@ -4839,9 +4901,10 @@ export class Process extends Host<Env> {
     call: T,
     args: unknown = {},
     signal?: AbortSignal,
+    requestId?: string,
   ): Promise<ResultOf<T>> {
     signal?.throwIfAborted();
-    const id = crypto.randomUUID();
+    const id = requestId ?? crypto.randomUUID();
     const frame = { type: "req", id, call, args } as RequestFrame;
     const pending = sendFrameToKernel(this.installationId, this.pid, frame);
     let rejectAbort: ((reason: unknown) => void) | undefined;

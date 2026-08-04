@@ -69,6 +69,12 @@ import {
   createGenerationService,
   extractGeneratedText,
 } from "../inference/service";
+import {
+  isManagedGeneration,
+  managedInferenceFromEnv,
+  managedLogicalRequestId,
+  type ManagedGenerationIdentity,
+} from "../inference/managed";
 import { createRoutedFetch, normalizeTarget, type NetFetchDeviceTransport } from "./net";
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
@@ -402,12 +408,20 @@ export async function handleAiTextGenerate(
   const generationFetch = transportTarget === "gsv"
     ? undefined
     : createRoutedFetch(ctx, transport, transportTarget);
-  const response = await createGenerationService(generationFetch ? { fetch: generationFetch } : {}).generate({
+  const managedInference = managedInferenceFromEnv(ctx.env);
+  const managed = isManagedGeneration(config)
+    ? await managedGenerationIdentity(ctx)
+    : undefined;
+  const response = await createGenerationService({
+    ...(generationFetch ? { fetch: generationFetch } : {}),
+    ...(managedInference ? { managedInference } : {}),
+  }).generate({
     config,
     context,
     ...(options ? { options } : {}),
     sessionAffinityKey: normalizeOptionalString(input.sessionAffinityKey),
     signal: ctx.requestSignal,
+    ...(managed ? { managed } : {}),
   });
   const text = extractGeneratedText(response);
   return {
@@ -415,6 +429,29 @@ export async function handleAiTextGenerate(
     provider: response.provider || config.provider,
     model: response.model || config.model,
     ...(text ? { text } : {}),
+  };
+}
+
+async function managedGenerationIdentity(
+  ctx: KernelContext,
+): Promise<ManagedGenerationIdentity> {
+  const process = ctx.identity?.process ?? ctx.preauthenticatedIdentity;
+  if (!process) {
+    throw new Error("Managed inference requires an authenticated actor.");
+  }
+  const operationId = ctx.requestId ?? crypto.randomUUID();
+  return {
+    installationId: ctx.installationId,
+    logicalRequestId: await managedLogicalRequestId([
+      "kernel",
+      ctx.installationId,
+      operationId,
+    ]),
+    actor: {
+      localUid: process.uid,
+      ...(ctx.processId ? { processId: ctx.processId } : {}),
+      ...(ctx.processRunId ? { runId: ctx.processRunId } : {}),
+    },
   };
 }
 

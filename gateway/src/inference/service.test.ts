@@ -22,7 +22,11 @@ import {
   resolveGenerationOptions,
   resolveGenerationTimeoutMs,
 } from "./service";
-import type { AiConfigResult } from "@humansandmachines/gsv/protocol";
+import {
+  MANAGED_INFERENCE_PRODUCT_MODEL,
+  type AiConfigResult,
+  type ManagedInferenceService,
+} from "@humansandmachines/gsv/protocol";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 
 function assistantMessage(content: AssistantMessage["content"]): AssistantMessage {
@@ -139,6 +143,75 @@ describe("resolveGenerationOptions", () => {
 });
 
 describe("createGenerationService", () => {
+  it("routes gsv/default through the managed binding with trusted identity", async () => {
+    const run = vi.fn<ManagedInferenceService["run"]>(async () => new Response(
+      `${JSON.stringify({
+        type: "done",
+        reason: "stop",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "managed pong" }],
+          api: "gsv-managed",
+          provider: "gsv",
+          model: MANAGED_INFERENCE_PRODUCT_MODEL,
+          usage: {
+            input: 10,
+            output: 2,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 12,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "stop",
+          timestamp: 1,
+        },
+      })}\n`,
+    ));
+    const managedInference: ManagedInferenceService = {
+      run,
+      abort: vi.fn(async () => ({ aborted: false })),
+    };
+
+    const result = await createGenerationService({ managedInference }).generate({
+      config: { ...CONFIG, provider: "gsv", model: "default", apiKey: "" },
+      context: {
+        systemPrompt: "Be direct.",
+        messages: [{ role: "user", content: "ping", timestamp: 1 }],
+      },
+      options: { maxTokens: 128, reasoning: "low", timeoutMs: 1_000 },
+      managed: {
+        installationId: "inst_test",
+        logicalRequestId: "request_test",
+        actor: { localUid: 1000, processId: "proc_test", runId: "run_test" },
+      },
+    });
+
+    expect(result.content).toEqual([{ type: "text", text: "managed pong" }]);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      installationId: "inst_test",
+      logicalRequestId: "request_test",
+      actor: { localUid: 1000, processId: "proc_test", runId: "run_test" },
+      model: MANAGED_INFERENCE_PRODUCT_MODEL,
+      systemPrompt: "Be direct.",
+      maxOutputTokens: 128,
+      reasoning: "low",
+      timeoutMs: 1_000,
+    }));
+    expect(completePiAiSimpleMock).not.toHaveBeenCalled();
+  });
+
+  it("does not treat a standalone gsv/default config as platform authorization", async () => {
+    await expect(createGenerationService().generate({
+      config: { ...CONFIG, provider: "gsv", model: "default", apiKey: "" },
+      context: CONTEXT,
+      managed: {
+        installationId: "inst_test",
+        logicalRequestId: "request_test",
+        actor: { localUid: 1000 },
+      },
+    })).rejects.toThrow("Managed inference is unavailable in this deployment");
+  });
+
   it("passes a routed fetch to built-in provider completions", async () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
     const fetchImpl = vi.fn() as unknown as typeof fetch;

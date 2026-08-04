@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelContext } from "../context";
+import {
+  MANAGED_INFERENCE_MODEL,
+  MANAGED_INFERENCE_PROVIDER,
+} from "@humansandmachines/gsv/protocol";
 
 const { handleSysBootstrapMock, seedBuiltinSkillsToHomeMock } = vi.hoisted(() => ({
   handleSysBootstrapMock: vi.fn(),
@@ -14,7 +18,7 @@ vi.mock("./skills-seed", () => ({
   seedBuiltinSkillsToHome: seedBuiltinSkillsToHomeMock,
 }));
 
-import { handleSysSetup } from "./setup";
+import { handleManagedInstallationSetup, handleSysSetup } from "./setup";
 
 function createCtx(overrides?: { setupMode?: boolean; ripgit?: Fetcher }) {
   type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
@@ -196,6 +200,41 @@ describe("handleSysSetup", () => {
     expect(result.user.username).toBe("alice");
     expect(result.server).toEqual({ version: "0.0.1-test", release: "dev" });
     expect(result.nodeToken?.allowedDeviceId).toBe("macbook");
+  });
+
+  it("selects the brokered model and disables standalone fallback for managed setup", async () => {
+    const { ctx, config } = createCtx();
+
+    const result = await handleManagedInstallationSetup({
+      operationId: "operation_test",
+      installation: {
+        installationId: "inst_test",
+        handle: "test",
+        canonicalOrigin: "https://test.gsv.space",
+      },
+      owner: {
+        principalId: "principal_test",
+        username: "alice",
+        agentName: "companion",
+      },
+      provisionVersion: 1,
+    }, ctx);
+
+    expect(result).toMatchObject({
+      installationId: "inst_test",
+      localUid: 1000,
+      username: "alice",
+    });
+    expect(config.set).toHaveBeenCalledWith(
+      "config/ai/provider",
+      MANAGED_INFERENCE_PROVIDER,
+    );
+    expect(config.set).toHaveBeenCalledWith(
+      "config/ai/model",
+      MANAGED_INFERENCE_MODEL,
+    );
+    expect(config.set).toHaveBeenCalledWith("config/ai/api_key", "");
+    expect(config.set).toHaveBeenCalledWith("config/ai/fallback_model_profile", "");
   });
 
   it("seeds shipped skills into root home after first setup bootstrap", async () => {

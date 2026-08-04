@@ -6,7 +6,13 @@ import type {
   ThinkingContent,
   ThinkingLevel,
 } from "@earendil-works/pi-ai";
-import type { AiConfigResult, AiTextGenerateOptions } from "@humansandmachines/gsv/protocol";
+import {
+  MANAGED_INFERENCE_PRODUCT_MODEL,
+  type AiConfigResult,
+  type AiTextGenerateOptions,
+  type ManagedInferenceRequest,
+  type ManagedInferenceService,
+} from "@humansandmachines/gsv/protocol";
 import { completeWithWorkersAi, isWorkersAiProvider, streamWithWorkersAi } from "./workers-ai";
 import { withTimeout } from "./timeout";
 import { resolveModelThinkingLevel, resolvePiAiModel } from "./model-registry";
@@ -24,6 +30,11 @@ import {
   completeWithOpenAiCodexFetch,
   streamWithOpenAiCodexFetch,
 } from "./openai-codex";
+import {
+  isManagedGeneration,
+  streamManagedInference,
+  type ManagedGenerationIdentity,
+} from "./managed";
 
 const OPENROUTER_ATTR_HEADERS = {
   "HTTP-Referer": "https://gsv.space",
@@ -39,6 +50,7 @@ type GenerateRequest = {
   fetch?: typeof fetch;
   sessionAffinityKey?: string;
   signal?: AbortSignal;
+  managed?: ManagedGenerationIdentity;
 };
 
 type GenerationService = {
@@ -49,6 +61,7 @@ type GenerationService = {
 
 type GenerationServiceOptions = {
   fetch?: typeof fetch;
+  managedInference?: ManagedInferenceService;
 };
 
 type ResolvedGenerationOptions = {
@@ -71,6 +84,22 @@ export function createGenerationService(
     const options = resolveGenerationOptions(request);
     const generationFetch = request.fetch ?? serviceOptions.fetch;
     const generationTimeoutMs = resolveGenerationTimeoutMs(request.config, request.options);
+    if (isManagedGeneration({
+      provider: options.modelProvider,
+      model: options.modelName,
+    })) {
+      if (generationFetch) {
+        throw new Error("Managed inference cannot originate model requests from a connected machine.");
+      }
+      const abort = createGenerationAbort(request.signal, generationTimeoutMs);
+      const result = streamManagedInference(
+        requireManagedInference(serviceOptions, request),
+        buildManagedInferenceRequest(request, options, generationTimeoutMs),
+        abort.signal,
+      );
+      void result.result().then(abort.clear, abort.clear);
+      return result;
+    }
     if (isWorkersAiProvider(options.modelProvider)) {
       if (generationFetch) {
         throw new Error("Workers AI uses a gateway binding and cannot originate model requests from a machine.");
@@ -168,6 +197,28 @@ export function createGenerationService(
     const options = resolveGenerationOptions(request);
     const generationFetch = request.fetch ?? serviceOptions.fetch;
     const generationTimeoutMs = resolveGenerationTimeoutMs(request.config, request.options);
+    if (isManagedGeneration({
+      provider: options.modelProvider,
+      model: options.modelName,
+    })) {
+      if (generationFetch) {
+        throw new Error("Managed inference cannot originate model requests from a connected machine.");
+      }
+      const abort = createGenerationAbort(request.signal, generationTimeoutMs);
+      try {
+        return await withTimeout(
+          streamManagedInference(
+            requireManagedInference(serviceOptions, request),
+            buildManagedInferenceRequest(request, options, generationTimeoutMs),
+            abort.signal,
+          ).result(),
+          generationTimeoutMs,
+          generationTimeoutMessage(generationTimeoutMs),
+        );
+      } finally {
+        abort.clear();
+      }
+    }
     if (isWorkersAiProvider(options.modelProvider)) {
       if (generationFetch) {
         throw new Error("Workers AI uses a gateway binding and cannot originate model requests from a machine.");
@@ -291,6 +342,45 @@ export function createGenerationService(
       }
       throw new Error(describeGeneratedTextFailure(request, response));
     },
+  };
+}
+
+function requireManagedInference(
+  serviceOptions: GenerationServiceOptions,
+  request: GenerateRequest,
+): ManagedInferenceService {
+  if (!serviceOptions.managedInference || !request.managed) {
+    throw new Error("Managed inference is unavailable in this deployment.");
+  }
+  return serviceOptions.managedInference;
+}
+
+function buildManagedInferenceRequest(
+  request: GenerateRequest,
+  options: ResolvedGenerationOptions,
+  timeoutMs: number,
+): ManagedInferenceRequest {
+  const identity = request.managed;
+  if (!identity) {
+    throw new Error("Managed inference identity is unavailable.");
+  }
+  return {
+    version: 1,
+    installationId: identity.installationId,
+    logicalRequestId: identity.logicalRequestId,
+    actor: identity.actor,
+    model: MANAGED_INFERENCE_PRODUCT_MODEL,
+    capability: "text",
+    ...(request.context.systemPrompt
+      ? { systemPrompt: request.context.systemPrompt }
+      : {}),
+    messages: request.context.messages as ManagedInferenceRequest["messages"],
+    ...(request.context.tools && request.context.tools.length > 0
+      ? { tools: request.context.tools as ManagedInferenceRequest["tools"] }
+      : {}),
+    maxOutputTokens: options.maxTokens,
+    ...(options.reasoning ? { reasoning: options.reasoning } : {}),
+    timeoutMs,
   };
 }
 

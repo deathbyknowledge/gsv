@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  MANAGED_INFERENCE_PROVIDER,
   MANAGED_INFERENCE_PRODUCT_MODEL,
   type AiAssistantMessage,
   type ManagedEntitlementProjection,
@@ -280,7 +281,7 @@ function sanitizeFinalMessage(
     role: "assistant",
     content: message.content,
     api: "gsv-managed",
-    provider: "gsv",
+    provider: MANAGED_INFERENCE_PROVIDER,
     model: MANAGED_INFERENCE_PRODUCT_MODEL,
     usage: sanitizeUsage(message.usage),
     stopReason: message.stopReason === "pending" ? "error" : message.stopReason,
@@ -300,7 +301,7 @@ function sanitizePartialMessage(
     role: "assistant",
     content: message.content,
     api: "gsv-managed",
-    provider: "gsv",
+    provider: MANAGED_INFERENCE_PROVIDER,
     model: MANAGED_INFERENCE_PRODUCT_MODEL,
     usage: sanitizeUsage(message.usage),
     stopReason: message.stopReason,
@@ -335,7 +336,7 @@ function managedErrorEvent(aborted: boolean): ManagedInferenceStreamEvent {
     role: "assistant",
     content: [],
     api: "gsv-managed",
-    provider: "gsv",
+    provider: MANAGED_INFERENCE_PROVIDER,
     model: MANAGED_INFERENCE_PRODUCT_MODEL,
     usage: {
       input: 0,

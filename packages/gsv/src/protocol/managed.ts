@@ -4,6 +4,8 @@ import type {
   AiTextTool,
 } from "./syscalls/ai";
 
+export const MANAGED_INFERENCE_PROVIDER = "gsv";
+export const MANAGED_INFERENCE_MODEL = "default";
 export const MANAGED_INFERENCE_PRODUCT_MODEL = "gsv/default";
 
 export type ManagedInstallationState =

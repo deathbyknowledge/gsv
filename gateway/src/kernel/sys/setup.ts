@@ -2,16 +2,21 @@ import { hashPassword, isLocked, makeShadowEntry } from "../../auth/shadow";
 import type { KernelContext } from "../context";
 import { SERVER_RELEASE } from "../../version";
 import type { PasswdEntry } from "../../auth/passwd";
-import type { ProcessIdentity, SysSetupArgs, SysSetupResult, UserIdentity } from "@humansandmachines/gsv/protocol";
+import {
+  MANAGED_INFERENCE_MODEL,
+  MANAGED_INFERENCE_PROVIDER,
+  type ProcessIdentity,
+  type ProvisionInstallationInput,
+  type ProvisionInstallationResult,
+  type SysSetupArgs,
+  type SysSetupResult,
+  type UserIdentity,
+} from "@humansandmachines/gsv/protocol";
 import { handleSysBootstrap } from "./bootstrap";
 import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
 import { ensurePersonalAgent } from "../agents";
-import type {
-  ProvisionInstallationInput,
-  ProvisionInstallationResult,
-} from "@humansandmachines/gsv/protocol";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -425,6 +430,15 @@ export async function handleManagedInstallationSetup(
   // one after recent platform authentication.
   ctx.auth.setShadow(makeShadowEntry(username, "!"));
   ctx.auth.setShadow(makeShadowEntry("root", "!"));
+  ctx.config.set("config/ai/provider", MANAGED_INFERENCE_PROVIDER);
+  ctx.config.set("config/ai/model", MANAGED_INFERENCE_MODEL);
+  ctx.config.set("config/ai/api_key", "");
+  ctx.config.set("config/ai/base_url", "");
+  ctx.config.set("config/ai/provider_style", "auto");
+  ctx.config.set("config/ai/transport_target", "gsv");
+  // The standalone Workers AI fallback is not entitlement- or budget-aware.
+  // Managed fallbacks must be added behind the broker instead.
+  ctx.config.set("config/ai/fallback_model_profile", "");
 
   return {
     state: "active",

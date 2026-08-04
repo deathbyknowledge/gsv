@@ -9,8 +9,10 @@ import {
 
 const GATEWAY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ACCOUNT_ROOT = resolve(GATEWAY_ROOT, "../account-service");
+const INFERENCE_ROOT = resolve(GATEWAY_ROOT, "../inference-service");
 const DEPENDENCY_WORKER = "gsv-test-dependencies";
 const ACCOUNT_WORKER = "gsv-accounts-integration";
+const INFERENCE_WORKER = "gsv-inference-integration";
 const DEPENDENCY_CONFIG_PATH = resolve(
   GATEWAY_ROOT,
   "test-integration/fixtures/wrangler.jsonc",
@@ -20,6 +22,7 @@ function integrationGatewayConfig(options: {
   name?: string;
   managed?: boolean;
   directoryService?: string;
+  managedInferenceService?: string;
 } = {}): Unstable_RawConfig {
   const config = unstable_readConfig(
     { config: resolve(GATEWAY_ROOT, "wrangler.jsonc") },
@@ -52,9 +55,43 @@ function integrationGatewayConfig(options: {
         ? [{
             binding: "INSTALLATION_DIRECTORY",
             service: options.directoryService ?? DEPENDENCY_WORKER,
-          }]
+          }, ...(options.managedInferenceService
+            ? [{
+                binding: "MANAGED_INFERENCE",
+                service: options.managedInferenceService,
+              }]
+            : [])]
         : []),
     ],
+  };
+}
+
+function integrationInferenceConfig(accountService: string): Unstable_RawConfig {
+  const config = unstable_readConfig(
+    { config: resolve(INFERENCE_ROOT, "wrangler.jsonc") },
+    { hideWarnings: true },
+  );
+  return {
+    name: INFERENCE_WORKER,
+    main: resolve(INFERENCE_ROOT, "src/index.ts"),
+    // Keep integration workerd aligned with the Vitest pool release.
+    compatibility_date: "2026-07-01",
+    compatibility_flags: config.compatibility_flags,
+    observability: config.observability,
+    vars: {
+      ...config.vars,
+      ENVIRONMENT: "test",
+      MANAGED_INFERENCE_PROVIDER: "synthetic",
+      SYNTHETIC_DELAY_MS: "1",
+      SYNTHETIC_FAIL_FIRST_ATTEMPT: "true",
+    },
+    durable_objects: config.durable_objects,
+    migrations: config.migrations,
+    services: [{
+      binding: "ENTITLEMENTS",
+      service: accountService,
+      entrypoint: "EntitlementReaderEntrypoint",
+    }],
   };
 }
 
@@ -150,6 +187,7 @@ export function createManagedAccountTestHarness(): TestHarness {
           name: "gsv-managed-account",
           managed: true,
           directoryService: ACCOUNT_WORKER,
+          managedInferenceService: INFERENCE_WORKER,
         }),
       },
       {
@@ -157,6 +195,9 @@ export function createManagedAccountTestHarness(): TestHarness {
       },
       {
         config: integrationAccountConfig("gsv-managed-account"),
+      },
+      {
+        config: integrationInferenceConfig(ACCOUNT_WORKER),
       },
     ],
   });

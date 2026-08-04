@@ -1563,7 +1563,7 @@ export class Kernel extends Host<Env> {
       result = await dispatch(
         frame,
         origin,
-        { ...ctx, requestSignal: controller.signal },
+        { ...ctx, requestId: frame.id, requestSignal: controller.signal },
         this.buildDispatchDeps(),
       );
     } finally {
@@ -1616,7 +1616,12 @@ export class Kernel extends Host<Env> {
 
     const ctx = this.buildKernelContext({ identity });
     const origin: RouteOrigin = { type: "process", id: "__service_binding__" };
-    const result = await dispatch(frame, origin, ctx, this.buildDispatchDeps());
+    const result = await dispatch(
+      frame,
+      origin,
+      { ...ctx, requestId: frame.id },
+      this.buildDispatchDeps(),
+    );
 
     if (!result.handled) {
       return errFrame(frame.id, 501, `${frame.call} requires unsupported async routing`);
@@ -1765,7 +1770,7 @@ export class Kernel extends Host<Env> {
         dispatch(
           frame,
           origin,
-          { ...ctx, requestSignal },
+          { ...ctx, requestId: frame.id, requestSignal },
           this.buildDispatchDeps(),
         ),
         requestSignal,
@@ -2312,7 +2317,11 @@ export class Kernel extends Host<Env> {
         result = await dispatch(
           frame,
           origin,
-          { ...this.buildContext(connection), requestSignal: controller.signal },
+          {
+            ...this.buildContext(connection),
+            requestId: frame.id,
+            requestSignal: controller.signal,
+          },
           this.buildDispatchDeps(),
         );
       } finally {

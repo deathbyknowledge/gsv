@@ -1,8 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { TestHarness } from "wrangler";
 import { createManagedAccountTestHarness } from "./harness";
-import { expectManagedRpcOk } from "./managed-rpc";
+import {
+  expectManagedRpcOk,
+  type HarnessWebSocket,
+} from "./managed-rpc";
 
 type AccountEnv = {
   ACCOUNT_DB: D1Database;
@@ -137,7 +140,7 @@ describe("managed account to Kernel integration", () => {
       reservationBody.installation.installationId,
       handle,
     );
-    await connectAsManagedOwner(gateway, handle, firstCookie, "first-entry");
+    await connectAsManagedOwner(gateway, handle, firstCookie, "first-entry", true);
 
     const logout = await gateway.fetch(`https://${handle}.gsv.space/auth/logout`, {
       method: "POST",
@@ -208,6 +211,7 @@ async function connectAsManagedOwner(
   handle: string,
   cookie: string,
   id: string,
+  runInference = false,
 ): Promise<void> {
   const response = await gateway.fetch(`https://${handle}.gsv.space/ws`, {
     headers: {
@@ -228,7 +232,77 @@ async function connectAsManagedOwner(
       role: "user",
     },
   });
+  if (runInference) {
+    await runManagedInference(socket);
+  }
   socket.close(1000, "test complete");
+}
+
+async function runManagedInference(socket: HarnessWebSocket): Promise<void> {
+  const spawned = await expectManagedRpcOk(socket, "managed-proc-spawn", "proc.spawn", {
+    label: "managed inference integration",
+    interactive: true,
+  });
+  const pid = (spawned.data as { pid: string }).pid;
+
+  const signals: Array<{ signal: string; payload?: Record<string, unknown> }> = [];
+  const eventSocket = socket as unknown as {
+    addEventListener(type: "message", listener: (event: { data: unknown }) => void): void;
+    removeEventListener(type: "message", listener: (event: { data: unknown }) => void): void;
+  };
+  const onMessage = (event: { data: unknown }) => {
+    if (typeof event.data !== "string") return;
+    const frame = JSON.parse(event.data) as {
+      type?: string;
+      signal?: string;
+      payload?: Record<string, unknown>;
+    };
+    if (frame.type === "sig" && typeof frame.signal === "string") {
+      signals.push({ signal: frame.signal, payload: frame.payload });
+    }
+  };
+  eventSocket.addEventListener("message", onMessage);
+  try {
+    const sent = await expectManagedRpcOk(socket, "managed-proc-send", "proc.send", {
+      pid,
+      message: "answer through bundled intelligence",
+    });
+    const runId = (sent.data as { runId: string }).runId;
+    await vi.waitFor(() => {
+      expect(signals.some((signal) =>
+        signal.signal === "proc.run.retrying" && signal.payload?.runId === runId
+      )).toBe(true);
+      expect(signals.some((signal) =>
+        signal.signal === "proc.run.finished"
+        && signal.payload?.runId === runId
+        && signal.payload?.status === "ok"
+      )).toBe(true);
+    }, { timeout: 5_000 });
+
+    const history = await expectManagedRpcOk(
+      socket,
+      "managed-proc-history",
+      "proc.history",
+      { pid },
+    );
+    expect(history.data).toMatchObject({
+      ok: true,
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          content: "synthetic managed response",
+          metadata: expect.objectContaining({
+            provider: expect.objectContaining({
+              provider: "gsv",
+              model: "gsv/default",
+            }),
+          }),
+        }),
+      ]),
+    });
+  } finally {
+    eventSocket.removeEventListener("message", onMessage);
+  }
 }
 
 function sha256Hex(value: string): string {

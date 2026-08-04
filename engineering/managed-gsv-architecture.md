@@ -917,10 +917,15 @@ gate. Phase 5 is in progress: the provider-neutral entitlement period contract,
 separate inference Worker, DeepSeek V4 Flash 0731 price book and adapter,
 SQLite-backed per-installation budget coordinator, conservative admission,
 attempt settlement, opaque upstream user isolation, synthetic provider, and
-abort path are implemented and deterministically tested. The real provider is
-disabled by default. Gateway routing, GSV task evaluation, fallback selection,
-and the provider privacy and contractual gate remain before customer prompts
-can be enabled. The shared-bot peer ownership
+abort path are implemented and deterministically tested. Managed provisioning
+selects `gsv/default`; Kernel and Process routing derive trusted installation
+and actor identity, reuse a stable logical ID across provider retries, preserve
+BYOK, reject unsupported media, and propagate cancellation to the broker. A
+clean four-Worker integration flow proves a failed first attempt can settle and
+retry without changing logical request identity. The real provider is disabled
+by default. GSV task evaluation, broker-owned fallback selection, and the
+provider privacy and contractual gate remain before customer prompts can be
+enabled. The shared-bot peer ownership
 recheck is a Phase 6 managed Telegram gate because that global peer directory
 does not exist before then. Managed production hosting remains disabled while
 Phases 5 through 9 are incomplete.

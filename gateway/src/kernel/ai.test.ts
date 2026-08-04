@@ -325,6 +325,7 @@ describe("handleAiConfig", () => {
       capabilities?: string[];
       oauthAccounts?: OAuthAccountRecord[];
       ripgit?: Fetcher;
+      env?: Record<string, unknown>;
     } = {},
   ): KernelContext {
     const uid = options.uid ?? 1000;
@@ -390,7 +391,10 @@ describe("handleAiConfig", () => {
         })),
       },
       processId: options.processId,
-      env: options.ripgit ? { RIPGIT: options.ripgit } : {},
+      env: {
+        ...(options.ripgit ? { RIPGIT: options.ripgit } : {}),
+        ...(options.env ?? {}),
+      },
     } as unknown as KernelContext;
   }
 
@@ -831,6 +835,63 @@ describe("handleAiConfig", () => {
       model: "claude-process",
       text: "snapshot pong",
     });
+  });
+
+  it("derives managed installation and actor identity inside the Kernel", async () => {
+    const managedInference = { run: vi.fn(), abort: vi.fn() };
+    generateMock.mockImplementationOnce(async (request: any) => {
+      expect(request.managed).toMatchObject({
+        installationId: "inst_managed",
+        actor: {
+          localUid: 1000,
+          processId: "task-1",
+          runId: "run-1",
+        },
+      });
+      expect(request.managed.logicalRequestId).toMatch(
+        /^managed-inference:[a-f0-9]{64}$/,
+      );
+      return {
+        role: "assistant",
+        content: [{ type: "text", text: "managed pong" }],
+        api: "gsv-managed",
+        provider: "gsv",
+        model: "gsv/default",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+    });
+    const ctx = {
+      ...makeAiConfigContext({
+        "config/ai/provider": "gsv",
+        "config/ai/model": "default",
+        "config/ai/fallback_model_profile": "",
+      }, {
+        processId: "task-1",
+        env: {
+          INSTALLATION_DIRECTORY: {},
+          MANAGED_INFERENCE: managedInference,
+        },
+      }),
+      installationId: "inst_managed",
+      processRunId: "run-1",
+      requestId: "frame-1",
+    } as unknown as KernelContext;
+
+    const result = await handleAiTextGenerate({
+      messages: [{ role: "user", content: "ping" }],
+    }, ctx);
+
+    expect(result.text).toBe("managed pong");
+    expect(createGenerationServiceMock).toHaveBeenCalledWith({ managedInference });
   });
 
   it("preserves explicit blank API key overrides for text generation", async () => {
