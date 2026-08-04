@@ -1,6 +1,6 @@
 import { defineCommand } from "just-bash";
 import type { ExecResult } from "just-bash";
-import type { KernelContext } from "../../../kernel/context";
+import { resolveCallerOwnerUid, type KernelContext } from "../../../kernel/context";
 import {
   handleSchedulerAdd,
   handleSchedulerList,
@@ -237,12 +237,21 @@ async function parseSchedAddCommand(args: string[], ctx: KernelContext): Promise
     };
   }
 
-  const processId = ctx.processId!;
-  const caller = ctx.procs.get(processId);
+  const currentProcessId = ctx.processId!;
+  const caller = ctx.procs.get(currentProcessId);
   if (!caller) {
-    throw new Error(`current process not found: ${processId}`);
+    throw new Error(`current process not found: ${currentProcessId}`);
   }
-  const route = ctx.processRunId ? ctx.runRoutes.get(ctx.processRunId) : null;
+  const ipcCall = ctx.processRunId
+    ? ctx.ipcCalls.findPendingByTargetRun({
+        uid: resolveCallerOwnerUid(ctx),
+        targetPid: currentProcessId,
+        targetRunId: ctx.processRunId,
+      })
+    : null;
+  const processId = ipcCall?.sourcePid ?? currentProcessId;
+  const routeRunId = ipcCall ? ipcCall.sourceRunId : ctx.processRunId;
+  const route = routeRunId ? ctx.runRoutes.get(routeRunId) : null;
   const replyTo = route?.kind === "adapter" && route.processId === processId
     ? route.destination
     : undefined;
@@ -305,7 +314,7 @@ function schedUsage(): string {
     "  sched remove <id>",
     "  sched run <id> [--force]",
     "",
-    "Use --here to wake this process and automatically reply on the current surface.",
+    "Use --here to wake this process, or its caller during delegated work, and reply on the current surface.",
     "Use --to for a direct scheduled message to an authorized adapter destination.",
     "--at requires a future ISO timestamp with Z or an explicit numeric UTC offset.",
     "Use crontab -l, crontab FILE, crontab -r, or /var/spool/cron/<user>",
