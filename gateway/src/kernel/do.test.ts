@@ -2243,6 +2243,13 @@ describe("Kernel IPC completion", () => {
         runId: "run-source",
         status: "aborted",
         reason: "user.superseded",
+        media: [{
+          type: "document",
+          mimeType: "application/pdf",
+          key: `home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
+          path: `/home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
+          size: 42,
+        }],
       },
     });
 
@@ -2254,6 +2261,13 @@ describe("Kernel IPC completion", () => {
     expect(cancelBySourceRun.mock.invocationCallOrder[0]).toBeLessThan(
       completeByRun.mock.invocationCallOrder[0],
     );
+    expect(completeByRun).toHaveBeenCalledWith(expect.objectContaining({
+      response: expect.objectContaining({
+        media: [expect.objectContaining({
+          path: `/home/worker/.gsv/media/archived-media:${"b".repeat(64)}`,
+        })],
+      }),
+    }));
   });
 
   it.each(["ipc.reply", "ipc.timeout"] as const)(
