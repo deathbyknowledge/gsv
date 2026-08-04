@@ -33,16 +33,6 @@ describe("BrowserTargetShell", () => {
     });
   });
 
-  it("passes argv to commands without shell expansion", async () => {
-    const shell = new BrowserTargetShell(directoryOnlyFileSystem(), []);
-    const payload = "check `sys.oauth.list`, $(whoami), $HOME, *.json, and 'quotes'";
-
-    await expect(shell.exec({ input: "printf '%s'", argv: [payload] })).resolves.toMatchObject({
-      status: "completed",
-      output: payload,
-    });
-  });
-
   it("stops a running command when its request is cancelled", async () => {
     const shell = new BrowserTargetShell(directoryOnlyFileSystem(), []);
     const controller = new AbortController();

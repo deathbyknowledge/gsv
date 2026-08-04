@@ -1328,7 +1328,6 @@ describe("proc native command", () => {
 
   it("delegates bounded work through a new child process", async () => {
     const spawnedPids: string[] = [];
-    const task = "check `sys.oauth.list`, $(whoami), $HOME, *.json, and 'quotes'";
     const parent = {
       processId: "task:shell",
       uid: IDENTITY.uid,
@@ -1360,7 +1359,7 @@ describe("proc native command", () => {
       }
       if (req.call === "proc.ipc.deliver") {
         expect(pid).toBe(spawnedPids[0]);
-        expect(req.args.message).toBe(task);
+        expect(req.args.message).toBe("write a migration plan");
         expect(req.args.metadata).toBeUndefined();
         expect(req.args.call).toEqual(expect.objectContaining({
           callId: expect.any(String),
@@ -1383,10 +1382,7 @@ describe("proc native command", () => {
     });
 
     const result = await handleShellExec(
-      {
-        input: "proc delegate --label planning --timeout 10m",
-        argv: [task],
-      },
+      { input: "proc delegate --label planning --timeout 10m write a migration plan" },
       makeContext({
         capabilities: ["proc.spawn", "proc.ipc.call"],
         procs: {

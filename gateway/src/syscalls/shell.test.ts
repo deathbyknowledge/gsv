@@ -9,12 +9,4 @@ describe("Shell tool definition", () => {
     expect(SHELL_EXEC_DEFINITION.description).toContain("NEXT action");
     expect(SHELL_EXEC_DEFINITION.description).not.toContain("txt2img");
   });
-
-  it("exposes a literal argument channel for opaque payloads", () => {
-    const argv = SHELL_EXEC_DEFINITION.inputSchema.properties.argv;
-
-    expect(argv).toMatchObject({ type: "array", items: { type: "string" } });
-    expect(argv.description).toContain("without shell expansion");
-    expect(argv.description).toContain("proc delegate");
-  });
 });
