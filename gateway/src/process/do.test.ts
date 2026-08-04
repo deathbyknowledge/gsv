@@ -3528,6 +3528,27 @@ describe("Process DO — mechanical", () => {
       expect(outputSignal?.payload.text).toBe("hello");
     });
 
+    it("does not relay provider stream events from noninteractive workers", async () => {
+      const pid = "mech-background-stream";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const sendSignal = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        process.store.setValue("interactive", "0");
+        process.sendSignal = vi.fn();
+
+        await process.emitRunStreamEvent("run-background", 1, {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "opaque work",
+          partial: {},
+        });
+        return process.sendSignal;
+      });
+
+      expect(sendSignal).not.toHaveBeenCalled();
+    });
+
     it("retries streamed reasoning-only model turns with monotonic stream sequence numbers", async () => {
       const pid = "mech-chat-stream-retry";
       const stub = await initProcess(pid, ROOT_IDENTITY);

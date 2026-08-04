@@ -4968,6 +4968,7 @@ export class Process extends Host<Env> {
     seq: number,
     event: AssistantMessageEvent,
   ): Promise<void> {
+    if (!this.interactive) return;
     await this.sendSignal("proc.run.stream", {
       pid: this.pid,
       runId,
