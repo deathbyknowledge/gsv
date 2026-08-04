@@ -139,6 +139,47 @@ describe("WhatsApp account residency", () => {
     expect(socket.end).toHaveBeenCalledOnce();
   });
 
+  it("leaves a connecting socket to its connection deadline", async () => {
+    const now = 10_000;
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const socket = {
+      ws: { isOpen: true },
+      end: vi.fn(async () => undefined),
+    } as unknown as WASocket;
+    const state = {
+      ...defaultWhatsAppAccountState(),
+      desired: "connected" as const,
+      status: "reconnecting" as const,
+      connected: false,
+      authenticated: true,
+      connectionDeadlineAt: now + 20_000,
+    };
+    const armIfPending = vi.fn(async () => true);
+    const retryPendingInbound = vi.fn(async () => undefined);
+    const account = fakeAccount({
+      sock: socket,
+      socketGeneration: 7,
+      authenticatedSockets: new WeakSet<object>(),
+      inboundDeliveries: { armIfPending },
+      socketOperations: { run: <T>(operation: () => Promise<T>) => operation() },
+      state,
+      persistStateAndSchedule: vi.fn(async () => undefined),
+      retryPendingInbound,
+      scheduleNextAlarm: vi.fn(async () => undefined),
+      scheduleReconnectAfterFailure: vi.fn(async () => undefined),
+    });
+
+    await account.alarm();
+
+    expect(armIfPending).toHaveBeenCalledWith(now + 10_000);
+    expect(retryPendingInbound).toHaveBeenCalledOnce();
+    expect(accountField(account, "sock")).toBe(socket);
+    expect(accountField(account, "socketGeneration")).toBe(7);
+    expect(state.status).toBe("reconnecting");
+    expect(state.connectionDeadlineAt).toBe(now + 20_000);
+    expect(socket.end).not.toHaveBeenCalled();
+  });
+
   it("starts residency alarms when the provider session authenticates", async () => {
     const now = 1_000;
     vi.spyOn(Date, "now").mockReturnValue(now);

@@ -492,6 +492,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       }
       if (
         this.state.desired === "connected"
+        && this.state.connected
         && this.sock
         && (
           !this.socketIsHealthy()
@@ -500,7 +501,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
         )
       ) {
         await this.socketOperations.run(async () => {
-          if (this.state.desired !== "connected" || !this.sock) return;
+          if (
+            this.state.desired !== "connected"
+            || !this.state.connected
+            || !this.sock
+          ) return;
           if (!this.socketIsHealthy()) {
             await this.failConnectionAttemptLocked("transport_unhealthy");
             return;
