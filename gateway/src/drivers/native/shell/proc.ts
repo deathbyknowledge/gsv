@@ -159,7 +159,7 @@ async function runProcCommand(args: string[], ctx: KernelContext): Promise<ExecR
           pid: spawned.pid,
           message: parsed.message,
           ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
-        }, ctx);
+        }, ctx, { terminateTargetOnTimeout: true });
       } catch (error) {
         return delegateFailureResult(ctx, spawned.pid, error);
       }

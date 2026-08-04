@@ -2227,6 +2227,40 @@ describe("Kernel IPC completion", () => {
       "onIpcCallTimeout",
       "call-timeout",
     );
+
+    await kernel.scheduleIpcCallTimeout("delegated-timeout", deadlineAt, {
+      terminateTargetOnTimeout: true,
+    });
+    expect(kernel.schedule).toHaveBeenLastCalledWith(
+      expect.any(Date),
+      "onIpcCallTimeout",
+      {
+        callId: "delegated-timeout",
+        terminateTargetOnTimeout: true,
+      },
+    );
+  });
+
+  it.each([
+    { input: "regular-call", terminates: false },
+    {
+      input: { callId: "delegated-call", terminateTargetOnTimeout: true },
+      terminates: true,
+    },
+  ])("terminates only disposable IPC targets on timeout", async ({ input, terminates }) => {
+    const call = { callId: typeof input === "string" ? input : input.callId, targetPid: "worker" };
+    const kernel = Object.create(Kernel.prototype) as any;
+    kernel.ipcCalls = {
+      get: vi.fn(() => call),
+      timeout: vi.fn(() => true),
+    };
+    kernel.queueIpcCallDelivery = vi.fn();
+    kernel.terminateTimedOutIpcTarget = vi.fn(async () => {});
+
+    await kernel.onIpcCallTimeout(input);
+
+    expect(kernel.queueIpcCallDelivery).toHaveBeenCalledWith(call.callId);
+    expect(kernel.terminateTimedOutIpcTarget).toHaveBeenCalledTimes(terminates ? 1 : 0);
   });
 
   it("cancels pending calls owned by an aborted source run", async () => {
