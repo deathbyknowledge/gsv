@@ -470,12 +470,14 @@ async fn mark_backgrounded(handle: &ProcessHandle, call_id: Option<String>) -> P
 
 async fn launch_managed_process(
     command: String,
+    argv: &[String],
     cwd: PathBuf,
     timeout_ms: u64,
 ) -> Result<(ProcessHandle, ForegroundProcessGuard), String> {
     let shell = resolve_shell_program();
     let mut cmd = Command::new(&shell.executable);
-    cmd.args(&shell.launch_args).arg(&command);
+    cmd.args(&shell.launch_args)
+        .arg(append_literal_args(command, argv)?);
     cmd.current_dir(&cwd);
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
@@ -617,6 +619,27 @@ async fn launch_managed_process(
     Ok((handle, foreground))
 }
 
+fn append_literal_args(mut command: String, argv: &[String]) -> Result<String, String> {
+    for value in argv {
+        if value.contains('\0') {
+            return Err("argv must not contain NUL bytes".to_string());
+        }
+        command.push(' ');
+        command.push_str(&quote_shell_literal(value));
+    }
+    Ok(command)
+}
+
+#[cfg(not(windows))]
+fn quote_shell_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(windows)]
+fn quote_shell_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 pub struct ShellTool {
     workspace: PathBuf,
 }
@@ -671,6 +694,8 @@ struct ShellArgs {
     #[serde(default)]
     input: Option<String>,
     #[serde(default)]
+    argv: Option<Vec<String>>,
+    #[serde(default)]
     cwd: Option<String>,
     #[serde(default)]
     session_id: Option<String>,
@@ -694,6 +719,11 @@ impl Tool for ShellTool {
                     "input": {
                         "type": "string",
                         "description": "Command to start, stdin for an existing session, or empty string to poll an existing session"
+                    },
+                    "argv": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Literal arguments appended to a new command without shell expansion"
                     },
                     "cwd": {
                         "type": "string",
@@ -719,6 +749,9 @@ impl Tool for ShellTool {
             .map(str::trim)
             .filter(|id| !id.is_empty())
         {
+            if args.argv.is_some() {
+                return Err("argv is only valid when starting a new command".to_string());
+            }
             let handle = get_process(session_id)
                 .await
                 .ok_or_else(|| format!("Unknown shell session: {}", session_id))?;
@@ -754,7 +787,13 @@ impl Tool for ShellTool {
             .unwrap_or_else(|| self.workspace.clone());
 
         let timeout_ms = args.timeout.unwrap_or(DEFAULT_TIMEOUT_MS);
-        let (handle, mut foreground) = launch_managed_process(command, cwd, timeout_ms).await?;
+        let (handle, mut foreground) = launch_managed_process(
+            command,
+            args.argv.as_deref().unwrap_or_default(),
+            cwd,
+            timeout_ms,
+        )
+        .await?;
 
         if args.background == Some(true) {
             let snapshot = mark_backgrounded(&handle, None).await;
@@ -788,6 +827,23 @@ mod tests {
         })
         .await
         .expect("shell did not write child PID");
+    }
+
+    #[tokio::test]
+    async fn argv_bypasses_shell_expansion() {
+        let payload = "check `printf corrupted`, $(printf corrupted), $HOME, *.json, and 'quotes'";
+        let result = ShellTool::new(std::env::temp_dir())
+            .execute(json!({
+                "input": "printf '%s'",
+                "argv": [payload],
+                "yieldMs": 30_000,
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.data["status"], "completed");
+        assert_eq!(result.data["stdout"], payload);
+        assert_eq!(result.data["stderr"], "");
     }
 
     #[tokio::test]
@@ -831,7 +887,7 @@ mod tests {
             pid_file.display()
         );
         let (handle, mut foreground) =
-            launch_managed_process(command, std::env::temp_dir(), 30_000)
+            launch_managed_process(command, &[], std::env::temp_dir(), 30_000)
                 .await
                 .unwrap();
         foreground.disarm();

@@ -13,6 +13,12 @@ export const SHELL_EXEC_DEFINITION: ToolDefinition = {
         description:
           "Command to start when sessionId is absent. Stdin to send when sessionId is present. Use an empty string with sessionId to poll for more output.",
       },
+      argv: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "Literal arguments appended to a new command without shell expansion. Put opaque prose, JSON, code, or paths containing shell syntax here instead of interpolating them into input; for example, pass a proc delegate task as one argv item.",
+      },
       cwd: {
         type: "string",
         description: "Working directory for a new command.",
