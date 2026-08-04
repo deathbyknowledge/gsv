@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["../worker-configuration.d.ts"],
+    "module": "es2022",
+    "moduleResolution": "bundler"
+  },
+  "include": ["./run.ts", "../src/evaluation/**/*.ts"],
+  "exclude": ["../src/**/*.test.ts"]
+}

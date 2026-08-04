@@ -8,6 +8,8 @@
     "dev": "wrangler dev",
     "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit",
+    "typecheck:evaluation": "tsc --noEmit -p evaluation/tsconfig.json",
+    "evaluate:deepseek": "npm exec --workspace gateway -- tsx ../inference-service/evaluation/run.ts",
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {

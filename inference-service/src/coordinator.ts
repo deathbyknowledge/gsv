@@ -24,7 +24,6 @@ import {
   type BudgetSnapshot,
 } from "./ledger";
 import { maximumRequestCostMicrounits, type TokenUsage } from "./price-book";
-import { mapDeepSeekReasoning } from "./providers/deepseek";
 import {
   resolveManagedProvider,
   type ProviderEnvironment,
@@ -175,7 +174,6 @@ export class BudgetCoordinator extends DurableObject<InferenceCoordinatorEnviron
       const stream = await input.provider.stream({
         request: input.request,
         context,
-        reasoning: mapDeepSeekReasoning(input.request.reasoning),
         attemptId: input.attemptId,
         attemptOrdinal: input.attemptOrdinal,
         signal: input.controller.signal,

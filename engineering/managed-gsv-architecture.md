@@ -679,6 +679,23 @@ Synthetic evaluation may proceed before that gate. A provider-specific model
 revision must pass GSV evaluations before promotion; an unversioned upstream
 alias is never promoted blindly.
 
+Promotion is enforced by a source-controlled release allowlist in the inference
+Worker. A provider name, production API key, and environment-variable change
+cannot enable customer prompts while that allowlist is blocked. Approval must
+record immutable content-free evidence report digests for the selected default
+and at least one fallback, plus affirmative privacy/data-processing, security,
+capacity/reliability, and brand/acceptable-use reviews.
+
+The versioned `gsv-managed-text-v1` evaluation suite covers GSV's fixed tool
+surface, concurrent reads, durable shell continuation, CodeMode composition,
+instruction precedence, destructive-action restraint, tool-result grounding,
+and long-context retrieval. It uses only synthetic fixtures through the real
+provider adapter. Its report includes stable task and assertion IDs, aggregate
+scores, reported token usage and cost, and latency, but never persists fixture
+prompts or model output. A DeepSeek credential is needed only to execute this
+evaluation against the live candidate; it is not needed to build or test the
+gate and it never belongs in the Gateway.
+
 The broker owns:
 
 - upstream credentials, prepaid balance monitoring, health, and failover;
@@ -923,9 +940,11 @@ and actor identity, reuse a stable logical ID across provider retries, preserve
 BYOK, reject unsupported media, and propagate cancellation to the broker. A
 clean four-Worker integration flow proves a failed first attempt can settle and
 retry without changing logical request identity. The real provider is disabled
-by default. GSV task evaluation, broker-owned fallback selection, and the
-provider privacy and contractual gate remain before customer prompts can be
-enabled. The shared-bot peer ownership
+by default and is additionally blocked by a source-controlled promotion gate.
+The repeatable content-free GSV task evaluation harness is implemented; a live
+candidate run, a selected and evaluated fallback, and the provider privacy and
+contractual approvals remain before customer prompts can be enabled. The
+shared-bot peer ownership
 recheck is a Phase 6 managed Telegram gate because that global peer directory
 does not exist before then. Managed production hosting remains disabled while
 Phases 5 through 9 are incomplete.
@@ -1014,8 +1033,10 @@ unauthorized principal cannot create or claim a Kernel.
 - Add capability routing and a non-DeepSeek media path or explicit unsupported
   response.
 - Add synthetic provider adapters and deterministic accounting tests.
-- Run the GSV task evaluation against the selected DeepSeek V4 Flash 0731 host
-  and at least one fallback.
+- Maintain the versioned GSV task evaluation and source-controlled production
+  promotion gate.
+- Run that evaluation against the selected DeepSeek V4 Flash 0731 host and at
+  least one fallback, then record only immutable content-free report digests.
 - Complete the provider privacy, security, capacity, brand, and data-processing
   release gate before customer prompts are enabled.
 

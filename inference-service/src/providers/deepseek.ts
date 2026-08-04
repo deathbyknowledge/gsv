@@ -46,7 +46,7 @@ export function createDeepSeekProvider(apiKey: string): ManagedProvider {
         apiKey,
         fetch: deepSeekIsolatingFetch(userId, input.attemptId),
         maxTokens: input.request.maxOutputTokens,
-        reasoning: input.reasoning,
+        reasoning: mapDeepSeekReasoning(input.request.reasoning),
         signal: input.signal,
       });
     },
@@ -89,7 +89,7 @@ export function deepSeekIsolatingFetch(
     ) {
       throw new Error("Managed DeepSeek request target is not allowed");
     }
-    const body = await request.clone().json<Record<string, unknown>>();
+    const body = await request.clone().json() as Record<string, unknown>;
     body.user_id = userId;
     const headers = new Headers(request.headers);
     headers.set("content-type", "application/json");

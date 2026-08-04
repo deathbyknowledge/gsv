@@ -1,4 +1,6 @@
 import { InferenceBoundaryError } from "../domain";
+import { DEEPSEEK_V4_FLASH_0731_PRICE } from "../price-book";
+import { isManagedInferenceReleaseApproved } from "../release-gate";
 import { createDeepSeekProvider } from "./deepseek";
 import { createSyntheticProvider } from "./synthetic";
 import type { ManagedProvider } from "./types";
@@ -15,6 +17,16 @@ export type ProviderEnvironment = {
 export function resolveManagedProvider(env: ProviderEnvironment): ManagedProvider {
   const provider = env.MANAGED_INFERENCE_PROVIDER?.trim().toLowerCase() || "disabled";
   if (provider === "deepseek") {
+    if (!isManagedInferenceReleaseApproved(
+      DEEPSEEK_V4_FLASH_0731_PRICE.provider,
+      DEEPSEEK_V4_FLASH_0731_PRICE.modelRevision,
+    )) {
+      throw new InferenceBoundaryError(
+        "Managed inference provider has not passed release gates",
+        503,
+        "provider_not_approved",
+      );
+    }
     if (!env.DEEPSEEK_API_KEY?.trim()) {
       throw new InferenceBoundaryError(
         "Managed inference provider is not configured",
