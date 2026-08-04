@@ -2,8 +2,9 @@
  * Kernel syscall dispatcher.
  *
  * Switch-based — every syscall is explicitly mapped for full visibility.
- * `target` is extracted at the dispatch boundary and stripped before
+ * A string `target` is extracted at the dispatch boundary and stripped before
  * native handlers see it unless the native syscall explicitly consumes it.
+ * Structured fields named `target` belong to their syscall payload.
  *
  * Returns a ResponseFrame for native-handled syscalls, or `null` when
  * the request was forwarded to a device (response will arrive later via
@@ -170,7 +171,7 @@ export async function dispatch(
     };
   }
   const raw = frame.args as Record<string, unknown>;
-  const target = raw.target as string | undefined;
+  const target = typeof raw.target === "string" ? raw.target : undefined;
   const sessionId = frame.call === "shell.exec" && typeof raw.sessionId === "string"
     ? raw.sessionId.trim()
     : "";

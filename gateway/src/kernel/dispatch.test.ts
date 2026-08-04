@@ -536,6 +536,54 @@ describe("dispatch", () => {
     expect(deps.registerRoute).not.toHaveBeenCalled();
   });
 
+  it("preserves structured syscall-owned target payloads", async () => {
+    const deps = {
+      connections: new Map(),
+      registerRoute: vi.fn(),
+      shellSessions: { get: vi.fn() },
+    } as unknown as DispatchDeps;
+    const frame = {
+      type: "req",
+      id: "req_schedule",
+      call: "sched.add",
+      args: {
+        name: "structured target",
+        expression: { kind: "after", afterMs: 60_000 },
+        target: { kind: "process.spawn", prompt: "Run later." },
+      },
+    } as RequestFrame<"sched.add">;
+    const ctx = {
+      ...makeContext(),
+      identity: {
+        ...makeContext().identity,
+        capabilities: ["proc.spawn"],
+      },
+      assertScheduledWorkAllowed: vi.fn(() => {
+        throw new Error("entitlement sentinel");
+      }),
+    } as unknown as KernelContext;
+
+    const result = await dispatch(
+      frame,
+      { type: "process", id: "proc_1" },
+      ctx,
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      handled: true,
+      response: {
+        ok: false,
+        error: { message: "entitlement sentinel" },
+      },
+    });
+    expect(frame.args.target).toEqual({
+      kind: "process.spawn",
+      prompt: "Run later.",
+    });
+    expect(deps.registerRoute).not.toHaveBeenCalled();
+  });
+
   it("rejects obsolete adapter target ids", async () => {
     const deps = {
       connections: new Map(),
