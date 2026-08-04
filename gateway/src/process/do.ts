@@ -3769,7 +3769,6 @@ export class Process extends Host<Env> {
 
   async tick(input: { runId: string; generation: number }): Promise<void> {
     const { runId, generation } = input;
-    const startedAt = Date.now();
     const run = this.currentRun;
     if (
       !run
@@ -3800,12 +3799,6 @@ export class Process extends Host<Env> {
         });
       })
       .finally(() => {
-        console.info(JSON.stringify({
-          event: "gsv.process.tick",
-          runId,
-          generation,
-          durationMs: Date.now() - startedAt,
-        }));
         this.activeTickRunIds.delete(runId);
         if (
           this.deferredTickRunIds.delete(runId)
@@ -4092,11 +4085,7 @@ export class Process extends Host<Env> {
       return retryState === "stopped" ? "stopped" : "retry";
     };
     let attempt = 1;
-    let generationAttempt = 1;
-    let generationStartedAt = 0;
     while (attempt <= MAX_RETRYABLE_GENERATION_ATTEMPTS) {
-      generationAttempt = attempt;
-      generationStartedAt = Date.now();
       try {
         response = await this.generateAssistantResponse({
           runId,
@@ -4272,18 +4261,6 @@ export class Process extends Host<Env> {
     const toolCalls = response.content.filter(
       (b): b is ToolCall => b.type === "toolCall",
     );
-    console.info(JSON.stringify({
-      event: "gsv.process.generation",
-      runId,
-      attempt: generationAttempt,
-      durationMs: Date.now() - generationStartedAt,
-      provider: run.config!.provider,
-      model: run.config!.model,
-      outcome: "ok",
-      textBlocks: textBlocks.length,
-      thinkingBlocks: thinkingBlocks.length,
-      toolCalls: toolCalls.length,
-    }));
 
     let outputMedia = toolCalls.length === 0 && this.currentRun?.runId === runId
       ? this.currentRun.outputMedia ?? []
@@ -4448,18 +4425,7 @@ export class Process extends Host<Env> {
 
     let seq = options.streamSeq?.value ?? 0;
     let response: AssistantMessage | null = null;
-    const startedAt = Date.now();
-    let firstOutputMs: number | null = null;
-    let firstTextMs: number | null = null;
-    let eventCount = 0;
     for await (const event of stream) {
-      eventCount += 1;
-      if (firstOutputMs === null && event.type.endsWith("_delta")) {
-        firstOutputMs = Date.now() - startedAt;
-      }
-      if (firstTextMs === null && event.type === "text_delta") {
-        firstTextMs = Date.now() - startedAt;
-      }
       seq += 1;
       if (options.streamSeq) {
         options.streamSeq.value = seq;
@@ -4474,15 +4440,6 @@ export class Process extends Host<Env> {
         return null;
       }
     }
-
-    console.info(JSON.stringify({
-      event: "gsv.process.generation.stream",
-      runId: options.runId,
-      durationMs: Date.now() - startedAt,
-      firstOutputMs,
-      firstTextMs,
-      eventCount,
-    }));
 
     return response ?? await stream.result();
   }
