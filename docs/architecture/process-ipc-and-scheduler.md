@@ -184,9 +184,11 @@ sched add --to DESTINATION --name NAME --after 10m --message "Send this text"
 ```
 
 `--here` requires a process-backed shell and creates a `process.event` for the
-current pid. During an adapter run it captures the authorized adapter destination
-in `replyTo`; the future terminal answer follows that destination. Without an
-adapter route, the result remains in process history.
+current pid. Inside a pending IPC call, it instead targets the calling process,
+so future work created by a delegated worker returns to its controller. During
+an adapter run it captures the authorized adapter destination in `replyTo`; the
+future terminal answer follows that destination. Without an adapter route, the
+result remains in the target process history.
 
 `--to` creates an `adapter.send` action and sends the stored text directly
 without running an agent. The scheduler validates destination ownership when a

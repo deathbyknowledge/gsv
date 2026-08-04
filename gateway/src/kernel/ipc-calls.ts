@@ -140,6 +140,25 @@ export class IpcCallStore {
     ).toArray().map((row) => row.call_id);
   }
 
+  findPendingByTargetRun(input: {
+    uid: number;
+    targetPid: string;
+    targetRunId: string;
+  }): IpcCallRecord | null {
+    const rows = this.sql.exec<IpcCallRow>(
+      `SELECT * FROM ipc_calls
+        WHERE uid = ?
+          AND target_pid = ?
+          AND target_run_id = ?
+          AND status = 'pending'
+        LIMIT 1`,
+      input.uid,
+      input.targetPid,
+      input.targetRunId,
+    ).toArray();
+    return rows[0] ? toIpcCallRecord(rows[0]) : null;
+  }
+
   timeout(callId: string, now = Date.now()): boolean {
     const cursor = this.sql.exec(
       `UPDATE ipc_calls

@@ -190,7 +190,9 @@ function makeContext(options?: {
     } as unknown as KernelContext["adapters"],
     runRoutes: null as never,
     schedules: options?.schedules,
-    ipcCalls: options?.ipcCalls,
+    ipcCalls: options?.ipcCalls ?? {
+      findPendingByTargetRun: vi.fn(() => null),
+    } as unknown as KernelContext["ipcCalls"],
     connection: null,
     identity: {
       role: "user",
@@ -3219,7 +3221,7 @@ describe("native administration shell commands", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it("schedules an event into the caller process", async () => {
+  it("returns a delegated schedule to the IPC caller", async () => {
     const wake = vi.fn(async () => "wake-here");
     const setWakeScheduleId = vi.fn();
     const create = vi.fn((input) => ({
@@ -3244,9 +3246,14 @@ describe("native administration shell commands", () => {
         runCount: 0,
       },
     }));
-    const caller = {
+    const worker = {
       processId: "task:shell",
       uid: IDENTITY.uid,
+      ownerUid: IDENTITY.uid,
+    };
+    const controller = {
+      processId: "proc:master-control",
+      uid: 2000,
       ownerUid: IDENTITY.uid,
     };
 
@@ -3257,14 +3264,21 @@ describe("native administration shell commands", () => {
       makeContext({
         capabilities: ["sched.add", "proc.send"],
         procs: {
-          get: vi.fn((pid: string) => pid === caller.processId ? caller : null),
+          get: vi.fn((pid: string) => [worker, controller].find((proc) => proc.processId === pid) ?? null),
           getOwnerUid: vi.fn(() => IDENTITY.uid),
         } as Partial<KernelContext["procs"]>,
+        ipcCalls: {
+          findPendingByTargetRun: vi.fn(() => ({
+            sourcePid: controller.processId,
+            sourceRunId: null,
+          })),
+        } as unknown as KernelContext["ipcCalls"],
         schedules: {
           create,
           setWakeScheduleId,
         } as unknown as KernelContext["schedules"],
         scheduleScheduleWake: wake,
+        processRunId: "run-worker",
       }),
     );
 
@@ -3275,7 +3289,7 @@ describe("native administration shell commands", () => {
       expression: { kind: "every", everyMs: 120_000 },
       target: {
         kind: "process.event",
-        pid: "task:shell",
+        pid: "proc:master-control",
         message: "Send a niche animal fact.",
       },
     }));
