@@ -55,6 +55,10 @@ import { BillingPlanCatalog, BillingProviderPriceCatalog } from "./billing/plans
 import { BillingReconciler } from "./billing/reconciler";
 import { BillingStore } from "./billing/store";
 import { StripeBillingProvider } from "./billing/stripe-provider";
+import {
+  BillingTerminationService,
+  BillingTerminationStore,
+} from "./billing/termination";
 import { BillingWebhookProcessor } from "./billing/webhooks";
 
 type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & BillingProductEnvironment
@@ -107,6 +111,7 @@ export default class AccountService
     if (lifecycleResponse) {
       if (request.method === "POST" && lifecycleResponse.ok) {
         this.deferNotificationSync();
+        this.deferBillingTermination();
       }
       return lifecycleResponse;
     }
@@ -141,6 +146,9 @@ export default class AccountService
       this.abuseProtection().deleteExpiredBuckets(),
       this.store().expireReservations(),
     ]);
+    await Promise.resolve()
+      .then(() => this.billingTerminationService().advanceDue(now))
+      .catch(() => undefined);
     await this.billingReconciler().advanceDue(now);
     const notifications = this.notificationService();
     await notifications.sync(now);
@@ -334,6 +342,24 @@ export default class AccountService
     );
   }
 
+  private billingTerminationService(): BillingTerminationService {
+    const product = billingProductConfig(this.env);
+    const store = new BillingStore(this.env.ACCOUNT_DB);
+    const provider = new StripeBillingProvider(
+      stripeBillingConfig(this.env, product.plan.planKey),
+    );
+    return new BillingTerminationService(
+      new BillingTerminationStore(this.env.ACCOUNT_DB),
+      provider,
+      new BillingReconciler(
+        store,
+        this.entitlementProjector(),
+        new BillingPlanCatalog([product.plan]),
+        product.policy,
+      ),
+    );
+  }
+
   private entitlementProjector(): GatewayEntitlementProjector {
     return new GatewayEntitlementProjector(
       new EntitlementStore(this.env.ACCOUNT_DB),
@@ -354,6 +380,15 @@ export default class AccountService
   private deferNotificationSync(): void {
     this.ctx.waitUntil(
       this.notificationService().sync().then(() => undefined).catch(() => undefined),
+    );
+  }
+
+  private deferBillingTermination(): void {
+    this.ctx.waitUntil(
+      Promise.resolve()
+        .then(() => this.billingTerminationService().advanceDue())
+        .then(() => undefined)
+        .catch(() => undefined),
     );
   }
 

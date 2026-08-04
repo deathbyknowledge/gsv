@@ -23,6 +23,10 @@ export class FakeBillingProvider implements BillingWebhookProvider, BillingComme
     input: string;
     session: BillingHostedSession;
   }>();
+  private readonly cancellations = new Map<string, {
+    subscriptionId: string;
+    snapshot: BillingSubscriptionSnapshot;
+  }>();
 
   constructor(
     private readonly signingSecret: string,
@@ -75,6 +79,38 @@ export class FakeBillingProvider implements BillingWebhookProvider, BillingComme
     returnUrl: string;
   }): Promise<BillingHostedSession> {
     return await this.hostedSession("portal", input);
+  }
+
+  async cancelSubscription(input: {
+    operationId: string;
+    subscriptionId: string;
+  }): Promise<BillingSubscriptionSnapshot> {
+    const operationId = parseExternalId(input.operationId, "billing operation ID");
+    const subscriptionId = parseExternalId(
+      input.subscriptionId,
+      "provider subscription ID",
+    );
+    const replay = this.cancellations.get(operationId);
+    if (replay) {
+      if (replay.subscriptionId !== subscriptionId) {
+        throw new Error("fake cancellation idempotency conflict");
+      }
+      return structuredClone(replay.snapshot);
+    }
+    const current = this.subscriptions.get(subscriptionId);
+    if (!current) throw new Error("fake provider subscription is unavailable");
+    const snapshot: BillingSubscriptionSnapshot = {
+      ...current,
+      state: "cancelled",
+      cancelAtPeriodEnd: false,
+      observedAt: Math.max(Date.now(), current.observedAt + 1),
+    };
+    this.subscriptions.set(subscriptionId, structuredClone(snapshot));
+    this.cancellations.set(operationId, {
+      subscriptionId,
+      snapshot: structuredClone(snapshot),
+    });
+    return snapshot;
   }
 
   async getSubscription(

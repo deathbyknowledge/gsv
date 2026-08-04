@@ -31,6 +31,18 @@ export class BillingReconciler {
       provider,
       snapshot.customerId,
     );
+    const snapshotHash = await sha256Hex(stableSnapshot(snapshot));
+    const installationState = await this.billing.getInstallationState(
+      snapshot.installationId,
+    );
+    if (installationState === "deleting" || installationState === "deleted") {
+      return await this.billing.reconcileTerminalSubscription({
+        account,
+        snapshot,
+        snapshotHash,
+        now,
+      });
+    }
     const existing = await this.billing.getSubscriptionByInstallation(
       snapshot.installationId,
     );
@@ -44,7 +56,7 @@ export class BillingReconciler {
     const stored = await this.billing.reconcileSubscription({
       account,
       snapshot,
-      snapshotHash: await sha256Hex(stableSnapshot(snapshot)),
+      snapshotHash,
       lifecycle,
       now,
     });

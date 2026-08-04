@@ -98,6 +98,29 @@ export class StripeBillingProvider implements BillingCommerceProvider {
       "provider subscription ID",
     );
     const subscription = await this.stripe.subscriptions.retrieve(subscriptionId);
+    return this.subscriptionSnapshot(subscription);
+  }
+
+  async cancelSubscription(input: {
+    operationId: string;
+    subscriptionId: string;
+  }): Promise<BillingSubscriptionSnapshot> {
+    const operationId = parseExternalId(input.operationId, "billing operation ID");
+    const subscriptionId = parseExternalId(
+      input.subscriptionId,
+      "provider subscription ID",
+    );
+    const subscription = await this.stripe.subscriptions.cancel(
+      subscriptionId,
+      { invoice_now: false, prorate: false },
+      { idempotencyKey: operationId },
+    );
+    return this.subscriptionSnapshot(subscription);
+  }
+
+  private subscriptionSnapshot(
+    subscription: Stripe.Subscription,
+  ): BillingSubscriptionSnapshot {
     const customerId = expandableId(subscription.customer, "Stripe customer");
     const installationId = parseExternalId(
       subscription.metadata.gsv_installation_id,

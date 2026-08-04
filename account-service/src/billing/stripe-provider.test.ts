@@ -122,6 +122,43 @@ describe("Stripe billing adapter", () => {
       });
   });
 
+  it("cancels immediately without a final invoice and reuses the operation identity", async () => {
+    const stripe = stripeClient(SECRET_KEY);
+    const cancel = vi.spyOn(stripe.subscriptions, "cancel").mockResolvedValue({
+      id: "sub_fixture",
+      object: "subscription",
+      customer: "cus_fixture",
+      metadata: {
+        gsv_installation_id: "inst_fixture",
+        gsv_plan_key: "founding-monthly",
+      },
+      status: "canceled",
+      cancel_at_period_end: false,
+      items: {
+        data: [{
+          quantity: 1,
+          price: { id: "price_founding" },
+          current_period_start: 1_799_000_000,
+          current_period_end: 1_801_000_000,
+        }],
+      },
+    } as unknown as Awaited<ReturnType<typeof stripe.subscriptions.cancel>>);
+
+    await expect(adapter(stripe).cancelSubscription({
+      operationId: "billing_termination_fixture",
+      subscriptionId: "sub_fixture",
+    })).resolves.toMatchObject({
+      subscriptionId: "sub_fixture",
+      state: "cancelled",
+      cancelAtPeriodEnd: false,
+    });
+    expect(cancel).toHaveBeenCalledWith(
+      "sub_fixture",
+      { invoice_now: false, prorate: false },
+      { idempotencyKey: "billing_termination_fixture" },
+    );
+  });
+
   it.each(["paused", "unpaid"] as const)(
     "keeps a recoverable %s subscription out of cancellation retention",
     async (status) => {

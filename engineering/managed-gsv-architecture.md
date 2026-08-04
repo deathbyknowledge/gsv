@@ -645,7 +645,12 @@ The initial lifecycle policy is:
 - explicit user deletion requires recent authentication and confirmation,
   disables new work immediately, and uses a seven-day recoverable window before
   irreversible deletion unless law or an incident-response policy requires a
-  different hold.
+  different hold; and
+- explicit deletion creates an independently retryable immediate subscription
+  cancellation obligation. Recovery cancels that obligation if the provider
+  call has not started, but it never attempts to reactivate a subscription the
+  provider already cancelled; paid-through access and a new checkout remain the
+  recovery path.
 
 These durations are configuration surfaced in user-visible policy. Changing
 them must not change lifecycle meanings or bypass notifications and export.
@@ -1077,7 +1082,10 @@ real multi-Worker lifecycle flow. A leased D1 notification outbox now delivers
 payment, restriction, retention, recovery, and deletion notices with bounded
 retry; retention teardown is gated on attempted start, seven-day, and one-day
 warnings. Production activation of the sending domain remains an external
-release gate. Installation export remains incomplete.
+release gate. Explicit deletion also records provider cancellation atomically,
+retries it independently of data teardown, and prevents late provider events
+from restoring entitlement to deleting or deleted installations. Installation
+export remains incomplete.
 
 ### Phase 0: executable specification
 

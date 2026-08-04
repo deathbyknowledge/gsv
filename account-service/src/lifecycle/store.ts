@@ -136,6 +136,18 @@ export class InstallationLifecycleStore {
            WHERE id = ? AND owner_principal_id = ? AND state = ?`,
         ).bind(installationId, principalId, installation.state),
         this.db.prepare(
+          `INSERT INTO billing_termination_operations (
+             operation_id, deletion_operation_id, installation_id,
+             provider, provider_subscription_id, state, next_attempt_at,
+             created_at, updated_at
+           )
+           SELECT 'billing_termination_' || ?, ?, s.installation_id,
+                  b.provider, s.provider_subscription_id, 'requested', ?, ?, ?
+           FROM subscriptions s
+           JOIN billing_accounts b ON b.id = s.billing_account_id
+           WHERE s.installation_id = ? AND s.provider_state != 'cancelled'`,
+        ).bind(operationId, operationId, now, now, now, installationId),
+        this.db.prepare(
           `UPDATE hostnames
            SET state = 'retired', retired_at = COALESCE(retired_at, ?)
            WHERE installation_id = ? AND state != 'retired'`,
@@ -378,6 +390,13 @@ export class InstallationLifecycleStore {
            AND state IN ('preparing', 'recoverable')
            AND recoverable_until > ?`,
       ).bind(now, now, operationId, principalId, now),
+      this.db.prepare(
+        `UPDATE billing_termination_operations
+         SET state = 'cancelled', lease_nonce = NULL, lease_until = NULL,
+             last_error_code = NULL, completed_at = ?, updated_at = ?
+         WHERE deletion_operation_id = ?
+           AND state IN ('requested', 'processing', 'failed')`,
+      ).bind(now, now, operationId),
       this.db.prepare(
         `INSERT INTO audit_events (
            id, principal_id, installation_id, action, outcome,

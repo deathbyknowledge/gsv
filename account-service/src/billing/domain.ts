@@ -68,6 +68,10 @@ export interface BillingCommerceProvider extends BillingWebhookProvider {
     customerId: string;
     returnUrl: string;
   }): Promise<BillingHostedSession>;
+  cancelSubscription(input: {
+    operationId: string;
+    subscriptionId: string;
+  }): Promise<BillingSubscriptionSnapshot>;
 }
 
 export type BillingPlan = {

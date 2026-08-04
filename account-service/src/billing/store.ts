@@ -1,4 +1,7 @@
-import type { ManagedEntitlementState } from "@humansandmachines/gsv/protocol";
+import type {
+  ManagedEntitlementState,
+  ManagedInstallationState,
+} from "@humansandmachines/gsv/protocol";
 import { parseOpaqueId } from "../domain";
 import { sha256Hex } from "../security/tokens";
 import {
@@ -249,6 +252,87 @@ export class BillingStore {
       providerSubscriptionId,
     );
     return row ? subscriptionFromRow(row) : null;
+  }
+
+  async getInstallationState(
+    installationIdValue: string,
+  ): Promise<ManagedInstallationState | null> {
+    const installationId = parseOpaqueId(installationIdValue, "installationId");
+    const row = await this.db.prepare(
+      "SELECT state FROM installations WHERE id = ? LIMIT 1",
+    ).bind(installationId).first<{ state: ManagedInstallationState }>();
+    return row?.state ?? null;
+  }
+
+  async reconcileTerminalSubscription(input: {
+    account: BillingAccount;
+    snapshot: BillingSubscriptionSnapshot;
+    snapshotHash: string;
+    now?: number;
+  }): Promise<StoredBillingSubscription> {
+    const now = timestamp(input.now ?? Date.now(), "terminal reconciliation timestamp");
+    if (!/^[0-9a-f]{64}$/.test(input.snapshotHash)) {
+      throw new Error("provider snapshot hash is invalid");
+    }
+    if (input.account.providerCustomerId !== input.snapshot.customerId) {
+      throw new Error("provider subscription customer is mismatched");
+    }
+    const installationState = await this.getInstallationState(
+      input.snapshot.installationId,
+    );
+    if (installationState !== "deleting" && installationState !== "deleted") {
+      throw new Error("terminal billing reconciliation requires deletion");
+    }
+    const existing = await this.getSubscriptionByInstallation(
+      input.snapshot.installationId,
+    );
+    if (
+      !existing
+      || existing.billingAccountId !== input.account.id
+      || existing.providerSubscriptionId !== input.snapshot.subscriptionId
+    ) {
+      throw new Error("terminal billing subscription is unavailable");
+    }
+    await this.db.prepare(
+      `UPDATE subscriptions
+       SET state = CASE WHEN ? = 'cancelled' THEN 'cancelled' ELSE state END,
+           provider_state = ?, provider_observed_at = ?,
+           provider_snapshot_hash = ?, current_period_starts_at = ?,
+           current_period_ends_at = ?, cancel_at_period_end = ?,
+           paid_through = CASE WHEN ? = 'cancelled' THEN ? ELSE paid_through END,
+           grace_ends_at = NULL, retention_ends_at = NULL,
+           entitlement_version = 0, entitlement_effective_at = NULL,
+           entitlement_json = NULL, last_reconciled_at = ?, updated_at = ?
+       WHERE installation_id = ? AND billing_account_id = ?
+         AND provider_subscription_id = ?
+         AND (
+           ? > provider_observed_at
+           OR (? = provider_observed_at AND ? = provider_snapshot_hash)
+         )`,
+    ).bind(
+      input.snapshot.state,
+      input.snapshot.state,
+      input.snapshot.observedAt,
+      input.snapshotHash,
+      input.snapshot.currentPeriodStartsAt,
+      input.snapshot.currentPeriodEndsAt,
+      input.snapshot.cancelAtPeriodEnd ? 1 : 0,
+      input.snapshot.state,
+      input.snapshot.currentPeriodEndsAt,
+      now,
+      now,
+      input.snapshot.installationId,
+      input.account.id,
+      input.snapshot.subscriptionId,
+      input.snapshot.observedAt,
+      input.snapshot.observedAt,
+      input.snapshotHash,
+    ).run();
+    const stored = await this.getSubscriptionByInstallation(
+      input.snapshot.installationId,
+    );
+    if (!stored) throw new Error("terminal billing subscription is unavailable");
+    return stored;
   }
 
   async reconcileSubscription(input: {
