@@ -3,7 +3,7 @@ import {
   base64UrlToBuffer,
   bufferToBase64Url,
   requestOptions,
-} from "./passkey";
+} from "../passkey";
 
 describe("account passkey transport", () => {
   it("round-trips WebAuthn binary values with base64url encoding", () => {

@@ -3,9 +3,9 @@ import {
   AccountApi,
   AccountApiError,
   type PublicAccountConfig,
-} from "./api";
+} from "../api";
 import { initialInstallationId } from "./domain";
-import { getPasskeyAssertion } from "./passkey";
+import { getPasskeyAssertion } from "../passkey";
 import type {
   AccountSession,
   ManagedTelegramClaimInspection,

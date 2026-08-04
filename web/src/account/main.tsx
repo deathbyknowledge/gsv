@@ -12,10 +12,24 @@ if (!app) {
 }
 
 const claimToken = claimFromHash(window.location.hash);
+const checkout = new URLSearchParams(window.location.search).get("checkout");
+const checkoutReturn = checkout === "complete" || checkout === "cancelled"
+  ? checkout
+  : null;
 window.history.replaceState(
   window.history.state,
   "",
   locationWithoutHash(window.location),
 );
+document.title = window.location.pathname.startsWith("/billing")
+  ? "Billing · GSV"
+  : "Connect Telegram · GSV";
 
-render(<AccountApp claimToken={claimToken} />, app);
+render(
+  <AccountApp
+    pathname={window.location.pathname}
+    claimToken={claimToken}
+    checkoutReturn={checkoutReturn}
+  />,
+  app,
+);

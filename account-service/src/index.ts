@@ -32,8 +32,23 @@ import { ManagedTelegramLinkHttp } from "./telegram/http";
 import { ManagedTelegramLinkService } from "./telegram/service";
 import { ManagedTelegramLinkOperationStore } from "./telegram/store";
 import { accountPage, publicTurnstileSiteKey } from "./account-ui";
+import {
+  billingProductConfig,
+  stripeBillingConfig,
+  type BillingProductEnvironment,
+  type StripeBillingEnvironment,
+} from "./billing/config";
+import { BillingCommerceService } from "./billing/commerce";
+import { BillingHttp, isBillingPath } from "./billing/http";
+import { BillingOverviewService } from "./billing/overview";
+import { BillingPlanCatalog, BillingProviderPriceCatalog } from "./billing/plans";
+import { BillingReconciler } from "./billing/reconciler";
+import { BillingStore } from "./billing/store";
+import { StripeBillingProvider } from "./billing/stripe-provider";
+import { BillingWebhookProcessor } from "./billing/webhooks";
 
-type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & {
+type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & BillingProductEnvironment
+& StripeBillingEnvironment & {
   ENVIRONMENT: string;
   GATEWAY: ManagedGatewayProvisioningInterface & ManagedGatewayTelegramInterface;
   MANAGED_TELEGRAM: ManagedTelegramControlInterface;
@@ -59,7 +74,12 @@ export default class AccountService
       });
     }
     if (
-      (url.pathname === "/telegram" || url.pathname === "/telegram/")
+      (
+        url.pathname === "/telegram"
+        || url.pathname === "/telegram/"
+        || url.pathname === "/billing"
+        || url.pathname === "/billing/"
+      )
       && (request.method === "GET" || request.method === "HEAD")
     ) {
       return await accountPage(request, this.env.ASSETS);
@@ -70,6 +90,14 @@ export default class AccountService
     if (installationResponse) return installationResponse;
     const telegramResponse = await this.telegramHttp().handle(request);
     if (telegramResponse) return telegramResponse;
+    if (isBillingPath(url.pathname)) {
+      try {
+        const billingResponse = await this.billingHttp().handle(request);
+        if (billingResponse) return billingResponse;
+      } catch {
+        return json({ error: "Billing temporarily unavailable" }, 503);
+      }
+    }
     if (url.pathname.startsWith("/api/")) {
       return json({ error: "Not Found" }, 404);
     }
@@ -80,6 +108,7 @@ export default class AccountService
     await Promise.all([
       this.abuseProtection().deleteExpiredBuckets(),
       this.store().expireReservations(),
+      this.billingReconciler().advanceDue(),
     ]);
   }
 
@@ -177,6 +206,64 @@ export default class AccountService
       ),
       this.abuseProtection(accountOrigin),
       accountOrigin,
+    );
+  }
+
+  private billingHttp(): BillingHttp {
+    const accountOrigin = parseAccountOrigin(this.env.GSV_ACCOUNT_ORIGIN);
+    const product = billingProductConfig(this.env);
+    const store = new BillingStore(this.env.ACCOUNT_DB);
+    return new BillingHttp(
+      new BillingOverviewService(
+        this.store(),
+        store,
+        this.authService(accountOrigin),
+      ),
+      () => this.billingProviderServices(store, accountOrigin),
+      this.abuseProtection(accountOrigin),
+      accountOrigin,
+      {
+        planKey: product.plan.planKey,
+        ...product.offer,
+      },
+    );
+  }
+
+  private billingProviderServices(
+    store: BillingStore,
+    accountOrigin: string,
+  ): {
+    commerce: BillingCommerceService;
+    webhooks: BillingWebhookProcessor;
+  } {
+    const product = billingProductConfig(this.env);
+    const providerConfig = stripeBillingConfig(this.env, product.plan.planKey);
+    const provider = new StripeBillingProvider(providerConfig);
+    const reconciler = new BillingReconciler(
+      store,
+      new EntitlementStore(this.env.ACCOUNT_DB),
+      new BillingPlanCatalog([product.plan]),
+      product.policy,
+    );
+    return {
+      commerce: new BillingCommerceService(
+        store,
+        this.authService(accountOrigin),
+        provider,
+        new BillingProviderPriceCatalog(providerConfig.prices),
+        accountOrigin,
+      ),
+      webhooks: new BillingWebhookProcessor(store, reconciler, provider),
+    };
+  }
+
+  private billingReconciler(): BillingReconciler {
+    const product = billingProductConfig(this.env);
+    return new BillingReconciler(
+      new BillingStore(this.env.ACCOUNT_DB),
+      new EntitlementStore(this.env.ACCOUNT_DB),
+      new BillingPlanCatalog([product.plan]),
+      product.policy,
     );
   }
 

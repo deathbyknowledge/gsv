@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@humansandmachines/gsv": "file:../packages/gsv",
-    "@simplewebauthn/server": "13.3.2"
+    "@simplewebauthn/server": "13.3.2",
+    "stripe": "22.4.0"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.18.0",

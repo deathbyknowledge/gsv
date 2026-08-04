@@ -6,7 +6,12 @@ import type {
   ManagedTelegramInstallation,
   ManagedTelegramLink,
   PublicKeyRequestOptionsJSON,
-} from "./types";
+} from "./telegram/types";
+import type {
+  BillingInstallation,
+  BillingOverview,
+  HostedBillingSession,
+} from "./billing/types";
 
 export type PublicAccountConfig = {
   turnstileSiteKey: string | null;
@@ -35,6 +40,54 @@ export class AccountApi {
 
   async session(): Promise<AccountSessionResult> {
     return parseSession(await this.json("/api/session"));
+  }
+
+  async billingOverview(): Promise<BillingOverview> {
+    const body = record(await this.json("/api/billing"));
+    const offer = record(body.offer);
+    if (!Array.isArray(body.installations)) {
+      throw new Error("Account service returned an invalid billing overview");
+    }
+    const currency = string(offer.currency).toLowerCase();
+    const monthlyPriceMinor = number(offer.monthlyPriceMinor);
+    if (
+      !/^[a-z]{3}$/.test(currency)
+      || !Number.isSafeInteger(monthlyPriceMinor)
+      || monthlyPriceMinor <= 0
+    ) {
+      throw new Error("Account service returned an invalid billing offer");
+    }
+    return {
+      offer: {
+        planKey: string(offer.planKey),
+        currency,
+        monthlyPriceMinor,
+      },
+      installations: body.installations.map(parseBillingInstallation),
+    };
+  }
+
+  async createBillingCheckout(input: {
+    installationId: string;
+    planKey: string;
+    idempotencyKey: string;
+  }): Promise<HostedBillingSession> {
+    const body = record(await this.json("/api/billing/checkout", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }));
+    return parseHostedBillingSession(body.session);
+  }
+
+  async createBillingPortal(input: {
+    installationId: string;
+    idempotencyKey: string;
+  }): Promise<HostedBillingSession> {
+    const body = record(await this.json("/api/billing/portal", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }));
+    return parseHostedBillingSession(body.session);
   }
 
   async inspectTelegramClaim(
@@ -224,6 +277,94 @@ function parseInstallation(value: unknown): ManagedTelegramInstallation {
   };
 }
 
+function parseBillingInstallation(value: unknown): BillingInstallation {
+  const body = record(value);
+  const installationState = string(body.installationState);
+  const operationState = string(body.operationState);
+  if (
+    ![
+      "reserved",
+      "provisioning",
+      "trialing",
+      "active",
+      "past_due",
+      "restricted",
+      "cancelled",
+      "retained",
+      "deleting",
+      "deleted",
+    ]
+      .includes(installationState)
+    || !["reserved", "provisioning", "complete", "failed"].includes(operationState)
+  ) {
+    throw new Error("Account service returned an invalid billing installation");
+  }
+  const canonicalOrigin = canonicalBillingOrigin(body.canonicalOrigin);
+  const base = {
+    installationId: string(body.installationId),
+    handle: string(body.handle),
+    canonicalOrigin,
+    installationState: installationState as BillingInstallation["installationState"],
+    operationState: operationState as BillingInstallation["operationState"],
+  };
+  if (body.subscription === null) return { ...base, subscription: null };
+
+  const subscription = record(body.subscription);
+  const state = string(subscription.state);
+  if (![
+    "pending",
+    "trialing",
+    "active",
+    "past_due",
+    "cancelled",
+    "restricted",
+    "retained",
+  ].includes(state)) {
+    throw new Error("Account service returned an invalid subscription state");
+  }
+  return {
+    ...base,
+    subscription: {
+      planKey: string(subscription.planKey),
+      state: state as NonNullable<BillingInstallation["subscription"]>["state"],
+      currentPeriodEndsAt: number(subscription.currentPeriodEndsAt),
+      cancelAtPeriodEnd: boolean(subscription.cancelAtPeriodEnd),
+      paidThrough: nullableNumber(subscription.paidThrough),
+      graceEndsAt: nullableNumber(subscription.graceEndsAt),
+      retentionEndsAt: nullableNumber(subscription.retentionEndsAt),
+    },
+  };
+}
+
+function parseHostedBillingSession(value: unknown): HostedBillingSession {
+  const body = record(value);
+  const url = string(body.url);
+  const parsed = new URL(url);
+  if (
+    parsed.protocol !== "https:"
+    || parsed.username
+    || parsed.password
+    || parsed.toString() !== url
+  ) {
+    throw new Error("Account service returned an invalid billing destination");
+  }
+  return {
+    url,
+    ...(body.expiresAt === undefined
+      ? {}
+      : { expiresAt: number(body.expiresAt) }),
+  };
+}
+
+function canonicalBillingOrigin(value: unknown): string {
+  const origin = string(value);
+  const parsed = new URL(origin);
+  if (parsed.origin !== origin || parsed.protocol !== "https:") {
+    throw new Error("Account service returned an invalid GSV origin");
+  }
+  return origin;
+}
+
 function record(value: unknown): Record<string, unknown> {
   if (!isRecord(value)) {
     throw new Error("Account service returned an invalid response");
@@ -254,4 +395,8 @@ function boolean(value: unknown): boolean {
     throw new Error("Account service returned an invalid response");
   }
   return value;
+}
+
+function nullableNumber(value: unknown): number | null {
+  return value === null ? null : number(value);
 }

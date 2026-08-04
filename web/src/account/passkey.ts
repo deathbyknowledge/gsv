@@ -1,7 +1,7 @@
 import type {
   AuthenticationResponseJSON,
   PublicKeyRequestOptionsJSON,
-} from "./types";
+} from "./telegram/types";
 
 export async function getPasskeyAssertion(
   options: PublicKeyRequestOptionsJSON,

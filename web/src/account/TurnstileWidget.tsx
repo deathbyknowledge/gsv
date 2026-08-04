@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "preact/hooks";
 
-type TurnstileApi = {
+export type TurnstileApi = {
   render: (
     container: HTMLElement,
     options: {

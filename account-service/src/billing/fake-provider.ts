@@ -1,18 +1,28 @@
-import { constantTimeEqual } from "../security/tokens";
+import { constantTimeEqual, sha256Hex } from "../security/tokens";
 import {
   parseExternalId,
   parseProviderName,
   type BillingSubscriptionSnapshot,
+  type BillingCommerceProvider,
+  type BillingHostedSession,
   type BillingWebhookEvent,
   type BillingWebhookProvider,
 } from "./domain";
 
 const SIGNATURE_HEADER = "x-gsv-fake-signature";
 
-export class FakeBillingProvider implements BillingWebhookProvider {
+export class FakeBillingProvider implements BillingWebhookProvider, BillingCommerceProvider {
   readonly name: string;
   readonly subscriptionReads = new Map<string, number>();
   private readonly subscriptions = new Map<string, BillingSubscriptionSnapshot>();
+  private readonly customers = new Map<string, {
+    input: string;
+    customerId: string;
+  }>();
+  private readonly hostedSessions = new Map<string, {
+    input: string;
+    session: BillingHostedSession;
+  }>();
 
   constructor(
     private readonly signingSecret: string,
@@ -26,6 +36,45 @@ export class FakeBillingProvider implements BillingWebhookProvider {
 
   setSubscription(snapshot: BillingSubscriptionSnapshot): void {
     this.subscriptions.set(snapshot.subscriptionId, structuredClone(snapshot));
+  }
+
+  async ensureCustomer(input: {
+    operationId: string;
+    principalId: string;
+    email: string;
+    displayName: string;
+  }): Promise<{ customerId: string }> {
+    const serialized = JSON.stringify(input);
+    const existing = this.customers.get(input.operationId);
+    if (existing) {
+      if (existing.input !== serialized) {
+        throw new Error("fake customer idempotency conflict");
+      }
+      return { customerId: existing.customerId };
+    }
+    const customerId = `customer_${(await sha256Hex(serialized)).slice(0, 24)}`;
+    this.customers.set(input.operationId, { input: serialized, customerId });
+    return { customerId };
+  }
+
+  async createCheckout(input: {
+    operationId: string;
+    customerId: string;
+    installationId: string;
+    planKey: string;
+    providerPriceId: string;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<BillingHostedSession> {
+    return await this.hostedSession("checkout", input);
+  }
+
+  async createPortal(input: {
+    operationId: string;
+    customerId: string;
+    returnUrl: string;
+  }): Promise<BillingHostedSession> {
+    return await this.hostedSession("portal", input);
   }
 
   async getSubscription(
@@ -114,5 +163,28 @@ export class FakeBillingProvider implements BillingWebhookProvider {
       new Uint8Array(signature),
       (byte) => byte.toString(16).padStart(2, "0"),
     ).join("");
+  }
+
+  private async hostedSession(
+    kind: "checkout" | "portal",
+    input: { operationId: string } & Record<string, unknown>,
+  ): Promise<BillingHostedSession> {
+    const key = `${kind}:${input.operationId}`;
+    const serialized = JSON.stringify(input);
+    const existing = this.hostedSessions.get(key);
+    if (existing) {
+      if (existing.input !== serialized) {
+        throw new Error("fake hosted-session idempotency conflict");
+      }
+      return structuredClone(existing.session);
+    }
+    const suffix = (await sha256Hex(`${kind}:${serialized}`)).slice(0, 24);
+    const session = {
+      sessionId: `${kind}_${suffix}`,
+      url: `https://${kind}.billing.test/session/${suffix}`,
+      ...(kind === "checkout" ? { expiresAt: Date.now() + 30 * 60_000 } : {}),
+    };
+    this.hostedSessions.set(key, { input: serialized, session });
+    return structuredClone(session);
   }
 }

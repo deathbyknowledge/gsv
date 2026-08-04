@@ -46,4 +46,17 @@ describe("account interface boundary", () => {
     );
     expect(await response.text()).toBe("");
   });
+
+  it("serves the same credential-safe shell for billing", async () => {
+    const response = await accountPage(
+      new Request("https://accounts.gsv.space/billing"),
+      {
+        fetch: vi.fn(async () => new Response("billing shell")),
+      } as unknown as Fetcher,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("billing shell");
+    expect(response.headers.get("content-security-policy"))
+      .toContain("default-src 'none'");
+  });
 });

@@ -18,6 +18,13 @@
     "GSV_BASE_DOMAIN": "gsv.space",
     "GSV_EMAIL_FROM": "noreply@gsv.space",
     "GSV_RP_NAME": "GSV",
+    "GSV_BILLING_PLAN_KEY": "founding-monthly",
+    "GSV_BILLING_CURRENCY": "usd",
+    "GSV_BILLING_MONTHLY_PRICE_MINOR": "2000",
+    "GSV_BILLING_INFERENCE_BUDGET_MICROUNITS": "5000000",
+    "GSV_BILLING_STORAGE_LIMIT_BYTES": "10737418240",
+    "GSV_BILLING_PAST_DUE_GRACE_MS": "604800000",
+    "GSV_BILLING_RETENTION_MS": "2592000000",
     "ENVIRONMENT": "production"
   },
   "send_email": [
@@ -48,7 +55,14 @@
   "assets": {
     "directory": "../web/dist-account",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*", "/health", "/telegram", "/telegram/"]
+    "run_worker_first": [
+      "/api/*",
+      "/health",
+      "/telegram",
+      "/telegram/",
+      "/billing",
+      "/billing/"
+    ]
   },
   "observability": {
     "enabled": true

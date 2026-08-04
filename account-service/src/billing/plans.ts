@@ -1,4 +1,5 @@
 import {
+  parseExternalId,
   parseBillingPlan,
   parsePlanKey,
   type BillingPlan,
@@ -26,5 +27,34 @@ export class BillingPlanCatalog {
     const plan = this.plans.get(planKey);
     if (!plan) throw new Error("billing plan is unavailable");
     return plan;
+  }
+}
+
+export class BillingProviderPriceCatalog {
+  private readonly prices: Map<string, string>;
+
+  constructor(entries: readonly {
+    planKey: string;
+    providerPriceId: string;
+  }[]) {
+    this.prices = new Map();
+    for (const entry of entries) {
+      const planKey = parsePlanKey(entry.planKey);
+      const providerPriceId = parseExternalId(
+        entry.providerPriceId,
+        "provider price ID",
+      );
+      if (this.prices.has(planKey)) {
+        throw new Error(`billing price for ${planKey} is duplicated`);
+      }
+      this.prices.set(planKey, providerPriceId);
+    }
+  }
+
+  require(planKeyValue: string): string {
+    const planKey = parsePlanKey(planKeyValue);
+    const providerPriceId = this.prices.get(planKey);
+    if (!providerPriceId) throw new Error("billing price is unavailable");
+    return providerPriceId;
   }
 }

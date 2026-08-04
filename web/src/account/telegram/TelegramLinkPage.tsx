@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { installationHostname, telegramIdentity } from "./domain";
-import { TurnstileWidget } from "./TurnstileWidget";
+import { TurnstileWidget } from "../TurnstileWidget";
 import { useTelegramLink, type TelegramLinkView } from "./useTelegramLink";
 
 export function TelegramLinkPage({ claimToken }: { claimToken: string | null }) {

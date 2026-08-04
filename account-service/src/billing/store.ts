@@ -14,6 +14,8 @@ import {
 } from "./domain";
 
 const EVENT_LEASE_MS = 30_000;
+const CHECKOUT_RECONCILIATION_BUFFER_MS = 10 * 60_000;
+const ABANDONED_CHECKOUT_MS = 40 * 60_000;
 const ERROR_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
 
 export type BillingAccount = {
@@ -59,6 +61,22 @@ export type BillingEventLease = {
   kind: "duplicate" | "in_progress";
 };
 
+export type BillingSessionOperation = {
+  operationId: string;
+  principalId: string;
+  installationId: string;
+  provider: string;
+  kind: "checkout" | "portal";
+  planKey: string | null;
+  providerSessionId: string | null;
+  providerSessionExpiresAt: number | null;
+  state: "created" | "complete" | "failed" | "expired";
+  attempt: number;
+  lastErrorCode: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 type BillingAccountRow = {
   id: string;
   principal_id: string;
@@ -100,6 +118,22 @@ type BillingEventRow = {
   subject_kind: string;
   subject_id: string | null;
   state: string;
+};
+
+type BillingSessionOperationRow = {
+  operation_id: string;
+  principal_id: string;
+  installation_id: string;
+  provider: string;
+  kind: string;
+  plan_key: string | null;
+  provider_session_id: string | null;
+  provider_session_expires_at: number | null;
+  state: string;
+  attempt: number;
+  last_error_code: string | null;
+  created_at: number;
+  updated_at: number;
 };
 
 export class BillingStore {
@@ -340,6 +374,193 @@ export class BillingStore {
     return rows.results.map(subscriptionFromRow);
   }
 
+  async beginSessionOperation(input: {
+    operationId: string;
+    principalId: string;
+    installationId: string;
+    provider: string;
+    kind: "checkout" | "portal";
+    planKey?: string;
+    now?: number;
+  }): Promise<BillingSessionOperation> {
+    const operationId = parseOpaqueId(input.operationId, "operationId");
+    const principalId = parseOpaqueId(input.principalId, "principalId");
+    const installationId = parseOpaqueId(
+      input.installationId,
+      "installationId",
+    );
+    const provider = parseProviderName(input.provider);
+    const planKey = input.kind === "checkout"
+      ? parsePlanKey(input.planKey)
+      : null;
+    if (input.kind === "portal" && input.planKey !== undefined) {
+      throw new Error("portal operation cannot select a billing plan");
+    }
+    const now = timestamp(input.now ?? Date.now(), "billing operation timestamp");
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO billing_session_operations (
+         operation_id, principal_id, installation_id, provider, kind,
+         plan_key, provider_session_id, provider_session_expires_at, state,
+         attempt, last_error_code, created_at, updated_at
+       )
+       SELECT ?, ?, id, ?, ?, ?, NULL, NULL, 'created', 0, NULL, ?, ?
+       FROM installations
+       WHERE id = ? AND owner_principal_id = ?
+         AND state NOT IN ('deleting', 'deleted')`,
+    ).bind(
+      operationId,
+      principalId,
+      provider,
+      input.kind,
+      planKey,
+      now,
+      now,
+      installationId,
+      principalId,
+    );
+    if (input.kind === "checkout") {
+      await this.db.batch([
+        this.db.prepare(
+          `UPDATE billing_session_operations
+           SET state = 'expired', last_error_code = 'checkout_expired',
+               updated_at = ?
+           WHERE installation_id = ? AND kind = 'checkout'
+             AND state = 'complete'
+             AND provider_session_expires_at <= ?`,
+        ).bind(
+          now,
+          installationId,
+          now - CHECKOUT_RECONCILIATION_BUFFER_MS,
+        ),
+        this.db.prepare(
+          `UPDATE billing_session_operations
+           SET state = 'failed', last_error_code = 'checkout_abandoned',
+               updated_at = ?
+           WHERE installation_id = ? AND kind = 'checkout'
+             AND state = 'created' AND updated_at <= ?`,
+        ).bind(now, installationId, now - ABANDONED_CHECKOUT_MS),
+        insert,
+      ]);
+    } else {
+      await insert.run();
+    }
+    const operation = await this.getSessionOperation(operationId);
+    if (!operation) {
+      if (
+        input.kind === "checkout"
+        && await this.getActiveCheckoutOperation(installationId)
+      ) {
+        throw new Error("billing checkout is already in progress");
+      }
+      throw new Error("billing installation is unavailable");
+    }
+    if (
+      operation.principalId !== principalId
+      || operation.installationId !== installationId
+      || operation.provider !== provider
+      || operation.kind !== input.kind
+      || operation.planKey !== planKey
+    ) {
+      throw new Error("billing idempotency key conflicts with an earlier request");
+    }
+    if (operation.state === "expired") {
+      throw new Error("billing checkout session expired");
+    }
+    try {
+      await this.db.prepare(
+        `UPDATE billing_session_operations
+         SET state = CASE WHEN state = 'failed' THEN 'created' ELSE state END,
+             attempt = attempt + 1, updated_at = ?, last_error_code = NULL
+         WHERE operation_id = ?`,
+      ).bind(now, operationId).run();
+    } catch (error) {
+      if (input.kind === "checkout") {
+        const active = await this.getActiveCheckoutOperation(installationId)
+          .catch(() => null);
+        if (active && active.operationId !== operationId) {
+          throw new Error("billing checkout is already in progress");
+        }
+      }
+      throw error;
+    }
+    return (await this.getSessionOperation(operationId))!;
+  }
+
+  async completeSessionOperation(input: {
+    operationId: string;
+    providerSessionId: string;
+    providerSessionExpiresAt?: number;
+    now?: number;
+  }): Promise<BillingSessionOperation> {
+    const operationId = parseOpaqueId(input.operationId, "operationId");
+    const providerSessionId = parseExternalId(
+      input.providerSessionId,
+      "provider session ID",
+    );
+    const operation = await this.getSessionOperation(operationId);
+    if (!operation) throw new Error("billing operation is unavailable");
+    const providerSessionExpiresAt = input.providerSessionExpiresAt === undefined
+      ? null
+      : timestamp(input.providerSessionExpiresAt, "billing session expiry");
+    if (
+      operation.kind === "checkout"
+      && providerSessionExpiresAt === null
+    ) {
+      throw new Error("billing checkout session expiry is required");
+    }
+    if (operation.kind === "portal" && providerSessionExpiresAt !== null) {
+      throw new Error("billing portal session cannot have an expiry");
+    }
+    await this.db.prepare(
+      `UPDATE billing_session_operations
+       SET provider_session_id = ?, provider_session_expires_at = ?,
+           state = 'complete',
+           last_error_code = NULL, updated_at = ?
+       WHERE operation_id = ?
+         AND (provider_session_id IS NULL OR provider_session_id = ?)
+         AND (
+           provider_session_expires_at IS NULL
+           OR provider_session_expires_at = ?
+         )`,
+    ).bind(
+      providerSessionId,
+      providerSessionExpiresAt,
+      timestamp(input.now ?? Date.now(), "billing operation timestamp"),
+      operationId,
+      providerSessionId,
+      providerSessionExpiresAt,
+    ).run();
+    const completed = await this.getSessionOperation(operationId);
+    if (
+      !completed
+      || completed.providerSessionId !== providerSessionId
+      || completed.providerSessionExpiresAt !== providerSessionExpiresAt
+    ) {
+      throw new Error("billing provider session conflicts with an earlier response");
+    }
+    return completed;
+  }
+
+  async failSessionOperation(input: {
+    operationId: string;
+    errorCode: string;
+    now?: number;
+  }): Promise<void> {
+    if (!ERROR_CODE_PATTERN.test(input.errorCode)) {
+      throw new Error("billing operation error code is invalid");
+    }
+    await this.db.prepare(
+      `UPDATE billing_session_operations
+       SET state = CASE WHEN provider_session_id IS NULL THEN 'failed' ELSE state END,
+           last_error_code = ?, updated_at = ?
+       WHERE operation_id = ?`,
+    ).bind(
+      input.errorCode,
+      timestamp(input.now ?? Date.now(), "billing operation timestamp"),
+      parseOpaqueId(input.operationId, "operationId"),
+    ).run();
+  }
+
   async beginEvent(input: {
     provider: string;
     event: BillingWebhookEvent;
@@ -464,6 +685,35 @@ export class BillingStore {
       `${SUBSCRIPTION_SELECT} WHERE ${where} LIMIT 1`,
     ).bind(...bindings).first<SubscriptionRow>();
   }
+
+  private async getSessionOperation(
+    operationId: string,
+  ): Promise<BillingSessionOperation | null> {
+    const row = await this.db.prepare(
+      `SELECT operation_id, principal_id, installation_id, provider, kind,
+              plan_key, provider_session_id, provider_session_expires_at,
+              state, attempt, last_error_code, created_at, updated_at
+       FROM billing_session_operations
+       WHERE operation_id = ?
+       LIMIT 1`,
+    ).bind(operationId).first<BillingSessionOperationRow>();
+    return row ? sessionOperationFromRow(row) : null;
+  }
+
+  private async getActiveCheckoutOperation(
+    installationId: string,
+  ): Promise<BillingSessionOperation | null> {
+    const row = await this.db.prepare(
+      `SELECT operation_id, principal_id, installation_id, provider, kind,
+              plan_key, provider_session_id, provider_session_expires_at,
+              state, attempt, last_error_code, created_at, updated_at
+       FROM billing_session_operations
+       WHERE installation_id = ? AND kind = 'checkout'
+         AND state IN ('created', 'complete')
+       LIMIT 1`,
+    ).bind(installationId).first<BillingSessionOperationRow>();
+    return row ? sessionOperationFromRow(row) : null;
+  }
 }
 
 const SUBSCRIPTION_SELECT = `SELECT
@@ -563,6 +813,46 @@ function parseEntitlementJson(value: string): BillingEntitlementTemplate {
       input.storageLimitBytes,
       "stored storage limit",
     ),
+  };
+}
+
+function sessionOperationFromRow(
+  row: BillingSessionOperationRow,
+): BillingSessionOperation {
+  if (
+    (row.kind !== "checkout" && row.kind !== "portal")
+    || (
+      row.state !== "created"
+      && row.state !== "complete"
+      && row.state !== "failed"
+      && row.state !== "expired"
+    )
+    || (row.kind === "checkout") !== (row.plan_key !== null)
+    || (row.state === "complete" || row.state === "expired")
+      !== (row.provider_session_id !== null)
+    || (row.provider_session_expires_at !== null && row.provider_session_id === null)
+    || (
+      row.kind === "checkout"
+      && (row.state === "complete" || row.state === "expired")
+      && row.provider_session_expires_at === null
+    )
+  ) {
+    throw new Error("stored billing session operation is invalid");
+  }
+  return {
+    operationId: row.operation_id,
+    principalId: row.principal_id,
+    installationId: row.installation_id,
+    provider: row.provider,
+    kind: row.kind,
+    planKey: row.plan_key,
+    providerSessionId: row.provider_session_id,
+    providerSessionExpiresAt: row.provider_session_expires_at,
+    state: row.state,
+    attempt: row.attempt,
+    lastErrorCode: row.last_error_code,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

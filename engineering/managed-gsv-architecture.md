@@ -656,6 +656,66 @@ lifecycle reconciler then projects `retained` without waiting for another
 provider event. Likewise, an unchanged `past_due` snapshot projects
 `restricted` when its original grace deadline passes.
 
+### Stripe launch adapter and merchant mode
+
+Stripe is the first concrete, replaceable billing adapter. GSV uses
+[hosted Checkout](https://docs.stripe.com/api/checkout/sessions/create) for a
+single recurring installation subscription and creates a short-lived
+[customer portal session](https://docs.stripe.com/api/customer_portal/sessions)
+on demand for payment repair, invoices, cancellation, and payment-method
+management. GSV does not collect or persist payment-instrument data, hosted
+session URLs, raw webhook bodies, or signatures. It persists only stable
+provider identifiers, content-free reconciliation state, and the derived
+entitlement projection.
+
+The adapter verifies Stripe's signature over the untouched request bytes as
+required by Stripe's [webhook signature guidance](https://docs.stripe.com/webhooks/signature),
+then treats the event only as a wake-up signal and refetches the current
+subscription. A checkout success redirect is presentation state, not payment
+authority. Activation and restoration wait for the verified webhook-derived
+entitlement before allowing cost-generating work.
+
+`GSV_STRIPE_MERCHANT_MODE` has no implicit production default. It must be one
+of:
+
+- `managed_payments`: request [Stripe Managed Payments](https://docs.stripe.com/payments/managed-payments/how-it-works),
+  where Stripe describes Stripe/Link as merchant of record. This is the
+  preferred launch candidate if GSV is admitted to the current preview and its
+  commercial terms, support allocation, product eligibility, country coverage,
+  refund handling, data processing, and termination path pass review.
+- `direct`: GSV is merchant of record. Checkout enables automatic tax,
+  billing-address collection, customer address updates, and tax-ID collection,
+  but Stripe Tax calculation does not remove GSV's responsibility for tax
+  registrations, filing, remittance, refunds, disputes, and customer billing
+  support.
+
+This switch exists to avoid coupling entitlement semantics to the merchant
+arrangement. It is not permission to enable Managed Payments without Stripe
+eligibility or to launch direct mode without tax and legal ownership.
+
+Production billing remains fail-closed until all of the following exist:
+
+- `STRIPE_SECRET_KEY` as an account-Worker secret;
+- `STRIPE_WEBHOOK_SECRET` as an account-Worker secret for the exact
+  `/api/billing/webhooks/stripe` endpoint;
+- `GSV_STRIPE_FOUNDING_PRICE_ID` as non-secret configuration for a recurring
+  USD 20 monthly Price matching the public founding offer;
+- an explicit `GSV_STRIPE_MERCHANT_MODE` selection;
+- a configured customer portal;
+- webhook delivery for checkout completion and customer subscription lifecycle
+  events.
+
+Do not enable Stripe Checkout's customer-wide **limit customers to one
+subscription** setting: one principal may own several GSVs, each with its own
+subscription under the same provider customer. GSV instead serializes Checkout
+per installation in D1, expires abandoned operations only after the provider
+session can no longer complete, and rejects a second subscription for an
+installation during reconciliation.
+
+Test-mode values are needed only for a live Stripe smoke test. Local tests use
+the signed deterministic fake provider and Stripe SDK test fixtures, so no
+developer or production credential is required.
+
 ## Managed inference
 
 The managed inference broker is a separate Worker reached through a service
@@ -1001,9 +1061,16 @@ and deduplication store, current-snapshot reconciler, lifecycle deadline
 advancer, entitlement projection, plan catalog, and signed deterministic fake
 provider are implemented. Tests cover exact replay, out-of-order notification,
 failed-event resumption, invalid signatures, seven-day grace semantics, and
-paid-through cancellation followed by retention. No hosted-checkout provider,
-customer portal, production webhook route, notification/deletion worker, or
-merchant credential is wired yet.
+paid-through cancellation followed by retention. The first concrete adapter now
+uses Stripe's Worker-compatible SDK for hosted Checkout, hosted customer-portal
+sessions, exact-raw-body webhook verification, and authoritative subscription
+refetch. Checkout, portal, billing overview, production webhook, and scheduled
+lifecycle routes are wired through the account service, and the dedicated
+account UI never treats a browser return as payment proof. The adapter can run
+in either direct-merchant or Stripe Managed Payments mode without changing GSV's
+provider-neutral contracts. No merchant credential is committed or wired, and
+the explicit merchant mode remains a production release choice. Notification,
+export, and bounded deletion work remains incomplete.
 
 ### Phase 0: executable specification
 
@@ -1196,10 +1263,11 @@ Additional release gates are:
 
 ## Deferred selections and non-goals
 
-The following selections do not block Phases 1 through 6 because their
-contracts are fixed above:
+The following selections do not block the completed implementation phases
+because their contracts are fixed above:
 
-- the first concrete billing adapter and merchant-of-record strategy;
+- Stripe Managed Payments eligibility and the resulting explicit
+  merchant-of-record mode;
 - the authentication library or service satisfying the principal contract;
 - the transactional email provider and fallback;
 - the production host for DeepSeek V4 Flash 0731 and its fallback; and
@@ -1249,3 +1317,6 @@ No product-content telemetry is required to compute these measures.
 - 2026-08-04: Bill per GSV installation with provider-neutral entitlements,
   founding pricing of USD 20 per month, intended list pricing of USD 29 per
   month, and no permanent free hosted tier.
+- 2026-08-04: Use Stripe hosted Checkout and customer portal as the first
+  replaceable billing adapter; require an explicit direct-versus-Managed-
+  Payments merchant mode instead of embedding that choice in entitlements.

@@ -41,6 +41,35 @@ export interface BillingWebhookProvider {
   getSubscription(subscriptionId: string): Promise<BillingSubscriptionSnapshot>;
 }
 
+export type BillingHostedSession = {
+  sessionId: string;
+  url: string;
+  expiresAt?: number;
+};
+
+export interface BillingCommerceProvider extends BillingWebhookProvider {
+  ensureCustomer(input: {
+    operationId: string;
+    principalId: string;
+    email: string;
+    displayName: string;
+  }): Promise<{ customerId: string }>;
+  createCheckout(input: {
+    operationId: string;
+    customerId: string;
+    installationId: string;
+    planKey: string;
+    providerPriceId: string;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<BillingHostedSession>;
+  createPortal(input: {
+    operationId: string;
+    customerId: string;
+    returnUrl: string;
+  }): Promise<BillingHostedSession>;
+}
+
 export type BillingPlan = {
   planKey: string;
   inferenceBudgetMicrounits: number;
