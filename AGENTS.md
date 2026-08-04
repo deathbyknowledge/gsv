@@ -19,6 +19,14 @@ This document is the root engineering contract for the repository. It explains h
 - Heavy or platform-native computation belongs on the appropriate device, provider, or specialized service.
 - Do not move adapter quirks, UI rendering, or device-specific behavior into the Kernel.
 
+### Treat installation identity as the outer security boundary
+
+- Managed HTTP requests resolve an accepted hostname through the trusted installation directory before addressing a Kernel. A random wildcard hostname must not allocate Durable Object state.
+- The Kernel Durable Object name is the immutable `installationId`; handles and canonical origins are routing metadata, not security identities.
+- Public callers never choose an `installationId`. Gateways derive it from host routing, adapters derive it from durable links, and background work retains it in owned state.
+- Process, R2, ripgit, and adapter physical addresses must include installation scope before managed multi-installation hosting is enabled.
+- Preserve the explicit `singleton` projection for supported standalone upgrades until a deliberate standalone migration replaces it end to end.
+
 ### Treat syscalls and protocol frames as the primitive boundary
 
 - Fix shared semantics at the syscall, protocol, or owning runtime boundary rather than patching individual callers.

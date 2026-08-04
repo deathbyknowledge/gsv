@@ -3033,6 +3033,16 @@ fn build_upload_metadata(
         }
     }
 
+    if bundle.component == COMPONENT_GATEWAY {
+        if let Some(subdomain) = options.account_subdomain {
+            metadata_bindings.push(json!({
+                "name": "GSV_CANONICAL_ORIGIN",
+                "type": "plain_text",
+                "text": workers_dev_url(&bundle.script_name, subdomain)
+            }));
+        }
+    }
+
     if let Some(assets) = &bundle.wrangler.assets {
         if let Some(binding) = &assets.binding {
             metadata_bindings.push(json!({
@@ -5060,6 +5070,58 @@ cpu_ms = 300000
             binding["name"] == "TELEGRAM_WEBHOOK_BASE_URL"
                 && binding["type"] == "plain_text"
                 && binding["text"] == "https://gsv-channel-telegram.example-subdomain.workers.dev"
+        }));
+    }
+
+    #[test]
+    fn build_upload_metadata_includes_gateway_canonical_origin_binding() {
+        let instance = DeployInstance::default();
+        let bundle = PreparedBundle {
+            bundle_dir: PathBuf::from("/tmp/gsv-test-bundle"),
+            component: COMPONENT_GATEWAY.to_string(),
+            manifest: BundleManifest {
+                component: COMPONENT_GATEWAY.to_string(),
+                worker: WorkerManifest {
+                    entrypoint: "worker/index.js".to_string(),
+                    source_map: None,
+                    wrangler_config: None,
+                },
+                assets_dir: None,
+            },
+            wrangler: WranglerConfig {
+                name: SCRIPT_GATEWAY.to_string(),
+                compatibility_date: Some("2026-01-28".to_string()),
+                ..WranglerConfig::default()
+            },
+            script_name: SCRIPT_GATEWAY.to_string(),
+            entrypoint_part_name: "worker/index.js".to_string(),
+            entrypoint_bytes: Vec::new(),
+            additional_modules: Vec::new(),
+            source_map: None,
+        };
+
+        let metadata = build_upload_metadata(
+            &bundle,
+            UploadMetadataOptions {
+                instance: &instance,
+                available_scripts: &HashSet::new(),
+                account_subdomain: Some("example-subdomain"),
+                existing_migration_tag: None,
+                include_migrations: false,
+                script_exists: false,
+                uploaded_assets: None,
+                keep_assets: false,
+                include_worker_loaders: true,
+                include_paid_limits: true,
+            },
+        )
+        .unwrap();
+
+        let bindings = metadata["bindings"].as_array().unwrap();
+        assert!(bindings.iter().any(|binding| {
+            binding["name"] == "GSV_CANONICAL_ORIGIN"
+                && binding["type"] == "plain_text"
+                && binding["text"] == "https://gsv.example-subdomain.workers.dev"
         }));
     }
 

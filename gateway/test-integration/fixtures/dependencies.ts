@@ -46,6 +46,31 @@ export default class TestDependencies
 {
   readonly adapterId = "test";
 
+  async resolveHostname(hostname: string): Promise<
+    | {
+        found: true;
+        installationId: string;
+        handle: string;
+        canonicalOrigin: string;
+        state: string;
+      }
+    | { found: false }
+  > {
+    const handle = hostname.endsWith(".gsv.space")
+      ? hostname.slice(0, -".gsv.space".length)
+      : "";
+    if (handle !== "first" && handle !== "second") {
+      return { found: false };
+    }
+    return {
+      found: true,
+      installationId: `inst_integration_${handle}`,
+      handle,
+      canonicalOrigin: `https://${handle}.gsv.space`,
+      state: "active",
+    };
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 

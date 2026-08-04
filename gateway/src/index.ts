@@ -1,5 +1,4 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { getAgentByName } from "agents";
 import type { GatewayAdapterInterface } from "./adapter-interface";
 import type { Frame } from "./protocol/frames";
 import { buildOAuthClientMetadata } from "./oauth-http";
@@ -9,6 +8,15 @@ import {
   servePublicAssetRequest,
 } from "./public-assets";
 import { isWebSocketRequest } from "./shared/utils";
+import {
+  getGatewayInstallationRoutingSource,
+  getKernelByInstallationId,
+  getStandaloneServiceInstallationId,
+  installationIdentityInput,
+  resolveInstallationRoute,
+  type TrustedInstallationRoute,
+} from "./installation/routing";
+import type { Kernel } from "./kernel/do";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -22,7 +30,9 @@ export default {
     }
 
     if (url.pathname === "/.well-known/oauth-client/gsv.json" && request.method === "GET") {
-      return Response.json(buildOAuthClientMetadata(url.origin), {
+      const resolved = await resolveGatewayInstallation(request, env);
+      if (!resolved.ok) return resolved.response;
+      return Response.json(buildOAuthClientMetadata(resolved.route.identity.canonicalOrigin), {
         headers: {
           "cache-control": "no-store",
           "access-control-allow-origin": "*",
@@ -31,13 +41,15 @@ export default {
     }
 
     if (url.pathname === "/oauth/callback" && request.method === "GET") {
-      const kernel = await getAgentByName(env.KERNEL, "singleton");
-      return kernel.fetch(request);
+      const resolved = await resolveGatewayKernel(request, env);
+      if (!resolved.ok) return resolved.response;
+      return resolved.kernel.fetch(request);
     }
 
     if (url.pathname === "/ws" && isWebSocketRequest(request)) {
-      const kernel = await getAgentByName(env.KERNEL, "singleton");
-      return kernel.fetch(request);
+      const resolved = await resolveGatewayKernel(request, env);
+      if (!resolved.ok) return resolved.response;
+      return resolved.kernel.fetch(request);
     }
 
     if (isRetiredCliDownloadPath(url.pathname)) {
@@ -55,7 +67,9 @@ export default {
     const gitMatch = matchGitPath(url);
     if (gitMatch) {
       const basicAuth = getBasicAuth(request);
-      const kernel = await getAgentByName(env.KERNEL, "singleton");
+      const resolved = await resolveGatewayKernel(request, env);
+      if (!resolved.ok) return resolved.response;
+      const { kernel } = resolved;
       const authorized = await kernel.authorizeGitHttp({
         owner: gitMatch.owner,
         repo: gitMatch.repo,
@@ -77,6 +91,65 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
+
+type InstallationResolution =
+  | { ok: true; route: TrustedInstallationRoute }
+  | { ok: false; response: Response };
+
+type KernelResolution =
+  | {
+      ok: true;
+      route: TrustedInstallationRoute;
+      kernel: DurableObjectStub<Kernel>;
+    }
+  | { ok: false; response: Response };
+
+async function resolveGatewayInstallation(
+  request: Request,
+  env: Env,
+): Promise<InstallationResolution> {
+  try {
+    const route = await resolveInstallationRoute(
+      request,
+      getGatewayInstallationRoutingSource(request, env),
+    );
+    if (!route) {
+      return { ok: false, response: new Response("Not Found", { status: 404 }) };
+    }
+    return { ok: true, route };
+  } catch {
+    console.error("[Gateway] Installation resolution failed");
+    return {
+      ok: false,
+      response: new Response("Installation routing unavailable", { status: 503 }),
+    };
+  }
+}
+
+async function resolveGatewayKernel(
+  request: Request,
+  env: Env,
+): Promise<KernelResolution> {
+  const resolved = await resolveGatewayInstallation(request, env);
+  if (!resolved.ok) return resolved;
+
+  try {
+    const kernel = await getKernelByInstallationId(
+      env.KERNEL,
+      resolved.route.identity.installationId,
+    );
+    await kernel.ensureInstallationIdentity(
+      installationIdentityInput(resolved.route.identity),
+    );
+    return { ok: true, route: resolved.route, kernel };
+  } catch {
+    console.error("[Gateway] Kernel installation identity check failed");
+    return {
+      ok: false,
+      response: new Response("Installation unavailable", { status: 503 }),
+    };
+  }
+}
 
 const RETIRED_CLI_DOWNLOAD_PATH = "/public/gsv/downloads/cli";
 
@@ -195,7 +268,11 @@ export class GatewayEntrypoint
   async serviceFrame(frame: Frame): Promise<Frame | null> {
     const body = "body" in frame ? frame.body : undefined;
     try {
-      const kernel = await getAgentByName(this.env.KERNEL, "singleton");
+      const installationId = getStandaloneServiceInstallationId(this.env);
+      if (!installationId) {
+        throw new Error("Managed adapter requests require an installation-scoped entrypoint");
+      }
+      const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
       return await kernel.serviceFrame(frame);
     } catch (error) {
       if (body && !body.stream.locked) {

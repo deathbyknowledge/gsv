@@ -26,9 +26,15 @@ import type { SignalWatchStore } from "./signal-watches";
 import type { IpcCallStore } from "./ipc-calls";
 import type { ScheduleStore } from "./scheduler";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
+import type {
+  InstallationId,
+  InstallationIdentity,
+} from "../installation/identity";
 
 export type KernelContext = {
   env: Env;
+  installationId: InstallationId;
+  installationIdentity: InstallationIdentity | null;
   auth: AuthStore;
   caps: CapabilityStore;
   config: ConfigStore;

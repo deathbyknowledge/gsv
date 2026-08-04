@@ -10,14 +10,17 @@ import {
 const GATEWAY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEPENDENCY_WORKER = "gsv-test-dependencies";
 
-function integrationGatewayConfig(): Unstable_RawConfig {
+function integrationGatewayConfig(options: {
+  name?: string;
+  managed?: boolean;
+} = {}): Unstable_RawConfig {
   const config = unstable_readConfig(
     { config: resolve(GATEWAY_ROOT, "wrangler.jsonc") },
     { hideWarnings: true },
   );
 
   return {
-    name: config.name,
+    name: options.name ?? config.name,
     main: config.main,
     compatibility_date: config.compatibility_date,
     compatibility_flags: config.compatibility_flags,
@@ -38,6 +41,9 @@ function integrationGatewayConfig(): Unstable_RawConfig {
       { binding: "CHANNEL_TELEGRAM", service: DEPENDENCY_WORKER },
       { binding: "CHANNEL_WHATSAPP", service: DEPENDENCY_WORKER },
       { binding: "RIPGIT", service: DEPENDENCY_WORKER },
+      ...(options.managed
+        ? [{ binding: "INSTALLATION_DIRECTORY", service: DEPENDENCY_WORKER }]
+        : []),
     ],
   };
 }
@@ -48,6 +54,23 @@ export function createGatewayTestHarness(): TestHarness {
     workers: [
       {
         config: integrationGatewayConfig(),
+      },
+      {
+        configPath: "test-integration/fixtures/wrangler.jsonc",
+      },
+    ],
+  });
+}
+
+export function createManagedGatewayTestHarness(): TestHarness {
+  return createTestHarness({
+    root: GATEWAY_ROOT,
+    workers: [
+      {
+        config: integrationGatewayConfig(),
+      },
+      {
+        config: integrationGatewayConfig({ name: "gsv-managed", managed: true }),
       },
       {
         configPath: "test-integration/fixtures/wrangler.jsonc",

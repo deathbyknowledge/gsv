@@ -1,4 +1,3 @@
-import { getAgentByName } from "agents";
 import { Kernel } from "../kernel/do";
 import { env } from "cloudflare:workers";
 import { Process } from "../process/do";
@@ -13,6 +12,9 @@ import type {
   ProcessScheduleDeliverResponseFrame,
 } from "../protocol/process-frames";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
+import { getAgentByName } from "agents";
+import { LEGACY_STANDALONE_INSTALLATION_ID } from "../installation/identity";
+import { getKernelByInstallationId } from "../installation/routing";
 
 export const isWebSocketRequest = (request: Request) =>
   request.method === "GET" && request.headers.get("upgrade") === "websocket";
@@ -29,7 +31,10 @@ export type RequestProcessNetFetchOptions = {
 };
 
 export async function getKernelPtr(): Promise<KernelPtr> {
-  return await getAgentByName(env.KERNEL, "singleton");
+  return await getKernelByInstallationId(
+    env.KERNEL,
+    LEGACY_STANDALONE_INSTALLATION_ID,
+  );
 }
 
 export async function getProcessByPid(pid: string): Promise<ProcessPtr> {

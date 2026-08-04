@@ -114,6 +114,12 @@ import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import { SERVER_VERSION } from "../version";
+import { InstallationIdentityStore } from "./installation-identity-store";
+import {
+  LEGACY_STANDALONE_INSTALLATION_ID,
+  type InstallationIdentity,
+  type InstallationIdentityInput,
+} from "../installation/identity";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -203,6 +209,7 @@ type AuthorizeGitHttpResult =
     };
 
 export class Kernel extends Host<Env> {
+  private readonly installationIdentity: InstallationIdentityStore;
   private readonly auth: AuthStore;
   private readonly caps: CapabilityStore;
   private readonly config: ConfigStore;
@@ -238,6 +245,12 @@ export class Kernel extends Host<Env> {
     super(ctx, env);
     const sql = ctx.storage.sql;
     runKernelSqlMigrations(ctx.storage);
+
+    // Gateway-routed Kernels are name-addressed. Keep unnamed test or
+    // maintenance objects constructible without relying on PartyServer's
+    // name fallback having been initialized by an RPC entry point.
+    const durableObjectName = ctx.id.name ?? `do_${ctx.id.toString()}`;
+    this.installationIdentity = new InstallationIdentityStore(sql, durableObjectName);
 
     this.auth = new AuthStore(sql);
 
@@ -305,6 +318,16 @@ export class Kernel extends Host<Env> {
     return provider;
   }
 
+  async ensureInstallationIdentity(
+    input: InstallationIdentityInput,
+  ): Promise<InstallationIdentity> {
+    return this.installationIdentity.ensure(input);
+  }
+
+  async getInstallationIdentity(): Promise<InstallationIdentity | null> {
+    return this.installationIdentity.get();
+  }
+
   async onRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname !== "/oauth/callback" || request.method !== "GET") {
@@ -323,7 +346,7 @@ export class Kernel extends Host<Env> {
   private async addMcpServerConnection(input: McpAddConnectionInput): Promise<McpAddConnectionResult> {
     const serverName = `u${input.uid}:${input.name}`;
     const serverId = `mcp-${crypto.randomUUID()}`;
-    let callbackHost = input.callbackHost;
+    let callbackHost = this.installationIdentity?.get()?.canonicalOrigin ?? input.callbackHost;
     if (!callbackHost) {
       const { request, connection } = getCurrentAgent();
       const activeUrl = request?.url ?? connection?.uri;
@@ -1550,8 +1573,12 @@ export class Kernel extends Host<Env> {
     requestSignal?: AbortSignal;
     callerOwnerUid?: number;
   }): KernelContext {
+    const installationIdentity = this.installationIdentity?.get() ?? null;
     return {
       env: this.env,
+      installationId: this.installationIdentity?.installationId
+        ?? LEGACY_STANDALONE_INSTALLATION_ID,
+      installationIdentity,
       auth: this.auth,
       caps: this.caps,
       config: this.config,

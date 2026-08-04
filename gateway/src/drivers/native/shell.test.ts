@@ -20,6 +20,7 @@ import {
   type ProcessIdentity,
 } from "@humansandmachines/gsv/protocol";
 import type { RequestFrame, ResponseFrame } from "../../protocol/frames";
+import { parseInstallationIdentity } from "../../installation/identity";
 
 const generateMock = vi.hoisted(() => vi.fn());
 
@@ -100,6 +101,11 @@ function makeContext(options?: {
   ripgit?: Fetcher;
 }): KernelContext {
   const identity = options?.identity ?? IDENTITY;
+  const installationIdentity = parseInstallationIdentity({
+    installationId: "inst_shell_test",
+    handle: "shell-test",
+    canonicalOrigin: "https://shell-test.gsv.space",
+  });
   const configValues = new Map<string, string>(Object.entries(options?.config ?? {}));
   const defaultAuth = {
     getPasswdByUid: vi.fn((uid: number) => uid === identity.uid
@@ -132,6 +138,8 @@ function makeContext(options?: {
       LOADER: { get() { throw new Error("LOADER should not be used in shell tests"); } },
       ...(options?.aiRun ? { AI: { run: vi.fn(options.aiRun) } } : {}),
     } as unknown as Env,
+    installationId: installationIdentity.installationId,
+    installationIdentity,
     auth: {
       ...defaultAuth,
       ...options?.auth,
@@ -2390,6 +2398,19 @@ describe("native administration shell commands", () => {
 
     expect(result.ok).toBe(true);
     expect(result.stdout).toBe("task:shell\ntask:shell\n");
+    expect(result.stderr).toBe("");
+  });
+
+  it("exposes the installation identity and canonical URL to shell commands", async () => {
+    const result = await handleShellExec(
+      { input: "printf \"$GSV_INSTALLATION_ID\\n$GSV_URL\\n\"" },
+      makeContext(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe(
+      "inst_shell_test\nhttps://shell-test.gsv.space\n",
+    );
     expect(result.stderr).toBe("");
   });
 
