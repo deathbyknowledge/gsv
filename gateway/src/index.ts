@@ -18,6 +18,10 @@ import {
 } from "./installation/routing";
 import type { Kernel } from "./kernel/do";
 import { createInstallationStorage } from "./installation/storage";
+import {
+  createInstallationRipgit,
+  removeUntrustedRipgitInstallationHeader,
+} from "./installation/ripgit";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -80,7 +84,7 @@ export default {
       const basicAuth = getBasicAuth(request);
       const resolved = await resolveGatewayKernel(request, env);
       if (!resolved.ok) return resolved.response;
-      const { kernel } = resolved;
+      const { kernel, route } = resolved;
       const authorized = await kernel.authorizeGitHttp({
         owner: gitMatch.owner,
         repo: gitMatch.repo,
@@ -94,7 +98,10 @@ export default {
           : new Response(authorized.message, { status: authorized.status });
       }
 
-      return env.RIPGIT.fetch(
+      return createInstallationRipgit(
+        env.RIPGIT,
+        route.identity.installationId,
+      ).fetch(
         await buildGitProxyRequest(request, gitMatch, authorized.username),
       );
     }
@@ -255,6 +262,7 @@ async function buildGitProxyRequest(
   const headers = new Headers(request.headers);
   headers.delete("authorization");
   headers.delete("cookie");
+  removeUntrustedRipgitInstallationHeader(headers);
   if (username) {
     headers.set("x-ripgit-actor-name", username);
   } else {

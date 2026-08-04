@@ -74,6 +74,24 @@ describe("installation routing", () => {
     },
   );
 
+  it("does not let managed routing claim the standalone compatibility object", async () => {
+    await expect(resolveInstallationRoute(
+      new Request("https://hank.gsv.space/ws"),
+      {
+        kind: "managed",
+        directory: {
+          resolveHostname: async () => ({
+            found: true,
+            installationId: "singleton",
+            handle: "hank",
+            canonicalOrigin: "https://hank.gsv.space",
+            state: "active",
+          }),
+        },
+      },
+    )).resolves.toBeNull();
+  });
+
   it("does not open a Kernel for an unknown managed hostname", async () => {
     const open = vi.fn(async () => ({ opened: true }));
     const result = await resolveInstallationTarget(

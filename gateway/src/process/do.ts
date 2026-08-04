@@ -210,6 +210,7 @@ import {
   type InstallationId,
 } from "../installation/identity";
 import { createInstallationStorage } from "../installation/storage";
+import { createInstallationRipgit } from "../installation/ripgit";
 
 type RunState = {
   runId: string;
@@ -859,7 +860,10 @@ function fitCompactionRecord(message: MessageRecord, maxChars: number): string |
 export class Process extends Host<Env> {
   private readonly store: ProcessStore;
   private readonly generation = createGenerationService();
-  private readonly ripgit: RipgitClient | null;
+  private installationRipgit: {
+    installationId: InstallationId;
+    client: RipgitClient;
+  } | null = null;
   private readonly codeModeResponses = new Map<string, CodeModeResponseWaiter>();
   private readonly codeModeApprovals = new Map<string, CodeModeApprovalWaiter>();
   private readonly requestControllers = new Map<string, AbortController>();
@@ -883,9 +887,6 @@ export class Process extends Host<Env> {
     super(ctx, env);
     runProcessSqlMigrations(ctx.storage);
     this.store = new ProcessStore(ctx.storage.sql);
-    this.ripgit = env.RIPGIT
-      ? new RipgitClient(env.RIPGIT)
-      : null;
     const recoveredRun = this.currentRun;
     if (
       recoveredRun?.pendingMediaMessageId !== undefined
@@ -962,6 +963,21 @@ export class Process extends Host<Env> {
       };
     }
     return this.installationStorage.bucket;
+  }
+
+  private get ripgit(): RipgitClient | null {
+    if (!this.env.RIPGIT) return null;
+    const installationId = this.installationId;
+    if (this.installationRipgit?.installationId !== installationId) {
+      this.installationRipgit = {
+        installationId,
+        client: new RipgitClient(createInstallationRipgit(
+          this.env.RIPGIT,
+          installationId,
+        )),
+      };
+    }
+    return this.installationRipgit.client;
   }
 
   /**

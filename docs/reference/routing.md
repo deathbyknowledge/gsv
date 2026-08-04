@@ -14,7 +14,17 @@ The directory returns an immutable `installationId`, handle, and persisted
 canonical origin. The Kernel Durable Object is named by `installationId`.
 Handles and hostnames are routing metadata and may not be substituted for that
 durable identity. Standalone deployments explicitly route to the compatibility
-installation `singleton`, preserving the historical Kernel object.
+installation `singleton`, preserving the historical Kernel object. That ID is
+reserved: a managed directory result naming `singleton` is rejected before any
+Durable Object lookup.
+
+The same trusted route scopes ripgit. Installation-local code receives a
+binding that overwrites ripgit's internal installation header, and the public
+Git proxy removes any caller-supplied value before forwarding. ripgit maps the
+logical `{owner}/{repo}` to the managed Repository Durable Object name
+`{installationId}/{owner}/{repo}`. The `singleton` compatibility route retains
+the historical `{owner}/{repo}` name, so existing standalone repositories do
+not move on upgrade.
 
 ## Routing Surfaces
 

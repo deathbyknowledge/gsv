@@ -123,6 +123,12 @@ paths for clone/fetch/push and an internal `/hyperspace/repos/...` API used by
 the Kernel for reads, writes, search, and upstream
 imports.
 
+The repository slug is installation-local. The Gateway binds every managed
+ripgit request to its trusted installation route, while ripgit includes that
+identity in the physical Repository Durable Object name. Public Git remotes
+stay `/git/{owner}/{repo}.git`; a caller-provided routing header is discarded.
+Standalone `singleton` keeps the original `{owner}/{repo}` object name.
+
 GSV uses repositories for more than source control:
 
 - `{username}/home` stores user-global knowledge and context.

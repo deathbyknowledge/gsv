@@ -107,10 +107,15 @@ export async function resolveInstallationRoute(
     return null;
   }
 
+  const identity = parseInstallationIdentity(result);
+  if (identity.installationId === LEGACY_STANDALONE_INSTALLATION_ID) {
+    return null;
+  }
+
   return {
     source: source.kind,
     requestedHostname,
-    identity: parseInstallationIdentity(result),
+    identity,
   };
 }
 

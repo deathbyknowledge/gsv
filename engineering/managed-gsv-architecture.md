@@ -872,8 +872,9 @@ isolation boundary. Protected prompt and seeded context content are not changed
 by this program.
 
 Current implementation status as of 2026-08-04: phases 0, 1, and 2 are complete
-on the managed-service branch. Phase 3 is next. Managed production hosting
-remains disabled until the ripgit and adapter isolation gates below pass.
+on the managed-service branch. Phase 3 is in progress: ripgit isolation is
+complete and adapter isolation is next. Managed production hosting remains
+disabled until the adapter isolation gate below passes.
 
 ### Phase 0: executable specification
 
