@@ -1,5 +1,7 @@
 export type ShellExecArgs = {
   input: string;
+  /** Literal arguments appended to a new command without shell expansion. */
+  argv?: string[];
   cwd?: string;
   sessionId?: string;
   /** Maximum runtime in milliseconds for a new command. */

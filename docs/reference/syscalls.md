@@ -168,6 +168,7 @@ type ShellSyscalls = {
       target?: string;
       cwd?: string;
       input: string;
+      argv?: string[];
       sessionId?: string;
     };
     result:
@@ -183,6 +184,12 @@ Start a command:
 
 ```json
 { "target": "macbook", "cwd": "~/projects/gsv", "input": "npm test" }
+```
+
+Pass opaque payloads in `argv` so shell syntax remains literal:
+
+```json
+{ "target": "gsv", "input": "proc delegate --as quorra --label research --timeout 8m", "argv": ["Check `sys.oauth.list` and whether a $LINEAR_API_KEY exists."] }
 ```
 
 Poll a running command:
