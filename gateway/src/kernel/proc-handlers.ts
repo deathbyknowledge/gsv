@@ -534,6 +534,7 @@ export async function handleProcIpcSend(
 export async function handleProcIpcCall(
   args: ProcIpcCallArgs,
   ctx: KernelContext,
+  options: { terminateTargetOnTimeout?: boolean } = {},
 ): Promise<ProcIpcCallResult> {
   const resolved = resolveSameOwnerIpc(args, ctx, "proc.ipc.call");
   if (!resolved.ok) return resolved;
@@ -553,7 +554,13 @@ export async function handleProcIpcCall(
   });
 
   try {
-    await ctx.scheduleIpcCallTimeout(callId, deadlineAt);
+    if (options.terminateTargetOnTimeout) {
+      await ctx.scheduleIpcCallTimeout(callId, deadlineAt, {
+        terminateTargetOnTimeout: true,
+      });
+    } else {
+      await ctx.scheduleIpcCallTimeout(callId, deadlineAt);
+    }
   } catch (error) {
     ctx.ipcCalls.remove(callId);
     return { ok: false, error: formatError(error) };

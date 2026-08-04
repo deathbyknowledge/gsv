@@ -1431,7 +1431,11 @@ describe("proc native command", () => {
       uid: IDENTITY.uid,
     }));
     const callId = createdCall.callId;
-    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(callId, createdCall.deadlineAt);
+    expect(scheduleIpcCallTimeout).toHaveBeenCalledWith(
+      callId,
+      createdCall.deadlineAt,
+      { terminateTargetOnTimeout: true },
+    );
   });
 
   it("rejects delegation from a top-level shell before spawning", async () => {

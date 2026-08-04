@@ -108,7 +108,7 @@ import type {
 } from "../protocol/process-frames";
 import { isRepoPublic } from "./repo-visibility";
 import { canReadRepo, canWriteRepo } from "./repo";
-import { handleProcSpawn } from "./proc-handlers";
+import { forwardToProcess, handleProcSpawn } from "./proc-handlers";
 import { ensurePersonalAgent } from "./agents";
 import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
@@ -120,6 +120,11 @@ const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
 const MAX_REQUEST_CANCEL_REASON_LENGTH = 512;
 const MAX_ONE_SHOT_SCHEDULE_DELIVERY_ATTEMPTS = 10;
 const MAX_ADAPTER_SIGNAL_DELIVERY_ATTEMPTS = 10;
+
+type IpcCallTimeout = {
+  callId: string;
+  terminateTargetOnTimeout?: boolean;
+};
 
 type AdapterSignalDeliveryOutcome =
   | { state: "delivered" }
@@ -2073,11 +2078,17 @@ export class Kernel extends Host<Env> {
     }
   }
 
-  private async scheduleIpcCallTimeout(callId: string, deadlineAt: number): Promise<string> {
+  private async scheduleIpcCallTimeout(
+    callId: string,
+    deadlineAt: number,
+    options?: { terminateTargetOnTimeout?: boolean },
+  ): Promise<string> {
     const sched = await this.schedule(
       new Date(Math.ceil(Math.max(Date.now() + 1_000, deadlineAt) / 1_000) * 1_000),
       "onIpcCallTimeout",
-      callId,
+      options?.terminateTargetOnTimeout
+        ? { callId, terminateTargetOnTimeout: true } satisfies IpcCallTimeout
+        : callId,
     );
     return sched.id;
   }
@@ -2554,10 +2565,28 @@ export class Kernel extends Host<Env> {
     this.deliverToOrigin(expired.origin, timeoutFrame);
   }
 
-  async onIpcCallTimeout(callId: string): Promise<void> {
+  async onIpcCallTimeout(input: string | IpcCallTimeout): Promise<void> {
+    const callId = typeof input === "string" ? input : input.callId;
+    const call = this.ipcCalls.get(callId);
     const timedOut = this.ipcCalls.timeout(callId);
     if (!timedOut) return;
     this.queueIpcCallDelivery(callId);
+    if (typeof input !== "string" && input.terminateTargetOnTimeout && call) {
+      await this.terminateTimedOutIpcTarget(call).catch((error) => {
+        console.warn(`[Kernel] Failed to terminate timed-out delegated process ${call.targetPid}:`, error);
+      });
+    }
+  }
+
+  private async terminateTimedOutIpcTarget(call: IpcCallRecord): Promise<void> {
+    const ctx = this.buildProcessContext(call.sourcePid);
+    if (!ctx) return;
+    await forwardToProcess({
+      type: "req",
+      id: crypto.randomUUID(),
+      call: "proc.kill",
+      args: { pid: call.targetPid, archive: false },
+    } as RequestFrame, ctx);
   }
 
   async onIpcCallDelivery(callId: string): Promise<void> {
