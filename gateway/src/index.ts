@@ -5,8 +5,13 @@ import type {
 } from "./adapter-interface";
 import type {
   ManagedGatewayProvisioningInterface,
+  ManagedGatewayTelegramInterface,
+  LinkManagedTelegramActorInput,
+  LinkManagedTelegramActorResult,
   ProvisionInstallationInput,
   ProvisionInstallationResult,
+  UnlinkManagedTelegramActorInput,
+  UnlinkManagedTelegramActorResult,
 } from "@humansandmachines/gsv/protocol";
 import type { Frame } from "./protocol/frames";
 import { buildOAuthClientMetadata } from "./oauth-http";
@@ -35,6 +40,10 @@ import {
   removeUntrustedRipgitInstallationHeader,
 } from "./installation/ripgit";
 import { parseProvisionInstallationInput } from "./managed/provisioning";
+import {
+  parseLinkManagedTelegramActorInput,
+  parseUnlinkManagedTelegramActorInput,
+} from "./managed/telegram";
 import {
   clearManagedSessionCookie,
   managedSessionSetCookie,
@@ -308,7 +317,10 @@ async function buildGitProxyRequest(
 
 export class GatewayEntrypoint
   extends WorkerEntrypoint<Env>
-  implements GatewayAdapterInterface, ManagedGatewayProvisioningInterface
+  implements
+    GatewayAdapterInterface,
+    ManagedGatewayProvisioningInterface,
+    ManagedGatewayTelegramInterface
 {
   async provisionInstallation(
     rawInput: ProvisionInstallationInput,
@@ -323,6 +335,28 @@ export class GatewayEntrypoint
     );
     await kernel.ensureInstallationIdentity(input.installation);
     return await kernel.provisionManagedInstallation(input);
+  }
+
+  async linkManagedTelegramActor(
+    rawInput: LinkManagedTelegramActorInput,
+  ): Promise<LinkManagedTelegramActorResult> {
+    if (getStandaloneServiceInstallationId(this.env)) {
+      throw new Error("Managed Telegram is not enabled");
+    }
+    const input = parseLinkManagedTelegramActorInput(rawInput);
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, input.installationId);
+    return await kernel.linkManagedTelegramActor(input);
+  }
+
+  async unlinkManagedTelegramActor(
+    rawInput: UnlinkManagedTelegramActorInput,
+  ): Promise<UnlinkManagedTelegramActorResult> {
+    if (getStandaloneServiceInstallationId(this.env)) {
+      throw new Error("Managed Telegram is not enabled");
+    }
+    const input = parseUnlinkManagedTelegramActorInput(rawInput);
+    const kernel = await getKernelByInstallationId(this.env.KERNEL, input.installationId);
+    return await kernel.unlinkManagedTelegramActor(input);
   }
 
   async serviceFrame(

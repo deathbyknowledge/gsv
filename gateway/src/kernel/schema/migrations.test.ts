@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(21);
+    expect(KERNEL_MIGRATIONS).toHaveLength(22);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -116,6 +116,10 @@ describe("kernel schema migrations", () => {
       id: 21,
       name: "add_managed_identity",
     });
+    expect(KERNEL_MIGRATIONS[21]).toMatchObject({
+      id: 22,
+      name: "add_managed_telegram_links",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -157,6 +161,7 @@ describe("kernel schema migrations", () => {
       "managed_provisioning_operations",
       "managed_principal_memberships",
       "managed_login_sessions",
+      "managed_telegram_link_operations",
     ]);
   });
 
@@ -174,6 +179,14 @@ describe("kernel schema migrations", () => {
     expect(memberships).toContain("local_uid INTEGER NOT NULL UNIQUE");
     expect(sessions).toContain("token_id TEXT PRIMARY KEY");
     expect(sessions).toContain("principal_id TEXT NOT NULL");
+  });
+
+  it("records idempotent managed Telegram link operations", () => {
+    const operations = createTableStatement("managed_telegram_link_operations");
+    expect(operations).toContain("operation_id TEXT PRIMARY KEY");
+    expect(operations).toContain("action TEXT NOT NULL CHECK (action IN ('link', 'unlink'))");
+    expect(operations).toContain("actor_id TEXT NOT NULL");
+    expect(operations).toContain("local_uid INTEGER NOT NULL");
   });
 
   it("keeps the processes baseline on the post-profile schema", () => {

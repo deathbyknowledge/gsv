@@ -26,12 +26,16 @@ import type {
   ConnectionIdentity,
   NetFetchArgs,
   ProcessIdentity,
+  LinkManagedTelegramActorInput,
+  LinkManagedTelegramActorResult,
   ProvisionInstallationInput,
   ProvisionInstallationResult,
   ScheduleRecord,
   ScheduleRunResult,
   SchedulerRunArgs,
   SchedulerRunResult,
+  UnlinkManagedTelegramActorInput,
+  UnlinkManagedTelegramActorResult,
 } from "@humansandmachines/gsv/protocol";
 import {
   BinaryBodyChannel,
@@ -129,6 +133,7 @@ import {
   type ManagedLoginSession,
 } from "./managed-provisioning";
 import { readManagedSessionCookie } from "../managed/session-cookie";
+import { ManagedTelegramLinkStore } from "./managed-telegram-links";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -224,6 +229,7 @@ export class Kernel extends Host<Env> {
   private readonly installationEnv: Env;
   private readonly auth: AuthStore;
   private readonly managedProvisioning: ManagedProvisioningStore;
+  private readonly managedTelegramLinks: ManagedTelegramLinkStore;
   private readonly caps: CapabilityStore;
   private readonly config: ConfigStore;
   private readonly devices: DeviceRegistry;
@@ -296,6 +302,10 @@ export class Kernel extends Host<Env> {
     this.procs = new ProcessRegistry(sql);
 
     this.adapters = new AdapterStore(sql);
+    this.managedTelegramLinks = new ManagedTelegramLinkStore(
+      ctx.storage,
+      this.adapters.identityLinks,
+    );
 
     this.runRoutes = new RunRouteStore(sql);
 
@@ -371,6 +381,20 @@ export class Kernel extends Host<Env> {
     return await this.managedProvisioning.provision(input, ctx);
   }
 
+  async linkManagedTelegramActor(
+    input: LinkManagedTelegramActorInput,
+  ): Promise<LinkManagedTelegramActorResult> {
+    this.assertManagedTelegramInstallation(input.installationId);
+    return this.managedTelegramLinks.link(input);
+  }
+
+  async unlinkManagedTelegramActor(
+    input: UnlinkManagedTelegramActorInput,
+  ): Promise<UnlinkManagedTelegramActorResult> {
+    this.assertManagedTelegramInstallation(input.installationId);
+    return this.managedTelegramLinks.unlink(input);
+  }
+
   async createManagedLoginSession(input: {
     principalId: string;
     localUid: number;
@@ -385,6 +409,16 @@ export class Kernel extends Host<Env> {
   async revokeManagedLoginSession(token: string): Promise<boolean> {
     if (!isManagedKernelEnv(this.env)) return false;
     return await this.managedProvisioning.revokeLoginSession(token);
+  }
+
+  private assertManagedTelegramInstallation(installationId: string): void {
+    if (!isManagedKernelEnv(this.env)) {
+      throw new Error("Managed Telegram is not enabled");
+    }
+    const identity = this.installationIdentity.get();
+    if (!identity || identity.installationId !== installationId) {
+      throw new Error("Managed Telegram installation identity mismatch");
+    }
   }
 
   async onRequest(request: Request): Promise<Response> {

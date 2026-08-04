@@ -74,6 +74,51 @@ export interface ManagedGatewayProvisioningInterface {
   ): Promise<ProvisionInstallationResult>;
 }
 
+export const MANAGED_TELEGRAM_ACCOUNT_ID = "managed";
+
+export type LinkManagedTelegramActorInput = {
+  operationId: string;
+  installationId: string;
+  principalId: string;
+  localUid: number;
+  actorId: string;
+  surfaceId: string;
+};
+
+export type LinkManagedTelegramActorResult = {
+  state: "linked";
+  installationId: string;
+  actorId: string;
+  surfaceId: string;
+  localUid: number;
+};
+
+export type UnlinkManagedTelegramActorInput = {
+  operationId: string;
+  installationId: string;
+  actorId: string;
+  surfaceId: string;
+  expectedLocalUid: number;
+};
+
+export type UnlinkManagedTelegramActorResult = {
+  state: "unlinked";
+  installationId: string;
+  actorId: string;
+  surfaceId: string;
+  localUid: number;
+  removed: boolean;
+};
+
+export interface ManagedGatewayTelegramInterface {
+  linkManagedTelegramActor(
+    input: LinkManagedTelegramActorInput,
+  ): Promise<LinkManagedTelegramActorResult>;
+  unlinkManagedTelegramActor(
+    input: UnlinkManagedTelegramActorInput,
+  ): Promise<UnlinkManagedTelegramActorResult>;
+}
+
 export type ManagedEntitlementState =
   | "trialing"
   | "active"
