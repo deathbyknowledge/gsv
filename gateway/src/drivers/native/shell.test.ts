@@ -45,10 +45,11 @@ vi.mock("../../shared/utils", async (importOriginal) => {
 });
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+const TEST_INSTALLATION_ID = "inst_shell_test" as KernelContext["installationId"];
 
 beforeEach(() => {
   sendFrameToProcessMock.mockReset();
-  sendFrameToProcessMock.mockImplementation(async (_pid, frame) => (
+  sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => (
     frame.type === "req" && frame.call === "proc.setidentity"
       ? { type: "res", id: frame.id, ok: true, data: { ok: true } }
       : null
@@ -102,7 +103,7 @@ function makeContext(options?: {
 }): KernelContext {
   const identity = options?.identity ?? IDENTITY;
   const installationIdentity = parseInstallationIdentity({
-    installationId: "inst_shell_test",
+    installationId: TEST_INSTALLATION_ID,
     handle: "shell-test",
     canonicalOrigin: "https://shell-test.gsv.space",
   });
@@ -1184,6 +1185,7 @@ describe("proc native command", () => {
       }),
     );
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       expect.stringMatching(/^proc:/),
       expect.objectContaining({ call: "proc.send", args: expect.objectContaining({ message: "do work" }) }),
     );
@@ -1251,6 +1253,7 @@ describe("proc native command", () => {
     expect(result.ok).toBe(true);
     expect(spawn).toHaveBeenCalledOnce();
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       expect.stringMatching(/^proc:/),
       expect.objectContaining({
         call: "proc.send",
@@ -1282,6 +1285,7 @@ describe("proc native command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toBe('pid=proc:child archived=3 archive="/home/sam/archive.jsonl.gz"\n');
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc:child",
       expect.objectContaining({ call: "proc.reset", args: { pid: "proc:child" } }),
     );
@@ -1321,6 +1325,7 @@ describe("proc native command", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toBe("pid=proc:child archived=0\n");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc:child",
       expect.objectContaining({ call: "proc.kill", args: { pid: "proc:child", archive: false } }),
     );
@@ -1360,7 +1365,7 @@ describe("proc native command", () => {
     };
     const scheduleIpcCallTimeout = vi.fn(async () => "timeout-schedule");
 
-    sendFrameToProcessMock.mockImplementation(async (pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
       const req = frame as any;
       if (req.call === "proc.setidentity") {
         return { type: "res", id: req.id, ok: true, data: { ok: true } };
@@ -1533,7 +1538,7 @@ describe("proc native command", () => {
       failIpcCallsByTarget: vi.fn(),
       runRoutes: { clearForProcess: vi.fn() },
     });
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       const req = frame as RequestFrame;
       if (req.call === "proc.setidentity") {
         return { type: "res", id: req.id, ok: true, data: { ok: true } };
@@ -1571,6 +1576,7 @@ describe("proc native command", () => {
     expect(result.stderr).toContain(`proc delegate: ${error}`);
     expect(result.stderr).not.toContain("rollback failed");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       children[0],
       expect.objectContaining({
         call: "proc.kill",
@@ -1696,14 +1702,18 @@ describe("proc native command", () => {
     expect(result.stdout).toContain("[truncated 6 chars; use --full or --json to inspect all content]");
     expect(result.stdout).toContain("xxxxxxxxxxxx");
     expect(result.stdout).toContain("[truncated 28 chars; use --full or --json to inspect all content]");
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith("proc:child", expect.objectContaining({
-      call: "proc.history",
-      args: {
-        pid: "proc:child",
-        limit: 2,
-        tail: true,
-      },
-    }));
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      "proc:child",
+      expect.objectContaining({
+        call: "proc.history",
+        args: {
+          pid: "proc:child",
+          limit: 2,
+          tail: true,
+        },
+      }),
+    );
   });
 });
 
@@ -3004,7 +3014,7 @@ describe("native administration shell commands", () => {
     await handleFsWrite({ path: "/tmp/final.png", content: "PNG" }, ctx);
     let stagedBytes: Uint8Array | undefined;
     let stagedKey = "";
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type !== "req") return null;
       if (frame.call === "proc.media.write") {
         stagedBytes = frame.body ? await bodyToBytes(frame.body) : undefined;
@@ -3044,6 +3054,7 @@ describe("native administration shell commands", () => {
     expect(result.stdout).toContain("run_id=run-native-file");
     expect(stagedBytes && [...stagedBytes]).toEqual([80, 78, 71]);
     expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
+      TEST_INSTALLATION_ID,
       "task:shell",
       expect.objectContaining({
         call: "proc.run.attach",
@@ -3062,7 +3073,7 @@ describe("native administration shell commands", () => {
     });
     await handleFsWrite({ path: "/tmp/late.pdf", content: "PDF" }, ctx);
     let key = "";
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type !== "req") return null;
       if (frame.call === "proc.media.write") {
         await frame.body?.stream.cancel("test does not need the bytes");
@@ -3103,6 +3114,7 @@ describe("native administration shell commands", () => {
     expect(result.status).toBe("failed");
     expect(result.stderr).toContain("run is no longer active");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "task:shell",
       expect.objectContaining({ call: "proc.media.delete", args: { pid: "task:shell", key } }),
     );

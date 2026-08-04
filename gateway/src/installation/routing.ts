@@ -9,6 +9,17 @@ import {
   type InstallationIdentityInput,
 } from "./identity";
 
+export function processDurableObjectName(
+  installationId: InstallationId | string,
+  pid: string,
+): string {
+  const parsed = parseInstallationId(installationId);
+  if (parsed === LEGACY_STANDALONE_INSTALLATION_ID) {
+    return pid;
+  }
+  return `process:${encodeURIComponent(parsed)}:${encodeURIComponent(pid)}`;
+}
+
 export type InstallationDirectoryResult =
   | {
       found: true;

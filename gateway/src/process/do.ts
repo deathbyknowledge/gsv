@@ -204,6 +204,12 @@ import {
   requestToNetFetchArgs,
   responseFromNetFetchResult,
 } from "../kernel/net";
+import {
+  LEGACY_STANDALONE_INSTALLATION_ID,
+  parseInstallationId,
+  type InstallationId,
+} from "../installation/identity";
+import { createInstallationStorage } from "../installation/storage";
 
 type RunState = {
   runId: string;
@@ -868,6 +874,10 @@ export class Process extends Host<Env> {
   private lifecycleEpoch = 0;
   private queuedSendAdmission: Promise<void> = Promise.resolve();
   private killed = false;
+  private installationStorage: {
+    installationId: InstallationId;
+    bucket: R2Bucket;
+  } | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -923,6 +933,14 @@ export class Process extends Host<Env> {
     return pid;
   }
 
+  get installationId(): InstallationId {
+    const installationId = this.store.getValue("installationId");
+    if (!installationId) {
+      throw new Error("Process not initialized — installationId missing");
+    }
+    return parseInstallationId(installationId);
+  }
+
   get identity(): ProcessIdentity {
     const raw = this.store.getValue("identity");
     if (!raw) throw new Error("Process not initialized — identity missing");
@@ -930,8 +948,20 @@ export class Process extends Host<Env> {
   }
 
   private isInitialized(): boolean {
-    return this.store.getValue("pid") !== null
+    return this.store.getValue("installationId") !== null
+      && this.store.getValue("pid") !== null
       && this.store.getValue("identity") !== null;
+  }
+
+  private get storage(): R2Bucket {
+    const installationId = this.installationId;
+    if (this.installationStorage?.installationId !== installationId) {
+      this.installationStorage = {
+        installationId,
+        bucket: createInstallationStorage(this.env.STORAGE, installationId),
+      };
+    }
+    return this.installationStorage.bucket;
   }
 
   /**
@@ -945,9 +975,23 @@ export class Process extends Host<Env> {
   }
 
   /**
-   * Single entry point — called by the Kernel to deliver frames.
+   * Single entry point — called by the Kernel to deliver frames. The one-frame
+   * form is the explicit standalone compatibility path for existing Process
+   * objects; managed routing always supplies and then persists installationId.
    */
-  async recvFrame(frame: ProcessInboundFrame) {
+  async recvFrame(
+    installationIdOrFrame: InstallationId | string | ProcessInboundFrame,
+    maybeFrame?: ProcessInboundFrame,
+  ) {
+    const frame = maybeFrame ?? (installationIdOrFrame as ProcessInboundFrame);
+    let installationId: InstallationId;
+    try {
+      installationId = typeof installationIdOrFrame === "string"
+        ? parseInstallationId(installationIdOrFrame)
+        : LEGACY_STANDALONE_INSTALLATION_ID;
+    } catch {
+      return rejectProcessInstallationRoute(frame, "Process route installation is invalid");
+    }
     if (this.killed) {
       if (frame.type === "req") {
         await frame.body?.stream.cancel("Process no longer exists").catch(() => {});
@@ -962,6 +1006,40 @@ export class Process extends Host<Env> {
         await cancelResponseBody(frame, "Process no longer exists");
       }
       return null;
+    }
+    const persistedInstallationId = this.store.getValue("installationId");
+    const isSetIdentity = frame.type === "req" && frame.call === "proc.setidentity";
+    const isUninitializedKill = frame.type === "req" && frame.call === "proc.kill";
+    const setIdentityInstallationValue = isSetIdentity
+      ? (frame.args as { installationId?: unknown }).installationId
+      : undefined;
+    let setIdentityInstallationId: InstallationId | undefined;
+    if (setIdentityInstallationValue !== undefined) {
+      try {
+        setIdentityInstallationId = parseInstallationId(setIdentityInstallationValue);
+      } catch {
+        return rejectProcessInstallationRoute(
+          frame,
+          "proc.setidentity installationId is invalid",
+        );
+      }
+    }
+    const routeError = persistedInstallationId !== null
+      && parseInstallationId(persistedInstallationId) !== installationId
+      ? "Process request installation does not match persisted identity"
+      : persistedInstallationId === null
+        && !isSetIdentity
+        && !isUninitializedKill
+        ? "Process installation identity is not initialized"
+        : setIdentityInstallationId !== undefined
+          && setIdentityInstallationId !== installationId
+          ? "proc.setidentity installation does not match Process route"
+          : isSetIdentity && setIdentityInstallationValue === undefined
+            && installationId !== LEGACY_STANDALONE_INSTALLATION_ID
+            ? "proc.setidentity requires installationId"
+            : null;
+    if (routeError) {
+      return rejectProcessInstallationRoute(frame, routeError);
     }
     switch (frame.type) {
       case "req":
@@ -1047,12 +1125,24 @@ export class Process extends Host<Env> {
       switch (frame.call) {
         case "proc.setidentity": {
           const idArgs = frame.args as unknown as {
+            installationId?: string;
             pid: string;
             identity: ProcessIdentity;
             interactive?: boolean;
             title?: string;
             autoTitle?: boolean;
           };
+          const installationId = parseInstallationId(
+            idArgs.installationId ?? LEGACY_STANDALONE_INSTALLATION_ID,
+          );
+          const existingInstallationId = this.store.getValue("installationId");
+          if (
+            existingInstallationId !== null
+            && parseInstallationId(existingInstallationId) !== installationId
+          ) {
+            throw new Error("Process installation identity cannot be changed");
+          }
+          this.store.setValue("installationId", installationId);
           this.store.setValue("pid", idArgs.pid);
           this.store.setValue("identity", JSON.stringify(idArgs.identity));
           if (idArgs.interactive !== undefined) {
@@ -1253,7 +1343,7 @@ export class Process extends Host<Env> {
           if (existing) return existing;
         }
         const media = await storeIncomingProcessMedia(
-          this.env.STORAGE,
+          this.storage,
           this.identity.uid,
           this.pid,
           args.media,
@@ -1524,7 +1614,7 @@ export class Process extends Host<Env> {
       );
       const media = await raceWithAbort(
         storeIncomingProcessMedia(
-          this.env.STORAGE,
+          this.storage,
           this.identity.uid,
           this.pid,
           input,
@@ -1592,7 +1682,7 @@ export class Process extends Host<Env> {
         releaseLifecycle();
       }
       if (unreferenced.length > 0) {
-        await this.env.STORAGE.delete(unreferenced);
+        await this.storage.delete(unreferenced);
       }
       await this.failPendingMedia(
         runId,
@@ -2171,7 +2261,7 @@ export class Process extends Host<Env> {
       return { data: { ok: false, error: "media key is outside this process" } };
     }
 
-    const object = await this.env.STORAGE.get(key);
+    const object = await this.storage.get(key);
     if (!object) {
       return { data: { ok: false, error: "media not found" } };
     }
@@ -2294,7 +2384,7 @@ export class Process extends Host<Env> {
           return { ok: false, error: "the process run is no longer active" };
         }
         for (const item of normalized) {
-          const object = await this.env.STORAGE.head(item.key);
+          const object = await this.storage.head(item.key);
           if (!object) {
             return { ok: false, error: `media not found: ${item.key}` };
           }
@@ -2416,7 +2506,7 @@ export class Process extends Host<Env> {
       }
 
       if (requestedMediaId) {
-        const existing = await this.env.STORAGE.head(key);
+        const existing = await this.storage.head(key);
         if (existing) {
           const existingMimeType = existing.httpMetadata?.contentType || "application/octet-stream";
           if (
@@ -2471,7 +2561,7 @@ export class Process extends Host<Env> {
       }
       const fixed = new FixedLengthStream(length);
       const [stored, piped] = await Promise.allSettled([
-        this.env.STORAGE.put(key, fixed.readable, {
+        this.storage.put(key, fixed.readable, {
           httpMetadata: { contentType: mimeType },
           customMetadata: {
             uid: String(uid),
@@ -2484,7 +2574,7 @@ export class Process extends Host<Env> {
         body.stream.pipeTo(fixed.writable, { signal: uploadController.signal }),
       ]);
       if (stored.status === "rejected") {
-        await this.env.STORAGE.delete(key);
+        await this.storage.delete(key);
         if (uploadController.signal.aborted) {
           return { ok: false, error: "Process reset during media upload" };
         }
@@ -2494,7 +2584,7 @@ export class Process extends Host<Env> {
         };
       }
       if (piped.status === "rejected") {
-        await this.env.STORAGE.delete(key);
+        await this.storage.delete(key);
         if (uploadController.signal.aborted) {
           return { ok: false, error: "Process reset during media upload" };
         }
@@ -2505,7 +2595,7 @@ export class Process extends Host<Env> {
       }
       const object = stored.value;
       if (object.size !== length) {
-        await this.env.STORAGE.delete(key);
+        await this.storage.delete(key);
         return { ok: false, error: `proc.media.write received ${object.size} bytes, expected ${length}` };
       }
 
@@ -2517,7 +2607,7 @@ export class Process extends Host<Env> {
           || this.identity.uid !== uid
           || this.lifecycleEpoch !== lifecycleEpoch
         ) {
-          await this.env.STORAGE.delete(key);
+          await this.storage.delete(key);
           return { ok: false, error: "Process reset during media upload" };
         }
       } finally {
@@ -2585,7 +2675,7 @@ export class Process extends Host<Env> {
         ) {
           return { ok: false, error: "media is referenced by process history" };
         }
-        await this.env.STORAGE.delete(key);
+        await this.storage.delete(key);
         return { ok: true, key };
       } finally {
         releaseLifecycle();
@@ -3036,7 +3126,7 @@ export class Process extends Host<Env> {
       };
     } catch (error) {
       await Promise.allSettled(temporaryArchivePaths.map((path) =>
-        this.env.STORAGE.delete(path.replace(/^\/+/, ""))
+        this.storage.delete(path.replace(/^\/+/, ""))
       ));
       return {
         ok: false,
@@ -3281,7 +3371,7 @@ export class Process extends Host<Env> {
 
       this.store.resetHistory();
 
-      await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
+      await deleteProcessMedia(this.storage, this.identity.uid, pid);
 
       return {
         ok: true,
@@ -3328,7 +3418,7 @@ export class Process extends Host<Env> {
         : emptyProcessArchive();
 
       if (initialized) {
-        await deleteProcessMedia(this.env.STORAGE, this.identity.uid, pid);
+        await deleteProcessMedia(this.storage, this.identity.uid, pid);
       }
 
       // A killed process is gone. Its transcript was archived above, so wipe the
@@ -3478,7 +3568,7 @@ export class Process extends Host<Env> {
     const tool = this.store.getResults(runId).find((result) => result.dispatchId === dispatchId);
     if (tool?.status === "pending") {
       this.ctx.waitUntil(
-        cancelProcessRequests(this.pid, [dispatchId], "Tool execution timed out").catch(() => 0),
+        cancelProcessRequests(this.installationId, this.pid, [dispatchId], "Tool execution timed out").catch(() => 0),
       );
       this.store.fail(dispatchId, `Tool execution timed out after ${TOOL_DISPATCH_TIMEOUT_MS}ms`);
       await this.resumeResolvedToolRun(runId);
@@ -3863,7 +3953,7 @@ export class Process extends Host<Env> {
         ownerIdentity: run.config?.owner ?? undefined,
         devices: run.devices ?? [],
         mcpServers: run.mcpServers ?? [],
-        storage: this.env.STORAGE,
+        storage: this.storage,
         ripgit: this.ripgit,
       });
       if (this.handleRunStopped(runId)) {
@@ -4737,7 +4827,7 @@ export class Process extends Host<Env> {
     signal?.throwIfAborted();
     const id = crypto.randomUUID();
     const frame = { type: "req", id, call, args } as RequestFrame;
-    const pending = sendFrameToKernel(this.pid, frame);
+    const pending = sendFrameToKernel(this.installationId, this.pid, frame);
     let rejectAbort: ((reason: unknown) => void) | undefined;
     const aborted = signal && new Promise<never>((_resolve, reject) => {
       rejectAbort = reject;
@@ -4748,6 +4838,7 @@ export class Process extends Host<Env> {
         : "Request cancelled";
       this.ctx.waitUntil(
         cancelProcessRequests(
+          this.installationId,
           this.pid,
           [id],
           reason,
@@ -4821,6 +4912,7 @@ export class Process extends Host<Env> {
         outbound.body,
         (reason) => {
           this.ctx.waitUntil(cancelProcessRequests(
+            this.installationId,
             this.pid,
             [requestId],
             reason instanceof Error ? reason.message : undefined,
@@ -4848,6 +4940,7 @@ export class Process extends Host<Env> {
     requestId?: string,
   ): Promise<ResponseOkFrame<"net.fetch">> {
     return await requestProcessNetFetch(
+      this.installationId,
       this.pid,
       target,
       args,
@@ -4874,7 +4967,7 @@ export class Process extends Host<Env> {
    * Send a signal frame to the kernel for relay to client connections.
    */
   private async sendSignal(signal: string, payload?: unknown): Promise<void> {
-    await sendFrameToKernel(this.pid, {
+    await sendFrameToKernel(this.installationId, this.pid, {
       type: "sig",
       signal,
       payload,
@@ -5162,7 +5255,7 @@ export class Process extends Host<Env> {
       new Response(gzipMessageRecords(messages, signal, mediaRewrites)).arrayBuffer(),
       signal,
     );
-    const upload = this.env.STORAGE.put(key, compressed, {
+    const upload = this.storage.put(key, compressed, {
       httpMetadata: { contentType: "application/gzip" },
     });
     await raceWithAbort(upload, signal, {
@@ -5177,7 +5270,7 @@ export class Process extends Host<Env> {
 
   private async deleteFailedCompactionArchive(key: string): Promise<void> {
     try {
-      await this.env.STORAGE.delete(key);
+      await this.storage.delete(key);
     } catch (error) {
       console.warn(`[Process] Failed to delete unreferenced archive ${key}:`, error);
     }
@@ -5189,7 +5282,7 @@ export class Process extends Host<Env> {
   ): Promise<ArchivedMessageRecord[]> {
     const key = archivePath.replace(/^\/+/, "");
     signal?.throwIfAborted();
-    const object = await raceWithAbort(this.env.STORAGE.get(key), signal, {
+    const object = await raceWithAbort(this.storage.get(key), signal, {
       onLateResolve: (late) => {
         if (late?.body && !late.body.locked) {
           void late.body.cancel("Archive read was cancelled");
@@ -5234,7 +5327,7 @@ export class Process extends Host<Env> {
       runId,
     } as RequestFrame;
 
-    const response = await sendFrameToKernel(this.pid, reqFrame);
+    const response = await sendFrameToKernel(this.installationId, this.pid, reqFrame);
 
     if (response && response.type === "res") {
       if (!this.store.getPending(dispatchId)) {
@@ -5375,7 +5468,7 @@ export class Process extends Host<Env> {
     if (!this.ownedMediaPath(key)) {
       return null;
     }
-    const object = await this.env.STORAGE.get(key);
+    const object = await this.storage.get(key);
     if (!object) {
       return null;
     }
@@ -5457,7 +5550,7 @@ export class Process extends Host<Env> {
           && !this.currentRun?.outputMedia?.some((item) => item.key === key)
         );
         if (unreferenced.length > 0) {
-          await this.env.STORAGE.delete(unreferenced);
+          await this.storage.delete(unreferenced);
         }
       } finally {
         releaseLifecycle();
@@ -5535,7 +5628,7 @@ export class Process extends Host<Env> {
 
     for (const sourceKey of [...new Set(sourceKeys)].sort()) {
       signal?.throwIfAborted();
-      const sourceHead = await this.env.STORAGE.head(sourceKey);
+      const sourceHead = await this.storage.head(sourceKey);
       if (!sourceHead) {
         rewrites.set(sourceKey, { missing: true });
         continue;
@@ -5544,7 +5637,7 @@ export class Process extends Host<Env> {
       const archivedKey = `${this.archiveMediaPrefix()}${archiveId}`;
       const sourceContentType = sourceHead.httpMetadata?.contentType?.trim()
         || "application/octet-stream";
-      const existing = await this.env.STORAGE.head(archivedKey);
+      const existing = await this.storage.head(archivedKey);
       const reusable = existing
         && existing.size === sourceHead.size
         && this.isValidOwnedArchiveObject(archivedKey, existing, {
@@ -5556,7 +5649,7 @@ export class Process extends Host<Env> {
       }
       if (!existing) {
         signal?.throwIfAborted();
-        const source = await this.env.STORAGE.get(sourceKey);
+        const source = await this.storage.get(sourceKey);
         if (!source) {
           rewrites.set(sourceKey, { missing: true });
           continue;
@@ -5584,7 +5677,7 @@ export class Process extends Host<Env> {
         let stored: Promise<R2Object>;
         let piped: Promise<void>;
         try {
-          stored = this.env.STORAGE.put(archivedKey, fixed.readable, {
+          stored = this.storage.put(archivedKey, fixed.readable, {
             httpMetadata: {
               ...sourceHead.httpMetadata,
               contentType: sourceContentType,
@@ -5612,7 +5705,7 @@ export class Process extends Host<Env> {
               : "unknown archive media error";
           throw reason instanceof Error ? reason : new Error(String(reason));
         }
-        const copied = await this.env.STORAGE.head(archivedKey);
+        const copied = await this.storage.head(archivedKey);
         if (
           !copied
           || copied.size !== sourceHead.size
@@ -6109,7 +6202,7 @@ export class Process extends Host<Env> {
       const timeoutId = setTimeout(() => {
         this.codeModeResponses.delete(id);
         this.ctx.waitUntil(
-          cancelProcessRequests(this.pid, [id], `${call} timed out`).catch(() => 0),
+          cancelProcessRequests(this.installationId, this.pid, [id], `${call} timed out`).catch(() => 0),
         );
         reject(new Error(`Timed out waiting for ${call}`));
       }, CODE_MODE_NESTED_SYSCALL_TIMEOUT_MS);
@@ -6118,7 +6211,7 @@ export class Process extends Host<Env> {
     void pending.catch(() => {});
 
     const operation = (async () => {
-      const response = await sendFrameToKernel(this.pid, reqFrame);
+      const response = await sendFrameToKernel(this.installationId, this.pid, reqFrame);
       if (response && response.type === "res") {
         const waiter = this.codeModeResponses.get(id);
         if (!waiter || (runId !== null && this.handleRunStopped(runId))) {
@@ -6152,7 +6245,7 @@ export class Process extends Host<Env> {
             waiter.reject(new Error(reason));
           }
           this.ctx.waitUntil(
-            cancelProcessRequests(this.pid, [id], reason).catch(() => 0),
+            cancelProcessRequests(this.installationId, this.pid, [id], reason).catch(() => 0),
           );
         },
         onLateResolve: (response) => {
@@ -6211,7 +6304,7 @@ export class Process extends Host<Env> {
 
     if (requestIds.size > 0) {
       this.ctx.waitUntil(
-        cancelProcessRequests(this.pid, [...requestIds], reason).catch(() => 0),
+        cancelProcessRequests(this.installationId, this.pid, [...requestIds], reason).catch(() => 0),
       );
     }
   }
@@ -6434,7 +6527,7 @@ export class Process extends Host<Env> {
 
   private async firstMissingMediaKey(keys: string[]): Promise<string | null> {
     for (const key of keys) {
-      if (!await this.env.STORAGE.head(key)) return key;
+      if (!await this.storage.head(key)) return key;
     }
     return null;
   }
@@ -6508,6 +6601,25 @@ export class Process extends Host<Env> {
       })));
     return next.runId;
   }
+}
+
+async function rejectProcessInstallationRoute(
+  frame: ProcessInboundFrame,
+  message: string,
+): Promise<ResponseErrFrame | null> {
+  if (frame.type === "req") {
+    await frame.body?.stream.cancel(message).catch(() => {});
+    return {
+      type: "res",
+      id: frame.id,
+      ok: false,
+      error: { code: 409, message },
+    };
+  }
+  if (frame.type === "res") {
+    await cancelResponseBody(frame, message);
+  }
+  return null;
 }
 
 function snapshotAssistantMessageEvent<T extends AssistantMessageEvent>(event: T): T {

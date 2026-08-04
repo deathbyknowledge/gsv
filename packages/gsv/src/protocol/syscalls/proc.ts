@@ -593,6 +593,8 @@ export type ProcListResult = {
 // Kernel-only: sets process identity. Sent by the kernel to Process DOs
 // at spawn time and never routed from user/device connections.
 export type ProcSetIdentityArgs = {
+  /** Immutable installation that owns the Process Durable Object. */
+  installationId: string;
   pid: string;
   identity: ProcessIdentity;
   interactive?: boolean;

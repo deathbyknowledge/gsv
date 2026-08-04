@@ -1,8 +1,8 @@
 import {
   createAccountHomeBackend,
   createProcessSourceBackend,
+  createProcessViewRequest,
   RipgitClient,
-  requestProcessView,
 } from "../../fs";
 import { GsvFs } from "../../fs/gsv-fs";
 import type { KernelContext } from "../../kernel/context";
@@ -33,7 +33,7 @@ export function createNativeFileSystem(ctx: KernelContext): GsvFs {
       config: ctx.config,
       cron: createCronFileService(ctx),
       schedules: ctx.schedules,
-      processRequest: requestProcessView,
+      processRequest: createProcessViewRequest(ctx.installationId),
     },
     ctx.processId ?? undefined,
     sourceBackend,

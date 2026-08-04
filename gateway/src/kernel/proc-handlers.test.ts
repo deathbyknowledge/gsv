@@ -22,6 +22,7 @@ const IDENTITY: ProcessIdentity = {
   home: "/home/sam",
   cwd: "/home/sam",
 };
+const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 
@@ -50,7 +51,7 @@ function makeStorageBucket() {
 describe("proc handlers", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => ({
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
       type: "res",
       id: frame.type === "req" ? frame.id : "signal",
       ok: true,
@@ -74,7 +75,7 @@ describe("proc handlers", () => {
 
     expect(result).toEqual({ ok: false, error: "target rejected delivery" });
     const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
-    const runId = (sendFrameToProcessMock.mock.calls[0]?.[1] as RequestFrame | undefined)?.args.runId;
+    const runId = (sendFrameToProcessMock.mock.calls[0]?.[2] as RequestFrame | undefined)?.args.runId;
     expect(callId).toBeTruthy();
     expect(runId).toBeTruthy();
     expect(ipcCalls.remove).toHaveBeenCalledWith(callId);
@@ -89,7 +90,7 @@ describe("proc handlers", () => {
   });
 
   it("keys same-owner cross-agent IPC calls by owner uid", async () => {
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => ({
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
       type: "res",
       id: "deliver",
       ok: true,
@@ -129,7 +130,7 @@ describe("proc handlers", () => {
       pid: "target-process",
       sourcePid: "source-process",
     });
-    const runId = (sendFrameToProcessMock.mock.calls[0]?.[1] as RequestFrame).args.runId;
+    const runId = (sendFrameToProcessMock.mock.calls[0]?.[2] as RequestFrame).args.runId;
     expect(result).toMatchObject({ runId });
     expect(ipcCalls.create).toHaveBeenCalledWith(expect.objectContaining({
       uid: ownerUid,
@@ -166,7 +167,7 @@ describe("proc handlers", () => {
 
   it("schedules IPC timeout before delivering work to the target", async () => {
     const { ctx, ipcCalls } = makeIpcCallContext();
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
       expect(ctx.scheduleIpcCallTimeout).toHaveBeenCalledWith(
         callId,
@@ -193,7 +194,7 @@ describe("proc handlers", () => {
   });
 
   it("correlates IPC with the dispatching run instead of mutable process state", async () => {
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => ({
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
       type: "res",
       id: "deliver",
       ok: true,
@@ -237,7 +238,7 @@ describe("proc handlers", () => {
   });
 
   it("does not report started after a delivered timeout row was removed", async () => {
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => ({
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => ({
       type: "res",
       id: "deliver",
       ok: true,
@@ -274,13 +275,14 @@ describe("proc handlers", () => {
     },
   ])("forwards $call cancellation to the Process request", async ({ call, id, args }) => {
     const controller = new AbortController();
-    sendFrameToProcessMock.mockImplementation(async (_pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, _pid, frame) => {
       if (frame.type === "sig") {
         return null;
       }
       return await new Promise(() => {});
     });
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       callerOwnerUid: IDENTITY.uid,
       identity: {
         role: "user",
@@ -303,11 +305,16 @@ describe("proc handlers", () => {
     controller.abort(new Error("new user message"));
 
     await expect(request).rejects.toThrow("new user message");
-    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(2, "proc-1", {
+    expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
+      2,
+      TEST_INSTALLATION_ID,
+      "proc-1",
+      {
       type: "sig",
       signal: "request.cancel",
       payload: { id, reason: "new user message" },
-    });
+      },
+    );
   });
 
   it("routes proc.send results by the target process owner", async () => {
@@ -319,6 +326,7 @@ describe("proc handlers", () => {
     } satisfies ResponseFrame);
     const setConnectionRoute = vi.fn();
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: {
         role: "user",
         process: { ...IDENTITY, uid: 0 },
@@ -355,6 +363,7 @@ describe("proc handlers", () => {
     } satisfies ResponseFrame);
 
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       processId: "proc-self",
       callerOwnerUid: IDENTITY.uid,
       identity: {
@@ -377,6 +386,7 @@ describe("proc handlers", () => {
     } as RequestFrame, ctx);
 
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc-self",
       expect.objectContaining({ call: "proc.history" }),
     );
@@ -384,6 +394,7 @@ describe("proc handlers", () => {
 
   it("requires an explicit pid outside a process", async () => {
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       callerOwnerUid: IDENTITY.uid,
       identity: {
         role: "user",
@@ -439,6 +450,7 @@ describe("proc handlers", () => {
       ["users/1000/ai/model_profiles/fast-stack/api_key", "sk-chat"],
     ]);
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: {
         role: "user",
         process: IDENTITY,
@@ -463,6 +475,7 @@ describe("proc handlers", () => {
     } as RequestFrame, ctx);
 
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc-1",
       expect.objectContaining({
         call: "proc.ai.config.set",
@@ -499,6 +512,7 @@ describe("proc handlers", () => {
       },
     } satisfies ResponseFrame);
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: {
         role: "user",
         process: IDENTITY,
@@ -520,6 +534,7 @@ describe("proc handlers", () => {
     } as RequestFrame, ctx);
 
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc-1",
       expect.objectContaining({
         call: "proc.ai.config.get",
@@ -619,7 +634,7 @@ describe("proc handlers", () => {
 
     expect(result).toEqual({ ok: false, error: "target unavailable" });
     const callId = ipcCalls.create.mock.calls[0]?.[0]?.callId;
-    const runId = (sendFrameToProcessMock.mock.calls[0]?.[1] as RequestFrame | undefined)?.args.runId;
+    const runId = (sendFrameToProcessMock.mock.calls[0]?.[2] as RequestFrame | undefined)?.args.runId;
     expect(callId).toBeTruthy();
     expect(runId).toBeTruthy();
     expect(ipcCalls.remove).toHaveBeenCalledWith(callId);
@@ -643,6 +658,7 @@ describe("proc handlers", () => {
       shell: "/bin/init",
     };
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       env: {
         STORAGE: makeStorageBucket(),
       },
@@ -684,17 +700,26 @@ describe("proc handlers", () => {
         label: "Review Demo Tool",
       }),
     );
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      call: "proc.setidentity",
-      args: expect.objectContaining({
-        title: "Review Demo Tool",
-        autoTitle: false,
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      expect.any(String),
+      expect.objectContaining({
+        call: "proc.setidentity",
+        args: expect.objectContaining({
+          installationId: TEST_INSTALLATION_ID,
+          title: "Review Demo Tool",
+          autoTitle: false,
+        }),
       }),
-    }));
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      call: "proc.send",
-      args: expect.objectContaining({ message: "Review this project." }),
-    }));
+    );
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      expect.any(String),
+      expect.objectContaining({
+        call: "proc.send",
+        args: expect.objectContaining({ message: "Review this project." }),
+      }),
+    );
   });
 
   it("spawns a fresh top-level process when requested without explicit cwd", async () => {
@@ -707,6 +732,7 @@ describe("proc handlers", () => {
       shell: "/bin/init",
     };
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       env: {
         STORAGE: makeStorageBucket(),
       },
@@ -743,15 +769,20 @@ describe("proc handlers", () => {
         interactive: true,
       }),
     );
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      call: "proc.setidentity",
-      args: expect.objectContaining({
-        autoTitle: true,
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      expect.any(String),
+      expect.objectContaining({
+        call: "proc.setidentity",
+        args: expect.objectContaining({
+          installationId: TEST_INSTALLATION_ID,
+          autoTitle: true,
+        }),
       }),
-    }));
-    const identityFrame = sendFrameToProcessMock.mock.calls.find(([, frame]) =>
+    );
+    const identityFrame = sendFrameToProcessMock.mock.calls.find(([, , frame]) =>
       frame.type === "req" && frame.call === "proc.setidentity"
-    )?.[1] as RequestFrame | undefined;
+    )?.[2] as RequestFrame | undefined;
     expect(identityFrame?.args).not.toHaveProperty("title");
   });
 
@@ -761,7 +792,7 @@ describe("proc handlers", () => {
       if (failure === "null") {
         sendFrameToProcessMock.mockResolvedValueOnce(null);
       } else if (failure === "error") {
-        sendFrameToProcessMock.mockImplementationOnce(async (_pid, frame) => ({
+        sendFrameToProcessMock.mockImplementationOnce(async (_installationId, _pid, frame) => ({
           type: "res",
           id: (frame as RequestFrame).id,
           ok: false,
@@ -777,6 +808,7 @@ describe("proc handlers", () => {
         kill: vi.fn(() => true),
       };
       const ctx = {
+        installationId: TEST_INSTALLATION_ID,
         processId: SPAWN_PARENT.processId,
         callerOwnerUid: IDENTITY.uid,
         identity: {
@@ -794,10 +826,14 @@ describe("proc handlers", () => {
         error: expect.stringContaining("Failed to initialize process"),
       });
       expect(pid).toEqual(expect.any(String));
-      expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(pid, expect.objectContaining({
-        call: "proc.kill",
-        args: { pid, archive: false },
-      }));
+      expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
+        TEST_INSTALLATION_ID,
+        pid,
+        expect.objectContaining({
+          call: "proc.kill",
+          args: { pid, archive: false },
+        }),
+      );
       expect(procs.kill).toHaveBeenCalledWith(pid);
     },
   );
@@ -805,7 +841,7 @@ describe("proc handlers", () => {
   it("keeps a failed spawn registered when Process rollback fails", async () => {
     sendFrameToProcessMock
       .mockResolvedValueOnce(null)
-      .mockImplementationOnce(async (_pid, frame) => ({
+      .mockImplementationOnce(async (_installationId, _pid, frame) => ({
         type: "res",
         id: (frame as RequestFrame).id,
         ok: false,
@@ -817,6 +853,7 @@ describe("proc handlers", () => {
       kill: vi.fn(() => true),
     };
     const ctx = {
+    installationId: TEST_INSTALLATION_ID,
       processId: SPAWN_PARENT.processId,
       callerOwnerUid: IDENTITY.uid,
       identity: {
@@ -837,6 +874,7 @@ describe("proc handlers", () => {
 
   it("spawns a fresh interactive worker for a parented spawn", async () => {
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       env: {},
       identity: {
         process: IDENTITY,
@@ -876,6 +914,7 @@ describe("proc handlers", () => {
       kill: vi.fn(() => true),
     };
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       processId: sourcePid,
       callerOwnerUid: IDENTITY.uid,
       env: { STORAGE: { delete: removeTemporaryHistory } },
@@ -900,7 +939,7 @@ describe("proc handlers", () => {
       procs,
     } as unknown as KernelContext;
 
-    sendFrameToProcessMock.mockImplementation(async (pid, frame) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId, pid, frame) => {
       if (frame.type !== "req") return null;
       if (frame.call === "proc.history.export") {
         return {
@@ -977,6 +1016,7 @@ describe("proc handlers", () => {
       cwd: "/home/sam-agent",
     };
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       processId: "proc:delegated-agent",
       callerOwnerUid: IDENTITY.uid,
       env: {},
@@ -1048,6 +1088,7 @@ function makeIpcCallContext(options: {
     remove: vi.fn(),
   };
   const ctx = {
+    installationId: TEST_INSTALLATION_ID,
     processId: "source-process",
     processRunId: "source-run",
     identity: { process: identity },
@@ -1069,6 +1110,7 @@ function makeForwardContext(overrides?: {
   cancelBySourcePid?: (input: { uid: number; sourcePid: string }) => void;
 }): KernelContext {
   return {
+    installationId: TEST_INSTALLATION_ID,
     identity: {
       role: "user",
       process: IDENTITY,
@@ -1096,6 +1138,7 @@ function makeForwardContext(overrides?: {
 describe("resolveCallerOwnerUid", () => {
   it("honors an explicit caller owner override", () => {
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       callerOwnerUid: 1000,
       identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: [] },
       procs: { get: vi.fn(() => null) },
@@ -1105,6 +1148,7 @@ describe("resolveCallerOwnerUid", () => {
 
   it("resolves to the owning human of the calling process, not the run-as uid", () => {
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       processId: "proc:abc",
       identity: { role: "user", process: { ...IDENTITY, uid: 2000 }, capabilities: [] },
       procs: { getOwnerUid: vi.fn(() => 1000) },
@@ -1114,6 +1158,7 @@ describe("resolveCallerOwnerUid", () => {
 
   it("falls back to the connecting user when not invoked from a process", () => {
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: [] },
       procs: { get: vi.fn(() => null) },
     } as unknown as KernelContext;
@@ -1180,6 +1225,7 @@ describe("resolveRunAsIdentity", () => {
       resolveGids: vi.fn((_username: string, gid: number) => [gid]),
     };
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: ["proc.spawn"] },
       auth,
     } as unknown as KernelContext;
@@ -1194,6 +1240,7 @@ describe("handleProcList", () => {
   it("filters by the owning human when an agent process lists its user's processes", () => {
     const list = vi.fn(() => []);
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       processId: "proc:abc",
       // The process runs as the personal agent (uid 2000) but is owned by the
       // human (uid 1000); listing must resolve to the human owner.
@@ -1208,6 +1255,7 @@ describe("handleProcList", () => {
   it("lets a non-root connecting user see only their own processes", () => {
     const list = vi.fn(() => []);
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: { role: "user", process: { ...IDENTITY, uid: 1000 }, capabilities: ["proc.list"] },
       procs: { get: vi.fn(() => null), list },
     } as unknown as KernelContext;
@@ -1219,6 +1267,7 @@ describe("handleProcList", () => {
   it("lets root list all processes and honors an explicit uid filter", () => {
     const list = vi.fn(() => []);
     const ctx = {
+      installationId: TEST_INSTALLATION_ID,
       identity: { role: "user", process: { ...IDENTITY, uid: 0, username: "root" }, capabilities: ["proc.list"] },
       procs: { get: vi.fn(() => null), list },
     } as unknown as KernelContext;

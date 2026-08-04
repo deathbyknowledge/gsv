@@ -17,6 +17,7 @@ import {
   type TrustedInstallationRoute,
 } from "./installation/routing";
 import type { Kernel } from "./kernel/do";
+import { createInstallationStorage } from "./installation/storage";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -61,7 +62,17 @@ export default {
 
     const publicAssetMatch = matchPublicAssetPath(url.pathname);
     if (publicAssetMatch) {
-      return servePublicAssetRequest(request, createPublicAssetFileSystem(env), publicAssetMatch);
+      const resolved = await resolveGatewayInstallation(request, env);
+      if (!resolved.ok) return resolved.response;
+      const storage = createInstallationStorage(
+        env.STORAGE,
+        resolved.route.identity.installationId,
+      );
+      return servePublicAssetRequest(
+        request,
+        createPublicAssetFileSystem({ STORAGE: storage }),
+        publicAssetMatch,
+      );
     }
 
     const gitMatch = matchGitPath(url);

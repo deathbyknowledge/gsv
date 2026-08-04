@@ -2,6 +2,20 @@
 
 GSV routing is kernel-level message and syscall routing. It is not only chat routing. The Kernel Durable Object is the central router for WebSocket clients, agent processes, adapter workers, and connected devices.
 
+## Installation Routing
+
+Installation identity is the outer routing boundary. In managed mode, the
+Gateway normalizes the request hostname and asks the trusted installation
+directory for an active installation before opening any Durable Object. An
+unknown, suspended, provisioning, or deleted hostname returns `404`; a random
+wildcard hostname does not allocate a Kernel.
+
+The directory returns an immutable `installationId`, handle, and persisted
+canonical origin. The Kernel Durable Object is named by `installationId`.
+Handles and hostnames are routing metadata and may not be substituted for that
+durable identity. Standalone deployments explicitly route to the compatibility
+installation `singleton`, preserving the historical Kernel object.
+
 ## Routing Surfaces
 
 | Surface | Entry Point | Routed By | Destination |
@@ -67,6 +81,13 @@ Each durable agent task is a process identified by a PID. `proc.spawn` creates a
 new process, and `proc.fork` creates a new process initialized from committed
 history in another process. There is no default process or second
 process-local conversation identifier.
+
+The PID is installation-local. Internally, every Process lookup carries both
+the trusted Kernel installation ID and the public PID. Managed Process Durable
+Object names use a canonical encoding of both values; the `singleton`
+compatibility installation keeps the historical unscoped PID name. A Process
+persists its parent installation ID during `proc.setidentity` and rejects a
+later frame routed with a different installation.
 
 The Kernel stores process metadata in the `processes` table: owner uid, run-as
 identity, parent PID, cwd, interactive flag, runtime state, active run id,
@@ -155,6 +176,8 @@ Device routing does not rename syscalls. Agents and clients always see the same 
 | Device does not implement syscall | `400 Device does not implement` |
 | Device route timeout | `504 Syscall timed out` |
 | Unknown or foreign process | `Process not found` or `Permission denied` |
+| Unknown or inactive managed hostname | `404 Not Found` before Kernel lookup |
+| Process installation mismatch | `409` and no Process state mutation |
 
 ## Related Stores
 

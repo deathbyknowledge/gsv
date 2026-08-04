@@ -120,6 +120,7 @@ import {
   type InstallationIdentity,
   type InstallationIdentityInput,
 } from "../installation/identity";
+import { createInstallationStorage } from "../installation/storage";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -210,6 +211,8 @@ type AuthorizeGitHttpResult =
 
 export class Kernel extends Host<Env> {
   private readonly installationIdentity: InstallationIdentityStore;
+  private readonly installationStorage: R2Bucket;
+  private readonly installationEnv: Env;
   private readonly auth: AuthStore;
   private readonly caps: CapabilityStore;
   private readonly config: ConfigStore;
@@ -251,6 +254,11 @@ export class Kernel extends Host<Env> {
     // name fallback having been initialized by an RPC entry point.
     const durableObjectName = ctx.id.name ?? `do_${ctx.id.toString()}`;
     this.installationIdentity = new InstallationIdentityStore(sql, durableObjectName);
+    this.installationStorage = createInstallationStorage(
+      env.STORAGE,
+      this.installationIdentity.installationId,
+    );
+    this.installationEnv = envWithStorage(env, this.installationStorage);
 
     this.auth = new AuthStore(sql);
 
@@ -882,7 +890,7 @@ export class Kernel extends Host<Env> {
     runId: string,
     requestId: string,
   ): Promise<boolean> {
-    const response = await sendFrameToProcess(processId, {
+    const response = await sendFrameToProcess(this.installationId, processId, {
       type: "req",
       id: crypto.randomUUID(),
       call: "proc.history",
@@ -971,7 +979,7 @@ export class Kernel extends Host<Env> {
         return;
       }
     }
-    await sendFrameToProcess(input.processId, {
+    await sendFrameToProcess(this.installationId, input.processId, {
       type: "sig",
       signal: "proc.delivery.notice",
       payload: {
@@ -1181,7 +1189,7 @@ export class Kernel extends Host<Env> {
   }
 
   private async deliverIpcCallSignal(call: IpcCallRecord): Promise<void> {
-    await sendFrameToProcess(call.sourcePid, {
+    await sendFrameToProcess(this.installationId, call.sourcePid, {
       type: "sig",
       signal: call.status === "timed_out" ? "ipc.timeout" : "ipc.reply",
       payload: {
@@ -1220,7 +1228,7 @@ export class Kernel extends Host<Env> {
     const { adapter, accountId, surface } = route.destination;
     if (frame.signal === "proc.run.started") {
       await setAdapterActivityForKernel(
-        this.env,
+        this.scopedEnv,
         adapter,
         accountId,
         surface,
@@ -1233,7 +1241,7 @@ export class Kernel extends Host<Env> {
       const request = normalizeAdapterHilRequest(frame.payload, "signal");
       if (!request) {
         await setAdapterActivityForKernel(
-          this.env,
+          this.scopedEnv,
           adapter,
           accountId,
           surface,
@@ -1249,7 +1257,7 @@ export class Kernel extends Host<Env> {
         });
       } finally {
         await setAdapterActivityForKernel(
-          this.env,
+          this.scopedEnv,
           adapter,
           accountId,
           surface,
@@ -1292,7 +1300,7 @@ export class Kernel extends Host<Env> {
       }, attachmentBundle.body);
     } finally {
       await setAdapterActivityForKernel(
-        this.env,
+        this.scopedEnv,
         adapter,
         accountId,
         surface,
@@ -1402,7 +1410,7 @@ export class Kernel extends Host<Env> {
         if (!mimeType) {
           throw new AdapterReplyMediaError("Process reply media requires mimeType");
         }
-        const object = await this.env.STORAGE.get(key);
+        const object = await this.storage.get(key);
         if (!object) {
           throw new AdapterReplyMediaError(`Process reply media not found: ${key}`);
         }
@@ -1575,9 +1583,8 @@ export class Kernel extends Host<Env> {
   }): KernelContext {
     const installationIdentity = this.installationIdentity?.get() ?? null;
     return {
-      env: this.env,
-      installationId: this.installationIdentity?.installationId
-        ?? LEGACY_STANDALONE_INSTALLATION_ID,
+      env: this.scopedEnv,
+      installationId: this.installationId,
       installationIdentity,
       auth: this.auth,
       caps: this.caps,
@@ -1621,6 +1628,19 @@ export class Kernel extends Host<Env> {
         signal ? { signal } : undefined,
       ),
     };
+  }
+
+  private get installationId(): KernelContext["installationId"] {
+    return this.installationIdentity?.installationId
+      ?? LEGACY_STANDALONE_INSTALLATION_ID;
+  }
+
+  private get scopedEnv(): Env {
+    return this.installationEnv ?? this.env;
+  }
+
+  private get storage(): R2Bucket {
+    return this.installationStorage ?? this.env.STORAGE;
   }
 
   private buildDispatchDeps(): DispatchDeps {
@@ -2294,7 +2314,7 @@ export class Kernel extends Host<Env> {
       throw new Error(`Process signal watch ${watch.watchId} is missing target process`);
     }
 
-    await sendFrameToProcess(watch.targetProcessId, {
+    await sendFrameToProcess(this.installationId, watch.targetProcessId, {
       type: "sig",
       signal: frame.signal,
       payload: {
@@ -2872,7 +2892,7 @@ export class Kernel extends Host<Env> {
       let admittedRunId = runId;
       let response: ProcessScheduleDeliverResponseFrame | null;
       try {
-        response = await sendFrameToProcess(target.pid, request);
+        response = await sendFrameToProcess(this.installationId, target.pid, request);
       } catch (error) {
         // As with adapter ingress, a thrown DO transport may have lost the
         // response after admission. Preserve a preallocated reply route so an
@@ -2965,7 +2985,7 @@ export class Kernel extends Host<Env> {
     }
 
     if (origin.type === "process") {
-      sendFrameToProcess(origin.id, frame).catch((err: unknown) => {
+      sendFrameToProcess(this.installationId, origin.id, frame).catch((err: unknown) => {
         void body?.stream.cancel(err).catch(() => {});
         console.error(`[Kernel] Failed to deliver frame to process ${origin.id}:`, err);
       });
@@ -3076,7 +3096,7 @@ export class Kernel extends Host<Env> {
 
       this.procs.updateIdentity(proc.processId, fresh);
 
-      sendFrameToProcess(proc.processId, {
+      sendFrameToProcess(this.installationId, proc.processId, {
         type: "sig",
         signal: "identity.changed",
         payload: { identity: fresh },
@@ -3303,4 +3323,14 @@ function shellStatusFromEvent(event: string): ShellSessionStatus {
     return "failed";
   }
   return "running";
+}
+
+function envWithStorage(env: Env, storage: R2Bucket): Env {
+  return new Proxy(env, {
+    get(target, property) {
+      return property === "STORAGE"
+        ? storage
+        : Reflect.get(target, property, target);
+    },
+  });
 }

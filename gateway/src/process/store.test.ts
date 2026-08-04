@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { runInDurableObject } from "cloudflare:test";
 import type { Process } from "./do";
-import { getProcessByPid } from "../shared/utils";
+import { getProcessByPid as getScopedProcessByPid } from "../shared/utils";
+import { LEGACY_STANDALONE_INSTALLATION_ID } from "../installation/identity";
+
+const getProcessByPid = (pid: string) => getScopedProcessByPid(
+  LEGACY_STANDALONE_INSTALLATION_ID,
+  pid,
+);
 
 describe("ProcessStore", () => {
   describe("history", () => {

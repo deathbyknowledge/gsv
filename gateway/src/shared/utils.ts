@@ -13,8 +13,14 @@ import type {
 } from "../protocol/process-frames";
 import type { NetFetchArgs } from "@humansandmachines/gsv/protocol";
 import { getAgentByName } from "agents";
-import { LEGACY_STANDALONE_INSTALLATION_ID } from "../installation/identity";
-import { getKernelByInstallationId } from "../installation/routing";
+import {
+  parseInstallationId,
+  type InstallationId,
+} from "../installation/identity";
+import {
+  getKernelByInstallationId,
+  processDurableObjectName,
+} from "../installation/routing";
 
 export const isWebSocketRequest = (request: Request) =>
   request.method === "GET" && request.headers.get("upgrade") === "websocket";
@@ -30,61 +36,77 @@ export type RequestProcessNetFetchOptions = {
   requestId?: string;
 };
 
-export async function getKernelPtr(): Promise<KernelPtr> {
+export async function getKernelPtr(
+  installationId: InstallationId | string,
+): Promise<KernelPtr> {
   return await getKernelByInstallationId(
     env.KERNEL,
-    LEGACY_STANDALONE_INSTALLATION_ID,
+    installationId,
   );
 }
 
-export async function getProcessByPid(pid: string): Promise<ProcessPtr> {
-  return await getAgentByName(env.PROCESS, pid);
+export async function getProcessByPid(
+  installationId: InstallationId | string,
+  pid: string,
+): Promise<ProcessPtr> {
+  return await getAgentByName(
+    env.PROCESS,
+    processDurableObjectName(installationId, pid),
+  );
 }
 
 export async function sendFrameToKernel(
+  installationId: InstallationId | string,
   processId: string,
   frame: Frame,
 ): Promise<Frame | null> {
-  const kernel = await getKernelPtr();
+  const kernel = await getKernelPtr(installationId);
   return kernel.recvFrame(processId, frame);
 }
 
 export async function requestProcessNetFetch(
+  installationId: InstallationId | string,
   processId: string,
   target: string,
   args: NetFetchArgs,
   options: RequestProcessNetFetchOptions = {},
 ): Promise<ResponseOkFrame<"net.fetch">> {
-  const kernel = await getKernelPtr();
+  const kernel = await getKernelPtr(installationId);
   return kernel.requestProcessNetFetch(processId, target, args, options);
 }
 
 export async function cancelProcessRequests(
+  installationId: InstallationId | string,
   processId: string,
   requestIds: string[],
   reason?: string,
 ): Promise<number> {
-  const kernel = await getKernelPtr();
+  const kernel = await getKernelPtr(installationId);
   return kernel.cancelProcessRequests(processId, requestIds, reason);
 }
 
 export function sendFrameToProcess(
+  installationId: InstallationId | string,
   pid: string,
   frame: ProcessAdapterDeliverRequestFrame,
 ): Promise<ProcessAdapterDeliverResponseFrame | null>;
 export function sendFrameToProcess(
+  installationId: InstallationId | string,
   pid: string,
   frame: ProcessScheduleDeliverRequestFrame,
 ): Promise<ProcessScheduleDeliverResponseFrame | null>;
 export function sendFrameToProcess(
+  installationId: InstallationId | string,
   pid: string,
   frame: ProcessRunAttachRequestFrame,
 ): Promise<ProcessRunAttachResponseFrame | null>;
 export function sendFrameToProcess(
+  installationId: InstallationId | string,
   pid: string,
   frame: Frame,
 ): Promise<Frame | null>;
 export async function sendFrameToProcess(
+  installationId: InstallationId | string,
   pid: string,
   frame: ProcessInboundFrame,
 ): Promise<
@@ -94,6 +116,6 @@ export async function sendFrameToProcess(
   | ProcessRunAttachResponseFrame
   | null
 > {
-  const proc = await getProcessByPid(pid);
-  return proc.recvFrame(frame);
+  const proc = await getProcessByPid(installationId, pid);
+  return proc.recvFrame(parseInstallationId(installationId), frame);
 }

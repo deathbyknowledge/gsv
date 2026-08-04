@@ -51,6 +51,7 @@ vi.mock("../shared/utils", () => ({
 }));
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
 
 beforeEach(() => {
   sendFrameToProcessMock.mockReset();
@@ -97,6 +98,7 @@ function makeContext(
     updatedAt: 2,
   };
   return {
+    installationId: TEST_INSTALLATION_ID,
     identity: {
       role: "user",
       process: {
@@ -329,6 +331,7 @@ describe("handleAiConfig", () => {
     const ownerUid = options.ownerUid ?? uid;
     const oauthAccounts = options.oauthAccounts ?? [];
     return {
+      installationId: TEST_INSTALLATION_ID,
       identity: {
         role: "user",
         process: {
@@ -1531,6 +1534,7 @@ describe("handleAiTranscriptionCreate", () => {
   } = {}): KernelContext {
     const config = options.config ?? {};
     return {
+      installationId: TEST_INSTALLATION_ID,
       identity: {
         role: "user",
         process: {
@@ -1617,6 +1621,7 @@ describe("handleAiTranscriptionCreate", () => {
 
     expect(result.model).toBe("@cf/openai/whisper-large-v3-turbo");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc:test",
       expect.objectContaining({
         call: "proc.ai.config.get",
@@ -1683,6 +1688,7 @@ describe("handleAiTranscriptionCreate", () => {
 
     expect(result.model).toBe("@cf/process/transcriber");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc:agent",
       expect.objectContaining({ call: "proc.ai.config.get" }),
     );
@@ -1909,6 +1915,7 @@ describe("handleAiImageRead", () => {
   } = {}): KernelContext {
     const config = options.config ?? {};
     return {
+      installationId: TEST_INSTALLATION_ID,
       identity: {
         role: "user",
         process: {
@@ -2077,6 +2084,7 @@ describe("handleAiImageGenerate", () => {
   } = {}): KernelContext {
     const config = options.config ?? {};
     return {
+      installationId: TEST_INSTALLATION_ID,
       identity: {
         role: "user",
         process: {
@@ -2184,6 +2192,7 @@ describe("handleAiImageGenerate", () => {
 
     expect(result.data.model).toBe("@cf/example/fallback-image");
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "proc:missing",
       expect.objectContaining({
         call: "proc.ai.config.get",
@@ -2207,6 +2216,7 @@ describe("handleAiSpeechCreate", () => {
   } = {}): KernelContext {
     const config = options.config ?? {};
     return {
+      installationId: TEST_INSTALLATION_ID,
       identity: {
         role: "user",
         process: {

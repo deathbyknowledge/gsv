@@ -871,9 +871,9 @@ add interfaces or test doubles early, but it must not depend on an unproven
 isolation boundary. Protected prompt and seeded context content are not changed
 by this program.
 
-Current implementation status as of 2026-08-04: phases 0 and 1 are complete on
-the managed-service branch. Phase 2 is next. Managed production hosting remains
-disabled until the Process, R2, ripgit, and adapter isolation gates below pass.
+Current implementation status as of 2026-08-04: phases 0, 1, and 2 are complete
+on the managed-service branch. Phase 3 is next. Managed production hosting
+remains disabled until the ripgit and adapter isolation gates below pass.
 
 ### Phase 0: executable specification
 

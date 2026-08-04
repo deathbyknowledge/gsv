@@ -8,6 +8,7 @@ import type { RequestFrame } from "../protocol/frames";
 import { sendFrameToProcess } from "../shared/utils";
 import type { ArgsOf, ResultOf } from "../syscalls";
 import type { ScheduleRecord, ScheduleRunHistoryEntry } from "@humansandmachines/gsv/protocol";
+import type { InstallationId } from "../installation/identity";
 
 export type ProcessViewCall =
   | "proc.ai.config.get"
@@ -23,6 +24,7 @@ export type ProcessViewRequest = <S extends ProcessViewCall>(
 ) => Promise<ResultOf<S>>;
 
 export async function requestProcessView<S extends ProcessViewCall>(
+  installationId: InstallationId,
   pid: string,
   call: S,
   args: ArgsOf<S>,
@@ -33,7 +35,7 @@ export async function requestProcessView<S extends ProcessViewCall>(
     call,
     args,
   } as RequestFrame;
-  const response = await sendFrameToProcess(pid, frame);
+  const response = await sendFrameToProcess(installationId, pid, frame);
   if (!response || response.type !== "res") {
     throw new Error(`${call} did not return a response`);
   }
@@ -41,6 +43,14 @@ export async function requestProcessView<S extends ProcessViewCall>(
     throw new Error(response.error.message);
   }
   return response.data as ResultOf<S>;
+}
+
+export function createProcessViewRequest(
+  installationId: InstallationId,
+): ProcessViewRequest {
+  return <S extends ProcessViewCall>(pid: string, call: S, args: ArgsOf<S>) => (
+    requestProcessView(installationId, pid, call, args)
+  );
 }
 
 export type ScheduleViewStore = {

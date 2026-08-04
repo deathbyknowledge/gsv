@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   normalizeHostname,
+  processDurableObjectName,
   resolveInstallationRoute,
   resolveInstallationTarget,
   type InstallationDirectoryService,
@@ -8,6 +9,17 @@ import {
 import { parseInstallationIdentity } from "./identity";
 
 describe("installation routing", () => {
+  it("preserves legacy Process names and scopes managed names", () => {
+    expect(processDurableObjectName("singleton", "proc:one")).toBe("proc:one");
+    expect(processDurableObjectName("inst_first", "proc:one")).toBe(
+      "process:inst_first:proc%3Aone",
+    );
+    expect(processDurableObjectName("inst_second", "proc:one"))
+      .not.toBe(processDurableObjectName("inst_first", "proc:one"));
+    expect(processDurableObjectName("inst:first", "proc:one"))
+      .not.toBe(processDurableObjectName("inst", "first:proc:one"));
+  });
+
   it("routes standalone requests to the fixed compatibility identity", async () => {
     const identity = parseInstallationIdentity({
       installationId: "singleton",

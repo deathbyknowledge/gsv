@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { PROCESS_MIGRATIONS, PROCESS_SCHEMA_COMPONENT } from "./migrations";
+import { runInDurableObject } from "cloudflare:test";
+import type { Process } from "../do";
+import { getProcessByPid } from "../../shared/utils";
+import { LEGACY_STANDALONE_INSTALLATION_ID } from "../../installation/identity";
+import {
+  PROCESS_MIGRATIONS,
+  PROCESS_SCHEMA_COMPONENT,
+  runProcessSqlMigrations,
+} from "./migrations";
 import { PROCESS_V001_INITIAL_SCHEMA } from "./v001_initial";
 import { PROCESS_V002_MESSAGE_RUN_ID } from "./v002_message_run_id";
 import { PROCESS_V003_MESSAGE_METADATA } from "./v003_message_metadata";
@@ -37,7 +45,7 @@ function createTableStatement(name: string): string {
 describe("process schema migrations", () => {
   it("starts the process component at a v1 baseline with ordered migrations", () => {
     expect(PROCESS_SCHEMA_COMPONENT).toBe("process");
-    expect(PROCESS_MIGRATIONS).toHaveLength(8);
+    expect(PROCESS_MIGRATIONS).toHaveLength(9);
     expect(PROCESS_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_process_schema",
@@ -69,6 +77,10 @@ describe("process schema migrations", () => {
     expect(PROCESS_MIGRATIONS[7]).toMatchObject({
       id: 8,
       name: "single_process_history",
+    });
+    expect(PROCESS_MIGRATIONS[8]).toMatchObject({
+      id: 9,
+      name: "backfill_installation_identity",
     });
   });
 
@@ -174,5 +186,44 @@ describe("process schema migrations", () => {
     expect(statements.some((statement) => (
       statement.includes("FROM messages WHERE conversation_id = 'default'")
     ))).toBe(true);
+  });
+
+  it("binds existing Process objects to the legacy standalone installation", () => {
+    expect(normalizedStatements()).toContain(
+      "INSERT OR IGNORE INTO process_kv (key, value) SELECT 'installationId', 'singleton' WHERE EXISTS ( SELECT 1 FROM process_kv WHERE key = 'pid' )",
+    );
+  });
+
+  it("backfills a persisted pre-v9 Process through the migration runner", async () => {
+    const process = await getProcessByPid(
+      LEGACY_STANDALONE_INSTALLATION_ID,
+      `migration-v9-${crypto.randomUUID()}`,
+    );
+
+    await runInDurableObject(process, (instance: Process, state) => {
+      const store = (instance as unknown as {
+        store: {
+          getValue(key: string): string | null;
+          setValue(key: string, value: string): void;
+          deleteValue(key: string): void;
+        };
+      }).store;
+      store.setValue("pid", "legacy-process");
+      store.deleteValue("installationId");
+      state.storage.sql.exec(
+        "DELETE FROM _gsv_schema_migrations WHERE component = ? AND id = 9",
+        PROCESS_SCHEMA_COMPONENT,
+      );
+
+      runProcessSqlMigrations(state.storage);
+
+      expect(store.getValue("installationId")).toBe(
+        LEGACY_STANDALONE_INSTALLATION_ID,
+      );
+      expect(state.storage.sql.exec<{ id: number }>(
+        "SELECT id FROM _gsv_schema_migrations WHERE component = ? AND id = 9",
+        PROCESS_SCHEMA_COMPONENT,
+      ).one().id).toBe(9);
+    });
   });
 });

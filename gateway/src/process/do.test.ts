@@ -20,7 +20,11 @@ import type {
   ProcessScheduleDeliverArgs,
   ProcessScheduleDeliverRequestFrame,
 } from "../protocol/process-frames";
-import { getProcessByPid, getKernelPtr } from "../shared/utils";
+import {
+  getKernelPtr as getScopedKernelPtr,
+  getProcessByPid as getScopedProcessByPid,
+} from "../shared/utils";
+import { LEGACY_STANDALONE_INSTALLATION_ID } from "../installation/identity";
 import { TOOL_TO_SYSCALL } from "../syscalls/constants";
 import { PROCESS_V001_INITIAL_SCHEMA } from "./schema/v001_initial";
 import { PROCESS_V004_PENDING_TOOL_DISPATCH_ID } from "./schema/v004_pending_tool_dispatch_id";
@@ -36,6 +40,12 @@ const ROOT_IDENTITY: ProcessIdentity = {
   cwd: "/root",
 };
 const DEFAULT_PROFILE = "task" as const;
+
+const getKernelPtr = () => getScopedKernelPtr(LEGACY_STANDALONE_INSTALLATION_ID);
+const getProcessByPid = (pid: string) => getScopedProcessByPid(
+  LEGACY_STANDALONE_INSTALLATION_ID,
+  pid,
+);
 
 function makeReq(call: string, args: unknown): RequestFrame {
   return { type: "req", id: crypto.randomUUID(), call, args } as RequestFrame;

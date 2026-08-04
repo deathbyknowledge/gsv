@@ -27,6 +27,15 @@ describe("managed installation routing integration", () => {
     expect(await response.text()).toBe("Not Found");
   });
 
+  it("does not expose public installation storage for an unknown hostname", async () => {
+    const response = await harness.getWorker("gsv-managed").fetch(
+      "https://random.gsv.space/public/private-by-default.txt",
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Not Found");
+  });
+
   it("uses the directory's persisted canonical origin", async () => {
     const response = await harness.getWorker("gsv-managed").fetch(
       "https://first.gsv.space/.well-known/oauth-client/gsv.json",

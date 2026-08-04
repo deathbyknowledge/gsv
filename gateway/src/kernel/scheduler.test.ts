@@ -8,7 +8,11 @@ import type {
   ScheduleRecord,
   ScheduleRunResult,
 } from "@humansandmachines/gsv/protocol";
-import { getProcessByPid } from "../shared/utils";
+import { getProcessByPid as getScopedProcessByPid } from "../shared/utils";
+import {
+  parseInstallationId,
+  type InstallationId,
+} from "../installation/identity";
 import type { RequestFrame } from "../protocol/frames";
 import { Kernel } from "./do";
 import {
@@ -82,14 +86,19 @@ function makeReq(call: string, args: unknown): RequestFrame {
 
 async function prepareScheduleTargetProcess(
   process: DurableObjectStub<Process>,
+  installationId: InstallationId,
   pid: string,
   identity: ProcessIdentity = USER_IDENTITY,
 ): Promise<void> {
-  const setIdentity = await process.recvFrame(makeReq("proc.setidentity", {
-    pid,
-    identity,
-    profile: "task",
-  }));
+  const setIdentity = await process.recvFrame(
+    installationId,
+    makeReq("proc.setidentity", {
+      installationId,
+      pid,
+      identity,
+      profile: "task",
+    }),
+  );
   expect(setIdentity?.type).toBe("res");
   expect(setIdentity && "ok" in setIdentity ? setIdentity.ok : false).toBe(true);
 
@@ -104,6 +113,13 @@ async function prepareScheduleTargetProcess(
       queued: false,
     }));
   });
+}
+
+function installationIdForKernel(kernel: DurableObjectStub<Kernel>): InstallationId {
+  if (!kernel.id.name) {
+    throw new Error("Scheduler test Kernel must have a named Durable Object id");
+  }
+  return parseInstallationId(kernel.id.name);
 }
 
 function schedulePrincipal(pid?: string): SchedulePrincipal {
@@ -1095,7 +1111,8 @@ describe("scheduler", () => {
       env.KERNEL,
       `scheduler-test-${crypto.randomUUID()}`,
     );
-    const process = await getProcessByPid(pid);
+    const installationId = installationIdForKernel(kernel);
+    const process = await getScopedProcessByPid(installationId, pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1114,7 +1131,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid, PERSONAL_AGENT_IDENTITY);
+    await prepareScheduleTargetProcess(process, installationId, pid, PERSONAL_AGENT_IDENTITY);
 
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1396,7 +1413,8 @@ describe("scheduler", () => {
       env.KERNEL,
       `scheduler-alarm-test-${crypto.randomUUID()}`,
     );
-    const process = await getProcessByPid(pid);
+    const installationId = installationIdForKernel(kernel);
+    const process = await getScopedProcessByPid(installationId, pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1412,7 +1430,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process, installationId, pid);
 
     const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1503,7 +1521,8 @@ describe("scheduler", () => {
       env.KERNEL,
       `scheduler-early-wake-test-${crypto.randomUUID()}`,
     );
-    const process = await getProcessByPid(pid);
+    const installationId = installationIdForKernel(kernel);
+    const process = await getScopedProcessByPid(installationId, pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1517,7 +1536,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process, installationId, pid);
 
     const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1591,7 +1610,8 @@ describe("scheduler", () => {
       env.KERNEL,
       `scheduler-stale-wake-test-${crypto.randomUUID()}`,
     );
-    const process = await getProcessByPid(pid);
+    const installationId = installationIdForKernel(kernel);
+    const process = await getScopedProcessByPid(installationId, pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1605,7 +1625,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process, installationId, pid);
 
     const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1677,7 +1697,8 @@ describe("scheduler", () => {
       env.KERNEL,
       `scheduler-force-test-${crypto.randomUUID()}`,
     );
-    const process = await getProcessByPid(pid);
+    const installationId = installationIdForKernel(kernel);
+    const process = await getScopedProcessByPid(installationId, pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1693,7 +1714,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process, installationId, pid);
 
     const { scheduleId, nextRunAtMs } = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as { schedules: ScheduleStore };
@@ -1797,7 +1818,8 @@ describe("scheduler", () => {
       env.KERNEL,
       `scheduler-once-test-${crypto.randomUUID()}`,
     );
-    const process = await getProcessByPid(pid);
+    const installationId = installationIdForKernel(kernel);
+    const process = await getScopedProcessByPid(installationId, pid);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1813,7 +1835,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process, installationId, pid);
 
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1934,7 +1956,10 @@ describe("scheduler", () => {
     );
     expect(spawned.schedule?.state.lastStatus).toBe("ok");
 
-    const cronProcess = await getProcessByPid(spawned.pid!);
+    const cronProcess = await getScopedProcessByPid(
+      installationIdForKernel(kernel),
+      spawned.pid!,
+    );
     const messages = await runInDurableObject(cronProcess, (instance: Process) =>
       (instance as unknown as {
         store: { getMessages: () => Array<{ role: string; content: string }> };

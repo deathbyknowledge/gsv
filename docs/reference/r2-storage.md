@@ -11,6 +11,30 @@ GSV uses several storage planes. The Kernel chooses the plane based on whether t
 | R2 `STORAGE` bucket | Cloudflare R2 | Ordinary virtual filesystem files, process media, and process archives. |
 | ripgit | `RIPGIT` binding | Versioned home knowledge, workspaces, and source trees. |
 
+## Installation Namespace
+
+An installation is the outer storage boundary. Managed installations share one
+deployment R2 bucket, but runtime code receives an installation-scoped bucket
+view rather than the raw binding. Callers continue to use logical keys such as
+`home/alice/file.txt`; the storage boundary maps them to physical keys:
+
+```text
+installations/{installationId}/home/alice/file.txt
+```
+
+The mapping applies centrally to `head`, `get`, `put`, `delete`, `list`, and
+multipart upload creation and resume. List results and returned object keys are
+mapped back to logical keys, so filesystem, media, archive, and cleanup code
+cannot accidentally retain or address the physical prefix. Public
+`/public/*` requests resolve their trusted hostname before selecting this
+storage view.
+
+The explicitly supported standalone installation ID, `singleton`, projects to
+the raw historical keyspace with no prefix. Existing self-hosted Process media,
+archives, and filesystem objects therefore remain at their current keys after
+upgrade. This compatibility projection does not apply to managed
+installations.
+
 ## Virtual Filesystem Mapping
 
 The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual filesystem with explicit mount routing.
@@ -67,7 +91,9 @@ messages to R2 under the run-as agent's home.
 
 ## R2 Object Layout
 
-R2 remains the byte store. The current runtime uses these key families:
+R2 remains the byte store. The table shows installation-logical keys. Managed
+deployments store each key below `installations/{installationId}/`; standalone
+`singleton` deployments retain the listed unprefixed form.
 
 | Key Pattern | Written By | Purpose |
 |---|---|---|
@@ -104,6 +130,8 @@ Generic visible repos are available under `/src/repos/{owner}/{repo}`. Repos wri
 - Use Kernel SQLite for authoritative control-plane state.
 - Use Process SQLite for history and run state.
 - Use R2 for opaque bytes, archives, media, and default filesystem files.
+- Address R2 through the installation-scoped bucket view; do not manually add
+  or remove managed prefixes in filesystem or Process code.
 - Use ripgit for user-editable/versioned documents, knowledge, workspace files, and source repositories.
 - Prefer filesystem paths in agent prompts; the mount layer hides the backing store.
 
