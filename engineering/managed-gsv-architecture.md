@@ -583,6 +583,15 @@ Webhook processing must:
 - fetch current provider objects when an event is insufficient or stale; and
 - update entitlements idempotently.
 
+A verified webhook is a wake-up signal, not the subscription snapshot used for
+authorization. The account service records only the provider/event identifiers,
+event timestamp, subject identifier, raw-body hash, processing lease, outcome,
+and a content-free failure code. It then fetches the provider's current
+subscription object and reconciles that normalized snapshot. Reordered event
+notifications therefore converge on current provider state. An exact replay is
+deduplicated; a failed or abandoned processing lease can safely retry. Raw
+provider payloads and signatures are not retained.
+
 Do not directly translate a payment-provider status into immediate data loss.
 Use an explicit installation lifecycle such as:
 
@@ -640,6 +649,12 @@ The initial lifecycle policy is:
 
 These durations are configuration surfaced in user-visible policy. Changing
 them must not change lifecycle meanings or bypass notifications and export.
+The subscription record and effective entitlement deliberately differ during a
+paid-through cancellation: the subscription is `cancelled`, while its
+entitlement remains `active` until the paid-through timestamp. The scheduled
+lifecycle reconciler then projects `retained` without waiting for another
+provider event. Likewise, an unchanged `past_due` snapshot projects
+`restricted` when its original grace deadline passes.
 
 ## Managed inference
 
@@ -980,6 +995,15 @@ installation through the managed inference broker. Standalone Telegram remains
 unchanged. The production bot credentials, webhook registration, account
 Turnstile widget, and overall Phases 5 through 9 launch gates remain external or
 incomplete, so managed production hosting remains disabled.
+
+Phase 7 is in progress. Its provider-neutral subscription schema, event lease
+and deduplication store, current-snapshot reconciler, lifecycle deadline
+advancer, entitlement projection, plan catalog, and signed deterministic fake
+provider are implemented. Tests cover exact replay, out-of-order notification,
+failed-event resumption, invalid signatures, seven-day grace semantics, and
+paid-through cancellation followed by retention. No hosted-checkout provider,
+customer portal, production webhook route, notification/deletion worker, or
+merchant credential is wired yet.
 
 ### Phase 0: executable specification
 
