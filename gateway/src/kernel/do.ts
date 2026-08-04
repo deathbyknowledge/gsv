@@ -1097,6 +1097,9 @@ export class Kernel extends Host<Env> {
     const response = {
       text: typeof payload.text === "string" ? payload.text : null,
       usage: payload.usage ?? null,
+      ...(Array.isArray(payload.media) && payload.media.length > 0
+        ? { media: payload.media }
+        : {}),
     };
     const status = typeof payload.status === "string" ? payload.status : "ok";
     const reason = typeof payload.reason === "string" ? payload.reason : null;

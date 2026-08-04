@@ -5298,7 +5298,18 @@ describe("Process DO — mechanical", () => {
           runId: "target-run",
           deadlineAt: Date.now() + 30_000,
           status: "completed",
-          response: { text: "busy result", usage: null },
+          response: {
+            text: "busy result",
+            usage: null,
+            media: [{
+              type: "video",
+              mimeType: "video/mp4",
+              key: `home/worker/.gsv/media/archived-media:${"a".repeat(64)}`,
+              path: `/home/worker/.gsv/media/archived-media:${"a".repeat(64)}`,
+              filename: "clip.mp4",
+              size: 1234,
+            }],
+          },
         },
       });
 
@@ -5309,6 +5320,8 @@ describe("Process DO — mechanical", () => {
         expect(messages[0].role).toBe("system");
         expect(messages[0].content).toContain(`Delegated task from process \`${targetPid}\` finished.`);
         expect(messages[0].content).toContain("busy result");
+        expect(messages[0].content).toContain("Attachments:");
+        expect(messages[0].content).toContain(`/home/worker/.gsv/media/archived-media:${"a".repeat(64)}`);
         expect(process.currentRun).toMatchObject({
           runId: "active-source-run",
           pendingRuntimeEvents: 1,

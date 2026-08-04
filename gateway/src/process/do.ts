@@ -695,9 +695,13 @@ function formatIpcReplyMessage(signal: string, payload: unknown): string {
     ? record.error.trim()
     : null;
   const response = "response" in record ? record.response : undefined;
-  const responseText = response && typeof response === "object" && !Array.isArray(response)
-    ? (response as Record<string, unknown>).text
+  const responseRecord = response && typeof response === "object" && !Array.isArray(response)
+    ? response as Record<string, unknown>
     : null;
+  const responseText = responseRecord?.text;
+  const responseMedia = parseStoredProcessMedia(
+    JSON.stringify(responseRecord?.media ?? null) ?? null,
+  );
   const renderedResponse = renderJsonBlock(response);
 
   const lines = [
@@ -713,8 +717,11 @@ function formatIpcReplyMessage(signal: string, payload: unknown): string {
   }
   if (typeof responseText === "string" && responseText.trim().length > 0) {
     lines.push("", "Result:", responseText.trim());
-  } else if (renderedResponse) {
+  } else if (renderedResponse && responseMedia.length === 0) {
     lines.push("", "Response:", "```json", renderedResponse, "```");
+  }
+  if (responseMedia.length > 0) {
+    lines.push("", "Attachments:", ...responseMedia.map((item) => `- ${describeStoredProcessMedia(item)}`));
   }
   return lines.join("\n");
 }
