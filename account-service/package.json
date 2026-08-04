@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "deploy": "wrangler deploy --minify",
-    "dev": "wrangler dev",
+    "deploy": "npm --prefix ../web run build:account && wrangler deploy --minify",
+    "dev": "npm --prefix ../web run build:account && wrangler dev",
     "cf-typegen": "wrangler types",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts"

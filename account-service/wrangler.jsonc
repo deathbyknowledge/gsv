@@ -45,6 +45,11 @@
       "entrypoint": "ManagedTelegramChannel"
     }
   ],
+  "assets": {
+    "directory": "../web/dist-account",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/health", "/telegram", "/telegram/"]
+  },
   "observability": {
     "enabled": true
   }

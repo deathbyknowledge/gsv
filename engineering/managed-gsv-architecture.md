@@ -553,10 +553,14 @@ a documented fallback plan.
 Production signup remains closed until `gsv.space` is activated as an Email
 Sending domain for `noreply@gsv.space` and the account Worker has a
 `TURNSTILE_SECRET` Worker secret for a hostname-restricted production widget.
-The Turnstile site key belongs in the later public account UI; the secret stays
-only in the account Worker. Neither value is needed by deterministic local
-tests, and no billing-provider credential is needed before the concrete billing
-adapter in Phase 7.
+The matching public site key is exposed to the account UI through the narrow
+`/api/public/config` response and is configured as
+`GSV_TURNSTILE_SITE_KEY`; the secret stays only in the account Worker. The
+production site key and secret must belong to the same widget, whose hostname
+allowlist contains only the intended account host. Deterministic Worker tests
+use the documented Cloudflare test site key and an in-process verifier, and no
+billing-provider credential is needed before the concrete billing adapter in
+Phase 7.
 
 ## Billing and entitlements
 
@@ -787,6 +791,16 @@ domain-separated claim-token hash. Its durable operation stages are
 operation owns a suspended claim, a browser retry that resubmits the same bearer
 can resume after public claim expiry without reopening the route.
 
+The account page copies the fragment bearer into memory and removes the entire
+fragment with `history.replaceState` before rendering or loading third-party
+code. A fresh browser performs Turnstile-protected discoverable-passkey login on
+the account origin; confirmation requires a recent passkey ceremony. The page
+shows the Telegram display identity, signed-in account, canonical hostnames,
+and membership roles, but no local UID, actor ID, installation ID, or raw route
+state. One installation is preselected; several require an explicit selection.
+The page keeps one idempotency key for in-page retries and never puts the claim
+in a request URL or browser storage.
+
 The global route chooses an installation; the Kernel identity link chooses and
 authorizes the local UID. Both mappings remain because they protect different
 boundaries. An actor may have only one active managed GSV route initially.
@@ -952,11 +966,20 @@ retry without changing logical request identity. The real provider is disabled
 by default and is additionally blocked by a source-controlled promotion gate.
 The repeatable content-free GSV task evaluation harness is implemented; a live
 candidate run, a selected and evaluated fallback, and the provider privacy and
-contractual approvals remain before customer prompts can be enabled. The
-shared-bot peer ownership
-recheck is a Phase 6 managed Telegram gate because that global peer directory
-does not exist before then. Managed production hosting remains disabled while
-Phases 5 through 9 are incomplete.
+contractual approvals remain before customer prompts can be enabled. Phase 6
+implementation is also complete behind the production launch gate. The separate
+managed Telegram Worker owns peer-scoped Durable Objects, signed one-time
+claims, exclusive installation routes, inbound retry state, and outbound
+delivery authorization. The account service owns a recent-passkey, resumable
+relink operation; the Gateway owns Kernel-local identity links; and a dedicated
+account page consumes claim fragments without persisting the bearer. A clean
+five-Worker integration flow proves that an unlinked DM cannot allocate
+inference, account confirmation links the real Kernel and peer, a foreign
+installation cannot send to that peer, and a linked DM reaches only the selected
+installation through the managed inference broker. Standalone Telegram remains
+unchanged. The production bot credentials, webhook registration, account
+Turnstile widget, and overall Phases 5 through 9 launch gates remain external or
+incomplete, so managed production hosting remains disabled.
 
 ### Phase 0: executable specification
 

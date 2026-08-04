@@ -31,12 +31,15 @@ import { ManagedInstallationService } from "./installations/service";
 import { ManagedTelegramLinkHttp } from "./telegram/http";
 import { ManagedTelegramLinkService } from "./telegram/service";
 import { ManagedTelegramLinkOperationStore } from "./telegram/store";
+import { accountPage, publicTurnstileSiteKey } from "./account-ui";
 
 type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & {
   ENVIRONMENT: string;
   GATEWAY: ManagedGatewayProvisioningInterface & ManagedGatewayTelegramInterface;
   MANAGED_TELEGRAM: ManagedTelegramControlInterface;
+  ASSETS?: Fetcher;
   TURNSTILE_SECRET?: string;
+  GSV_TURNSTILE_SITE_KEY?: string;
 };
 
 export default class AccountService
@@ -47,6 +50,19 @@ export default class AccountService
     const url = new URL(request.url);
     if (url.pathname === "/health" && request.method === "GET") {
       return Response.json({ status: "healthy" });
+    }
+    if (url.pathname === "/api/public/config" && request.method === "GET") {
+      return json({
+        turnstileSiteKey: publicTurnstileSiteKey(
+          this.env.GSV_TURNSTILE_SITE_KEY,
+        ),
+      });
+    }
+    if (
+      (url.pathname === "/telegram" || url.pathname === "/telegram/")
+      && (request.method === "GET" || request.method === "HEAD")
+    ) {
+      return await accountPage(request, this.env.ASSETS);
     }
     const authResponse = await this.authHttp().handle(request);
     if (authResponse) return authResponse;

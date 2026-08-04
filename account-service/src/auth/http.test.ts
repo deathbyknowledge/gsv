@@ -2,6 +2,17 @@ import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 describe("account auth HTTP boundary", () => {
+  it("publishes only the browser-safe authentication configuration", async () => {
+    const response = await SELF.fetch(
+      "https://accounts.gsv.space/api/public/config",
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      turnstileSiteKey: "1x00000000000000000000AA",
+    });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
   it("requires the exact account origin for authentication mutations", async () => {
     const missing = await SELF.fetch(
       "https://accounts.gsv.space/api/auth/passkeys/authenticate/options",

@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:account": "vite --config vite.account.config.ts",
     "build": "vite build",
+    "build:account": "vite build --config vite.account.config.ts",
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "test": "vitest",

@@ -9,6 +9,7 @@
     "GSV_BASE_DOMAIN": "gsv.space",
     "GSV_EMAIL_FROM": "noreply@gsv.space",
     "GSV_RP_NAME": "GSV",
+    "GSV_TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
     "ENVIRONMENT": "test"
   },
   "d1_databases": [
