@@ -36,14 +36,6 @@ export async function handleShellExec(
 ): Promise<ShellExecResult> {
   const identity = ctx.identity!.process;
   if (args.sessionId) {
-    if (args.argv !== undefined) {
-      return {
-        status: "failed",
-        output: "",
-        error: "argv is only valid when starting a new command",
-        sessionId: args.sessionId,
-      };
-    }
     return {
       status: "failed",
       output: "",
@@ -55,12 +47,6 @@ export async function handleShellExec(
   const command = args.input;
   if (command.trim().length === 0) {
     return { status: "failed", output: "", error: "input must not be empty" };
-  }
-  if (args.argv !== undefined && (
-    !Array.isArray(args.argv)
-    || args.argv.some((value) => typeof value !== "string" || value.includes("\0"))
-  )) {
-    return { status: "failed", output: "", error: "argv must contain only strings without NUL bytes" };
   }
 
   const cwd = args.cwd
@@ -88,7 +74,6 @@ export async function handleShellExec(
     let result: BashExecResult;
     try {
       result = await bash.exec(command, {
-        args: args.argv,
         cwd,
         signal,
       });

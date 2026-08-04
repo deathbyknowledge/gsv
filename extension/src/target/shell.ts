@@ -57,21 +57,9 @@ export class BrowserTargetShell {
     const input = typeof record.input === "string" ? record.input : "";
     const cwd = typeof record.cwd === "string" && record.cwd.trim() ? this.fs.resolvePath("/", record.cwd) : "/";
     const sessionId = typeof record.sessionId === "string" ? record.sessionId.trim() : "";
-    const argv = record.argv === undefined
-      ? undefined
-      : Array.isArray(record.argv)
-        && record.argv.every((value) => typeof value === "string" && !value.includes("\0"))
-        ? record.argv as string[]
-        : null;
 
     if (sessionId) {
-      if (argv !== undefined) {
-        return { status: "failed", output: "", error: "argv is only valid when starting a new command" };
-      }
       return { status: "failed", output: "", error: "Browser shell sessions are not supported yet" };
-    }
-    if (argv === null) {
-      return { status: "failed", output: "", error: "argv must contain only strings without NUL bytes" };
     }
     if (!input.trim()) {
       return { status: "failed", output: "", error: "shell.exec requires input" };
@@ -87,7 +75,7 @@ export class BrowserTargetShell {
       }
       throwIfAborted(context.abortSignal);
       this.activeExecContext = context;
-      const result = await this.requireBash().exec(input, { args: argv, cwd, signal: context.abortSignal });
+      const result = await this.requireBash().exec(input, { cwd, signal: context.abortSignal });
       throwIfAborted(context.abortSignal);
       return toShellResult(result);
     } catch (error) {
