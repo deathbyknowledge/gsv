@@ -61,17 +61,14 @@ while signed in as the intended GSV user. The code expires after ten minutes.
 The message that requests the code is consumed by the linking flow, so send a
 new message after linking to start a conversation with an agent.
 
-While connected, the outbound WhatsApp WebSocket prevents the account Durable
-Object from being evicted. Cloudflare limits that keepalive effect to 15 minutes
-per outbound connection; the WebSocket itself may continue after that point.
-GSV therefore schedules an alarm ten minutes after each successful connection.
-When the alarm fires, the account opens a replacement with its saved
-linked-device credentials while the current transport keeps handling messages.
-Only after the replacement authenticates does it become active and close the
-old transport, establishing a fresh outbound-connection lease before the
-15-minute keepalive cap. The alarm is the scheduled trigger, not the mechanism
-that keeps the object alive, and this reconnect is not a WhatsApp logout or a
-new pairing.
+While connected, the outbound WhatsApp WebSocket initially prevents the account
+Durable Object from being evicted. Cloudflare limits that keepalive effect to 15
+minutes per outbound connection; the WebSocket itself may continue after that
+point. GSV keeps the same provider session and schedules a Durable Object alarm
+every 30 seconds. Each alarm is an incoming event inside Cloudflare's minimum
+70-second idle-eviction window, so routine residency maintenance never opens a
+second WhatsApp session. Baileys separately pings WhatsApp every 30 seconds and
+the ordinary reconnect path replaces a transport only when it is unhealthy.
 
 This design targets the free Workers and Durable Objects plan; it does not
 require Containers. The account alarm also arbitrates pairing expiry,

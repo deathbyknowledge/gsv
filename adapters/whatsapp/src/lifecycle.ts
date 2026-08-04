@@ -1,6 +1,6 @@
 import { DisconnectReason } from "@whiskeysockets/baileys";
 
-export const SOCKET_LEASE_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+export const SOCKET_RESIDENCY_ALARM_INTERVAL_MS = 30_000;
 export const PAIRING_WINDOW_MS = 2 * 60 * 1000;
 export const INBOUND_RETRY_DELAY_MS = 10_000;
 export const INBOUND_RETRY_BATCH_SIZE = 25;
@@ -76,36 +76,6 @@ export function nextAccountAlarmDeadline(
     lifecycleDeadline,
     hasPendingInbound ? now + INBOUND_RETRY_DELAY_MS : undefined,
   );
-}
-
-export type SocketLeaseHealth = {
-  hasSocket: boolean;
-  stateConnected: boolean;
-  socketAuthenticated: boolean;
-  webSocketOpen: boolean;
-};
-
-export type SocketLeaseAction = "wait" | "refresh" | "recover";
-
-/**
- * An established socket is checked on every account alarm, but a healthy
- * socket is replaced only when its absolute Cloudflare keepalive lease is due.
- */
-export function socketLeaseAction(
-  refreshAt: number | undefined,
-  health: SocketLeaseHealth,
-  now = Date.now(),
-): SocketLeaseAction {
-  if (refreshAt === undefined || !Number.isFinite(refreshAt)) return "wait";
-  if (
-    !health.hasSocket
-    || !health.stateConnected
-    || !health.socketAuthenticated
-    || !health.webSocketOpen
-  ) {
-    return "recover";
-  }
-  return refreshAt <= now ? "refresh" : "wait";
 }
 
 export function pairingSessionExpired(

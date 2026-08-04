@@ -20,13 +20,14 @@ For WhatsApp, budget the Free plan for one continuously connected account. Its
 [outbound WebSocket prevents account Durable Object eviction for at most 15
 minutes per connection](https://developers.cloudflare.com/changelog/post/2026-06-19-outbound-connections-keep-dos-alive/).
 The connection itself can continue after that cap, but it stops preventing
-eviction. Ten minutes after each successful connection, an alarm closes the old
-transport and reconnects with the saved credentials. That reconnect establishes
-a fresh outbound-connection lease before the cap; the alarm is only its
-scheduled trigger and does not keep the object alive by itself.
-That is roughly 144 alarm requests and writes per day, but resident duration is
-the tighter limit: one continuously resident 128 MB object is about 11,060 GB-s
-against Cloudflare's current 13,000 GB-s daily Free allowance. This is an
+eviction. While the transport is healthy, the account schedules an alarm every
+30 seconds so an incoming event reaches the Durable Object before Cloudflare's
+minimum idle eviction window. Routine residency maintenance therefore keeps the
+same provider session; only an unhealthy transport reconnects with the saved
+credentials.
+That is roughly 2,880 alarm requests and writes per day, but resident duration
+is the tighter limit: one continuously resident 128 MB object is about 11,060
+GB-s against Cloudflare's current 13,000 GB-s daily Free allowance. This is an
 operating estimate, not a hard account-capacity guarantee, because other active
 Durable Objects use the same allowance. Review the current
 [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/)
@@ -64,9 +65,9 @@ From the CLI:
 gsv infra upgrade --all
 ```
 
-Routine WhatsApp upgrades and the adapter's ten-minute lease-refresh reconnect
-keep the saved linked-device authentication. They are not logout operations and
-do not require scanning a new QR.
+Routine WhatsApp upgrades and unhealthy-transport reconnects keep the saved
+linked-device authentication. They are not logout operations and do not require
+scanning a new QR.
 
 ## Remove
 
