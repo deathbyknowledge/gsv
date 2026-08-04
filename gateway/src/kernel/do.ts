@@ -1239,6 +1239,7 @@ export class Kernel extends Host<Env> {
     if (frame.signal === "proc.run.started") {
       await setAdapterActivityForKernel(
         this.scopedEnv,
+        this.installationId,
         adapter,
         accountId,
         surface,
@@ -1252,6 +1253,7 @@ export class Kernel extends Host<Env> {
       if (!request) {
         await setAdapterActivityForKernel(
           this.scopedEnv,
+          this.installationId,
           adapter,
           accountId,
           surface,
@@ -1268,6 +1270,7 @@ export class Kernel extends Host<Env> {
       } finally {
         await setAdapterActivityForKernel(
           this.scopedEnv,
+          this.installationId,
           adapter,
           accountId,
           surface,
@@ -1311,6 +1314,7 @@ export class Kernel extends Host<Env> {
     } finally {
       await setAdapterActivityForKernel(
         this.scopedEnv,
+        this.installationId,
         adapter,
         accountId,
         surface,

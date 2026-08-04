@@ -1,5 +1,6 @@
 import { DisconnectReason } from "@whiskeysockets/baileys";
 import { describe, expect, it } from "vitest";
+import { LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID } from "../../shared/src/installation";
 
 import {
   canReplaceSupersededLifecycleAlarm,
@@ -164,6 +165,7 @@ describe("WhatsApp state upgrade", () => {
       10_000,
     )).toEqual({
       ...defaultWhatsAppAccountState(),
+      installationId: LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
       accountId: "default",
       desired: "connected",
       status: "reconnecting",
@@ -193,5 +195,23 @@ describe("WhatsApp state upgrade", () => {
       accountId: "default",
       status: "logged_out",
     });
+  });
+
+  it("assigns legacy v2 state to the standalone installation", () => {
+    const current = {
+      ...defaultWhatsAppAccountState(),
+      accountId: "default",
+    };
+    const {
+      installationId: _missingLegacyField,
+      ...legacy
+    } = current;
+
+    expect(restoreWhatsAppAccountState(
+      legacy as WhatsAppAccountState,
+      undefined,
+      false,
+      10_000,
+    ).installationId).toBe(LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID);
   });
 });

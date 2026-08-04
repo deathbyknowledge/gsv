@@ -871,10 +871,13 @@ add interfaces or test doubles early, but it must not depend on an unproven
 isolation boundary. Protected prompt and seeded context content are not changed
 by this program.
 
-Current implementation status as of 2026-08-04: phases 0, 1, and 2 are complete
-on the managed-service branch. Phase 3 is in progress: ripgit isolation is
-complete and adapter isolation is next. Managed production hosting remains
-disabled until the adapter isolation gate below passes.
+Current implementation status as of 2026-08-04: phases 0 through 3 are complete
+for the existing runtime on the managed-service branch. Kernel, Process, R2,
+ripgit, and user-owned adapter state now share one installation boundary with
+explicit standalone compatibility. The shared-bot peer ownership recheck is a
+Phase 6 managed Telegram gate because that global peer directory does not exist
+before then. Managed production hosting remains disabled while Phases 4 through
+9 are incomplete.
 
 ### Phase 0: executable specification
 
@@ -927,13 +930,13 @@ state.
   Durable Object names, Git proxy requests, imports, and cleanup.
 - Carry trusted installation identity through adapter service RPCs.
 - Scope user-owned adapter account Durable Objects by installation.
-- Require managed adapter outbound delivery to recheck its peer-to-installation
-  binding.
 - Audit OAuth state, public media routes, caches, telemetry dimensions, alarms,
   and scheduled work for ambient or unscoped identity.
 
 Exit: installations containing identical repository and adapter identifiers
-remain isolated in both directions, including retries and alarms.
+remain isolated in both directions, including retries and alarms. A future
+global managed adapter must additionally pass the peer-ownership gate in Phase
+6 before launch.
 
 ### Phase 4: managed control plane and provisioning
 

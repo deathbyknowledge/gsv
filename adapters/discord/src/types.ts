@@ -7,6 +7,7 @@ export type {
   AdapterDisconnectResult,
   AdapterInboundMessage,
   AdapterInboundResult,
+  AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,

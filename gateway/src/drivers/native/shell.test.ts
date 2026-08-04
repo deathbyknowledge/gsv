@@ -46,6 +46,7 @@ vi.mock("../../shared/utils", async (importOriginal) => {
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 const TEST_INSTALLATION_ID = "inst_shell_test" as KernelContext["installationId"];
+const TEST_INSTALLATION_CONTEXT = { installationId: TEST_INSTALLATION_ID };
 
 beforeEach(() => {
   sendFrameToProcessMock.mockReset();
@@ -270,6 +271,7 @@ function enableTelegramMessaging(ctx: KernelContext) {
     updatedAt: 3,
   };
   const adapterSend = vi.fn(async (
+    _installation: unknown,
     _accountId: string,
     _message: unknown,
     body?: { stream: ReadableStream<Uint8Array>; length?: number },
@@ -2851,6 +2853,7 @@ describe("native administration shell commands", () => {
     expect(intentional.stdout).not.toContain("message_id=msg-1");
     expect(adapterSend).toHaveBeenCalledTimes(1);
     expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
       "bot",
       expect.objectContaining({
         surface: { kind: "dm", id: "chat-42" },
@@ -2886,6 +2889,7 @@ describe("native administration shell commands", () => {
     expect(sent.stdout).not.toContain("chat-42");
     expect(sent.stdout).not.toContain("msg-1");
     expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
       "bot",
       expect.objectContaining({ text: "opaque route" }),
       undefined,
@@ -2908,6 +2912,7 @@ describe("native administration shell commands", () => {
     expect(result.stdout).toContain("sent=true");
     expect(result.stdout).not.toContain("bytes-3");
     expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
       "bot",
       expect.objectContaining({
         text: "",
@@ -2943,7 +2948,7 @@ describe("native administration shell commands", () => {
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
     expect(result.stdout).toContain("delivery_id=logical-send-1");
     expect(adapterSend).toHaveBeenCalledTimes(2);
-    expect(adapterSend.mock.calls.map((call) => (call[1] as any).deliveryId)).toEqual([
+    expect(adapterSend.mock.calls.map((call) => (call[2] as any).deliveryId)).toEqual([
       "logical-send-1",
       "logical-send-1",
     ]);
@@ -2984,6 +2989,7 @@ describe("native administration shell commands", () => {
     enableTelegramMessaging(ctx);
     await handleFsWrite({ path: "/tmp/retry-share.png", content: "PNG" }, ctx);
     const adapterSend = vi.fn(async (
+      _installation: unknown,
       _accountId: string,
       _message: unknown,
       body?: { stream: ReadableStream<Uint8Array>; length?: number },

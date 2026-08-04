@@ -1,3 +1,5 @@
+import { LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID } from "../../shared/src/installation";
+
 export type WhatsAppConnectionStatus =
   | "idle"
   | "connecting"
@@ -9,6 +11,7 @@ export type WhatsAppConnectionStatus =
 
 export type WhatsAppAccountState = {
   version: 2;
+  installationId: string | null;
   accountId: string;
   desired: "connected" | "disconnected";
   status: WhatsAppConnectionStatus;
@@ -44,6 +47,7 @@ export type WhatsAppConnectResult =
 export function defaultWhatsAppAccountState(): WhatsAppAccountState {
   return {
     version: 2,
+    installationId: null,
     accountId: "",
     desired: "disconnected",
     status: "idle",
@@ -69,13 +73,21 @@ export function restoreWhatsAppAccountState(
       rotationAt?: number;
       lastMessageAt?: number;
     };
-    return { ...defaultWhatsAppAccountState(), ...current };
+    return {
+      ...defaultWhatsAppAccountState(),
+      ...current,
+      installationId:
+        "installationId" in stored
+          ? current.installationId ?? null
+          : LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+    };
   }
   if (!hasRegisteredLegacyAuth) {
     return { ...defaultWhatsAppAccountState(), accountId: legacyAccountId ?? "" };
   }
   return {
     ...defaultWhatsAppAccountState(),
+    installationId: LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
     accountId: legacyAccountId ?? "",
     desired: "connected",
     status: "reconnecting",

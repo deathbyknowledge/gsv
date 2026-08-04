@@ -1,5 +1,8 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import type { GatewayAdapterInterface } from "./adapter-interface";
+import type {
+  AdapterInstallationContext,
+  GatewayAdapterInterface,
+} from "./adapter-interface";
 import type { Frame } from "./protocol/frames";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import {
@@ -16,6 +19,10 @@ import {
   resolveInstallationRoute,
   type TrustedInstallationRoute,
 } from "./installation/routing";
+import {
+  LEGACY_STANDALONE_INSTALLATION_ID,
+  parseInstallationId,
+} from "./installation/identity";
 import type { Kernel } from "./kernel/do";
 import { createInstallationStorage } from "./installation/storage";
 import {
@@ -284,12 +291,20 @@ export class GatewayEntrypoint
   extends WorkerEntrypoint<Env>
   implements GatewayAdapterInterface
 {
-  async serviceFrame(frame: Frame): Promise<Frame | null> {
+  async serviceFrame(
+    installation: AdapterInstallationContext,
+    frame: Frame,
+  ): Promise<Frame | null> {
     const body = "body" in frame ? frame.body : undefined;
     try {
-      const installationId = getStandaloneServiceInstallationId(this.env);
-      if (!installationId) {
-        throw new Error("Managed adapter requests require an installation-scoped entrypoint");
+      const installationId = parseInstallationId(installation?.installationId);
+      const standaloneInstallationId = getStandaloneServiceInstallationId(this.env);
+      if (standaloneInstallationId) {
+        if (installationId !== standaloneInstallationId) {
+          throw new Error("Adapter installation does not match standalone Gateway");
+        }
+      } else if (installationId === LEGACY_STANDALONE_INSTALLATION_ID) {
+        throw new Error("Managed adapter requests cannot address singleton");
       }
       const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
       return await kernel.serviceFrame(frame);

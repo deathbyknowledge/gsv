@@ -19,12 +19,18 @@ import {
   SAFE_MATERIALIZED_MEDIA_PART_BYTES,
   SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
 } from "../../shared/src/media-body";
+import {
+  adapterAccountDurableObjectName,
+  assertAdapterInstallationIdentity,
+  parseAdapterInstallationContext,
+} from "../../shared/src/installation";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
   AdapterActor,
   AdapterInboundMessage,
   AdapterInboundResult,
+  AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,
@@ -36,7 +42,10 @@ import type {
 } from "../../shared/src/types";
 
 type GatewayAdapterBinding = Fetcher & {
-  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>;
+  serviceFrame: (
+    installation: AdapterInstallationContext,
+    frame: GatewayFrame,
+  ) => Promise<GatewayFrame | null>;
 };
 
 type RecordedMessage = {
@@ -55,6 +64,7 @@ interface Env {
 // ============================================================================
 
 export class TestChannelState extends DurableObject<Env> {
+  private installationId: string | null = null;
   private connected = false;
   private messages: RecordedMessage[] = [];
   private readonly deliveries: DeliveryLedger;
@@ -64,32 +74,52 @@ export class TestChannelState extends DurableObject<Env> {
     this.deliveries = new DeliveryLedger(this.ctx.storage);
     // Load state from storage
     this.ctx.blockConcurrencyWhile(async () => {
+      this.installationId =
+        (await this.ctx.storage.get<string>("installationId")) ?? null;
       this.connected = (await this.ctx.storage.get<boolean>("connected")) ?? false;
       this.messages = (await this.ctx.storage.get<RecordedMessage[]>("messages")) ?? [];
     });
   }
   
-  async setConnected(connected: boolean): Promise<void> {
+  private async ensureInstallation(installationId: string): Promise<void> {
+    const installation = parseAdapterInstallationContext({ installationId });
+    const resolved = assertAdapterInstallationIdentity(
+      this.installationId,
+      installation,
+    );
+    if (!this.installationId) {
+      this.installationId = resolved;
+      await this.ctx.storage.put("installationId", resolved);
+    }
+  }
+
+  async setConnected(installationId: string, connected: boolean): Promise<void> {
+    await this.ensureInstallation(installationId);
     this.connected = connected;
     await this.ctx.storage.put("connected", connected);
   }
   
-  async isConnected(): Promise<boolean> {
+  async isConnected(installationId: string): Promise<boolean> {
+    await this.ensureInstallation(installationId);
     return this.connected;
   }
   
   async recordMessage(
+    installationId: string,
     direction: "in" | "out",
     message: AdapterOutboundMessage | AdapterInboundMessage,
   ): Promise<void> {
+    await this.ensureInstallation(installationId);
     this.messages.push({ direction, message, timestamp: Date.now() });
     await this.ctx.storage.put("messages", this.messages);
   }
 
   async recordOutboundMessage(
+    installationId: string,
     message: AdapterOutboundMessage,
     requestFingerprint: string,
   ): Promise<AdapterSendResult> {
+    await this.ensureInstallation(installationId);
     const claim = await this.deliveries.claim(
       message.deliveryId,
       requestFingerprint,
@@ -139,25 +169,30 @@ export class TestChannelState extends DurableObject<Env> {
     return { ok: true, messageId };
   }
   
-  async getMessages(): Promise<RecordedMessage[]> {
+  async getMessages(installationId: string): Promise<RecordedMessage[]> {
+    await this.ensureInstallation(installationId);
     return this.messages;
   }
   
-  async getOutboundMessages(): Promise<AdapterOutboundMessage[]> {
+  async getOutboundMessages(installationId: string): Promise<AdapterOutboundMessage[]> {
+    await this.ensureInstallation(installationId);
     return this.messages
       .filter(m => m.direction === "out")
       .map(m => m.message as AdapterOutboundMessage);
   }
   
-  async clearMessages(): Promise<void> {
+  async clearMessages(installationId: string): Promise<void> {
+    await this.ensureInstallation(installationId);
     this.messages = [];
     await this.ctx.storage.put("messages", []);
   }
   
-  async reset(): Promise<void> {
+  async reset(installationId: string): Promise<void> {
+    await this.ensureInstallation(installationId);
     this.connected = false;
     this.messages = [];
     await this.ctx.storage.deleteAll();
+    await this.ctx.storage.put("installationId", installationId);
   }
 }
 
@@ -168,17 +203,24 @@ export class TestChannelState extends DurableObject<Env> {
 export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerInterface {
   readonly adapterId = "test";
 
-  private getStateDO(accountId: string): DurableObjectStub<TestChannelState> {
-    const id = this.env.TEST_CHANNEL_STATE.idFromName(accountId);
+  private getStateDO(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): DurableObjectStub<TestChannelState> {
+    const id = this.env.TEST_CHANNEL_STATE.idFromName(
+      adapterAccountDurableObjectName(installation, accountId),
+    );
     return this.env.TEST_CHANNEL_STATE.get(id) as DurableObjectStub<TestChannelState>;
   }
 
   async adapterConnect(
+    installation: AdapterInstallationContext,
     accountId: string,
     _config: Record<string, unknown> = {},
   ): Promise<{ ok: true; connected: true; authenticated: true; message: string }> {
-    const state = this.getStateDO(accountId);
-    await state.setConnected(true);
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
+    await state.setConnected(parsedInstallation.installationId, true);
     return {
       ok: true,
       connected: true,
@@ -188,17 +230,23 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
   }
 
   async adapterDisconnect(
+    installation: AdapterInstallationContext,
     accountId: string,
   ): Promise<{ ok: true; message: string }> {
-    const state = this.getStateDO(accountId);
-    await state.setConnected(false);
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
+    await state.setConnected(parsedInstallation.installationId, false);
     return { ok: true, message: "Disconnected" };
   }
 
-  async adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]> {
+  async adapterStatus(
+    installation: AdapterInstallationContext,
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
     if (accountId) {
-      const state = this.getStateDO(accountId);
-      const connected = await state.isConnected();
+      const state = this.getStateDO(parsedInstallation, accountId);
+      const connected = await state.isConnected(parsedInstallation.installationId);
       return [{
         accountId,
         connected,
@@ -215,10 +263,21 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
    * Records it in the account's Durable Object.
    */
   async adapterSend(
+    installation: AdapterInstallationContext,
     accountId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
   ): Promise<AdapterSendResult> {
+    let parsedInstallation: AdapterInstallationContext;
+    try {
+      parsedInstallation = parseAdapterInstallationContext(installation);
+    } catch (error) {
+      await cancelBinaryBody(body, error);
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
     try {
       validateAdapterMediaBody(message.media, body, {
         maxBytes: SAFE_MATERIALIZED_MEDIA_TOTAL_BYTES,
@@ -245,7 +304,7 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
         retryable: true,
       };
     }
-    const state = this.getStateDO(accountId);
+    const state = this.getStateDO(parsedInstallation, accountId);
     let requestFingerprint: string;
     try {
       requestFingerprint = await fingerprintOutboundDelivery(message, mediaBytes);
@@ -273,7 +332,11 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
       }),
     };
     try {
-      const result = await state.recordOutboundMessage(outbound, requestFingerprint);
+      const result = await state.recordOutboundMessage(
+        parsedInstallation.installationId,
+        outbound,
+        requestFingerprint,
+      );
       if (result.ok && !result.deduplicated) {
         console.log(
           `[TestChannel] Sent to ${accountId}/${message.surface.id}: ${message.text.slice(0, 50)}...`,
@@ -292,10 +355,12 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
   }
 
   async adapterSetActivity(
+    installation: AdapterInstallationContext,
     _accountId: string,
     _surface: AdapterSurface,
     _activity: AdapterActivity,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
+    parseAdapterInstallationContext(installation);
     return { ok: true };
   }
 
@@ -304,6 +369,7 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
   // =========================================================================
 
   async simulateInbound(
+    installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     text: string,
@@ -316,8 +382,9 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
       wasMentioned?: boolean;
     },
   ): Promise<{ ok: boolean; messageId: string; error?: string }> {
-    const state = this.getStateDO(accountId);
-    const connected = await state.isConnected();
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
+    const connected = await state.isConnected(parsedInstallation.installationId);
     if (!connected) {
       await cancelBinaryBody(options?.body, "Test adapter account is not connected");
       return { ok: false, messageId: "", error: "Account not connected" };
@@ -337,7 +404,7 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
       wasMentioned: surface.kind === "dm" ? true : options?.wasMentioned === true,
     };
 
-    await state.recordMessage("in", message);
+    await state.recordMessage(parsedInstallation.installationId, "in", message);
 
     console.log(`[TestChannel] Simulating inbound from ${surface.id}: ${text}`);
 
@@ -349,7 +416,10 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
         args: { adapter: "test", accountId, deliveryId: messageId, message },
         ...(options?.body ? { body: options.body } : {}),
       };
-      const response = await this.env.GATEWAY.serviceFrame(frame);
+      const response = await this.env.GATEWAY.serviceFrame(
+        parsedInstallation,
+        frame,
+      );
       if (!response || response.type !== "res") {
         return { ok: false, messageId, error: "No response from gateway serviceFrame" };
       }
@@ -372,24 +442,40 @@ export class TestChannel extends WorkerEntrypoint<Env> implements AdapterWorkerI
     }
   }
 
-  async getMessages(accountId: string): Promise<RecordedMessage[]> {
-    const state = this.getStateDO(accountId);
-    return await state.getMessages();
+  async getMessages(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<RecordedMessage[]> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
+    return await state.getMessages(parsedInstallation.installationId);
   }
 
-  async getOutboundMessages(accountId: string): Promise<AdapterOutboundMessage[]> {
-    const state = this.getStateDO(accountId);
-    return await state.getOutboundMessages();
+  async getOutboundMessages(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<AdapterOutboundMessage[]> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
+    return await state.getOutboundMessages(parsedInstallation.installationId);
   }
 
-  async clearMessages(accountId: string): Promise<void> {
-    const state = this.getStateDO(accountId);
-    await state.clearMessages();
+  async clearMessages(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<void> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
+    await state.clearMessages(parsedInstallation.installationId);
   }
 
-  async reset(accountId: string): Promise<void> {
-    const state = this.getStateDO(accountId);
-    await state.reset();
+  async reset(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<void> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
+    const state = this.getStateDO(parsedInstallation, accountId);
+    await state.reset(parsedInstallation.installationId);
   }
 }
 

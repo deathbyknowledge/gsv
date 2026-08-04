@@ -9,6 +9,10 @@ import {
 
 const GATEWAY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEPENDENCY_WORKER = "gsv-test-dependencies";
+const DEPENDENCY_CONFIG_PATH = resolve(
+  GATEWAY_ROOT,
+  "test-integration/fixtures/wrangler.jsonc",
+);
 
 function integrationGatewayConfig(options: {
   name?: string;
@@ -48,6 +52,29 @@ function integrationGatewayConfig(options: {
   };
 }
 
+function integrationDependencyConfig(
+  gatewayService: string,
+): Unstable_RawConfig {
+  const config = unstable_readConfig(
+    { config: DEPENDENCY_CONFIG_PATH },
+    { hideWarnings: true },
+  );
+  return {
+    name: config.name,
+    main: config.main,
+    compatibility_date: config.compatibility_date,
+    compatibility_flags: config.compatibility_flags,
+    observability: config.observability,
+    durable_objects: config.durable_objects,
+    migrations: config.migrations,
+    services: [{
+      binding: "GATEWAY",
+      service: gatewayService,
+      entrypoint: "GatewayEntrypoint",
+    }],
+  };
+}
+
 export function createGatewayTestHarness(): TestHarness {
   return createTestHarness({
     root: GATEWAY_ROOT,
@@ -56,7 +83,7 @@ export function createGatewayTestHarness(): TestHarness {
         config: integrationGatewayConfig(),
       },
       {
-        configPath: "test-integration/fixtures/wrangler.jsonc",
+        config: integrationDependencyConfig("gsv"),
       },
     ],
   });
@@ -73,7 +100,7 @@ export function createManagedGatewayTestHarness(): TestHarness {
         config: integrationGatewayConfig({ name: "gsv-managed", managed: true }),
       },
       {
-        configPath: "test-integration/fixtures/wrangler.jsonc",
+        config: integrationDependencyConfig("gsv-managed"),
       },
     ],
   });

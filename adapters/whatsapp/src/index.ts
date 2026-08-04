@@ -1,10 +1,15 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { cancelBinaryBody } from "../../shared/src/media-body";
+import {
+  adapterAccountDurableObjectName,
+  parseAdapterInstallationContext,
+} from "../../shared/src/installation";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
   AdapterConnectResult,
   AdapterDisconnectResult,
+  AdapterInstallationContext,
   AdapterOutboundMessage,
   AdapterSendResult,
   AdapterSurface,
@@ -24,11 +29,16 @@ export class WhatsAppChannelEntrypoint
   readonly adapterId = "whatsapp";
 
   async adapterConnect(
+    installation: AdapterInstallationContext,
     accountId: string,
     config: Record<string, unknown> = {},
   ): Promise<AdapterConnectResult> {
     try {
-      const result = await this.getAccount(accountId).connectAccount(accountId, {
+      const parsedInstallation = parseAdapterInstallationContext(installation);
+      const result = await this.getAccount(
+        parsedInstallation,
+        accountId,
+      ).connectAccount(parsedInstallation.installationId, accountId, {
         force: config.force === true || config.force === "true",
       });
       if (!result.ok) return result;
@@ -59,9 +69,16 @@ export class WhatsAppChannelEntrypoint
     }
   }
 
-  async adapterDisconnect(accountId: string): Promise<AdapterDisconnectResult> {
+  async adapterDisconnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<AdapterDisconnectResult> {
     try {
-      await this.getAccount(accountId).disconnectAccount(accountId);
+      const parsedInstallation = parseAdapterInstallationContext(installation);
+      await this.getAccount(
+        parsedInstallation,
+        accountId,
+      ).disconnectAccount(parsedInstallation.installationId, accountId);
       return { ok: true, message: "Disconnected" };
     } catch (error) {
       logWhatsApp("error", "disconnect_failed", errorFields(error));
@@ -69,10 +86,17 @@ export class WhatsAppChannelEntrypoint
     }
   }
 
-  async adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]> {
+  async adapterStatus(
+    installation: AdapterInstallationContext,
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
     if (!accountId) return [];
     try {
-      return [await this.getAccount(accountId).getAccountStatus(accountId)];
+      return [await this.getAccount(
+        parsedInstallation,
+        accountId,
+      ).getAccountStatus(parsedInstallation.installationId, accountId)];
     } catch (error) {
       return [{
         accountId,
@@ -85,12 +109,22 @@ export class WhatsAppChannelEntrypoint
   }
 
   async adapterSend(
+    installation: AdapterInstallationContext,
     accountId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
   ): Promise<AdapterSendResult> {
     try {
-      return await this.getAccount(accountId).sendAccountMessage(accountId, message, body);
+      const parsedInstallation = parseAdapterInstallationContext(installation);
+      return await this.getAccount(
+        parsedInstallation,
+        accountId,
+      ).sendAccountMessage(
+        parsedInstallation.installationId,
+        accountId,
+        message,
+        body,
+      );
     } catch (error) {
       await cancelBinaryBody(body, error);
       logWhatsApp("error", "send_failed", errorFields(error));
@@ -99,20 +133,35 @@ export class WhatsAppChannelEntrypoint
   }
 
   async adapterSetActivity(
+    installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
-      await this.getAccount(accountId).setAccountActivity(accountId, surface, activity);
+      const parsedInstallation = parseAdapterInstallationContext(installation);
+      await this.getAccount(
+        parsedInstallation,
+        accountId,
+      ).setAccountActivity(
+        parsedInstallation.installationId,
+        accountId,
+        surface,
+        activity,
+      );
       return { ok: true };
     } catch (error) {
       return { ok: false, error: errorMessage(error) };
     }
   }
 
-  private getAccount(accountId: string): DurableObjectStub<WhatsAppAccount> {
-    return this.env.WHATSAPP_ACCOUNT.getByName(accountId);
+  private getAccount(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): DurableObjectStub<WhatsAppAccount> {
+    return this.env.WHATSAPP_ACCOUNT.getByName(
+      adapterAccountDurableObjectName(installation, accountId),
+    );
   }
 }
 

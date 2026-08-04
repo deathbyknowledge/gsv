@@ -26,6 +26,17 @@ logical `{owner}/{repo}` to the managed Repository Durable Object name
 the historical `{owner}/{repo}` name, so existing standalone repositories do
 not move on upgrade.
 
+Adapter service-binding RPC carries the same trusted installation identity in
+both directions. Gateway-to-adapter calls derive it from the Kernel context;
+adapter-to-Gateway calls recover it from the owning account Durable Object.
+Managed adapter account objects use a collision-free internal name derived
+from `{installationId, accountId}` and persist the installation ID as an
+ownership assertion. `singleton` retains the historical unscoped account
+object name for standalone upgrades. Public webhook payloads and adapter frame
+arguments cannot choose this identity. Managed Telegram webhook routes use an
+opaque Durable Object ID, while legacy standalone webhook paths keep their
+existing account identifier.
+
 ## Routing Surfaces
 
 | Surface | Entry Point | Routed By | Destination |
@@ -188,6 +199,7 @@ Device routing does not rename syscalls. Agents and clients always see the same 
 | Unknown or foreign process | `Process not found` or `Permission denied` |
 | Unknown or inactive managed hostname | `404 Not Found` before Kernel lookup |
 | Process installation mismatch | `409` and no Process state mutation |
+| Adapter installation mismatch | Adapter RPC fails before account state or provider access |
 
 ## Related Stores
 

@@ -12,6 +12,11 @@ import {
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
+  assertAdapterInstallationIdentity,
+  LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+  parseAdapterInstallationContext,
+} from "../../shared/src/installation";
+import {
   bundleAdapterMedia,
   cancelResponseBody,
   cancelBinaryBody,
@@ -30,6 +35,7 @@ import type {
   AdapterActor,
   AdapterInboundMessage,
   AdapterInboundResult,
+  AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,
@@ -42,6 +48,7 @@ import {
   sendTelegramMarkdownMessage,
 } from "./telegram-formatting";
 import { planTelegramMediaDeliveries } from "./telegram-media";
+import { buildTelegramWebhookPath } from "./webhook-route";
 
 interface Env {
   GATEWAY: Fetcher & AdapterGatewayBinding;
@@ -189,6 +196,7 @@ type TelegramInputMedia = {
 };
 
 type TelegramAccountState = {
+  installationId: string | null;
   accountId: string;
   botToken: string | null;
   botUserId: number | null;
@@ -244,6 +252,7 @@ export class TelegramAccount extends DurableObject<Env> {
   }
 
   private state: TelegramAccountState = {
+    installationId: null,
     accountId: "default",
     botToken: null,
     botUserId: null,
@@ -260,14 +269,24 @@ export class TelegramAccount extends DurableObject<Env> {
     if (this.loaded) return;
 
     const stored = await this.ctx.storage.get<
-      TelegramAccountState & { lastUpdateId?: number | null }
+      Omit<TelegramAccountState, "installationId"> & {
+        installationId?: string | null;
+        lastUpdateId?: number | null;
+      }
     >("state");
     if (stored) {
       const normalized = { ...stored };
       const hadLegacyUpdateId = "lastUpdateId" in normalized;
+      const hadLegacyInstallationId = !("installationId" in normalized);
       delete normalized.lastUpdateId;
-      this.state = { ...this.state, ...normalized };
-      if (hadLegacyUpdateId) {
+      this.state = {
+        ...this.state,
+        ...normalized,
+        installationId: hadLegacyInstallationId
+          ? LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID
+          : normalized.installationId ?? null,
+      };
+      if (hadLegacyUpdateId || hadLegacyInstallationId) {
         await this.saveState();
       }
     }
@@ -318,6 +337,25 @@ export class TelegramAccount extends DurableObject<Env> {
 
   private getAccountId(): string {
     return this.state.accountId || "default";
+  }
+
+  private getInstallationContext(): AdapterInstallationContext {
+    if (!this.state.installationId) {
+      throw new Error("Telegram account installation identity is not initialized");
+    }
+    return { installationId: this.state.installationId };
+  }
+
+  private async ensureInstallation(installationId: string): Promise<void> {
+    const installation = parseAdapterInstallationContext({ installationId });
+    const resolved = assertAdapterInstallationIdentity(
+      this.state.installationId,
+      installation,
+    );
+    if (!this.state.installationId) {
+      this.state.installationId = resolved;
+      await this.saveState();
+    }
   }
 
   private async callTelegramApi<T>(
@@ -405,12 +443,15 @@ export class TelegramAccount extends DurableObject<Env> {
   }
 
   async start(
+    installationId: string,
     botToken: string,
     accountId: string,
     webhookBaseUrl: string,
+    webhookRoute: string,
     providedSecret?: string,
   ): Promise<void> {
     await this.ensureLoaded();
+    await this.ensureInstallation(installationId);
 
     const normalizedToken = botToken.trim();
     if (!normalizedToken) {
@@ -423,11 +464,18 @@ export class TelegramAccount extends DurableObject<Env> {
     }
 
     const normalizedAccountId = accountId.trim() || "default";
+    const normalizedWebhookRoute = webhookRoute.trim();
+    if (!normalizedWebhookRoute) {
+      throw new Error("Webhook route is required");
+    }
     const webhookSecret =
       (providedSecret && providedSecret.trim()) ||
       this.state.webhookSecret ||
       buildWebhookSecret();
-    const webhookUrl = `${baseUrl}/webhook/${encodeURIComponent(normalizedAccountId)}`;
+    const webhookUrl = `${baseUrl}${buildTelegramWebhookPath(
+      installationId,
+      normalizedWebhookRoute,
+    )}`;
 
     const me = await this.callTelegramApi<TelegramUser>(
       "getMe",
@@ -459,8 +507,9 @@ export class TelegramAccount extends DurableObject<Env> {
     await this.notifyGatewayStatus();
   }
 
-  async stop(): Promise<void> {
+  async stop(installationId: string): Promise<void> {
     await this.ensureLoaded();
+    await this.ensureInstallation(installationId);
 
     if (this.state.botToken) {
       try {
@@ -482,8 +531,9 @@ export class TelegramAccount extends DurableObject<Env> {
     await this.notifyGatewayStatus();
   }
 
-  async getStatus(): Promise<AdapterAccountStatus> {
+  async getStatus(installationId: string): Promise<AdapterAccountStatus> {
     await this.ensureLoaded();
+    await this.ensureInstallation(installationId);
 
     let pendingUpdateCount: number | undefined;
     if (this.state.botToken) {
@@ -515,10 +565,12 @@ export class TelegramAccount extends DurableObject<Env> {
   }
 
   async sendMessage(
+    installationId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
   ): Promise<AdapterSendResult> {
     await this.ensureLoaded();
+    await this.ensureInstallation(installationId);
 
     if (!this.state.botToken || !this.state.authenticated) {
       await cancelBinaryBody(body, "Telegram account is not authenticated");
@@ -939,8 +991,13 @@ export class TelegramAccount extends DurableObject<Env> {
     return mapping[normalized] || (mediaType === "document" ? "bin" : mediaType);
   }
 
-  async setTyping(surface: AdapterSurface, typing: boolean): Promise<void> {
+  async setTyping(
+    installationId: string,
+    surface: AdapterSurface,
+    typing: boolean,
+  ): Promise<void> {
     await this.ensureLoaded();
+    await this.ensureInstallation(installationId);
 
     if (!typing || !this.state.botToken || !this.state.authenticated) {
       return;
@@ -964,6 +1021,9 @@ export class TelegramAccount extends DurableObject<Env> {
     secretToken: string | null,
   ): Promise<{ ok: boolean; status?: number; error?: string }> {
     await this.ensureLoaded();
+    if (!this.state.installationId) {
+      return { ok: false, status: 404, error: "Telegram webhook route is not initialized" };
+    }
 
     if (!this.state.webhookSecret) {
       return {
@@ -1041,6 +1101,7 @@ export class TelegramAccount extends DurableObject<Env> {
 
     const result = await callAdapterGateway<AdapterInboundResult>(
       this.env.GATEWAY,
+      this.getInstallationContext(),
       "adapter.inbound",
       {
         adapter: "telegram",
@@ -1086,7 +1147,10 @@ export class TelegramAccount extends DurableObject<Env> {
     const attempt = await this.inboundDeliveries.attempt(
       deliveryId,
       async (message) => this.forwardWebhookMessage(message, deliveryId),
-      async (response) => this.sendMessage(response),
+      async (response) => this.sendMessage(
+        this.getInstallationContext().installationId,
+        response,
+      ),
     );
     if (attempt.state !== "pending") {
       return "completed";
@@ -1536,12 +1600,18 @@ export class TelegramAccount extends DurableObject<Env> {
 
   private async notifyGatewayStatus(): Promise<void> {
     try {
-      const status = await this.getStatus();
-      await callAdapterGateway(this.env.GATEWAY, "adapter.state.update", {
-        adapter: "telegram",
-        accountId: this.getAccountId(),
-        status,
-      });
+      const installation = this.getInstallationContext();
+      const status = await this.getStatus(installation.installationId);
+      await callAdapterGateway(
+        this.env.GATEWAY,
+        installation,
+        "adapter.state.update",
+        {
+          adapter: "telegram",
+          accountId: this.getAccountId(),
+          status,
+        },
+      );
     } catch (error) {
       console.error(
         `[TelegramAccount:${this.getAccountId()}] Failed to notify status:`,

@@ -2,6 +2,7 @@ import type {
   AdapterActivity,
   AdapterInboundMessage,
   AdapterAccountStatus,
+  AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
   AdapterSurface,
@@ -150,7 +151,11 @@ export async function handleAdapterConnect(
     }
     let connectResult: unknown;
     try {
-      connectResult = await service.adapterConnect(accountId, args.config);
+      connectResult = await service.adapterConnect(
+        adapterInstallationContext(ctx),
+        accountId,
+        args.config,
+      );
     } catch {
       logAdapterBoundaryFailure("error", "connect_worker_failed");
       return { ok: false, error: `Adapter connect failed: ${adapter}` };
@@ -222,7 +227,10 @@ export async function handleAdapterDisconnect(
   try {
     let result: unknown;
     try {
-      result = await service.adapterDisconnect(accountId);
+      result = await service.adapterDisconnect(
+        adapterInstallationContext(ctx),
+        accountId,
+      );
     } catch {
       logAdapterBoundaryFailure("error", "disconnect_worker_failed");
       return { ok: false, error: `Adapter disconnect failed: ${adapter}` };
@@ -431,7 +439,12 @@ async function deliverAdapterMessage(
 
   let result: unknown;
   try {
-    result = await service.adapterSend(accountId, outbound, body);
+    result = await service.adapterSend(
+      adapterInstallationContext(ctx),
+      accountId,
+      outbound,
+      body,
+    );
   } catch {
     return {
       ok: false,
@@ -580,7 +593,10 @@ export async function handleAdapterStatus(
     const refreshAccountIds = adapterStatusRefreshAccountIds(ctx, adapter, accountId);
     for (const refreshAccountId of refreshAccountIds) {
       try {
-        const statuses: unknown = await service.adapterStatus(refreshAccountId);
+        const statuses: unknown = await service.adapterStatus(
+          adapterInstallationContext(ctx),
+          refreshAccountId,
+        );
         if (!isAdapterWorkerStatusResult(statuses)) {
           logAdapterBoundaryFailure("error", "status_invalid_response");
           continue;
@@ -1489,6 +1505,7 @@ function adapterAccountStatusFromRecord(status: AdapterStatusRecord): AdapterAcc
 
 export async function setAdapterActivityForKernel(
   env: Env,
+  installationId: KernelContext["installationId"],
   adapter: string,
   accountId: string,
   surface: AdapterSurface,
@@ -1500,7 +1517,12 @@ export async function setAdapterActivityForKernel(
   }
 
   try {
-    const result: unknown = await service.adapterSetActivity(accountId, surface, activity);
+    const result: unknown = await service.adapterSetActivity(
+      { installationId },
+      accountId,
+      surface,
+      activity,
+    );
     if (!isAdapterWorkerActivityResult(result)) {
       logAdapterBoundaryFailure("warn", "activity_invalid_response");
       return;
@@ -1524,7 +1546,10 @@ async function refreshAdapterStatus(
   }
 
   try {
-    const statuses: unknown = await service.adapterStatus(accountId);
+    const statuses: unknown = await service.adapterStatus(
+      adapterInstallationContext(ctx),
+      accountId,
+    );
     if (!isAdapterWorkerStatusResult(statuses)) {
       logAdapterBoundaryFailure("error", "status_invalid_response");
       return null;
@@ -1538,6 +1563,12 @@ async function refreshAdapterStatus(
     logAdapterBoundaryFailure("error", "status_refresh_failed");
     return null;
   }
+}
+
+function adapterInstallationContext(
+  ctx: KernelContext,
+): AdapterInstallationContext {
+  return { installationId: ctx.installationId };
 }
 
 function logAdapterBoundaryFailure(

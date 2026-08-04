@@ -1,5 +1,23 @@
 import type { BinaryBody } from "./body";
 
+export type AdapterInstallationContext = {
+  installationId: string;
+};
+
+const ADAPTER_INSTALLATION_ID_PATTERN =
+  /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/;
+
+export function isAdapterInstallationContext(
+  value: unknown,
+): value is AdapterInstallationContext {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const installationId = (value as { installationId?: unknown }).installationId;
+  return typeof installationId === "string"
+    && ADAPTER_INSTALLATION_ID_PATTERN.test(installationId);
+}
+
 export type AdapterSurfaceKind = "dm" | "group" | "channel" | "thread";
 
 export type AdapterSurface = {
@@ -369,7 +387,10 @@ export type AdapterGatewayFrame =
 
 /** Gateway RPC surface consumed by adapter workers through a service binding. */
 export interface AdapterGatewayInterface<Frame = AdapterGatewayFrame> {
-  serviceFrame(frame: Frame): Promise<Frame | null>;
+  serviceFrame(
+    installation: AdapterInstallationContext,
+    frame: Frame,
+  ): Promise<Frame | null>;
 }
 
 /** Canonical service-binding RPC surface implemented by every adapter worker. */
@@ -380,19 +401,28 @@ export interface AdapterWorkerInterface {
    * method name for socket connections and would bypass the adapter RPC.
    */
   adapterConnect(
+    installation: AdapterInstallationContext,
     accountId: string,
     config?: Record<string, unknown>,
   ): Promise<AdapterWorkerConnectResult>;
-  adapterDisconnect(accountId: string): Promise<AdapterWorkerDisconnectResult>;
+  adapterDisconnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<AdapterWorkerDisconnectResult>;
   adapterSend(
+    installation: AdapterInstallationContext,
     accountId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
   ): Promise<AdapterWorkerSendResult>;
   adapterSetActivity(
+    installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
   ): Promise<AdapterWorkerActivityResult>;
-  adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]>;
+  adapterStatus(
+    installation: AdapterInstallationContext,
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]>;
 }

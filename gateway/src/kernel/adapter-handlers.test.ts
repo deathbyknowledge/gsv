@@ -40,6 +40,9 @@ type MakeContextOptions = {
   callerOwnerUid?: number;
 };
 const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
+const TEST_INSTALLATION_CONTEXT = {
+  installationId: TEST_INSTALLATION_ID,
+};
 
 function makeStorageBucket() {
   return {
@@ -693,8 +696,14 @@ describe("adapter lifecycle handlers", () => {
 
     const result = await handleAdapterStatus({ adapter: "whatsapp" }, ctx);
 
-    expect(adapterStatus).toHaveBeenCalledWith("primary");
-    expect(adapterStatus).not.toHaveBeenCalledWith(undefined);
+    expect(adapterStatus).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
+      "primary",
+    );
+    expect(adapterStatus).not.toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
+      undefined,
+    );
     expect(status.upsert).toHaveBeenCalledTimes(1);
     expect(status.upsert).toHaveBeenCalledWith(
       "whatsapp",
@@ -830,7 +839,7 @@ describe("adapter lifecycle handlers", () => {
     const result = await handleAdapterStatus({ adapter: "telegram" }, ctx);
 
     expect(listLinks).toHaveBeenCalledWith(1000);
-    expect(adapterStatus).toHaveBeenCalledWith("bot");
+    expect(adapterStatus).toHaveBeenCalledWith(TEST_INSTALLATION_CONTEXT, "bot");
     expect(result.accounts).toEqual([
       expect.objectContaining({
         accountId: "bot",
@@ -888,7 +897,11 @@ describe("adapter lifecycle handlers", () => {
       ctx,
     );
 
-    expect(service.adapterConnect).toHaveBeenCalledWith("default", undefined);
+    expect(service.adapterConnect).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
+      "default",
+      undefined,
+    );
     expect(status.setOwner).toHaveBeenCalledWith("whatsapp", "default", 1000);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -2456,6 +2469,7 @@ describe("adapter lifecycle handlers", () => {
       } as unknown as ReadableStream<Uint8Array>,
     };
     const adapterSend = vi.fn(async (
+      _installation: unknown,
       _accountId: string,
       _message: unknown,
       forwardedBody: unknown,
@@ -2492,6 +2506,7 @@ describe("adapter lifecycle handlers", () => {
       deliveryState: "sent",
     });
     expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
       "primary",
       expect.objectContaining({
         surface: { kind: "dm", id: "dm-1" },
@@ -2553,6 +2568,7 @@ describe("adapter lifecycle handlers", () => {
 
     await setAdapterActivityForKernel(
       ctx.env,
+      TEST_INSTALLATION_ID,
       "whatsapp",
       "primary",
       { kind: "dm", id: "dm-1" },
@@ -2688,6 +2704,7 @@ describe("adapter lifecycle handlers", () => {
     }, ctx);
 
     expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
       "bot",
       expect.objectContaining({ deliveryId: "retryable-delivery-1" }),
       undefined,
@@ -2835,13 +2852,18 @@ describe("adapter lifecycle handlers", () => {
       messageId: "msg-1",
       deliveryState: "sent",
     });
-    expect(adapterSend).toHaveBeenCalledWith("primary", {
-      deliveryId: "explicit-linked-1",
-      surface: { kind: "dm", id: "wa:+123" },
-      text: "hello",
-      media: undefined,
-      replyToId: undefined,
-    }, undefined);
+    expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
+      "primary",
+      {
+        deliveryId: "explicit-linked-1",
+        surface: { kind: "dm", id: "wa:+123" },
+        text: "hello",
+        media: undefined,
+        replyToId: undefined,
+      },
+      undefined,
+    );
   });
 
   it("denies adapter.send to an unlinked surface on the same account", async () => {
@@ -3151,6 +3173,7 @@ describe("adapter lifecycle handlers", () => {
     );
 
     expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
       "bot",
       {
         deliveryId: "run-1:finished",

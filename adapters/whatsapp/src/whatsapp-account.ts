@@ -13,6 +13,10 @@ import {
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
+  assertAdapterInstallationIdentity,
+  parseAdapterInstallationContext,
+} from "../../shared/src/installation";
+import {
   bundleAdapterMedia,
   cancelBinaryBody,
   cancelResponseBody,
@@ -26,6 +30,7 @@ import type {
   AdapterActivity,
   AdapterInboundMessage,
   AdapterInboundResult,
+  AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,
@@ -178,10 +183,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   async connectAccount(
+    installationId: string,
     accountId: string,
     options: { force?: boolean } = {},
   ): Promise<WhatsAppConnectResult> {
-    await this.ensureAccount(accountId);
+    await this.ensureAccount(installationId, accountId);
     await this.socketOperations.run(async () => {
       if (options.force) {
         await this.forceNewPairingLocked();
@@ -222,8 +228,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
     };
   }
 
-  async disconnectAccount(accountId: string): Promise<void> {
-    await this.ensureAccount(accountId);
+  async disconnectAccount(installationId: string, accountId: string): Promise<void> {
+    await this.ensureAccount(installationId, accountId);
     try {
       await this.socketOperations.run(async () => this.logoutLocked());
     } finally {
@@ -232,18 +238,22 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
   }
 
-  async getAccountStatus(accountId: string): Promise<AdapterAccountStatus> {
-    await this.ensureAccount(accountId);
+  async getAccountStatus(
+    installationId: string,
+    accountId: string,
+  ): Promise<AdapterAccountStatus> {
+    await this.ensureAccount(installationId, accountId);
     await this.scheduleNextAlarm();
     return this.adapterStatus();
   }
 
   async setAccountActivity(
+    installationId: string,
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
   ): Promise<void> {
-    await this.ensureAccount(accountId);
+    await this.ensureAccount(installationId, accountId);
     await this.socketOperations.run(async () => {
       const socket = this.requireConnectedSocket();
       const jid = await this.resolveOutboundProviderJid(surface.id, socket);
@@ -259,6 +269,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   async sendAccountMessage(
+    installationId: string,
     accountId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
@@ -267,7 +278,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const preparedSessionEpoch = expectedSessionEpoch;
     const preparedSocketGeneration = this.socketGeneration;
     try {
-      await this.ensureAccount(accountId);
+      await this.ensureAccount(installationId, accountId);
     } catch (error) {
       await cancelBinaryBody(body, error);
       return { ok: false, error: errorMessage(error) };
@@ -540,6 +551,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
       this.ctx.storage.get<string>("accountId"),
       hasRegisteredAuthState(this.ctx.storage),
     ]);
+    const hadLegacyInstallationId = Boolean(
+      stored && !("installationId" in stored),
+    );
     this.state = restoreWhatsAppAccountState(
       stored,
       legacyAccountId,
@@ -570,19 +584,35 @@ export class WhatsAppAccount extends DurableObject<Env> {
           await txn.setAlarm(reconnectDeadline);
         }
       });
-    } else if (!stored) {
+    } else if (!stored || hadLegacyInstallationId) {
       await this.ctx.storage.put(STATE_KEY, this.state);
     }
     await this.scheduleNextAlarm();
   }
 
-  private async ensureAccount(accountId: string): Promise<void> {
+  private getInstallationContext(): AdapterInstallationContext {
+    if (!this.state.installationId) {
+      throw new Error("WhatsApp account installation identity is not initialized");
+    }
+    return { installationId: this.state.installationId };
+  }
+
+  private async ensureAccount(
+    installationId: string,
+    accountId: string,
+  ): Promise<void> {
+    const installation = parseAdapterInstallationContext({ installationId });
+    const resolvedInstallationId = assertAdapterInstallationIdentity(
+      this.state.installationId,
+      installation,
+    );
     const normalized = accountId.trim();
     if (!normalized) throw new Error("WhatsApp account ID is required");
     if (this.state.accountId && this.state.accountId !== normalized) {
       throw new Error("WhatsApp account ID mismatch");
     }
-    if (!this.state.accountId) {
+    if (!this.state.installationId || !this.state.accountId) {
+      this.state.installationId = resolvedInstallationId;
       this.state.accountId = normalized;
       await this.persistStateAndSchedule();
     }
@@ -1248,9 +1278,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.qrCode = null;
     this.resolvePairingWaiters({});
     const accountId = this.state.accountId;
+    const installationId = this.state.installationId;
     const sessionEpoch = this.state.sessionEpoch;
     this.state = {
       ...defaultWhatsAppAccountState(),
+      installationId,
       accountId,
       desired: "connected",
       sessionEpoch,
@@ -1277,10 +1309,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
     await this.advanceProviderSessionLocked();
     await clearAuthState(this.ctx.storage);
     const accountId = this.state.accountId;
+    const installationId = this.state.installationId;
     const sessionEpoch = this.state.sessionEpoch;
     const lastDisconnectedAt = Date.now();
     this.state = {
       ...defaultWhatsAppAccountState(),
+      installationId,
       accountId,
       sessionEpoch,
       status: providerError ? "error" : "logged_out",
@@ -1448,6 +1482,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         );
       },
       async (response) => this.sendAccountMessage(
+        this.getInstallationContext().installationId,
         this.state.accountId,
         response,
         undefined,
@@ -1563,6 +1598,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       }
       const result = await callAdapterGateway<AdapterInboundResult>(
         this.gatewayBinding(),
+        this.getInstallationContext(),
         "adapter.inbound",
         {
           adapter: "whatsapp",
@@ -1983,6 +2019,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     if (!this.state.accountId) return;
     await callAdapterGateway(
       this.gatewayBinding(),
+      this.getInstallationContext(),
       "adapter.state.update",
       {
         adapter: "whatsapp",

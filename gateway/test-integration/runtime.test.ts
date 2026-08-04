@@ -14,6 +14,7 @@ import {
   startOpenAiFixture,
   type OpenAiFixture,
 } from "./openai-fixture";
+import { LEGACY_STANDALONE_INSTALLATION_ID } from "../src/installation/identity";
 
 const USERNAME = "runtime-user";
 const PASSWORD = "runtime-integration-password";
@@ -28,6 +29,7 @@ type RunSignal = {
 };
 
 type RecordedOutboundMessage = {
+  installationId: string;
   accountId: string;
   message: {
     deliveryId: string;
@@ -632,7 +634,12 @@ async function sendServiceFrame(
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(frame),
+      body: JSON.stringify({
+        installation: {
+          installationId: LEGACY_STANDALONE_INSTALLATION_ID,
+        },
+        frame,
+      }),
     },
   );
   if (!response.ok) {
@@ -656,7 +663,7 @@ async function listOutbound(
   accountId: string,
 ): Promise<RecordedOutboundMessage[]> {
   const response = await harness.getWorker("gsv-test-dependencies").fetch(
-    `http://gsv-test-dependencies/__test/outbound?accountId=${encodeURIComponent(accountId)}`,
+    `http://gsv-test-dependencies/__test/outbound?installationId=${encodeURIComponent(LEGACY_STANDALONE_INSTALLATION_ID)}&accountId=${encodeURIComponent(accountId)}`,
   );
   if (!response.ok) {
     throw new Error(`Test dependency outbound endpoint returned ${response.status}`);

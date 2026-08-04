@@ -16,6 +16,7 @@ import {
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
 const TEST_INSTALLATION_ID = "singleton";
+const TEST_INSTALLATION_CONTEXT = { installationId: TEST_INSTALLATION_ID };
 
 describe("Kernel frame bodies", () => {
   it("passes request cancellation to Agents SDK MCP calls", async () => {
@@ -1424,6 +1425,7 @@ describe("Kernel adapter route replies", () => {
       : null;
     return {
       env: { CHANNEL_TELEGRAM: { adapterSend: options.adapterSend } },
+      installationId: TEST_INSTALLATION_ID,
       adapters: {
         identityLinks: { get: vi.fn(() => link) },
         surfaceRoutes: { get: vi.fn(() => null) },
@@ -1444,6 +1446,7 @@ describe("Kernel adapter route replies", () => {
 
     expect(adapterSetActivity).toHaveBeenCalledTimes(1);
     expect(adapterSetActivity).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
       route.destination.accountId,
       route.destination.surface,
       { kind: "typing", active: true },
@@ -1497,10 +1500,11 @@ describe("Kernel adapter route replies", () => {
     expect(JSON.stringify(outcome)).not.toContain("bot");
     expect(JSON.stringify(outcome)).not.toContain("chat-42");
     expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
       "bot",
       {
         deliveryId: "run-adapter-reply:finished",
-        surface: { kind: "dm", id: "chat-42", threadId: undefined },
+        surface: { kind: "dm", id: "chat-42" },
         actorId: "telegram:user:42",
         text: "retry this",
         media: undefined,
@@ -1513,6 +1517,7 @@ describe("Kernel adapter route replies", () => {
   it("streams immutable process-owned final-reply media through the adapter body", async () => {
     let deliveredBytes: Uint8Array | undefined;
     const adapterSend = vi.fn(async (
+      _installation: unknown,
       _accountId: string,
       _message: unknown,
       body?: { stream: ReadableStream<Uint8Array> },
@@ -1572,6 +1577,7 @@ describe("Kernel adapter route replies", () => {
 
     expect(deliveredBytes && [...deliveredBytes]).toEqual([7, 8, 9]);
     expect(adapterSend).toHaveBeenCalledWith(
+      TEST_INSTALLATION_CONTEXT,
       "bot",
       expect.objectContaining({
         text: "Here it is.",

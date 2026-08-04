@@ -4,11 +4,13 @@ import type {
   AdapterActivity,
   AdapterGatewayInterface,
   AdapterGatewayRequestFrame,
+  AdapterInstallationContext,
   AdapterOutboundMessage,
   AdapterSurface,
   AdapterWorkerInterface,
   BinaryBody,
 } from "@humansandmachines/gsv/protocol";
+import { LEGACY_STANDALONE_INSTALLATION_ID } from "../../src/installation/identity";
 
 type ImportRequest = {
   remoteUrl?: unknown;
@@ -16,6 +18,7 @@ type ImportRequest = {
 };
 
 export type RecordedOutboundMessage = {
+  installationId: string;
   accountId: string;
   message: AdapterOutboundMessage;
 };
@@ -32,11 +35,15 @@ export class IntegrationState extends DurableObject<Env> {
     await this.ctx.storage.put("outbound", messages);
   }
 
-  async listOutbound(accountId?: string): Promise<RecordedOutboundMessage[]> {
+  async listOutbound(
+    installationId?: string,
+    accountId?: string,
+  ): Promise<RecordedOutboundMessage[]> {
     const messages = await this.ctx.storage.get<RecordedOutboundMessage[]>("outbound") ?? [];
-    return accountId
-      ? messages.filter((entry) => entry.accountId === accountId)
-      : messages;
+    return messages.filter((entry) => (
+      (!installationId || entry.installationId === installationId)
+      && (!accountId || entry.accountId === accountId)
+    ));
   }
 }
 
@@ -75,14 +82,24 @@ export default class TestDependencies
     const url = new URL(request.url);
 
     if (url.pathname === "/__test/service-frame" && request.method === "POST") {
-      const frame = await request.json<AdapterGatewayRequestFrame>();
-      const response = await this.env.GATEWAY.serviceFrame(frame);
+      const input = await request.json<{
+        installation: AdapterInstallationContext;
+        frame: AdapterGatewayRequestFrame;
+      }>();
+      const response = await this.env.GATEWAY.serviceFrame(
+        input.installation,
+        input.frame,
+      );
       return Response.json(response);
     }
 
     if (url.pathname === "/__test/outbound" && request.method === "GET") {
+      const installationId = url.searchParams.get("installationId") ?? undefined;
       const accountId = url.searchParams.get("accountId") ?? undefined;
-      return Response.json(await this.integrationState().listOutbound(accountId));
+      return Response.json(await this.integrationState().listOutbound(
+        installationId,
+        accountId,
+      ));
     }
 
     if (url.pathname.endsWith("/read") && request.method === "GET") {
@@ -117,6 +134,7 @@ export default class TestDependencies
   }
 
   async adapterConnect(
+    _installation: AdapterInstallationContext,
     _accountId: string,
     _config?: Record<string, unknown>,
   ): Promise<{ ok: true; connected: true; authenticated: true; message: string }> {
@@ -128,11 +146,15 @@ export default class TestDependencies
     };
   }
 
-  async adapterDisconnect(_accountId: string): Promise<{ ok: true; message: string }> {
+  async adapterDisconnect(
+    _installation: AdapterInstallationContext,
+    _accountId: string,
+  ): Promise<{ ok: true; message: string }> {
     return { ok: true, message: "disconnected by integration fixture" };
   }
 
   async adapterSend(
+    installation: AdapterInstallationContext,
     accountId: string,
     message: AdapterOutboundMessage,
     body?: BinaryBody,
@@ -140,11 +162,16 @@ export default class TestDependencies
     if (body && !body.stream.locked) {
       await body.stream.cancel("Integration fixture does not consume media").catch(() => {});
     }
-    await this.integrationState().recordOutbound({ accountId, message });
+    await this.integrationState().recordOutbound({
+      installationId: installation.installationId,
+      accountId,
+      message,
+    });
     return { ok: true, messageId: `fixture:${message.deliveryId}` };
   }
 
   async adapterSetActivity(
+    _installation: AdapterInstallationContext,
     _accountId: string,
     _surface: AdapterSurface,
     _activity: AdapterActivity,
@@ -152,7 +179,10 @@ export default class TestDependencies
     return { ok: true };
   }
 
-  async adapterStatus(_accountId?: string): Promise<AdapterAccountStatus[]> {
+  async adapterStatus(
+    _installation: AdapterInstallationContext,
+    _accountId?: string,
+  ): Promise<AdapterAccountStatus[]> {
     return [];
   }
 
@@ -169,7 +199,9 @@ export default class TestDependencies
   }
 
   private integrationState(): DurableObjectStub<IntegrationState> {
-    const id = this.env.INTEGRATION_STATE.idFromName("singleton");
+    const id = this.env.INTEGRATION_STATE.idFromName(
+      LEGACY_STANDALONE_INSTALLATION_ID,
+    );
     return this.env.INTEGRATION_STATE.get(id);
   }
 }
