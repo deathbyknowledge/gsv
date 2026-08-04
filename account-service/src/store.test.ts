@@ -5,6 +5,7 @@ import type {
   ProvisionInstallationResult,
 } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
+import { EntitlementStore } from "./entitlements/store";
 import { provisionReservedInstallation } from "./provisioning";
 import { AccountStore } from "./store";
 
@@ -38,6 +39,18 @@ function successfulGateway(): ManagedGatewayProvisioningInterface & {
       provisionVersion: input.provisionVersion,
     })),
   };
+}
+
+async function grantProvisioningEntitlement(installationId: string): Promise<void> {
+  await new EntitlementStore(env.ACCOUNT_DB).project({
+    installationId,
+    state: "active",
+    planKey: "test",
+    inferenceBudgetMicrounits: 5_000_000,
+    storageLimitBytes: 10_000_000,
+    effectiveAt: Date.now(),
+    version: 1,
+  });
 }
 
 describe("managed account store", () => {
@@ -77,6 +90,44 @@ describe("managed account store", () => {
     });
 
     expect(second).toEqual(first);
+  });
+
+  it("expires an abandoned reservation so its handle can be claimed again", async () => {
+    const firstPrincipal = await createVerifiedPrincipal("expiry_first");
+    const first = await store().reserveInstallation({
+      principalId: firstPrincipal,
+      operationId: "op_expiry_first",
+      handle: "expiry-home",
+    });
+    await env.ACCOUNT_DB.prepare(
+      "UPDATE installations SET reservation_expires_at = ? WHERE id = ?",
+    ).bind(Date.now() - 1, first.installationId).run();
+
+    await expect(store().expireReservations()).resolves.toBe(1);
+    await expect(store().resolveHostname("expiry-home.gsv.space")).resolves.toEqual({
+      found: false,
+    });
+    const secondPrincipal = await createVerifiedPrincipal("expiry_second");
+    await expect(store().reserveInstallation({
+      principalId: secondPrincipal,
+      operationId: "op_expiry_second",
+      handle: "expiry-home",
+    })).resolves.toMatchObject({ ownerPrincipalId: secondPrincipal });
+
+    const audit = await env.ACCOUNT_DB.prepare(
+      `SELECT principal_id, installation_id, action
+       FROM audit_events
+       WHERE id = ?`,
+    ).bind(`audit_reservation_expired_${first.installationId}`).first<{
+      principal_id: string;
+      installation_id: string | null;
+      action: string;
+    }>();
+    expect(audit).toEqual({
+      principal_id: firstPrincipal,
+      installation_id: null,
+      action: "installation.reservation_expired",
+    });
   });
 
   it("lets only one principal claim a handle", async () => {
@@ -133,11 +184,12 @@ describe("managed account store", () => {
 
   it("activates routing only after private Gateway provisioning succeeds", async () => {
     const principalId = await createVerifiedPrincipal("provision");
-    await store().reserveInstallation({
+    const reservation = await store().reserveInstallation({
       principalId,
       operationId: "op_provision",
       handle: "provision-home",
     });
+    await grantProvisioningEntitlement(reservation.installationId);
     const gateway = successfulGateway();
 
     const result = await provisionReservedInstallation(store(), gateway, {
@@ -171,6 +223,7 @@ describe("managed account store", () => {
       operationId: "op_resume",
       handle: "resume-home",
     });
+    await grantProvisioningEntitlement(reserved.installationId);
     const gateway = successfulGateway();
     gateway.provisionInstallation
       .mockRejectedValueOnce(new Error("Gateway unavailable"));
@@ -193,11 +246,12 @@ describe("managed account store", () => {
 
   it("does not activate a mismatched Gateway result", async () => {
     const principalId = await createVerifiedPrincipal("mismatch");
-    await store().reserveInstallation({
+    const reservation = await store().reserveInstallation({
       principalId,
       operationId: "op_mismatch",
       handle: "mismatch-home",
     });
+    await grantProvisioningEntitlement(reservation.installationId);
     const gateway: ManagedGatewayProvisioningInterface = {
       provisionInstallation: vi.fn(async () => ({
         state: "active" as const,
@@ -231,6 +285,7 @@ describe("managed account store", () => {
       operationId: `op_result_${key}`,
       handle: `result-${key.replace("_", "-")}`,
     });
+    await grantProvisioningEntitlement(reserved.installationId);
     const gateway: ManagedGatewayProvisioningInterface = {
       provisionInstallation: vi.fn(async (input) => ({
         state: "active" as const,
@@ -248,5 +303,22 @@ describe("managed account store", () => {
       operationId: `op_result_${key}`,
       username: "owner",
     })).rejects.toThrow("mismatched provisioning result");
+  });
+
+  it("does not allocate a Kernel before an authoritative entitlement exists", async () => {
+    const principalId = await createVerifiedPrincipal("no_entitlement");
+    await store().reserveInstallation({
+      principalId,
+      operationId: "op_no_entitlement",
+      handle: "no-entitlement-home",
+    });
+    const gateway = successfulGateway();
+
+    await expect(provisionReservedInstallation(store(), gateway, {
+      principalId,
+      operationId: "op_no_entitlement",
+      username: "owner",
+    })).rejects.toThrow("provisioning entitlement is required");
+    expect(gateway.provisionInstallation).not.toHaveBeenCalled();
   });
 });

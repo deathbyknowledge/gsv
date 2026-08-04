@@ -3,6 +3,7 @@ import type {
   InstallationDirectoryResult,
   InstallationDirectoryService,
   LoginHandoffVerificationResult,
+  ManagedEntitlementService,
   ManagedGatewayProvisioningInterface,
 } from "@humansandmachines/gsv/protocol";
 import { provisionReservedInstallation, type ProvisionReservedInstallationInput } from "./provisioning";
@@ -17,6 +18,13 @@ import { SimpleWebAuthnPasskeyProvider } from "./auth/passkeys";
 import { PlatformAuthService } from "./auth/service";
 import { PlatformAuthStore } from "./auth/store";
 import { CloudflareTransactionalMailer } from "./email/mailer";
+import {
+  EntitlementStore,
+  type EntitlementProjection,
+} from "./entitlements/store";
+import { json } from "./http";
+import { ManagedInstallationHttp } from "./installations/http";
+import { ManagedInstallationService } from "./installations/service";
 
 type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & {
   ENVIRONMENT: string;
@@ -26,7 +34,7 @@ type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & {
 
 export default class AccountService
   extends WorkerEntrypoint<AccountServiceEnv>
-  implements InstallationDirectoryService
+  implements InstallationDirectoryService, ManagedEntitlementService
 {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -35,11 +43,19 @@ export default class AccountService
     }
     const authResponse = await this.authHttp().handle(request);
     if (authResponse) return authResponse;
+    const installationResponse = await this.installationHttp().handle(request);
+    if (installationResponse) return installationResponse;
+    if (url.pathname.startsWith("/api/")) {
+      return json({ error: "Not Found" }, 404);
+    }
     return new Response("Not Found", { status: 404 });
   }
 
   async scheduled(): Promise<void> {
-    await this.abuseProtection().deleteExpiredBuckets();
+    await Promise.all([
+      this.abuseProtection().deleteExpiredBuckets(),
+      this.store().expireReservations(),
+    ]);
   }
 
   async resolveHostname(hostname: string): Promise<InstallationDirectoryResult> {
@@ -68,6 +84,12 @@ export default class AccountService
     return await provisionReservedInstallation(this.store(), this.env.GATEWAY, input);
   }
 
+  async projectEntitlement(
+    input: EntitlementProjection,
+  ): Promise<EntitlementProjection> {
+    return await new EntitlementStore(this.env.ACCOUNT_DB).project(input);
+  }
+
   private store(): AccountStore {
     return new AccountStore(this.env.ACCOUNT_DB, this.env.GSV_BASE_DOMAIN);
   }
@@ -78,7 +100,17 @@ export default class AccountService
 
   private authHttp(): AccountAuthHttp {
     const accountOrigin = parseAccountOrigin(this.env.GSV_ACCOUNT_ORIGIN);
-    const auth = new PlatformAuthService(
+    return new AccountAuthHttp(
+      this.authService(accountOrigin),
+      this.abuseProtection(accountOrigin),
+      accountOrigin,
+    );
+  }
+
+  private authService(
+    accountOrigin = parseAccountOrigin(this.env.GSV_ACCOUNT_ORIGIN),
+  ): PlatformAuthService {
+    return new PlatformAuthService(
       this.authStore(),
       new SimpleWebAuthnPasskeyProvider(
         this.env.GSV_RP_NAME,
@@ -91,9 +123,19 @@ export default class AccountService
         defer: (task) => this.ctx.waitUntil(task),
       },
     );
-    return new AccountAuthHttp(
-      auth,
-      this.abuseProtection(accountOrigin),
+  }
+
+  private installationHttp(): ManagedInstallationHttp {
+    const accountOrigin = parseAccountOrigin(this.env.GSV_ACCOUNT_ORIGIN);
+    const abuse = this.abuseProtection(accountOrigin);
+    return new ManagedInstallationHttp(
+      new ManagedInstallationService(
+        this.store(),
+        new EntitlementStore(this.env.ACCOUNT_DB),
+        this.authService(accountOrigin),
+        this.env.GATEWAY,
+      ),
+      abuse,
       accountOrigin,
     );
   }

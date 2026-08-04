@@ -22,7 +22,7 @@ export async function provisionReservedInstallation(
   const operationId = parseOpaqueId(input.operationId, "operationId");
   const principalId = parseOpaqueId(input.principalId, "principalId");
   const reservation = await store.beginProvisioning(operationId, principalId);
-  if (reservation.operationState === "complete" && reservation.state === "active") {
+  if (reservation.operationState === "complete") {
     return reservation;
   }
 

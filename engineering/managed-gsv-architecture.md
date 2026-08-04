@@ -890,12 +890,16 @@ short bootstrap sessions, host-only platform sessions, discoverable passkeys,
 hashed one-time recovery codes, complete session and credential revocation
 during recovery, recent-auth checks, transactional verification and security
 notification email, atomic handoff auditing, exact-origin mutation checks, D1
-rate limits, and fail-closed Turnstile verification. The remaining Phase 4 work
-is the authenticated public reservation and provisioning flow, clean-instance
-account-to-Kernel E2E, and production activation of email and Turnstile. The
-shared-bot peer ownership recheck is a Phase 6 managed Telegram gate because
-that global peer directory does not exist before then. Managed production
-hosting remains disabled while Phases 4 through 9 are incomplete.
+rate limits, and fail-closed Turnstile verification. Authenticated public handle
+reservation is idempotent, expired reservations are reclaimed, and private
+Kernel provisioning now requires an effective provider-neutral entitlement.
+The clean account-to-Kernel integration flow covers reservation, entitlement,
+provisioning, hostname activation, entry, logout, and re-entry against a real
+Kernel. Phase 4's code exit gate is complete; production activation of email and
+Turnstile remains an external release gate. The shared-bot peer ownership
+recheck is a Phase 6 managed Telegram gate because that global peer directory
+does not exist before then. Managed production hosting remains disabled while
+Phases 5 through 9 are incomplete.
 
 ### Phase 0: executable specification
 

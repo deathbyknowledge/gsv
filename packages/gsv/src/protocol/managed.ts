@@ -63,3 +63,27 @@ export interface ManagedGatewayProvisioningInterface {
     input: ProvisionInstallationInput,
   ): Promise<ProvisionInstallationResult>;
 }
+
+export type ManagedEntitlementState =
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "restricted"
+  | "cancelled"
+  | "retained";
+
+export type ManagedEntitlementProjection = {
+  installationId: string;
+  state: ManagedEntitlementState;
+  planKey: string;
+  inferenceBudgetMicrounits: number;
+  storageLimitBytes: number;
+  effectiveAt: number;
+  version: number;
+};
+
+export interface ManagedEntitlementService {
+  projectEntitlement(
+    input: ManagedEntitlementProjection,
+  ): Promise<ManagedEntitlementProjection>;
+}

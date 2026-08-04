@@ -20,6 +20,8 @@ export type AuthRateLimitOperation =
   | "passkey_login_options"
   | "passkey_login_verify"
   | "passkey_registration"
+  | "installation_reservation"
+  | "installation_provision"
   | "installation_handoff";
 
 type RateLimitPolicy = {
@@ -35,6 +37,8 @@ const DEFAULT_RATE_LIMIT_POLICIES: Record<AuthRateLimitOperation, RateLimitPolic
   passkey_login_options: { windowMs: 60_000, ipLimit: 20 },
   passkey_login_verify: { windowMs: 5 * 60_000, ipLimit: 30, subjectLimit: 10 },
   passkey_registration: { windowMs: 5 * 60_000, ipLimit: 20, subjectLimit: 10 },
+  installation_reservation: { windowMs: 30 * 60_000, ipLimit: 10, subjectLimit: 5 },
+  installation_provision: { windowMs: 5 * 60_000, ipLimit: 20, subjectLimit: 10 },
   installation_handoff: { windowMs: 5 * 60_000, ipLimit: 30, subjectLimit: 10 },
 };
 

@@ -202,17 +202,22 @@ export class PlatformAuthService {
     sessionToken: string;
     installationId: string;
   }): Promise<{ token: string; canonicalOrigin: string; expiresAt: number }> {
-    const session = await this.requireSession(input.sessionToken);
+    const session = await this.requireRecentPasskeySession(input.sessionToken);
+    return await this.store.createLoginHandoff({
+      principalId: session.principal.id,
+      installationId: input.installationId,
+    });
+  }
+
+  async requireRecentPasskeySession(sessionToken: string): Promise<PlatformSession> {
+    const session = await this.requireSession(sessionToken);
     if (session.authMethod !== "passkey") {
       throw new Error("passkey authentication is required");
     }
     if (session.recentAuthAt + RECENT_AUTH_TTL_MS <= Date.now()) {
       throw new Error("recent passkey authentication is required");
     }
-    return await this.store.createLoginHandoff({
-      principalId: session.principal.id,
-      installationId: input.installationId,
-    });
+    return session;
   }
 
   private async requireSession(token: string): Promise<PlatformSession> {

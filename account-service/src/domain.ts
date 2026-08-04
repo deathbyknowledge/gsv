@@ -2,6 +2,7 @@ import type { ManagedInstallationIdentity } from "@humansandmachines/gsv/protoco
 
 const HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/;
+const USERNAME_PATTERN = /^[a-z_][a-z0-9_-]{0,31}$/;
 
 const RESERVED_HANDLES = new Set([
   "admin",
@@ -56,6 +57,25 @@ export function parseHandle(value: unknown): string {
   }
   if (RESERVED_HANDLES.has(value)) {
     throw new Error("handle is reserved");
+  }
+  return value;
+}
+
+export function parseUsername(value: unknown, field = "username"): string {
+  if (typeof value !== "string" || !USERNAME_PATTERN.test(value)) {
+    throw new Error(`${field} is invalid`);
+  }
+  return value;
+}
+
+export function parseTimezone(value: unknown): string {
+  if (typeof value !== "string" || !value.trim() || value !== value.trim()) {
+    throw new Error("timezone is invalid");
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+  } catch {
+    throw new Error("timezone is invalid");
   }
   return value;
 }

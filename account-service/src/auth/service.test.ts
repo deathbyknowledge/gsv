@@ -7,6 +7,7 @@ import type {
 } from "@simplewebauthn/server";
 import { describe, expect, it } from "vitest";
 import { AccountStore } from "../store";
+import { EntitlementStore } from "../entitlements/store";
 import type {
   SecurityNotification,
   TransactionalMailer,
@@ -360,6 +361,15 @@ describe("platform authentication", () => {
       principalId: session.principal.id,
       operationId,
       handle: `h-${crypto.randomUUID().slice(0, 12)}`,
+    });
+    await new EntitlementStore(env.ACCOUNT_DB).project({
+      installationId: reserved.installationId,
+      state: "active",
+      planKey: "test",
+      inferenceBudgetMicrounits: 5_000_000,
+      storageLimitBytes: 10_000_000,
+      effectiveAt: Date.now(),
+      version: 1,
     });
     await accountStore.beginProvisioning(operationId, session.principal.id);
     await accountStore.completeProvisioning(operationId, session.principal.id, "owner", {
