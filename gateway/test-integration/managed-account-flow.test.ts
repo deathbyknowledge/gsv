@@ -93,6 +93,8 @@ describe("managed account to Kernel integration", () => {
         state: "trialing";
         planKey: string;
         inferenceBudgetMicrounits: number;
+        inferencePeriodStartsAt: number;
+        inferencePeriodEndsAt: number;
         storageLimitBytes: number;
         effectiveAt: number;
         version: number;
@@ -103,6 +105,8 @@ describe("managed account to Kernel integration", () => {
       state: "trialing",
       planKey: "integration-trial",
       inferenceBudgetMicrounits: 5_000_000,
+      inferencePeriodStartsAt: Date.now(),
+      inferencePeriodEndsAt: Date.now() + 30 * 24 * 60 * 60_000,
       storageLimitBytes: 10_000_000_000,
       effectiveAt: Date.now(),
       version: 1,

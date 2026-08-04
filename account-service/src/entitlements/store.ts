@@ -14,6 +14,8 @@ type EntitlementRow = {
   state: string;
   plan_key: string;
   inference_budget_microunits: number;
+  inference_period_starts_at: number | null;
+  inference_period_ends_at: number | null;
   storage_limit_bytes: number;
   effective_at: number;
   version: number;
@@ -28,15 +30,18 @@ export class EntitlementStore {
       this.db.prepare(
         `INSERT INTO entitlements (
          installation_id, state, plan_key, inference_budget_microunits,
+         inference_period_starts_at, inference_period_ends_at,
          storage_limit_bytes, effective_at, version
        )
-       SELECT ?, ?, ?, ?, ?, ?, ?
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
        FROM installations
        WHERE id = ? AND state NOT IN ('deleting', 'deleted')
        ON CONFLICT(installation_id) DO UPDATE SET
          state = excluded.state,
          plan_key = excluded.plan_key,
          inference_budget_microunits = excluded.inference_budget_microunits,
+         inference_period_starts_at = excluded.inference_period_starts_at,
+         inference_period_ends_at = excluded.inference_period_ends_at,
          storage_limit_bytes = excluded.storage_limit_bytes,
          effective_at = excluded.effective_at,
          version = excluded.version
@@ -46,6 +51,8 @@ export class EntitlementStore {
         projection.state,
         projection.planKey,
         projection.inferenceBudgetMicrounits,
+        projection.inferencePeriodStartsAt,
+        projection.inferencePeriodEndsAt,
         projection.storageLimitBytes,
         projection.effectiveAt,
         projection.version,
@@ -64,7 +71,10 @@ export class EntitlementStore {
              SELECT 1 FROM entitlements e
              WHERE e.installation_id = installations.id
                AND e.state = ? AND e.plan_key = ?
-               AND e.inference_budget_microunits = ? AND e.storage_limit_bytes = ?
+               AND e.inference_budget_microunits = ?
+               AND e.inference_period_starts_at = ?
+               AND e.inference_period_ends_at = ?
+               AND e.storage_limit_bytes = ?
                AND e.effective_at = ? AND e.version = ?
            )`,
       ).bind(
@@ -73,6 +83,8 @@ export class EntitlementStore {
         projection.state,
         projection.planKey,
         projection.inferenceBudgetMicrounits,
+        projection.inferencePeriodStartsAt,
+        projection.inferencePeriodEndsAt,
         projection.storageLimitBytes,
         projection.effectiveAt,
         projection.version,
@@ -86,7 +98,10 @@ export class EntitlementStore {
          FROM entitlements e
          JOIN installations i ON i.id = e.installation_id
          WHERE e.installation_id = ? AND e.state = ? AND e.plan_key = ?
-           AND e.inference_budget_microunits = ? AND e.storage_limit_bytes = ?
+           AND e.inference_budget_microunits = ?
+           AND e.inference_period_starts_at = ?
+           AND e.inference_period_ends_at = ?
+           AND e.storage_limit_bytes = ?
            AND e.effective_at = ? AND e.version = ?`,
       ).bind(
         `audit_entitlement_${projection.installationId}_${projection.version}`,
@@ -95,6 +110,8 @@ export class EntitlementStore {
         projection.state,
         projection.planKey,
         projection.inferenceBudgetMicrounits,
+        projection.inferencePeriodStartsAt,
+        projection.inferencePeriodEndsAt,
         projection.storageLimitBytes,
         projection.effectiveAt,
         projection.version,
@@ -117,6 +134,7 @@ export class EntitlementStore {
     const row = await this.db.prepare(
       `SELECT
          installation_id, state, plan_key, inference_budget_microunits,
+         inference_period_starts_at, inference_period_ends_at,
          storage_limit_bytes, effective_at, version
        FROM entitlements
        WHERE installation_id = ?
@@ -158,6 +176,14 @@ function parseProjection(input: EntitlementProjection): EntitlementProjection {
     }
   }
   if (
+    !Number.isSafeInteger(input.inferencePeriodStartsAt)
+    || !Number.isSafeInteger(input.inferencePeriodEndsAt)
+    || input.inferencePeriodStartsAt < 0
+    || input.inferencePeriodEndsAt <= input.inferencePeriodStartsAt
+  ) {
+    throw new Error("entitlement inference period is invalid");
+  }
+  if (
     !Number.isSafeInteger(input.effectiveAt)
     || input.effectiveAt < 0
     || input.effectiveAt > Date.now() + 60_000
@@ -172,6 +198,8 @@ function parseProjection(input: EntitlementProjection): EntitlementProjection {
     state: input.state,
     planKey: input.planKey,
     inferenceBudgetMicrounits: input.inferenceBudgetMicrounits,
+    inferencePeriodStartsAt: input.inferencePeriodStartsAt,
+    inferencePeriodEndsAt: input.inferencePeriodEndsAt,
     storageLimitBytes: input.storageLimitBytes,
     effectiveAt: input.effectiveAt,
     version: input.version,
@@ -182,11 +210,19 @@ function projectionFromRow(row: EntitlementRow): EntitlementProjection {
   if (!isEntitlementState(row.state)) {
     throw new Error("stored entitlement state is invalid");
   }
+  if (
+    row.inference_period_starts_at === null
+    || row.inference_period_ends_at === null
+  ) {
+    throw new Error("stored entitlement inference period is invalid");
+  }
   return {
     installationId: row.installation_id,
     state: row.state,
     planKey: row.plan_key,
     inferenceBudgetMicrounits: row.inference_budget_microunits,
+    inferencePeriodStartsAt: row.inference_period_starts_at,
+    inferencePeriodEndsAt: row.inference_period_ends_at,
     storageLimitBytes: row.storage_limit_bytes,
     effectiveAt: row.effective_at,
     version: row.version,
@@ -210,6 +246,8 @@ function sameProjection(
     && left.state === right.state
     && left.planKey === right.planKey
     && left.inferenceBudgetMicrounits === right.inferenceBudgetMicrounits
+    && left.inferencePeriodStartsAt === right.inferencePeriodStartsAt
+    && left.inferencePeriodEndsAt === right.inferencePeriodEndsAt
     && left.storageLimitBytes === right.storageLimitBytes
     && left.effectiveAt === right.effectiveAt
     && left.version === right.version;

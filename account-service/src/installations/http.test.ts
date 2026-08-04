@@ -113,6 +113,8 @@ describe("managed installation HTTP boundary", () => {
       state: "trialing",
       planKey: "test",
       inferenceBudgetMicrounits: 5_000_000,
+      inferencePeriodStartsAt: Date.now(),
+      inferencePeriodEndsAt: Date.now() + 30 * 24 * 60 * 60_000,
       storageLimitBytes: 10_000_000,
       effectiveAt: Date.now(),
       version: 1,

@@ -3,6 +3,7 @@ import type {
   InstallationDirectoryResult,
   InstallationDirectoryService,
   LoginHandoffVerificationResult,
+  ManagedEntitlementReader,
   ManagedEntitlementService,
   ManagedGatewayProvisioningInterface,
 } from "@humansandmachines/gsv/protocol";
@@ -150,6 +151,17 @@ export default class AccountService
           new URL(accountOrigin).hostname,
         );
     return new AuthAbuseProtection(this.env.ACCOUNT_DB, botVerifier);
+  }
+}
+
+export class EntitlementReaderEntrypoint
+  extends WorkerEntrypoint<AccountServiceEnv>
+  implements ManagedEntitlementReader
+{
+  async getEntitlement(
+    installationId: string,
+  ): Promise<EntitlementProjection | null> {
+    return await new EntitlementStore(this.env.ACCOUNT_DB).get(installationId);
   }
 }
 

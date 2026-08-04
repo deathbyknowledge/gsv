@@ -77,6 +77,8 @@ export type ManagedEntitlementProjection = {
   state: ManagedEntitlementState;
   planKey: string;
   inferenceBudgetMicrounits: number;
+  inferencePeriodStartsAt: number;
+  inferencePeriodEndsAt: number;
   storageLimitBytes: number;
   effectiveAt: number;
   version: number;
@@ -86,4 +88,10 @@ export interface ManagedEntitlementService {
   projectEntitlement(
     input: ManagedEntitlementProjection,
   ): Promise<ManagedEntitlementProjection>;
+}
+
+export interface ManagedEntitlementReader {
+  getEntitlement(
+    installationId: string,
+  ): Promise<ManagedEntitlementProjection | null>;
 }

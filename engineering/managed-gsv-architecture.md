@@ -240,6 +240,7 @@ billing_events
 
 entitlements
   installation_id, state, plan_key, inference_budget_microunits,
+  inference_period_starts_at, inference_period_ends_at,
   storage_limit_bytes, effective_at, version
 
 login_handoffs
@@ -790,6 +791,9 @@ interface InstallationDirectoryService {
     | { ok: true; installationId: string; principalId: string; localUid: number }
     | { ok: false }
   >;
+}
+
+interface ManagedEntitlementReader {
   getEntitlement(installationId: string): Promise<InstallationEntitlement>;
 }
 ```
