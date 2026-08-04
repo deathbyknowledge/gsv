@@ -98,7 +98,7 @@ accounts.gsv.space
     - installation and hostname directory
     - memberships and ownership
     - provisioning state
-    - Stripe customer and subscription state
+    - billing-provider customer and subscription state
     - transactional email and recovery
     - private provisioning authority
 
@@ -117,10 +117,10 @@ ripgit and adapter Workers
 ```
 
 These are ordinary Workers. Keeping the managed control plane separate prevents
-Stripe secrets, global account records, recovery authority, and provisioning
-credentials from entering the agent runtime environment. The Gateway should
-receive only narrow operations such as hostname resolution, entitlement lookup,
-and login-ticket verification.
+billing-provider secrets, global account records, recovery authority, and
+provisioning credentials from entering the agent runtime environment. The
+Gateway should receive only narrow operations such as hostname resolution,
+entitlement lookup, and login-ticket verification.
 
 ## Installation identity
 
@@ -348,7 +348,7 @@ The initial managed signup flow is:
 1. Create or authenticate a global platform principal.
 2. Verify a recovery-capable email address and register a primary credential.
 3. Choose and atomically reserve an installation handle.
-4. Create a trial entitlement or Stripe Checkout session associated with the
+4. Create a trial entitlement or hosted checkout session associated with the
    proposed installation ID.
 5. Treat the verified billing webhook, not a browser success redirect, as the
    authority to continue paid provisioning.
@@ -410,8 +410,8 @@ a documented fallback plan.
 
 ## Billing and entitlements
 
-Billing belongs to the managed control plane, not the Kernel. Stripe customer,
-Checkout, subscription, invoice, webhook, and tax data never becomes agent
+Billing belongs to the managed control plane, not the Kernel. External customer,
+checkout, subscription, invoice, webhook, and tax data never becomes agent
 runtime configuration.
 
 The installation is the initial subscription unit. A billing account may pay
@@ -419,8 +419,9 @@ for multiple installations later, and an installation may contain multiple
 local users. Local UIDs, agents, processes, messages, and tool calls are not
 appropriate primary subscription identities.
 
-The platform stores provider identifiers and a derived entitlement projection.
-Stripe remains authoritative for payment state. Webhook processing must:
+The platform stores billing-provider identifiers and a derived entitlement
+projection. The billing provider remains authoritative for payment state.
+Webhook processing must:
 
 - verify the signature against the unmodified raw request body;
 - deduplicate provider event IDs;
@@ -448,9 +449,10 @@ and other cost-generating work while preserving authentication, billing repair,
 inspection, export, and teardown. Cancellation ends service according to the
 paid-through date. Retention and deletion are separate, visible policies.
 
-The Gateway consumes a narrow entitlement decision rather than calling Stripe
-on requests. Kernel background work also receives entitlement changes so
-schedules and agents do not continue accruing unbounded cost after restriction.
+The Gateway consumes a narrow entitlement decision rather than calling the
+billing provider on requests. Kernel background work also receives entitlement
+changes so schedules and agents do not continue accruing unbounded cost after
+restriction.
 
 Pricing, included inference, bring-your-own-provider behavior, storage
 allowances, member limits, and retention duration are product decisions built
@@ -518,7 +520,8 @@ that an unknown hostname does not allocate a Kernel.
 
 ### 5. Add billing
 
-- Integrate Checkout, subscriptions, Customer Portal, and signed webhooks.
+- Integrate hosted checkout, subscriptions, a customer portal, and signed
+  webhooks.
 - Add idempotent entitlement projection and lifecycle transitions.
 - Add graceful restriction, export, retention, and deletion flows.
 - Run clean-instance end-to-end tests from signup through first agent run,
@@ -545,6 +548,8 @@ Managed GSV is not ready for external users until all of these are true:
 
 - The initial managed subscription price and included inference allowance.
 - Whether model usage is bundled, metered, bring-your-own-provider, or a hybrid.
+- Whether the billing provider is a merchant of record or a direct payment and
+  tax stack.
 - Whether the first release allows invited human members.
 - Whether one external adapter account may connect to multiple installations.
 - Handle rename and retired-handle reuse policy.
