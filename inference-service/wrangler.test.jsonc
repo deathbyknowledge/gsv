@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-inference-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "ENVIRONMENT": "test",
+    "MANAGED_INFERENCE_PROVIDER": "synthetic",
+    "MANAGED_MAX_CONCURRENT": "2",
+    "MANAGED_DAILY_BUDGET_MICROUNITS": "500000",
+    "MANAGED_MAX_ATTEMPTS": "3",
+    "SYNTHETIC_FAIL_FIRST_ATTEMPT": "true",
+    "SYNTHETIC_THROW_REQUEST_PREFIX": "throw_",
+    "SYNTHETIC_DELAY_MS": "100"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BUDGET_COORDINATOR",
+        "class_name": "BudgetCoordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["BudgetCoordinator"]
+    }
+  ]
+}

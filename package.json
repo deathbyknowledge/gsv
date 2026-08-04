@@ -6,6 +6,7 @@
     "account-service",
     "extension",
     "gateway",
+    "inference-service",
     "web",
     "packages/*"
   ],

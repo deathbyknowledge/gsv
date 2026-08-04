@@ -62,6 +62,7 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 - `gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
 - `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
 - `gateway/src/inference/`: provider integration and model transport.
+- `inference-service/`: platform-funded inference credentials, provider routing, per-installation budgets, and usage settlement.
 - `packages/gsv/`: public client and protocol types.
 - `web/`: desktop shell, setup/login, system UI, and browser-side gateway integration.
 - `cli/`: user, device, deployment, and administration commands.
@@ -107,6 +108,7 @@ Durable Object SQLite and managed D1 schemas use versioned migrations in:
 - `gateway/src/kernel/schema/`
 - `gateway/src/process/schema/`
 - `gateway/src/schema/runner.ts`
+- `inference-service/src/schema/`
 - `ripgit/src/schema.rs`
 
 Do not create tables, indexes, or ad hoc `ensureColumn` migrations from store constructors. Do not edit a migration that has shipped; add the next numbered migration. Collapse to a new baseline only for an explicit release/reset policy, and preserve supported upgrade paths with migration tests.
@@ -135,6 +137,7 @@ Preserve unrelated user changes in a dirty worktree. Do not broaden a cleanup ba
 ```text
 gsv/
 ├── account-service/ # Managed accounts, directory, provisioning, billing
+├── inference-service/ # Managed inference broker and budget coordinator
 ├── gateway/       # Kernel, Process, syscalls, inference, filesystem
 ├── packages/gsv/  # Public TypeScript client and protocol
 ├── web/           # Desktop shell and embedded app host
@@ -165,6 +168,7 @@ npm run dev
 Validate only the surfaces affected by the change:
 
 - Managed account service: `cd account-service && npm run typecheck && npm test`
+- Managed inference service: `cd inference-service && npm run typecheck && npm test`
 - Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
@@ -179,6 +183,7 @@ Protocol or client changes may affect gateway, web, CLI, devices, and adapters e
 ## Deployment model
 
 - Managed account service: apply its D1 migrations, then `cd account-service && npm run deploy`.
+- Managed inference service: `cd inference-service && npm run deploy`; keep its provider disabled until the provider release gates pass.
 - Gateway code: `cd gateway && npm run deploy`
 - Web code: build `web`, then deploy the gateway that serves the resulting assets.
 - Adapter code: deploy the affected adapter worker.

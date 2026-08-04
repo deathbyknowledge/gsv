@@ -1,0 +1,23 @@
+{
+  "name": "gsv-inference-service",
+  "version": "0.4.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy --minify",
+    "dev": "wrangler dev",
+    "cf-typegen": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.83.0",
+    "@humansandmachines/gsv": "file:../packages/gsv"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.18.0",
+    "typescript": "^5.9.3",
+    "vitest": "4.1.9",
+    "wrangler": "4.115.0"
+  }
+}

@@ -659,6 +659,19 @@ alias as a durable identifier. Model and serving provider are separate choices:
 the router may use the official DeepSeek API, a contractually suitable host of
 the open weights, or a tested fallback without changing GSV configuration.
 
+Candidate evidence recorded on 2026-08-04 comes from DeepSeek's own release
+materials and is not yet GSV validation. The vendor reports 82.7 on Terminal
+Bench 2.1, 54.2 on NL2Repo, 76.7 on Cybergym, 54.4 on DeepSWE, 70.3 on
+Toolathlon Verified, and 25.2 on Agents' Last Exam for V4 Flash 0731. Its
+[official API price](https://api-docs.deepseek.com/quick_start/pricing?article_id=article_1779470751466_8)
+is USD 0.0028 per million cache-hit input tokens, USD 0.14 per million
+cache-miss input tokens, and USD 0.28 per million output tokens. The versioned
+broker price book records those rates in integer microdollars; production
+promotion still depends on GSV's own task evaluation, observed latency and
+reliability, and the privacy and contractual gate below. The release evidence
+is recorded in DeepSeek's [official changelog](https://api-docs.deepseek.com/updates/)
+and [official model card](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731).
+
 The default may not process real customer data until the selected host provides
 acceptable written terms for API data use, training, retention, deletion, data
 location, subprocessors, security, and applicable data-processing agreements.
@@ -883,10 +896,10 @@ add interfaces or test doubles early, but it must not depend on an unproven
 isolation boundary. Protected prompt and seeded context content are not changed
 by this program.
 
-Current implementation status as of 2026-08-04: phases 0 through 3 are complete
+Current implementation status as of 2026-08-04: phases 0 through 4 are complete
 for the existing runtime on the managed-service branch. Kernel, Process, R2,
 ripgit, and user-owned adapter state now share one installation boundary with
-explicit standalone compatibility. Phase 4 is in progress. The account-service
+explicit standalone compatibility. The account-service
 D1 schema, atomic handle reservation, active-host directory, resumable private
 Kernel provisioning, managed public-setup rejection, and one-time host-session
 handoff boundary are implemented. The account service now also implements
@@ -899,8 +912,15 @@ reservation is idempotent, expired reservations are reclaimed, and private
 Kernel provisioning now requires an effective provider-neutral entitlement.
 The clean account-to-Kernel integration flow covers reservation, entitlement,
 provisioning, hostname activation, entry, logout, and re-entry against a real
-Kernel. Phase 4's code exit gate is complete; production activation of email and
-Turnstile remains an external release gate. The shared-bot peer ownership
+Kernel. Production activation of email and Turnstile remains an external release
+gate. Phase 5 is in progress: the provider-neutral entitlement period contract,
+separate inference Worker, DeepSeek V4 Flash 0731 price book and adapter,
+SQLite-backed per-installation budget coordinator, conservative admission,
+attempt settlement, opaque upstream user isolation, synthetic provider, and
+abort path are implemented and deterministically tested. The real provider is
+disabled by default. Gateway routing, GSV task evaluation, fallback selection,
+and the provider privacy and contractual gate remain before customer prompts
+can be enabled. The shared-bot peer ownership
 recheck is a Phase 6 managed Telegram gate because that global peer directory
 does not exist before then. Managed production hosting remains disabled while
 Phases 5 through 9 are incomplete.

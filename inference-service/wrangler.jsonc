@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-inference",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "ENVIRONMENT": "production",
+    "MANAGED_INFERENCE_PROVIDER": "disabled",
+    "MANAGED_MAX_CONCURRENT": "2",
+    "MANAGED_DAILY_BUDGET_MICROUNITS": "500000",
+    "MANAGED_MAX_ATTEMPTS": "3"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BUDGET_COORDINATOR",
+        "class_name": "BudgetCoordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["BudgetCoordinator"]
+    }
+  ],
+  "services": [
+    {
+      "binding": "ENTITLEMENTS",
+      "service": "gsv-accounts",
+      "entrypoint": "EntitlementReaderEntrypoint"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

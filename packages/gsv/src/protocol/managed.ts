@@ -1,3 +1,11 @@
+import type {
+  AiAssistantMessage,
+  AiTextMessage,
+  AiTextTool,
+} from "./syscalls/ai";
+
+export const MANAGED_INFERENCE_PRODUCT_MODEL = "gsv/default";
+
 export type ManagedInstallationState =
   | "reserved"
   | "provisioning"
@@ -94,4 +102,70 @@ export interface ManagedEntitlementReader {
   getEntitlement(
     installationId: string,
   ): Promise<ManagedEntitlementProjection | null>;
+}
+
+export type ManagedInferenceActor = {
+  localUid: number;
+  processId?: string;
+  runId?: string;
+};
+
+export type ManagedInferenceRequest = {
+  version: 1;
+  installationId: string;
+  logicalRequestId: string;
+  actor: ManagedInferenceActor;
+  model: typeof MANAGED_INFERENCE_PRODUCT_MODEL;
+  capability: "text";
+  systemPrompt?: string;
+  messages: AiTextMessage[];
+  tools?: AiTextTool[];
+  maxOutputTokens: number;
+  reasoning?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  timeoutMs: number;
+};
+
+export type ManagedInferenceAbort = Pick<
+  ManagedInferenceRequest,
+  "installationId" | "logicalRequestId"
+>;
+
+export type ManagedInferenceAbortResult = {
+  aborted: boolean;
+};
+
+export type ManagedInferencePartialMessage = Omit<AiAssistantMessage, "stopReason"> & {
+  stopReason: AiAssistantMessage["stopReason"] | "pending";
+};
+
+export type ManagedInferenceStreamEvent =
+  | { type: "start"; partial: ManagedInferencePartialMessage }
+  | { type: "text_start"; contentIndex: number; partial: ManagedInferencePartialMessage }
+  | { type: "text_delta"; contentIndex: number; delta: string; partial: ManagedInferencePartialMessage }
+  | { type: "text_end"; contentIndex: number; content: string; partial: ManagedInferencePartialMessage }
+  | { type: "thinking_start"; contentIndex: number; partial: ManagedInferencePartialMessage }
+  | { type: "thinking_delta"; contentIndex: number; delta: string; partial: ManagedInferencePartialMessage }
+  | { type: "thinking_end"; contentIndex: number; content: string; partial: ManagedInferencePartialMessage }
+  | { type: "toolcall_start"; contentIndex: number; partial: ManagedInferencePartialMessage }
+  | { type: "toolcall_delta"; contentIndex: number; delta: string; partial: ManagedInferencePartialMessage }
+  | {
+      type: "toolcall_end";
+      contentIndex: number;
+      toolCall: Extract<AiAssistantMessage["content"][number], { type: "toolCall" }>;
+      partial: ManagedInferencePartialMessage;
+    }
+  | {
+      type: "done";
+      reason: "stop" | "length" | "toolUse";
+      message: AiAssistantMessage;
+    }
+  | {
+      type: "error";
+      reason: "aborted" | "error";
+      error: AiAssistantMessage;
+    };
+
+export interface ManagedInferenceService {
+  run(input: ManagedInferenceRequest): Promise<Response>;
+  abort(input: ManagedInferenceAbort): Promise<ManagedInferenceAbortResult>;
 }
