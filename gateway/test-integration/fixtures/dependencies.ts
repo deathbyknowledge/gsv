@@ -9,6 +9,9 @@ import type {
   AdapterSurface,
   AdapterWorkerInterface,
   BinaryBody,
+  ManagedGatewayProvisioningInterface,
+  ProvisionInstallationInput,
+  ProvisionInstallationResult,
 } from "@humansandmachines/gsv/protocol";
 import { LEGACY_STANDALONE_INSTALLATION_ID } from "../../src/installation/identity";
 
@@ -24,7 +27,7 @@ export type RecordedOutboundMessage = {
 };
 
 interface Env {
-  GATEWAY: Fetcher & AdapterGatewayInterface;
+  GATEWAY: Fetcher & AdapterGatewayInterface & ManagedGatewayProvisioningInterface;
   INTEGRATION_STATE: DurableObjectNamespace<IntegrationState>;
 }
 
@@ -44,6 +47,25 @@ export class IntegrationState extends DurableObject<Env> {
       (!installationId || entry.installationId === installationId)
       && (!accountId || entry.accountId === accountId)
     ));
+  }
+
+  async rememberProvision(result: ProvisionInstallationResult): Promise<void> {
+    await this.ctx.storage.put(`provision:${result.installationId}`, result);
+  }
+
+  async consumeHandoff(
+    token: string,
+    installationId: string,
+  ): Promise<ProvisionInstallationResult | null> {
+    return await this.ctx.storage.transaction(async (txn) => {
+      if (await txn.get<boolean>(`handoff:${token}`)) return null;
+      const provision = await txn.get<ProvisionInstallationResult>(
+        `provision:${installationId}`,
+      );
+      if (!provision) return null;
+      await txn.put(`handoff:${token}`, true);
+      return provision;
+    });
   }
 }
 
@@ -78,6 +100,26 @@ export default class TestDependencies
     };
   }
 
+  async verifyLoginHandoff(token: string, hostname: string): Promise<
+    | { ok: true; installationId: string; principalId: string; localUid: number }
+    | { ok: false }
+  > {
+    const handle = hostname.endsWith(".gsv.space")
+      ? hostname.slice(0, -".gsv.space".length)
+      : "";
+    if (token !== `test-handoff:${handle}` || (handle !== "first" && handle !== "second")) {
+      return { ok: false };
+    }
+    const installationId = `inst_integration_${handle}`;
+    const provision = await this.integrationState().consumeHandoff(token, installationId);
+    return provision ? {
+      ok: true,
+      installationId,
+      principalId: provision.principalId,
+      localUid: provision.localUid,
+    } : { ok: false };
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
@@ -91,6 +133,13 @@ export default class TestDependencies
         input.frame,
       );
       return Response.json(response);
+    }
+
+    if (url.pathname === "/__test/provision" && request.method === "POST") {
+      const input = await request.json<ProvisionInstallationInput>();
+      const result = await this.env.GATEWAY.provisionInstallation(input);
+      await this.integrationState().rememberProvision(result);
+      return Response.json(result);
     }
 
     if (url.pathname === "/__test/outbound" && request.method === "GET") {

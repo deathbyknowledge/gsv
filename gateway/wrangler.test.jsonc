@@ -66,7 +66,7 @@
 		"directory": "./test-assets/",
 		"binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/health", "/ws", "/git/*", "/downloads/*"]
+    "run_worker_first": ["/health", "/ws", "/auth/handoff", "/auth/logout", "/git/*", "/downloads/*"]
 	}
 	// Note: No AI binding, no service bindings for channels
 	// Tests should mock these dependencies

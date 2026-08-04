@@ -37,6 +37,9 @@ import { KERNEL_V019_REMOVE_NOTIFICATIONS } from "./v019_remove_notifications";
 import {
   KERNEL_V020_ADD_INSTALLATION_IDENTITY,
 } from "./v020_add_installation_identity";
+import {
+  KERNEL_V021_ADD_MANAGED_IDENTITY,
+} from "./v021_add_managed_identity";
 
 // Used by Kernel DO startup before the individual stores initialize.
 export const KERNEL_SCHEMA_COMPONENT = "kernel";
@@ -62,6 +65,7 @@ export const KERNEL_MIGRATIONS: readonly SqlMigration[] = [
   KERNEL_V018_REMOVE_CONVERSATION_REGISTRY,
   KERNEL_V019_REMOVE_NOTIFICATIONS,
   KERNEL_V020_ADD_INSTALLATION_IDENTITY,
+  KERNEL_V021_ADD_MANAGED_IDENTITY,
 ];
 
 export function runKernelSqlMigrations(storage: DurableObjectStorage): void {

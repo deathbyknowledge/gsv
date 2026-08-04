@@ -20,3 +20,4 @@ export * from "./binary-body-channel";
 export * from "./request-cancel";
 export * from "./file-content";
 export * from "./speech-text";
+export type * from "./managed";

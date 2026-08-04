@@ -874,10 +874,15 @@ by this program.
 Current implementation status as of 2026-08-04: phases 0 through 3 are complete
 for the existing runtime on the managed-service branch. Kernel, Process, R2,
 ripgit, and user-owned adapter state now share one installation boundary with
-explicit standalone compatibility. The shared-bot peer ownership recheck is a
-Phase 6 managed Telegram gate because that global peer directory does not exist
-before then. Managed production hosting remains disabled while Phases 4 through
-9 are incomplete.
+explicit standalone compatibility. Phase 4 foundation is in progress: the
+account-service D1 schema, atomic handle reservation, active-host directory,
+resumable private Kernel provisioning, managed public-setup rejection, and the
+one-time host-session handoff boundary are implemented. Platform credentials,
+real handoff issuance, account recovery, abuse controls, transactional email,
+and audit recording remain before the Phase 4 exit gate. The shared-bot peer
+ownership recheck is a Phase 6 managed Telegram gate because that global peer
+directory does not exist before then. Managed production hosting remains
+disabled while Phases 4 through 9 are incomplete.
 
 ### Phase 0: executable specification
 

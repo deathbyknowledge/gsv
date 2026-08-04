@@ -15,7 +15,7 @@
     "test:run": "npm run test:unit && npm run test:integration"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.18.0",
+    "@cloudflare/vitest-pool-workers": "0.18.0",
     "alchemy": "^0.83.1",
     "tsx": "^4.19.0",
     "typescript": "^5.5.2",

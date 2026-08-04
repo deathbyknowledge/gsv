@@ -31,6 +31,10 @@ export type AuthResult =
   | { ok: true; identity: AuthIdentity }
   | { ok: false; error: string };
 
+export type AuthTokenResult =
+  | { ok: true; identity: AuthIdentity; tokenId: string }
+  | { ok: false; error: string };
+
 export type AuthTokenKind = "node" | "service" | "user";
 export type AuthTokenRole = "driver" | "service" | "user";
 
@@ -365,19 +369,38 @@ export class AuthStore {
     const user = this.getPasswdByUsername(username);
     if (!user) return { ok: false, error: "Unknown user" };
 
+    const result = await this.authenticateTokenValue(token, options);
+    if (!result.ok || result.identity.uid !== user.uid) {
+      return { ok: false, error: "Authentication failed" };
+    }
+    return { ok: true, identity: result.identity };
+  }
+
+  async authenticateTokenValue(
+    token: string,
+    options: TokenAuthOptions = {},
+  ): Promise<AuthTokenResult> {
+    if (!token) return { ok: false, error: "Authentication failed" };
+
     const tokenHash = await hashToken(token);
     const rows = this.sql.exec<{
       token_id: string;
+      uid: number;
+      username: string;
+      gid: number;
+      home: string;
       allowed_role: AuthTokenRole | null;
       allowed_device_id: string | null;
       expires_at: number | null;
       revoked_at: number | null;
     }>(
-      `SELECT token_id, allowed_role, allowed_device_id, expires_at, revoked_at
-       FROM auth_tokens
-       WHERE uid = ? AND token_hash = ?
+      `SELECT
+         t.token_id, t.uid, p.username, p.gid, p.home,
+         t.allowed_role, t.allowed_device_id, t.expires_at, t.revoked_at
+       FROM auth_tokens t
+       JOIN passwd p ON p.uid = t.uid
+       WHERE t.token_hash = ?
        LIMIT 1`,
-      user.uid,
       tokenHash,
     ).toArray();
 
@@ -417,15 +440,16 @@ export class AuthStore {
       tokenRow.token_id,
     );
 
-    const gids = this.resolveGids(username, user.gid);
+    const gids = this.resolveGids(tokenRow.username, tokenRow.gid);
     return {
       ok: true,
+      tokenId: tokenRow.token_id,
       identity: {
-        uid: user.uid,
-        gid: user.gid,
+        uid: tokenRow.uid,
+        gid: tokenRow.gid,
         gids,
-        username: user.username,
-        home: user.home,
+        username: tokenRow.username,
+        home: tokenRow.home,
       },
     };
   }

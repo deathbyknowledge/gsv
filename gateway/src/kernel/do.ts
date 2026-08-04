@@ -26,6 +26,8 @@ import type {
   ConnectionIdentity,
   NetFetchArgs,
   ProcessIdentity,
+  ProvisionInstallationInput,
+  ProvisionInstallationResult,
   ScheduleRecord,
   ScheduleRunResult,
   SchedulerRunArgs,
@@ -122,6 +124,11 @@ import {
 } from "../installation/identity";
 import { createInstallationStorage } from "../installation/storage";
 import { createInstallationRipgit } from "../installation/ripgit";
+import {
+  ManagedProvisioningStore,
+  type ManagedLoginSession,
+} from "./managed-provisioning";
+import { readManagedSessionCookie } from "../managed/session-cookie";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -178,6 +185,7 @@ function adapterSignalRetryDelayMs(attempt: number): number {
 type ConnectionState = {
   step: "pending" | "connected" | "superseded";
   identity?: ConnectionIdentity;
+  preauthenticatedIdentity?: ProcessIdentity;
   clientId?: string;
   clientPlatform?: string;
 };
@@ -215,6 +223,7 @@ export class Kernel extends Host<Env> {
   private readonly installationStorage: R2Bucket;
   private readonly installationEnv: Env;
   private readonly auth: AuthStore;
+  private readonly managedProvisioning: ManagedProvisioningStore;
   private readonly caps: CapabilityStore;
   private readonly config: ConfigStore;
   private readonly devices: DeviceRegistry;
@@ -271,6 +280,7 @@ export class Kernel extends Host<Env> {
     );
 
     this.auth = new AuthStore(sql);
+    this.managedProvisioning = new ManagedProvisioningStore(ctx.storage, this.auth);
 
     this.caps = new CapabilityStore(sql);
     this.caps.seed();
@@ -344,6 +354,37 @@ export class Kernel extends Host<Env> {
 
   async getInstallationIdentity(): Promise<InstallationIdentity | null> {
     return this.installationIdentity.get();
+  }
+
+  async provisionManagedInstallation(
+    input: ProvisionInstallationInput,
+  ): Promise<ProvisionInstallationResult> {
+    if (!isManagedKernelEnv(this.env)) {
+      throw new Error("Managed provisioning is not enabled");
+    }
+    const identity = await this.installationIdentity.ensure(input.installation);
+    if (identity.installationId !== input.installation.installationId) {
+      throw new Error("Provisioning installation identity mismatch");
+    }
+    const ctx = this.buildKernelContext({});
+    await ensureKernelBootstrapped(ctx);
+    return await this.managedProvisioning.provision(input, ctx);
+  }
+
+  async createManagedLoginSession(input: {
+    principalId: string;
+    localUid: number;
+    expiresAt: number;
+  }): Promise<ManagedLoginSession> {
+    if (!isManagedKernelEnv(this.env)) {
+      throw new Error("Managed sessions are not enabled");
+    }
+    return await this.managedProvisioning.createLoginSession(input);
+  }
+
+  async revokeManagedLoginSession(token: string): Promise<boolean> {
+    if (!isManagedKernelEnv(this.env)) return false;
+    return await this.managedProvisioning.revokeLoginSession(token);
   }
 
   async onRequest(request: Request): Promise<Response> {
@@ -457,8 +498,15 @@ export class Kernel extends Host<Env> {
     return false;
   }
 
-  onConnect(connection: Connection): void {
-    const state: ConnectionState = { step: "pending" };
+  async onConnect(connection: Connection, context: ConnectionContext): Promise<void> {
+    const token = readManagedSessionCookie(context.request.headers.get("cookie"));
+    const preauthenticatedIdentity = token && isManagedKernelEnv(this.env)
+      ? await this.managedProvisioning.authenticateLoginSession(token)
+      : null;
+    const state: ConnectionState = {
+      step: "pending",
+      ...(preauthenticatedIdentity ? { preauthenticatedIdentity } : {}),
+    };
     connection.setState(state);
   }
 
@@ -1584,12 +1632,19 @@ export class Kernel extends Host<Env> {
     return this.buildKernelContext({
       connection,
       identity: state.identity as ConnectionIdentity | undefined,
+      preauthenticatedIdentity: state.preauthenticatedIdentity
+        ? {
+            ...state.preauthenticatedIdentity,
+            gids: [...state.preauthenticatedIdentity.gids],
+          }
+        : undefined,
     });
   }
 
   private buildKernelContext(options: {
     connection?: Connection | null;
     identity?: ConnectionIdentity;
+    preauthenticatedIdentity?: ProcessIdentity;
     processId?: string;
     processRunId?: string;
     requestSignal?: AbortSignal;
@@ -1616,6 +1671,7 @@ export class Kernel extends Host<Env> {
       schedules: this.schedules,
       connection: options.connection ?? null,
       identity: options.identity,
+      preauthenticatedIdentity: options.preauthenticatedIdentity,
       processId: options.processId,
       processRunId: options.processRunId,
       requestSignal: options.requestSignal,
@@ -2191,17 +2247,34 @@ export class Kernel extends Host<Env> {
       }
 
       if (frame.call === "sys.setup.assist") {
+        if (isManagedKernelEnv(this.env)) {
+          this.sendError(connection, frame.id, 403, "Public setup is disabled for managed installations");
+          return;
+        }
         await this.handleSysSetupAssist(connection, frame as RequestFrame<"sys.setup.assist">);
         return;
       }
 
       if (frame.call === "sys.setup") {
+        if (isManagedKernelEnv(this.env)) {
+          this.sendError(connection, frame.id, 403, "Public setup is disabled for managed installations");
+          return;
+        }
         await this.handleSysSetup(connection, frame as RequestFrame<"sys.setup">);
         return;
       }
 
       if (!state || state.step !== "connected" || !state.identity) {
         if (this.auth.isSetupMode()) {
+          if (isManagedKernelEnv(this.env)) {
+            this.sendError(
+              connection,
+              frame.id,
+              503,
+              "Managed installation provisioning is incomplete",
+            );
+            return;
+          }
           this.sendError(
             connection,
             frame.id,
@@ -3286,6 +3359,10 @@ function requestAbortError(reason: unknown): Error {
 
 function sameRouteOrigin(left: RouteOrigin, right: RouteOrigin): boolean {
   return left.type === right.type && left.id === right.id;
+}
+
+function isManagedKernelEnv(env: Env): boolean {
+  return Boolean((env as Env & { INSTALLATION_DIRECTORY?: unknown }).INSTALLATION_DIRECTORY);
 }
 
 function normalizeRequestCancelReason(reason: string | undefined): string {

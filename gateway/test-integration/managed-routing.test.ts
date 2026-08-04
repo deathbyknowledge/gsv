@@ -72,6 +72,123 @@ describe("managed installation routing integration", () => {
     }
   });
 
+  it("rejects public setup for an uninitialized managed Kernel", async () => {
+    const response = await harness.getWorker("gsv-managed").fetch(
+      "https://first.gsv.space/ws",
+      { headers: { Upgrade: "websocket" } },
+    );
+    expect(response.status).toBe(101);
+    const socket = response.webSocket;
+    if (!socket) throw new Error("No managed WebSocket");
+    socket.accept();
+
+    const setup = await expectManagedRpc(
+      socket,
+      "public-managed-setup",
+      "sys.setup",
+      { username: "attacker", password: "attacker-password" },
+    );
+    expect(setup).toMatchObject({
+      ok: false,
+      error: {
+        code: 403,
+        message: "Public setup is disabled for managed installations",
+      },
+    });
+    socket.close(1000, "test complete");
+  });
+
+  it("exchanges a one-time host handoff for a managed browser session", async () => {
+    await provisionManagedInstallation(harness, "first");
+    const cookie = await exchangeManagedHandoff(harness, "first");
+
+    const replay = await harness.getWorker("gsv-managed").fetch(
+      "https://first.gsv.space/auth/handoff",
+      {
+        method: "POST",
+        redirect: "manual",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: "https://accounts.gsv.space",
+        },
+        body: new URLSearchParams({ token: "test-handoff:first" }).toString(),
+      },
+    );
+    expect(replay.status).toBe(401);
+
+    const socketResponse = await harness.getWorker("gsv-managed").fetch(
+      "https://first.gsv.space/ws",
+      {
+        headers: {
+          Upgrade: "websocket",
+          Cookie: cookie,
+        },
+      },
+    );
+    expect(socketResponse.status).toBe(101);
+    const socket = socketResponse.webSocket;
+    if (!socket) throw new Error("No managed WebSocket");
+    socket.accept();
+
+    await expectManagedRpcOk(socket, "managed-session-connect", "sys.connect", {
+      protocol: 2,
+      client: {
+        id: "managed-first",
+        version: "1.0.0",
+        platform: "test",
+        role: "user",
+      },
+    });
+    socket.close(1000, "test complete");
+  });
+
+  it("revokes a managed browser session on same-origin logout", async () => {
+    await provisionManagedInstallation(harness, "first");
+    const cookie = await exchangeManagedHandoff(harness, "first");
+    const worker = harness.getWorker("gsv-managed");
+
+    const logout = await worker.fetch("https://first.gsv.space/auth/logout", {
+      method: "POST",
+      headers: {
+        Cookie: cookie,
+        Origin: "https://first.gsv.space",
+      },
+    });
+    expect(logout.status).toBe(204);
+    expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
+
+    const socketResponse = await worker.fetch("https://first.gsv.space/ws", {
+      headers: {
+        Upgrade: "websocket",
+        Cookie: cookie,
+      },
+    });
+    expect(socketResponse.status).toBe(101);
+    const socket = socketResponse.webSocket;
+    if (!socket) throw new Error("No managed WebSocket");
+    socket.accept();
+
+    const connect = await expectManagedRpc(
+      socket,
+      "revoked-managed-session",
+      "sys.connect",
+      {
+        protocol: 2,
+        client: {
+          id: "managed-first",
+          version: "1.0.0",
+          platform: "test",
+          role: "user",
+        },
+      },
+    );
+    expect(connect).toMatchObject({
+      ok: false,
+      error: { code: 401, message: "Authentication required" },
+    });
+    socket.close(1000, "test complete");
+  });
+
   it("routes trusted adapter RPC to its managed installation", async () => {
     const frame: AdapterGatewayRequestFrame = {
       type: "req",
@@ -119,42 +236,36 @@ describe("managed installation routing integration", () => {
   });
 
   it("carries installation identity through outbound adapter RPC", async () => {
-    const worker = harness.getWorker("gsv-managed");
+    const deliveryId = "same-logical-delivery";
     for (const handle of ["first", "second"] as const) {
-      const socketResponse = await worker.fetch(`https://${handle}.gsv.space/ws`, {
-        headers: { Upgrade: "websocket" },
-      });
-      expect(socketResponse.status).toBe(101);
-      const socket = socketResponse.webSocket;
-      if (!socket) throw new Error(`No WebSocket for ${handle}`);
-      socket.accept();
-
-      const rootPassword = `root-${handle}-integration`;
-      await expectManagedRpcOk(socket, `setup-${handle}`, "sys.setup", {
-        username: `${handle}-owner`,
-        password: `${handle}-owner-password`,
-        rootPassword,
-        agentName: `${handle}-agent`,
-        timezone: "Europe/Amsterdam",
-      });
-      await expectManagedRpcOk(socket, `connect-${handle}`, "sys.connect", {
-        protocol: 2,
-        client: {
-          id: `managed-${handle}`,
-          version: "1.0.0",
-          platform: "test",
-          role: "user",
+      await provisionManagedInstallation(harness, handle);
+      const frame: AdapterGatewayRequestFrame = {
+        type: "req",
+        id: `send-${handle}`,
+        call: "adapter.send",
+        args: {
+          adapter: "telegram",
+          accountId: "shared-account",
+          deliveryId,
+          surface: { kind: "dm", id: "same-provider-peer" },
+          text: `from ${handle}`,
         },
-        auth: { username: "root", password: rootPassword },
+      };
+      const response = await sendAdapterServiceFrame(
+        harness,
+        `inst_integration_${handle}`,
+        frame,
+      );
+      expect(response).toMatchObject({
+        type: "res",
+        id: frame.id,
+        ok: true,
+        data: {
+          ok: true,
+          deliveryId,
+          deliveryState: "sent",
+        },
       });
-      await expectManagedRpcOk(socket, `send-${handle}`, "adapter.send", {
-        adapter: "telegram",
-        accountId: "shared-account",
-        deliveryId: "same-logical-delivery",
-        surface: { kind: "dm", id: "same-provider-peer" },
-        text: `from ${handle}`,
-      });
-      socket.close(1000, "test complete");
     }
 
     for (const handle of ["first", "second"] as const) {
@@ -167,7 +278,7 @@ describe("managed installation routing integration", () => {
         installationId,
         accountId: "shared-account",
         message: expect.objectContaining({
-          deliveryId: "same-logical-delivery",
+          deliveryId,
           text: `from ${handle}`,
         }),
       }]);
@@ -188,6 +299,17 @@ type HarnessResponse = Awaited<ReturnType<HarnessWorker["fetch"]>>;
 type HarnessWebSocket = NonNullable<HarnessResponse["webSocket"]>;
 
 async function expectManagedRpcOk(
+  socket: HarnessWebSocket,
+  id: string,
+  call: string,
+  args: unknown,
+): Promise<ManagedRpcResponse> {
+  const response = await expectManagedRpc(socket, id, call, args);
+  expect(response).toMatchObject({ type: "res", id, ok: true });
+  return response;
+}
+
+async function expectManagedRpc(
   socket: HarnessWebSocket,
   id: string,
   call: string,
@@ -220,9 +342,67 @@ async function expectManagedRpcOk(
     }, 5_000);
   });
   socket.send(JSON.stringify({ type: "req", id, call, args }));
-  const response = await responsePromise;
-  expect(response).toMatchObject({ type: "res", id, ok: true });
-  return response;
+  return await responsePromise;
+}
+
+async function provisionManagedInstallation(
+  harness: TestHarness,
+  handle: "first" | "second",
+): Promise<void> {
+  const response = await harness.getWorker("gsv-test-dependencies").fetch(
+    "http://gsv-test-dependencies/__test/provision",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        operationId: `op_integration_${handle}`,
+        installation: {
+          installationId: `inst_integration_${handle}`,
+          handle,
+          canonicalOrigin: `https://${handle}.gsv.space`,
+        },
+        owner: {
+          principalId: `principal_integration_${handle}`,
+          username: `${handle}-owner`,
+          agentName: `${handle}-agent`,
+          timezone: "Europe/Amsterdam",
+        },
+        provisionVersion: 1,
+      }),
+    },
+  );
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toMatchObject({
+    state: "active",
+    installationId: `inst_integration_${handle}`,
+    principalId: `principal_integration_${handle}`,
+    localUid: 1000,
+  });
+}
+
+async function exchangeManagedHandoff(
+  harness: TestHarness,
+  handle: "first" | "second",
+): Promise<string> {
+  const response = await harness.getWorker("gsv-managed").fetch(
+    `https://${handle}.gsv.space/auth/handoff`,
+    {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        origin: "https://accounts.gsv.space",
+      },
+      body: new URLSearchParams({ token: `test-handoff:${handle}` }).toString(),
+    },
+  );
+  expect(response.status, await response.clone().text()).toBe(303);
+  expect(response.headers.get("location")).toBe("/");
+  const setCookie = response.headers.get("set-cookie");
+  expect(setCookie).toContain("__Host-gsv-session=");
+  expect(setCookie).not.toContain("Domain=");
+  if (!setCookie) throw new Error("Managed handoff did not set a cookie");
+  return setCookie.split(";", 1)[0];
 }
 
 async function sendAdapterServiceFrame(

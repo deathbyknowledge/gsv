@@ -55,7 +55,7 @@ describe("installation routing", () => {
     expect(route?.identity.installationId).toBe("inst_hank");
   });
 
-  it.each(["provisioning", "suspended", "deleted"])(
+  it.each(["reserved", "provisioning", "deleting", "deleted"] as const)(
     "does not route a managed installation in %s state",
     async (state) => {
       const directory: InstallationDirectoryService = {
@@ -71,6 +71,27 @@ describe("installation routing", () => {
         new Request("https://hank.gsv.space/ws"),
         { kind: "managed", directory },
       )).resolves.toBeNull();
+    },
+  );
+
+  it.each(["trialing", "active", "past_due", "restricted", "cancelled", "retained"] as const)(
+    "keeps a managed installation routable in %s state",
+    async (state) => {
+      const directory: InstallationDirectoryService = {
+        resolveHostname: async () => ({
+          found: true,
+          installationId: "inst_hank",
+          handle: "hank",
+          canonicalOrigin: "https://hank.gsv.space",
+          state,
+        }),
+      };
+      await expect(resolveInstallationRoute(
+        new Request("https://hank.gsv.space/ws"),
+        { kind: "managed", directory },
+      )).resolves.toMatchObject({
+        identity: { installationId: "inst_hank" },
+      });
     },
   );
 

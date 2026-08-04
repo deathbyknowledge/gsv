@@ -9,6 +9,7 @@ import type { Connection } from "agents";
 import type { MCPClientManager } from "agents/mcp/client";
 import type {
   ConnectionIdentity,
+  ProcessIdentity,
   SchedulerRunArgs,
   SchedulerRunResult,
 } from "@humansandmachines/gsv/protocol";
@@ -51,6 +52,7 @@ export type KernelContext = {
   schedules: ScheduleStore;
   connection: Connection | null;
   identity?: ConnectionIdentity;
+  preauthenticatedIdentity?: ProcessIdentity;
   processId?: string;
   processRunId?: string;
   requestSignal?: AbortSignal;

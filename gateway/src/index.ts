@@ -3,6 +3,11 @@ import type {
   AdapterInstallationContext,
   GatewayAdapterInterface,
 } from "./adapter-interface";
+import type {
+  ManagedGatewayProvisioningInterface,
+  ProvisionInstallationInput,
+  ProvisionInstallationResult,
+} from "@humansandmachines/gsv/protocol";
 import type { Frame } from "./protocol/frames";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import {
@@ -29,6 +34,12 @@ import {
   createInstallationRipgit,
   removeUntrustedRipgitInstallationHeader,
 } from "./installation/ripgit";
+import { parseProvisionInstallationInput } from "./managed/provisioning";
+import {
+  clearManagedSessionCookie,
+  managedSessionSetCookie,
+  readManagedSessionCookie,
+} from "./managed/session-cookie";
 
 export { Kernel } from "./kernel/do";
 export { Process } from "./process/do";
@@ -39,6 +50,14 @@ export default {
 
     if (url.pathname === "/health") {
       return Response.json({ status: "healthy" });
+    }
+
+    if (url.pathname === "/auth/handoff") {
+      return await handleManagedLoginHandoff(request, env);
+    }
+
+    if (url.pathname === "/auth/logout") {
+      return await handleManagedLogout(request, env);
     }
 
     if (url.pathname === "/.well-known/oauth-client/gsv.json" && request.method === "GET") {
@@ -289,8 +308,23 @@ async function buildGitProxyRequest(
 
 export class GatewayEntrypoint
   extends WorkerEntrypoint<Env>
-  implements GatewayAdapterInterface
+  implements GatewayAdapterInterface, ManagedGatewayProvisioningInterface
 {
+  async provisionInstallation(
+    rawInput: ProvisionInstallationInput,
+  ): Promise<ProvisionInstallationResult> {
+    if (getStandaloneServiceInstallationId(this.env)) {
+      throw new Error("Managed provisioning is not enabled");
+    }
+    const input = parseProvisionInstallationInput(rawInput);
+    const kernel = await getKernelByInstallationId(
+      this.env.KERNEL,
+      input.installation.installationId,
+    );
+    await kernel.ensureInstallationIdentity(input.installation);
+    return await kernel.provisionManagedInstallation(input);
+  }
+
   async serviceFrame(
     installation: AdapterInstallationContext,
     frame: Frame,
@@ -315,5 +349,137 @@ export class GatewayEntrypoint
       console.error("[GatewayEntrypoint] serviceFrame failed:", error);
       return null;
     }
+  }
+}
+
+const MANAGED_BROWSER_SESSION_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_HANDOFF_BODY_BYTES = 2_048;
+
+async function handleManagedLoginHandoff(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { Allow: "POST" },
+    });
+  }
+  const source = getGatewayInstallationRoutingSource(request, env);
+  if (source.kind !== "managed") {
+    return new Response("Managed login is not available", { status: 404 });
+  }
+  if (!hasExpectedOrigin(request, managedAccountOrigin(env))) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  let token: string;
+  try {
+    token = await readHandoffToken(request);
+  } catch {
+    return new Response("Invalid login handoff", { status: 400 });
+  }
+
+  const resolved = await resolveGatewayKernel(request, env);
+  if (!resolved.ok) return resolved.response;
+  try {
+    const verification = await source.directory.verifyLoginHandoff(
+      token,
+      resolved.route.requestedHostname,
+    );
+    if (
+      !verification.ok
+      || verification.installationId !== resolved.route.identity.installationId
+      || !Number.isSafeInteger(verification.localUid)
+      || verification.localUid < 1000
+    ) {
+      return new Response("Invalid or expired login handoff", {
+        status: 401,
+        headers: { "cache-control": "no-store" },
+      });
+    }
+    const session = await resolved.kernel.createManagedLoginSession({
+      principalId: verification.principalId,
+      localUid: verification.localUid,
+      expiresAt: Date.now() + MANAGED_BROWSER_SESSION_MS,
+    });
+    return new Response(null, {
+      status: 303,
+      headers: {
+        location: "/",
+        "set-cookie": managedSessionSetCookie(session.token, session.expiresAt),
+        "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
+      },
+    });
+  } catch {
+    console.error("[Gateway] Managed login handoff failed");
+    return new Response("Login unavailable", {
+      status: 503,
+      headers: { "cache-control": "no-store" },
+    });
+  }
+}
+
+async function handleManagedLogout(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { Allow: "POST" },
+    });
+  }
+  const source = getGatewayInstallationRoutingSource(request, env);
+  if (source.kind !== "managed") {
+    return new Response("Managed login is not available", { status: 404 });
+  }
+  const expectedOrigin = new URL(request.url).origin;
+  if (!hasExpectedOrigin(request, expectedOrigin)) {
+    return new Response("Forbidden", { status: 403 });
+  }
+  const resolved = await resolveGatewayKernel(request, env);
+  if (!resolved.ok) return resolved.response;
+  const token = readManagedSessionCookie(request.headers.get("cookie"));
+  if (token) {
+    await resolved.kernel.revokeManagedLoginSession(token).catch(() => false);
+  }
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "set-cookie": clearManagedSessionCookie(),
+      "cache-control": "no-store",
+    },
+  });
+}
+
+async function readHandoffToken(request: Request): Promise<string> {
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_HANDOFF_BODY_BYTES) {
+    throw new Error("handoff body is too large");
+  }
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim();
+  if (contentType !== "application/x-www-form-urlencoded") {
+    throw new Error("handoff content type is invalid");
+  }
+  const body = await request.text();
+  if (new TextEncoder().encode(body).byteLength > MAX_HANDOFF_BODY_BYTES) {
+    throw new Error("handoff body is too large");
+  }
+  const params = new URLSearchParams(body);
+  const values = params.getAll("token");
+  if (values.length !== 1 || !values[0] || values[0].length > 512) {
+    throw new Error("handoff token is invalid");
+  }
+  return values[0];
+}
+
+function managedAccountOrigin(env: Env): string {
+  const value = (env as Env & { GSV_ACCOUNT_ORIGIN?: string }).GSV_ACCOUNT_ORIGIN;
+  return value?.trim() || "https://accounts.gsv.space";
+}
+
+function hasExpectedOrigin(request: Request, expectedOrigin: string): boolean {
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+  try {
+    return new URL(origin).origin === new URL(expectedOrigin).origin;
+  } catch {
+    return false;
   }
 }

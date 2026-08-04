@@ -103,6 +103,13 @@ export async function handleConnect(
   await ensureKernelBootstrapped(ctx);
 
   if (auth.isSetupMode()) {
+    if ((ctx.env as Env & { INSTALLATION_DIRECTORY?: unknown }).INSTALLATION_DIRECTORY) {
+      return {
+        ok: false,
+        code: 503,
+        message: "Managed installation provisioning is incomplete",
+      };
+    }
     return {
       ok: false,
       code: SETUP_REQUIRED_ERROR_CODE,
@@ -240,6 +247,13 @@ async function resolveIdentity(
 ): Promise<IdentityOutcome> {
   const { auth } = ctx;
   const role = args.client.role;
+
+  if (ctx.preauthenticatedIdentity) {
+    if (role !== "user" || args.auth) {
+      return { ok: false, error: "Managed session cannot be combined with explicit authentication" };
+    }
+    return { ok: true, identity: ctx.preauthenticatedIdentity };
+  }
 
   if (!args.auth) {
     return { ok: false, error: "Authentication required" };

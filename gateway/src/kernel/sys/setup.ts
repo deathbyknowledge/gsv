@@ -8,6 +8,10 @@ import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
 import { ensurePersonalAgent } from "../agents";
+import type {
+  ProvisionInstallationInput,
+  ProvisionInstallationResult,
+} from "@humansandmachines/gsv/protocol";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -363,4 +367,123 @@ export async function handleSysSetup(
     );
     throw error;
   }
+}
+
+/**
+ * Provision the first managed human without creating a second user-facing
+ * password. The generated bootstrap password exists only for the duration of
+ * this call and both human and root password entries are locked before the
+ * installation becomes routable.
+ *
+ * A retry after partial setup resumes from the matching first account. This is
+ * intentionally separate from public sys.setup, whose standalone contract
+ * remains strict and password based.
+ */
+export async function handleManagedInstallationSetup(
+  input: ProvisionInstallationInput,
+  ctx: KernelContext,
+): Promise<ProvisionInstallationResult> {
+  const username = input.owner.username;
+  const bootstrapPassword = randomBootstrapPassword();
+  parseSetupIdentity({ username, password: bootstrapPassword });
+  const agentName = parseManagedAgentName(ctx.auth, input.owner.agentName, username);
+  const timezone = parseTimezone({
+    username,
+    password: bootstrapPassword,
+    timezone: input.owner.timezone,
+  });
+
+  const existingHumans = ctx.auth.getPasswdEntries().filter((entry) => entry.uid >= 1000);
+  const existing = ctx.auth.getPasswdByUsername(username);
+  if (existingHumans.length === 0) {
+    await handleSysSetup({
+      username,
+      password: bootstrapPassword,
+      ...(agentName ? { agentName } : {}),
+      ...(timezone ? { timezone } : {}),
+    }, ctx);
+  } else if (
+    existingHumans.length !== 1
+    || !existing
+    || existingHumans[0].uid !== existing.uid
+  ) {
+    throw new Error("Managed installation is already initialized by another account");
+  } else {
+    await resumeManagedAccountSetup(ctx, existing, agentName);
+    if (timezone !== undefined) {
+      ctx.config.set("config/server/timezone", timezone);
+    }
+  }
+
+  const user = ctx.auth.getPasswdByUsername(username);
+  if (!user || user.uid < 1000) {
+    throw new Error("Managed owner account was not created");
+  }
+
+  // Managed browser sessions authenticate with revocable opaque tokens. Local
+  // passwords remain unavailable unless a future explicit product flow adds
+  // one after recent platform authentication.
+  ctx.auth.setShadow(makeShadowEntry(username, "!"));
+  ctx.auth.setShadow(makeShadowEntry("root", "!"));
+
+  return {
+    state: "active",
+    installationId: input.installation.installationId,
+    principalId: input.owner.principalId,
+    localUid: user.uid,
+    username: user.username,
+    provisionVersion: input.provisionVersion,
+  };
+}
+
+async function resumeManagedAccountSetup(
+  ctx: KernelContext,
+  user: PasswdEntry,
+  agentName: string | undefined,
+): Promise<void> {
+  const processIdentity: ProcessIdentity = {
+    uid: user.uid,
+    gid: user.gid,
+    gids: ctx.auth.resolveGids(user.username, user.gid),
+    username: user.username,
+    home: user.home,
+    cwd: user.home,
+  };
+  await ensureAccountHomeLayout(ctx.env, {
+    uid: 0,
+    gid: 0,
+    gids: [0],
+    username: "root",
+    home: "/root",
+    cwd: "/root",
+  }, {
+    cleanupGeneratedPromptContext: true,
+  });
+  await ensureAccountHomeLayout(ctx.env, processIdentity, {
+    cleanupGeneratedPromptContext: true,
+  });
+  await ensurePersonalAgent(ctx, processIdentity, agentName);
+}
+
+function randomBootstrapPassword(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function parseManagedAgentName(
+  auth: KernelContext["auth"],
+  value: unknown,
+  username: string,
+): string | undefined {
+  if (typeof value === "string") {
+    const owner = auth.getPasswdByUsername(username);
+    const existingAgentUid = owner ? auth.getPersonalAgentUid(owner.uid) : null;
+    const existingAgent = existingAgentUid === null
+      ? null
+      : auth.getPasswdByUid(existingAgentUid);
+    if (existingAgent?.username === value) {
+      return value;
+    }
+  }
+  return parseSetupAgentName(auth, value, username);
 }

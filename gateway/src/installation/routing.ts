@@ -1,4 +1,9 @@
 import { getAgentByName } from "agents";
+import type {
+  InstallationDirectoryResult,
+  InstallationDirectoryService,
+  ManagedInstallationState,
+} from "@humansandmachines/gsv/protocol";
 import type { Kernel } from "../kernel/do";
 import {
   LEGACY_STANDALONE_INSTALLATION_ID,
@@ -20,19 +25,16 @@ export function processDurableObjectName(
   return `process:${encodeURIComponent(parsed)}:${encodeURIComponent(pid)}`;
 }
 
-export type InstallationDirectoryResult =
-  | {
-      found: true;
-      installationId: string;
-      handle: string;
-      canonicalOrigin: string;
-      state: string;
-    }
-  | { found: false };
+export type { InstallationDirectoryResult, InstallationDirectoryService };
 
-export interface InstallationDirectoryService {
-  resolveHostname(hostname: string): Promise<InstallationDirectoryResult>;
-}
+const ROUTABLE_MANAGED_INSTALLATION_STATES: ReadonlySet<ManagedInstallationState> = new Set([
+  "trialing",
+  "active",
+  "past_due",
+  "restricted",
+  "cancelled",
+  "retained",
+]);
 
 export type InstallationRoutingSource =
   | {
@@ -103,7 +105,7 @@ export async function resolveInstallationRoute(
   }
 
   const result = await source.directory.resolveHostname(requestedHostname);
-  if (!result.found || result.state !== "active") {
+  if (!result.found || !ROUTABLE_MANAGED_INSTALLATION_STATES.has(result.state)) {
     return null;
   }
 

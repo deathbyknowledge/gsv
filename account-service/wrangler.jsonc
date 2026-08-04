@@ -1,0 +1,35 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-accounts",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    {
+      "pattern": "accounts.gsv.space/*",
+      "zone_name": "gsv.space"
+    }
+  ],
+  "vars": {
+    "GSV_ACCOUNT_ORIGIN": "https://accounts.gsv.space",
+    "GSV_BASE_DOMAIN": "gsv.space",
+    "ENVIRONMENT": "production"
+  },
+  "d1_databases": [
+    {
+      "binding": "ACCOUNT_DB",
+      "database_name": "gsv-accounts",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "gsv",
+      "entrypoint": "GatewayEntrypoint"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

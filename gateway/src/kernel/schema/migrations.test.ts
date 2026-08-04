@@ -31,7 +31,7 @@ function createTableStatement(name: string): string {
 describe("kernel schema migrations", () => {
   it("starts the kernel component at a v1 baseline", () => {
     expect(KERNEL_SCHEMA_COMPONENT).toBe("kernel");
-    expect(KERNEL_MIGRATIONS).toHaveLength(20);
+    expect(KERNEL_MIGRATIONS).toHaveLength(21);
     expect(KERNEL_MIGRATIONS[0]).toMatchObject({
       id: 1,
       name: "initial_kernel_schema",
@@ -112,6 +112,10 @@ describe("kernel schema migrations", () => {
       id: 20,
       name: "add_installation_identity",
     });
+    expect(KERNEL_MIGRATIONS[20]).toMatchObject({
+      id: 21,
+      name: "add_managed_identity",
+    });
   });
 
   it("creates the current kernel table set", () => {
@@ -150,6 +154,9 @@ describe("kernel schema migrations", () => {
       "user_mcp_servers",
       "adapter_ingress_receipts",
       "installation_identity",
+      "managed_provisioning_operations",
+      "managed_principal_memberships",
+      "managed_login_sessions",
     ]);
   });
 
@@ -158,6 +165,15 @@ describe("kernel schema migrations", () => {
     expect(identity).toContain("record_id INTEGER PRIMARY KEY CHECK (record_id = 1)");
     expect(identity).toContain("installation_id TEXT NOT NULL UNIQUE");
     expect(identity).toContain("CHECK ((handle IS NULL) = (canonical_origin IS NULL))");
+  });
+
+  it("stores managed principals and host sessions inside their Kernel", () => {
+    const memberships = createTableStatement("managed_principal_memberships");
+    const sessions = createTableStatement("managed_login_sessions");
+    expect(memberships).toContain("principal_id TEXT PRIMARY KEY");
+    expect(memberships).toContain("local_uid INTEGER NOT NULL UNIQUE");
+    expect(sessions).toContain("token_id TEXT PRIMARY KEY");
+    expect(sessions).toContain("principal_id TEXT NOT NULL");
   });
 
   it("keeps the processes baseline on the post-profile schema", () => {
