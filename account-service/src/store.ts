@@ -38,6 +38,12 @@ export type InstallationReservation = ManagedInstallationIdentity & {
   timezone: string | null;
 };
 
+export type ActiveInstallationMembership = ManagedInstallationIdentity & {
+  state: ManagedInstallationState;
+  localUid: number;
+  role: "owner" | "admin" | "member";
+};
+
 type InstallationRow = {
   id: string;
   owner_principal_id: string;
@@ -549,6 +555,79 @@ export class AccountStore {
       timezone: string | null;
     }>();
     return rows.results.map(reservationFromRow);
+  }
+
+  async listActiveInstallationMemberships(
+    principalIdValue: string,
+  ): Promise<ActiveInstallationMembership[]> {
+    const principalId = parseOpaqueId(principalIdValue, "principalId");
+    const rows = await this.db.prepare(
+      `SELECT
+         i.id, i.handle, i.canonical_origin, i.state, m.local_uid, m.role
+       FROM memberships m
+       JOIN installations i ON i.id = m.installation_id
+       WHERE m.principal_id = ? AND m.state = 'active'
+         AND m.local_uid IS NOT NULL
+         AND i.state IN (
+           'trialing', 'active', 'past_due', 'restricted',
+           'cancelled', 'retained'
+         )
+       ORDER BY i.created_at DESC`,
+    ).bind(principalId).all<{
+      id: string;
+      handle: string;
+      canonical_origin: string;
+      state: ManagedInstallationState;
+      local_uid: number;
+      role: ActiveInstallationMembership["role"];
+    }>();
+    return rows.results.map((row) => ({
+      installationId: row.id,
+      handle: row.handle,
+      canonicalOrigin: row.canonical_origin,
+      state: row.state,
+      localUid: row.local_uid,
+      role: row.role,
+    }));
+  }
+
+  async getActiveInstallationMembership(
+    principalIdValue: string,
+    installationIdValue: string,
+  ): Promise<ActiveInstallationMembership | null> {
+    const principalId = parseOpaqueId(principalIdValue, "principalId");
+    const installationId = parseOpaqueId(
+      installationIdValue,
+      "installationId",
+    );
+    const row = await this.db.prepare(
+      `SELECT
+         i.id, i.handle, i.canonical_origin, i.state, m.local_uid, m.role
+       FROM memberships m
+       JOIN installations i ON i.id = m.installation_id
+       WHERE m.principal_id = ? AND m.installation_id = ?
+         AND m.state = 'active' AND m.local_uid IS NOT NULL
+         AND i.state IN (
+           'trialing', 'active', 'past_due', 'restricted',
+           'cancelled', 'retained'
+         )
+       LIMIT 1`,
+    ).bind(principalId, installationId).first<{
+      id: string;
+      handle: string;
+      canonical_origin: string;
+      state: ManagedInstallationState;
+      local_uid: number;
+      role: ActiveInstallationMembership["role"];
+    }>();
+    return row ? {
+      installationId: row.id,
+      handle: row.handle,
+      canonicalOrigin: row.canonical_origin,
+      state: row.state,
+      localUid: row.local_uid,
+      role: row.role,
+    } : null;
   }
 
   private async requireOwnedReservation(

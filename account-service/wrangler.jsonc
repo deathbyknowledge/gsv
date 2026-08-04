@@ -38,6 +38,11 @@
       "binding": "GATEWAY",
       "service": "gsv",
       "entrypoint": "GatewayEntrypoint"
+    },
+    {
+      "binding": "MANAGED_TELEGRAM",
+      "service": "gsv-managed-telegram",
+      "entrypoint": "ManagedTelegramChannel"
     }
   ],
   "observability": {

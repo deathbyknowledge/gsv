@@ -6,6 +6,8 @@ import type {
   ManagedEntitlementReader,
   ManagedEntitlementService,
   ManagedGatewayProvisioningInterface,
+  ManagedGatewayTelegramInterface,
+  ManagedTelegramControlInterface,
 } from "@humansandmachines/gsv/protocol";
 import { provisionReservedInstallation, type ProvisionReservedInstallationInput } from "./provisioning";
 import { AccountStore, type InstallationReservation } from "./store";
@@ -26,10 +28,14 @@ import {
 import { json } from "./http";
 import { ManagedInstallationHttp } from "./installations/http";
 import { ManagedInstallationService } from "./installations/service";
+import { ManagedTelegramLinkHttp } from "./telegram/http";
+import { ManagedTelegramLinkService } from "./telegram/service";
+import { ManagedTelegramLinkOperationStore } from "./telegram/store";
 
 type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & {
   ENVIRONMENT: string;
-  GATEWAY: ManagedGatewayProvisioningInterface;
+  GATEWAY: ManagedGatewayProvisioningInterface & ManagedGatewayTelegramInterface;
+  MANAGED_TELEGRAM: ManagedTelegramControlInterface;
   TURNSTILE_SECRET?: string;
 };
 
@@ -46,6 +52,8 @@ export default class AccountService
     if (authResponse) return authResponse;
     const installationResponse = await this.installationHttp().handle(request);
     if (installationResponse) return installationResponse;
+    const telegramResponse = await this.telegramHttp().handle(request);
+    if (telegramResponse) return telegramResponse;
     if (url.pathname.startsWith("/api/")) {
       return json({ error: "Not Found" }, 404);
     }
@@ -137,6 +145,21 @@ export default class AccountService
         this.env.GATEWAY,
       ),
       abuse,
+      accountOrigin,
+    );
+  }
+
+  private telegramHttp(): ManagedTelegramLinkHttp {
+    const accountOrigin = parseAccountOrigin(this.env.GSV_ACCOUNT_ORIGIN);
+    return new ManagedTelegramLinkHttp(
+      new ManagedTelegramLinkService(
+        this.store(),
+        new ManagedTelegramLinkOperationStore(this.env.ACCOUNT_DB),
+        this.authService(accountOrigin),
+        this.env.MANAGED_TELEGRAM,
+        this.env.GATEWAY,
+      ),
+      this.abuseProtection(accountOrigin),
       accountOrigin,
     );
   }

@@ -22,7 +22,9 @@ export type AuthRateLimitOperation =
   | "passkey_registration"
   | "installation_reservation"
   | "installation_provision"
-  | "installation_handoff";
+  | "installation_handoff"
+  | "telegram_claim_inspect"
+  | "telegram_link_confirm";
 
 type RateLimitPolicy = {
   windowMs: number;
@@ -40,6 +42,8 @@ const DEFAULT_RATE_LIMIT_POLICIES: Record<AuthRateLimitOperation, RateLimitPolic
   installation_reservation: { windowMs: 30 * 60_000, ipLimit: 10, subjectLimit: 5 },
   installation_provision: { windowMs: 5 * 60_000, ipLimit: 20, subjectLimit: 10 },
   installation_handoff: { windowMs: 5 * 60_000, ipLimit: 30, subjectLimit: 10 },
+  telegram_claim_inspect: { windowMs: 5 * 60_000, ipLimit: 60, subjectLimit: 30 },
+  telegram_link_confirm: { windowMs: 5 * 60_000, ipLimit: 20, subjectLimit: 10 },
 };
 
 export class RateLimitExceededError extends Error {

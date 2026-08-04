@@ -778,6 +778,15 @@ The first connection flow is account linking, not authentication by handle:
 6. The bot confirms the canonical GSV hostname. Pre-link messages are not sent
    to a model and are not replayed automatically.
 
+The button puts the bearer claim in the account-page URL fragment, so it is not
+sent in the initial HTTP request or referrer. The page submits it in the body of
+an exact-origin, authenticated `POST`. The control plane persists only a
+domain-separated claim-token hash. Its durable operation stages are
+`created`, `route_suspended`, `old_kernel_unlinked`, `new_kernel_linked`, and
+`complete`; retrying any stage reuses the same external operation IDs. Once an
+operation owns a suspended claim, a browser retry that resubmits the same bearer
+can resume after public claim expiry without reopening the route.
+
 The global route chooses an installation; the Kernel identity link chooses and
 authorizes the local UID. Both mappings remain because they protect different
 boundaries. An actor may have only one active managed GSV route initially.
