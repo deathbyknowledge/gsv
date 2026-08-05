@@ -153,6 +153,12 @@ export default {
       );
     }
 
+    if (request.method === "GET" || request.method === "HEAD") {
+      const resolved = await resolveGatewayInstallation(request, env);
+      if (!resolved.ok) return resolved.response;
+      return await env.ASSETS.fetch(request);
+    }
+
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;

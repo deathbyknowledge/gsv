@@ -32,6 +32,28 @@ describe("managed installation routing integration", () => {
     expect(await response.text()).toBe("Not Found");
   });
 
+  it("admits the desktop shell only after managed hostname resolution", async () => {
+    const worker = harness.getWorker("gsv-managed");
+    const unknown = await worker.fetch("https://random.gsv.space/tasks", {
+      headers: {
+        Accept: "text/html",
+        "Sec-Fetch-Mode": "navigate",
+      },
+    });
+    expect(unknown.status).toBe(404);
+    expect(await unknown.text()).toBe("Not Found");
+
+    const accepted = await worker.fetch("https://first.gsv.space/tasks", {
+      headers: {
+        Accept: "text/html",
+        "Sec-Fetch-Mode": "navigate",
+      },
+    });
+    expect(accepted.status).toBe(200);
+    expect(accepted.headers.get("content-type")).toContain("text/html");
+    expect(await accepted.text()).toContain("<div id=\"app\"></div>");
+  });
+
   it("does not expose public installation storage for an unknown hostname", async () => {
     const response = await harness.getWorker("gsv-managed").fetch(
       "https://random.gsv.space/public/private-by-default.txt",

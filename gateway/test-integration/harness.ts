@@ -15,6 +15,8 @@ const DEPENDENCY_WORKER = "gsv-test-dependencies";
 const ACCOUNT_WORKER = "gsv-accounts-integration";
 const INFERENCE_WORKER = "gsv-inference-integration";
 const TELEGRAM_WORKER = "gsv-managed-telegram-integration";
+// The pinned Vitest pool's workerd currently supports dates through this one.
+const INTEGRATION_COMPATIBILITY_DATE = "2026-07-29";
 const DEPENDENCY_CONFIG_PATH = resolve(
   GATEWAY_ROOT,
   "test-integration/fixtures/wrangler.jsonc",
@@ -28,14 +30,21 @@ function integrationGatewayConfig(options: {
   managedTelegramService?: string;
 } = {}): Unstable_RawConfig {
   const config = unstable_readConfig(
-    { config: resolve(GATEWAY_ROOT, "wrangler.jsonc") },
+    {
+      config: resolve(
+        GATEWAY_ROOT,
+        options.managed ? "wrangler.managed.jsonc" : "wrangler.jsonc",
+      ),
+    },
     { hideWarnings: true },
   );
 
   return {
     name: options.name ?? config.name,
     main: config.main,
-    compatibility_date: config.compatibility_date,
+    compatibility_date: options.managed
+      ? INTEGRATION_COMPATIBILITY_DATE
+      : config.compatibility_date,
     compatibility_flags: config.compatibility_flags,
     define: config.define,
     rules: config.rules,
@@ -64,6 +73,9 @@ function integrationGatewayConfig(options: {
         ? [{
             binding: "INSTALLATION_DIRECTORY",
             service: options.directoryService ?? DEPENDENCY_WORKER,
+            ...(options.directoryService
+              ? { entrypoint: "GatewayDirectoryEntrypoint" }
+              : {}),
           }, ...(options.managedInferenceService
               ? [{
                 binding: "MANAGED_INFERENCE",
@@ -84,8 +96,7 @@ function integrationInferenceConfig(accountService: string): Unstable_RawConfig 
   return {
     name: INFERENCE_WORKER,
     main: resolve(INFERENCE_ROOT, "src/index.ts"),
-    // Keep integration workerd aligned with the Vitest pool release.
-    compatibility_date: "2026-07-01",
+    compatibility_date: INTEGRATION_COMPATIBILITY_DATE,
     compatibility_flags: config.compatibility_flags,
     observability: config.observability,
     vars: {
@@ -117,7 +128,7 @@ function integrationAccountConfig(
   return {
     name: ACCOUNT_WORKER,
     main: resolve(ACCOUNT_ROOT, "src/index.ts"),
-    compatibility_date: config.compatibility_date,
+    compatibility_date: INTEGRATION_COMPATIBILITY_DATE,
     compatibility_flags: config.compatibility_flags,
     observability: config.observability,
     vars: {
@@ -167,7 +178,7 @@ function integrationManagedTelegramConfig(
   return {
     name: TELEGRAM_WORKER,
     main: resolve(TELEGRAM_ROOT, "src/managed.ts"),
-    compatibility_date: config.compatibility_date,
+    compatibility_date: INTEGRATION_COMPATIBILITY_DATE,
     compatibility_flags: config.compatibility_flags,
     observability: config.observability,
     vars: {

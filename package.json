@@ -19,6 +19,8 @@
     "extension:package": "bash ./scripts/build-extension-package.sh",
     "gsv:build": "npm run build --workspace packages/gsv",
     "gsv:check": "npm run typecheck --workspace packages/gsv && npm run gsv:build",
+    "managed:topology:check": "node ./scripts/validate-managed-topology.mjs",
+    "managed:check": "bash ./scripts/check-managed-deployment.sh",
     "version:show": "node ./scripts/version.mjs show",
     "version:check": "node ./scripts/version.mjs check",
     "version:sync": "node ./scripts/version.mjs sync",

@@ -436,6 +436,26 @@ export class EntitlementReaderEntrypoint
   }
 }
 
+export class GatewayDirectoryEntrypoint
+  extends WorkerEntrypoint<AccountServiceEnv>
+  implements InstallationDirectoryService
+{
+  async resolveHostname(hostname: string): Promise<InstallationDirectoryResult> {
+    return await new AccountStore(
+      this.env.ACCOUNT_DB,
+      this.env.GSV_BASE_DOMAIN,
+    ).resolveHostname(hostname);
+  }
+
+  async verifyLoginHandoff(
+    token: string,
+    hostname: string,
+  ): Promise<LoginHandoffVerificationResult> {
+    return await new PlatformAuthStore(this.env.ACCOUNT_DB)
+      .consumeLoginHandoff(token, hostname);
+  }
+}
+
 function parseAccountOrigin(value: string): string {
   const normalized = value.trim();
   const url = new URL(normalized);

@@ -2,8 +2,10 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gsv-accounts",
   "main": "src/index.ts",
-  "compatibility_date": "2026-07-29",
+  "compatibility_date": "2026-07-31",
   "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
   "routes": [
     {
       "pattern": "accounts.gsv.space/*",
@@ -27,6 +29,16 @@
     "GSV_BILLING_RETENTION_MS": "2592000000",
     "ENVIRONMENT": "production"
   },
+  "secrets": {
+    "required": [
+      "TURNSTILE_SECRET",
+      "GSV_TURNSTILE_SITE_KEY",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET",
+      "GSV_STRIPE_FOUNDING_PRICE_ID",
+      "GSV_STRIPE_MERCHANT_MODE"
+    ]
+  },
   "send_email": [
     {
       "name": "EMAIL",
@@ -43,7 +55,7 @@
   "services": [
     {
       "binding": "GATEWAY",
-      "service": "gsv",
+      "service": "gsv-managed-gateway",
       "entrypoint": "GatewayEntrypoint"
     },
     {

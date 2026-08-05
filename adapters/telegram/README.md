@@ -40,7 +40,8 @@ Worker secrets on that deployment:
   bytes used only to sign short-lived account-link claims
 
 `GSV_ACCOUNT_ORIGIN` defaults to `https://accounts.gsv.space`. The bot webhook
-must point to `POST /webhook` and use the same verification secret. Deploy with:
+must point to `POST https://telegram.gsv.space/webhook` and use the same
+verification secret. Deploy with:
 
 ```bash
 npm run deploy:managed

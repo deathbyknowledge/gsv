@@ -1,0 +1,111 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-managed-gateway",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "*.gsv.space/*",
+      "zone_name": "gsv.space"
+    }
+  ],
+  "vars": {
+    "GSV_ACCOUNT_ORIGIN": "https://accounts.gsv.space"
+  },
+  "define": {
+    "__GSV_RELEASE__": "\"dev\""
+  },
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.md"],
+      "fallthrough": true
+    }
+  ],
+  "migrations": [
+    {
+      "new_sqlite_classes": ["Kernel"],
+      "tag": "v1"
+    },
+    {
+      "new_sqlite_classes": ["Process"],
+      "tag": "v2"
+    },
+    {
+      "new_sqlite_classes": ["AppRunner"],
+      "tag": "v3"
+    },
+    {
+      "deleted_classes": ["AppRunner"],
+      "tag": "v4"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "Kernel",
+        "name": "KERNEL"
+      },
+      {
+        "class_name": "Process",
+        "name": "PROCESS"
+      }
+    ]
+  },
+  "r2_buckets": [
+    {
+      "binding": "STORAGE",
+      "bucket_name": "gsv-managed-storage"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "assets": {
+    "directory": "../web/dist/",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/*",
+      "!/assets/*",
+      "!/brand/*",
+      "!/fonts/*",
+      "!/icons/*",
+      "!/img/*",
+      "!/favicon.svg",
+      "!/manifest.webmanifest"
+    ]
+  },
+  "services": [
+    {
+      "binding": "INSTALLATION_DIRECTORY",
+      "service": "gsv-accounts",
+      "entrypoint": "GatewayDirectoryEntrypoint"
+    },
+    {
+      "binding": "MANAGED_INFERENCE",
+      "service": "gsv-inference",
+      "entrypoint": "InferenceService"
+    },
+    {
+      "binding": "CHANNEL_TELEGRAM",
+      "service": "gsv-managed-telegram",
+      "entrypoint": "ManagedTelegramChannel"
+    },
+    {
+      "binding": "RIPGIT",
+      "service": "gsv-managed-ripgit"
+    }
+  ],
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

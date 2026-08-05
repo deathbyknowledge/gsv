@@ -2,13 +2,28 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gsv-managed-telegram",
   "main": "src/managed.ts",
-  "compatibility_date": "2026-01-28",
+  "compatibility_date": "2026-07-31",
   "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "telegram.gsv.space/*",
+      "zone_name": "gsv.space"
+    }
+  ],
   "observability": {
     "enabled": true
   },
   "vars": {
     "GSV_ACCOUNT_ORIGIN": "https://accounts.gsv.space"
+  },
+  "secrets": {
+    "required": [
+      "TELEGRAM_BOT_TOKEN",
+      "TELEGRAM_WEBHOOK_SECRET",
+      "TELEGRAM_CLAIM_SIGNING_KEY"
+    ]
   },
   "durable_objects": {
     "bindings": [
@@ -27,7 +42,7 @@
   "services": [
     {
       "binding": "GATEWAY",
-      "service": "gsv",
+      "service": "gsv-managed-gateway",
       "entrypoint": "GatewayEntrypoint"
     }
   ]

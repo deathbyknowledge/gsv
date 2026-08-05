@@ -25,6 +25,7 @@ jobs:
       whatsapp: ${{ steps.filter.outputs.whatsapp }}
       ripgit: ${{ steps.filter.outputs.ripgit }}
       cli: ${{ steps.filter.outputs.cli }}
+      managed: ${{ steps.filter.outputs.managed }}
     steps:
       - uses: actions/checkout@v4
 
@@ -101,6 +102,21 @@ jobs:
             cli:
               - '.github/workflows/ci.yml'
               - 'cli/**'
+            managed:
+              - '.github/workflows/ci.yml'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'packages/gsv/**'
+              - 'web/**'
+              - 'gateway/**'
+              - 'account-service/**'
+              - 'inference-service/**'
+              - 'adapters/shared/**'
+              - 'adapters/telegram/**'
+              - 'ripgit/**'
+              - 'deployment/managed/**'
+              - 'scripts/check-managed-deployment.sh'
+              - 'scripts/validate-managed-topology.mjs'
 
   version-check:
     name: Version Check
@@ -195,6 +211,59 @@ jobs:
       
       - name: Run gateway tests
         run: npm run test:run --workspace gateway
+
+  managed-topology:
+    name: Managed Topology
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.managed == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            adapters/telegram/package-lock.json
+            ripgit/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Install managed Telegram dependencies
+        working-directory: adapters/telegram
+        run: npm ci --workspaces=false
+
+      - name: Install ripgit dependencies
+        working-directory: ripgit
+        run: npm ci --workspaces=false
+
+      - name: Validate managed production topology
+        run: npm run managed:check
+
+      - name: Test account control plane
+        run: npm test --workspace gsv-account-service
+
+      - name: Test inference broker
+        run: npm test --workspace gsv-inference-service
+
+      - name: Test managed Telegram boundaries
+        run: npm exec -- vitest run adapters/shared/test adapters/telegram
+
+      - name: Test managed cross-service flows
+        run: npm run test:integration --workspace gateway
+
+      - name: Test managed repository service
+        working-directory: ripgit
+        run: npm test
 
   ripgit-test:
     name: Ripgit Tests

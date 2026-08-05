@@ -165,6 +165,16 @@ ripgit and adapter Workers
     - installation-scoped repository and adapter Durable Objects
 ```
 
+The production Worker identities are `gsv-accounts`,
+`gsv-managed-gateway`, `gsv-inference`, `gsv-managed-telegram`, and
+`gsv-managed-ripgit`. Only the account route, the Telegram webhook route, and
+the wildcard Gateway route are public. Exact `accounts.gsv.space/*` and
+`telegram.gsv.space/*` routes take precedence over `*.gsv.space/*`; inference
+and ripgit disable all public development and preview URLs. The checked configs,
+clean-account service-binding bootstrap, state provisioning order, trigger
+activation, and rollback procedure live in
+`engineering/managed-gsv-deployment.md`.
+
 These are ordinary Workers. Keeping the managed control plane separate prevents
 billing-provider secrets, global account records, recovery authority, and
 provisioning credentials from entering the agent runtime environment. The
@@ -1143,8 +1153,12 @@ recent-passkey, owner-only installation export now streams Kernel and Process
 SQL, exact R2 objects and metadata, and self-contained Git bundles through the
 Account and Gateway service-binding chain. A real multi-Worker flow proves it
 remains available after payment restriction and emits a final completion
-record. Automated restore validation, production topology, and the remaining
-Phase 8 and 9 product and release gates are still incomplete.
+record. The distinct managed Worker identities, public and internal routes,
+least-authority service graph, secret ownership, clean-account binding
+bootstrap, state provisioning order, dry-run bundle validation, activation
+order, and rollback procedure are now executable in the production topology.
+Automated restore validation and the remaining Phase 8 and 9 product and release
+gates are still incomplete.
 
 ### Phase 0: executable specification
 
@@ -1396,3 +1410,7 @@ No product-content telemetry is required to compute these measures.
 - 2026-08-04: Use Stripe hosted Checkout and customer portal as the first
   replaceable billing adapter; require an explicit direct-versus-Managed-
 Payments merchant mode instead of embedding that choice in entitlements.
+- 2026-08-05: Give managed and standalone Workers distinct production names;
+  expose only account, Telegram webhook, and wildcard Gateway routes; bootstrap
+  the cyclic service graph with inert named entrypoints; and keep inference and
+  ripgit service-binding-only.
