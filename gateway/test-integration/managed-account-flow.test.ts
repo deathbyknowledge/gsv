@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { TestHarness } from "wrangler";
+import {
+  MANAGED_INFERENCE_PRODUCT_MODEL,
+  type ManagedInferenceService,
+} from "@humansandmachines/gsv/protocol";
 import { createManagedAccountTestHarness } from "./harness";
 import {
   expectManagedRpc,
@@ -14,6 +18,20 @@ type AccountEnv = {
 
 type FetchWorker = {
   fetch: ReturnType<TestHarness["getWorker"]>["fetch"];
+};
+
+type AccountExport = {
+  projectEntitlement(input: {
+    installationId: string;
+    state: "trialing" | "active" | "restricted";
+    planKey: string;
+    inferenceBudgetMicrounits: number;
+    inferencePeriodStartsAt: number;
+    inferencePeriodEndsAt: number;
+    storageLimitBytes: number;
+    effectiveAt: number;
+    version: number;
+  }): Promise<unknown>;
 };
 
 describe("managed account to Kernel integration", () => {
@@ -91,19 +109,7 @@ describe("managed account to Kernel integration", () => {
     expect(beforeGrant.status).toBe(404);
     expect(await gateway.listDurableObjectIds("KERNEL")).toEqual([]);
 
-    const accountApi = await account.getExport() as unknown as {
-      projectEntitlement(input: {
-        installationId: string;
-        state: "trialing" | "active" | "restricted";
-        planKey: string;
-        inferenceBudgetMicrounits: number;
-        inferencePeriodStartsAt: number;
-        inferencePeriodEndsAt: number;
-        storageLimitBytes: number;
-        effectiveAt: number;
-        version: number;
-      }): Promise<unknown>;
-    };
+    const accountApi = await account.getExport() as unknown as AccountExport;
     await accountApi.projectEntitlement({
       installationId: reservationBody.installation.installationId,
       state: "trialing",
@@ -133,6 +139,37 @@ describe("managed account to Kernel integration", () => {
       },
     });
     expect(await gateway.listDurableObjectIds("KERNEL")).toHaveLength(1);
+
+    const inference = await harness
+      .getWorker("gsv-inference-integration")
+      .getExport() as unknown as ManagedInferenceService;
+    const inferenceResponse = await inference.run({
+      version: 1,
+      installationId: reservationBody.installation.installationId,
+      logicalRequestId: `usage_${suffix}`,
+      actor: { localUid: 1000, processId: "process_usage", runId: "run_usage" },
+      model: MANAGED_INFERENCE_PRODUCT_MODEL,
+      capability: "text",
+      messages: [{ role: "user", content: "integration usage check" }],
+      maxOutputTokens: 128,
+      timeoutMs: 1_000,
+    });
+    expect(inferenceResponse.status).toBe(200);
+    await inferenceResponse.text();
+    const usage = await account.fetch(
+      `https://accounts.gsv.space/api/installations/${reservationBody.installation.installationId}/usage`,
+      { headers: { Cookie: accountCookie } },
+    );
+    expect(usage.status, await usage.clone().text()).toBe(200);
+    const usageText = await usage.text();
+    expect(usageText).not.toContain("Microunits");
+    expect(usageText).not.toContain("provider");
+    expect(JSON.parse(usageText)).toMatchObject({
+      usage: {
+        level: "normal",
+        usedPercent: 0,
+      },
+    });
 
     const firstCookie = await enterInstallation(
       account,
@@ -252,7 +289,279 @@ describe("managed account to Kernel integration", () => {
       socket.close(1000, "test complete");
     }
   });
+
+  it("isolates hostile installations that deliberately reuse local identifiers", async () => {
+    const account = harness.getWorker<AccountEnv>("gsv-accounts-integration");
+    const gateway = harness.getWorker("gsv-managed-account");
+    const accountEnv = await account.getEnv();
+    const accountApi = await account.getExport() as unknown as AccountExport;
+    const suffix = randomUUID().slice(0, 8);
+    const first = await provisionIsolationFixture(
+      account,
+      accountEnv,
+      accountApi,
+      `isolation-a-${suffix}`,
+    );
+    const second = await provisionIsolationFixture(
+      account,
+      accountEnv,
+      accountApi,
+      `isolation-b-${suffix}`,
+    );
+
+    const firstList = await account.fetch(
+      "https://accounts.gsv.space/api/installations",
+      { headers: { Cookie: first.accountCookie } },
+    );
+    await expect(firstList.json()).resolves.toMatchObject({
+      installations: [{ installationId: first.installationId }],
+    });
+    const foreignHandoff = await account.fetch(
+      "https://accounts.gsv.space/api/installations/handoff",
+      {
+        method: "POST",
+        headers: accountHeaders(first.accountCookie),
+        body: JSON.stringify({ installationId: second.installationId }),
+      },
+    );
+    expect(foreignHandoff.status).toBe(400);
+    await expect(foreignHandoff.json()).resolves.toEqual({
+      error: "Authentication failed",
+    });
+
+    const firstCookie = await enterInstallation(
+      account,
+      gateway,
+      first.accountCookie,
+      first.installationId,
+      first.handle,
+    );
+    const secondCookie = await enterInstallation(
+      account,
+      gateway,
+      second.accountCookie,
+      second.installationId,
+      second.handle,
+    );
+    const firstSocket = await openManagedOwnerSocket(
+      gateway,
+      first.handle,
+      firstCookie,
+      `isolation-first-${suffix}`,
+    );
+    const secondSocket = await openManagedOwnerSocket(
+      gateway,
+      second.handle,
+      secondCookie,
+      `isolation-second-${suffix}`,
+    );
+    try {
+      const commonPath = "/tmp/isolation-proof.txt";
+      await expectManagedRpcOk(firstSocket, "isolation-write-first", "fs.write", {
+        path: commonPath,
+        content: `isolation-proof first-${suffix}`,
+      });
+      await expectManagedRpcOk(secondSocket, "isolation-write-second", "fs.write", {
+        path: commonPath,
+        content: `isolation-proof second-${suffix}`,
+      });
+      const firstSearch = await expectManagedRpcOk(
+        firstSocket,
+        "isolation-search-first",
+        "fs.search",
+        { path: "/tmp", query: "isolation-proof" },
+      );
+      const secondSearch = await expectManagedRpcOk(
+        secondSocket,
+        "isolation-search-second",
+        "fs.search",
+        { path: "/tmp", query: "isolation-proof" },
+      );
+      expect(JSON.stringify(firstSearch.data)).toContain(`first-${suffix}`);
+      expect(JSON.stringify(firstSearch.data)).not.toContain(`second-${suffix}`);
+      expect(JSON.stringify(secondSearch.data)).toContain(`second-${suffix}`);
+      expect(JSON.stringify(secondSearch.data)).not.toContain(`first-${suffix}`);
+
+      const firstSpawn = await expectManagedRpcOk(
+        firstSocket,
+        "isolation-spawn-first",
+        "proc.spawn",
+        { label: "same local process", interactive: true },
+      );
+      const secondSpawn = await expectManagedRpcOk(
+        secondSocket,
+        "isolation-spawn-second",
+        "proc.spawn",
+        { label: "same local process", interactive: true },
+      );
+      const firstPid = (firstSpawn.data as { pid: string }).pid;
+      const secondPid = (secondSpawn.data as { pid: string }).pid;
+      const firstProcesses = await expectManagedRpcOk(
+        firstSocket,
+        "isolation-list-first",
+        "proc.list",
+        {},
+      );
+      const secondProcesses = await expectManagedRpcOk(
+        secondSocket,
+        "isolation-list-second",
+        "proc.list",
+        {},
+      );
+      expect(firstProcesses.data).toMatchObject({
+        processes: [expect.objectContaining({
+          pid: firstPid,
+          uid: 1000,
+          username: "companion",
+          label: "same local process",
+        })],
+      });
+      expect(JSON.stringify(firstProcesses.data)).not.toContain(secondPid);
+      expect(secondProcesses.data).toMatchObject({
+        processes: [expect.objectContaining({
+          pid: secondPid,
+          uid: 1000,
+          username: "companion",
+          label: "same local process",
+        })],
+      });
+      expect(JSON.stringify(secondProcesses.data)).not.toContain(firstPid);
+
+      await expect(expectManagedRpc(
+        secondSocket,
+        "isolation-foreign-process",
+        "proc.history",
+        { pid: firstPid },
+      )).resolves.toMatchObject({
+        ok: false,
+        error: { message: expect.stringContaining("not found") },
+      });
+
+      const crossHost = await gateway.fetch(
+        `https://${second.handle}.gsv.space/ws`,
+        {
+          headers: { Upgrade: "websocket", Cookie: firstCookie },
+        },
+      );
+      expect(crossHost.status).toBe(101);
+      const crossSocket = crossHost.webSocket;
+      if (!crossSocket) throw new Error("Cross-host WebSocket was not created");
+      crossSocket.accept();
+      await expect(expectManagedRpc(
+        crossSocket,
+        "isolation-cross-host-session",
+        "sys.connect",
+        {
+          protocol: 2,
+          client: {
+            id: "isolation-cross-host",
+            version: "1.0.0",
+            platform: "integration",
+            role: "user",
+          },
+        },
+      )).resolves.toMatchObject({
+        ok: false,
+        error: { code: 401, message: "Authentication required" },
+      });
+      crossSocket.close(1000, "cross-host rejection complete");
+
+      await expectManagedRpcOk(firstSocket, "isolation-kill-first", "proc.kill", {
+        pid: firstPid,
+        archive: false,
+      });
+      await expectManagedRpcOk(secondSocket, "isolation-kill-second", "proc.kill", {
+        pid: secondPid,
+        archive: false,
+      });
+    } finally {
+      firstSocket.close(1000, "test complete");
+      secondSocket.close(1000, "test complete");
+    }
+  });
 });
+
+async function provisionIsolationFixture(
+  account: FetchWorker,
+  accountEnv: AccountEnv,
+  accountApi: AccountExport,
+  handle: string,
+): Promise<{
+  accountCookie: string;
+  installationId: string;
+  handle: string;
+}> {
+  const principalId = `principal_${handle}`;
+  const token = `gsvsession_${randomUUID()}${randomUUID()}`;
+  const now = Date.now();
+  await accountEnv.ACCOUNT_DB.batch([
+    accountEnv.ACCOUNT_DB.prepare(
+      `INSERT INTO principals (
+         id, primary_email, primary_email_normalized, display_name,
+         email_verified_at, state, created_at, updated_at
+       ) VALUES (?, ?, ?, 'Isolation owner', ?, 'active', ?, ?)`,
+    ).bind(
+      principalId,
+      `${handle}@example.com`,
+      `${handle}@example.com`,
+      now,
+      now,
+      now,
+    ),
+    accountEnv.ACCOUNT_DB.prepare(
+      `INSERT INTO sessions (
+         id_hash, principal_id, created_at, expires_at, recent_auth_at,
+         revoked_at, ip_hash, user_agent, auth_method
+       ) VALUES (?, ?, ?, ?, ?, NULL, NULL, 'integration', 'passkey')`,
+    ).bind(
+      sha256Hex(token),
+      principalId,
+      now,
+      now + 30 * 24 * 60 * 60_000,
+      now,
+    ),
+  ]);
+  const accountCookie = `__Host-gsv-account-session=${encodeURIComponent(token)}`;
+  const reservation = await account.fetch(
+    "https://accounts.gsv.space/api/installations",
+    {
+      method: "POST",
+      headers: accountHeaders(accountCookie),
+      body: JSON.stringify({
+        idempotencyKey: randomUUID(),
+        handle,
+        ownerUsername: "owner",
+        agentName: "companion",
+        timezone: "Europe/Amsterdam",
+      }),
+    },
+  );
+  expect(reservation.status, await reservation.clone().text()).toBe(201);
+  const installationId = ((await reservation.json()) as {
+    installation: { installationId: string };
+  }).installation.installationId;
+  await accountApi.projectEntitlement({
+    installationId,
+    state: "active",
+    planKey: "integration-isolation",
+    inferenceBudgetMicrounits: 5_000_000,
+    inferencePeriodStartsAt: now,
+    inferencePeriodEndsAt: now + 30 * 24 * 60 * 60_000,
+    storageLimitBytes: 10_000_000_000,
+    effectiveAt: now,
+    version: 1,
+  });
+  const provision = await account.fetch(
+    `https://accounts.gsv.space/api/installations/${installationId}/provision`,
+    {
+      method: "POST",
+      headers: accountHeaders(accountCookie),
+      body: "{}",
+    },
+  );
+  expect(provision.status, await provision.clone().text()).toBe(200);
+  return { accountCookie, installationId, handle };
+}
 
 function accountHeaders(cookie: string): Record<string, string> {
   return {
