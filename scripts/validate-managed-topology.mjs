@@ -60,6 +60,7 @@ const expectedSecrets = {
   ],
   telegram: [
     "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_BOT_USERNAME",
     "TELEGRAM_CLAIM_SIGNING_KEY",
     "TELEGRAM_WEBHOOK_SECRET",
   ],

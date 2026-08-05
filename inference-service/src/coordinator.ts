@@ -4,6 +4,7 @@ import {
   MANAGED_INFERENCE_PRODUCT_MODEL,
   type AiAssistantMessage,
   type ManagedEntitlementProjection,
+  type ManagedInferenceBudgetUsage,
   type ManagedInferencePartialMessage,
   type ManagedInferenceStreamEvent,
   type PrepareManagedInstallationDeletionInput,
@@ -232,6 +233,11 @@ export class BudgetCoordinator extends DurableObject<InferenceCoordinatorEnviron
       throw new Error("Inference inspection is test-only");
     }
     return this.ledger.snapshot();
+  }
+
+  budgetUsage(installationId: string): ManagedInferenceBudgetUsage | null {
+    const usage = this.ledger.currentPeriodUsage();
+    return usage ? { installationId, ...usage } : null;
   }
 
   private lifecycleRecord(): {

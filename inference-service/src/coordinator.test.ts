@@ -5,6 +5,23 @@ import type { BudgetCoordinator } from "./coordinator";
 import type { BudgetSnapshot } from "./ledger";
 
 describe("managed inference budget coordinator", () => {
+  it("reports only the current installation budget period", async () => {
+    const installationId = installation("usage");
+    const stub = coordinator(installationId);
+    await expect(stub.budgetUsage(installationId)).resolves.toBeNull();
+
+    await events(await stub.run(
+      request(installationId, "request_usage"),
+      entitlement(installationId),
+    ));
+    await expect(stub.budgetUsage(installationId)).resolves.toMatchObject({
+      installationId,
+      budgetMicrounits: 5_000_000,
+      spentMicrounits: 1,
+      reservedMicrounits: 0,
+    });
+  });
+
   it("settles provider retries once per attempt and cannot replay a success", async () => {
     const installationId = installation("retry");
     const stub = coordinator(installationId);

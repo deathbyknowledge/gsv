@@ -6,6 +6,7 @@ import type {
   ManagedTelegramControlInterface,
   ManagedTelegramDataLifecycleInterface,
   ManagedTelegramInstallationRouteLifecycleInput,
+  ManagedTelegramPublicInterface,
   SuspendManagedTelegramClaimInput,
   SuspendManagedTelegramClaimResult,
 } from "../../../packages/gsv/src/protocol/managed.js";
@@ -38,6 +39,7 @@ export { ManagedTelegramPeer } from "./managed-peer";
 
 interface Env extends ManagedTelegramPeerEnv {
   MANAGED_TELEGRAM_PEER: DurableObjectNamespace;
+  TELEGRAM_BOT_USERNAME?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
 }
 
@@ -83,7 +85,8 @@ export class ManagedTelegramChannel
   implements
     AdapterWorkerInterface,
     ManagedTelegramControlInterface,
-    ManagedTelegramDataLifecycleInterface
+    ManagedTelegramDataLifecycleInterface,
+    ManagedTelegramPublicInterface
 {
   readonly adapterId = "telegram";
 
@@ -188,6 +191,12 @@ export class ManagedTelegramChannel
       : { ok: false, reason: "invalid" };
   }
 
+  async getManagedTelegramPublicBot(): Promise<{ username: string }> {
+    return {
+      username: managedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME),
+    };
+  }
+
   async suspendManagedTelegramClaim(
     input: SuspendManagedTelegramClaimInput,
   ): Promise<SuspendManagedTelegramClaimResult> {
@@ -246,6 +255,7 @@ export class ManagedTelegramChannel
   private isConfigured(): boolean {
     if (
       !this.env.TELEGRAM_BOT_TOKEN?.trim()
+      || !validManagedTelegramBotUsername(this.env.TELEGRAM_BOT_USERNAME)
       || !this.env.TELEGRAM_WEBHOOK_SECRET?.trim()
       || (this.env.TELEGRAM_CLAIM_SIGNING_KEY?.trim().length ?? 0) < 32
     ) {
@@ -271,6 +281,7 @@ export default {
         status: "ok",
         configured: Boolean(
           env.TELEGRAM_BOT_TOKEN?.trim()
+          && validManagedTelegramBotUsername(env.TELEGRAM_BOT_USERNAME)
           && env.TELEGRAM_WEBHOOK_SECRET?.trim()
           && (env.TELEGRAM_CLAIM_SIGNING_KEY?.trim().length ?? 0) >= 32
         ),
@@ -318,6 +329,21 @@ export default {
     return Response.json({ ok: true });
   },
 };
+
+function managedTelegramBotUsername(value: string | undefined): string {
+  const username = value?.trim().replace(/^@/, "") ?? "";
+  if (!validManagedTelegramBotUsername(username)) {
+    throw new Error("Managed Telegram bot username is not configured");
+  }
+  return username;
+}
+
+function validManagedTelegramBotUsername(value: string | undefined): boolean {
+  const username = value?.trim().replace(/^@/, "") ?? "";
+  return username.length >= 5
+    && username.length <= 32
+    && /^[A-Za-z][A-Za-z0-9_]*bot$/i.test(username);
+}
 
 async function readBoundedRequestText(
   request: Request,

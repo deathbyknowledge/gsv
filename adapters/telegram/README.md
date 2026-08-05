@@ -35,6 +35,9 @@ It does not replace or migrate standalone account objects. Configure these as
 Worker secrets on that deployment:
 
 - `TELEGRAM_BOT_TOKEN` -- the single platform-owned bot token
+- `TELEGRAM_BOT_USERNAME` -- the public BotFather username, with or without the
+  leading `@`; the account service reads it through the adapter's service
+  binding so Telegram presentation remains adapter-owned
 - `TELEGRAM_WEBHOOK_SECRET` -- the Telegram webhook verification secret
 - `TELEGRAM_CLAIM_SIGNING_KEY` -- an independent random secret of at least 32
   bytes used only to sign short-lived account-link claims

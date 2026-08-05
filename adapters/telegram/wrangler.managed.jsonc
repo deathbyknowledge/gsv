@@ -21,6 +21,7 @@
   "secrets": {
     "required": [
       "TELEGRAM_BOT_TOKEN",
+      "TELEGRAM_BOT_USERNAME",
       "TELEGRAM_WEBHOOK_SECRET",
       "TELEGRAM_CLAIM_SIGNING_KEY"
     ]

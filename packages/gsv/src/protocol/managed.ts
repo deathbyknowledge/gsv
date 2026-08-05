@@ -178,6 +178,10 @@ export interface ManagedTelegramControlInterface {
   ): Promise<ActivateManagedTelegramClaimResult>;
 }
 
+export interface ManagedTelegramPublicInterface {
+  getManagedTelegramPublicBot(): Promise<{ username: string }>;
+}
+
 export type ManagedTelegramInstallationRouteLifecycleInput = {
   installationId: string;
   operationId: string;
@@ -395,6 +399,21 @@ export interface ManagedInferenceDataLifecycleInterface {
   deleteManagedInferenceInstallation(
     input: RecoverManagedInstallationInput,
   ): Promise<{ deleted: true }>;
+}
+
+export type ManagedInferenceBudgetUsage = {
+  installationId: string;
+  periodStartsAt: number;
+  periodEndsAt: number;
+  budgetMicrounits: number;
+  spentMicrounits: number;
+  reservedMicrounits: number;
+};
+
+export interface ManagedInferenceUsageReader {
+  getManagedInferenceBudgetUsage(
+    installationId: string,
+  ): Promise<ManagedInferenceBudgetUsage | null>;
 }
 
 export interface ManagedInferenceService {

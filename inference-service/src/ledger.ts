@@ -79,6 +79,14 @@ export type BudgetSnapshot = {
   attempts: ProviderAttemptRow[];
 };
 
+export type BudgetPeriodUsage = {
+  periodStartsAt: number;
+  periodEndsAt: number;
+  budgetMicrounits: number;
+  spentMicrounits: number;
+  reservedMicrounits: number;
+};
+
 export class BudgetLedger {
   constructor(private readonly storage: DurableObjectStorage) {}
 
@@ -334,6 +342,26 @@ export class BudgetLedger {
         "SELECT * FROM provider_attempts ORDER BY logical_request_id, ordinal",
       ).toArray(),
     };
+  }
+
+  currentPeriodUsage(now = Date.now()): BudgetPeriodUsage | null {
+    const period = this.storage.sql.exec<BudgetPeriodRow>(
+      `SELECT period_start, period_end, entitlement_version,
+              budget_microunits, spent_microunits, reserved_microunits
+       FROM budget_periods
+       WHERE period_start <= ? AND period_end > ?
+       ORDER BY period_start DESC
+       LIMIT 1`,
+      now,
+      now,
+    ).toArray()[0];
+    return period ? {
+      periodStartsAt: period.period_start,
+      periodEndsAt: period.period_end,
+      budgetMicrounits: period.budget_microunits,
+      spentMicrounits: period.spent_microunits,
+      reservedMicrounits: period.reserved_microunits,
+    } : null;
   }
 
   private settle(

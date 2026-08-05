@@ -4,6 +4,8 @@ import type {
   ManagedInferenceAbort,
   ManagedInferenceAbortResult,
   ManagedInferenceDataLifecycleInterface,
+  ManagedInferenceBudgetUsage,
+  ManagedInferenceUsageReader,
   ManagedInferenceRequest,
   ManagedInferenceService,
   PrepareManagedInstallationDeletionInput,
@@ -13,6 +15,7 @@ import { BudgetCoordinator, inferenceErrorResponse } from "./coordinator";
 import {
   parseAbortInput,
   parseInferenceRequest,
+  parseManagedInferenceInstallationId,
 } from "./domain";
 import { resolveManagedProvider, type ProviderEnvironment } from "./providers/router";
 
@@ -28,7 +31,10 @@ type InferenceServiceEnv = ProviderEnvironment & {
 
 export class InferenceService
   extends WorkerEntrypoint<InferenceServiceEnv>
-  implements ManagedInferenceService, ManagedInferenceDataLifecycleInterface
+  implements
+    ManagedInferenceService,
+    ManagedInferenceDataLifecycleInterface,
+    ManagedInferenceUsageReader
 {
   async fetch(): Promise<Response> {
     return new Response("Not Found", { status: 404 });
@@ -50,6 +56,15 @@ export class InferenceService
   async abort(rawInput: ManagedInferenceAbort): Promise<ManagedInferenceAbortResult> {
     const input = parseAbortInput(rawInput);
     return await this.coordinator(input.installationId).abort(input.logicalRequestId);
+  }
+
+  async getManagedInferenceBudgetUsage(
+    installationIdValue: string,
+  ): Promise<ManagedInferenceBudgetUsage | null> {
+    const installationId = parseManagedInferenceInstallationId(
+      installationIdValue,
+    );
+    return await this.coordinator(installationId).budgetUsage(installationId);
   }
 
   async suspendManagedInferenceInstallation(
