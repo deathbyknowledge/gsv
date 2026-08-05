@@ -2,6 +2,84 @@ import type {
   AuthenticationResponseJSON,
   PublicKeyRequestOptionsJSON,
 } from "./telegram/types";
+import type {
+  PublicKeyCreationOptionsJSON,
+  RegistrationResponseJSON,
+} from "./home/types";
+
+export async function createPasskey(
+  options: PublicKeyCreationOptionsJSON,
+  credentials: CredentialsContainer = navigator.credentials,
+): Promise<RegistrationResponseJSON> {
+  if (!credentials?.create) {
+    throw new Error("Passkeys are not supported by this browser");
+  }
+  const credential = await credentials.create({
+    publicKey: creationOptions(options),
+  });
+  if (!credential || credential.type !== "public-key") {
+    throw new Error("Passkey creation was cancelled");
+  }
+  return registrationResponse(credential as PublicKeyCredential);
+}
+
+export function creationOptions(
+  options: PublicKeyCreationOptionsJSON,
+): PublicKeyCredentialCreationOptions {
+  return {
+    challenge: base64UrlToBuffer(options.challenge),
+    rp: options.rp,
+    user: {
+      ...options.user,
+      id: base64UrlToBuffer(options.user.id),
+    },
+    pubKeyCredParams: options.pubKeyCredParams,
+    ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+    ...(options.excludeCredentials
+      ? {
+          excludeCredentials: options.excludeCredentials.map((credential) => ({
+            ...credential,
+            id: base64UrlToBuffer(credential.id),
+          })),
+        }
+      : {}),
+    ...(options.authenticatorSelection
+      ? { authenticatorSelection: options.authenticatorSelection }
+      : {}),
+    ...(options.attestation ? { attestation: options.attestation } : {}),
+    ...(options.extensions ? { extensions: options.extensions } : {}),
+  };
+}
+
+export function registrationResponse(
+  credential: PublicKeyCredential,
+): RegistrationResponseJSON {
+  const response = credential.response as AuthenticatorAttestationResponse;
+  if (
+    !(response.clientDataJSON instanceof ArrayBuffer)
+    || !(response.attestationObject instanceof ArrayBuffer)
+  ) {
+    throw new Error("Passkey response is invalid");
+  }
+  const attachment = credential.authenticatorAttachment === "platform"
+      || credential.authenticatorAttachment === "cross-platform"
+    ? credential.authenticatorAttachment
+    : undefined;
+  return {
+    id: credential.id,
+    rawId: bufferToBase64Url(credential.rawId),
+    response: {
+      clientDataJSON: bufferToBase64Url(response.clientDataJSON),
+      attestationObject: bufferToBase64Url(response.attestationObject),
+      ...(typeof response.getTransports === "function"
+        ? { transports: response.getTransports() as AuthenticatorTransport[] }
+        : {}),
+    },
+    ...(attachment ? { authenticatorAttachment: attachment } : {}),
+    clientExtensionResults: credential.getClientExtensionResults(),
+    type: "public-key",
+  };
+}
 
 export async function getPasskeyAssertion(
   options: PublicKeyRequestOptionsJSON,

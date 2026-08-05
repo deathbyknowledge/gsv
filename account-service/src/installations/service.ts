@@ -1,4 +1,8 @@
-import type { ManagedGatewayProvisioningInterface } from "@humansandmachines/gsv/protocol";
+import type {
+  ManagedGatewayProvisioningInterface,
+  ManagedInferenceBudgetUsage,
+  ManagedInferenceUsageReader,
+} from "@humansandmachines/gsv/protocol";
 import type { PlatformAuthService } from "../auth/service";
 import {
   EntitlementStore,
@@ -23,6 +27,12 @@ export type ManagedInstallationView = {
   entitlement: null | Pick<EntitlementProjection, "state" | "planKey" | "effectiveAt">;
 };
 
+export type ManagedInstallationUsage = {
+  level: "normal" | "approaching" | "critical" | "exhausted";
+  usedPercent: number;
+  periodEndsAt: number;
+};
+
 export class InstallationProvisioningUnavailableError extends Error {}
 
 export class ManagedInstallationService {
@@ -31,6 +41,7 @@ export class ManagedInstallationService {
     private readonly entitlements: EntitlementStore,
     private readonly auth: PlatformAuthService,
     private readonly gateway: ManagedGatewayProvisioningInterface,
+    private readonly inference: ManagedInferenceUsageReader,
   ) {}
 
   async list(sessionToken: string): Promise<ManagedInstallationView[]> {
@@ -100,6 +111,51 @@ export class ManagedInstallationService {
     return await this.view(completed);
   }
 
+  async usage(input: {
+    sessionToken: string;
+    installationId: string;
+  }): Promise<ManagedInstallationUsage | null> {
+    const session = await this.auth.authenticateSession(input.sessionToken);
+    if (!session) throw new Error("authentication required");
+    const installation = await this.accounts.getOwnedInstallation(
+      input.installationId,
+      session.principal.id,
+    );
+    if (!installation || installation.state === "deleted") {
+      throw new Error("installation is unavailable");
+    }
+    if (installation.operationState !== "complete") return null;
+
+    let usage: ManagedInferenceBudgetUsage | null;
+    try {
+      usage = await this.inference.getManagedInferenceBudgetUsage(
+        installation.installationId,
+      );
+    } catch {
+      // Usage presentation is advisory. It must not make account recovery,
+      // export, billing repair, or teardown depend on the inference service.
+      return null;
+    }
+    if (!usage) return null;
+    assertUsageMatchesInstallation(usage, installation.installationId);
+    if (usage.budgetMicrounits === 0) return null;
+    const usedPercent = Math.min(
+      100,
+      Math.floor((usage.spentMicrounits / usage.budgetMicrounits) * 100),
+    );
+    return {
+      level: usedPercent >= 100
+        ? "exhausted"
+        : usedPercent >= 95
+          ? "critical"
+          : usedPercent >= 80
+            ? "approaching"
+            : "normal",
+      usedPercent,
+      periodEndsAt: usage.periodEndsAt,
+    };
+  }
+
   private async view(
     reservation: InstallationReservation,
   ): Promise<ManagedInstallationView> {
@@ -121,6 +177,27 @@ export class ManagedInstallationService {
       } : null,
     };
   }
+}
+
+function assertUsageMatchesInstallation(
+  usage: ManagedInferenceBudgetUsage,
+  installationId: string,
+): void {
+  if (
+    usage.installationId !== installationId
+    || !validUsageInteger(usage.periodStartsAt)
+    || !validUsageInteger(usage.periodEndsAt)
+    || usage.periodEndsAt <= usage.periodStartsAt
+    || !validUsageInteger(usage.budgetMicrounits)
+    || !validUsageInteger(usage.spentMicrounits)
+    || !validUsageInteger(usage.reservedMicrounits)
+  ) {
+    throw new Error("managed inference returned invalid usage");
+  }
+}
+
+function validUsageInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
 }
 
 function parseIdempotencyKey(value: string): string {

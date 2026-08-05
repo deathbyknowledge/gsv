@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import type {
   ManagedGatewayProvisioningInterface,
+  ManagedInferenceUsageReader,
   ProvisionInstallationInput,
 } from "@humansandmachines/gsv/protocol";
 import { describe, expect, it, vi } from "vitest";
@@ -60,10 +61,16 @@ async function fixture() {
     })),
   } satisfies ManagedGatewayProvisioningInterface;
   const entitlements = new EntitlementStore(env.ACCOUNT_DB);
+  const inference = {
+    getManagedInferenceBudgetUsage: vi.fn<
+      ManagedInferenceUsageReader["getManagedInferenceBudgetUsage"]
+    >(async () => null),
+  } satisfies ManagedInferenceUsageReader;
   return {
     accounts,
     entitlements,
     gateway,
+    inference,
     principalId,
     token,
     service: new ManagedInstallationService(
@@ -76,6 +83,7 @@ async function fixture() {
         { accountOrigin: "https://accounts.gsv.space" },
       ),
       gateway,
+      inference,
     ),
   };
 }
@@ -154,5 +162,61 @@ describe("managed installation service", () => {
       state: "restricted",
       entitlement: { state: "restricted" },
     }]);
+  });
+
+  it("projects provider-neutral usage warnings only for the owning account", async () => {
+    const result = await fixture();
+    const reserved = await result.service.reserve({
+      sessionToken: result.token,
+      idempotencyKey: crypto.randomUUID(),
+      handle: `usage-${crypto.randomUUID().slice(0, 8)}`,
+      ownerUsername: "owner",
+      agentName: "companion",
+    });
+    const now = Date.now();
+    await result.entitlements.project({
+      installationId: reserved.installationId,
+      state: "active",
+      planKey: "founding-monthly",
+      inferenceBudgetMicrounits: 5_000_000,
+      inferencePeriodStartsAt: now - 60_000,
+      inferencePeriodEndsAt: now + 60_000,
+      storageLimitBytes: 10_000_000_000,
+      effectiveAt: now - 60_000,
+      version: 1,
+    });
+    await result.service.provision({
+      sessionToken: result.token,
+      installationId: reserved.installationId,
+    });
+    result.inference.getManagedInferenceBudgetUsage.mockResolvedValue({
+      installationId: reserved.installationId,
+      periodStartsAt: now - 60_000,
+      periodEndsAt: now + 60_000,
+      budgetMicrounits: 5_000_000,
+      spentMicrounits: 4_500_000,
+      reservedMicrounits: 0,
+    });
+
+    await expect(result.service.usage({
+      sessionToken: result.token,
+      installationId: reserved.installationId,
+    })).resolves.toEqual({
+      level: "approaching",
+      usedPercent: 90,
+      periodEndsAt: now + 60_000,
+    });
+    await expect(result.service.usage({
+      sessionToken: "gsvsession_invalid",
+      installationId: reserved.installationId,
+    })).rejects.toThrow("authentication required");
+
+    result.inference.getManagedInferenceBudgetUsage.mockRejectedValue(
+      new Error("inference unavailable"),
+    );
+    await expect(result.service.usage({
+      sessionToken: result.token,
+      installationId: reserved.installationId,
+    })).resolves.toBeNull();
   });
 });

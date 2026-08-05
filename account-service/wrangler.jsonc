@@ -75,6 +75,11 @@
     "run_worker_first": [
       "/api/*",
       "/health",
+      "/",
+      "/verify",
+      "/verify/",
+      "/recover",
+      "/recover/",
       "/telegram",
       "/telegram/",
       "/billing",

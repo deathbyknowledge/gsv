@@ -26,6 +26,7 @@ beforeEach(async () => {
 describe("billing hosted commerce", () => {
   it("creates one customer and one checkout session across an exact retry", async () => {
     const fixture = await commerceFixture();
+    const createCheckout = vi.spyOn(fixture.provider, "createCheckout");
     const request = {
       sessionToken: "session-token",
       installationId: fixture.installationId,
@@ -38,6 +39,10 @@ describe("billing hosted commerce", () => {
     expect(replay).toEqual(first);
     expect(first.url).toMatch(/^https:\/\/checkout\.billing\.test\//);
     expect(fixture.auth.requireRecentPasskeySession).toHaveBeenCalledTimes(2);
+    expect(createCheckout).toHaveBeenCalledWith(expect.objectContaining({
+      successUrl: "https://accounts.gsv.space/?checkout=complete",
+      cancelUrl: "https://accounts.gsv.space/?checkout=cancelled",
+    }));
     await expect(env.ACCOUNT_DB.prepare(
       "SELECT COUNT(*) AS count FROM billing_accounts",
     ).first<{ count: number }>()).resolves.toEqual({ count: 1 });

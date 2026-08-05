@@ -34,6 +34,13 @@ describe("managed Telegram clean-instance integration", () => {
     const inference = harness.getWorker("gsv-inference-integration");
     const telegram = harness.getWorker("gsv-managed-telegram-integration");
     const dependencies = harness.getWorker("gsv-test-dependencies");
+    const publicConfig = await account.fetch(
+      "https://accounts.gsv.space/api/public/config",
+    );
+    expect(publicConfig.status).toBe(200);
+    await expect(publicConfig.json()).resolves.toMatchObject({
+      telegramBotUsername: "GsvIntegrationBot",
+    });
     const principal = await createAccountSession(await account.getEnv());
     const installation = await provisionInstallation(
       account,

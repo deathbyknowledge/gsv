@@ -1,6 +1,12 @@
 import { useEffect, useState } from "preact/hooks";
 import { installationHostname, telegramIdentity } from "./domain";
 import { TurnstileWidget } from "../TurnstileWidget";
+import {
+  AccountShell,
+  Notice,
+  Progress,
+  StatusCard,
+} from "../shared/AccountShell";
 import { useTelegramLink, type TelegramLinkView } from "./useTelegramLink";
 
 export function TelegramLinkPage({ claimToken }: { claimToken: string | null }) {
@@ -8,6 +14,7 @@ export function TelegramLinkPage({ claimToken }: { claimToken: string | null }) 
     view,
     authenticate,
     confirm,
+    enter,
     selectInstallation,
     restart,
   } = useTelegramLink(claimToken);
@@ -21,38 +28,23 @@ export function TelegramLinkPage({ claimToken }: { claimToken: string | null }) 
   }, [resetKey]);
 
   return (
-    <main class="account-page">
-      <div class="account-grid" aria-hidden="true" />
-      <header class="account-header">
-        <a class="account-brand" href="https://gsv.space" aria-label="GSV home">
-          <img src="/brand/gsv-mark-white.svg" alt="" />
-          <span>GSV</span>
-        </a>
-        <span class="account-product">PERSONAL INTELLIGENCE</span>
-      </header>
-
-      <section class="account-stage" aria-live="polite">
-        <div class="account-service-mark">
-          <img src="/icons/telegram.svg" alt="" />
-        </div>
-        <p class="account-eyebrow">MANAGED TELEGRAM</p>
-        {content(view, {
-          turnstileToken,
-          turnstileError,
-          setTurnstileToken,
-          setTurnstileError,
-          authenticate,
-          confirm,
-          selectInstallation,
-          restart,
-        })}
-      </section>
-
-      <footer class="account-footer">
-        <span>accounts.gsv.space</span>
-        <span>Telegram never receives your account credentials.</span>
-      </footer>
-    </main>
+    <AccountShell
+      eyebrow="MANAGED TELEGRAM"
+      icon="/icons/telegram.svg"
+      footer="Telegram never receives your account credentials."
+    >
+      {content(view, {
+        turnstileToken,
+        turnstileError,
+        setTurnstileToken,
+        setTurnstileError,
+        authenticate,
+        confirm,
+        enter,
+        selectInstallation,
+        restart,
+      })}
+    </AccountShell>
   );
 }
 
@@ -63,6 +55,7 @@ type PageActions = {
   setTurnstileError: (value: boolean) => void;
   authenticate: (turnstileToken: string) => Promise<void>;
   confirm: () => Promise<void>;
+  enter: () => Promise<void>;
   selectInstallation: (installationId: string) => void;
   restart: () => void;
 };
@@ -115,6 +108,7 @@ function content(view: TelegramLinkView, actions: PageActions) {
           {siteKey ? (
             <TurnstileWidget
               siteKey={siteKey}
+              action="passkey_login"
               resetKey={view.resetKey}
               onToken={actions.setTurnstileToken}
               onError={() => actions.setTurnstileError(true)}
@@ -153,13 +147,18 @@ function content(view: TelegramLinkView, actions: PageActions) {
         copy={`New messages to the GSV bot will now reach ${hostname}. The bot has sent you a confirmation.`}
         tone="success"
       >
+        {view.error ? <Notice tone="error">{view.error}</Notice> : null}
         <div class="account-complete-actions">
-          <a
+          <button
             class="account-button account-button-primary"
-            href={view.link.installation.canonicalOrigin}
+            type="button"
+            disabled={view.pending}
+            onClick={() => void actions.enter()}
           >
-            OPEN {view.link.installation.handle.toUpperCase()}.GSV.SPACE
-          </a>
+            {view.pending
+              ? "OPENING…"
+              : `OPEN ${view.link.installation.handle.toUpperCase()}.GSV.SPACE`}
+          </button>
           <button
             class="account-button account-button-secondary"
             type="button"
@@ -278,47 +277,5 @@ function content(view: TelegramLinkView, actions: PageActions) {
         </Notice>
       )}
     </div>
-  );
-}
-
-function StatusCard({
-  title,
-  copy,
-  tone = "neutral",
-  children,
-}: {
-  title: string;
-  copy: string;
-  tone?: "neutral" | "warning" | "error" | "success";
-  children?: preact.ComponentChildren;
-}) {
-  return (
-    <div class={`account-card account-status-card account-tone-${tone}`}>
-      <span class="account-status-light" aria-hidden="true" />
-      <h1>{title}</h1>
-      <p>{copy}</p>
-      {children}
-    </div>
-  );
-}
-
-function Notice({
-  tone,
-  children,
-}: {
-  tone: "warning" | "error";
-  children: preact.ComponentChildren;
-}) {
-  return <p class={`account-notice account-notice-${tone}`}>{children}</p>;
-}
-
-function Progress() {
-  return (
-    <span class="account-progress" role="status">
-      <span />
-      <span />
-      <span />
-      <span class="account-sr-only">Working</span>
-    </span>
   );
 }

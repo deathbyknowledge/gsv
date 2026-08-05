@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   base64UrlToBuffer,
   bufferToBase64Url,
+  creationOptions,
+  registrationResponse,
   requestOptions,
 } from "../passkey";
 
@@ -37,5 +39,51 @@ describe("account passkey transport", () => {
   it("rejects malformed server challenges", () => {
     expect(() => base64UrlToBuffer("not base64url"))
       .toThrow("Passkey challenge is invalid");
+  });
+
+  it("decodes passkey enrollment options and serializes attestation bytes", () => {
+    const options = creationOptions({
+      challenge: "AQID",
+      rp: { id: "accounts.gsv.space", name: "GSV" },
+      user: {
+        id: "BAUG",
+        name: "person@example.com",
+        displayName: "Person",
+      },
+      pubKeyCredParams: [{ alg: -7, type: "public-key" }],
+      excludeCredentials: [{ id: "BwgJ", type: "public-key" }],
+      authenticatorSelection: { userVerification: "required" },
+      attestation: "none",
+    });
+    expect(Array.from(new Uint8Array(options.challenge as ArrayBuffer)))
+      .toEqual([1, 2, 3]);
+    expect(Array.from(new Uint8Array(options.user.id as ArrayBuffer)))
+      .toEqual([4, 5, 6]);
+    expect(Array.from(new Uint8Array(
+      options.excludeCredentials![0].id as ArrayBuffer,
+    ))).toEqual([7, 8, 9]);
+
+    const serialized = registrationResponse({
+      id: "credential-id",
+      rawId: Uint8Array.from([10, 11]).buffer,
+      response: {
+        clientDataJSON: Uint8Array.from([12]).buffer,
+        attestationObject: Uint8Array.from([13]).buffer,
+        getTransports: () => ["internal"],
+      } as AuthenticatorAttestationResponse,
+      authenticatorAttachment: "platform",
+      getClientExtensionResults: () => ({}),
+      type: "public-key",
+    } as unknown as PublicKeyCredential);
+    expect(serialized).toMatchObject({
+      id: "credential-id",
+      rawId: "Cgs",
+      response: {
+        clientDataJSON: "DA",
+        attestationObject: "DQ",
+        transports: ["internal"],
+      },
+      authenticatorAttachment: "platform",
+    });
   });
 });

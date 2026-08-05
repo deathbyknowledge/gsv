@@ -13,6 +13,21 @@ export function publicTurnstileSiteKey(
   return siteKey;
 }
 
+export function publicTelegramBotUsername(
+  value: string | undefined,
+): string | null {
+  if (value === undefined) return null;
+  const username = value.trim().replace(/^@/, "");
+  if (
+    username.length < 5
+    || username.length > 32
+    || !/^[A-Za-z][A-Za-z0-9_]*bot$/i.test(username)
+  ) {
+    throw new Error("Managed Telegram bot username is invalid");
+  }
+  return username;
+}
+
 export async function accountPage(
   request: Request,
   assets: Fetcher | undefined,
@@ -31,7 +46,7 @@ export async function accountPage(
     "base-uri 'none'",
     "connect-src 'self' https://challenges.cloudflare.com",
     "font-src 'self'",
-    "form-action 'self'",
+    "form-action 'self' https://*.gsv.space",
     "frame-ancestors 'none'",
     "frame-src https://challenges.cloudflare.com",
     "img-src 'self' data:",
@@ -47,6 +62,7 @@ export async function accountPage(
     "geolocation=()",
     "microphone=()",
     "payment=()",
+    "publickey-credentials-create=(self)",
     "publickey-credentials-get=(self)",
   ].join(", "));
   headers.set("referrer-policy", "no-referrer");

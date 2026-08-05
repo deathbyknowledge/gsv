@@ -183,5 +183,19 @@ describe("managed installation HTTP boundary", () => {
     );
     expect(provision.status).toBe(404);
     await expect(provision.json()).resolves.toEqual({ error: "Not Found" });
+
+    const foreignUsage = await SELF.fetch(
+      `https://accounts.gsv.space/api/installations/${body.installation.installationId}/usage`,
+      { headers: { Cookie: intruder.cookie } },
+    );
+    expect(foreignUsage.status).toBe(404);
+    await expect(foreignUsage.json()).resolves.toEqual({ error: "Not Found" });
+
+    const ownerUsage = await SELF.fetch(
+      `https://accounts.gsv.space/api/installations/${body.installation.installationId}/usage`,
+      { headers: { Cookie: owner.cookie } },
+    );
+    expect(ownerUsage.status).toBe(200);
+    await expect(ownerUsage.json()).resolves.toEqual({ usage: null });
   });
 });

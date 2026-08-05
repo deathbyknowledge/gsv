@@ -4,17 +4,20 @@ import {
   AccountApiError,
   type PublicAccountConfig,
 } from "../api";
+import {
+  forgetCheckoutOperation,
+  rememberedCheckoutOperation,
+  rememberCheckoutOperation,
+} from "./checkoutStorage";
+import { submitInstallationHandoff } from "../home/navigation";
 import { getPasskeyAssertion } from "../passkey";
 import type { AccountSession } from "../telegram/types";
 import type { BillingOverview } from "./types";
 
 export type CheckoutReturn = "complete" | "cancelled" | null;
 
-const IDEMPOTENCY_KEY_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CHECKOUT_OPERATION_PREFIX = "gsv.billing.checkout.";
-
 type BillingAction = {
-  kind: "checkout" | "portal";
+  kind: "checkout" | "portal" | "enter";
   installationId: string;
 };
 
@@ -133,6 +136,11 @@ export function useBilling(
     await execute({ kind: "portal", installationId }, view);
   }
 
+  async function enter(installationId: string) {
+    if (view.kind !== "ready") return;
+    await execute({ kind: "enter", installationId }, view);
+  }
+
   async function execute(
     action: BillingAction,
     current: Extract<BillingView, { kind: "ready" }>,
@@ -147,17 +155,24 @@ export function useBilling(
       error: undefined,
     });
     try {
+      if (action.kind === "enter") {
+        const handoff = await api.createInstallationHandoff(
+          action.installationId,
+        );
+        submitInstallationHandoff(handoff);
+        return;
+      }
       const key = `${action.kind}:${action.installationId}`;
       let idempotencyKey = operationKeys.current.get(key)
         ?? (action.kind === "checkout"
-          ? rememberedCheckoutKey(action.installationId)
+          ? rememberedCheckoutOperation(action.installationId)
           : null);
       if (!idempotencyKey) {
         idempotencyKey = crypto.randomUUID();
       }
       operationKeys.current.set(key, idempotencyKey);
       if (action.kind === "checkout") {
-        rememberCheckoutKey(action.installationId, idempotencyKey);
+        rememberCheckoutOperation(action.installationId, idempotencyKey);
       }
       const hosted = action.kind === "checkout"
         ? await api.createBillingCheckout({
@@ -176,11 +191,7 @@ export function useBilling(
         && (error.status === 401 || error.status === 403)
       ) {
         pendingAction.current = action;
-        await enterAuthentication(
-          action.kind === "checkout"
-            ? "Confirm with your passkey before starting a subscription"
-            : "Confirm with your passkey before changing billing",
-        );
+        await enterAuthentication(actionPrompt(action.kind));
         return;
       }
       if (
@@ -193,7 +204,7 @@ export function useBilling(
         )
       ) {
         operationKeys.current.delete(`${action.kind}:${action.installationId}`);
-        forgetCheckoutKey(action.installationId);
+        forgetCheckoutOperation(action.installationId);
       }
       setView({
         ...current,
@@ -229,7 +240,7 @@ export function useBilling(
     window.location.reload();
   }
 
-  return { view, authenticate, startCheckout, openPortal, reload };
+  return { view, authenticate, startCheckout, openPortal, enter, reload };
 }
 
 function ready(
@@ -262,37 +273,19 @@ function publicError(error: unknown): string {
 
 function forgetSubscribedCheckoutKeys(overview: BillingOverview): void {
   for (const installation of overview.installations) {
-    if (installation.subscription) forgetCheckoutKey(installation.installationId);
+    if (installation.subscription) {
+      forgetCheckoutOperation(installation.installationId);
+    }
   }
 }
 
-function rememberedCheckoutKey(installationId: string): string | null {
-  try {
-    const key = sessionStorage.getItem(checkoutStorageKey(installationId));
-    if (key && IDEMPOTENCY_KEY_PATTERN.test(key)) return key;
-    forgetCheckoutKey(installationId);
-  } catch {
-    // Storage can be unavailable without making billing unavailable.
+function actionPrompt(kind: BillingAction["kind"]): string {
+  switch (kind) {
+    case "checkout":
+      return "Confirm with your passkey before starting a subscription";
+    case "portal":
+      return "Confirm with your passkey before changing billing";
+    case "enter":
+      return "Confirm with your passkey before entering this GSV";
   }
-  return null;
-}
-
-function rememberCheckoutKey(installationId: string, key: string): void {
-  try {
-    sessionStorage.setItem(checkoutStorageKey(installationId), key);
-  } catch {
-    // The in-memory operation key still protects retries in this page instance.
-  }
-}
-
-function forgetCheckoutKey(installationId: string): void {
-  try {
-    sessionStorage.removeItem(checkoutStorageKey(installationId));
-  } catch {
-    // Storage cleanup is best effort and contains no credential material.
-  }
-}
-
-function checkoutStorageKey(installationId: string): string {
-  return `${CHECKOUT_OPERATION_PREFIX}${installationId}`;
 }

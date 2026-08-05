@@ -1,6 +1,12 @@
 import { useEffect, useState } from "preact/hooks";
 import { TurnstileWidget } from "../TurnstileWidget";
 import {
+  AccountShell,
+  Notice,
+  Progress,
+  StatusCard,
+} from "../shared/AccountShell";
+import {
   billingDeadline,
   billingState,
   monthlyPrice,
@@ -22,6 +28,7 @@ export function BillingPage({
     authenticate,
     startCheckout,
     openPortal,
+    enter,
     reload,
   } = useBilling(checkoutReturn);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
@@ -34,38 +41,22 @@ export function BillingPage({
   }, [resetKey]);
 
   return (
-    <main class="account-page">
-      <div class="account-grid" aria-hidden="true" />
-      <header class="account-header">
-        <a class="account-brand" href="https://gsv.space" aria-label="GSV home">
-          <img src="/brand/gsv-mark-white.svg" alt="" />
-          <span>GSV</span>
-        </a>
-        <span class="account-product">PERSONAL INTELLIGENCE</span>
-      </header>
-
-      <section class="account-stage account-billing-stage" aria-live="polite">
-        <div class="account-service-mark">
-          <img src="/icons/stars.svg" alt="" />
-        </div>
-        <p class="account-eyebrow">MANAGED GSV</p>
-        {content(view, {
-          turnstileToken,
-          turnstileError,
-          setTurnstileToken,
-          setTurnstileError,
-          authenticate,
-          startCheckout,
-          openPortal,
-          reload,
-        })}
-      </section>
-
-      <footer class="account-footer">
-        <span>accounts.gsv.space</span>
-        <span>Payment details stay in Stripe’s hosted checkout and portal.</span>
-      </footer>
-    </main>
+    <AccountShell
+      stageClass="account-billing-stage"
+      footer="Payment details stay in Stripe’s hosted checkout and portal."
+    >
+      {content(view, {
+        turnstileToken,
+        turnstileError,
+        setTurnstileToken,
+        setTurnstileError,
+        authenticate,
+        startCheckout,
+        openPortal,
+        enter,
+        reload,
+      })}
+    </AccountShell>
   );
 }
 
@@ -77,6 +68,7 @@ type PageActions = {
   authenticate: (turnstileToken: string) => Promise<void>;
   startCheckout: (installationId: string) => Promise<void>;
   openPortal: (installationId: string) => Promise<void>;
+  enter: (installationId: string) => Promise<void>;
   reload: () => void;
 };
 
@@ -111,6 +103,7 @@ function content(view: BillingView, actions: PageActions) {
           {siteKey ? (
             <TurnstileWidget
               siteKey={siteKey}
+              action="passkey_login"
               resetKey={view.resetKey}
               onToken={actions.setTurnstileToken}
               onError={() => actions.setTurnstileError(true)}
@@ -209,6 +202,7 @@ function content(view: BillingView, actions: PageActions) {
             disabled={view.pendingInstallationId !== null}
             startCheckout={actions.startCheckout}
             openPortal={actions.openPortal}
+            enter={actions.enter}
           />
         ))}
       </div>
@@ -223,6 +217,7 @@ function InstallationBilling({
   disabled,
   startCheckout,
   openPortal,
+  enter,
 }: {
   installation: BillingInstallation;
   price: string;
@@ -230,6 +225,7 @@ function InstallationBilling({
   disabled: boolean;
   startCheckout: (installationId: string) => Promise<void>;
   openPortal: (installationId: string) => Promise<void>;
+  enter: (installationId: string) => Promise<void>;
 }) {
   const subscription = installation.subscription;
   const state = subscription ? billingState(subscription.state) : null;
@@ -288,9 +284,14 @@ function InstallationBilling({
           </button>
         )}
         {installation.installationState === "active" ? (
-          <a class="account-button account-button-secondary" href={installation.canonicalOrigin}>
-            OPEN GSV
-          </a>
+          <button
+            class="account-button account-button-secondary"
+            type="button"
+            disabled={disabled}
+            onClick={() => void enter(installation.installationId)}
+          >
+            {pending ? "OPENING…" : "OPEN GSV"}
+          </button>
         ) : null}
       </div>
     </section>
@@ -303,46 +304,4 @@ function formatDate(value: number): string {
     month: "short",
     day: "numeric",
   }).format(value);
-}
-
-function StatusCard({
-  title,
-  copy,
-  tone = "neutral",
-  children,
-}: {
-  title: string;
-  copy: string;
-  tone?: "neutral" | "warning" | "error" | "success";
-  children?: preact.ComponentChildren;
-}) {
-  return (
-    <div class={`account-card account-status-card account-tone-${tone}`}>
-      <span class="account-status-light" aria-hidden="true" />
-      <h1>{title}</h1>
-      <p>{copy}</p>
-      {children}
-    </div>
-  );
-}
-
-function Notice({
-  tone,
-  children,
-}: {
-  tone: "warning" | "error" | "success";
-  children: preact.ComponentChildren;
-}) {
-  return <p class={`account-notice account-notice-${tone}`}>{children}</p>;
-}
-
-function Progress() {
-  return (
-    <span class="account-progress" role="status">
-      <span />
-      <span />
-      <span />
-      <span class="account-sr-only">Working</span>
-    </span>
-  );
 }

@@ -5,6 +5,7 @@ import {
   type PublicAccountConfig,
 } from "../api";
 import { initialInstallationId } from "./domain";
+import { submitInstallationHandoff } from "../home/navigation";
 import { getPasskeyAssertion } from "../passkey";
 import type {
   AccountSession,
@@ -32,7 +33,12 @@ export type TelegramLinkView =
       pending: boolean;
       error?: string;
     }
-  | { kind: "complete"; link: ManagedTelegramLink }
+  | {
+      kind: "complete";
+      link: ManagedTelegramLink;
+      pending: boolean;
+      error?: string;
+    }
   | { kind: "failure"; message: string };
 
 export function useTelegramLink(
@@ -177,7 +183,7 @@ export function useTelegramLink(
         installationId: view.selectedInstallationId,
         idempotencyKey: idempotencyKey.current,
       });
-      setView({ kind: "complete", link });
+      setView({ kind: "complete", link, pending: false });
     } catch (error) {
       if (
         error instanceof AccountApiError
@@ -210,11 +216,25 @@ export function useTelegramLink(
     }
   }
 
+  async function enter() {
+    if (view.kind !== "complete" || view.pending) return;
+    const completeView = view;
+    setView({ ...completeView, pending: true, error: undefined });
+    try {
+      const handoff = await api.createInstallationHandoff(
+        completeView.link.installation.installationId,
+      );
+      submitInstallationHandoff(handoff);
+    } catch (error) {
+      setView({ ...completeView, pending: false, error: publicError(error) });
+    }
+  }
+
   function restart() {
     window.location.reload();
   }
 
-  return { view, authenticate, confirm, selectInstallation, restart };
+  return { view, authenticate, confirm, enter, selectInstallation, restart };
 }
 
 function claimRejection(

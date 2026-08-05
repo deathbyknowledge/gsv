@@ -70,8 +70,8 @@ export class BillingCommerceService {
         installationId: operation.installationId,
         planKey,
         providerPriceId: this.prices.require(planKey),
-        successUrl: new URL("/billing?checkout=complete", this.accountOrigin).toString(),
-        cancelUrl: new URL("/billing?checkout=cancelled", this.accountOrigin).toString(),
+        successUrl: new URL("/?checkout=complete", this.accountOrigin).toString(),
+        cancelUrl: new URL("/?checkout=cancelled", this.accountOrigin).toString(),
       }), true);
       await this.store.completeSessionOperation({
         operationId,

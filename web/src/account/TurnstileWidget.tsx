@@ -27,11 +27,13 @@ let turnstileScript: Promise<TurnstileApi> | null = null;
 
 export function TurnstileWidget({
   siteKey,
+  action,
   resetKey,
   onToken,
   onError,
 }: {
   siteKey: string;
+  action: "signup" | "recovery" | "passkey_login";
   resetKey: number;
   onToken: (token: string | null) => void;
   onError: () => void;
@@ -46,7 +48,7 @@ export function TurnstileWidget({
       if (disposed || !container.current) return;
       widgetId = turnstile.render(container.current, {
         sitekey: siteKey,
-        action: "passkey_login",
+        action,
         appearance: "interaction-only",
         size: "flexible",
         theme: "dark",
@@ -66,7 +68,7 @@ export function TurnstileWidget({
         window.turnstile.remove(widgetId);
       }
     };
-  }, [siteKey, resetKey]);
+  }, [siteKey, action, resetKey]);
 
   return <div class="account-turnstile" ref={container} />;
 }

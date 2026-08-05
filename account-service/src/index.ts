@@ -12,7 +12,9 @@ import type {
   ManagedGatewayTelegramInterface,
   ManagedTelegramControlInterface,
   ManagedTelegramDataLifecycleInterface,
+  ManagedTelegramPublicInterface,
   ManagedInferenceDataLifecycleInterface,
+  ManagedInferenceUsageReader,
 } from "@humansandmachines/gsv/protocol";
 import { provisionReservedInstallation, type ProvisionReservedInstallationInput } from "./provisioning";
 import { AccountStore, type InstallationReservation } from "./store";
@@ -42,7 +44,11 @@ import { LifecycleNotificationStore } from "./notifications/store";
 import { ManagedTelegramLinkHttp } from "./telegram/http";
 import { ManagedTelegramLinkService } from "./telegram/service";
 import { ManagedTelegramLinkOperationStore } from "./telegram/store";
-import { accountPage, publicTurnstileSiteKey } from "./account-ui";
+import {
+  accountPage,
+  publicTelegramBotUsername,
+  publicTurnstileSiteKey,
+} from "./account-ui";
 import {
   billingProductConfig,
   stripeBillingConfig,
@@ -73,8 +79,10 @@ type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & BillingProductEnvironment
     & ManagedGatewayDataLifecycleInterface
     & ManagedGatewayExportInterface;
   MANAGED_TELEGRAM: ManagedTelegramControlInterface
-    & ManagedTelegramDataLifecycleInterface;
-  MANAGED_INFERENCE: ManagedInferenceDataLifecycleInterface;
+    & ManagedTelegramDataLifecycleInterface
+    & ManagedTelegramPublicInterface;
+  MANAGED_INFERENCE: ManagedInferenceDataLifecycleInterface
+    & ManagedInferenceUsageReader;
   ASSETS?: Fetcher;
   TURNSTILE_SECRET?: string;
   GSV_TURNSTILE_SITE_KEY?: string;
@@ -90,15 +98,28 @@ export default class AccountService
       return Response.json({ status: "healthy" });
     }
     if (url.pathname === "/api/public/config" && request.method === "GET") {
+      let telegramBotUsername: string | null = null;
+      try {
+        const bot = await this.env.MANAGED_TELEGRAM.getManagedTelegramPublicBot();
+        telegramBotUsername = publicTelegramBotUsername(bot.username);
+      } catch {
+        // Bot presentation is optional and cannot block account access.
+      }
       return json({
         turnstileSiteKey: publicTurnstileSiteKey(
           this.env.GSV_TURNSTILE_SITE_KEY,
         ),
+        telegramBotUsername,
       });
     }
     if (
       (
-        url.pathname === "/telegram"
+        url.pathname === "/"
+        || url.pathname === "/verify"
+        || url.pathname === "/verify/"
+        || url.pathname === "/recover"
+        || url.pathname === "/recover/"
+        || url.pathname === "/telegram"
         || url.pathname === "/telegram/"
         || url.pathname === "/billing"
         || url.pathname === "/billing/"
@@ -247,6 +268,7 @@ export default class AccountService
         new EntitlementStore(this.env.ACCOUNT_DB),
         this.authService(accountOrigin),
         this.env.GATEWAY,
+        this.env.MANAGED_INFERENCE,
       ),
       abuse,
       accountOrigin,

@@ -37,6 +37,10 @@ export class ManagedInstallationHttp {
         () => this.provision(request, decodeURIComponent(provision[1]!)),
       );
     }
+    const usage = /^\/api\/installations\/([^/]+)\/usage$/.exec(url.pathname);
+    if (usage && request.method === "GET") {
+      return await this.usage(request, decodeURIComponent(usage[1]!));
+    }
     return null;
   }
 
@@ -85,6 +89,19 @@ export class ManagedInstallationHttp {
       installationId,
     });
     return json({ installation });
+  }
+
+  private async usage(request: Request, installationId: string): Promise<Response> {
+    try {
+      return json({
+        usage: await this.installations.usage({
+          sessionToken: requireSessionToken(request),
+          installationId,
+        }),
+      });
+    } catch (error) {
+      return installationError(error);
+    }
   }
 
   private async withMutationBoundary(

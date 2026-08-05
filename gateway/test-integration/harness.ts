@@ -184,6 +184,7 @@ function integrationManagedTelegramConfig(
     vars: {
       ...config.vars,
       TELEGRAM_BOT_TOKEN: "integration-telegram-bot-token",
+      TELEGRAM_BOT_USERNAME: "GsvIntegrationBot",
       TELEGRAM_WEBHOOK_SECRET: "integration-telegram-webhook-secret",
       TELEGRAM_CLAIM_SIGNING_KEY:
         "integration-telegram-claim-signing-key-with-more-than-32-bytes",

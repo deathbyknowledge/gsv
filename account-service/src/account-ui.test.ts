@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { accountPage, publicTurnstileSiteKey } from "./account-ui";
+import {
+  accountPage,
+  publicTelegramBotUsername,
+  publicTurnstileSiteKey,
+} from "./account-ui";
 
 describe("account interface boundary", () => {
   it("validates the public widget identifier without exposing a secret", () => {
@@ -9,6 +13,13 @@ describe("account interface boundary", () => {
     expect(() => publicTurnstileSiteKey("short")).toThrow(
       "GSV_TURNSTILE_SITE_KEY is invalid",
     );
+  });
+
+  it("publishes only a validated Telegram bot identity", () => {
+    expect(publicTelegramBotUsername(undefined)).toBeNull();
+    expect(publicTelegramBotUsername(" @GsvSpaceBot ")).toBe("GsvSpaceBot");
+    expect(() => publicTelegramBotUsername("not-a-bot"))
+      .toThrow("Managed Telegram bot username is invalid");
   });
 
   it("serves the dedicated HTML asset with credential-safe headers", async () => {
@@ -35,6 +46,10 @@ describe("account interface boundary", () => {
       .toContain("frame-ancestors 'none'");
     expect(response.headers.get("content-security-policy"))
       .toContain("script-src 'self' https://challenges.cloudflare.com");
+    expect(response.headers.get("content-security-policy"))
+      .toContain("form-action 'self' https://*.gsv.space");
+    expect(response.headers.get("permissions-policy"))
+      .toContain("publickey-credentials-create=(self)");
   });
 
   it("never sends an HTML body for HEAD", async () => {
@@ -58,5 +73,18 @@ describe("account interface boundary", () => {
     expect(await response.text()).toBe("billing shell");
     expect(response.headers.get("content-security-policy"))
       .toContain("default-src 'none'");
+  });
+
+  it("serves the same no-store shell for signup, verification, and recovery", async () => {
+    for (const pathname of ["/", "/verify", "/recover"]) {
+      const response = await accountPage(
+        new Request(`https://accounts.gsv.space${pathname}`),
+        {
+          fetch: vi.fn(async () => new Response("account shell")),
+        } as unknown as Fetcher,
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
   });
 });
