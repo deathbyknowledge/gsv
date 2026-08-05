@@ -100,14 +100,62 @@ export function parseBaseDomain(value: unknown): string {
   return normalized;
 }
 
-export function installationIdentity(handle: string, baseDomain: string): ManagedInstallationIdentity {
+export function installationIdentity(
+  handle: string,
+  baseDomain: string,
+  canonicalOriginTemplate?: string,
+): ManagedInstallationIdentity {
   const parsedHandle = parseHandle(handle);
   const parsedDomain = parseBaseDomain(baseDomain);
   return {
     installationId: `inst_${crypto.randomUUID()}`,
     handle: parsedHandle,
-    canonicalOrigin: `https://${parsedHandle}.${parsedDomain}`,
+    canonicalOrigin: canonicalOriginTemplate
+      ? installationOriginFromTemplate(
+          parsedHandle,
+          parsedDomain,
+          canonicalOriginTemplate,
+        )
+      : `https://${parsedHandle}.${parsedDomain}`,
   };
+}
+
+export function installationOriginFromTemplate(
+  handle: string,
+  baseDomain: string,
+  template: string,
+): string {
+  const parsedHandle = parseHandle(handle);
+  const parsedDomain = parseBaseDomain(baseDomain);
+  if (
+    typeof template !== "string"
+    || template.split("{handle}").length !== 2
+  ) {
+    throw new Error("GSV_INSTALLATION_ORIGIN_TEMPLATE is invalid");
+  }
+
+  let url: URL;
+  try {
+    url = new URL(template.replace("{handle}", parsedHandle));
+  } catch {
+    throw new Error("GSV_INSTALLATION_ORIGIN_TEMPLATE is invalid");
+  }
+  const expectedHostname = `${parsedHandle}.${parsedDomain}`;
+  const localHttp = url.protocol === "http:"
+    && (url.hostname === "localhost" || url.hostname.endsWith(".localhost"));
+  if (
+    url.origin !== template.replace("{handle}", parsedHandle)
+    || (url.protocol !== "https:" && !localHttp)
+    || url.hostname !== expectedHostname
+    || url.pathname !== "/"
+    || url.username
+    || url.password
+    || url.search
+    || url.hash
+  ) {
+    throw new Error("GSV_INSTALLATION_ORIGIN_TEMPLATE is invalid");
+  }
+  return url.origin;
 }
 
 export function hostnameForHandle(handle: string, baseDomain: string): string {

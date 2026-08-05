@@ -13,11 +13,31 @@ const configPaths = {
   ripgit: "ripgit/wrangler.managed.jsonc",
 };
 
+const developmentConfigPaths = {
+  gateway: "gateway/wrangler.managed.dev.jsonc",
+  account: "account-service/wrangler.dev.jsonc",
+  inference: "inference-service/wrangler.dev.jsonc",
+  telegram: "adapters/telegram/wrangler.managed.dev.jsonc",
+  ripgit: "ripgit/wrangler.managed.dev.jsonc",
+};
+
 const configs = Object.fromEntries(
   Object.entries(configPaths).map(([key, relativePath]) => [
     key,
     JSON.parse(fs.readFileSync(path.join(root, relativePath), "utf8")),
   ]),
+);
+
+const developmentConfigs = Object.fromEntries(
+  Object.entries(developmentConfigPaths).map(([key, relativePath]) => [
+    key,
+    JSON.parse(fs.readFileSync(path.join(root, relativePath), "utf8")),
+  ]),
+);
+
+const developmentLauncher = fs.readFileSync(
+  path.join(root, "scripts/dev-managed-stack.sh"),
+  "utf8",
 );
 
 const expectedNames = {
@@ -26,6 +46,48 @@ const expectedNames = {
   inference: "gsv-inference",
   telegram: "gsv-managed-telegram",
   ripgit: "gsv-managed-ripgit",
+};
+
+const expectedMains = {
+  gateway: "src/index.ts",
+  account: "src/index.ts",
+  inference: "src/index.ts",
+  telegram: "src/managed.ts",
+  ripgit: "build/index.js",
+};
+
+const expectedDevelopmentMains = {
+  gateway: "src/managed-development.ts",
+  account: "src/development.ts",
+  inference: "src/index.ts",
+  telegram: "src/managed.ts",
+  ripgit: "build/index.js",
+};
+
+const expectedDevelopmentNames = Object.fromEntries(
+  Object.entries(expectedNames).map(([key, name]) => [key, `${name}-dev`]),
+);
+
+const expectedDevelopmentServices = {
+  gateway: [
+    ["ACCOUNT_HTTP", "gsv-accounts-dev", undefined],
+    ["CHANNEL_TELEGRAM", "gsv-managed-telegram-dev", "ManagedTelegramChannel"],
+    ["INSTALLATION_DIRECTORY", "gsv-accounts-dev", "GatewayDirectoryEntrypoint"],
+    ["MANAGED_INFERENCE", "gsv-inference-dev", "InferenceService"],
+    ["RIPGIT", "gsv-managed-ripgit-dev", undefined],
+  ],
+  account: [
+    ["GATEWAY", "gsv-managed-gateway-dev", "GatewayEntrypoint"],
+    ["MANAGED_INFERENCE", "gsv-inference-dev", "InferenceService"],
+    ["MANAGED_TELEGRAM", "gsv-managed-telegram-dev", "ManagedTelegramChannel"],
+  ],
+  inference: [
+    ["ENTITLEMENTS", "gsv-accounts-dev", "EntitlementReaderEntrypoint"],
+  ],
+  telegram: [
+    ["GATEWAY", "gsv-managed-gateway-dev", "GatewayEntrypoint"],
+  ],
+  ripgit: [],
 };
 
 const expectedServices = {
@@ -68,6 +130,7 @@ const expectedSecrets = {
 
 for (const [key, config] of Object.entries(configs)) {
   invariant(config.name === expectedNames[key], `${key}: unexpected Worker name`);
+  invariant(config.main === expectedMains[key], `${key}: production entrypoint drifted`);
   invariant(config.compatibility_date === "2026-07-31", `${key}: compatibility date drifted`);
   invariant(config.workers_dev === false, `${key}: workers.dev must remain disabled`);
   invariant(config.preview_urls === false, `${key}: preview URLs must remain disabled`);
@@ -128,6 +191,11 @@ invariant(
   "account: transactional email binding is missing",
 );
 invariant(
+  configs.account.vars?.ENVIRONMENT === "production"
+    && !("GSV_INSTALLATION_ORIGIN_TEMPLATE" in configs.account.vars),
+  "account: production environment boundary drifted",
+);
+invariant(
   configs.account.triggers?.crons?.length === 1,
   "account: lifecycle cron must remain configured",
 );
@@ -153,6 +221,70 @@ for (const [owner, names] of Object.entries(expectedSecrets)) {
     `${owner}: required production secrets drifted`,
   );
 }
+
+for (const [key, config] of Object.entries(developmentConfigs)) {
+  invariant(
+    config.name === expectedDevelopmentNames[key],
+    `${key} development: unexpected Worker name`,
+  );
+  invariant(
+    config.main === expectedDevelopmentMains[key],
+    `${key} development: entrypoint drifted`,
+  );
+  invariant(
+    config.compatibility_date === "2026-07-29",
+    `${key} development: compatibility date drifted from the local runtime`,
+  );
+  invariant(config.workers_dev === false, `${key} development: workers.dev must remain disabled`);
+  invariant(config.preview_urls === false, `${key} development: preview URLs must remain disabled`);
+  invariant((config.routes ?? []).length === 0, `${key} development: public routes are forbidden`);
+  invariant(
+    !("secrets" in config),
+    `${key} development: secrets would enable ambient environment overrides`,
+  );
+  invariant(!("dispatch_namespaces" in config), `${key} development: Workers for Platforms is forbidden`);
+  assertDevelopmentServices(key, config.services ?? []);
+}
+
+invariant(
+  developmentConfigs.account.vars?.ENVIRONMENT === "test"
+    && developmentConfigs.account.vars?.GSV_ACCOUNT_ORIGIN === "http://localhost:8976"
+    && developmentConfigs.account.vars?.GSV_BASE_DOMAIN === "localhost"
+    && developmentConfigs.account.vars?.GSV_INSTALLATION_ORIGIN_TEMPLATE
+      === "http://{handle}.localhost:8976",
+  "account development: local-only runtime boundary drifted",
+);
+invariant(
+  developmentLauncher.includes("CLOUDFLARE_INCLUDE_PROCESS_ENV=false")
+    && developmentLauncher.includes("CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false")
+    && developmentLauncher.includes('--env-file "$EMPTY_ENV_FILE"'),
+  "development launcher: ambient environment isolation is missing",
+);
+invariant(
+  developmentConfigs.inference.vars?.ENVIRONMENT === "test"
+    && developmentConfigs.inference.vars?.MANAGED_INFERENCE_PROVIDER === "synthetic",
+  "inference development: credential-free synthetic provider is missing",
+);
+invariant(
+  !("ai" in developmentConfigs.gateway),
+  "gateway development: Workers AI must not be activated locally",
+);
+invariant(
+  developmentConfigs.gateway.assets?.directory === "../.wrangler/managed-dev-assets/"
+    && JSON.stringify(developmentConfigs.gateway.assets?.run_worker_first) === '["/*"]',
+  "gateway development: the primary host router must own all local assets",
+);
+invariant(
+  !("assets" in developmentConfigs.account),
+  "account development: auxiliary assets must be staged behind the primary host router",
+);
+const developmentAccountOrigin = developmentConfigs.account.vars?.GSV_ACCOUNT_ORIGIN;
+invariant(
+  developmentAccountOrigin === developmentConfigs.gateway.vars?.GSV_ACCOUNT_ORIGIN
+    && developmentAccountOrigin === developmentConfigs.telegram.vars?.GSV_ACCOUNT_ORIGIN
+    && developmentAccountOrigin === "http://localhost:8976",
+  "development: account origins must share the local ingress",
+);
 for (const key of ["gateway", "inference", "ripgit"]) {
   invariant(
     (configs[key].secrets?.required ?? []).length === 0,
@@ -176,6 +308,7 @@ process.stdout.write(
     "Public: *.gsv.space -> gsv-managed-gateway",
     "Internal only: gsv-inference, gsv-managed-ripgit",
     "Managed inference provider: disabled (release gate intact)",
+    "Local managed graph: five credential-free *-dev Workers on localhost:8976",
   ].join("\n") + "\n",
 );
 
@@ -203,6 +336,23 @@ function assertServices(key, actualBindings, expectedBindings) {
     invariant(
       Object.values(expectedNames).includes(target),
       `${key}: ${target} is outside the managed service graph`,
+    );
+  }
+}
+
+function assertDevelopmentServices(key, actualBindings) {
+  const actual = actualBindings
+    .map((binding) => [binding.binding, binding.service, binding.entrypoint])
+    .sort(compareTuples);
+  const expected = [...expectedDevelopmentServices[key]].sort(compareTuples);
+  invariant(
+    JSON.stringify(actual) === JSON.stringify(expected),
+    `${key} development: service binding graph drifted`,
+  );
+  for (const [, target] of actual) {
+    invariant(
+      Object.values(expectedDevelopmentNames).includes(target),
+      `${key} development: ${target} is outside the local managed graph`,
     );
   }
 }

@@ -14,6 +14,7 @@
     "postinstall": "npm run gsv:build",
     "setup": "bash ./scripts/setup-deps.sh",
     "dev": "bash ./scripts/dev-stack.sh",
+    "dev:managed": "bash ./scripts/dev-managed-stack.sh",
     "extension:check": "npm run check --workspace extension",
     "extension:build": "npm run build --workspace extension",
     "extension:package": "bash ./scripts/build-extension-package.sh",

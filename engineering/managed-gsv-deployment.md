@@ -72,6 +72,41 @@ temporary directory, builds both web surfaces, and dry-runs all five Worker
 bundles plus the clean-account bootstrap. It never calls a mutating Cloudflare
 API.
 
+## Run the managed product locally
+
+Use a separate local graph when reviewing the managed product:
+
+```bash
+npm run dev:managed
+```
+
+The command builds both web surfaces, applies the account migrations to local
+D1, and starts local versions of all five managed Workers. Visit
+`http://localhost:8976/__gsv/development`; the development-only account ingress
+creates or resumes one trial through the real entitlement and provisioning
+boundaries, then uses the normal one-time Gateway handoff. The installation is
+served at `http://local.localhost:8976` and text inference uses the synthetic
+provider.
+
+The local Workers have distinct `*-dev` names, no public routes, no production
+secrets, no Workers AI binding, and persistent state under
+`.wrangler/managed-dev-state`. The development ingress translates only the two
+host-only browser session cookies needed for plain-HTTP localhost; production
+cookie behavior is unchanged. Set `GSV_MANAGED_DEV_STATE_DIR` to an empty
+directory for a disposable clean-instance run.
+
+Worker sources reload while the stack is running. The desktop and account UI
+are staged together under `.wrangler/managed-dev-assets` at startup, isolated
+from ordinary `web/dist` rebuilds. Restart the command after changing `web/`
+source. Local HTTP cookies assume the developer machine is trusted; the ingress
+requires the exact installation origin for cookie-authenticated WebSockets.
+These loopback configs are not a staging topology; local TLS is required when a
+test needs production-equivalent cookie transport semantics.
+
+This bootstrap validates the managed runtime, not the production acquisition
+funnel. Stripe Checkout/webhooks, verification-email delivery, passkeys, and
+real Telegram delivery still require their credentialed staging checks.
+
 ## DNS
 
 Worker routes do not create DNS records. Keep a proxied wildcard DNS record for

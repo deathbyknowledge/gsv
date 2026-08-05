@@ -56,6 +56,27 @@ async function grantProvisioningEntitlement(installationId: string): Promise<voi
 }
 
 describe("managed account store", () => {
+  it("uses an explicit localhost origin template for local managed routing", async () => {
+    const principalId = await createVerifiedPrincipal("local_origin");
+    const localStore = new AccountStore(
+      env.ACCOUNT_DB,
+      "localhost",
+      "http://{handle}.localhost:8787",
+    );
+    const reservation = await localStore.reserveInstallation({
+      principalId,
+      operationId: "op_local_origin",
+      handle: "local-home",
+    });
+
+    expect(reservation.canonicalOrigin).toBe("http://local-home.localhost:8787");
+    await expect(localStore.resolveHostname("local-home.localhost")).resolves
+      .toMatchObject({
+        found: true,
+        installationId: reservation.installationId,
+      });
+  });
+
   it("atomically reserves a handle for a verified principal", async () => {
     const principalId = await createVerifiedPrincipal("reserve");
     const reservation = await store().reserveInstallation({

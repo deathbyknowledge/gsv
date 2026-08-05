@@ -58,6 +58,7 @@ export class AccountStore {
   constructor(
     private readonly db: D1Database,
     private readonly baseDomain: string,
+    private readonly canonicalOriginTemplate?: string,
   ) {
     parseBaseDomain(baseDomain);
   }
@@ -137,7 +138,11 @@ export class AccountStore {
       return existing;
     }
 
-    const identity = installationIdentity(handle, this.baseDomain);
+    const identity = installationIdentity(
+      handle,
+      this.baseDomain,
+      this.canonicalOriginTemplate,
+    );
     const hostname = hostnameForHandle(handle, this.baseDomain);
     const now = nowMs();
     const reservationExpiresAt = now + RESERVATION_TTL_MS;

@@ -70,7 +70,7 @@ import { BillingWebhookProcessor } from "./billing/webhooks";
 import { InstallationExportHttp } from "./installation-export/http";
 import { InstallationExportService } from "./installation-export/service";
 
-type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & BillingProductEnvironment
+export type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & BillingProductEnvironment
 & StripeBillingEnvironment & {
   ENVIRONMENT: string;
   GATEWAY: ManagedGatewayProvisioningInterface
@@ -86,6 +86,7 @@ type AccountServiceEnv = Omit<Env, "ENVIRONMENT"> & BillingProductEnvironment
   ASSETS?: Fetcher;
   TURNSTILE_SECRET?: string;
   GSV_TURNSTILE_SITE_KEY?: string;
+  GSV_INSTALLATION_ORIGIN_TEMPLATE?: string;
 };
 
 export default class AccountService
@@ -225,7 +226,11 @@ export default class AccountService
   }
 
   private store(): AccountStore {
-    return new AccountStore(this.env.ACCOUNT_DB, this.env.GSV_BASE_DOMAIN);
+    return new AccountStore(
+      this.env.ACCOUNT_DB,
+      this.env.GSV_BASE_DOMAIN,
+      this.env.GSV_INSTALLATION_ORIGIN_TEMPLATE,
+    );
   }
 
   private authStore(): PlatformAuthStore {
@@ -478,12 +483,14 @@ export class GatewayDirectoryEntrypoint
   }
 }
 
-function parseAccountOrigin(value: string): string {
+export function parseAccountOrigin(value: string): string {
   const normalized = value.trim();
   const url = new URL(normalized);
+  const localHttp = url.protocol === "http:"
+    && (url.hostname === "localhost" || url.hostname.endsWith(".localhost"));
   if (
     url.origin !== normalized
-    || url.protocol !== "https:"
+    || (url.protocol !== "https:" && !localHttp)
     || url.pathname !== "/"
     || url.username
     || url.password

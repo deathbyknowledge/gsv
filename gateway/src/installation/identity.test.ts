@@ -34,6 +34,9 @@ describe("installation identity", () => {
       "https://hank.gsv.space",
     );
     expect(parseCanonicalOrigin("http://localhost:8787")).toBe("http://localhost:8787");
+    expect(parseCanonicalOrigin("http://hank.localhost:8787")).toBe(
+      "http://hank.localhost:8787",
+    );
     expect(() => parseCanonicalOrigin("http://hank.gsv.space")).toThrow("must use https");
     expect(() => parseCanonicalOrigin("https://hank.gsv.space/path")).toThrow("URL origin");
   });
