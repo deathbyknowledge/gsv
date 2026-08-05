@@ -8,6 +8,7 @@ import type {
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createGatewayTestHarness, webSocketUrl } from "./harness";
+import { SINGLETON_INSTALLATION_ID } from "../src/installation/identity";
 
 const USERNAME = "auth-user";
 const PASSWORD = "integration-auth-password";
@@ -301,7 +302,7 @@ describe("gateway authentication integration", () => {
     user.close();
     root.close();
     await harness.getWorker("gsv").evictDurableObject("KERNEL", {
-      name: "singleton",
+      name: SINGLETON_INSTALLATION_ID,
       webSockets: "close",
     });
 

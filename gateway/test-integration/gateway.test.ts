@@ -47,20 +47,15 @@ describe("gateway integration", () => {
     });
   });
 
-  it("serves the production SPA without swallowing retired Worker routes", async () => {
+  it("serves the production SPA and leaves removed public assets missing", async () => {
     const root = await harness.fetch("/");
     expect(root.status).toBe(200);
     expect(root.headers.get("content-type")).toContain("text/html");
     expect(await root.text()).toContain("<div id=\"app\"></div>");
 
-    const retired = await harness.fetch("/public/gsv/downloads/cli/install.sh");
-    expect(retired.status).toBe(410);
-    expect(retired.headers.get("cache-control")).toBe("no-store");
-    await expect(retired.text()).resolves.toContain("https://install.gsv.space");
-
-    const nearMiss = await harness.fetch("/public/gsv/downloads/cli-old/install.sh");
-    expect(nearMiss.status).toBe(404);
-    await expect(nearMiss.text()).resolves.toBe("Not Found");
+    const removedCliAsset = await harness.fetch("/public/gsv/downloads/cli/install.sh");
+    expect(removedCliAsset.status).toBe(404);
+    await expect(removedCliAsset.text()).resolves.toBe("Not Found");
   });
 
   it("runs setup, authentication, process lifecycle, and adapter RPC through real boundaries", async () => {

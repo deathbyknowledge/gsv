@@ -21,7 +21,6 @@ import type {
 import type {
   AdapterMedia,
   AdapterMediaPart,
-  AdapterSurface,
   BinaryBody,
   ConnectionIdentity,
   NetFetchArgs,
@@ -114,6 +113,8 @@ import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import { SERVER_VERSION } from "../version";
+import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
+import type { InstallationIdentity } from "../installation/identity";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -203,6 +204,7 @@ type AuthorizeGitHttpResult =
     };
 
 export class Kernel extends Host<Env> {
+  private installationIdentity?: InstallationIdentity;
   private readonly auth: AuthStore;
   private readonly caps: CapabilityStore;
   private readonly config: ConfigStore;
@@ -238,6 +240,9 @@ export class Kernel extends Host<Env> {
     super(ctx, env);
     const sql = ctx.storage.sql;
     runKernelSqlMigrations(ctx.storage);
+
+    const identity = ctx.storage.kv.get<InstallationIdentity>("install_identity");
+    this.installationIdentity = identity;
 
     this.auth = new AuthStore(sql);
 
@@ -305,6 +310,32 @@ export class Kernel extends Host<Env> {
     return provider;
   }
 
+  async ensureInstallationIdentity(input: InstallationIdentity) {
+    if (input.installationId !== this.name) {
+      throw new Error("installation identity conflicts with Kernel name");
+    }
+
+    if (!this.installationIdentity) {
+      this.ctx.storage.kv.put("install_identity", input);
+      this.installationIdentity = input;
+      return input;
+    }
+
+    const existing = this.installationIdentity;
+    if (
+      existing.installationId !== input.installationId
+      || existing.handle !== input.handle
+      || existing.canonicalOrigin !== input.canonicalOrigin
+    ) {
+      throw new Error("installation identity conflicts with persisted Kernel identity");
+    }
+    return existing;
+  }
+
+  async getInstallationIdentity(): Promise<InstallationIdentity | null> {
+    return this.installationIdentity ?? null;
+  }
+
   async onRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname !== "/oauth/callback" || request.method !== "GET") {
@@ -323,7 +354,7 @@ export class Kernel extends Host<Env> {
   private async addMcpServerConnection(input: McpAddConnectionInput): Promise<McpAddConnectionResult> {
     const serverName = `u${input.uid}:${input.name}`;
     const serverId = `mcp-${crypto.randomUUID()}`;
-    let callbackHost = input.callbackHost;
+    let callbackHost = this.installationIdentity?.canonicalOrigin ?? input.callbackHost;
     if (!callbackHost) {
       const { request, connection } = getCurrentAgent();
       const activeUrl = request?.url ?? connection?.uri;
@@ -1550,8 +1581,11 @@ export class Kernel extends Host<Env> {
     requestSignal?: AbortSignal;
     callerOwnerUid?: number;
   }): KernelContext {
+    const installationIdentity = this.installationIdentity ?? null;
     return {
       env: this.env,
+      installationId: this.installationIdentity?.installationId ?? SINGLETON_INSTALLATION_ID,
+      installationIdentity,
       auth: this.auth,
       caps: this.caps,
       config: this.config,
