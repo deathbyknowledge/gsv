@@ -115,6 +115,7 @@ import { runKernelSqlMigrations } from "./schema/migrations";
 import { SERVER_VERSION } from "../version";
 import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
 import type { InstallationIdentity } from "../installation/identity";
+import { createInstallationStorage } from "../installation/storage";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -205,6 +206,8 @@ type AuthorizeGitHttpResult =
 
 export class Kernel extends Host<Env> {
   private installationIdentity?: InstallationIdentity;
+  private readonly installationStorage: R2Bucket;
+  private readonly installationEnv: Env;
   private readonly auth: AuthStore;
   private readonly caps: CapabilityStore;
   private readonly config: ConfigStore;
@@ -243,6 +246,11 @@ export class Kernel extends Host<Env> {
 
     const identity = ctx.storage.kv.get<InstallationIdentity>("install_identity");
     this.installationIdentity = identity;
+    this.installationStorage = createInstallationStorage(
+      env.STORAGE,
+      identity?.installationId ?? ctx.id.name ?? SINGLETON_INSTALLATION_ID,
+    );
+    this.installationEnv = envWithStorage(env, this.installationStorage);
 
     this.auth = new AuthStore(sql);
 
@@ -1228,7 +1236,7 @@ export class Kernel extends Host<Env> {
     const { adapter, accountId, surface } = route.destination;
     if (frame.signal === "proc.run.started") {
       await setAdapterActivityForKernel(
-        this.env,
+        this.bindings,
         adapter,
         accountId,
         surface,
@@ -1241,7 +1249,7 @@ export class Kernel extends Host<Env> {
       const request = normalizeAdapterHilRequest(frame.payload, "signal");
       if (!request) {
         await setAdapterActivityForKernel(
-          this.env,
+          this.bindings,
           adapter,
           accountId,
           surface,
@@ -1257,7 +1265,7 @@ export class Kernel extends Host<Env> {
         });
       } finally {
         await setAdapterActivityForKernel(
-          this.env,
+          this.bindings,
           adapter,
           accountId,
           surface,
@@ -1300,7 +1308,7 @@ export class Kernel extends Host<Env> {
       }, attachmentBundle.body);
     } finally {
       await setAdapterActivityForKernel(
-        this.env,
+        this.bindings,
         adapter,
         accountId,
         surface,
@@ -1410,7 +1418,7 @@ export class Kernel extends Host<Env> {
         if (!mimeType) {
           throw new AdapterReplyMediaError("Process reply media requires mimeType");
         }
-        const object = await this.env.STORAGE.get(key);
+        const object = await this.storage.get(key);
         if (!object) {
           throw new AdapterReplyMediaError(`Process reply media not found: ${key}`);
         }
@@ -1583,7 +1591,7 @@ export class Kernel extends Host<Env> {
   }): KernelContext {
     const installationIdentity = this.installationIdentity ?? null;
     return {
-      env: this.env,
+      env: this.bindings,
       installationId: this.installationIdentity?.installationId ?? SINGLETON_INSTALLATION_ID,
       installationIdentity,
       auth: this.auth,
@@ -1628,6 +1636,14 @@ export class Kernel extends Host<Env> {
         signal ? { signal } : undefined,
       ),
     };
+  }
+
+  private get bindings(): Env {
+    return this.installationEnv ?? this.env;
+  }
+
+  private get storage(): R2Bucket {
+    return this.installationStorage ?? this.env.STORAGE;
   }
 
   private buildDispatchDeps(): DispatchDeps {
@@ -3310,4 +3326,14 @@ function shellStatusFromEvent(event: string): ShellSessionStatus {
     return "failed";
   }
   return "running";
+}
+
+function envWithStorage(env: Env, storage: R2Bucket): Env {
+  return new Proxy(env, {
+    get(target, property) {
+      return property === "STORAGE"
+        ? storage
+        : Reflect.get(target, property, target);
+    },
+  });
 }

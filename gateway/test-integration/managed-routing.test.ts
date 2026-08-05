@@ -36,6 +36,32 @@ describe("managed installation routing integration", () => {
     expect(await response.text()).toBe("Not Found");
   });
 
+  it("does not expose public storage for an unknown hostname", async () => {
+    const response = await harness.getWorker("gsv-managed").fetch(
+      "https://random.gsv.space/public/private-by-default.txt",
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Not Found");
+  });
+
+  it("serves each installation's public storage namespace", async () => {
+    const worker = harness.getWorker<{ STORAGE: R2Bucket }>("gsv-managed");
+    const { STORAGE } = await worker.getEnv();
+    await Promise.all([
+      putPublicAsset(STORAGE, "inst_integration_first", "first"),
+      putPublicAsset(STORAGE, "inst_integration_second", "second"),
+    ]);
+
+    const first = await worker.fetch("https://first.gsv.space/public/installation.txt");
+    const second = await worker.fetch("https://second.gsv.space/public/installation.txt");
+
+    expect(first.status).toBe(200);
+    expect(await first.text()).toBe("first");
+    expect(second.status).toBe(200);
+    expect(await second.text()).toBe("second");
+  });
+
   it("uses the directory's persisted canonical origin", async () => {
     const response = await harness.getWorker("gsv-managed").fetch(
       "https://first.gsv.space/.well-known/oauth-client/gsv.json",
@@ -68,3 +94,18 @@ describe("managed installation routing integration", () => {
     }
   });
 });
+
+async function putPublicAsset(
+  storage: R2Bucket,
+  installationId: string,
+  content: string,
+): Promise<void> {
+  await storage.put(
+    `installations/${installationId}/public/installation.txt`,
+    content,
+    {
+      httpMetadata: { contentType: "text/plain" },
+      customMetadata: { uid: "0", gid: "0", mode: "644" },
+    },
+  );
+}

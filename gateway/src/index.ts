@@ -14,6 +14,7 @@ import {
 } from "./installation/routing";
 import type { GatewayInstallationBindings } from "./installation/routing";
 import { SINGLETON_INSTALLATION_ID } from "./installation/identity";
+import { createInstallationStorage } from "./installation/storage";
 import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
 
 export { Kernel } from "./kernel/do";
@@ -44,10 +45,11 @@ export default {
       });
     }
 
-    // TODO: still needs work since we don't have public asset install routing
     const publicAssetMatch = matchPublicAssetPath(url.pathname);
     if (publicAssetMatch) {
-      return servePublicAssetRequest(request, createPublicAssetFileSystem(env), publicAssetMatch);
+      const storage = createInstallationStorage(env.STORAGE, route.identity.installationId);
+      const fs = createPublicAssetFileSystem({ STORAGE: storage });
+      return servePublicAssetRequest(request, fs, publicAssetMatch);
     }
     const kernelDO = await getKernelByInstallationId(
       env.KERNEL,
