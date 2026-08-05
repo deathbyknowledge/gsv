@@ -871,6 +871,15 @@ fixed token count. Cohort telemetry determines the production allowance before
 the list-price launch. The broker continues to enforce smaller rolling and
 concurrency limits even when monthly budget remains.
 
+The account service may read the current installation budget period through a
+narrow internal inference RPC only after authenticating the owning principal.
+It converts content-free microunit counters into a bounded percentage and the
+plain-language states `normal`, `approaching`, `critical`, or `exhausted`.
+Browser APIs never expose provider names, token counts, price-book entries, or
+raw upstream cost. This read is advisory: inference unavailability suppresses
+the warning rather than blocking login, billing repair, export, recovery, or
+deletion.
+
 DeepSeek V4 Flash is text-only for product purposes. GSV routes image, audio,
 speech, and other unsupported input to an explicitly capable model or reports a
 clear unsupported capability. It must not silently replace private media with
@@ -963,6 +972,11 @@ GSVs with `/switch`, custom managed bots, and Telegram-based account recovery
 are deferred. Standalone installations retain the existing local challenge
 flow and user-owned bot token. A managed Telegram link grants only the
 capabilities of its mapped local UID and is not a global account credential.
+The account service publishes the configured public bot username through its
+otherwise secret-free public configuration so the dashboard can link directly
+to the managed bot. The token remains exclusively in the Telegram Worker, and
+the bot username is an environment-owned launch input rather than a hardcoded
+product identifier.
 
 ## Private service contracts
 
@@ -1015,6 +1029,12 @@ The inference broker exposes:
 interface ManagedInferenceService {
   run(input: ManagedInferenceRequest): Promise<ManagedInferenceResponse>;
   abort(input: ManagedInferenceAbort): Promise<{ aborted: boolean }>;
+}
+
+interface ManagedInferenceUsageReader {
+  getManagedInferenceBudgetUsage(
+    installationId: string,
+  ): Promise<ManagedInferenceBudgetUsage | null>;
 }
 ```
 
@@ -1121,9 +1141,10 @@ five-Worker integration flow proves that an unlinked DM cannot allocate
 inference, account confirmation links the real Kernel and peer, a foreign
 installation cannot send to that peer, and a linked DM reaches only the selected
 installation through the managed inference broker. Standalone Telegram remains
-unchanged. The production bot credentials, webhook registration, account
-Turnstile widget, and overall Phases 5 through 9 launch gates remain external or
-incomplete, so managed production hosting remains disabled.
+unchanged. The production bot credentials, public bot username, webhook
+registration, account Turnstile widget, and overall Phases 5 through 9 launch
+gates remain external or incomplete, so managed production hosting remains
+disabled.
 
 Phase 7 is in progress. Its provider-neutral subscription schema, event lease
 and deduplication store, current-snapshot reconciler, lifecycle deadline
@@ -1157,8 +1178,27 @@ record. The distinct managed Worker identities, public and internal routes,
 least-authority service graph, secret ownership, clean-account binding
 bootstrap, state provisioning order, dry-run bundle validation, activation
 order, and rollback procedure are now executable in the production topology.
-Automated restore validation and the remaining Phase 8 and 9 product and release
-gates are still incomplete.
+Phase 8 implementation is now complete behind the external launch gates. The
+account Worker serves one credential-safe browser shell for signup, email
+verification, passkey enrollment and recovery, handle choice, Stripe Checkout,
+signed-entitlement polling, provisioning progress, and one-use host entry. The
+account dashboard presents the launch-scope single GSV, billing repair, a
+configured managed Telegram bot, provider-neutral GSV Intelligence warnings,
+complete streaming export, recoverable deletion, and recovery. Cancelled
+Checkout resumes the same idempotent provider operation, and a browser success
+return never grants service. Sensitive operations require a recent passkey;
+billing and inference presentation failures do not remove account, export, or
+deletion controls. A live nontechnical-user exit run still depends on the
+production email, Turnstile, Stripe, Telegram, and promoted-model gates.
+
+Phase 9 is in progress. A clean two-installation hostile test now deliberately
+reuses local usernames, UID 1000, process labels, and logical filesystem paths,
+then proves account membership, host sessions, R2-backed filesystem data, and
+Process Durable Objects remain isolated. Separate integration tests retain
+installation identity across matching adapter delivery identifiers and
+inference request identifiers. Automated restore validation, load and provider
+failure exercises, production dashboards and alerts, and cohort rollout remain
+incomplete.
 
 ### Phase 0: executable specification
 

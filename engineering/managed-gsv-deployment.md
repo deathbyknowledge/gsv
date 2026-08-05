@@ -165,6 +165,8 @@ history. The account Worker owns:
 The managed Telegram Worker owns:
 
 - `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_BOT_USERNAME` (the public bot identity, stored as an
+  environment-owned input so no placeholder is committed)
 - `TELEGRAM_WEBHOOK_SECRET`
 - `TELEGRAM_CLAIM_SIGNING_KEY`, at least 32 random bytes
 
@@ -238,11 +240,16 @@ command, ticket, log, or document.
 Before founding-cohort traffic, verify:
 
 - `GET https://accounts.gsv.space/health` reports healthy;
+- `GET https://accounts.gsv.space/` serves the no-store signup shell, and the
+  public configuration names the intended managed Telegram bot without
+  exposing any credential;
 - `GET https://telegram.gsv.space/health` reports configured;
 - an unknown installation hostname returns `404` and allocates no Kernel;
 - an active test installation reaches only its persisted Kernel identity;
 - account signup rejects missing or invalid Turnstile proof;
 - no Checkout return grants entitlement without a verified webhook;
+- a consumed inference attempt produces only a provider-neutral usage summary
+  for its owning account and no summary for another principal;
 - inference still returns the explicit provider-disabled state until approval;
 - an unlinked Telegram DM cannot allocate a Process or inference budget;
 - export and deletion still work for a restricted test installation; and
