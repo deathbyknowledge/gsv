@@ -11,7 +11,10 @@
     "noEmit": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "types": ["./worker-configuration.d.ts"]
+    "types": [
+      "./worker-configuration.d.ts",
+      "@cloudflare/workers-types"
+    ]
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "src/**/*.test.ts"]

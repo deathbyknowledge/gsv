@@ -6,7 +6,7 @@
   "scripts": {
     "deploy": "npm --prefix ../web run build:account && wrangler deploy --minify",
     "dev": "npm --prefix ../web run build:account && wrangler dev",
-    "cf-typegen": "wrangler types",
+    "cf-typegen": "wrangler types --include-runtime false",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts"
   },
@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.18.0",
+    "@cloudflare/workers-types": "5.20260722.1",
     "typescript": "^5.9.3",
     "vitest": "4.1.9",
     "wrangler": "4.115.0"

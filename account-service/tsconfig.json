@@ -12,6 +12,7 @@
     "skipLibCheck": true,
     "types": [
       "./worker-configuration.d.ts",
+      "@cloudflare/workers-types",
       "@cloudflare/vitest-pool-workers/types"
     ]
   },
