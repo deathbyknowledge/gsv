@@ -174,7 +174,7 @@ async function attachToReply(
         },
         body: { stream: opened.body, length: opened.size },
       };
-      const response = await sendFrameToProcess(pid, request);
+      const response = await sendFrameToProcess(ctx.installationId, pid, request);
       if (!response || response.type !== "res" || !response.ok) {
         throw new Error(
           response && response.type === "res" && !response.ok
@@ -202,7 +202,7 @@ async function attachToReply(
         ...(stagedKeys.length > 0 ? { stagedKeys } : {}),
       },
     };
-    const response = await sendFrameToProcess(pid, request);
+    const response = await sendFrameToProcess(ctx.installationId, pid, request);
     if (!response || response.type !== "res" || !response.ok) {
       throw new Error(
         response && response.type === "res" && !response.ok
@@ -222,13 +222,17 @@ async function attachToReply(
       "",
     ].join("\n"));
   } catch (error) {
-    await rollbackStagedReplyMedia(pid, stagedKeys);
+    await rollbackStagedReplyMedia(ctx.installationId, pid, stagedKeys);
     throw error;
   }
 }
 
-async function rollbackStagedReplyMedia(pid: string, keys: string[]): Promise<void> {
-  await Promise.allSettled(keys.map((key) => sendFrameToProcess(pid, {
+async function rollbackStagedReplyMedia(
+  installationId: string,
+  pid: string,
+  keys: string[],
+): Promise<void> {
+  await Promise.allSettled(keys.map((key) => sendFrameToProcess(installationId, pid, {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.media.delete",

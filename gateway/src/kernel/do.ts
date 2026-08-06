@@ -113,7 +113,7 @@ import { handleShellExec } from "../drivers/native/shell";
 import { getVisibleTarget } from "./targets";
 import { runKernelSqlMigrations } from "./schema/migrations";
 import { SERVER_VERSION } from "../version";
-import { SINGLETON_INSTALLATION_ID } from "../installation/identity";
+import { parseInstallationId } from "../installation/identity";
 import type { InstallationIdentity } from "../installation/identity";
 import { createInstallationStorage } from "../installation/storage";
 
@@ -204,7 +204,10 @@ type AuthorizeGitHttpResult =
       message: string;
     };
 
+type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
+
 export class Kernel extends Host<Env> {
+  private readonly installationId: string;
   private installationIdentity?: InstallationIdentity;
   private readonly installationStorage: R2Bucket;
   private readonly installationEnv: Env;
@@ -241,14 +244,17 @@ export class Kernel extends Host<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.installationId = parseInstallationId(ctx.id.name);
     const sql = ctx.storage.sql;
     runKernelSqlMigrations(ctx.storage);
 
-    const identity = ctx.storage.kv.get<InstallationIdentity>("install_identity");
-    this.installationIdentity = identity;
+    const identity = ctx.storage.kv.get<StoredInstallationIdentity>("install_identity");
+    this.installationIdentity = identity
+      ? { ...identity, installationId: this.installationId }
+      : undefined;
     this.installationStorage = createInstallationStorage(
       env.STORAGE,
-      identity?.installationId ?? ctx.id.name ?? SINGLETON_INSTALLATION_ID,
+      this.installationId,
     );
     this.installationEnv = envWithStorage(env, this.installationStorage);
 
@@ -319,14 +325,21 @@ export class Kernel extends Host<Env> {
   }
 
   async ensureInstallationIdentity(input: InstallationIdentity) {
-    if (input.installationId !== this.name) {
+    if (input.installationId !== this.installationId) {
       throw new Error("installation identity conflicts with Kernel name");
     }
 
     if (!this.installationIdentity) {
-      this.ctx.storage.kv.put("install_identity", input);
-      this.installationIdentity = input;
-      return input;
+      const identity: StoredInstallationIdentity = {
+        canonicalOrigin: input.canonicalOrigin,
+        ...(input.handle !== undefined ? { handle: input.handle } : {}),
+      };
+      this.ctx.storage.kv.put("install_identity", identity);
+      this.installationIdentity = {
+        ...identity,
+        installationId: this.installationId,
+      };
+      return this.installationIdentity;
     }
 
     const existing = this.installationIdentity;
@@ -898,7 +911,7 @@ export class Kernel extends Host<Env> {
     runId: string,
     requestId: string,
   ): Promise<boolean> {
-    const response = await sendFrameToProcess(processId, {
+    const response = await sendFrameToProcess(this.installationId, processId, {
       type: "req",
       id: crypto.randomUUID(),
       call: "proc.history",
@@ -987,7 +1000,7 @@ export class Kernel extends Host<Env> {
         return;
       }
     }
-    await sendFrameToProcess(input.processId, {
+    await sendFrameToProcess(this.installationId, input.processId, {
       type: "sig",
       signal: "proc.delivery.notice",
       payload: {
@@ -1197,7 +1210,7 @@ export class Kernel extends Host<Env> {
   }
 
   private async deliverIpcCallSignal(call: IpcCallRecord): Promise<void> {
-    await sendFrameToProcess(call.sourcePid, {
+    await sendFrameToProcess(this.installationId, call.sourcePid, {
       type: "sig",
       signal: call.status === "timed_out" ? "ipc.timeout" : "ipc.reply",
       payload: {
@@ -1592,7 +1605,7 @@ export class Kernel extends Host<Env> {
     const installationIdentity = this.installationIdentity ?? null;
     return {
       env: this.bindings,
-      installationId: this.installationIdentity?.installationId ?? SINGLETON_INSTALLATION_ID,
+      installationId: this.installationId,
       installationIdentity,
       auth: this.auth,
       caps: this.caps,
@@ -2317,7 +2330,7 @@ export class Kernel extends Host<Env> {
       throw new Error(`Process signal watch ${watch.watchId} is missing target process`);
     }
 
-    await sendFrameToProcess(watch.targetProcessId, {
+    await sendFrameToProcess(this.installationId, watch.targetProcessId, {
       type: "sig",
       signal: frame.signal,
       payload: {
@@ -2895,7 +2908,7 @@ export class Kernel extends Host<Env> {
       let admittedRunId = runId;
       let response: ProcessScheduleDeliverResponseFrame | null;
       try {
-        response = await sendFrameToProcess(target.pid, request);
+        response = await sendFrameToProcess(this.installationId, target.pid, request);
       } catch (error) {
         // As with adapter ingress, a thrown DO transport may have lost the
         // response after admission. Preserve a preallocated reply route so an
@@ -2988,7 +3001,7 @@ export class Kernel extends Host<Env> {
     }
 
     if (origin.type === "process") {
-      sendFrameToProcess(origin.id, frame).catch((err: unknown) => {
+      sendFrameToProcess(this.installationId, origin.id, frame).catch((err: unknown) => {
         void body?.stream.cancel(err).catch(() => {});
         console.error(`[Kernel] Failed to deliver frame to process ${origin.id}:`, err);
       });
@@ -3099,7 +3112,7 @@ export class Kernel extends Host<Env> {
 
       this.procs.updateIdentity(proc.processId, fresh);
 
-      sendFrameToProcess(proc.processId, {
+      sendFrameToProcess(this.installationId, proc.processId, {
         type: "sig",
         signal: "identity.changed",
         payload: { identity: fresh },

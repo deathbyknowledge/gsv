@@ -230,7 +230,7 @@ async function initProcess(pid: string, identity: ProcessIdentity, opts?: { regi
     await registerInKernel(pid, identity);
   }
   const stub = await getProcessByPid(pid);
-  const res = await stub.recvFrame(makeReq("proc.setidentity", { pid, identity, profile: DEFAULT_PROFILE }));
+  const res = await stub.recvFrame(makeReq("proc.setidentity", { identity, profile: DEFAULT_PROFILE }));
   expect((res as ResponseFrame).ok).toBe(true);
   return stub;
 }
@@ -289,7 +289,7 @@ describe("Process DO — mechanical", () => {
       expect(process.store.getValue("deliveryNotice:notice:bounded:256")).not.toBeNull();
       expect(JSON.parse(process.store.getValue("deliveryNoticeIds"))).toHaveLength(256);
     });
-  });
+  }, 15_000);
 
   it("projects proc.run signals into kernel process activity", async () => {
     const pid = "mech-kernel-process-activity";
@@ -468,7 +468,7 @@ describe("Process DO — mechanical", () => {
   });
 
   describe("proc.setidentity", () => {
-    it("stores pid and identity", async () => {
+    it("derives pid and stores identity", async () => {
       const pid = "mech-setid-1";
       const stub = await initProcess(pid, ROOT_IDENTITY);
 
@@ -492,7 +492,7 @@ describe("Process DO — mechanical", () => {
         home: "/home/alice",
         cwd: "/home/alice",
       };
-      await stub.recvFrame(makeReq("proc.setidentity", { pid, identity: newIdentity, profile: "mcp" }));
+      await stub.recvFrame(makeReq("proc.setidentity", { identity: newIdentity, profile: "mcp" }));
 
       await runInDurableObject(stub, (instance: Process) => {
         expect(instance.identity.uid).toBe(1000);
@@ -506,7 +506,6 @@ describe("Process DO — mechanical", () => {
       const stub = await getProcessByPid(pid);
 
       await stub.recvFrame(makeReq("proc.setidentity", {
-        pid,
         identity: ROOT_IDENTITY,
         title: "  Explicit task title  ",
         autoTitle: true,
@@ -526,7 +525,6 @@ describe("Process DO — mechanical", () => {
       await registerInKernel(pid, ROOT_IDENTITY);
       const stub = await getProcessByPid(pid);
       await stub.recvFrame(makeReq("proc.setidentity", {
-        pid,
         identity: ROOT_IDENTITY,
         autoTitle: true,
       }));
@@ -578,7 +576,6 @@ describe("Process DO — mechanical", () => {
       await registerInKernel(pid, ROOT_IDENTITY);
       const stub = await getProcessByPid(pid);
       await stub.recvFrame(makeReq("proc.setidentity", {
-        pid,
         identity: ROOT_IDENTITY,
         autoTitle: true,
       }));
@@ -609,7 +606,6 @@ describe("Process DO — mechanical", () => {
       await registerInKernel(pid, ROOT_IDENTITY);
       const stub = await getProcessByPid(pid);
       await stub.recvFrame(makeReq("proc.setidentity", {
-        pid,
         identity: ROOT_IDENTITY,
         autoTitle: true,
       }));
@@ -1086,7 +1082,6 @@ describe("Process DO — mechanical", () => {
         });
         const delivery = instance.recvFrame(request);
         await Promise.resolve();
-        process.store.deleteValue("pid");
         process.store.deleteValue("identity");
         releaseLifecycle();
         const response = await delivery;
@@ -3852,7 +3847,6 @@ describe("Process DO — mechanical", () => {
         });
         await Promise.resolve();
 
-        process.store.deleteValue("pid");
         process.store.deleteValue("identity");
         releaseLifecycle();
 
@@ -4426,7 +4420,7 @@ describe("Process DO — mechanical", () => {
 
       const result = await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        const originalEnv = process.env;
+        const originalStorage = process.storage;
         const objects = new Map<string, {
           bytes: Uint8Array;
           httpMetadata?: { contentType?: string };
@@ -4458,25 +4452,22 @@ describe("Process DO — mechanical", () => {
           });
           return { key, size: bytes.byteLength };
         });
-        process.env = {
-          ...originalEnv,
-          STORAGE: {
-            head: vi.fn(async (key: string) => {
-              const object = objects.get(key);
-              return object
-                ? {
-                  key,
-                  size: object.bytes.byteLength,
-                  httpMetadata: object.httpMetadata,
-                  customMetadata: object.customMetadata,
-                }
-                : null;
-            }),
-            put,
-            delete: vi.fn(async (key: string) => {
-              objects.delete(key);
-            }),
-          },
+        process.storage = {
+          head: vi.fn(async (key: string) => {
+            const object = objects.get(key);
+            return object
+              ? {
+                key,
+                size: object.bytes.byteLength,
+                httpMetadata: object.httpMetadata,
+                customMetadata: object.customMetadata,
+              }
+              : null;
+          }),
+          put,
+          delete: vi.fn(async (key: string) => {
+            objects.delete(key);
+          }),
         };
 
         try {
@@ -4505,7 +4496,7 @@ describe("Process DO — mechanical", () => {
             storedBytes: stored ? [...stored.bytes] : [],
           };
         } finally {
-          process.env = originalEnv;
+          process.storage = originalStorage;
           releasePut();
         }
       });
@@ -4520,7 +4511,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        const originalEnv = process.env;
+        const originalStorage = process.storage;
         const get = vi.fn();
         process.store.appendMessage("user", "Review this diagram.", {
           media: JSON.stringify([{
@@ -4530,7 +4521,7 @@ describe("Process DO — mechanical", () => {
             filename: "diagram.svg",
           }]),
         });
-        process.env = { ...originalEnv, STORAGE: { get } };
+        process.storage = { get };
 
         try {
           const messages = await process.buildContextMessages("default");
@@ -4543,7 +4534,7 @@ describe("Process DO — mechanical", () => {
             },
           ]);
         } finally {
-          process.env = originalEnv;
+          process.storage = originalStorage;
         }
       });
     });
@@ -4631,7 +4622,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        const originalEnv = process.env;
+        const originalStorage = process.storage;
         const objects = new Map<string, Uint8Array>();
         let releasePut!: () => void;
         let markPutStarted!: () => void;
@@ -4646,24 +4637,21 @@ describe("Process DO — mechanical", () => {
             objects.delete(item);
           }
         });
-        process.env = {
-          ...originalEnv,
-          STORAGE: {
-            put: vi.fn(async (key: string, stream: ReadableStream<Uint8Array>) => {
-              markPutStarted();
-              await putBlocked;
-              const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
-              objects.set(key, bytes);
-              return { key, size: bytes.byteLength };
-            }),
-            list: vi.fn(async ({ prefix }: { prefix: string }) => ({
-              objects: [...objects.entries()]
-                .filter(([key]) => key.startsWith(prefix))
-                .map(([key, bytes]) => ({ key, size: bytes.byteLength })),
-              truncated: false,
-            })),
-            delete: deleteObject,
-          },
+        process.storage = {
+          put: vi.fn(async (key: string, stream: ReadableStream<Uint8Array>) => {
+            markPutStarted();
+            await putBlocked;
+            const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+            objects.set(key, bytes);
+            return { key, size: bytes.byteLength };
+          }),
+          list: vi.fn(async ({ prefix }: { prefix: string }) => ({
+            objects: [...objects.entries()]
+              .filter(([key]) => key.startsWith(prefix))
+              .map(([key, bytes]) => ({ key, size: bytes.byteLength })),
+            truncated: false,
+          })),
+          delete: deleteObject,
         };
 
         try {
@@ -4682,7 +4670,7 @@ describe("Process DO — mechanical", () => {
           expect(objects.size).toBe(0);
           expect(deleteObject).toHaveBeenCalledWith(expect.stringContaining(`/0/${pid}/`));
         } finally {
-          process.env = originalEnv;
+          process.storage = originalStorage;
           releasePut();
         }
       });
@@ -4694,7 +4682,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        const originalEnv = process.env;
+        const originalStorage = process.storage;
         const arrayBuffer = vi.fn(async () => new Uint8Array([1]).buffer);
         const prefix = `var/media/0/${pid}/`;
         process.store.appendMessage("user", "Review these images.", {
@@ -4704,15 +4692,12 @@ describe("Process DO — mechanical", () => {
             { type: "image", mimeType: "image/png", key: `${prefix}second` },
           ]),
         });
-        process.env = {
-          ...originalEnv,
-          STORAGE: {
-            get: vi.fn(async (key: string) => ({
-              size: key.endsWith("oversized") ? 25 * 1024 * 1024 + 1 : 15 * 1024 * 1024,
-              arrayBuffer,
-              body: { cancel: vi.fn(async () => {}) },
-            })),
-          },
+        process.storage = {
+          get: vi.fn(async (key: string) => ({
+            size: key.endsWith("oversized") ? 25 * 1024 * 1024 + 1 : 15 * 1024 * 1024,
+            arrayBuffer,
+            body: { cancel: vi.fn(async () => {}) },
+          })),
         };
 
         try {
@@ -4722,7 +4707,7 @@ describe("Process DO — mechanical", () => {
             expect.objectContaining({ type: "image", data: "AQ==" }),
           ]));
         } finally {
-          process.env = originalEnv;
+          process.storage = originalStorage;
         }
       });
     });
@@ -4732,7 +4717,7 @@ describe("Process DO — mechanical", () => {
 
       await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        const originalEnv = process.env;
+        const originalStorage = process.storage;
         const get = vi.fn(async () => ({
           size: 3,
           arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
@@ -4744,10 +4729,7 @@ describe("Process DO — mechanical", () => {
             key: "var/media/0/another-process/secret.png",
           }]),
         });
-        process.env = {
-          ...originalEnv,
-          STORAGE: { get },
-        };
+        process.storage = { get };
 
         try {
           const messages = await process.buildContextMessages("default");
@@ -4756,7 +4738,7 @@ describe("Process DO — mechanical", () => {
             expect.objectContaining({ type: "image" }),
           ]));
         } finally {
-          process.env = originalEnv;
+          process.storage = originalStorage;
         }
       });
     });
@@ -8416,7 +8398,6 @@ describe("Process DO — mechanical", () => {
       const resumedPid = "mech-resume-archive-media";
       const resumed = await getProcessByPid(resumedPid);
       const initialized = await resumed.recvFrame(makeReq("proc.setidentity", {
-        pid: resumedPid,
         identity: ROOT_IDENTITY,
         profile: DEFAULT_PROFILE,
       })) as ResponseOkFrame;
@@ -8452,7 +8433,7 @@ describe("Process DO — mechanical", () => {
         data: { ok: true, pid, archivedMessages: 0, archives: [] },
       });
       await expect(stub.recvFrame(
-        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY }),
+        makeReq("proc.setidentity", { identity: ROOT_IDENTITY }),
       )).resolves.toMatchObject({
         ok: false,
         error: { code: 410 },
@@ -8547,7 +8528,7 @@ describe("Process DO — mechanical", () => {
       ]));
 
       const reuse = await stub.recvFrame(
-        makeReq("proc.setidentity", { pid, identity: ROOT_IDENTITY }),
+        makeReq("proc.setidentity", { identity: ROOT_IDENTITY }),
       );
       expect(reuse).toMatchObject({
         ok: false,

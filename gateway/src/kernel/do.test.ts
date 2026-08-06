@@ -15,6 +15,13 @@ import {
 } from "@humansandmachines/gsv/protocol";
 
 const sendFrameToProcessMock = vi.mocked(sendFrameToProcess);
+const TEST_INSTALLATION_ID = "singleton";
+
+function createRoutedKernel() {
+  const kernel = Object.create(Kernel.prototype) as any;
+  kernel.installationId = TEST_INSTALLATION_ID;
+  return kernel;
+}
 
 describe("Kernel frame bodies", () => {
   it("passes request cancellation to Agents SDK MCP calls", async () => {
@@ -422,7 +429,7 @@ describe("Kernel frame bodies", () => {
       reading = resolve;
     });
     let forwardedError: unknown;
-    sendFrameToProcessMock.mockImplementationOnce(async (_pid, frame) => {
+    sendFrameToProcessMock.mockImplementationOnce(async (_installationId, _pid, frame) => {
       const reader = frame.body!.stream.getReader();
       reading();
       try {
@@ -888,7 +895,7 @@ describe("Kernel user signal broadcasts", () => {
 
 describe("Kernel process signal routing", () => {
   function buildKernel(route: Record<string, unknown>) {
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createRoutedKernel();
     kernel.procs = { getOwnerUid: vi.fn(() => 1000) };
     kernel.dispatchSignalWatches = vi.fn(async () => {});
     kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
@@ -1039,10 +1046,14 @@ describe("Kernel process signal routing", () => {
       attempt: 2,
     });
 
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(route.processId, expect.objectContaining({
-      type: "req",
-      call: "proc.history",
-    }));
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      route.processId,
+      expect.objectContaining({
+        type: "req",
+        call: "proc.history",
+      }),
+    );
     expect(kernel.deliverSignalToAdapter).not.toHaveBeenCalled();
     expect(kernel.schedule).not.toHaveBeenCalled();
   });
@@ -1287,7 +1298,7 @@ describe("Kernel process signal routing", () => {
       runId: "run-hil-notice-stale",
       processId: "proc-1",
     };
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createRoutedKernel();
     kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
 
     await kernel.onProcessDeliveryNotice({
@@ -1302,10 +1313,14 @@ describe("Kernel process signal routing", () => {
     });
 
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(route.processId, expect.objectContaining({
-      type: "req",
-      call: "proc.history",
-    }));
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      route.processId,
+      expect.objectContaining({
+        type: "req",
+        call: "proc.history",
+      }),
+    );
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
   });
 
@@ -1320,7 +1335,7 @@ describe("Kernel process signal routing", () => {
     sendFrameToProcessMock
       .mockResolvedValueOnce(historyResponse(pending))
       .mockResolvedValueOnce(null);
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createRoutedKernel();
     kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
 
     await kernel.onProcessDeliveryNotice({
@@ -1334,14 +1349,18 @@ describe("Kernel process signal routing", () => {
       cleanupRunRoute: false,
     });
 
-    expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(route.processId, expect.objectContaining({
-      type: "sig",
-      signal: "proc.delivery.notice",
-      payload: expect.objectContaining({
-        noticeId: "notice:hil:current",
-        requestId: pending.requestId,
+    expect(sendFrameToProcessMock).toHaveBeenLastCalledWith(
+      TEST_INSTALLATION_ID,
+      route.processId,
+      expect.objectContaining({
+        type: "sig",
+        signal: "proc.delivery.notice",
+        payload: expect.objectContaining({
+          noticeId: "notice:hil:current",
+          requestId: pending.requestId,
+        }),
       }),
-    }));
+    );
     expect(kernel.runRoutes.delete).not.toHaveBeenCalled();
   });
 
@@ -1353,7 +1372,7 @@ describe("Kernel process signal routing", () => {
       runId: "run-notice",
       processId: "proc-1",
     };
-    const kernel = Object.create(Kernel.prototype) as any;
+    const kernel = createRoutedKernel();
     kernel.runRoutes = { get: vi.fn(() => route), delete: vi.fn() };
 
     await kernel.onProcessDeliveryNotice({
@@ -1366,10 +1385,14 @@ describe("Kernel process signal routing", () => {
       cleanupRunRoute: true,
     });
 
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith(route.processId, expect.objectContaining({
-      signal: "proc.delivery.notice",
-      payload: expect.objectContaining({ noticeId: "notice:accepted" }),
-    }));
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      route.processId,
+      expect.objectContaining({
+        signal: "proc.delivery.notice",
+        payload: expect.objectContaining({ noticeId: "notice:accepted" }),
+      }),
+    );
     expect(kernel.runRoutes.delete).toHaveBeenCalledWith(route.runId);
   });
 });
@@ -1712,7 +1735,7 @@ describe("Kernel scheduled process reply routes", () => {
     deletesRoute,
   }) => {
     const { kernel, record, setAdapterRoute, deleteRoute } = makeScheduledProcessKernel();
-    sendFrameToProcessMock.mockImplementationOnce(async (_pid, request) => response(request));
+    sendFrameToProcessMock.mockImplementationOnce(async (_installationId, _pid, request) => response(request));
 
     await expect(kernel.dispatchScheduleTarget(
       record,
@@ -2260,7 +2283,7 @@ describe("Kernel IPC completion", () => {
     "includes source-run correlation in %s payloads",
     async (signal) => {
       sendFrameToProcessMock.mockResolvedValue(null);
-      const kernel = Object.create(Kernel.prototype) as any;
+      const kernel = createRoutedKernel();
       const call = {
         callId: "call-1",
         sourcePid: "proc-source",
@@ -2276,7 +2299,7 @@ describe("Kernel IPC completion", () => {
 
       await kernel.deliverIpcCallSignal(call);
 
-      expect(sendFrameToProcessMock).toHaveBeenCalledWith("proc-source", {
+      expect(sendFrameToProcessMock).toHaveBeenCalledWith(TEST_INSTALLATION_ID, "proc-source", {
         type: "sig",
         signal,
         payload: {

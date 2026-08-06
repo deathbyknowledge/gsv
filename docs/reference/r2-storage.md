@@ -11,6 +11,19 @@ GSV uses several storage planes. The Kernel chooses the plane based on whether t
 | R2 `STORAGE` bucket | Cloudflare R2 | Ordinary virtual filesystem files, process media, and process archives. |
 | ripgit | `RIPGIT` binding | Versioned home knowledge, workspaces, and source trees. |
 
+## Installation Namespaces
+
+Managed installations share the deployment R2 bucket through scoped bucket
+views. Runtime code continues to address logical keys such as
+`home/alice/file.txt`, while the view maps them beneath
+`installations/{installationId}/`. Returned object keys and list results are
+mapped back to logical keys, so filesystem, media, archive, and cleanup code do
+not handle physical prefixes.
+
+The standalone `singleton` installation maps to the historical unprefixed
+keyspace. Existing self-hosted filesystem objects, Process media, and archives
+therefore retain their current keys after upgrade.
+
 ## Virtual Filesystem Mapping
 
 The native `fs.*` and `shell.exec` handlers use `GsvFs`, a Linux-like virtual filesystem with explicit mount routing.

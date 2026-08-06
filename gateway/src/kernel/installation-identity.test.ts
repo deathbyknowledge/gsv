@@ -3,7 +3,6 @@ import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { handleFsWrite } from "../drivers/native/fs";
 import { handleShellExec } from "../drivers/native/shell";
-import type { InstallationIdentity } from "../installation/identity";
 import { getKernelByInstallationId } from "../installation/routing";
 import { installationStoragePrefix } from "../installation/storage";
 import type { KernelContext } from "./context";
@@ -47,8 +46,8 @@ describe("Kernel installation identity", () => {
     });
 
     await runInDurableObject(first, (_kernel: Kernel, state) => {
-      expect(state.storage.kv.get<InstallationIdentity>("install_identity")).toEqual({
-        installationId: firstId,
+      expect(state.id.name).toBe(firstId);
+      expect(state.storage.kv.get("install_identity")).toEqual({
         handle: "first",
         canonicalOrigin: "https://first.gsv.space",
       });

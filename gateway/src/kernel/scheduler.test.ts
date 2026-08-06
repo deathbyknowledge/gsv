@@ -82,11 +82,9 @@ function makeReq(call: string, args: unknown): RequestFrame {
 
 async function prepareScheduleTargetProcess(
   process: DurableObjectStub<Process>,
-  pid: string,
   identity: ProcessIdentity = USER_IDENTITY,
 ): Promise<void> {
   const setIdentity = await process.recvFrame(makeReq("proc.setidentity", {
-    pid,
     identity,
     profile: "task",
   }));
@@ -1091,11 +1089,12 @@ describe("scheduler", () => {
 
   it("runs a due schedule through the Kernel and delivers a process event", async () => {
     const pid = `sched-event-${crypto.randomUUID()}`;
+    const installationId = `scheduler-test-${crypto.randomUUID()}`;
     const kernel = await getAgentByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-test-${crypto.randomUUID()}`,
+      installationId,
     );
-    const process = await getProcessByPid(pid);
+    const process = await getProcessByPid(pid, installationId);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1114,7 +1113,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid, PERSONAL_AGENT_IDENTITY);
+    await prepareScheduleTargetProcess(process, PERSONAL_AGENT_IDENTITY);
 
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1392,11 +1391,12 @@ describe("scheduler", () => {
 
   it("fires an armed one-shot schedule through the Agent alarm", async () => {
     const pid = `sched-alarm-${crypto.randomUUID()}`;
+    const installationId = `scheduler-alarm-test-${crypto.randomUUID()}`;
     const kernel = await getAgentByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-alarm-test-${crypto.randomUUID()}`,
+      installationId,
     );
-    const process = await getProcessByPid(pid);
+    const process = await getProcessByPid(pid, installationId);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1412,7 +1412,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process);
 
     const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1499,11 +1499,12 @@ describe("scheduler", () => {
 
   it("re-arms when an existing wake fires before the GSV schedule is due", async () => {
     const pid = `sched-early-${crypto.randomUUID()}`;
+    const installationId = `scheduler-early-wake-test-${crypto.randomUUID()}`;
     const kernel = await getAgentByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-early-wake-test-${crypto.randomUUID()}`,
+      installationId,
     );
-    const process = await getProcessByPid(pid);
+    const process = await getProcessByPid(pid, installationId);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1517,7 +1518,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process);
 
     const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1587,11 +1588,12 @@ describe("scheduler", () => {
 
   it("ignores stale wake rows before checking due state", async () => {
     const pid = `sched-stale-${crypto.randomUUID()}`;
+    const installationId = `scheduler-stale-wake-test-${crypto.randomUUID()}`;
     const kernel = await getAgentByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-stale-wake-test-${crypto.randomUUID()}`,
+      installationId,
     );
-    const process = await getProcessByPid(pid);
+    const process = await getProcessByPid(pid, installationId);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1605,7 +1607,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process);
 
     const scheduleId = await runInDurableObject(kernel, async (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1673,11 +1675,12 @@ describe("scheduler", () => {
 
   it("force-runs a process event schedule before it is due", async () => {
     const pid = `sched-force-${crypto.randomUUID()}`;
+    const installationId = `scheduler-force-test-${crypto.randomUUID()}`;
     const kernel = await getAgentByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-force-test-${crypto.randomUUID()}`,
+      installationId,
     );
-    const process = await getProcessByPid(pid);
+    const process = await getProcessByPid(pid, installationId);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1693,7 +1696,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process);
 
     const { scheduleId, nextRunAtMs } = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as { schedules: ScheduleStore };
@@ -1793,11 +1796,12 @@ describe("scheduler", () => {
 
   it("disables an after schedule once it runs", async () => {
     const pid = `sched-once-${crypto.randomUUID()}`;
+    const installationId = `scheduler-once-test-${crypto.randomUUID()}`;
     const kernel = await getAgentByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-once-test-${crypto.randomUUID()}`,
+      installationId,
     );
-    const process = await getProcessByPid(pid);
+    const process = await getProcessByPid(pid, installationId);
 
     await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1813,7 +1817,7 @@ describe("scheduler", () => {
       });
     });
 
-    await prepareScheduleTargetProcess(process, pid);
+    await prepareScheduleTargetProcess(process);
 
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1854,9 +1858,10 @@ describe("scheduler", () => {
   });
 
   it("runs a due process.spawn schedule and sends the prompt to the cron process", async () => {
+    const installationId = `scheduler-spawn-test-${crypto.randomUUID()}`;
     const kernel = await getAgentByName<Env, Kernel>(
       env.KERNEL,
-      `scheduler-spawn-test-${crypto.randomUUID()}`,
+      installationId,
     );
     const scheduleId = await runInDurableObject(kernel, (instance: Kernel) => {
       const k = instance as unknown as {
@@ -1934,7 +1939,7 @@ describe("scheduler", () => {
     );
     expect(spawned.schedule?.state.lastStatus).toBe("ok");
 
-    const cronProcess = await getProcessByPid(spawned.pid!);
+    const cronProcess = await getProcessByPid(spawned.pid!, installationId);
     const messages = await runInDurableObject(cronProcess, (instance: Process) =>
       (instance as unknown as {
         store: { getMessages: () => Array<{ role: string; content: string }> };

@@ -39,6 +39,7 @@ type MakeContextOptions = {
   ingressReceipts?: Record<string, unknown>;
   callerOwnerUid?: number;
 };
+const TEST_INSTALLATION_ID = "singleton" as KernelContext["installationId"];
 
 function makeStorageBucket() {
   return {
@@ -197,6 +198,7 @@ function makeContext(
   };
 
   return {
+    installationId: TEST_INSTALLATION_ID,
     env: {
       STORAGE: makeStorageBucket(),
       ...env,
@@ -1221,7 +1223,7 @@ describe("adapter lifecycle handlers", () => {
       },
     }, { upsert: vi.fn() });
     let admittedRunId = "";
-    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
@@ -1296,7 +1298,7 @@ describe("adapter lifecycle handlers", () => {
       },
     }, { upsert: vi.fn() });
     const deliveredRunIds: string[] = [];
-    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
@@ -1386,6 +1388,7 @@ describe("adapter lifecycle handlers", () => {
     expect(ctx.adapters.surfaceRoutes.setRoute).toHaveBeenCalledTimes(1);
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       expect.stringMatching(/^proc:adapter-ingress:/),
       expect.objectContaining({
         call: "proc.setidentity",
@@ -1396,7 +1399,7 @@ describe("adapter lifecycle handlers", () => {
 
   it("keeps equal WhatsApp stanza ids distinct across group participants", async () => {
     const ctx = makeContext({}, { upsert: vi.fn() }, { routePid: "pid-1" });
-    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
@@ -1438,7 +1441,7 @@ describe("adapter lifecycle handlers", () => {
     }, ctx);
 
     expect(first.delivered?.runId).not.toBe(second.delivered?.runId);
-    expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) =>
+    expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) =>
       frame.call === "proc.adapter.deliver"
     )).toHaveLength(2);
   });
@@ -1528,7 +1531,7 @@ describe("adapter lifecycle handlers", () => {
     const ctx = makeContext({
       CHANNEL_TELEGRAM: { adapterSetActivity },
     }, { upsert: vi.fn() });
-    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
@@ -1595,13 +1598,17 @@ describe("adapter lifecycle handlers", () => {
     expect(result.ok).toBe(true);
     const runId = result.delivered?.runId;
     expect(ctx.runRoutes.delete).toHaveBeenCalledWith(runId);
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith("pid-1", expect.objectContaining({
-      call: "proc.media.delete",
-      args: {
-        pid: "pid-1",
-        key: "var/media/1000/pid-1/replayed",
-      },
-    }));
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      "pid-1",
+      expect.objectContaining({
+        call: "proc.media.delete",
+        args: {
+          pid: "pid-1",
+          key: "var/media/1000/pid-1/replayed",
+        },
+      }),
+    );
     expect(adapterSetActivity).not.toHaveBeenCalled();
   });
 
@@ -1657,7 +1664,7 @@ describe("adapter lifecycle handlers", () => {
 
   it("stores adapter media before delivering proc.send", async () => {
     let uploadedBytes: number[] = [];
-    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
@@ -1711,14 +1718,14 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx, bodyFromBytes(new Uint8Array([1, 2, 3])));
 
-    const upload = sendFrameToProcessMock.mock.calls[1]?.[1];
+    const upload = sendFrameToProcessMock.mock.calls[1]?.[2];
     expect(upload).toMatchObject({
       call: "proc.media.write",
       args: { type: "image", mimeType: "image/png" },
     });
     expect(upload?.args).not.toHaveProperty("size");
     expect(uploadedBytes).toEqual([1, 2, 3]);
-    expect(sendFrameToProcessMock.mock.calls[2]?.[1]).toMatchObject({
+    expect(sendFrameToProcessMock.mock.calls[2]?.[2]).toMatchObject({
       call: "proc.adapter.deliver",
       args: {
         media: [{
@@ -1732,7 +1739,7 @@ describe("adapter lifecycle handlers", () => {
   });
 
   it("rolls back adapter uploads when another upload fails", async () => {
-    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
@@ -1795,15 +1802,19 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx, bodyFromBytes(new Uint8Array([1, 2])))).rejects.toThrow("upload failed");
 
-    expect(sendFrameToProcessMock).toHaveBeenCalledWith("pid-1", expect.objectContaining({
-      call: "proc.media.delete",
-      args: { pid: "pid-1", key: "var/media/1000/pid-1/good" },
-    }));
-    expect(sendFrameToProcessMock.mock.calls.some(([, frame]) => frame.call === "proc.adapter.deliver")).toBe(false);
+    expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
+      "pid-1",
+      expect.objectContaining({
+        call: "proc.media.delete",
+        args: { pid: "pid-1", key: "var/media/1000/pid-1/good" },
+      }),
+    );
+    expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) => frame.call === "proc.adapter.deliver")).toBe(false);
   });
 
   it("preserves adapter uploads when a Process error response leaves admission ambiguous", async () => {
-    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
@@ -1855,7 +1866,7 @@ describe("adapter lifecycle handlers", () => {
       },
     }, ctx, bodyFromBytes(new Uint8Array([1])))).rejects.toThrow("delivery failed");
 
-    expect(sendFrameToProcessMock.mock.calls.some(([, frame]) =>
+    expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) =>
       frame.call === "proc.media.delete"
     )).toBe(false);
     const preallocatedRunId = vi.mocked(ctx.runRoutes.setAdapterRoute).mock.calls[0]?.[0]?.runId;
@@ -1866,7 +1877,7 @@ describe("adapter lifecycle handlers", () => {
   it("reclaims and reconciles an ambiguous Process admission without re-uploading media", async () => {
     const adapterSetActivity = vi.fn(async () => ({ ok: true as const }));
     let deliveryAttempts = 0;
-    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         return { type: "res", id: frame.id, ok: true, data: { pendingHil: null } };
       }
@@ -1947,13 +1958,13 @@ describe("adapter lifecycle handlers", () => {
     const preallocatedRunId = vi.mocked(ctx.runRoutes.setAdapterRoute).mock.calls[0]?.[0]?.runId;
     expect(preallocatedRunId).toEqual(expect.any(String));
     expect(ctx.runRoutes.delete).not.toHaveBeenCalled();
-    expect(sendFrameToProcessMock.mock.calls.some(([, frame]) =>
+    expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) =>
       frame.call === "proc.media.delete"
     )).toBe(false);
-    expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
+    expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) => (
       frame.call === "proc.adapter.deliver"
     ))).toHaveLength(2);
-    expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
+    expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) => (
       frame.call === "proc.media.write"
     ))).toHaveLength(1);
     expect(adapterSetActivity).not.toHaveBeenCalled();
@@ -1995,6 +2006,7 @@ describe("adapter lifecycle handlers", () => {
     expect(result.reply?.text).toContain('"approve hil[hil-current]"');
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(1);
     expect(sendFrameToProcessMock).not.toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       "pid-1",
       expect.objectContaining({ call: "proc.hil" }),
     );
@@ -2180,7 +2192,7 @@ describe("adapter lifecycle handlers", () => {
     expect(replay).toEqual({ ...first, replayed: "completed" });
     expect(replay.reply?.deliveryId).toBe(first.reply?.deliveryId);
     expect(sendFrameToProcessMock).toHaveBeenCalledTimes(2);
-    expect(sendFrameToProcessMock.mock.calls.filter(([, frame]) => (
+    expect(sendFrameToProcessMock.mock.calls.filter(([, , frame]) => (
       frame.call === "proc.hil"
     ))).toHaveLength(1);
   });
@@ -2188,7 +2200,7 @@ describe("adapter lifecycle handlers", () => {
   it("reconciles a crashed HIL decision without applying it to the next approval", async () => {
     let historyReads = 0;
     let hilAttempts = 0;
-    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         historyReads++;
         return {
@@ -2249,7 +2261,7 @@ describe("adapter lifecycle handlers", () => {
     expect(result.reply?.text).toContain("~/new.txt");
     expect(hilAttempts).toBe(2);
     expect(historyReads).toBe(2);
-    expect(sendFrameToProcessMock.mock.calls.some(([, frame]) => (
+    expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) => (
       frame.call === "proc.adapter.deliver"
     ))).toBe(false);
     const checkpointOrder = vi.mocked(ctx.adapters.ingressReceipts.checkpoint)
@@ -2261,7 +2273,7 @@ describe("adapter lifecycle handlers", () => {
   it("does not turn a reclaimed HIL answer into a normal message", async () => {
     let historyReads = 0;
     let hilAttempts = 0;
-    sendFrameToProcessMock.mockImplementation(async (_pid: string, frame: any) => {
+    sendFrameToProcessMock.mockImplementation(async (_installationId: string, _pid: string, frame: any) => {
       if (frame.call === "proc.history") {
         historyReads++;
         return {
@@ -2308,7 +2320,7 @@ describe("adapter lifecycle handlers", () => {
     const result = await handleAdapterInbound(inbound, ctx);
 
     expect(result.reply?.text).toBe("Denied. Continuing.");
-    expect(sendFrameToProcessMock.mock.calls.some(([, frame]) => (
+    expect(sendFrameToProcessMock.mock.calls.some(([, , frame]) => (
       frame.call === "proc.adapter.deliver"
     ))).toBe(false);
   });
@@ -2371,6 +2383,7 @@ describe("adapter lifecycle handlers", () => {
     expect(result.reply?.text).toContain("remember");
     expect(sendFrameToProcessMock).toHaveBeenNthCalledWith(
       2,
+      TEST_INSTALLATION_ID,
       "pid-1",
       expect.objectContaining({
         call: "proc.hil",
@@ -2408,6 +2421,7 @@ describe("adapter lifecycle handlers", () => {
       expect.objectContaining({ ownerUid: 1000, interactive: true }),
     );
     expect(sendFrameToProcessMock).toHaveBeenCalledWith(
+      TEST_INSTALLATION_ID,
       expect.stringMatching(/^proc:/),
       expect.objectContaining({
         call: "proc.setidentity",

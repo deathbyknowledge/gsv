@@ -1008,7 +1008,7 @@ async function resolveClaimedAdapterInbound(input: {
     updatedByUid: uid,
   });
 
-  const pendingHil = await getPendingHil(pid);
+  const pendingHil = await getPendingHil(ctx.installationId, pid);
   if (pendingHil) {
     const parsedDecision = message.surface.kind === "dm"
       ? parseHilDecision(message.text)
@@ -1068,7 +1068,7 @@ async function deliverAdapterHilDecision(input: {
   reconciling: boolean;
 }): Promise<AdapterInboundDisposition> {
   const { adapter, accountId, message, ctx, recovery, reconciling } = input;
-  const response = await sendFrameToProcess(recovery.pid, {
+  const response = await sendFrameToProcess(ctx.installationId, recovery.pid, {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.hil",
@@ -1105,7 +1105,7 @@ async function deliverAdapterHilDecision(input: {
     // The earlier attempt may have committed and cleared this request before
     // its response was lost. Query current state, but never apply the old
     // YES/DENY to a newer approval or turn it into ordinary conversation text.
-    const current = await getPendingHil(recovery.pid);
+    const current = await getPendingHil(ctx.installationId, recovery.pid);
     if (current?.requestId === recovery.requestId) {
       throw new Error(data.error || "Process has not reconciled approval yet");
     }
@@ -1174,6 +1174,7 @@ async function deliverAdapterInboundToProcess(input: {
       [input.checkpoint.receiptId],
     );
     const media = await storeAdapterInboundMedia(
+      ctx.installationId,
       input.pid,
       runId,
       message.media,
@@ -1224,7 +1225,7 @@ async function deliverAdapterInboundToProcess(input: {
   // Adapter ingress is itself an RPC from the adapter. Calling activity back
   // into a stateful adapter here would re-enter its Durable Object before this
   // request can return. Process lifecycle signals own typing activity.
-  const response: ProcessAdapterDeliverResponseFrame | null = await sendFrameToProcess(pid, {
+  const response: ProcessAdapterDeliverResponseFrame | null = await sendFrameToProcess(ctx.installationId, pid, {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.adapter.deliver",
@@ -1247,18 +1248,18 @@ async function deliverAdapterInboundToProcess(input: {
   const data = (response as ProcessAdapterDeliverResponseFrame & { ok: true }).data;
   if (!data.ok) {
     ctx.runRoutes.delete(runId);
-    await rollbackAdapterMedia(pid, media);
+    await rollbackAdapterMedia(ctx.installationId, pid, media);
     return { ok: false, error: data.error };
   }
   const queued = data.queued === true;
   if (data.runId !== runId) {
     ctx.runRoutes.delete(runId);
-    await rollbackAdapterMedia(pid, media);
+    await rollbackAdapterMedia(ctx.installationId, pid, media);
     return { ok: false, error: "proc.adapter.deliver admitted an unexpected run" };
   }
   if (data.replayed === "recorded") {
     ctx.runRoutes.delete(runId);
-    await rollbackAdapterMedia(pid, media);
+    await rollbackAdapterMedia(ctx.installationId, pid, media);
   }
 
   return {
@@ -1299,6 +1300,7 @@ function normalizeAdapterIngressRecovery(value: unknown): AdapterIngressRecovery
 }
 
 async function storeAdapterInboundMedia(
+  installationId: KernelContext["installationId"],
   pid: string,
   runId: string,
   media: AdapterInboundMessage["media"],
@@ -1313,7 +1315,7 @@ async function storeAdapterInboundMedia(
       media: item,
       body: partBody,
     }) => {
-      const response = await sendFrameToProcess(pid, {
+      const response = await sendFrameToProcess(installationId, pid, {
         type: "req",
         id: crypto.randomUUID(),
         call: "proc.media.write",
@@ -1344,7 +1346,7 @@ async function storeAdapterInboundMedia(
       signal,
     });
   } catch (error) {
-    await rollbackAdapterMedia(pid, stored);
+    await rollbackAdapterMedia(installationId, pid, stored);
     throw error;
   }
   return stored.length > 0 ? stored : undefined;
@@ -1399,11 +1401,12 @@ function validateAdapterMediaItems(
 }
 
 async function rollbackAdapterMedia(
+  installationId: KernelContext["installationId"],
   pid: string,
   media: ProcMediaInput[] | undefined,
 ): Promise<void> {
   await Promise.allSettled((media ?? []).flatMap(({ key }) => key
-    ? [sendFrameToProcess(pid, {
+    ? [sendFrameToProcess(installationId, pid, {
         type: "req",
         id: crypto.randomUUID(),
         call: "proc.media.delete",
@@ -1927,12 +1930,11 @@ async function spawnAdapterAgentProcess(
     });
   }
 
-  await sendFrameToProcess(pid, {
+  await sendFrameToProcess(ctx.installationId, pid, {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.setidentity",
     args: {
-      pid,
       identity: agent.identity,
       interactive: true,
       autoTitle: true,
@@ -1983,8 +1985,11 @@ function adapterInteractionOrigin(
   };
 }
 
-async function getPendingHil(pid: string): Promise<AdapterHilRequest | null> {
-  const response = await sendFrameToProcess(pid, {
+async function getPendingHil(
+  installationId: KernelContext["installationId"],
+  pid: string,
+): Promise<AdapterHilRequest | null> {
+  const response = await sendFrameToProcess(installationId, pid, {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.history",

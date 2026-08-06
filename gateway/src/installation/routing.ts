@@ -6,6 +6,63 @@ import {
   parseInstallationId,
 } from "./identity";
 
+const PROCESS_DURABLE_OBJECT_PREFIX = "process:";
+const MAX_DURABLE_OBJECT_NAME_BYTES = 1_024;
+
+export type ProcessDurableObjectIdentity = {
+  installationId: string;
+  pid: string;
+};
+
+export function processDurableObjectName(
+  installationId: string,
+  pid: string,
+): string {
+  const parsedInstallationId = parseInstallationId(installationId);
+  const parsedPid = parseProcessId(pid);
+  const name = `${PROCESS_DURABLE_OBJECT_PREFIX}${encodeURIComponent(parsedInstallationId)}:${encodeURIComponent(parsedPid)}`;
+  if (new TextEncoder().encode(name).byteLength > MAX_DURABLE_OBJECT_NAME_BYTES) {
+    throw new Error("Process Durable Object name is too long");
+  }
+  return name;
+}
+
+export function parseProcessDurableObjectName(
+  name: string | undefined,
+): ProcessDurableObjectIdentity {
+  if (!name)
+    throw new Error("Process Durable Objects must be accessed by name");
+
+  if (!name.startsWith(PROCESS_DURABLE_OBJECT_PREFIX)) 
+    throw new Error("Process Durable Object name is invalid");
+
+  const separator = name.indexOf(":", PROCESS_DURABLE_OBJECT_PREFIX.length);
+  if (separator === -1) 
+    throw new Error("Process Durable Object name is invalid");
+
+  try {
+    const installationId = parseInstallationId(decodeURIComponent(
+      name.slice(PROCESS_DURABLE_OBJECT_PREFIX.length, separator),
+    ));
+    const pid = parseProcessId(decodeURIComponent(name.slice(separator + 1)));
+    if (processDurableObjectName(installationId, pid) !== name) 
+      throw new Error("Process Durable Object name is not canonical");
+
+    return { installationId, pid };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Process Durable Object name is not canonical") {
+      throw error;
+    }
+    throw new Error("Process Durable Object name is invalid");
+  }
+}
+
+function parseProcessId(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) 
+    throw new Error("pid must be a non-empty string");
+  return value;
+}
+
 function getGatewayInstallationRoutingSource(
   request: Request,
 ) {

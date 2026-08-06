@@ -1255,7 +1255,7 @@ async function resolveAiProcessOverridesForContext(
   let frame: Awaited<ReturnType<typeof sendFrameToProcess>>;
   try {
     frame = await raceWithAbort(
-      sendFrameToProcess(ctx.processId, {
+      sendFrameToProcess(ctx.installationId, ctx.processId, {
         type: "req",
         id: crypto.randomUUID(),
         call: "proc.ai.config.get",

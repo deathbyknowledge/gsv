@@ -160,12 +160,11 @@ export async function handleProcSpawn(
     });
 
     const requestId = crypto.randomUUID();
-    const response = await sendFrameToProcess(pid, {
+    const response = await sendFrameToProcess(ctx.installationId, pid, {
       type: "req",
       id: requestId,
       call: "proc.setidentity",
       args: {
-        pid,
         identity: spawnIdentity,
         interactive,
         ...(label ? { title: label } : {}),
@@ -199,7 +198,7 @@ export async function handleProcSpawn(
 
   if (args.prompt) {
     const origin = interactionOriginForContext(ctx);
-    await sendFrameToProcess(pid, {
+    await sendFrameToProcess(ctx.installationId, pid, {
       type: "req",
       id: crypto.randomUUID(),
       call: "proc.send",
@@ -241,6 +240,7 @@ export async function handleProcFork(
   let targetPid: string | null = null;
   try {
     const exportResult = await requestProcessSyscall(
+      ctx.installationId,
       sourcePid,
       "proc.history.export",
       {
@@ -276,6 +276,7 @@ export async function handleProcFork(
     ctx.requestSignal?.throwIfAborted();
 
     const imported = await requestProcessSyscall(
+      ctx.installationId,
       targetPid,
       "proc.history.import",
       { archivePaths: exported.archivePaths },
@@ -327,6 +328,7 @@ export async function handleProcFork(
 async function requestProcessSyscall<
   S extends "proc.history.export" | "proc.history.import",
 >(
+  installationId: KernelContext["installationId"],
   pid: string,
   call: S,
   args: ArgsOf<S>,
@@ -334,7 +336,7 @@ async function requestProcessSyscall<
 ): Promise<ResultOf<S>> {
   const id = crypto.randomUUID();
   let cancellation: Promise<unknown> | undefined;
-  const responsePromise = sendFrameToProcess(pid, {
+  const responsePromise = sendFrameToProcess(installationId, pid, {
     type: "req",
     id,
     call,
@@ -345,7 +347,7 @@ async function requestProcessSyscall<
     response = await raceWithAbort(responsePromise, signal, {
       abortReason: () => signal?.reason ?? new Error("Request cancelled"),
       onAbort: () => {
-        cancellation = sendFrameToProcess(pid, {
+        cancellation = sendFrameToProcess(installationId, pid, {
           type: "sig",
           signal: REQUEST_CANCEL_SIGNAL,
           payload: { id, reason: "Request cancelled" },
@@ -373,7 +375,7 @@ async function rollbackSpawn(
   pid: string,
 ): Promise<void> {
   const requestId = crypto.randomUUID();
-  const response = await sendFrameToProcess(pid, {
+  const response = await sendFrameToProcess(ctx.installationId, pid, {
     type: "req",
     id: requestId,
     call: "proc.kill",
@@ -493,7 +495,7 @@ export async function handleProcIpcSend(
   if (!resolved.ok) return resolved;
   const runId = crypto.randomUUID();
 
-  const response = await sendFrameToProcess(resolved.args.pid, {
+  const response = await sendFrameToProcess(ctx.installationId, resolved.args.pid, {
     type: "req",
     id: crypto.randomUUID(),
     call: "proc.ipc.deliver",
@@ -553,7 +555,7 @@ export async function handleProcIpcCall(
 
   let response: ResponseFrame | null;
   try {
-    response = await sendFrameToProcess(resolved.args.pid, {
+    response = await sendFrameToProcess(ctx.installationId, resolved.args.pid, {
       type: "req",
       id: crypto.randomUUID(),
       call: "proc.ipc.deliver",
@@ -650,7 +652,7 @@ export async function forwardToProcess(
     : frame.call === "proc.ai.config.set"
       ? withProcAiConfigProfile(frame as RequestFrame<"proc.ai.config.set">, ctx, proc.ownerUid)
       : frame;
-  const responsePromise = sendFrameToProcess(pid, processFrame);
+  const responsePromise = sendFrameToProcess(ctx.installationId, pid, processFrame);
   let cancellation: Promise<unknown> | undefined;
   const signal = frame.call === "codemode.run" || frame.call === "proc.history.compact"
     ? ctx.requestSignal
@@ -663,7 +665,7 @@ export async function forwardToProcess(
         const reason = signal?.reason instanceof Error
           ? signal.reason.message
           : "Request cancelled";
-        cancellation = sendFrameToProcess(pid, {
+        cancellation = sendFrameToProcess(ctx.installationId, pid, {
           type: "sig",
           signal: REQUEST_CANCEL_SIGNAL,
           payload: { id: frame.id, reason },

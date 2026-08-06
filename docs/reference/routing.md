@@ -68,6 +68,12 @@ new process, and `proc.fork` creates a new process initialized from committed
 history in another process. There is no default process or second
 process-local conversation identifier.
 
+PIDs are installation-local. Process Durable Object lookups combine the
+trusted installation ID with the PID in one canonical Durable Object name.
+Each Process derives both immutable identifiers from that name; routing
+identity is not persisted separately or repeated in delivered frames. The
+standalone `singleton` installation uses the same composite naming scheme.
+
 The Kernel stores process metadata in the `processes` table: owner uid, run-as
 identity, parent PID, cwd, interactive flag, runtime state, active run id,
 and label. `proc.list` is answered directly from this registry.

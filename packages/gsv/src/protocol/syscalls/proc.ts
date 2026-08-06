@@ -593,7 +593,6 @@ export type ProcListResult = {
 // Kernel-only: sets process identity. Sent by the kernel to Process DOs
 // at spawn time and never routed from user/device connections.
 export type ProcSetIdentityArgs = {
-  pid: string;
   identity: ProcessIdentity;
   interactive?: boolean;
   /** Initial process label. */
