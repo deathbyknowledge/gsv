@@ -25,6 +25,7 @@ This document is the root engineering contract for the repository. It explains h
 - The Kernel Durable Object name is the immutable `installationId`; handles and canonical origins are routing metadata, not security identities.
 - Public callers never choose an `installationId`. Gateways derive it from host routing, adapters derive it from durable links, and background work retains it in owned state.
 - Process, R2, ripgit, and adapter physical addresses must include installation scope before managed multi-installation hosting is enabled.
+- `ctx.id.name` is available only on name-preserving Durable Object paths. An `idFromString()` callback must recover a previously validated identity from owned state or a trusted routing record.
 - Preserve the explicit `singleton` projection for supported standalone upgrades until a deliberate standalone migration replaces it end to end.
 
 ### Treat syscalls and protocol frames as the primitive boundary

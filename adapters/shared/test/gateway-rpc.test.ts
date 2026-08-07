@@ -4,7 +4,13 @@ import {
   callAdapterGateway,
   type AdapterGatewayBinding,
 } from "../src/gateway-rpc";
-import type { BinaryBody, GatewayFrame } from "../src/types";
+import type {
+  AdapterInstallationContext,
+  BinaryBody,
+  GatewayFrame,
+} from "../src/types";
+
+const INSTALLATION = { installationId: "inst_test" } as const;
 
 function trackedBody(): {
   body: BinaryBody;
@@ -24,7 +30,10 @@ function trackedBody(): {
 }
 
 function binding(
-  serviceFrame: (frame: GatewayFrame) => Promise<GatewayFrame | null>,
+  serviceFrame: (
+    installation: AdapterInstallationContext,
+    frame: GatewayFrame,
+  ) => Promise<GatewayFrame | null>,
 ): AdapterGatewayBinding {
   return { serviceFrame };
 }
@@ -32,7 +41,11 @@ function binding(
 describe("callAdapterGateway", () => {
   it("forwards the request body and returns typed response data", async () => {
     const request = trackedBody();
-    const serviceFrame = vi.fn(async (frame: GatewayFrame) => {
+    const serviceFrame = vi.fn(async (
+      installation: AdapterInstallationContext,
+      frame: GatewayFrame,
+    ) => {
+      expect(installation).toEqual(INSTALLATION);
       expect(frame).toMatchObject({
         type: "req",
         call: "adapter.inbound",
@@ -50,6 +63,7 @@ describe("callAdapterGateway", () => {
 
     await expect(callAdapterGateway<{ accepted: boolean }>(
       binding(serviceFrame),
+      INSTALLATION,
       "adapter.inbound",
       { value: 1 },
       request.body,
@@ -64,6 +78,7 @@ describe("callAdapterGateway", () => {
       binding(async () => {
         throw transportError;
       }),
+      INSTALLATION,
       "adapter.inbound",
       {},
       transportBody.body,
@@ -73,6 +88,7 @@ describe("callAdapterGateway", () => {
     const missingBody = trackedBody();
     await expect(callAdapterGateway(
       binding(async () => null),
+      INSTALLATION,
       "adapter.inbound",
       {},
       missingBody.body,
@@ -92,6 +108,7 @@ describe("callAdapterGateway", () => {
         args: {},
         body: unexpected.body,
       })),
+      INSTALLATION,
       "adapter.inbound",
       {},
       request.body,
@@ -110,6 +127,7 @@ describe("callAdapterGateway", () => {
         ok: true,
         body: successBody.body,
       })),
+      INSTALLATION,
       "adapter.state.update",
       {},
     )).resolves.toEqual({});
@@ -127,6 +145,7 @@ describe("callAdapterGateway", () => {
         error: { message: "Gateway rejected message" },
         body: errorBody.body,
       })),
+      INSTALLATION,
       "adapter.inbound",
       {},
       acceptedRequestBody.body,
@@ -142,6 +161,7 @@ describe("callAdapterGateway", () => {
         id: "error",
         ok: false,
       })),
+      INSTALLATION,
       "adapter.state.update",
       {},
     )).rejects.toThrow("Gateway error on adapter.state.update");

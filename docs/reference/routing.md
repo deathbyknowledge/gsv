@@ -8,6 +8,18 @@ caller-provided values from public Git requests. Ripgit maps logical
 `{owner}/{repo}` slugs to installation-specific Repository Durable Objects.
 The standalone `singleton` route retains the historical `{owner}/{repo}` name.
 
+Adapter service-binding RPC carries the same trusted installation identity in
+both directions. Gateway-to-adapter calls derive it from the Kernel context;
+adapter-to-Gateway calls normally recover it from the owning account Durable
+Object's immutable name. Managed adapter account objects use a collision-free
+internal name derived from `{installationId, accountId}`. `singleton` retains the
+historical unscoped account object name for standalone upgrades. Public webhook
+payloads and adapter frame arguments cannot choose this identity. Managed
+Telegram webhook routes use an opaque Durable Object ID, so Telegram accounts
+also persist the validated installation ID for callbacks reached through
+`idFromString()`. Legacy standalone webhook paths keep their existing account
+identifier.
+
 ## Routing Surfaces
 
 | Surface | Entry Point | Routed By | Destination |
@@ -167,6 +179,7 @@ Device routing does not rename syscalls. Agents and clients always see the same 
 | Device does not implement syscall | `400 Device does not implement` |
 | Device route timeout | `504 Syscall timed out` |
 | Unknown or foreign process | `Process not found` or `Permission denied` |
+| Adapter installation mismatch | Adapter RPC fails before account state or provider access |
 
 ## Related Stores
 

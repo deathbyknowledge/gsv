@@ -16,6 +16,11 @@ import {
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
+  assertAdapterAccountDurableObjectIdentity,
+  LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+  resolveAdapterAccountDurableObjectIdentity,
+} from "../../shared/src/installation";
+import {
   bundleAdapterMedia,
   cancelResponseBody,
   responseBodyToBinaryBody,
@@ -30,6 +35,7 @@ import type {
   AdapterAccountStatus,
   AdapterInboundMessage,
   AdapterInboundResult,
+  AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,
@@ -103,6 +109,7 @@ export class DiscordGateway extends DurableObject<Env> {
   private readonly deliveries: DeliveryLedger;
   private readonly inboundDeliveries: InboundDeliveryLedger<string>;
   private heartbeatInterval: number = 0;
+  private loaded = false;
   private state: GatewayState = {
     accountId: null,
     botToken: null,
@@ -121,14 +128,16 @@ export class DiscordGateway extends DurableObject<Env> {
       this.ctx.storage,
       INBOUND_DELIVERY_PREFIX,
     );
-    this.loadState();
+    this.ctx.blockConcurrencyWhile(async () => this.loadState());
   }
 
   private async loadState() {
+    if (this.loaded) return;
     const stored = await this.ctx.storage.get<GatewayState>("state");
     if (stored) {
       this.state = { ...this.state, ...stored };
     }
+    this.loaded = true;
   }
 
   private async saveState() {
@@ -140,14 +149,21 @@ export class DiscordGateway extends DurableObject<Env> {
   // ─────────────────────────────────────────────────────────
 
   async start(botToken: string, accountId?: string): Promise<void> {
+    await this.loadState();
+    const normalizedAccountId = accountId
+      ? assertAdapterAccountDurableObjectIdentity(
+          this.ctx.id.name,
+          accountId,
+        ).accountId
+      : undefined;
     if (this.ws && this.state.connected) {
       console.log("[DiscordGateway] Already connected");
       return;
     }
 
     // Store the accountId name (not the hex DO id) for consistent inbound routing.
-    if (accountId) {
-      this.state.accountId = accountId;
+    if (normalizedAccountId) {
+      this.state.accountId = normalizedAccountId;
     }
     this.state.botToken = botToken;
     await this.saveState();
@@ -158,6 +174,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   async stop(): Promise<void> {
+    await this.loadState();
     if (this.ws) {
       this.ws.close(1000, "Stopped by user");
       this.ws = null;
@@ -168,6 +185,7 @@ export class DiscordGateway extends DurableObject<Env> {
   }
 
   async getStatus(): Promise<AdapterAccountStatus> {
+    await this.loadState();
     return {
       accountId: this.getAccountId(),
       connected: this.state.connected,
@@ -203,6 +221,19 @@ export class DiscordGateway extends DurableObject<Env> {
   /** Get the account ID name (e.g., "default"), falling back to hex DO id */
   private getAccountId(): string {
     return this.state.accountId ?? this.ctx.id.toString();
+  }
+
+  private getInstallationContext(): AdapterInstallationContext {
+    const identity = resolveAdapterAccountDurableObjectIdentity(
+      this.ctx.id.name,
+      {
+        installationId: this.ctx.id.name
+          ? undefined
+          : LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+        accountId: this.state.accountId,
+      },
+    );
+    return { installationId: identity.installationId };
   }
 
   // ─────────────────────────────────────────────────────────
@@ -495,6 +526,7 @@ export class DiscordGateway extends DurableObject<Env> {
 
     const result = await callAdapterGateway<AdapterInboundResult>(
       this.env.GATEWAY,
+      this.getInstallationContext(),
       "adapter.inbound",
       {
         adapter: "discord",
@@ -526,11 +558,16 @@ export class DiscordGateway extends DurableObject<Env> {
   private async notifyGatewayStatus(status: AdapterAccountStatus): Promise<void> {
     const accountId = this.getAccountId();
     try {
-      await callAdapterGateway(this.env.GATEWAY, "adapter.state.update", {
-        adapter: "discord",
-        accountId,
-        status,
-      });
+      await callAdapterGateway(
+        this.env.GATEWAY,
+        this.getInstallationContext(),
+        "adapter.state.update",
+        {
+          adapter: "discord",
+          accountId,
+          status,
+        },
+      );
     } catch (e) {
       console.error("[DiscordGateway] Failed to deliver status via RPC:", e);
     }

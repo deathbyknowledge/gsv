@@ -81,15 +81,36 @@ Gateway-to-adapter bindings expose lifecycle, status, activity, and send
 operations; adapters call the Gateway's single `serviceFrame` entrypoint for
 `adapter.inbound` and `adapter.state.update`.
 
+Every call in either direction begins with a validated installation context.
+The Kernel supplies that context from its durable installation identity; it is
+not read from adapter message arguments or a public request. First-party
+adapters use it to derive the account Durable Object name. The object recovers
+the same immutable installation and account identity from its name instead of
+persisting a second, mutable copy alongside provider state. Telegram is the
+one exception: its managed webhook uses an opaque Durable Object ID, and
+Cloudflare does not expose `ctx.id.name` when an object is reached through
+`idFromString()`. The Telegram account therefore persists the validated
+installation ID alongside its provider state for that callback path.
+
+Managed account objects use a collision-free internal name derived from
+`installationId` and the installation-local `accountId`. The explicit
+`singleton` compatibility installation retains the historical unscoped
+account name, so upgrading a standalone Telegram, Discord, WhatsApp, or test
+adapter reaches its existing Durable Object and provider session. Adapter
+alarms and retries recover the installation context from the named Durable
+Object before calling the Gateway; Telegram can also recover its validated
+stored identity. They do not depend on a browser hostname.
+
 ## Inbound flow
 
 The inbound path looks like this:
 
 1. A platform event arrives at the adapter worker.
 2. The adapter normalizes it into a GSV adapter message.
-3. The adapter sends `adapter.inbound` through the Gateway's `serviceFrame`
-   binding with its stable account-scoped ingress `deliveryId` and an optional
-   top-level media body.
+3. The account Durable Object recovers its installation identity and
+   sends `adapter.inbound` through the Gateway's `serviceFrame` binding with
+   that trusted context, its stable account-scoped ingress `deliveryId`, and an
+   optional top-level media body.
 4. The Kernel resolves the adapter account and external actor.
 5. The Kernel checks the identity link and non-DM activation policy.
 6. The Kernel records the actor/thread-scoped observed surface and resolves its

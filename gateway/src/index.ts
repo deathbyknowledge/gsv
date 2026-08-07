@@ -1,5 +1,8 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
-import type { GatewayAdapterInterface } from "./adapter-interface";
+import type {
+  AdapterInstallationContext,
+  GatewayAdapterInterface,
+} from "./adapter-interface";
 import type { Frame } from "./protocol/frames";
 import { buildOAuthClientMetadata } from "./oauth-http";
 import {
@@ -13,7 +16,11 @@ import {
   resolveInstallationRoute,
 } from "./installation/routing";
 import type { GatewayInstallationBindings } from "./installation/routing";
-import { SINGLETON_INSTALLATION_ID } from "./installation/identity";
+import {
+  parseInstallationId,
+  parseManagedInstallationId,
+  SINGLETON_INSTALLATION_ID,
+} from "./installation/identity";
 import { createInstallationStorage } from "./installation/storage";
 import { createInstallationRipgit } from "./installation/ripgit";
 import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
@@ -107,13 +114,21 @@ export class GatewayEntrypoint
   extends WorkerEntrypoint<Env & GatewayInstallationBindings>
   implements GatewayAdapterInterface
 {
-  async serviceFrame(frame: Frame): Promise<Frame | null> {
+  async serviceFrame(
+    installation: AdapterInstallationContext,
+    frame: Frame,
+  ): Promise<Frame | null> {
     const body = "body" in frame ? frame.body : undefined;
     try {
+      let installationId: string;
       if (this.env.INSTALLATION_DIRECTORY) {
-        throw new Error("Managed adapter requests require installation-scoped routing");
+        installationId = parseManagedInstallationId(installation?.installationId);
+      } else {
+        installationId = parseInstallationId(installation?.installationId);
+        if (installationId !== SINGLETON_INSTALLATION_ID) {
+          throw new Error("Adapter installation does not match standalone Gateway");
+        }
       }
-      const installationId = SINGLETON_INSTALLATION_ID;
       const kernel = await getKernelByInstallationId(this.env.KERNEL, installationId);
       return await kernel.serviceFrame(frame);
     } catch (error) {

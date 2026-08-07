@@ -9,6 +9,7 @@ export type {
   AdapterActivity,
   AdapterActor,
   AdapterConnectChallenge,
+  AdapterInstallationContext,
   AdapterInboundMessage,
   AdapterInboundResult,
   AdapterMedia,

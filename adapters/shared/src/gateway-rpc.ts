@@ -1,6 +1,7 @@
 import type { AdapterGatewayInterface } from "../../../packages/gsv/src/protocol/adapters.js";
 import { cancelBinaryBody } from "./media-body";
 import type {
+  AdapterInstallationContext,
   BinaryBody,
   GatewayFrame,
   GatewayRequestFrame,
@@ -16,6 +17,7 @@ export type AdapterGatewayBinding = AdapterGatewayInterface<GatewayFrame>;
  */
 export async function callAdapterGateway<T = unknown>(
   gateway: AdapterGatewayBinding,
+  installation: AdapterInstallationContext,
   call: string,
   args: unknown,
   body?: BinaryBody,
@@ -30,7 +32,7 @@ export async function callAdapterGateway<T = unknown>(
 
   let response: GatewayFrame | null;
   try {
-    response = await gateway.serviceFrame(frame);
+    response = await gateway.serviceFrame(installation, frame);
   } catch (error) {
     await cancelBinaryBody(body, error);
     throw error;

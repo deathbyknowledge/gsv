@@ -12,6 +12,11 @@ import {
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
+  assertAdapterAccountDurableObjectIdentity,
+  LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+  resolveAdapterAccountDurableObjectIdentity,
+} from "../../shared/src/installation";
+import {
   bundleAdapterMedia,
   cancelResponseBody,
   cancelBinaryBody,
@@ -30,6 +35,7 @@ import type {
   AdapterActor,
   AdapterInboundMessage,
   AdapterInboundResult,
+  AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,
@@ -42,6 +48,7 @@ import {
   sendTelegramMarkdownMessage,
 } from "./telegram-formatting";
 import { planTelegramMediaDeliveries } from "./telegram-media";
+import { buildTelegramWebhookPath } from "./webhook-route";
 
 interface Env {
   GATEWAY: Fetcher & AdapterGatewayBinding;
@@ -189,6 +196,7 @@ type TelegramInputMedia = {
 };
 
 type TelegramAccountState = {
+  installationId: string | null;
   accountId: string;
   botToken: string | null;
   botUserId: number | null;
@@ -244,6 +252,7 @@ export class TelegramAccount extends DurableObject<Env> {
   }
 
   private state: TelegramAccountState = {
+    installationId: null,
     accountId: "default",
     botToken: null,
     botUserId: null,
@@ -260,14 +269,24 @@ export class TelegramAccount extends DurableObject<Env> {
     if (this.loaded) return;
 
     const stored = await this.ctx.storage.get<
-      TelegramAccountState & { lastUpdateId?: number | null }
+      Omit<TelegramAccountState, "installationId"> & {
+        installationId?: string | null;
+        lastUpdateId?: number | null;
+      }
     >("state");
     if (stored) {
       const normalized = { ...stored };
       const hadLegacyUpdateId = "lastUpdateId" in normalized;
+      const hadLegacyInstallationId = !("installationId" in normalized);
       delete normalized.lastUpdateId;
-      this.state = { ...this.state, ...normalized };
-      if (hadLegacyUpdateId) {
+      this.state = {
+        ...this.state,
+        ...normalized,
+        installationId: hadLegacyInstallationId
+          ? LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID
+          : normalized.installationId ?? null,
+      };
+      if (hadLegacyUpdateId || hadLegacyInstallationId) {
         await this.saveState();
       }
     }
@@ -318,6 +337,14 @@ export class TelegramAccount extends DurableObject<Env> {
 
   private getAccountId(): string {
     return this.state.accountId || "default";
+  }
+
+  private getInstallationContext(): AdapterInstallationContext {
+    const identity = resolveAdapterAccountDurableObjectIdentity(
+      this.ctx.id.name,
+      this.state,
+    );
+    return { installationId: identity.installationId };
   }
 
   private async callTelegramApi<T>(
@@ -408,6 +435,7 @@ export class TelegramAccount extends DurableObject<Env> {
     botToken: string,
     accountId: string,
     webhookBaseUrl: string,
+    webhookRoute: string,
     providedSecret?: string,
   ): Promise<void> {
     await this.ensureLoaded();
@@ -423,11 +451,36 @@ export class TelegramAccount extends DurableObject<Env> {
     }
 
     const normalizedAccountId = accountId.trim() || "default";
+    const accountIdentity = assertAdapterAccountDurableObjectIdentity(
+      this.ctx.id.name,
+      normalizedAccountId,
+    );
+    if (
+      this.state.installationId
+      && this.state.installationId !== accountIdentity.installationId
+    ) {
+      throw new Error("Adapter installation identity mismatch");
+    }
+    const identityChanged =
+      this.state.installationId !== accountIdentity.installationId
+      || this.state.accountId !== accountIdentity.accountId;
+    this.state.installationId = accountIdentity.installationId;
+    this.state.accountId = accountIdentity.accountId;
+    if (identityChanged) {
+      await this.saveState();
+    }
+    const normalizedWebhookRoute = webhookRoute.trim();
+    if (!normalizedWebhookRoute) {
+      throw new Error("Webhook route is required");
+    }
     const webhookSecret =
       (providedSecret && providedSecret.trim()) ||
       this.state.webhookSecret ||
       buildWebhookSecret();
-    const webhookUrl = `${baseUrl}/webhook/${encodeURIComponent(normalizedAccountId)}`;
+    const webhookUrl = `${baseUrl}${buildTelegramWebhookPath(
+      accountIdentity.installationId,
+      normalizedWebhookRoute,
+    )}`;
 
     const me = await this.callTelegramApi<TelegramUser>(
       "getMe",
@@ -1041,6 +1094,7 @@ export class TelegramAccount extends DurableObject<Env> {
 
     const result = await callAdapterGateway<AdapterInboundResult>(
       this.env.GATEWAY,
+      this.getInstallationContext(),
       "adapter.inbound",
       {
         adapter: "telegram",
@@ -1536,12 +1590,18 @@ export class TelegramAccount extends DurableObject<Env> {
 
   private async notifyGatewayStatus(): Promise<void> {
     try {
+      const installation = this.getInstallationContext();
       const status = await this.getStatus();
-      await callAdapterGateway(this.env.GATEWAY, "adapter.state.update", {
-        adapter: "telegram",
-        accountId: this.getAccountId(),
-        status,
-      });
+      await callAdapterGateway(
+        this.env.GATEWAY,
+        installation,
+        "adapter.state.update",
+        {
+          adapter: "telegram",
+          accountId: this.getAccountId(),
+          status,
+        },
+      );
     } catch (error) {
       console.error(
         `[TelegramAccount:${this.getAccountId()}] Failed to notify status:`,

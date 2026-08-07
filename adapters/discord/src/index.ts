@@ -11,11 +11,16 @@ import {
   cancelResponseBody,
   cancelBinaryBody,
 } from "../../shared/src/media-body";
+import {
+  adapterAccountDurableObjectName,
+  parseAdapterInstallationContext,
+} from "../../shared/src/installation";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
   AdapterConnectResult,
   AdapterDisconnectResult,
+  AdapterInstallationContext,
   AdapterOutboundMessage,
   AdapterSendResult,
   AdapterSurface,
@@ -51,6 +56,7 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
   // DONT RENAME TO connect() because Cloudflare service bindings already expose
   // a built-in socket connect() method, which hijacks adapter RPC calls.
   async adapterConnect(
+    installation: AdapterInstallationContext,
     accountId: string,
     config: Record<string, unknown> = {},
   ): Promise<AdapterConnectResult> {
@@ -63,7 +69,8 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
     }
 
     try {
-      const gateway = this.getGatewayDO(accountId);
+      const parsedInstallation = parseAdapterInstallationContext(installation);
+      const gateway = this.getGatewayDO(parsedInstallation, accountId);
       await gateway.start(botToken, accountId);
     } catch (error) {
       return {
@@ -83,9 +90,13 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
   /**
    * Canonical adapter lifecycle entrypoint used by gateway.
    */
-  async adapterDisconnect(accountId: string): Promise<AdapterDisconnectResult> {
+  async adapterDisconnect(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<AdapterDisconnectResult> {
     try {
-      const gateway = this.getGatewayDO(accountId);
+      const parsedInstallation = parseAdapterInstallationContext(installation);
+      const gateway = this.getGatewayDO(parsedInstallation, accountId);
       await gateway.stop();
       return { ok: true, message: "Disconnected" };
     } catch (error) {
@@ -99,9 +110,13 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
   /**
    * Get status of Discord connection(s).
    */
-  async adapterStatus(accountId?: string): Promise<AdapterAccountStatus[]> {
+  async adapterStatus(
+    installation: AdapterInstallationContext,
+    accountId?: string,
+  ): Promise<AdapterAccountStatus[]> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
     if (accountId) {
-      const gateway = this.getGatewayDO(accountId);
+      const gateway = this.getGatewayDO(parsedInstallation, accountId);
       const state = await gateway.getStatus();
       return [state];
     }
@@ -113,12 +128,14 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
    * Send a message to a Discord channel.
    */
   async adapterSend(
+    installation: AdapterInstallationContext,
     accountId: string,
     message: AdapterOutboundMessage,
     binaryBody?: BinaryBody,
   ): Promise<AdapterSendResult> {
-    const gateway = this.getGatewayDO(accountId);
     try {
+      const parsedInstallation = parseAdapterInstallationContext(installation);
+      const gateway = this.getGatewayDO(parsedInstallation, accountId);
       return await gateway.sendMessage(message, binaryBody);
     } catch (error) {
       await cancelBinaryBody(binaryBody, error);
@@ -131,16 +148,18 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
   }
 
   async adapterSetActivity(
+    installation: AdapterInstallationContext,
     accountId: string,
     surface: AdapterSurface,
     activity: AdapterActivity,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const parsedInstallation = parseAdapterInstallationContext(installation);
     if (activity.kind !== "typing" || !activity.active) {
       return { ok: true };
     }
 
     try {
-      const botToken = await this.resolveBotToken(accountId);
+      const botToken = await this.resolveBotToken(parsedInstallation, accountId);
       if (!botToken) {
         return { ok: true };
       }
@@ -159,13 +178,21 @@ export class DiscordChannel extends WorkerEntrypoint<Env> implements AdapterWork
   // Private helpers
   // ─────────────────────────────────────────────────────────
 
-  private getGatewayDO(accountId: string) {
-    const id = this.env.DISCORD_GATEWAY.idFromName(accountId);
+  private getGatewayDO(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ) {
+    const id = this.env.DISCORD_GATEWAY.idFromName(
+      adapterAccountDurableObjectName(installation, accountId),
+    );
     return this.env.DISCORD_GATEWAY.get(id) as unknown as DiscordGatewayStub;
   }
 
-  private async resolveBotToken(accountId: string): Promise<string | null> {
-    const gateway = this.getGatewayDO(accountId);
+  private async resolveBotToken(
+    installation: AdapterInstallationContext,
+    accountId: string,
+  ): Promise<string | null> {
+    const gateway = this.getGatewayDO(installation, accountId);
     const persistedToken = await gateway.getBotToken();
     return persistedToken || this.env.DISCORD_BOT_TOKEN || null;
   }

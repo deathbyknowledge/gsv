@@ -13,6 +13,11 @@ import {
 import { callAdapterGateway } from "../../shared/src/gateway-rpc";
 import type { AdapterGatewayBinding } from "../../shared/src/gateway-rpc";
 import {
+  assertAdapterAccountDurableObjectIdentity,
+  LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+  resolveAdapterAccountDurableObjectIdentity,
+} from "../../shared/src/installation";
+import {
   bundleAdapterMedia,
   cancelBinaryBody,
   cancelResponseBody,
@@ -26,6 +31,7 @@ import type {
   AdapterActivity,
   AdapterInboundMessage,
   AdapterInboundResult,
+  AdapterInstallationContext,
   AdapterMedia,
   AdapterOutboundMessage,
   AdapterSendResult,
@@ -576,9 +582,23 @@ export class WhatsAppAccount extends DurableObject<Env> {
     await this.scheduleNextAlarm();
   }
 
+  private getInstallationContext(): AdapterInstallationContext {
+    const identity = resolveAdapterAccountDurableObjectIdentity(
+      this.ctx.id.name,
+      {
+        installationId: this.ctx.id.name
+          ? undefined
+          : LEGACY_STANDALONE_ADAPTER_INSTALLATION_ID,
+        accountId: this.state.accountId,
+      },
+    );
+    return { installationId: identity.installationId };
+  }
+
   private async ensureAccount(accountId: string): Promise<void> {
     const normalized = accountId.trim();
     if (!normalized) throw new Error("WhatsApp account ID is required");
+    assertAdapterAccountDurableObjectIdentity(this.ctx.id.name, normalized);
     if (this.state.accountId && this.state.accountId !== normalized) {
       throw new Error("WhatsApp account ID mismatch");
     }
@@ -1563,6 +1583,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       }
       const result = await callAdapterGateway<AdapterInboundResult>(
         this.gatewayBinding(),
+        this.getInstallationContext(),
         "adapter.inbound",
         {
           adapter: "whatsapp",
@@ -1983,6 +2004,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     if (!this.state.accountId) return;
     await callAdapterGateway(
       this.gatewayBinding(),
+      this.getInstallationContext(),
       "adapter.state.update",
       {
         adapter: "whatsapp",
