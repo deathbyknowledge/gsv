@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseInstallationId,
+  parseManagedInstallationId,
   SINGLETON_INSTALLATION_ID,
 } from "./identity";
 
@@ -28,5 +29,11 @@ describe("installation identity", () => {
 
   it("rejects non-string installation IDs", () => {
     expect(() => parseInstallationId(null)).toThrow("installationId must be a string");
+  });
+
+  it("reserves the standalone identity from managed routing", () => {
+    expect(parseManagedInstallationId("inst_first")).toBe("inst_first");
+    expect(() => parseManagedInstallationId(SINGLETON_INSTALLATION_ID))
+      .toThrow("cannot use the standalone identity");
   });
 });

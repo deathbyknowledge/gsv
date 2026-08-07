@@ -4,6 +4,7 @@ import type { Kernel } from "../kernel/do";
 import {
   SINGLETON_INSTALLATION_ID,
   parseInstallationId,
+  parseManagedInstallationId,
 } from "./identity";
 
 const PROCESS_DURABLE_OBJECT_PREFIX = "process:";
@@ -99,9 +100,16 @@ export async function resolveInstallationRoute(
     return null;
   }
 
+  let installationId: string;
+  try {
+    installationId = parseManagedInstallationId(result.installationId);
+  } catch {
+    return null;
+  }
+
   return {
     identity: {
-      installationId: result.installationId,
+      installationId,
       canonicalOrigin: result.canonicalOrigin,
       handle: result.handle,
     },

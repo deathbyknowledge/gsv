@@ -1,3 +1,5 @@
+import { removeUntrustedRipgitInstallationHeader } from "./installation/ripgit";
+
 type BasicAuth = {
   username: string;
   credential: string;
@@ -74,6 +76,7 @@ export async function buildGitProxyRequest(
   const headers = new Headers(request.headers);
   headers.delete("authorization");
   headers.delete("cookie");
+  removeUntrustedRipgitInstallationHeader(headers);
   if (username) {
     headers.set("x-ripgit-actor-name", username);
   } else {

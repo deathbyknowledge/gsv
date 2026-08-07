@@ -2,6 +2,12 @@
 
 GSV routing is kernel-level message and syscall routing. It is not only chat routing. The Kernel Durable Object is the central router for WebSocket clients, agent processes, adapter workers, and connected devices.
 
+The installation route also scopes Ripgit. The Gateway overwrites Ripgit's
+internal installation metadata after resolving the request hostname and strips
+caller-provided values from public Git requests. Ripgit maps logical
+`{owner}/{repo}` slugs to installation-specific Repository Durable Objects.
+The standalone `singleton` route retains the historical `{owner}/{repo}` name.
+
 ## Routing Surfaces
 
 | Surface | Entry Point | Routed By | Destination |

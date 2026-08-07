@@ -116,6 +116,7 @@ import { SERVER_VERSION } from "../version";
 import { parseInstallationId } from "../installation/identity";
 import type { InstallationIdentity } from "../installation/identity";
 import { createInstallationStorage } from "../installation/storage";
+import { createInstallationRipgit } from "../installation/ripgit";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -256,7 +257,13 @@ export class Kernel extends Host<Env> {
       env.STORAGE,
       this.installationId,
     );
-    this.installationEnv = envWithStorage(env, this.installationStorage);
+    this.installationEnv = envWithInstallationResources(
+      env,
+      this.installationStorage,
+      env.RIPGIT
+        ? createInstallationRipgit(env.RIPGIT, this.installationId)
+        : undefined,
+    );
 
     this.auth = new AuthStore(sql);
 
@@ -3341,12 +3348,16 @@ function shellStatusFromEvent(event: string): ShellSessionStatus {
   return "running";
 }
 
-function envWithStorage(env: Env, storage: R2Bucket): Env {
+function envWithInstallationResources(
+  env: Env,
+  storage: R2Bucket,
+  ripgit: Fetcher | undefined,
+): Env {
   return new Proxy(env, {
     get(target, property) {
-      return property === "STORAGE"
-        ? storage
-        : Reflect.get(target, property, target);
+      if (property === "STORAGE") return storage;
+      if (property === "RIPGIT") return ripgit;
+      return Reflect.get(target, property, target);
     },
   });
 }

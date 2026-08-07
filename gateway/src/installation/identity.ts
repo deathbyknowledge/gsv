@@ -21,3 +21,11 @@ export function parseInstallationId(value: unknown): string {
   }
   return value;
 }
+
+export function parseManagedInstallationId(value: unknown): string {
+  const installationId = parseInstallationId(value);
+  if (installationId === SINGLETON_INSTALLATION_ID) {
+    throw new Error("managed installationId cannot use the standalone identity");
+  }
+  return installationId;
+}

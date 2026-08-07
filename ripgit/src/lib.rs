@@ -11,6 +11,8 @@ use worker::*;
 /// Delta compression keyframe interval. A full keyframe is stored every N
 /// versions within a blob group. Worst-case reconstruction applies N-1 deltas.
 pub const KEYFRAME_INTERVAL: i64 = 50;
+const INSTALLATION_HEADER: &str = "X-GSV-Installation-ID";
+const LEGACY_STANDALONE_INSTALLATION_ID: &str = "singleton";
 
 struct Actor {
     display_name: String,
@@ -39,15 +41,50 @@ fn unauthorized_401() -> Result<Response> {
     Ok(resp)
 }
 
+fn installation_id_from_request(req: &Request) -> std::result::Result<String, &'static str> {
+    let installation_id = req
+        .headers()
+        .get(INSTALLATION_HEADER)
+        .map_err(|_| "Invalid installation routing header")?
+        .unwrap_or_else(|| LEGACY_STANDALONE_INSTALLATION_ID.to_string());
+    if !is_valid_installation_id(&installation_id) {
+        return Err("Invalid installation routing header");
+    }
+    Ok(installation_id)
+}
+
+fn is_valid_installation_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.is_empty() || bytes.len() > 128 {
+        return false;
+    }
+    let is_alphanumeric = |byte: u8| byte.is_ascii_alphanumeric();
+    if !is_alphanumeric(bytes[0]) || !is_alphanumeric(bytes[bytes.len() - 1]) {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|byte| is_alphanumeric(*byte) || matches!(*byte, b'.' | b'_' | b':' | b'-'))
+}
+
+fn repository_do_name(installation_id: &str, owner: &str, repo: &str) -> String {
+    if installation_id == LEGACY_STANDALONE_INSTALLATION_ID {
+        format!("{}/{}", owner, repo)
+    } else {
+        format!("{}/{}/{}", installation_id, owner, repo)
+    }
+}
+
 async fn forward_hyperspace_request(
     mut req: Request,
     env: &Env,
     url: &Url,
     parts: &[&str],
+    installation_id: &str,
 ) -> Result<Response> {
     let owner = parts[2];
     let repo = parts[3];
-    let do_name = format!("{}/{}", owner, repo);
+    let do_name = repository_do_name(installation_id, owner, repo);
     let namespace = env.durable_object("REPOSITORY")?;
     let id = namespace.id_from_name(&do_name)?;
     let stub = id.get_stub()?;
@@ -82,6 +119,10 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let url = req.url()?;
     let path = url.path();
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    let installation_id = match installation_id_from_request(&req) {
+        Ok(installation_id) => installation_id,
+        Err(message) => return Response::error(message, 400),
+    };
 
     if parts.len() >= 4
         && parts[0] == "hyperspace"
@@ -89,11 +130,11 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         && !parts[2].is_empty()
         && !parts[3].is_empty()
     {
-        return forward_hyperspace_request(req, &env, &url, &parts).await;
+        return forward_hyperspace_request(req, &env, &url, &parts, &installation_id).await;
     }
 
     if parts.len() >= 2 && !parts[0].is_empty() && !parts[1].is_empty() {
-        let do_name = format!("{}/{}", parts[0], parts[1]);
+        let do_name = repository_do_name(&installation_id, parts[0], parts[1]);
         let namespace = env.durable_object("REPOSITORY")?;
         let id = namespace.id_from_name(&do_name)?;
         let stub = id.get_stub()?;
@@ -425,4 +466,40 @@ fn pkt_line(buf: &mut Vec<u8>, data: &str) {
 
 fn is_hex40(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod installation_tests {
+    use super::*;
+
+    #[test]
+    fn preserves_standalone_repository_names() {
+        assert_eq!(
+            repository_do_name(LEGACY_STANDALONE_INSTALLATION_ID, "alice", "home"),
+            "alice/home"
+        );
+    }
+
+    #[test]
+    fn scopes_managed_repository_names() {
+        assert_eq!(
+            repository_do_name("inst_first", "alice", "home"),
+            "inst_first/alice/home"
+        );
+        assert_ne!(
+            repository_do_name("inst_first", "alice", "home"),
+            repository_do_name("inst_second", "alice", "home")
+        );
+    }
+
+    #[test]
+    fn validates_installation_ids_like_the_gateway_boundary() {
+        for value in ["singleton", "inst_123", "a.b:c-d"] {
+            assert!(is_valid_installation_id(value), "{value}");
+        }
+        for value in ["", "_leading", "trailing_", "has/slash", "has space"] {
+            assert!(!is_valid_installation_id(value), "{value}");
+        }
+        assert!(!is_valid_installation_id(&"a".repeat(129)));
+    }
 }

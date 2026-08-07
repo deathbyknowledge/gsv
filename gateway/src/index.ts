@@ -15,6 +15,7 @@ import {
 import type { GatewayInstallationBindings } from "./installation/routing";
 import { SINGLETON_INSTALLATION_ID } from "./installation/identity";
 import { createInstallationStorage } from "./installation/storage";
+import { createInstallationRipgit } from "./installation/ripgit";
 import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
 
 export { Kernel } from "./kernel/do";
@@ -91,7 +92,10 @@ export default {
           : new Response(authorized.message, { status: authorized.status });
       }
 
-      return env.RIPGIT.fetch(
+      return createInstallationRipgit(
+        env.RIPGIT,
+        route.identity.installationId,
+      ).fetch(
         await buildGitProxyRequest(request, gitMatch, authorized.username),
       );
     }

@@ -207,6 +207,7 @@ import {
 } from "../kernel/net";
 import { parseProcessDurableObjectName } from "../installation/routing";
 import { createInstallationStorage } from "../installation/storage";
+import { createInstallationRipgit } from "../installation/ripgit";
 
 type RunState = {
   runId: string;
@@ -884,7 +885,7 @@ export class Process extends Host<Env> {
     runProcessSqlMigrations(ctx.storage);
     this.store = new ProcessStore(ctx.storage.sql);
     this.ripgit = env.RIPGIT
-      ? new RipgitClient(env.RIPGIT)
+      ? new RipgitClient(createInstallationRipgit(env.RIPGIT, this.installationId))
       : null;
     const recoveredRun = this.currentRun;
     if (
