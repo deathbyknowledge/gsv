@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-accounts-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "GSV_BASE_DOMAIN": "gsv.space"
+  },
+  "d1_databases": [
+    {
+      "binding": "ACCOUNT_DB",
+      "database_name": "gsv-accounts-test",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

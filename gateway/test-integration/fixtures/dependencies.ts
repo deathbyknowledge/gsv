@@ -9,6 +9,7 @@ import type {
   AdapterSurface,
   AdapterWorkerInterface,
   BinaryBody,
+  InstallationDirectoryResult,
 } from "@humansandmachines/gsv/protocol";
 import { SINGLETON_INSTALLATION_ID } from "../../src/installation/identity";
 
@@ -53,16 +54,7 @@ export default class TestDependencies
 {
   readonly adapterId = "test";
 
-  async resolveHostname(hostname: string): Promise<
-    | {
-        found: true;
-        installationId: string;
-        handle: string;
-        canonicalOrigin: string;
-        state: string;
-      }
-    | { found: false }
-  > {
+  async resolveHostname(hostname: string): Promise<InstallationDirectoryResult> {
     const handle = hostname.endsWith(".gsv.space")
       ? hostname.slice(0, -".gsv.space".length)
       : "";
@@ -74,7 +66,7 @@ export default class TestDependencies
       installationId: `inst_integration_${handle}`,
       handle,
       canonicalOrigin: `https://${handle}.gsv.space`,
-      state: handle === "suspended" ? "suspended" : "active",
+      state: handle === "suspended" ? "deleted" : "active",
     };
   }
 

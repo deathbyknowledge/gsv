@@ -58,6 +58,7 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 
 ## System ownership
 
+- `accounts/`: managed principals, installation reservations, hostname directory, and account-to-installation membership.
 - `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
 - `gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
 - `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
@@ -101,8 +102,9 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 
 ## Schema migrations
 
-Durable Object SQLite schemas use versioned migrations in:
+Durable Object SQLite and managed D1 schemas use versioned migrations in:
 
+- `accounts/migrations/`
 - `gateway/src/kernel/schema/`
 - `gateway/src/process/schema/`
 - `gateway/src/schema/runner.ts`
@@ -137,6 +139,7 @@ Preserve unrelated user changes in a dirty worktree. Do not broaden a cleanup ba
 
 ```text
 gsv/
+├── accounts/       # Managed accounts and installation directory
 ├── gateway/       # Kernel, Process, syscalls, inference, filesystem
 ├── packages/gsv/  # Public TypeScript client and protocol
 ├── web/           # Desktop shell and embedded app host
@@ -166,6 +169,7 @@ npm run dev
 
 Validate only the surfaces affected by the change:
 
+- Managed accounts: `cd accounts && npm run typecheck && npm test`
 - Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
@@ -179,6 +183,7 @@ Protocol or client changes may affect gateway, web, CLI, devices, and adapters e
 
 ## Deployment model
 
+- Managed accounts: apply its D1 migrations, then `cd accounts && npm run deploy`.
 - Gateway code: `cd gateway && npm run deploy`
 - Web code: build `web`, then deploy the gateway that serves the resulting assets.
 - Adapter code: deploy the affected adapter worker.

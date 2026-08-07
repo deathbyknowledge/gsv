@@ -1,0 +1,23 @@
+{
+  "name": "gsv-accounts",
+  "version": "0.4.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy --minify",
+    "dev": "wrangler dev",
+    "cf-typegen": "wrangler types --include-runtime false",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@humansandmachines/gsv": "file:../packages/gsv"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.0",
+    "@cloudflare/workers-types": "^5.20260722.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9",
+    "wrangler": "^4.115.0"
+  }
+}

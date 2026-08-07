@@ -1,5 +1,9 @@
 import { getAgentByName } from "agents";
 import { env } from "cloudflare:workers";
+import type {
+  InstallationDirectoryResult,
+  InstallationDirectoryService,
+} from "@humansandmachines/gsv/protocol";
 import type { Kernel } from "../kernel/do";
 import {
   SINGLETON_INSTALLATION_ID,
@@ -124,19 +128,7 @@ export async function getKernelByInstallationId(
 }
 
 // TODO: this should move to wherever we put an actual implementation for it
-export type InstallationDirectoryResult =
-  | {
-      found: true;
-      installationId: string;
-      handle: string;
-      canonicalOrigin: string;
-      state: string;
-    }
-  | { found: false };
-
-export interface InstallationDirectoryService {
-  resolveHostname(hostname: string): Promise<InstallationDirectoryResult>;
-}
+export type { InstallationDirectoryResult, InstallationDirectoryService };
 
 export type GatewayInstallationBindings = {
   INSTALLATION_DIRECTORY?: InstallationDirectoryService;
