@@ -313,7 +313,6 @@ class AccountHomeMountBackend implements MountBackend {
     private readonly fallback: R2MountBackend,
     private readonly identity: ProcessIdentity,
     private readonly bucket: R2Bucket,
-    private readonly allowHomeR2Fallback = true,
   ) {}
 
   private get repo() {
@@ -381,11 +380,6 @@ class AccountHomeMountBackend implements MountBackend {
     return normalized === this.home || normalized.startsWith(`${this.home}/`);
   }
 
-  handlesOverlayPath(path: string): boolean {
-    const kind = this.classify(normalizePath(path));
-    return kind !== "home" && kind !== "other";
-  }
-
   async readFile(path: string): Promise<string> {
     const bytes = await this.readFileBuffer(path);
     return TEXT_DECODER.decode(bytes);
@@ -396,12 +390,6 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
-      if (!this.allowHomeR2Fallback) {
-        if (kind === "home") {
-          throw new Error(`EISDIR: illegal operation on a directory, read '${normalized}'`);
-        }
-        throwPermissionDenied(normalized);
-      }
       await this.assertReadableArchivedMedia(normalized);
       return this.fallback.readFileBuffer(normalized);
     }
@@ -426,9 +414,6 @@ class AccountHomeMountBackend implements MountBackend {
     if (this.classify(normalized) !== "other") {
       return undefined;
     }
-    if (!this.allowHomeR2Fallback) {
-      throwPermissionDenied(normalized);
-    }
     await this.assertReadableArchivedMedia(normalized);
     return this.fallback.openFile(normalized, options);
   }
@@ -439,9 +424,6 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
-      if (!this.allowHomeR2Fallback) {
-        throwPermissionDenied(normalized);
-      }
       await this.fallback.writeFile(normalized, content, options);
       return;
     }
@@ -472,9 +454,6 @@ class AccountHomeMountBackend implements MountBackend {
     if (this.classify(normalized) !== "other") {
       return undefined;
     }
-    if (!this.allowHomeR2Fallback) {
-      throwPermissionDenied(normalized);
-    }
     return this.fallback.writeFileStream(normalized, content, options);
   }
 
@@ -484,9 +463,6 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
-      if (!this.allowHomeR2Fallback) {
-        throwPermissionDenied(normalized);
-      }
       await this.fallback.appendFile(normalized, content);
       return;
     }
@@ -511,9 +487,6 @@ class AccountHomeMountBackend implements MountBackend {
       return true;
     }
     if (kind === "other") {
-      if (!this.allowHomeR2Fallback) {
-        return false;
-      }
       const archiveReadable = await this.archivedMediaReadable(normalized);
       return archiveReadable ?? this.fallback.exists(normalized);
     }
@@ -545,9 +518,6 @@ class AccountHomeMountBackend implements MountBackend {
       return this.makeDirectoryStat();
     }
     if (kind === "other") {
-      if (!this.allowHomeR2Fallback) {
-        throwPermissionDenied(normalized);
-      }
       await this.assertReadableArchivedMedia(normalized);
       return this.fallback.stat(normalized);
     }
@@ -602,9 +572,6 @@ class AccountHomeMountBackend implements MountBackend {
       return;
     }
     if (kind === "other") {
-      if (!this.allowHomeR2Fallback) {
-        throwPermissionDenied(normalized);
-      }
       await this.fallback.mkdir(normalized, options);
       return;
     }
@@ -619,9 +586,6 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other") {
-      if (!this.allowHomeR2Fallback) {
-        throwPermissionDenied(normalized);
-      }
       if (normalized !== this.archivedMediaRoot) {
         await this.assertReadableArchivedMedia(normalized);
         return this.fallback.readdir(normalized);
@@ -639,10 +603,8 @@ class AccountHomeMountBackend implements MountBackend {
     const entries = new Set<string>();
 
     if (kind === "home") {
-      if (this.allowHomeR2Fallback) {
-        for (const name of await this.fallback.readdir(normalized).catch(() => [] as string[])) {
-          entries.add(name);
-        }
+      for (const name of await this.fallback.readdir(normalized).catch(() => [] as string[])) {
+        entries.add(name);
       }
       entries.add("context.d");
       entries.add("skills.d");
@@ -686,9 +648,6 @@ class AccountHomeMountBackend implements MountBackend {
       throw new Error(`EPERM: cannot remove home mount '${normalized}'`);
     }
     if (kind === "other") {
-      if (!this.allowHomeR2Fallback) {
-        throwPermissionDenied(normalized);
-      }
       await this.fallback.rm(normalized, options);
       return;
     }
@@ -748,9 +707,6 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other") {
-      if (!this.allowHomeR2Fallback) {
-        throwPermissionDenied(normalized);
-      }
       await this.assertReadableArchivedMedia(normalized);
       return this.filterReadableArchiveMatches(
         await this.fallback.search!(normalized, query, include, signal),
@@ -760,14 +716,12 @@ class AccountHomeMountBackend implements MountBackend {
     const combined = new Map<string, FsSearchBackendResult["matches"][number]>();
 
     if (kind === "home") {
-      if (this.allowHomeR2Fallback) {
-        const fallbackMatches = await this.fallback.search!(normalized, query, include, signal).catch(() => {
-          signal?.throwIfAborted();
-          return { matches: [] as FsSearchBackendResult["matches"] };
-        });
-        for (const match of (await this.filterReadableArchiveMatches(fallbackMatches)).matches) {
-          combined.set(`${match.path}:${match.line}:${match.content}`, match);
-        }
+      const fallbackMatches = await this.fallback.search!(normalized, query, include, signal).catch(() => {
+        signal?.throwIfAborted();
+        return { matches: [] as FsSearchBackendResult["matches"] };
+      });
+      for (const match of (await this.filterReadableArchiveMatches(fallbackMatches)).matches) {
+        combined.set(`${match.path}:${match.line}:${match.content}`, match);
       }
       for (const match of await this.searchRepo(query, undefined, signal)) {
         combined.set(`${match.path}:${match.line}:${match.content}`, match);
@@ -800,9 +754,6 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
-      if (!this.allowHomeR2Fallback) {
-        throwPermissionDenied(normalized);
-      }
       await this.fallback.symlink(target, normalized);
       return;
     }
@@ -831,9 +782,6 @@ class AccountHomeMountBackend implements MountBackend {
     const kind = this.classify(normalized);
 
     if (kind === "other" || kind === "home") {
-      if (!this.allowHomeR2Fallback) {
-        throwPermissionDenied(normalized);
-      }
       return this.fallback.readlink(normalized);
     }
 
@@ -965,10 +913,9 @@ class AccountHomeMountBackend implements MountBackend {
 }
 
 /**
- * Routes another account's home root and home repo overlay dirs through a
- * ripgit-backed mount keyed on the target account when the viewer is authorized
- * to manage that agent. Non-overlay files in the target home stay on the
- * viewer's normal R2 permission path.
+ * Routes an authorized account home through that account's filesystem identity.
+ * The owner may act as any account they own; homes outside that ownership
+ * boundary never resolve through this backend.
  */
 class DelegatingAccountHomeMountBackend implements MountBackend {
   private readonly delegates = new Map<string, AccountHomeMountBackend>();
@@ -1102,10 +1049,12 @@ class DelegatingAccountHomeMountBackend implements MountBackend {
       const targetIdentity = accountIdentity(this.auth, entry);
       delegate = new AccountHomeMountBackend(
         this.client,
-        new R2MountBackend(this.bucket, this.viewerIdentity),
+        new R2MountBackend(
+          this.bucket,
+          this.isRoot ? this.viewerIdentity : targetIdentity,
+        ),
         targetIdentity,
         this.bucket,
-        this.isRoot,
       );
       this.delegates.set(username, delegate);
     }

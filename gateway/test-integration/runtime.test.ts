@@ -684,8 +684,11 @@ async function expectArchive(
 ): Promise<void> {
   const response = await client.request("fs.transfer.stat", { path });
   expect(response.data).toMatchObject({
-    ok: false,
-    error: expect.stringContaining("EACCES"),
+    ok: true,
+    path,
+    size: expect.any(Number),
+    isFile: true,
+    isDirectory: false,
   });
 
   const env = await harness.getWorker<GatewayTestEnv>("gsv").getEnv();

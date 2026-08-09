@@ -44,10 +44,7 @@ export function canOwnerRunAsAccount(
   return canOwnerDelegateRunAs(auth, ownerUid, target);
 }
 
-/**
- * Whether `ownerUid` may use the account-home (ripgit) overlay for `targetUsername`'s
- * home tree. Used when a human edits another account's `~/context.d` via fs.*.
- */
+/** Whether `ownerUid` may access `targetUsername`'s account home via fs.*. */
 export function canOwnerAccessAccountHome(
   auth: AuthStore,
   ownerUid: number,

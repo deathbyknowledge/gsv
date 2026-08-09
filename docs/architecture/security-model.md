@@ -87,6 +87,12 @@ non-sensitive `config/...` keys; sensitive key names such as `api_key`,
 `secret`, `token`, and `password` are hidden. Non-root config writes are limited
 to user-overridable `users/{uid}/ai/...` keys.
 
+An owned agent retains its own process identity for context, home, and
+provenance, but uses the owning human's authority for user-scoped resources.
+The human and all of their agents may therefore access the human's home and the
+homes of agent accounts that human may run as. Homes outside that ownership
+boundary remain inaccessible. Capabilities and tool approvals still apply.
+
 ## Files and Shell
 
 Native GSV file access uses a virtual filesystem. `/sys`, `/proc`, `/dev`, and
