@@ -364,3 +364,69 @@ export async function handleSysSetup(
     throw error;
   }
 }
+
+export async function recoverCompletedSysSetup(
+  args: SysSetupArgs,
+  ctx: KernelContext,
+): Promise<SysSetupResult> {
+  const { username, password } = parseSetupIdentity(args);
+  const humans = ctx.auth.getPasswdEntries().filter(
+    (entry) => entry.uid >= 1000 && !ctx.auth.isPersonalAgentUid(entry.uid),
+  );
+  const user = ctx.auth.getPasswdByUsername(username);
+  if (humans.length !== 1 || !user || humans[0]?.uid !== user.uid) {
+    throw new Error("System already initialized");
+  }
+  const authenticated = await ctx.auth.authenticate(username, password);
+  if (!authenticated.ok || authenticated.identity.uid !== user.uid) {
+    throw new Error("Installation setup credentials do not match");
+  }
+
+  const node = parseNodeConfig(args);
+  let nodeToken: SysSetupResult["nodeToken"];
+  if (node) {
+    for (const token of ctx.auth.listTokens(user.uid)) {
+      if (
+        token.kind === "node"
+        && token.allowedDeviceId === node.deviceId
+        && token.revokedAt === null
+      ) {
+        ctx.auth.revokeToken(token.tokenId, "setup retry", user.uid);
+      }
+    }
+    const issued = await ctx.auth.issueToken({
+      uid: user.uid,
+      kind: "node",
+      label: node.label ?? `node:${node.deviceId}`,
+      allowedRole: "driver",
+      allowedDeviceId: node.deviceId,
+      expiresAt: node.expiresAt,
+    });
+    nodeToken = {
+      tokenId: issued.tokenId,
+      token: issued.token,
+      tokenPrefix: issued.tokenPrefix,
+      uid: issued.uid,
+      kind: "node",
+      label: issued.label,
+      allowedRole: "driver",
+      allowedDeviceId: issued.allowedDeviceId,
+      createdAt: issued.createdAt,
+      expiresAt: issued.expiresAt,
+    };
+  }
+
+  const rootShadow = ctx.auth.getShadowByUsername("root");
+  return {
+    server: {
+      version: ctx.serverVersion,
+      release: SERVER_RELEASE,
+    },
+    user: {
+      ...authenticated.identity,
+      cwd: authenticated.identity.home,
+    },
+    rootLocked: rootShadow ? isLocked(rootShadow) : true,
+    nodeToken,
+  };
+}

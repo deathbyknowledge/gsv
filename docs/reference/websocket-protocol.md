@@ -135,6 +135,13 @@ The gateway rejects setup-mode connections with error code `425` and details:
 }
 ```
 
+Managed first boot is different: a provisioning hostname may serve the desktop
+and accept its WebSocket, but normal `sys.connect` returns `503` until setup is
+complete. `sys.setup` and `sys.setup.assist` must include the one-time
+`onboardingToken` issued for that exact installation. The Kernel removes the
+token before invoking the ordinary setup implementation and activates routing
+only after setup succeeds.
+
 ---
 
 ## `sys.connect`

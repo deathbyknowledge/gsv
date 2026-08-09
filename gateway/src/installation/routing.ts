@@ -3,6 +3,8 @@ import { env } from "cloudflare:workers";
 import type {
   InstallationDirectoryResult,
   InstallationDirectoryService,
+  InstallationOnboardingService,
+  ManagedInstallationState,
 } from "@humansandmachines/gsv/protocol";
 import type { Kernel } from "../kernel/do";
 import {
@@ -38,11 +40,11 @@ export function parseProcessDurableObjectName(
   if (!name)
     throw new Error("Process Durable Objects must be accessed by name");
 
-  if (!name.startsWith(PROCESS_DURABLE_OBJECT_PREFIX)) 
+  if (!name.startsWith(PROCESS_DURABLE_OBJECT_PREFIX))
     throw new Error("Process Durable Object name is invalid");
 
   const separator = name.indexOf(":", PROCESS_DURABLE_OBJECT_PREFIX.length);
-  if (separator === -1) 
+  if (separator === -1)
     throw new Error("Process Durable Object name is invalid");
 
   try {
@@ -50,7 +52,7 @@ export function parseProcessDurableObjectName(
       name.slice(PROCESS_DURABLE_OBJECT_PREFIX.length, separator),
     ));
     const pid = parseProcessId(decodeURIComponent(name.slice(separator + 1)));
-    if (processDurableObjectName(installationId, pid) !== name) 
+    if (processDurableObjectName(installationId, pid) !== name)
       throw new Error("Process Durable Object name is not canonical");
 
     return { installationId, pid };
@@ -63,7 +65,7 @@ export function parseProcessDurableObjectName(
 }
 
 function parseProcessId(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0) 
+  if (typeof value !== "string" || value.length === 0)
     throw new Error("pid must be a non-empty string");
   return value;
 }
@@ -90,6 +92,7 @@ function getGatewayInstallationRoutingSource(
 
 export async function resolveInstallationRoute(
   request: Request,
+  options: { allowProvisioning?: boolean } = {},
 ) {
   const hostname = new URL(request.url).hostname;
   const source = getGatewayInstallationRoutingSource(request);
@@ -100,7 +103,10 @@ export async function resolveInstallationRoute(
   }
 
   const result = await source.directory.resolveHostname(hostname);
-  if (!result.found || result.state !== "active") {
+  if (!result.found || !isRoutableManagedInstallationState(
+    result.state,
+    options.allowProvisioning ?? false,
+  )) {
     return null;
   }
 
@@ -120,6 +126,13 @@ export async function resolveInstallationRoute(
   };
 }
 
+export function isRoutableManagedInstallationState(
+  state: ManagedInstallationState,
+  allowProvisioning: boolean,
+): boolean {
+  return state === "active" || (allowProvisioning && state === "provisioning");
+}
+
 export async function getKernelByInstallationId(
   namespace: DurableObjectNamespace<Kernel>,
   installationId: string,
@@ -131,6 +144,6 @@ export async function getKernelByInstallationId(
 export type { InstallationDirectoryResult, InstallationDirectoryService };
 
 export type GatewayInstallationBindings = {
-  INSTALLATION_DIRECTORY?: InstallationDirectoryService;
+  INSTALLATION_DIRECTORY?: InstallationDirectoryService & InstallationOnboardingService;
   GSV_CANONICAL_ORIGIN?: string;
 };

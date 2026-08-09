@@ -14,7 +14,7 @@ vi.mock("./skills-seed", () => ({
   seedBuiltinSkillsToHome: seedBuiltinSkillsToHomeMock,
 }));
 
-import { handleSysSetup } from "./setup";
+import { handleSysSetup, recoverCompletedSysSetup } from "./setup";
 
 function createCtx(overrides?: { setupMode?: boolean; ripgit?: Fetcher }) {
   type PasswdRow = { username: string; uid: number; gid: number; gecos: string; home: string; shell: string };
@@ -77,6 +77,23 @@ function createCtx(overrides?: { setupMode?: boolean; ripgit?: Fetcher }) {
       personalAgents.set(ownerUid, agentUid);
     }),
     isPersonalAgentUid: vi.fn((uid: number) => [...personalAgents.values()].includes(uid)),
+    authenticate: vi.fn(async (username: string, password: string) => {
+      const user = passwd.find((entry) => entry.username === username);
+      return user && password === "password-123"
+        ? {
+          ok: true as const,
+          identity: {
+            uid: user.uid,
+            gid: user.gid,
+            gids: [user.gid],
+            username: user.username,
+            home: user.home,
+          },
+        }
+        : { ok: false as const, error: "Authentication failed" };
+    }),
+    listTokens: vi.fn(() => []),
+    revokeToken: vi.fn(() => true),
     setPassword: vi.fn(async () => true),
     issueToken: vi.fn(async () => ({
       tokenId: "tok-1",
@@ -302,5 +319,25 @@ describe("handleSysSetup", () => {
     );
 
     expect(auth.setPassword).toHaveBeenCalledWith("root", expect.any(String));
+  });
+
+  it("recovers a completed setup only for the matching credentials", async () => {
+    const { ctx } = createCtx();
+    await handleSysSetup({
+      username: "alice",
+      password: "password-123",
+    }, ctx);
+
+    await expect(recoverCompletedSysSetup({
+      username: "alice",
+      password: "password-123",
+    }, ctx)).resolves.toMatchObject({
+      user: { username: "alice" },
+      server: { version: "0.0.1-test" },
+    });
+    await expect(recoverCompletedSysSetup({
+      username: "alice",
+      password: "wrong-password",
+    }, ctx)).rejects.toThrow("credentials do not match");
   });
 });

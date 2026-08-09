@@ -6,6 +6,7 @@ import {
 } from "./routing";
 
 describe("installation routing", () => {
+
   it("round-trips installation-scoped Process names", () => {
     expect(processDurableObjectName("singleton", "proc:one")).toBe(
       "process:singleton:proc%3Aone",

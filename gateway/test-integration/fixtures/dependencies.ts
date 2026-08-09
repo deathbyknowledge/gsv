@@ -8,8 +8,12 @@ import type {
   AdapterOutboundMessage,
   AdapterSurface,
   AdapterWorkerInterface,
+  AuthorizeInstallationOnboardingInput,
   BinaryBody,
+  CompleteInstallationOnboardingInput,
+  CompleteInstallationOnboardingResult,
   InstallationDirectoryResult,
+  InstallationOnboardingAuthorization,
 } from "@humansandmachines/gsv/protocol";
 import { SINGLETON_INSTALLATION_ID } from "../../src/installation/identity";
 
@@ -23,6 +27,8 @@ export type RecordedOutboundMessage = {
   accountId: string;
   message: AdapterOutboundMessage;
 };
+
+type OnboardingCompletionFailure = "before-activation" | "after-activation";
 
 interface Env {
   GATEWAY: Fetcher & AdapterGatewayInterface;
@@ -46,6 +52,35 @@ export class IntegrationState extends DurableObject<Env> {
       && (!accountId || entry.accountId === accountId)
     ));
   }
+
+  async setInstallationState(
+    handle: string,
+    state: "provisioning" | "active",
+  ): Promise<void> {
+    await this.ctx.storage.put(`installation:${handle}:state`, state);
+  }
+
+  async getInstallationState(handle: string): Promise<"provisioning" | "active"> {
+    return await this.ctx.storage.get<"provisioning" | "active">(
+      `installation:${handle}:state`,
+    ) ?? "active";
+  }
+
+  async setOnboardingCompletionFailure(
+    handle: string,
+    failure: OnboardingCompletionFailure,
+  ): Promise<void> {
+    await this.ctx.storage.put(`installation:${handle}:completion-failure`, failure);
+  }
+
+  async takeOnboardingCompletionFailure(
+    handle: string,
+  ): Promise<OnboardingCompletionFailure | null> {
+    const key = `installation:${handle}:completion-failure`;
+    const failure = await this.ctx.storage.get<OnboardingCompletionFailure>(key) ?? null;
+    if (failure) await this.ctx.storage.delete(key);
+    return failure;
+  }
 }
 
 export default class TestDependencies
@@ -66,8 +101,50 @@ export default class TestDependencies
       installationId: `inst_integration_${handle}`,
       handle,
       canonicalOrigin: `https://${handle}.gsv.space`,
-      state: handle === "suspended" ? "deleted" : "active",
+      state: handle === "suspended"
+        ? "deleted"
+        : await this.integrationState().getInstallationState(handle),
     };
+  }
+
+  async authorizeInstallationOnboarding(
+    input: AuthorizeInstallationOnboardingInput,
+  ): Promise<InstallationOnboardingAuthorization> {
+    const handle = installationHandle(input.installationId);
+    if (
+      !handle
+      || input.token !== `integration-onboarding-${handle}`
+      || await this.integrationState().getInstallationState(handle) !== "provisioning"
+    ) {
+      return { ok: false };
+    }
+    return {
+      ok: true,
+      claimId: `integration-claim-${handle}`,
+      installation: installationIdentity(handle),
+    };
+  }
+
+  async completeInstallationOnboarding(
+    input: CompleteInstallationOnboardingInput,
+  ): Promise<CompleteInstallationOnboardingResult> {
+    const handle = installationHandle(input.installationId);
+    if (
+      !handle
+      || input.claimId !== `integration-claim-${handle}`
+      || await this.integrationState().getInstallationState(handle) !== "provisioning"
+    ) {
+      throw new Error("integration onboarding claim is invalid");
+    }
+    const failure = await this.integrationState().takeOnboardingCompletionFailure(handle);
+    if (failure === "before-activation") {
+      throw new Error("integration onboarding completion failed before activation");
+    }
+    await this.integrationState().setInstallationState(handle, "active");
+    if (failure === "after-activation") {
+      throw new Error("integration onboarding completion failed after activation");
+    }
+    return { state: "complete", installationId: input.installationId };
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -92,6 +169,31 @@ export default class TestDependencies
         installationId,
         accountId,
       ));
+    }
+
+    if (url.pathname === "/__test/provisioning" && request.method === "POST") {
+      const handle = url.searchParams.get("handle") ?? "";
+      if (handle !== "first" && handle !== "second") {
+        return new Response("invalid handle", { status: 400 });
+      }
+      await this.integrationState().setInstallationState(handle, "provisioning");
+      return new Response(null, { status: 204 });
+    }
+
+    if (
+      url.pathname === "/__test/onboarding-completion-failure"
+      && request.method === "POST"
+    ) {
+      const handle = url.searchParams.get("handle") ?? "";
+      const failure = url.searchParams.get("failure") ?? "";
+      if (
+        (handle !== "first" && handle !== "second")
+        || (failure !== "before-activation" && failure !== "after-activation")
+      ) {
+        return new Response("invalid onboarding completion failure", { status: 400 });
+      }
+      await this.integrationState().setOnboardingCompletionFailure(handle, failure);
+      return new Response(null, { status: 204 });
     }
 
     if (url.pathname.endsWith("/read") && request.method === "GET") {
@@ -194,4 +296,18 @@ export default class TestDependencies
     const id = this.env.INTEGRATION_STATE.idFromName(SINGLETON_INSTALLATION_ID);
     return this.env.INTEGRATION_STATE.get(id);
   }
+}
+
+function installationHandle(installationId: string): "first" | "second" | null {
+  if (installationId === "inst_integration_first") return "first";
+  if (installationId === "inst_integration_second") return "second";
+  return null;
+}
+
+function installationIdentity(handle: "first" | "second") {
+  return {
+    installationId: `inst_integration_${handle}`,
+    handle,
+    canonicalOrigin: `https://${handle}.gsv.space`,
+  };
 }

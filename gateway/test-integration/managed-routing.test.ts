@@ -98,6 +98,52 @@ describe("managed installation routing integration", () => {
     }
   });
 
+  it("retries accounts activation after setup completes locally", async () => {
+    await beginProvisioning(harness, "first");
+    await failNextOnboardingCompletion(harness, "first", "before-activation");
+    const socket = await openManagedSocket(harness, "first");
+    const args = {
+      username: "first-owner",
+      password: "first-owner-password",
+      onboardingToken: "integration-onboarding-first",
+    };
+
+    await expect(
+      managedRpc(socket, "setup-first-attempt", "sys.setup", args),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 503,
+        message: "Installation setup could not be activated",
+      },
+    });
+    await expectManagedRpcOk(socket, "setup-first-retry", "sys.setup", args);
+    socket.close(1000, "test complete");
+  });
+
+  it("recovers when accounts activates before its response is lost", async () => {
+    await beginProvisioning(harness, "second");
+    await failNextOnboardingCompletion(harness, "second", "after-activation");
+    const socket = await openManagedSocket(harness, "second");
+    const args = {
+      username: "second-owner",
+      password: "second-owner-password",
+      onboardingToken: "integration-onboarding-second",
+    };
+
+    await expect(
+      managedRpc(socket, "setup-second-attempt", "sys.setup", args),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 503,
+        message: "Installation setup could not be activated",
+      },
+    });
+    await expectManagedRpcOk(socket, "setup-second-retry", "sys.setup", args);
+    socket.close(1000, "test complete");
+  });
+
   it("routes trusted adapter RPC to its managed installation", async () => {
     const frame: AdapterGatewayRequestFrame = {
       type: "req",
@@ -147,6 +193,11 @@ describe("managed installation routing integration", () => {
   it("carries installation identity through outbound adapter RPC", async () => {
     const worker = harness.getWorker("gsv-managed");
     for (const handle of ["first", "second"] as const) {
+      const provisioning = await harness.getWorker("gsv-test-dependencies").fetch(
+        `http://gsv-test-dependencies/__test/provisioning?handle=${handle}`,
+        { method: "POST" },
+      );
+      expect(provisioning.status).toBe(204);
       const socketResponse = await worker.fetch(`https://${handle}.gsv.space/ws`, {
         headers: { Upgrade: "websocket" },
       });
@@ -162,6 +213,7 @@ describe("managed installation routing integration", () => {
         rootPassword,
         agentName: `${handle}-agent`,
         timezone: "Europe/Amsterdam",
+        onboardingToken: `integration-onboarding-${handle}`,
       });
       await expectManagedRpcOk(socket, `connect-${handle}`, "sys.connect", {
         protocol: 2,
@@ -219,6 +271,17 @@ async function expectManagedRpcOk(
   call: string,
   args: unknown,
 ): Promise<ManagedRpcResponse> {
+  const response = await managedRpc(socket, id, call, args);
+  expect(response).toMatchObject({ type: "res", id, ok: true });
+  return response;
+}
+
+async function managedRpc(
+  socket: HarnessWebSocket,
+  id: string,
+  call: string,
+  args: unknown,
+): Promise<ManagedRpcResponse> {
   const eventSocket = socket as unknown as {
     addEventListener(
       type: "message",
@@ -246,9 +309,44 @@ async function expectManagedRpcOk(
     }, 5_000);
   });
   socket.send(JSON.stringify({ type: "req", id, call, args }));
-  const response = await responsePromise;
-  expect(response).toMatchObject({ type: "res", id, ok: true });
-  return response;
+  return await responsePromise;
+}
+
+async function beginProvisioning(
+  harness: TestHarness,
+  handle: "first" | "second",
+): Promise<void> {
+  const response = await harness.getWorker("gsv-test-dependencies").fetch(
+    `http://gsv-test-dependencies/__test/provisioning?handle=${handle}`,
+    { method: "POST" },
+  );
+  expect(response.status).toBe(204);
+}
+
+async function failNextOnboardingCompletion(
+  harness: TestHarness,
+  handle: "first" | "second",
+  failure: "before-activation" | "after-activation",
+): Promise<void> {
+  const response = await harness.getWorker("gsv-test-dependencies").fetch(
+    `http://gsv-test-dependencies/__test/onboarding-completion-failure?handle=${handle}&failure=${failure}`,
+    { method: "POST" },
+  );
+  expect(response.status).toBe(204);
+}
+
+async function openManagedSocket(
+  harness: TestHarness,
+  handle: "first" | "second",
+): Promise<HarnessWebSocket> {
+  const response = await harness.getWorker("gsv-managed").fetch(
+    `https://${handle}.gsv.space/ws`,
+    { headers: { Upgrade: "websocket" } },
+  );
+  expect(response.status).toBe(101);
+  if (!response.webSocket) throw new Error(`No WebSocket for ${handle}`);
+  response.webSocket.accept();
+  return response.webSocket;
 }
 
 async function sendAdapterServiceFrame(

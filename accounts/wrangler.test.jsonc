@@ -5,6 +5,8 @@
   "compatibility_date": "2026-07-29",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
+    "ENVIRONMENT": "test",
+    "GSV_ACCOUNT_ORIGIN": "https://gsv.space",
     "GSV_BASE_DOMAIN": "gsv.space"
   },
   "d1_databases": [

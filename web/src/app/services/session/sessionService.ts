@@ -5,6 +5,10 @@ import type {
   SysSetupArgs,
   SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
+import {
+  clearInstallationOnboardingToken,
+  readInstallationOnboardingToken,
+} from "./installationOnboarding";
 
 const STORAGE_USERNAME = "gsv.ui.gateway.username";
 const STORAGE_SESSION_TOKEN = "gsv.ui.session.token.v1";
@@ -242,6 +246,7 @@ export function createSessionService(client: GSVClient): SessionService {
   const listeners = new Set<(snapshot: SessionSnapshot) => void>();
 
   let currentSessionToken: PersistedSessionToken | null = readPersistedToken();
+  let installationOnboardingToken = readInstallationOnboardingToken();
 
   let snapshot: SessionSnapshot = {
     phase: "booting",
@@ -677,7 +682,16 @@ export function createSessionService(client: GSVClient): SessionService {
     });
 
     try {
-      const result = await client.requestOnce(url, "sys.setup", input);
+      const result = await client.requestOnce(url, "sys.setup", {
+        ...input,
+        ...(installationOnboardingToken
+          ? { onboardingToken: installationOnboardingToken }
+          : {}),
+      });
+      if (installationOnboardingToken) {
+        clearInstallationOnboardingToken();
+        installationOnboardingToken = null;
+      }
       pendingSetupLogin = { username, password };
       storeValue(STORAGE_USERNAME, username);
 
@@ -745,6 +759,18 @@ export function createSessionService(client: GSVClient): SessionService {
     cancelSilentReconnect();
     const url = deriveGatewayUrlFromOrigin();
     const persisted = currentSessionToken;
+
+    if (installationOnboardingToken) {
+      setSnapshot({
+        phase: "setup",
+        url,
+        username: snapshot.username,
+        connectionId: null,
+        message: null,
+        setupResult: null,
+      });
+      return;
+    }
 
     if (!persisted) {
       const setupRequired = await probeSetupMode(client, url);

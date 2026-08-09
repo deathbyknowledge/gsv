@@ -6,11 +6,13 @@
   "compatibility_flags": ["nodejs_compat"],
   "routes": [
     {
-      "pattern": "accounts.gsv.space/*",
+      "pattern": "gsv.space/admin*",
       "zone_name": "gsv.space"
     }
   ],
   "vars": {
+    "ENVIRONMENT": "production",
+    "GSV_ACCOUNT_ORIGIN": "https://gsv.space",
     "GSV_BASE_DOMAIN": "gsv.space"
   },
   "d1_databases": [

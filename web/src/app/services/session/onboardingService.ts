@@ -8,6 +8,7 @@ import type {
   OnboardingMode,
   OnboardingStage,
 } from "@humansandmachines/gsv/protocol";
+import { readInstallationOnboardingToken } from "./installationOnboarding";
 
 const STORAGE_ONBOARDING = "gsv.ui.onboarding.v2";
 
@@ -341,10 +342,12 @@ export function createOnboardingService(
       });
 
       try {
+        const onboardingToken = readInstallationOnboardingToken();
         const result = await client.requestOnce(url, "sys.setup.assist", {
           lane: currentState.draft.lane,
           draft: sanitizeDraftForStorage(currentState.draft),
           messages: nextMessages,
+          ...(onboardingToken ? { onboardingToken } : {}),
         });
         const latestState = state;
         let nextDraft = latestState.draft;

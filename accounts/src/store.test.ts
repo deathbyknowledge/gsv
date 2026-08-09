@@ -112,15 +112,21 @@ describe("account directory", () => {
     });
   });
 
-  it("keeps control-plane hostnames unavailable as installation handles", async () => {
+  it("keeps published product hostnames unavailable as installation handles", async () => {
     const principalId = await createVerifiedPrincipal("reserved_names");
-    for (const handle of ["accounts", "billing", "telegram", "webhooks"]) {
+    for (const handle of ["deploy", "docs", "install", "www"]) {
       await expect(store().reserveInstallation({
         principalId,
         operationId: `op_reserved_${handle}`,
         handle,
       })).rejects.toThrow("handle is reserved");
     }
+
+    await expect(store().reserveInstallation({
+      principalId,
+      operationId: "op_internal_service_name",
+      handle: "accounts",
+    })).resolves.toMatchObject({ handle: "accounts" });
   });
 
   it("distinguishes unknown and retired hostnames from inactive installations", async () => {

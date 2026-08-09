@@ -36,10 +36,24 @@ export default {
       return Response.json({ status: "healthy" });
     }
 
+    const publicAssetMatch = matchPublicAssetPath(url.pathname);
+    const gitMatch = matchGitPath(url);
+    const websocketRequest = url.pathname === "/ws" && isWebSocketRequest(request);
+    const browserAssetRequest = (
+      request.method === "GET" || request.method === "HEAD"
+    )
+      && !publicAssetMatch
+      && !gitMatch
+      && url.pathname !== "/ws"
+      && url.pathname !== "/oauth/callback"
+      && url.pathname !== "/.well-known/oauth-client/gsv.json";
+
     // two possibilities:
     // 1. self-hosted GSV, has no multiple tenants so there's a singleton Kernel DO
     // 2. Managed GSV, there's one Kernel DO for each tenant and the routing is done through subdomains for tenant identifiers
-    const route = await resolveInstallationRoute(request);
+    const route = await resolveInstallationRoute(request, {
+      allowProvisioning: websocketRequest || browserAssetRequest,
+    });
     if (!route) {
       return new Response("Not Found", { status: 404 });
     }
@@ -53,7 +67,6 @@ export default {
       });
     }
 
-    const publicAssetMatch = matchPublicAssetPath(url.pathname);
     if (publicAssetMatch) {
       const storage = createInstallationStorage(env.STORAGE, route.identity.installationId);
       const fs = createPublicAssetFileSystem({ STORAGE: storage });
@@ -76,11 +89,10 @@ export default {
       return kernelDO.fetch(request);
     }
 
-    if (url.pathname === "/ws" && isWebSocketRequest(request)) {
+    if (websocketRequest) {
       return kernelDO.fetch(request);
     }
 
-    const gitMatch = matchGitPath(url);
     if (gitMatch) {
       const basicAuth = getBasicAuth(request);
       const authorized = await kernelDO.authorizeGitHttp({
@@ -107,6 +119,9 @@ export default {
       );
     }
 
+    if (request.method === "GET" || request.method === "HEAD") {
+      return await env.ASSETS.fetch(request);
+    }
     return new Response("Not Found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;

@@ -58,7 +58,7 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 
 ## System ownership
 
-- `accounts/`: managed principals, installation reservations, hostname directory, and account-to-installation membership.
+- `accounts/`: installation reservations, hostname directory, private operator administration, one-time onboarding claims, managed principals, and account-to-installation membership.
 - `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
 - `gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
 - `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
@@ -96,6 +96,7 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 ### Data and security
 
 - Enforce authorization in the Kernel, not only in UI or callers.
+- Managed onboarding capabilities authorize only first-boot setup for one installation. Store them hashed in accounts, keep them out of URLs after the browser reads the fragment, and let only the Kernel create local credentials.
 - Never hardcode or log secrets, raw authentication material, QR payloads, prompts, tool arguments, or private file contents.
 - Store live process media once in R2, persist references in history, and scope keys to the owning process. Before live cleanup, promote archived references to immutable media under the run-as agent home. Hydrate bytes only while building model context or serving an explicit media read.
 - Telemetry uses an explicit allowlist and records timings and outcomes rather than user content.

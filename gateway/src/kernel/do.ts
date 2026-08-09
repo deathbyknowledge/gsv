@@ -23,12 +23,16 @@ import type {
   AdapterMediaPart,
   BinaryBody,
   ConnectionIdentity,
+  InstallationDirectoryService,
+  InstallationOnboardingAuthorization,
+  InstallationOnboardingService,
   NetFetchArgs,
   ProcessIdentity,
   ScheduleRecord,
   ScheduleRunResult,
   SchedulerRunArgs,
   SchedulerRunResult,
+  SysSetupResult,
 } from "@humansandmachines/gsv/protocol";
 import {
   BinaryBodyChannel,
@@ -86,7 +90,10 @@ import {
   processMediaPath,
   processMediaPrefix,
 } from "../shared/process-media-path";
-import { handleSysSetup as handleKernelSetup } from "./sys/setup";
+import {
+  handleSysSetup as handleKernelSetup,
+  recoverCompletedSysSetup,
+} from "./sys/setup";
 import { handleSysSetupAssist } from "./sys/setup-assist";
 import { completeOAuthCallback as completeOAuthCallbackFlow } from "./sys/oauth";
 import type { McpAddConnectionInput, McpAddConnectionResult } from "./sys/mcp";
@@ -207,6 +214,13 @@ type AuthorizeGitHttpResult =
 
 type StoredInstallationIdentity = Omit<InstallationIdentity, "installationId">;
 
+type PendingManagedOnboardingCompletion = {
+  claimId: string;
+  installationId: string;
+};
+
+const MANAGED_ONBOARDING_COMPLETION_KEY = "managed_onboarding_completion";
+
 export class Kernel extends Host<Env> {
   private readonly installationId: string;
   private installationIdentity?: InstallationIdentity;
@@ -227,6 +241,8 @@ export class Kernel extends Host<Env> {
   private readonly oauth: OAuthStore;
   private readonly mcpServers: McpServerStore;
   private readonly connections = new Map<string, Connection<ConnectionState>>();
+  private managedOnboardingInProgress = false;
+  private pendingManagedOnboarding?: PendingManagedOnboardingCompletion;
   private readonly pendingKernelResponses = new Map<string, (frame: ResponseFrame) => void>();
   private readonly pendingProcessSignals = new Map<string, Promise<void>>();
   private readonly frameBodyChannels = new Map<string, BinaryBodyChannel>();
@@ -253,6 +269,9 @@ export class Kernel extends Host<Env> {
     this.installationIdentity = identity
       ? { ...identity, installationId: this.installationId }
       : undefined;
+    this.pendingManagedOnboarding = ctx.storage.kv.get<PendingManagedOnboardingCompletion>(
+      MANAGED_ONBOARDING_COMPLETION_KEY,
+    );
     this.installationStorage = createInstallationStorage(
       env.STORAGE,
       this.installationId,
@@ -2215,6 +2234,15 @@ export class Kernel extends Host<Env> {
 
       if (!state || state.step !== "connected" || !state.identity) {
         if (this.auth.isSetupMode()) {
+          if (this.managedOnboardingService()) {
+            this.sendError(
+              connection,
+              frame.id,
+              503,
+              "Managed installation provisioning is incomplete",
+            );
+            return;
+          }
           this.sendError(
             connection,
             frame.id,
@@ -2437,6 +2465,11 @@ export class Kernel extends Host<Env> {
     const ctx = this.buildContext(connection);
     await ensureKernelBootstrapped(ctx);
 
+    if (this.managedOnboardingService()) {
+      await this.handleManagedSysSetup(connection, frame, ctx);
+      return;
+    }
+
     if (!this.auth.isSetupMode()) {
       this.sendError(connection, frame.id, 409, "System already initialized");
       return;
@@ -2469,18 +2502,208 @@ export class Kernel extends Host<Env> {
     const ctx = this.buildContext(connection);
     await ensureKernelBootstrapped(ctx);
 
+    let args = frame.args;
+    if (this.managedOnboardingService()) {
+      let authorization: InstallationOnboardingAuthorization;
+      try {
+        authorization = await this.authorizeManagedInstallationOnboarding(
+          frame.args.onboardingToken,
+        );
+      } catch {
+        this.sendError(connection, frame.id, 503, "Installation setup is unavailable");
+        return;
+      }
+      if (!authorization.ok) {
+        this.sendError(
+          connection,
+          frame.id,
+          401,
+          "Installation setup link is invalid or expired",
+        );
+        return;
+      }
+      const { onboardingToken: _onboardingToken, ...assistArgs } = frame.args;
+      args = assistArgs;
+    }
+
     if (!this.auth.isSetupMode()) {
       this.sendError(connection, frame.id, 409, "System already initialized");
       return;
     }
 
     try {
-      const data = await handleSysSetupAssist(frame.args, ctx);
+      const data = await handleSysSetupAssist(args, ctx);
       this.sendOk(connection, frame.id, data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.sendError(connection, frame.id, 400, message);
     }
+  }
+
+  private async handleManagedSysSetup(
+    connection: Connection<ConnectionState>,
+    frame: RequestFrame<"sys.setup">,
+    ctx: KernelContext,
+  ): Promise<void> {
+    if (this.managedOnboardingInProgress) {
+      this.sendError(connection, frame.id, 409, "Installation setup is already in progress");
+      return;
+    }
+    this.managedOnboardingInProgress = true;
+
+    try {
+      const { onboardingToken: _onboardingToken, ...setupArgs } = frame.args;
+      let authorization: InstallationOnboardingAuthorization;
+      try {
+        authorization = await this.authorizeManagedInstallationOnboarding(
+          frame.args.onboardingToken,
+        );
+      } catch {
+        this.sendError(connection, frame.id, 503, "Installation setup is unavailable");
+        return;
+      }
+      if (!authorization.ok) {
+        let recovered: SysSetupResult | null;
+        try {
+          recovered = await this.recoverActivatedManagedSetup(setupArgs);
+        } catch {
+          this.sendError(connection, frame.id, 503, "Installation setup is unavailable");
+          return;
+        }
+        if (recovered) {
+          this.sendOk(connection, frame.id, recovered);
+          return;
+        }
+        this.sendError(
+          connection,
+          frame.id,
+          401,
+          "Installation setup link is invalid or expired",
+        );
+        return;
+      }
+
+      let data: SysSetupResult;
+      try {
+        if (this.auth.isSetupMode()) {
+          data = await handleKernelSetup(setupArgs, ctx);
+          this.pendingManagedOnboarding = {
+            claimId: authorization.claimId,
+            installationId: authorization.installation.installationId,
+          };
+          this.ctx.storage.kv.put(
+            MANAGED_ONBOARDING_COMPLETION_KEY,
+            this.pendingManagedOnboarding,
+          );
+        } else {
+          const pending = this.pendingManagedOnboarding;
+          if (
+            !pending
+            || pending.claimId !== authorization.claimId
+            || pending.installationId !== authorization.installation.installationId
+          ) {
+            throw new Error("System already initialized");
+          }
+          data = await recoverCompletedSysSetup(setupArgs, ctx);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.sendError(connection, frame.id, 400, message);
+        return;
+      }
+
+      try {
+        const directory = this.managedOnboardingService();
+        if (!directory) throw new Error("Managed onboarding is unavailable");
+        const completion = await directory.completeInstallationOnboarding({
+          claimId: authorization.claimId,
+          installationId: authorization.installation.installationId,
+        });
+        if (
+          completion.state !== "complete"
+          || completion.installationId !== authorization.installation.installationId
+        ) {
+          throw new Error("Installation onboarding completion mismatch");
+        }
+        this.pendingManagedOnboarding = undefined;
+        this.ctx.storage.kv.delete(MANAGED_ONBOARDING_COMPLETION_KEY);
+        this.sendOk(connection, frame.id, data);
+      } catch {
+        this.sendError(
+          connection,
+          frame.id,
+          503,
+          "Installation setup could not be activated",
+        );
+      }
+    } finally {
+      this.managedOnboardingInProgress = false;
+    }
+  }
+
+  private async authorizeManagedInstallationOnboarding(
+    token: unknown,
+  ): Promise<InstallationOnboardingAuthorization> {
+    if (typeof token !== "string") return { ok: false };
+    const directory = this.managedOnboardingService();
+    const installation = this.installationIdentity;
+    if (!directory || !installation) return { ok: false };
+
+    const authorization = await directory.authorizeInstallationOnboarding({
+      installationId: installation.installationId,
+      token,
+    });
+    if (
+      !authorization.ok
+      || authorization.installation.installationId !== installation.installationId
+      || authorization.installation.handle !== installation.handle
+      || authorization.installation.canonicalOrigin !== installation.canonicalOrigin
+    ) {
+      return { ok: false };
+    }
+    return authorization;
+  }
+
+  private async recoverActivatedManagedSetup(
+    args: Parameters<typeof recoverCompletedSysSetup>[0],
+  ): Promise<SysSetupResult | null> {
+    const pending = this.pendingManagedOnboarding;
+    const installation = this.installationIdentity;
+    const directory = this.managedOnboardingService();
+    if (!pending || !installation || !directory || this.auth.isSetupMode()) {
+      return null;
+    }
+
+    const resolved = await directory.resolveHostname(
+      new URL(installation.canonicalOrigin).hostname,
+    );
+    if (
+      !resolved.found
+      || resolved.state !== "active"
+      || resolved.installationId !== installation.installationId
+      || resolved.handle !== installation.handle
+      || resolved.canonicalOrigin !== installation.canonicalOrigin
+    ) {
+      return null;
+    }
+
+    let data: SysSetupResult;
+    try {
+      data = await recoverCompletedSysSetup(args, this.buildKernelContext({}));
+    } catch {
+      return null;
+    }
+    this.pendingManagedOnboarding = undefined;
+    this.ctx.storage.kv.delete(MANAGED_ONBOARDING_COMPLETION_KEY);
+    return data;
+  }
+
+  private managedOnboardingService(): (
+    InstallationDirectoryService & InstallationOnboardingService
+  ) | null {
+    return (this.env as Env & {
+      INSTALLATION_DIRECTORY?: InstallationDirectoryService & InstallationOnboardingService;
+    }).INSTALLATION_DIRECTORY ?? null;
   }
 
   private handleRes(connection: Connection<ConnectionState>, wireFrame: ResponseFrame): void {

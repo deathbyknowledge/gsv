@@ -40,6 +40,22 @@ PBKDF2-SHA-512 hashes. Issued tokens are stored hashed with high-entropy token
 prefix metadata, optional expiry, revocation state, allowed role, and optional
 device binding. Raw tokens are returned only at creation time.
 
+For a managed installation, the private accounts operator reserves the hostname
+and issues a one-time onboarding capability in the URL fragment. The browser
+moves that capability to tab-scoped storage before making requests. The
+accounts Worker stores only its hash and binds it to one provisioning
+installation; the Kernel validates it over a private service binding before
+accepting `sys.setup` or `sys.setup.assist`. Local usernames and passwords never
+belong to the accounts directory. They are created and authenticated only by
+that installation's Kernel. Successful setup consumes the claim and activates
+the hostname.
+
+The accounts directory and onboarding methods are available only through a
+service binding. Cloudflare Access protects its public operator page at
+`https://gsv.space/admin`; it is not a customer login system. The registry
+principal and pending membership are control-plane bookkeeping and are not
+mapped to a Kernel uid during onboarding.
+
 The CLI stores local credentials in `~/.config/gsv/config.toml`. On Unix it
 writes the file as `0600` and ignores cached session tokens if the file is
 group/world-readable.

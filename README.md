@@ -87,7 +87,14 @@ GSV uses Linux as a design model (not POSIX, though). Familiar, composable primi
 ./scripts/setup-deps.sh        # install workspace and worker dependencies
 npm run build --workspace web  # build assets served by the gateway
 npm run dev                    # start the local multi-worker stack
+npm run dev:managed            # start the local managed stack
 ```
+
+The managed stack starts the accounts directory, Gateway, and ripgit on
+`http://localhost:8976`. Open `http://localhost:8976/admin`, create an
+installation, and follow the one-time onboarding link. Local development uses
+the real private admin and Kernel-owned setup flow; only the admin access
+boundary changes from Cloudflare Access to exact loopback access.
 
 Requires [Rust](https://rustup.rs) and Node.js 22 or newer with
 [npm](https://nodejs.org).

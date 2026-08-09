@@ -4,27 +4,9 @@ const HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/;
 
 const RESERVED_HANDLES = new Set([
-  "admin",
-  "api",
-  "app",
-  "accounts",
-  "assets",
-  "auth",
-  "billing",
-  "bot",
-  "cdn",
-  "dashboard",
   "deploy",
   "docs",
-  "inference",
   "install",
-  "login",
-  "mail",
-  "oauth",
-  "status",
-  "support",
-  "telegram",
-  "webhooks",
   "www",
 ]);
 
@@ -83,16 +65,48 @@ export function normalizeHostname(value: unknown): string | null {
 export function installationIdentity(
   handle: string,
   baseDomain: string,
+  originTemplate?: string,
 ): ManagedInstallationIdentity {
   const parsedHandle = parseHandle(handle);
   const parsedDomain = parseBaseDomain(baseDomain);
   return {
     installationId: `inst_${crypto.randomUUID()}`,
     handle: parsedHandle,
-    canonicalOrigin: `https://${parsedHandle}.${parsedDomain}`,
+    canonicalOrigin: installationOrigin(
+      parsedHandle,
+      parsedDomain,
+      originTemplate,
+    ),
   };
 }
 
 export function hostnameForHandle(handle: string, baseDomain: string): string {
   return `${parseHandle(handle)}.${parseBaseDomain(baseDomain)}`;
+}
+
+function installationOrigin(
+  handle: string,
+  baseDomain: string,
+  template?: string,
+): string {
+  if (template === undefined) return `https://${handle}.${baseDomain}`;
+  if (template.split("{handle}").length !== 2) {
+    throw new Error("GSV_INSTALLATION_ORIGIN_TEMPLATE is invalid");
+  }
+
+  let origin: URL;
+  try {
+    origin = new URL(template.replace("{handle}", handle));
+  } catch {
+    throw new Error("GSV_INSTALLATION_ORIGIN_TEMPLATE is invalid");
+  }
+  if (
+    origin.origin !== origin.toString().replace(/\/$/, "")
+    || origin.username
+    || origin.password
+    || origin.hostname !== `${handle}.${baseDomain}`
+  ) {
+    throw new Error("GSV_INSTALLATION_ORIGIN_TEMPLATE is invalid");
+  }
+  return origin.origin;
 }
