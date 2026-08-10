@@ -1,0 +1,21 @@
+{
+  "name": "gsv-inference",
+  "version": "0.4.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cf-typegen": "wrangler types --config wrangler.dev.jsonc --include-runtime false",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.83.0",
+    "@humansandmachines/gsv": "file:../packages/gsv"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260722.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9",
+    "wrangler": "^4.115.0"
+  }
+}

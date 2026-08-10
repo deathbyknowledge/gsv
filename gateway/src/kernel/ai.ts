@@ -69,6 +69,13 @@ import {
   createGenerationService,
   extractGeneratedText,
 } from "../inference/service";
+import {
+  gsvInferenceProviderFactoryFromEnv,
+} from "../inference/gsv-provider";
+import {
+  inferenceLogicalRequestId,
+  type InferenceAttribution,
+} from "../inference/provider";
 import { createRoutedFetch, normalizeTarget, type NetFetchDeviceTransport } from "./net";
 import {
   DEFAULT_AUDIO_TRANSCRIPTION_MODEL,
@@ -402,12 +409,18 @@ export async function handleAiTextGenerate(
   const generationFetch = transportTarget === "gsv"
     ? undefined
     : createRoutedFetch(ctx, transport, transportTarget);
-  const response = await createGenerationService(generationFetch ? { fetch: generationFetch } : {}).generate({
+  const gsvInference = gsvInferenceProviderFactoryFromEnv(ctx.env);
+  const attribution = await inferenceAttribution(ctx);
+  const response = await createGenerationService({
+    ...(generationFetch ? { fetch: generationFetch } : {}),
+    ...(gsvInference ? { providers: [gsvInference] } : {}),
+  }).generate({
     config,
     context,
     ...(options ? { options } : {}),
     sessionAffinityKey: normalizeOptionalString(input.sessionAffinityKey),
     signal: ctx.requestSignal,
+    attribution,
   });
   const text = extractGeneratedText(response);
   return {
@@ -415,6 +428,28 @@ export async function handleAiTextGenerate(
     provider: response.provider || config.provider,
     model: response.model || config.model,
     ...(text ? { text } : {}),
+  };
+}
+
+async function inferenceAttribution(
+  ctx: KernelContext,
+): Promise<InferenceAttribution> {
+  const process = ctx.identity?.process;
+  return {
+    installationId: ctx.installationId,
+    logicalRequestId: await inferenceLogicalRequestId([
+      "kernel",
+      ctx.installationId,
+      process?.uid ?? 0,
+      ctx.processId,
+      ctx.processRunId,
+      ctx.requestId ?? crypto.randomUUID(),
+    ]),
+    actor: {
+      localUid: process?.uid ?? 0,
+      ...(ctx.processId ? { processId: ctx.processId } : {}),
+      ...(ctx.processRunId ? { runId: ctx.processRunId } : {}),
+    },
   };
 }
 

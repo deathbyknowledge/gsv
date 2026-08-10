@@ -163,6 +163,7 @@ export async function dispatch(
   ctx: KernelContext,
   deps: DispatchDeps,
 ): Promise<DispatchResult> {
+  ctx = { ...ctx, requestId: frame.id };
   if (ctx.requestSignal?.aborted) {
     return {
       handled: true,

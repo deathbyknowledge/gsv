@@ -71,6 +71,11 @@
       "service": "gsv-accounts-dev"
     },
     {
+      "binding": "MANAGED_INFERENCE",
+      "service": "gsv-inference-dev",
+      "entrypoint": "InferenceService"
+    },
+    {
       "binding": "RIPGIT",
       "service": "gsv-managed-ripgit-dev"
     }

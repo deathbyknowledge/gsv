@@ -62,12 +62,12 @@ describe("media syscall dispatch", () => {
 
     expect(transcriptionCreateMock).toHaveBeenCalledWith(
       { audio: { mimeType: "audio/webm" } },
-      ctx,
+      { ...ctx, requestId: "transcription" },
       audioBody,
     );
     expect(imageReadMock).toHaveBeenCalledWith(
       { image: { mimeType: "image/png" } },
-      ctx,
+      { ...ctx, requestId: "image-read" },
       imageBody,
     );
   });

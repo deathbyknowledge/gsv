@@ -46,7 +46,14 @@ function integrationGatewayConfig(options: {
       { binding: "CHANNEL_WHATSAPP", service: DEPENDENCY_WORKER },
       { binding: "RIPGIT", service: DEPENDENCY_WORKER },
       ...(options.managed
-        ? [{ binding: "INSTALLATION_DIRECTORY", service: DEPENDENCY_WORKER }]
+        ? [
+            { binding: "INSTALLATION_DIRECTORY", service: DEPENDENCY_WORKER },
+            {
+              binding: "MANAGED_INFERENCE",
+              service: DEPENDENCY_WORKER,
+              entrypoint: "ManagedInferenceFixture",
+            },
+          ]
         : []),
     ],
   };
@@ -71,6 +78,28 @@ function integrationDependencyConfig(
       binding: "GATEWAY",
       service: gatewayService,
       entrypoint: "GatewayEntrypoint",
+    }],
+  };
+}
+
+function managedInferenceProbeConfig(): Unstable_RawConfig {
+  const config = unstable_readConfig(
+    { config: DEPENDENCY_CONFIG_PATH },
+    { hideWarnings: true },
+  );
+  return {
+    name: "gsv-managed-inference-probe",
+    main: resolve(
+      GATEWAY_ROOT,
+      "test-integration/fixtures/managed-inference-probe.ts",
+    ),
+    compatibility_date: config.compatibility_date,
+    compatibility_flags: config.compatibility_flags,
+    observability: config.observability,
+    services: [{
+      binding: "MANAGED_INFERENCE",
+      service: DEPENDENCY_WORKER,
+      entrypoint: "ManagedInferenceFixture",
     }],
   };
 }
@@ -101,6 +130,9 @@ export function createManagedGatewayTestHarness(): TestHarness {
       },
       {
         config: integrationDependencyConfig("gsv-managed"),
+      },
+      {
+        config: managedInferenceProbeConfig(),
       },
     ],
   });

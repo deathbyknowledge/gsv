@@ -106,6 +106,13 @@ import type {
 } from "@earendil-works/pi-ai";
 import { createGenerationService } from "../inference/service";
 import {
+  gsvInferenceProviderFactoryFromEnv,
+} from "../inference/gsv-provider";
+import {
+  inferenceLogicalRequestId,
+  type InferenceAttribution,
+} from "../inference/provider";
+import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
   formatProviderContextOverflowMessage,
@@ -859,7 +866,7 @@ export class Process extends Host<Env> {
   readonly pid: string;
   private readonly store: ProcessStore;
   private readonly storage: R2Bucket;
-  private readonly generation = createGenerationService();
+  private readonly generation: ReturnType<typeof createGenerationService>;
   private readonly ripgit: RipgitClient | null;
   private readonly codeModeResponses = new Map<string, CodeModeResponseWaiter>();
   private readonly codeModeApprovals = new Map<string, CodeModeApprovalWaiter>();
@@ -878,6 +885,10 @@ export class Process extends Host<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    const gsvInference = gsvInferenceProviderFactoryFromEnv(env);
+    this.generation = createGenerationService(
+      gsvInference ? { providers: [gsvInference] } : {},
+    );
     const processIdentity = parseProcessDurableObjectName(ctx.id.name);
     this.installationId = processIdentity.installationId;
     this.pid = processIdentity.pid;
@@ -4322,8 +4333,13 @@ export class Process extends Host<Env> {
     streamSeq?: StreamSeqCounter;
   }): Promise<AssistantMessage | null> {
     const executor = options.config.executor;
+    const attribution = await this.buildInferenceAttribution(
+      options.config,
+      "run",
+      options.runId,
+    );
     if (executor.kind === "process" && executor.pid === this.pid) {
-      return await this.generateAssistantResponseLocally(options);
+      return await this.generateAssistantResponseLocally(options, attribution);
     }
     const result = await this.kernelRpc(
       "ai.text.generate",
@@ -4334,6 +4350,7 @@ export class Process extends Host<Env> {
         target: executor.kind === "device" ? executor.target : undefined,
       }),
       this.runAbortSignal(options.runId),
+      attribution.logicalRequestId,
     );
     return result.message as unknown as AssistantMessage;
   }
@@ -4345,7 +4362,7 @@ export class Process extends Host<Env> {
     context: Context;
     sessionAffinityKey?: string;
     streamSeq?: StreamSeqCounter;
-  }): Promise<AssistantMessage | null> {
+  }, attribution: InferenceAttribution): Promise<AssistantMessage | null> {
     const routedFetch = this.createGenerationFetch(options.config, options.runId);
     const signal = this.runAbortSignal(options.runId);
     const stream = options.config.generationStreaming !== "off" &&
@@ -4357,6 +4374,7 @@ export class Process extends Host<Env> {
         ...(routedFetch ? { fetch: routedFetch } : {}),
         sessionAffinityKey: options.sessionAffinityKey,
         signal,
+        attribution,
       })
       : null;
 
@@ -4367,6 +4385,7 @@ export class Process extends Host<Env> {
         ...(routedFetch ? { fetch: routedFetch } : {}),
         sessionAffinityKey: options.sessionAffinityKey,
         signal,
+        attribution,
       });
     }
 
@@ -4399,6 +4418,12 @@ export class Process extends Host<Env> {
     signal?: AbortSignal;
   }): Promise<string> {
     const executor = options.config.executor;
+    const attribution = await this.buildInferenceAttribution(
+      options.config,
+      "compaction",
+      this.currentRun?.runId,
+      options.sessionAffinityKey,
+    );
     if (executor.kind !== "process" || executor.pid !== this.pid) {
       const result = await this.kernelRpc(
         "ai.text.generate",
@@ -4409,6 +4434,7 @@ export class Process extends Host<Env> {
           target: executor.kind === "device" ? executor.target : undefined,
         }),
         options.signal,
+        attribution.logicalRequestId,
       );
       return result.text ?? "";
     }
@@ -4420,7 +4446,37 @@ export class Process extends Host<Env> {
       ...(routedFetch ? { fetch: routedFetch } : {}),
       sessionAffinityKey: options.sessionAffinityKey,
       signal: options.signal,
+      attribution,
     });
+  }
+
+  private async buildInferenceAttribution(
+    config: Pick<AiConfigResult, "provider" | "model">,
+    purpose: "run" | "compaction",
+    runId?: string,
+    purposeKey?: string,
+  ): Promise<InferenceAttribution> {
+    const { lastMessageId } = this.store.messageStats();
+    return {
+      installationId: this.installationId,
+      logicalRequestId: await inferenceLogicalRequestId([
+        "process",
+        this.installationId,
+        this.pid,
+        purpose,
+        runId,
+        this.store.getHistoryGeneration(),
+        lastMessageId,
+        config.provider.trim().toLowerCase(),
+        config.model.trim().toLowerCase(),
+        purposeKey,
+      ]),
+      actor: {
+        localUid: this.identity.uid,
+        processId: this.pid,
+        ...(runId ? { runId } : {}),
+      },
+    };
   }
 
   private buildAiTextGenerateArgs(options: {
@@ -4732,9 +4788,10 @@ export class Process extends Host<Env> {
     call: T,
     args: unknown = {},
     signal?: AbortSignal,
+    requestId?: string,
   ): Promise<ResultOf<T>> {
     signal?.throwIfAborted();
-    const id = crypto.randomUUID();
+    const id = requestId ?? crypto.randomUUID();
     const frame = { type: "req", id, call, args } as RequestFrame;
     const pending = sendFrameToKernel(this.installationId, this.pid, frame);
     let rejectAbort: ((reason: unknown) => void) | undefined;

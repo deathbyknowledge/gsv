@@ -52,6 +52,7 @@ export type ConnectArgs = {
 export type ServerBuild = {
   version: string;
   release: string;
+  features?: string[];
 };
 
 export type ConnectResult = {

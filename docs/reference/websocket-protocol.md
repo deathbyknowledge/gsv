@@ -196,6 +196,7 @@ only after setup succeeds.
     "server": {
       "version": "0.4.0",
       "release": "dev",
+      "features": ["ai.provider.gsv"],
       "connectionId": "conn-123"
     },
     "identity": {
@@ -218,6 +219,10 @@ only after setup succeeds.
 ```
 
 **Role-specific identity payloads**
+
+`server.features` is an optional list of runtime capabilities advertised by the
+connected deployment. Managed gateways with the private GSV inference binding
+include `ai.provider.gsv`; standalone gateways omit it.
 
 | Role | Extra fields |
 |---|---|

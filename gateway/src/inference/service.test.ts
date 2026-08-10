@@ -5,10 +5,14 @@ const streamPiAiSimpleMock = vi.hoisted(() => vi.fn());
 const completeWithOpenAiCodexFetchMock = vi.hoisted(() => vi.fn());
 const streamWithOpenAiCodexFetchMock = vi.hoisted(() => vi.fn());
 
-vi.mock("./pi-ai", () => ({
-  completePiAiSimple: completePiAiSimpleMock,
-  streamPiAiSimple: streamPiAiSimpleMock,
-}));
+vi.mock("./pi-ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./pi-ai")>();
+  return {
+    ...actual,
+    completePiAiSimple: completePiAiSimpleMock,
+    streamPiAiSimple: streamPiAiSimpleMock,
+  };
+});
 
 vi.mock("./openai-codex", () => ({
   completeWithOpenAiCodexFetch: completeWithOpenAiCodexFetchMock,
@@ -22,8 +26,16 @@ import {
   resolveGenerationOptions,
   resolveGenerationTimeoutMs,
 } from "./service";
-import type { AiConfigResult } from "@humansandmachines/gsv/protocol";
+import {
+  GSV_INFERENCE_MODEL,
+  GSV_INFERENCE_PRODUCT_MODEL,
+  GSV_INFERENCE_PROVIDER,
+  type AiConfigResult,
+  type ManagedInferenceResult,
+  type ManagedInferenceService,
+} from "@humansandmachines/gsv/protocol";
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
+import { createGsvInferenceProviderFactory } from "./gsv-provider";
 
 function assistantMessage(content: AssistantMessage["content"]): AssistantMessage {
   return {
@@ -139,6 +151,113 @@ describe("resolveGenerationOptions", () => {
 });
 
 describe("createGenerationService", () => {
+  it("routes gsv/default through the managed binding with trusted identity", async () => {
+    const managedResult: ManagedInferenceResult = {
+      role: "assistant",
+      content: [{ type: "text", text: "managed pong" }],
+      api: "gsv-inference",
+      provider: GSV_INFERENCE_PROVIDER,
+      model: GSV_INFERENCE_PRODUCT_MODEL,
+      usage: {
+        input: 10,
+        output: 2,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 12,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: 1,
+    };
+    const generate = vi.fn<ManagedInferenceService["generate"]>(async () => ({
+      result: async () => managedResult,
+      abort: async () => {},
+    }));
+    const managedInference: ManagedInferenceService = {
+      generate,
+    };
+    completePiAiSimpleMock.mockImplementationOnce((model, context, options, models) =>
+      models.completeSimple(model, context, options)
+    );
+
+    const result = await createGenerationService({
+      providers: [createGsvInferenceProviderFactory(managedInference)],
+    }).generate({
+      config: {
+        ...CONFIG,
+        provider: GSV_INFERENCE_PROVIDER,
+        model: GSV_INFERENCE_MODEL,
+        apiKey: "",
+        baseUrl: "https://stale.example/v1",
+        providerStyle: "openai-chat-completions",
+      },
+      context: {
+        systemPrompt: "Be direct.",
+        messages: [{ role: "user", content: "ping", timestamp: 1 }],
+      },
+      options: { maxTokens: 128, reasoning: "low", timeoutMs: 1_000 },
+      attribution: {
+        installationId: "inst_test",
+        logicalRequestId: "request_test",
+        actor: { localUid: 1000, processId: "proc_test", runId: "run_test" },
+      },
+    });
+
+    expect(result.content).toEqual([{ type: "text", text: "managed pong" }]);
+    expect(generate).toHaveBeenCalledWith(expect.objectContaining({
+      installationId: "inst_test",
+      logicalRequestId: "request_test",
+      actor: { localUid: 1000, processId: "proc_test", runId: "run_test" },
+      model: GSV_INFERENCE_PRODUCT_MODEL,
+      systemPrompt: "Be direct.",
+      maxOutputTokens: 128,
+      reasoning: "low",
+      timeoutMs: 1_000,
+    }));
+    expect(completePiAiSimpleMock).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "gsv", id: "default" }),
+      expect.objectContaining({ systemPrompt: "Be direct." }),
+      expect.objectContaining({ maxTokens: 128, reasoning: "low" }),
+      expect.anything(),
+    );
+  });
+
+  it("does not treat gsv/default configuration as platform authorization", async () => {
+    await expect(createGenerationService().generate({
+      config: {
+        ...CONFIG,
+        provider: GSV_INFERENCE_PROVIDER,
+        model: GSV_INFERENCE_MODEL,
+        apiKey: "",
+      },
+      context: CONTEXT,
+      attribution: {
+        installationId: "inst_test",
+        logicalRequestId: "request_test",
+        actor: { localUid: 1000 },
+      },
+    })).rejects.toThrow("Unknown model provider: gsv");
+  });
+
+  it("requires trusted attribution for a registered provider", async () => {
+    const managedInference: ManagedInferenceService = {
+      generate: vi.fn(),
+    };
+
+    await expect(createGenerationService({
+      providers: [createGsvInferenceProviderFactory(managedInference)],
+    }).generate({
+      config: {
+        ...CONFIG,
+        provider: GSV_INFERENCE_PROVIDER,
+        model: GSV_INFERENCE_MODEL,
+        apiKey: "",
+      },
+      context: CONTEXT,
+    })).rejects.toThrow("Inference attribution is unavailable for provider: gsv");
+    expect(managedInference.generate).not.toHaveBeenCalled();
+  });
+
   it("passes a routed fetch to built-in provider completions", async () => {
     const message = assistantMessage([{ type: "text", text: "pong" }]);
     const fetchImpl = vi.fn() as unknown as typeof fetch;
@@ -153,6 +272,7 @@ describe("createGenerationService", () => {
       expect.objectContaining({ provider: "anthropic" }),
       CONTEXT,
       expect.objectContaining({ fetch: fetchImpl }),
+      expect.anything(),
     );
   });
 
@@ -175,6 +295,7 @@ describe("createGenerationService", () => {
       expect.objectContaining({ provider: "anthropic" }),
       CONTEXT,
       expect.objectContaining({ fetch: fetchImpl }),
+      expect.anything(),
     );
   });
 

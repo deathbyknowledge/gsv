@@ -1,0 +1,11 @@
+{
+  "name": "gsv-inference-dev",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat"],
+  "secrets": {
+    "required": ["OPENROUTER_API_KEY"]
+  },
+  "workers_dev": false,
+  "preview_urls": false
+}

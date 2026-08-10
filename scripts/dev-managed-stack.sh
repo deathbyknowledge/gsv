@@ -29,6 +29,7 @@ exec env \
   npm exec --workspaces=false -- wrangler dev \
   --config ../gateway/wrangler.managed.dev.jsonc \
   --config wrangler.dev.jsonc \
+  --config ../inference/wrangler.dev.jsonc \
   --config ../ripgit/wrangler.managed.dev.jsonc \
   --ip 127.0.0.1 \
   --port 8976 \

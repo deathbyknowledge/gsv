@@ -50,6 +50,7 @@ export type KernelContext = {
   identity?: ConnectionIdentity;
   processId?: string;
   processRunId?: string;
+  requestId?: string;
   requestSignal?: AbortSignal;
   callerOwnerUid?: number;
   serverVersion: string;

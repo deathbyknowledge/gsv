@@ -45,6 +45,7 @@ import {
   DEFAULT_IMAGE_READING_MODEL,
 } from "../inference/image-reading";
 import { DEFAULT_IMAGE_GENERATION_MODEL } from "../inference/capabilities";
+import { inferenceLogicalRequestId } from "../inference/provider";
 
 vi.mock("../shared/utils", () => ({
   sendFrameToProcess: vi.fn(),
@@ -830,6 +831,70 @@ describe("handleAiConfig", () => {
       provider: "anthropic",
       model: "claude-process",
       text: "snapshot pong",
+    });
+  });
+
+  it("derives trusted inference attribution inside the Kernel", async () => {
+    const managedInference = { generate: vi.fn() };
+    const logicalRequestId = await inferenceLogicalRequestId([
+      "kernel",
+      "inst_managed",
+      1000,
+      "task-1",
+      "run-1",
+      "frame-1",
+    ]);
+    generateMock.mockImplementationOnce(async (request: any) => {
+      expect(request.attribution).toMatchObject({
+        installationId: "inst_managed",
+        actor: {
+          localUid: 1000,
+          processId: "task-1",
+          runId: "run-1",
+        },
+      });
+      expect(request.attribution.logicalRequestId).toBe(logicalRequestId);
+      return {
+        role: "assistant",
+        content: [{ type: "text", text: "managed pong" }],
+        api: "gsv-inference",
+        provider: "gsv",
+        model: "gsv/default",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+    });
+    const ctx = {
+      ...makeAiConfigContext({
+        "config/ai/provider": "gsv",
+        "config/ai/model": "default",
+      }, {
+        processId: "task-1",
+      }),
+      installationId: "inst_managed",
+      processRunId: "run-1",
+      requestId: "frame-1",
+      env: {
+        INSTALLATION_DIRECTORY: {},
+        MANAGED_INFERENCE: managedInference,
+      },
+    } as unknown as KernelContext;
+
+    const result = await handleAiTextGenerate({
+      messages: [{ role: "user", content: "ping" }],
+    }, ctx);
+
+    expect(result.text).toBe("managed pong");
+    expect(createGenerationServiceMock).toHaveBeenCalledWith({
+      providers: [expect.objectContaining({ id: "gsv" })],
     });
   });
 

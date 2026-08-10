@@ -726,7 +726,7 @@ metadata document advertises the same URL as its `client_id`.
 type SystemSyscalls = {
   "sys.connect": {
     args: { protocol: number; client: { id: string; version: string; platform: string; role: "user" | "driver" | "service"; channel?: string }; driver?: { implements: string[] }; auth?: { username: string; password?: string; token?: string } };
-    result: { protocol: number; server: { version: string; release: string; connectionId: string }; identity: ConnectionIdentity; syscalls: string[]; signals: string[] };
+    result: { protocol: number; server: { version: string; release: string; features?: string[]; connectionId: string }; identity: ConnectionIdentity; syscalls: string[]; signals: string[] };
   };
 
   "sys.setup.assist": {
@@ -736,7 +736,7 @@ type SystemSyscalls = {
 
   "sys.setup": {
     args: { username: string; password: string; rootPassword?: string; timezone?: string; ai?: { provider?: string; model?: string; apiKey?: string }; node?: { deviceId: string; label?: string; expiresAt?: number } };
-    result: { server: { version: string; release: string }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; nodeToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node"; label: string | null; allowedRole: "driver" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
+    result: { server: { version: string; release: string; features?: string[] }; user: ProcessIdentity; rootLocked: boolean; bootstrap?: SystemSyscalls["sys.bootstrap"]["result"]; nodeToken?: { tokenId: string; token: string; tokenPrefix: string; uid: number; kind: "node"; label: string | null; allowedRole: "driver" | null; allowedDeviceId: string | null; createdAt: number; expiresAt: number | null } };
   };
 
   "sys.bootstrap": {

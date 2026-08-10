@@ -1,6 +1,13 @@
+import {
+  GSV_INFERENCE_FEATURE,
+  GSV_INFERENCE_MODEL,
+  GSV_INFERENCE_PROVIDER,
+} from "@humansandmachines/gsv/protocol";
+
 export type AiProviderOption = {
   value: string;
   label: string;
+  defaultModel?: string;
 };
 
 // Keep this to providers GSV can configure for chat/default model paths with
@@ -46,6 +53,26 @@ export const AI_OPENAI_WORKERS_PROVIDER_OPTIONS: ReadonlyArray<AiProviderOption>
   { value: "workers-ai", label: "Workers AI (gateway binding)" },
   { value: "openai", label: "OpenAI" },
 ];
+
+export function aiProviderOptionsForFeatures(
+  features: readonly string[] | undefined,
+  baseOptions: ReadonlyArray<AiProviderOption> = AI_PROVIDER_OPTIONS,
+): AiProviderOption[] {
+  if (
+    !features?.includes(GSV_INFERENCE_FEATURE)
+    || baseOptions.some((option) => option.value === GSV_INFERENCE_PROVIDER)
+  ) {
+    return [...baseOptions];
+  }
+  return [
+    {
+      value: GSV_INFERENCE_PROVIDER,
+      label: "GSV included",
+      defaultModel: GSV_INFERENCE_MODEL,
+    },
+    ...baseOptions,
+  ];
+}
 
 export function aiProviderOptionsForValue(
   value: string,

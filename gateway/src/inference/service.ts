@@ -1,16 +1,26 @@
 import type {
+  Api,
   AssistantMessage,
   AssistantMessageEventStream,
   Context,
+  Model,
+  Models,
   TextContent,
   ThinkingContent,
   ThinkingLevel,
 } from "@earendil-works/pi-ai";
-import type { AiConfigResult, AiTextGenerateOptions } from "@humansandmachines/gsv/protocol";
+import {
+  type AiConfigResult,
+  type AiTextGenerateOptions,
+} from "@humansandmachines/gsv/protocol";
 import { completeWithWorkersAi, isWorkersAiProvider, streamWithWorkersAi } from "./workers-ai";
 import { withTimeout } from "./timeout";
 import { resolveModelThinkingLevel, resolvePiAiModel } from "./model-registry";
-import { completePiAiSimple, streamPiAiSimple } from "./pi-ai";
+import {
+  completePiAiSimple,
+  modelsWithProviders,
+  streamPiAiSimple,
+} from "./pi-ai";
 import {
   errorMessageFromUnknown,
   formatProviderErrorMessage,
@@ -24,6 +34,10 @@ import {
   completeWithOpenAiCodexFetch,
   streamWithOpenAiCodexFetch,
 } from "./openai-codex";
+import type {
+  InferenceAttribution,
+  InferenceProviderFactory,
+} from "./provider";
 
 const OPENROUTER_ATTR_HEADERS = {
   "HTTP-Referer": "https://gsv.space",
@@ -39,6 +53,7 @@ type GenerateRequest = {
   fetch?: typeof fetch;
   sessionAffinityKey?: string;
   signal?: AbortSignal;
+  attribution?: InferenceAttribution;
 };
 
 type GenerationService = {
@@ -49,6 +64,7 @@ type GenerationService = {
 
 type GenerationServiceOptions = {
   fetch?: typeof fetch;
+  providers?: readonly InferenceProviderFactory[];
 };
 
 type ResolvedGenerationOptions = {
@@ -71,6 +87,10 @@ export function createGenerationService(
     const options = resolveGenerationOptions(request);
     const generationFetch = request.fetch ?? serviceOptions.fetch;
     const generationTimeoutMs = resolveGenerationTimeoutMs(request.config, request.options);
+    const providerFactory = findInferenceProviderFactory(
+      serviceOptions,
+      options.modelProvider,
+    );
     if (isWorkersAiProvider(options.modelProvider)) {
       if (generationFetch) {
         throw new Error("Workers AI uses a gateway binding and cannot originate model requests from a machine.");
@@ -87,6 +107,7 @@ export function createGenerationService(
     }
     if (
       options.modelProvider !== OPENAI_CODEX_PROVIDER &&
+      !providerFactory &&
       shouldUseCustomProvider({
         provider: options.modelProvider,
         baseUrl: options.baseUrl,
@@ -119,14 +140,14 @@ export function createGenerationService(
     }
 
     assertOpenAiCodexCredential(options.modelProvider, options.apiKey);
-    const model = resolvePiAiModel(options.modelProvider, options.modelName);
+    const piAi = resolvePiAiProviderModel(providerFactory, request, options);
     const abort = createGenerationAbort(request.signal, generationTimeoutMs);
     const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
       ? generationFetch ?? fetch
       : undefined;
     if (openAiCodexFetch) {
       const result = streamWithOpenAiCodexFetch({
-        model,
+        model: piAi.model,
         context: request.context,
         fetch: openAiCodexFetch,
         options: {
@@ -145,7 +166,7 @@ export function createGenerationService(
       );
       return result;
     }
-    const result = streamPiAiSimple(model, request.context, {
+    const result = streamPiAiSimple(piAi.model, request.context, {
       apiKey: options.apiKey,
       fetch: generationFetch,
       reasoning: options.reasoning,
@@ -156,7 +177,7 @@ export function createGenerationService(
       headers: {
         ...(options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {}),
       },
-    });
+    }, piAi.models);
     void result.result().then(
       abort.clear,
       abort.clear,
@@ -168,6 +189,10 @@ export function createGenerationService(
     const options = resolveGenerationOptions(request);
     const generationFetch = request.fetch ?? serviceOptions.fetch;
     const generationTimeoutMs = resolveGenerationTimeoutMs(request.config, request.options);
+    const providerFactory = findInferenceProviderFactory(
+      serviceOptions,
+      options.modelProvider,
+    );
     if (isWorkersAiProvider(options.modelProvider)) {
       if (generationFetch) {
         throw new Error("Workers AI uses a gateway binding and cannot originate model requests from a machine.");
@@ -184,6 +209,7 @@ export function createGenerationService(
     }
     if (
       options.modelProvider !== OPENAI_CODEX_PROVIDER &&
+      !providerFactory &&
       shouldUseCustomProvider({
         provider: options.modelProvider,
         baseUrl: options.baseUrl,
@@ -219,7 +245,7 @@ export function createGenerationService(
     }
 
     assertOpenAiCodexCredential(options.modelProvider, options.apiKey);
-    const model = resolvePiAiModel(options.modelProvider, options.modelName);
+    const piAi = resolvePiAiProviderModel(providerFactory, request, options);
     const abort = createGenerationAbort(request.signal, generationTimeoutMs);
     const openAiCodexFetch = options.modelProvider === OPENAI_CODEX_PROVIDER
       ? generationFetch ?? fetch
@@ -228,7 +254,7 @@ export function createGenerationService(
       if (openAiCodexFetch) {
         return await withTimeout(
           completeWithOpenAiCodexFetch({
-            model,
+            model: piAi.model,
             context: request.context,
             fetch: openAiCodexFetch,
             options: {
@@ -246,7 +272,7 @@ export function createGenerationService(
         );
       }
       return await withTimeout(
-        completePiAiSimple(model, request.context, {
+        completePiAiSimple(piAi.model, request.context, {
           apiKey: options.apiKey,
           fetch: generationFetch,
           reasoning: options.reasoning,
@@ -257,7 +283,7 @@ export function createGenerationService(
           headers: {
             ...(options.modelProvider === "openrouter" ? OPENROUTER_ATTR_HEADERS : {}),
           },
-        }),
+        }, piAi.models),
         generationTimeoutMs,
         generationTimeoutMessage(generationTimeoutMs),
       );
@@ -292,6 +318,39 @@ export function createGenerationService(
       throw new Error(describeGeneratedTextFailure(request, response));
     },
   };
+}
+
+function findInferenceProviderFactory(
+  serviceOptions: GenerationServiceOptions,
+  provider: string,
+): InferenceProviderFactory | undefined {
+  const providerId = provider.trim().toLowerCase();
+  return serviceOptions.providers?.find(
+    (candidate) => candidate.id.trim().toLowerCase() === providerId,
+  );
+}
+
+function resolvePiAiProviderModel(
+  factory: InferenceProviderFactory | undefined,
+  request: GenerateRequest,
+  options: ResolvedGenerationOptions,
+): { models: Models; model: Model<Api> } {
+  if (!factory) {
+    return {
+      models: modelsWithProviders([]),
+      model: resolvePiAiModel(options.modelProvider, options.modelName),
+    };
+  }
+  if (!request.attribution) {
+    throw new Error(`Inference attribution is unavailable for provider: ${factory.id}`);
+  }
+  const provider = factory.create(request.attribution);
+  const models = modelsWithProviders([provider]);
+  const model = models.getModel(provider.id, options.modelName);
+  if (!model) {
+    throw new Error(`Model not found: ${options.modelProvider}/${options.modelName}`);
+  }
+  return { models, model };
 }
 
 function resolvePiAiTransportOptions(

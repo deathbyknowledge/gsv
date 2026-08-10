@@ -17,7 +17,11 @@ import { Stepper } from "../../../components/ui/Stepper";
 import { Surface } from "../../../components/ui/Surface";
 import { TextArea } from "../../../components/ui/TextArea";
 import { TextInput } from "../../../components/ui/TextInput";
-import { aiProviderOptionsForValue } from "../../../domain/aiProviders";
+import {
+  aiProviderOptionsForFeatures,
+  aiProviderOptionsForValue,
+} from "../../../domain/aiProviders";
+import { useSession } from "../../../services/session/SessionProvider";
 import { ConsoleDetailPage } from "../components/ConsoleDetailPage";
 import { useUnsavedGuard, useUnsavedGuardLeave } from "../../gsv-shell/unsaved/unsavedGuard";
 import {
@@ -2067,6 +2071,7 @@ function SettingFieldInput({
   onChange: (value: string) => void;
   onClearRedacted?: () => void;
 }) {
+  const { snapshot } = useSession();
   const [replacingRedacted, setReplacingRedacted] = useState(false);
   const placeholder = redacted ? "Enter replacement" : field.placeholder;
   const description = redacted ? `${field.description} Current value is hidden.` : field.description;
@@ -2134,8 +2139,11 @@ function SettingFieldInput({
   }
 
   if (field.kind === "select") {
+    const providerOptions = field.options?.some((option) => option.value === "custom")
+      ? aiProviderOptionsForFeatures(snapshot.server?.features, field.options)
+      : field.options;
     const options = field.key.endsWith("/provider") || field.key === "config/ai/provider"
-      ? aiProviderOptionsForValue(value, field.options)
+      ? aiProviderOptionsForValue(value, providerOptions)
       : [...(field.options ?? [])];
     const optionLabels = options.map((option) => option.label);
     const selectedIndex = Math.max(0, options.findIndex((option) => option.value === value));

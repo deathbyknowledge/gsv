@@ -90,8 +90,8 @@ npm run dev                    # start the local multi-worker stack
 npm run dev:managed            # start the local managed stack
 ```
 
-The managed stack starts the accounts directory, Gateway, and ripgit on
-`http://localhost:8976`. Open `http://localhost:8976/admin`, create an
+The managed stack starts the accounts directory, Gateway, inference broker, and
+ripgit on `http://localhost:8976`. Open `http://localhost:8976/admin`, create an
 installation, and follow the one-time onboarding link. Local development uses
 the real private admin and Kernel-owned setup flow; only the admin access
 boundary changes from Cloudflare Access to exact loopback access.

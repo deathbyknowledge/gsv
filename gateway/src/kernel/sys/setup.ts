@@ -8,6 +8,7 @@ import { ensureAccountHomeLayout } from "../account-home";
 import { RipgitClient } from "../../fs";
 import { seedBuiltinSkillsToHome } from "./skills-seed";
 import { ensurePersonalAgent } from "../agents";
+import { gsvInferenceFeaturesFromEnv } from "../../inference/gsv-provider";
 
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -346,10 +347,14 @@ export async function handleSysSetup(
       `[sys.setup] user=${username} completed in ${Date.now() - startedAt}ms (${formatSetupTimings(timings)})`,
     );
 
+    const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
     return {
       server: {
         version: ctx.serverVersion,
         release: SERVER_RELEASE,
+        ...(serverFeatures.length > 0
+          ? { features: serverFeatures }
+          : {}),
       },
       user: processIdentity,
       rootLocked,
@@ -417,10 +422,14 @@ export async function recoverCompletedSysSetup(
   }
 
   const rootShadow = ctx.auth.getShadowByUsername("root");
+  const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
   return {
     server: {
       version: ctx.serverVersion,
       release: SERVER_RELEASE,
+      ...(serverFeatures.length > 0
+        ? { features: serverFeatures }
+        : {}),
     },
     user: {
       ...authenticated.identity,

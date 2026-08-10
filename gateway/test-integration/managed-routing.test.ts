@@ -1,7 +1,9 @@
-import type {
-  AdapterGatewayRequestFrame,
-  AdapterGatewayResponseFrame,
+import {
+  GSV_INFERENCE_FEATURE,
+  type AdapterGatewayRequestFrame,
+  type AdapterGatewayResponseFrame,
 } from "@humansandmachines/gsv/protocol";
+import type { IntegrationState } from "./fixtures/dependencies";
 import type { TestHarness } from "wrangler";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createManagedGatewayTestHarness } from "./harness";
@@ -144,6 +146,125 @@ describe("managed installation routing integration", () => {
     socket.close(1000, "test complete");
   });
 
+  it("derives managed inference identity behind the private service binding", async () => {
+    await beginProvisioning(harness, "first");
+    const socket = await openManagedSocket(harness, "first");
+    await expectManagedRpcOk(socket, "setup-inference", "sys.setup", {
+      username: "inference-owner",
+      password: "inference-owner-password",
+      onboardingToken: "integration-onboarding-first",
+    });
+    const connect = await expectManagedRpcOk(socket, "connect-inference", "sys.connect", {
+      protocol: 2,
+      client: {
+        id: "managed-inference-test",
+        version: "1.0.0",
+        platform: "test",
+        role: "user",
+      },
+      auth: {
+        username: "inference-owner",
+        password: "inference-owner-password",
+      },
+    });
+    expect(connect.data).toMatchObject({
+      server: { features: [GSV_INFERENCE_FEATURE] },
+    });
+
+    const response = await managedRpc(socket, "generate-managed", "ai.text.generate", {
+      messages: [{ role: "user", content: "ping" }],
+      config: {
+        overrides: {
+          "config/ai/provider": "gsv",
+          "config/ai/model": "default",
+          "config/ai/api_key": "",
+        },
+      },
+      options: { maxTokens: 128, reasoning: "low", timeoutMs: 5_000 },
+    });
+
+    expect(response).toMatchObject({
+      ok: true,
+      data: {
+        provider: "gsv",
+        model: "gsv/default",
+        text: "managed:inst_integration_first:uid:1000:pid:none:run:none",
+      },
+    });
+    socket.close(1000, "test complete");
+  });
+
+  it("runs a managed agent turn through the registered provider", async () => {
+    await beginProvisioning(harness, "first");
+    const socket = await openManagedSocket(harness, "first");
+    await expectManagedRpcOk(socket, "setup-process-inference", "sys.setup", {
+      username: "process-owner",
+      password: "process-owner-password",
+      onboardingToken: "integration-onboarding-first",
+      ai: {
+        provider: "gsv",
+        model: "default",
+        apiKey: "",
+      },
+    });
+    await expectManagedRpcOk(socket, "connect-process-inference", "sys.connect", {
+      protocol: 2,
+      client: {
+        id: "managed-process-inference-test",
+        version: "1.0.0",
+        platform: "test",
+        role: "user",
+      },
+      auth: {
+        username: "process-owner",
+        password: "process-owner-password",
+      },
+    });
+    const spawned = await expectManagedRpcOk(
+      socket,
+      "spawn-process-inference",
+      "proc.spawn",
+      { label: "managed inference", interactive: true },
+    );
+    const pid = (spawned.data as { pid: string }).pid;
+    const finished = nextManagedSignal(socket, "proc.run.finished");
+    const sent = await expectManagedRpcOk(socket, "send-process-inference", "proc.send", {
+      pid,
+      message: "run managed inference",
+    });
+    const runId = (sent.data as { runId: string }).runId;
+
+    await expect(finished).resolves.toMatchObject({
+      type: "sig",
+      signal: "proc.run.finished",
+      payload: {
+        pid,
+        runId,
+        status: "ok",
+        text: expect.stringMatching(
+          `^managed:inst_integration_first:uid:[0-9]+:pid:${pid}:run:${runId}$`,
+        ),
+      },
+    });
+    socket.close(1000, "test complete");
+  });
+
+  it("propagates a scoped abort capability across the inference binding", async () => {
+    const response = await harness.getWorker("gsv-managed-inference-probe").fetch(
+      "http://gsv-managed-inference-probe/cancel",
+    );
+    expect(response.status).toBe(204);
+
+    const dependencies = harness.getWorker<{
+      INTEGRATION_STATE: DurableObjectNamespace<IntegrationState>;
+    }>("gsv-test-dependencies");
+    const { INTEGRATION_STATE } = await dependencies.getEnv();
+    const state = INTEGRATION_STATE.get(
+      INTEGRATION_STATE.idFromName("singleton"),
+    );
+    await waitForManagedInferenceCancellation(state, "inst_integration_first");
+  });
+
   it("routes trusted adapter RPC to its managed installation", async () => {
     const frame: AdapterGatewayRequestFrame = {
       type: "req",
@@ -261,6 +382,12 @@ type ManagedRpcResponse = {
   error?: { code?: number; message: string };
 };
 
+type ManagedSignalFrame = {
+  type: "sig";
+  signal: string;
+  payload?: unknown;
+};
+
 type HarnessWorker = ReturnType<TestHarness["getWorker"]>;
 type HarnessResponse = Awaited<ReturnType<HarnessWorker["fetch"]>>;
 type HarnessWebSocket = NonNullable<HarnessResponse["webSocket"]>;
@@ -310,6 +437,38 @@ async function managedRpc(
   });
   socket.send(JSON.stringify({ type: "req", id, call, args }));
   return await responsePromise;
+}
+
+function nextManagedSignal(
+  socket: HarnessWebSocket,
+  signal: string,
+): Promise<ManagedSignalFrame> {
+  const eventSocket = socket as unknown as {
+    addEventListener(
+      type: "message",
+      listener: (event: { data: unknown }) => void,
+    ): void;
+    removeEventListener(
+      type: "message",
+      listener: (event: { data: unknown }) => void,
+    ): void;
+  };
+  return new Promise((resolve, reject) => {
+    let timeout: ReturnType<typeof setTimeout>;
+    const onMessage = (event: { data: unknown }) => {
+      if (typeof event.data !== "string") return;
+      const frame = JSON.parse(event.data) as ManagedSignalFrame;
+      if (frame.type !== "sig" || frame.signal !== signal) return;
+      eventSocket.removeEventListener("message", onMessage);
+      clearTimeout(timeout);
+      resolve(frame);
+    };
+    eventSocket.addEventListener("message", onMessage);
+    timeout = setTimeout(() => {
+      eventSocket.removeEventListener("message", onMessage);
+      reject(new Error(`Timed out waiting for ${signal}`));
+    }, 5_000);
+  });
 }
 
 async function beginProvisioning(
@@ -382,4 +541,18 @@ async function putPublicAsset(
       customMetadata: { uid: "0", gid: "0", mode: "644" },
     },
   );
+}
+
+async function waitForManagedInferenceCancellation(
+  state: DurableObjectStub<IntegrationState>,
+  installationId: string,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (await state.wasManagedInferenceCancelled(installationId)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for managed inference cancellation");
 }

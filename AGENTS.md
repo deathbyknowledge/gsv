@@ -59,6 +59,7 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 ## System ownership
 
 - `accounts/`: installation reservations, hostname directory, private operator administration, one-time onboarding claims, managed principals, and account-to-installation membership.
+- `inference/`: private managed inference entrypoint and platform-owned provider transport.
 - `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
 - `gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
 - `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
@@ -141,6 +142,7 @@ Preserve unrelated user changes in a dirty worktree. Do not broaden a cleanup ba
 ```text
 gsv/
 ├── accounts/       # Managed accounts and installation directory
+├── inference/      # Private managed inference worker
 ├── gateway/       # Kernel, Process, syscalls, inference, filesystem
 ├── packages/gsv/  # Public TypeScript client and protocol
 ├── web/           # Desktop shell and embedded app host
@@ -171,6 +173,7 @@ npm run dev
 Validate only the surfaces affected by the change:
 
 - Managed accounts: `cd accounts && npm run typecheck && npm test`
+- Managed inference: `cd inference && npm run typecheck`
 - Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`

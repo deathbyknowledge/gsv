@@ -1,4 +1,8 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import {
+  GSV_INFERENCE_PRODUCT_MODEL,
+  GSV_INFERENCE_PROVIDER,
+} from "@humansandmachines/gsv/protocol";
 import type {
   AdapterAccountStatus,
   AdapterActivity,
@@ -14,6 +18,10 @@ import type {
   CompleteInstallationOnboardingResult,
   InstallationDirectoryResult,
   InstallationOnboardingAuthorization,
+  ManagedInferenceGeneration,
+  ManagedInferenceRequest,
+  ManagedInferenceResult,
+  ManagedInferenceService,
 } from "@humansandmachines/gsv/protocol";
 import { SINGLETON_INSTALLATION_ID } from "../../src/installation/identity";
 
@@ -80,6 +88,75 @@ export class IntegrationState extends DurableObject<Env> {
     const failure = await this.ctx.storage.get<OnboardingCompletionFailure>(key) ?? null;
     if (failure) await this.ctx.storage.delete(key);
     return failure;
+  }
+
+  async recordManagedInferenceCancellation(installationId: string): Promise<void> {
+    await this.ctx.storage.put(`managed-inference-cancelled:${installationId}`, true);
+  }
+
+  async wasManagedInferenceCancelled(installationId: string): Promise<boolean> {
+    return await this.ctx.storage.get<boolean>(
+      `managed-inference-cancelled:${installationId}`,
+    ) === true;
+  }
+}
+
+export class ManagedInferenceFixture
+  extends WorkerEntrypoint<Env>
+  implements ManagedInferenceService
+{
+  async generate(input: ManagedInferenceRequest): Promise<ManagedInferenceGeneration> {
+    const waitsForCancellation = input.messages.some((message) => (
+      message.role === "user" && message.content === "wait for cancellation"
+    ));
+    let resultReady = Promise.resolve();
+    let releaseResult = () => {};
+    let abort = async () => {};
+    if (waitsForCancellation) {
+      const id = this.env.INTEGRATION_STATE.idFromName(SINGLETON_INSTALLATION_ID);
+      const state = this.env.INTEGRATION_STATE.get(id);
+      resultReady = new Promise<void>((resolve) => {
+        releaseResult = resolve;
+      });
+      abort = async () => {
+        try {
+          await state.recordManagedInferenceCancellation(input.installationId);
+        } finally {
+          releaseResult();
+        }
+      };
+    }
+
+    const text = [
+      `managed:${input.installationId}`,
+      `uid:${input.actor.localUid}`,
+      `pid:${input.actor.processId ?? "none"}`,
+      `run:${input.actor.runId ?? "none"}`,
+    ].join(":");
+    const result: ManagedInferenceResult = {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      api: "gsv-inference",
+      provider: GSV_INFERENCE_PROVIDER,
+      model: GSV_INFERENCE_PRODUCT_MODEL,
+      usage: {
+        input: 1,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    };
+    return {
+      result: async () => {
+        await resultReady;
+        return result;
+      },
+      abort,
+    };
   }
 }
 

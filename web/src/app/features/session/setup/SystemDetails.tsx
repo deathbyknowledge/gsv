@@ -1,11 +1,21 @@
-import type { OnboardingDetailStep, OnboardingDraft } from "@humansandmachines/gsv/protocol";
+import {
+  GSV_INFERENCE_FEATURE,
+  GSV_INFERENCE_PROVIDER,
+  type OnboardingDetailStep,
+  type OnboardingDraft,
+} from "@humansandmachines/gsv/protocol";
 import { useEffect } from "preact/hooks";
 import { Checkbox } from "../../../components/ui/Checkbox";
 import { Select } from "../../../components/ui/Select";
 import { TextInput } from "../../../components/ui/TextInput";
 import { Toggle } from "../../../components/ui/Toggle";
 import { InfoTip } from "../../../components/ui/InfoTip";
-import { aiProviderOptionsForValue, aiProviderSelectIndex } from "../../../domain/aiProviders";
+import {
+  aiProviderOptionsForFeatures,
+  aiProviderOptionsForValue,
+  aiProviderSelectIndex,
+} from "../../../domain/aiProviders";
+import { readInstallationOnboardingToken } from "../../../services/session/installationOnboarding";
 import { advancedSectionsVisible } from "../sessionDomain";
 import "./SystemDetails.css";
 
@@ -27,10 +37,16 @@ export function SystemDetails({
     ? timezoneOptions
     : [...timezoneOptions, draft.system.timezone].filter(Boolean).sort((left, right) => left.localeCompare(right));
   const timezoneIndex = Math.max(0, options.indexOf(draft.system.timezone));
-  const aiProviderOptions = aiProviderOptionsForValue(draft.ai.provider);
+  const aiProviderOptions = aiProviderOptionsForValue(
+    draft.ai.provider,
+    aiProviderOptionsForFeatures(
+      readInstallationOnboardingToken() ? [GSV_INFERENCE_FEATURE] : undefined,
+    ),
+  );
   const aiProviderLabels = aiProviderOptions.map((option) => option.label);
   const aiProviderIndex = aiProviderSelectIndex(aiProviderOptions, draft.ai.provider);
   const defaultAiProvider = aiProviderOptions[0]?.value ?? "";
+  const defaultAiModel = aiProviderOptions[0]?.defaultModel ?? "";
 
   useEffect(() => {
     if (!showAiRows || draft.ai.provider.trim() || !defaultAiProvider) {
@@ -42,10 +58,14 @@ export function SystemDetails({
       }
       return {
         ...current,
-        ai: { ...current.ai, provider: defaultAiProvider },
+        ai: {
+          ...current.ai,
+          provider: defaultAiProvider,
+          model: current.ai.model.trim() ? current.ai.model : defaultAiModel,
+        },
       };
     });
-  }, [defaultAiProvider, draft.ai.provider, showAiRows, updateDraft]);
+  }, [defaultAiModel, defaultAiProvider, draft.ai.provider, showAiRows, updateDraft]);
 
   return (
     <section class="onboarding-section gsv-setup-preferences" data-setup-detail-step="system" hidden={draft.stage !== "details" || activeStep !== "system"}>
@@ -160,6 +180,9 @@ export function SystemDetails({
                   provider: checked && !current.ai.provider.trim()
                     ? defaultAiProvider
                     : current.ai.provider,
+                  model: checked && !current.ai.model.trim()
+                    ? defaultAiModel
+                    : current.ai.model,
                 },
               }))}
             />
@@ -171,10 +194,17 @@ export function SystemDetails({
               options={aiProviderLabels}
               value={aiProviderIndex}
               disabled={!showAiRows}
-              onChange={(index) => updateDraft((current) => ({
-                ...current,
-                ai: { ...current.ai, provider: aiProviderOptions[index]?.value ?? "" },
-              }))}
+              onChange={(index) => updateDraft((current) => {
+                const selected = aiProviderOptions[index];
+                return {
+                  ...current,
+                  ai: {
+                    ...current.ai,
+                    provider: selected?.value ?? "",
+                    model: selected?.defaultModel ?? current.ai.model,
+                  },
+                };
+              })}
             />
           </div>
           <div data-setup-ai-model-row hidden={!showAiRows}>
@@ -190,7 +220,7 @@ export function SystemDetails({
               }))}
             />
           </div>
-          <div data-setup-ai-key-row hidden={!showAiRows}>
+          <div data-setup-ai-key-row hidden={!showAiRows || draft.ai.provider === GSV_INFERENCE_PROVIDER}>
             <TextInput
               label="API key"
               type="password"

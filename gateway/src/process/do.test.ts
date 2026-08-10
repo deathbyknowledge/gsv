@@ -26,6 +26,7 @@ import { PROCESS_V001_INITIAL_SCHEMA } from "./schema/v001_initial";
 import { PROCESS_V004_PENDING_TOOL_DISPATCH_ID } from "./schema/v004_pending_tool_dispatch_id";
 import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./schema/v005_tool_result_outcome";
 import { PROCESS_V006_PENDING_HIL_OWNER } from "./schema/v006_pending_hil_owner";
+import { processDurableObjectName } from "../installation/routing";
 
 const ROOT_IDENTITY: ProcessIdentity = {
   uid: 0,
@@ -240,6 +241,47 @@ async function initProcess(pid: string, identity: ProcessIdentity, opts?: { regi
 // ---------------------------------------------------------------------------
 
 describe("Process DO — mechanical", () => {
+  it("derives inference attribution from its named installation", async () => {
+    const installationId = "inst_managed_process";
+    const pid = "mech-managed-inference";
+    const name = processDurableObjectName(installationId, pid);
+    const stub = env.PROCESS.get(env.PROCESS.idFromName(name));
+    const identityResponse = await stub.recvFrame(makeReq("proc.setidentity", {
+      identity: ROOT_IDENTITY,
+      profile: DEFAULT_PROFILE,
+    }));
+    expect((identityResponse as ResponseFrame).ok).toBe(true);
+
+    const result = await runInDurableObject(stub, async (instance: Process) => {
+      const process = instance as any;
+      const first = await process.buildInferenceAttribution(
+        { provider: "gsv", model: "default" },
+        "run",
+        "run-managed",
+      );
+      const repeated = await process.buildInferenceAttribution(
+        { provider: "gsv", model: "default" },
+        "run",
+        "run-managed",
+      );
+      process.store.appendMessage("user", "next model turn");
+      const next = await process.buildInferenceAttribution(
+        { provider: "gsv", model: "default" },
+        "run",
+        "run-managed",
+      );
+      return { first, repeated, next };
+    });
+
+    expect(result.first).toMatchObject({
+      installationId,
+      actor: { localUid: 0, processId: pid, runId: "run-managed" },
+    });
+    expect(result.first.logicalRequestId).toMatch(/^inference:[a-f0-9]{64}$/);
+    expect(result.repeated.logicalRequestId).toBe(result.first.logicalRequestId);
+    expect(result.next.logicalRequestId).not.toBe(result.first.logicalRequestId);
+  });
+
   it("records terminal adapter delivery outcomes in process history", async () => {
     const pid = "mech-delivery-notice";
     const stub = await initProcess(pid, ROOT_IDENTITY);

@@ -24,6 +24,7 @@ import { SERVER_RELEASE } from "../version";
 import { ensureAccountHomeLayout } from "./account-home";
 import { ensurePublicAssetStorageLayout } from "../public-assets";
 import { USER_CONNECTION_SIGNALS } from "./user-signals";
+import { gsvInferenceFeaturesFromEnv } from "../inference/gsv-provider";
 
 export type ConnectOutcome =
   | { ok: true; identity: ConnectionIdentity; result: ConnectResult }
@@ -194,11 +195,15 @@ export async function handleConnect(
       return { ok: false, code: 103, message: "Invalid client role" };
   }
 
+  const serverFeatures = gsvInferenceFeaturesFromEnv(ctx.env);
   const result: ConnectResult = {
     protocol: 2,
     server: {
       version: serverVersion,
       release: SERVER_RELEASE,
+      ...(serverFeatures.length > 0
+        ? { features: serverFeatures }
+        : {}),
       connectionId: ctx.connection.id,
     },
     identity: connectionIdentity,
