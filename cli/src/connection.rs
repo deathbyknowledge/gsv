@@ -1,26 +1,159 @@
 use crate::build_info;
 use crate::protocol::{
-    AuthInfo, ClientInfo, ConnectArgs, ConnectResult, DriverInfo, ErrorShape, Frame, RequestFrame,
-    ResponseFrame, PROTOCOL_VERSION,
+    build_binary_frame, AuthInfo, ClientInfo, ConnectArgs, ConnectResult, DriverInfo, ErrorShape,
+    Frame, RequestFrame, ResponseFrame, SignalFrame, BINARY_FRAME_CANCEL, BINARY_FRAME_END,
+    BINARY_FRAME_HEADER_BYTES, PROTOCOL_VERSION, REQUEST_CANCEL_SIGNAL,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
+use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-pub type PendingRequests = Arc<Mutex<HashMap<String, oneshot::Sender<ResponseFrame>>>>;
+type PendingRequests = Arc<Mutex<HashMap<String, PendingRequestEntry>>>;
 pub type FrameHandler = Arc<RwLock<Option<Box<dyn Fn(Frame) + Send + Sync>>>>;
 pub type BinaryHandler = Arc<RwLock<Option<Box<dyn Fn(Vec<u8>) + Send + Sync>>>>;
 pub type DisconnectFlag = Arc<AtomicBool>;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+struct PendingRequestEntry {
+    sender: oneshot::Sender<ResponseFrame>,
+    state: Arc<PendingRequestState>,
+}
+
+#[derive(Default)]
+struct PendingRequestState {
+    response_body_stream_id: AtomicU32,
+}
+
+struct PendingResponse {
+    id: String,
+    receiver: oneshot::Receiver<ResponseFrame>,
+    state: Arc<PendingRequestState>,
+    pending: PendingRequests,
+    abandoned_bodies: Arc<Mutex<AbandonedBodyStreams>>,
+    tx: mpsc::Sender<Message>,
+    complete: bool,
+}
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_ABANDONED_BODY_STREAMS: usize = 256;
+
+#[derive(Default)]
+struct AbandonedBodyStreams {
+    stream_ids: HashSet<u32>,
+    insertion_order: VecDeque<u32>,
+}
+
+impl AbandonedBodyStreams {
+    fn insert(&mut self, stream_id: u32) {
+        if stream_id == 0 || !self.stream_ids.insert(stream_id) {
+            return;
+        }
+        while self.insertion_order.len() >= MAX_ABANDONED_BODY_STREAMS {
+            if let Some(evicted) = self.insertion_order.pop_front() {
+                self.stream_ids.remove(&evicted);
+            }
+        }
+        self.insertion_order.push_back(stream_id);
+    }
+
+    fn accept_reused(&mut self, stream_id: u32) {
+        self.stream_ids.remove(&stream_id);
+        self.insertion_order.retain(|queued| *queued != stream_id);
+    }
+
+    fn should_discard(&mut self, stream_id: u32, flags: u8) -> bool {
+        let should_discard = self.stream_ids.contains(&stream_id);
+        if should_discard && flags & BINARY_FRAME_END != 0 {
+            self.stream_ids.remove(&stream_id);
+            self.insertion_order.retain(|queued| *queued != stream_id);
+        }
+        should_discard
+    }
+}
+
+fn should_discard_abandoned_frame(
+    abandoned: &mut AbandonedBodyStreams,
+    stream_id: u32,
+    flags: u8,
+) -> bool {
+    flags & BINARY_FRAME_CANCEL == 0 && abandoned.should_discard(stream_id, flags)
+}
+
+impl PendingResponse {
+    fn complete(&mut self) {
+        self.complete = true;
+    }
+}
+
+impl Drop for PendingResponse {
+    fn drop(&mut self) {
+        if self.complete {
+            return;
+        }
+
+        let removed = self
+            .pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.remove(&self.id))
+            .is_some();
+        if removed {
+            if let Ok(frame) = serde_json::to_string(&Frame::Sig(SignalFrame {
+                signal: REQUEST_CANCEL_SIGNAL.to_string(),
+                payload: Some(serde_json::json!({
+                    "id": self.id,
+                    "reason": "Request future was cancelled",
+                })),
+                seq: None,
+            })) {
+                send_detached(&self.tx, Message::Text(frame));
+            }
+        }
+
+        let stream_id = self.state.response_body_stream_id.load(Ordering::Acquire);
+        if stream_id != 0 {
+            if let Ok(mut abandoned) = self.abandoned_bodies.lock() {
+                abandoned.insert(stream_id);
+            }
+            send_body_cancel(&self.tx, stream_id, "Response body was no longer needed");
+        }
+    }
+}
+
+fn send_detached(tx: &mpsc::Sender<Message>, message: Message) {
+    match tx.try_send(message) {
+        Ok(()) => {}
+        Err(mpsc::error::TrySendError::Full(message)) => {
+            let tx = tx.clone();
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                runtime.spawn(async move {
+                    let _ = tx.send(message).await;
+                });
+            }
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {}
+    }
+}
+
+fn send_body_cancel(tx: &mpsc::Sender<Message>, stream_id: u32, reason: &str) {
+    if stream_id == 0 {
+        return;
+    }
+    send_detached(
+        tx,
+        Message::Binary(build_binary_frame(
+            stream_id,
+            BINARY_FRAME_CANCEL | BINARY_FRAME_END,
+            reason.as_bytes(),
+        )),
+    );
+}
 
 #[derive(Debug, Clone)]
 pub struct GatewayRpcError {
@@ -78,14 +211,16 @@ impl Display for GatewayRpcError {
 impl StdError for GatewayRpcError {}
 
 async fn fail_all_pending_requests(pending: &PendingRequests, code: i32, message: &str) {
-    let mut pending = pending.lock().await;
+    let Ok(mut pending) = pending.lock() else {
+        return;
+    };
     if pending.is_empty() {
         return;
     }
 
     let message = message.to_string();
-    for (id, sender) in pending.drain() {
-        let _ = sender.send(ResponseFrame {
+    for (id, entry) in pending.drain() {
+        let _ = entry.sender.send(ResponseFrame {
             id,
             ok: false,
             data: None,
@@ -116,6 +251,7 @@ pub struct Connection {
     pending: PendingRequests,
     frame_handler: FrameHandler,
     binary_handler: BinaryHandler,
+    abandoned_bodies: Arc<Mutex<AbandonedBodyStreams>>,
     disconnected: DisconnectFlag,
     pub connect_result: Option<ConnectResult>,
 }
@@ -149,6 +285,7 @@ impl Connection {
         let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
         let frame_handler: FrameHandler = Arc::new(RwLock::new(Some(Box::new(on_frame))));
         let binary_handler: BinaryHandler = Arc::new(RwLock::new(None));
+        let abandoned_bodies = Arc::new(Mutex::new(AbandonedBodyStreams::default()));
         let disconnected: DisconnectFlag = Arc::new(AtomicBool::new(false));
 
         let pending_for_write = pending.clone();
@@ -172,6 +309,7 @@ impl Connection {
         let pending_clone = pending.clone();
         let frame_handler_clone = frame_handler.clone();
         let binary_handler_clone = binary_handler.clone();
+        let abandoned_bodies_clone = abandoned_bodies.clone();
         let disconnected_clone = disconnected.clone();
 
         tokio::spawn(async move {
@@ -181,9 +319,43 @@ impl Connection {
                         if let Ok(frame) = serde_json::from_str::<Frame>(&text) {
                             match &frame {
                                 Frame::Res(res) => {
-                                    let mut pending = pending_clone.lock().await;
-                                    if let Some(sender) = pending.remove(&res.id) {
-                                        let _ = sender.send(res.clone());
+                                    let entry =
+                                        pending_clone.lock().ok().and_then(|mut pending| {
+                                            if let Some(entry) = pending.get(&res.id) {
+                                                if let Some(body) = res.body {
+                                                    entry
+                                                        .state
+                                                        .response_body_stream_id
+                                                        .store(body.stream_id, Ordering::Release);
+                                                }
+                                            }
+                                            pending.remove(&res.id)
+                                        });
+                                    if entry.is_some() {
+                                        if let Some(body) = res.body {
+                                            if let Ok(mut abandoned) = abandoned_bodies_clone.lock()
+                                            {
+                                                abandoned.accept_reused(body.stream_id);
+                                            }
+                                        }
+                                    }
+                                    let abandoned_body = match entry {
+                                        Some(entry) => entry
+                                            .sender
+                                            .send(res.clone())
+                                            .err()
+                                            .and_then(|response| response.body),
+                                        None => res.body,
+                                    };
+                                    if let Some(body) = abandoned_body {
+                                        if let Ok(mut abandoned) = abandoned_bodies_clone.lock() {
+                                            abandoned.insert(body.stream_id);
+                                        }
+                                        send_body_cancel(
+                                            &tx_for_read,
+                                            body.stream_id,
+                                            "Response body had no receiver",
+                                        );
                                     }
                                 }
                                 _ => {
@@ -196,6 +368,23 @@ impl Connection {
                         }
                     }
                     Message::Binary(data) => {
+                        let cancelled = if data.len() >= BINARY_FRAME_HEADER_BYTES {
+                            let stream_id =
+                                u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+                            let flags = data[4];
+                            abandoned_bodies_clone
+                                .lock()
+                                .ok()
+                                .map(|mut abandoned| {
+                                    should_discard_abandoned_frame(&mut abandoned, stream_id, flags)
+                                })
+                                .unwrap_or(false)
+                        } else {
+                            false
+                        };
+                        if cancelled {
+                            continue;
+                        }
                         let handler = binary_handler_clone.read().await;
                         if let Some(ref h) = *handler {
                             h(data);
@@ -222,6 +411,7 @@ impl Connection {
             pending,
             frame_handler,
             binary_handler,
+            abandoned_bodies,
             disconnected,
             connect_result: None,
         };
@@ -332,16 +522,15 @@ impl Connection {
         args: Option<Value>,
         timeout: Duration,
     ) -> Result<ResponseFrame, Box<dyn std::error::Error>> {
-        let (id, rx) = self.send_request_frame(call, args).await?;
+        let mut request = self.send_request_frame(call, args).await?;
 
-        match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(res)) => Ok(res),
-            Ok(Err(_)) => Err("Connection closed while waiting for response".into()),
-            Err(_) => {
-                let mut pending = self.pending.lock().await;
-                pending.remove(&id);
-                Err(format!("Request timed out after {:?}: {}", timeout, call).into())
+        match tokio::time::timeout(timeout, &mut request.receiver).await {
+            Ok(Ok(res)) => {
+                request.complete();
+                Ok(res)
             }
+            Ok(Err(_)) => Err("Connection closed while waiting for response".into()),
+            Err(_) => Err(format!("Request timed out after {:?}: {}", timeout, call).into()),
         }
     }
 
@@ -350,10 +539,11 @@ impl Connection {
         call: &str,
         args: Option<Value>,
     ) -> Result<ResponseFrame, Box<dyn std::error::Error>> {
-        let (_id, rx) = self.send_request_frame(call, args).await?;
-        let res = rx
+        let mut request = self.send_request_frame(call, args).await?;
+        let res = (&mut request.receiver)
             .await
             .map_err(|error| format!("Connection closed while waiting for response: {}", error))?;
+        request.complete();
         Ok(res)
     }
 
@@ -361,7 +551,7 @@ impl Connection {
         &self,
         call: &str,
         args: Option<Value>,
-    ) -> Result<(String, oneshot::Receiver<ResponseFrame>), Box<dyn std::error::Error>> {
+    ) -> Result<PendingResponse, Box<dyn std::error::Error>> {
         if self.is_disconnected() {
             return Err("Connection is disconnected".into());
         }
@@ -370,20 +560,42 @@ impl Connection {
         let id = req.id.clone();
 
         let (tx, rx) = oneshot::channel();
+        let state = Arc::new(PendingRequestState::default());
         {
-            let mut pending = self.pending.lock().await;
-            pending.insert(id.clone(), tx);
+            let mut pending = self
+                .pending
+                .lock()
+                .map_err(|error| format!("Pending request registry is unavailable: {error}"))?;
+            pending.insert(
+                id.clone(),
+                PendingRequestEntry {
+                    sender: tx,
+                    state: state.clone(),
+                },
+            );
         }
+
+        let mut pending_response = PendingResponse {
+            id,
+            receiver: rx,
+            state,
+            pending: self.pending.clone(),
+            abandoned_bodies: self.abandoned_bodies.clone(),
+            tx: self.tx.clone(),
+            complete: false,
+        };
 
         let frame = Frame::Req(req);
         let msg = Message::Text(serde_json::to_string(&frame)?);
         if let Err(error) = self.tx.send(msg).await {
-            let mut pending = self.pending.lock().await;
-            pending.remove(&id);
+            pending_response.complete();
+            if let Ok(mut pending) = self.pending.lock() {
+                pending.remove(&pending_response.id);
+            }
             return Err(error.into());
         }
 
-        Ok((id, rx))
+        Ok(pending_response)
     }
 }
 
@@ -403,12 +615,19 @@ fn parse_connect_result(data: Option<Value>) -> Result<ConnectResult, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::BINARY_FRAME_DATA;
 
     #[tokio::test]
     async fn fail_all_pending_requests_resolves_waiters() {
         let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
         let (tx, rx) = oneshot::channel();
-        pending.lock().await.insert("req-1".to_string(), tx);
+        pending.lock().expect("pending mutex").insert(
+            "req-1".to_string(),
+            PendingRequestEntry {
+                sender: tx,
+                state: Arc::new(PendingRequestState::default()),
+            },
+        );
 
         fail_all_pending_requests(&pending, 503, "Connection closed").await;
 
@@ -419,7 +638,154 @@ mod tests {
         let error = response.error.expect("error details should be present");
         assert_eq!(error.code, 503);
         assert_eq!(error.message, "Connection closed");
-        assert!(pending.lock().await.is_empty());
+        assert!(pending.lock().expect("pending mutex").is_empty());
+    }
+
+    #[tokio::test]
+    async fn dropping_a_pending_request_removes_it_and_sends_request_cancel() {
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        let state = Arc::new(PendingRequestState::default());
+        let (response_tx, response_rx) = oneshot::channel();
+        pending.lock().expect("pending mutex").insert(
+            "req-cancel".to_string(),
+            PendingRequestEntry {
+                sender: response_tx,
+                state: state.clone(),
+            },
+        );
+        let (wire_tx, mut wire_rx) = mpsc::channel(2);
+        let request = PendingResponse {
+            id: "req-cancel".to_string(),
+            receiver: response_rx,
+            state,
+            pending: pending.clone(),
+            abandoned_bodies: Arc::new(Mutex::new(AbandonedBodyStreams::default())),
+            tx: wire_tx,
+            complete: false,
+        };
+
+        drop(request);
+
+        assert!(pending.lock().expect("pending mutex").is_empty());
+        let message = wire_rx.recv().await.expect("request.cancel frame");
+        let Message::Text(message) = message else {
+            panic!("expected text cancellation frame");
+        };
+        assert_eq!(
+            serde_json::from_str::<Value>(&message).expect("valid cancellation frame"),
+            serde_json::json!({
+                "type": "sig",
+                "signal": "request.cancel",
+                "payload": {
+                    "id": "req-cancel",
+                    "reason": "Request future was cancelled",
+                },
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn request_timeout_cancels_the_registered_request() {
+        let (wire_tx, mut wire_rx) = mpsc::channel(4);
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        let connection = Connection {
+            tx: wire_tx,
+            pending: pending.clone(),
+            frame_handler: Arc::new(RwLock::new(None)),
+            binary_handler: Arc::new(RwLock::new(None)),
+            abandoned_bodies: Arc::new(Mutex::new(AbandonedBodyStreams::default())),
+            disconnected: Arc::new(AtomicBool::new(false)),
+            connect_result: None,
+        };
+
+        let result = connection
+            .request_with_timeout("test.slow", None, Duration::from_millis(1))
+            .await;
+        let Err(error) = result else {
+            panic!("request should time out");
+        };
+        assert!(error.to_string().contains("timed out"));
+        assert!(pending.lock().expect("pending mutex").is_empty());
+
+        let request = wire_rx.recv().await.expect("request frame");
+        assert!(matches!(request, Message::Text(_)));
+        let cancellation = wire_rx.recv().await.expect("request.cancel frame");
+        let Message::Text(cancellation) = cancellation else {
+            panic!("expected text cancellation frame");
+        };
+        let frame: Frame = serde_json::from_str(&cancellation).expect("valid cancellation frame");
+        assert!(matches!(
+            frame,
+            Frame::Sig(SignalFrame { ref signal, .. }) if signal == REQUEST_CANCEL_SIGNAL
+        ));
+    }
+
+    #[tokio::test]
+    async fn dropping_a_delivered_body_sends_body_cancel_and_discards_late_chunks() {
+        let state = Arc::new(PendingRequestState::default());
+        state.response_body_stream_id.store(42, Ordering::Release);
+        let (_response_tx, response_rx) = oneshot::channel();
+        let (wire_tx, mut wire_rx) = mpsc::channel(2);
+        let abandoned_bodies = Arc::new(Mutex::new(AbandonedBodyStreams::default()));
+        let request = PendingResponse {
+            id: "req-body".to_string(),
+            receiver: response_rx,
+            state,
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            abandoned_bodies: abandoned_bodies.clone(),
+            tx: wire_tx,
+            complete: false,
+        };
+
+        drop(request);
+
+        assert!(abandoned_bodies
+            .lock()
+            .expect("abandoned body mutex")
+            .stream_ids
+            .contains(&42));
+        let message = wire_rx.recv().await.expect("body cancellation frame");
+        let Message::Binary(message) = message else {
+            panic!("expected binary cancellation frame");
+        };
+        let (stream_id, flags, _) =
+            crate::protocol::parse_binary_frame(&message).expect("valid binary cancellation frame");
+        assert_eq!(stream_id, 42);
+        assert_eq!(flags, BINARY_FRAME_CANCEL | BINARY_FRAME_END);
+    }
+
+    #[test]
+    fn abandoned_body_tracking_is_bounded_and_forgets_terminal_streams() {
+        let mut streams = AbandonedBodyStreams::default();
+        for stream_id in 1..=(MAX_ABANDONED_BODY_STREAMS as u32 + 1) {
+            streams.insert(stream_id);
+        }
+
+        assert_eq!(streams.stream_ids.len(), MAX_ABANDONED_BODY_STREAMS);
+        assert!(!streams.stream_ids.contains(&1));
+        let newest = MAX_ABANDONED_BODY_STREAMS as u32 + 1;
+        assert!(streams.should_discard(newest, BINARY_FRAME_END));
+        assert!(!streams.stream_ids.contains(&newest));
+        assert!(!streams.should_discard(newest, BINARY_FRAME_END));
+
+        streams.insert(42);
+        streams.accept_reused(42);
+        assert!(!streams.should_discard(42, BINARY_FRAME_DATA));
+        streams.insert(42);
+        assert!(streams.should_discard(42, BINARY_FRAME_END));
+        assert!(!streams.should_discard(42, BINARY_FRAME_DATA));
+
+        streams.insert(99);
+        assert!(!should_discard_abandoned_frame(
+            &mut streams,
+            99,
+            BINARY_FRAME_CANCEL | BINARY_FRAME_END,
+        ));
+        assert!(should_discard_abandoned_frame(
+            &mut streams,
+            99,
+            BINARY_FRAME_DATA,
+        ));
     }
 
     #[test]
