@@ -55,12 +55,13 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 - `gateway/src/inference/`: provider integration and model transport.
 - `packages/gsv/`: public client and protocol types.
 - `web/`: desktop shell, setup/login, system UI, and browser-side gateway integration.
+- `native/`: GPUI desktop client, text-first interaction model, and native presentation.
 - `cli/`: user, device, deployment, and administration commands.
 - `adapters/`: platform-specific messaging workers and identity normalization.
 - `extension/`: browser-backed target and browser integration.
 - `ripgit/`: git-backed repositories and filesystem storage operations.
 
-Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web shell. Keep target selection below stable syscall contracts.
+Keep platform-specific identity and delivery behavior in its adapter. Keep visual presentation in the web and native clients. Keep target selection below stable syscall contracts.
 
 ## Runtime invariants
 
@@ -127,6 +128,7 @@ gsv/
 ├── gateway/       # Kernel, Process, syscalls, inference, filesystem
 ├── packages/gsv/  # Public TypeScript client and protocol
 ├── web/           # Desktop shell and embedded app host
+├── native/        # GPUI text-first native client
 ├── cli/           # Rust CLI and device runtime
 ├── adapters/      # WhatsApp, Discord, Telegram, and test channels
 ├── extension/     # Browser target
@@ -155,6 +157,7 @@ Validate only the surfaces affected by the change:
 
 - Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
+- Native client: `cargo fmt --manifest-path native/Cargo.toml --check && cargo test --manifest-path native/Cargo.toml && cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`
 - CLI/device: `cd cli && cargo fmt --check && cargo test`
 - ripgit: `cd ripgit && npm test`
