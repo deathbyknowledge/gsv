@@ -7,11 +7,17 @@ use std::thread;
 use std::time::Duration;
 
 use gsv::config::CliConfig;
+use gsv::connection::GatewayRpcError;
 use gsv::kernel_client::{GatewayAuth, KernelClient, ProcSendResult};
 use gsv::protocol::Frame;
 use serde_json::{json, Value};
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio::task::JoinSet;
+
+use crate::startup::{
+    resolve_startup, ConnectionSettings, Credential, LoginDefaults, LoginStep, StartupResolution,
+    StartupSources,
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const RPC_TIMEOUT: Duration = Duration::from_secs(45);
@@ -30,8 +36,12 @@ pub enum ApprovalDecision {
     Deny,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum ClientCommand {
+    Connect(ConnectionSettings),
+    CancelConnect {
+        attempt_id: u64,
+    },
     Send {
         submission_id: u64,
         message: String,
@@ -51,11 +61,23 @@ pub enum ClientCommand {
 #[derive(Clone, Debug)]
 pub enum ClientEvent {
     Connecting,
+    LoginFailed {
+        attempt_id: u64,
+        defaults: LoginDefaults,
+        step: LoginStep,
+        message: String,
+    },
+    SetupRequired {
+        attempt_id: u64,
+        defaults: LoginDefaults,
+        message: String,
+    },
     Reconnecting {
         attempt: u32,
         message: String,
     },
     Connected {
+        attempt_id: u64,
         session_id: u64,
         pid: String,
     },
@@ -113,11 +135,20 @@ pub enum ClientEvent {
 pub struct ClientHandle {
     pub commands: tokio_mpsc::UnboundedSender<ClientCommand>,
     pub events: tokio_mpsc::UnboundedReceiver<ClientEvent>,
+    pub login: Option<LoginDefaults>,
 }
 
 pub fn start(demo: bool) -> ClientHandle {
     let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
     let (event_tx, event_rx) = tokio_mpsc::unbounded_channel();
+    let (initial_connection, login) = if demo {
+        (None, None)
+    } else {
+        match startup_resolution() {
+            StartupResolution::Connect(settings) => (Some(settings), None),
+            StartupResolution::Login(defaults) => (None, Some(defaults)),
+        }
+    };
     let thread_name = if demo {
         "gsv-native-demo"
     } else {
@@ -143,7 +174,7 @@ pub fn start(demo: bool) -> ClientHandle {
             if demo {
                 runtime.block_on(run_demo(command_rx, thread_events));
             } else {
-                runtime.block_on(run_live(command_rx, thread_events));
+                runtime.block_on(run_live(command_rx, thread_events, initial_connection));
             }
         });
     if let Err(error) = spawn_result {
@@ -155,54 +186,175 @@ pub fn start(demo: bool) -> ClientHandle {
     ClientHandle {
         commands: command_tx,
         events: event_rx,
+        login,
     }
 }
 
 async fn run_live(
     mut commands: tokio_mpsc::UnboundedReceiver<ClientCommand>,
     events: tokio_mpsc::UnboundedSender<ClientEvent>,
+    mut connection: Option<ConnectionSettings>,
 ) {
-    let _ = events.send(ClientEvent::Connecting);
     let mut preferred_pid = None;
     let mut reconnect_attempt = 0_u32;
+    let mut has_connected = false;
 
-    loop {
-        let config = CliConfig::load();
-        let (url, auth) = gateway_settings(&config);
+    'connection: loop {
+        let settings = match connection.take() {
+            Some(settings) => settings,
+            None => {
+                has_connected = false;
+                preferred_pid = None;
+                reconnect_attempt = 0;
+                let Some(settings) = wait_for_connection(&mut commands, &events).await else {
+                    return;
+                };
+                settings
+            }
+        };
+        let _ = events.send(ClientEvent::Connecting);
         let reconnect_pid = preferred_pid.clone();
-        let establishing =
-            establish_live_session(&url, auth, reconnect_pid.as_deref(), events.clone());
+        let url = settings.url.clone();
+        let establishing = establish_live_session(
+            &url,
+            gateway_auth(&settings),
+            reconnect_pid.as_deref(),
+            events.clone(),
+        );
         tokio::pin!(establishing);
 
         let session = loop {
             tokio::select! {
                 biased;
-                result = &mut establishing => break result,
                 command = commands.recv() => {
                     let Some(command) = command else {
                         return;
                     };
-                    if handle_unavailable_command(command, &events) {
-                        return;
+                    match command {
+                        ClientCommand::Connect(next) => {
+                            has_connected = false;
+                            preferred_pid = None;
+                            reconnect_attempt = 0;
+                            connection = Some(next);
+                            continue 'connection;
+                        }
+                        ClientCommand::CancelConnect { attempt_id }
+                            if attempt_id == settings.attempt_id =>
+                        {
+                            has_connected = false;
+                            preferred_pid = None;
+                            continue 'connection;
+                        }
+                        command => {
+                            if handle_unavailable_command(command, &events) {
+                                return;
+                            }
+                        }
                     }
                 }
+                result = &mut establishing => break result,
             }
         };
 
         let session = match session {
             Ok(session) => session,
             Err(error) => {
+                match error.kind {
+                    EstablishFailureKind::Authentication(step) => {
+                        let _ = events.send(ClientEvent::LoginFailed {
+                            attempt_id: settings.attempt_id,
+                            defaults: login_defaults(&settings),
+                            step,
+                            message: error.message,
+                        });
+                        preferred_pid = None;
+                        continue;
+                    }
+                    EstablishFailureKind::SetupRequired => {
+                        let _ = events.send(ClientEvent::SetupRequired {
+                            attempt_id: settings.attempt_id,
+                            defaults: login_defaults(&settings),
+                            message: error.message,
+                        });
+                        preferred_pid = None;
+                        continue;
+                    }
+                    EstablishFailureKind::Transport if !has_connected => {
+                        let _ = events.send(ClientEvent::LoginFailed {
+                            attempt_id: settings.attempt_id,
+                            defaults: login_defaults(&settings),
+                            step: LoginStep::Url,
+                            message: error.message,
+                        });
+                        preferred_pid = None;
+                        continue;
+                    }
+                    EstablishFailureKind::Session if !has_connected => {
+                        let _ = events.send(ClientEvent::LoginFailed {
+                            attempt_id: settings.attempt_id,
+                            defaults: login_defaults(&settings),
+                            step: LoginStep::Password,
+                            message: error.message,
+                        });
+                        preferred_pid = None;
+                        continue;
+                    }
+                    EstablishFailureKind::Transport | EstablishFailureKind::Session => {}
+                }
                 reconnect_attempt = reconnect_attempt.saturating_add(1);
                 let _ = events.send(ClientEvent::Reconnecting {
                     attempt: reconnect_attempt,
-                    message: error,
+                    message: error.message,
                 });
-                if wait_to_reconnect(reconnect_attempt, &mut commands, &events).await {
-                    return;
+                match wait_to_reconnect(
+                    reconnect_attempt,
+                    settings.attempt_id,
+                    &mut commands,
+                    &events,
+                )
+                .await
+                {
+                    ReconnectWaitOutcome::Retry => connection = Some(settings),
+                    ReconnectWaitOutcome::Replace(next) => {
+                        has_connected = false;
+                        preferred_pid = None;
+                        connection = Some(next);
+                    }
+                    ReconnectWaitOutcome::Cancelled => {
+                        has_connected = false;
+                        preferred_pid = None;
+                    }
+                    ReconnectWaitOutcome::Shutdown => return,
                 }
                 continue;
             }
         };
+
+        loop {
+            match commands.try_recv() {
+                Ok(ClientCommand::Connect(next)) => {
+                    has_connected = false;
+                    preferred_pid = None;
+                    reconnect_attempt = 0;
+                    connection = Some(next);
+                    continue 'connection;
+                }
+                Ok(ClientCommand::CancelConnect { attempt_id })
+                    if attempt_id == settings.attempt_id =>
+                {
+                    has_connected = false;
+                    preferred_pid = None;
+                    continue 'connection;
+                }
+                Ok(command) => {
+                    if handle_unavailable_command(command, &events) {
+                        return;
+                    }
+                }
+                Err(tokio_mpsc::error::TryRecvError::Empty) => break,
+                Err(tokio_mpsc::error::TryRecvError::Disconnected) => return,
+            }
+        }
 
         let LiveSession {
             client,
@@ -213,8 +365,14 @@ async fn run_live(
             signal_lease,
             session_id,
         } = session;
+        has_connected = true;
+        reconnect_attempt = 0;
         preferred_pid = Some(pid.clone());
+        if settings.remember_identity {
+            remember_connection_identity(&settings);
+        }
         let _ = events.send(ClientEvent::Connected {
+            attempt_id: settings.attempt_id,
             session_id,
             pid: pid.clone(),
         });
@@ -222,12 +380,15 @@ async fn run_live(
             signal_lease.handoff_history(history_request_signal_id, history, &events);
 
         match run_connected_session(
-            client,
-            pid,
+            ActiveClientSession {
+                client,
+                pid,
+                process_exit,
+                signal_lease,
+                attempt_id: settings.attempt_id,
+            },
             &mut commands,
             &events,
-            process_exit,
-            signal_lease,
             initial_history_superseded,
         )
         .await
@@ -239,9 +400,35 @@ async fn run_live(
                     attempt: reconnect_attempt,
                     message,
                 });
-                if wait_to_reconnect(reconnect_attempt, &mut commands, &events).await {
-                    return;
+                match wait_to_reconnect(
+                    reconnect_attempt,
+                    settings.attempt_id,
+                    &mut commands,
+                    &events,
+                )
+                .await
+                {
+                    ReconnectWaitOutcome::Retry => connection = Some(settings),
+                    ReconnectWaitOutcome::Replace(next) => {
+                        has_connected = false;
+                        preferred_pid = None;
+                        connection = Some(next);
+                    }
+                    ReconnectWaitOutcome::Cancelled => {
+                        has_connected = false;
+                        preferred_pid = None;
+                    }
+                    ReconnectWaitOutcome::Shutdown => return,
                 }
+            }
+            ConnectedSessionOutcome::Replace(next) => {
+                has_connected = false;
+                preferred_pid = None;
+                connection = Some(next);
+            }
+            ConnectedSessionOutcome::Cancelled => {
+                has_connected = false;
+                preferred_pid = None;
             }
         }
     }
@@ -255,6 +442,37 @@ struct LiveSession {
     process_exit: Arc<tokio::sync::Notify>,
     signal_lease: SessionSignalLease,
     session_id: u64,
+}
+
+struct ActiveClientSession {
+    client: Arc<KernelClient>,
+    pid: String,
+    process_exit: Arc<tokio::sync::Notify>,
+    signal_lease: SessionSignalLease,
+    attempt_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EstablishFailureKind {
+    Authentication(LoginStep),
+    SetupRequired,
+    Transport,
+    Session,
+}
+
+#[derive(Debug)]
+struct EstablishFailure {
+    kind: EstablishFailureKind,
+    message: String,
+}
+
+impl EstablishFailure {
+    fn session(message: impl Into<String>) -> Self {
+        Self {
+            kind: EstablishFailureKind::Session,
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -408,6 +626,15 @@ impl Drop for SessionSignalLease {
 
 enum ConnectedSessionOutcome {
     Reconnect(String),
+    Replace(ConnectionSettings),
+    Cancelled,
+    Shutdown,
+}
+
+enum ReconnectWaitOutcome {
+    Retry,
+    Replace(ConnectionSettings),
+    Cancelled,
     Shutdown,
 }
 
@@ -675,7 +902,10 @@ fn spawn_connected_command(
                 }
             });
         }
-        ClientCommand::RefreshHistory | ClientCommand::Shutdown => {}
+        ClientCommand::Connect(_)
+        | ClientCommand::CancelConnect { .. }
+        | ClientCommand::RefreshHistory
+        | ClientCommand::Shutdown => {}
     }
 }
 
@@ -914,7 +1144,7 @@ async fn establish_live_session(
     auth: GatewayAuth,
     preferred_pid: Option<&str>,
     events: tokio_mpsc::UnboundedSender<ClientEvent>,
-) -> Result<LiveSession, String> {
+) -> Result<LiveSession, EstablishFailure> {
     let session_id = next_live_session_id();
     let process_exit = Arc::new(tokio::sync::Notify::new());
     let signal_lease = SessionSignalLease::new(session_id);
@@ -938,25 +1168,24 @@ async fn establish_live_session(
             signal_process_exit.notify_one();
         }
     });
-    let client = Arc::new(
-        tokio::time::timeout(CONNECT_TIMEOUT, connect)
+    let connected = tokio::time::timeout(CONNECT_TIMEOUT, connect)
         .await
-        .map_err(|_| format!("Connecting to {url} timed out after {CONNECT_TIMEOUT:?}."))?
-        .map_err(|error| {
-            format!(
-                "I couldn’t reach your GSV at {url}. Run the gateway or sign in with the CLI. {error}"
-            )
-        })?,
-    );
+        .map_err(|_| EstablishFailure {
+            kind: EstablishFailureKind::Transport,
+            message: format!("Connecting to {url} timed out after {CONNECT_TIMEOUT:?}."),
+        })?;
+    let client = Arc::new(connected.map_err(|error| classify_connect_failure(url, error))?);
 
-    let pid = choose_process(&client, preferred_pid).await?;
+    let pid = choose_process(&client, preferred_pid)
+        .await
+        .map_err(EstablishFailure::session)?;
     if signal_lease.select_pid(pid.clone()) {
         process_exit.notify_one();
     }
     let history_request_signal_id = signal_lease.signal_watermark();
-    let history = fetch_history(&client, &pid)
-        .await
-        .map_err(|error| format!("This process’s history could not be read: {error}"))?;
+    let history = fetch_history(&client, &pid).await.map_err(|error| {
+        EstablishFailure::session(format!("This process’s history could not be read: {error}"))
+    })?;
 
     Ok(LiveSession {
         client,
@@ -969,15 +1198,51 @@ async fn establish_live_session(
     })
 }
 
+fn classify_connect_failure(url: &str, error: Box<dyn std::error::Error>) -> EstablishFailure {
+    if let Some(error) = error.downcast_ref::<GatewayRpcError>() {
+        if error.is_setup_required() {
+            return EstablishFailure {
+                kind: EstablishFailureKind::SetupRequired,
+                message: "This GSV still needs first-time setup. Finish setup in the web app or with `gsv auth setup`, then try again."
+                    .to_string(),
+            };
+        }
+        if error.code == 401 {
+            let unknown_user = error.message.to_ascii_lowercase().contains("unknown user");
+            return EstablishFailure {
+                kind: EstablishFailureKind::Authentication(if unknown_user {
+                    LoginStep::Username
+                } else {
+                    LoginStep::Password
+                }),
+                message: if unknown_user {
+                    "I couldn’t find that user on this GSV.".to_string()
+                } else {
+                    "That username or credential wasn’t accepted.".to_string()
+                },
+            };
+        }
+    }
+
+    EstablishFailure {
+        kind: EstablishFailureKind::Transport,
+        message: format!("I couldn’t reach your GSV at {url}. {error}"),
+    }
+}
+
 async fn run_connected_session(
-    client: Arc<KernelClient>,
-    pid: String,
+    session: ActiveClientSession,
     commands: &mut tokio_mpsc::UnboundedReceiver<ClientCommand>,
     events: &tokio_mpsc::UnboundedSender<ClientEvent>,
-    process_exit: Arc<tokio::sync::Notify>,
-    signal_lease: SessionSignalLease,
     initial_history_superseded: bool,
 ) -> ConnectedSessionOutcome {
+    let ActiveClientSession {
+        client,
+        pid,
+        process_exit,
+        signal_lease,
+        attempt_id: session_attempt_id,
+    } = session;
     let mut connection_check = tokio::time::interval(CONNECTION_CHECK_INTERVAL);
     connection_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut history_poll = tokio::time::interval(HISTORY_POLL_INTERVAL);
@@ -1036,6 +1301,31 @@ async fn run_connected_session(
                     return ConnectedSessionOutcome::Shutdown;
                 };
                 match command {
+                    ClientCommand::Connect(next) => {
+                        signal_lease.deactivate();
+                        reconcile_interrupted_tasks(
+                            &mut tasks,
+                            &mut pending,
+                            events,
+                            &signal_lease,
+                            "The connection changed before GSV confirmed the operation.",
+                        ).await;
+                        return ConnectedSessionOutcome::Replace(next);
+                    }
+                    ClientCommand::CancelConnect { attempt_id }
+                        if attempt_id == session_attempt_id =>
+                    {
+                        signal_lease.deactivate();
+                        reconcile_interrupted_tasks(
+                            &mut tasks,
+                            &mut pending,
+                            events,
+                            &signal_lease,
+                            "The connection was cancelled before GSV confirmed the operation.",
+                        ).await;
+                        return ConnectedSessionOutcome::Cancelled;
+                    }
+                    ClientCommand::CancelConnect { .. } => {}
                     ClientCommand::Shutdown => {
                         signal_lease.deactivate();
                         discard_tasks(&mut tasks).await;
@@ -1142,6 +1432,7 @@ fn handle_unavailable_command(
     events: &tokio_mpsc::UnboundedSender<ClientEvent>,
 ) -> bool {
     match command {
+        ClientCommand::Connect(_) | ClientCommand::CancelConnect { .. } => {}
         ClientCommand::Send { submission_id, .. } => {
             let _ = events.send(ClientEvent::SendFailed {
                 submission_id,
@@ -1174,11 +1465,28 @@ fn handle_unavailable_command(
     false
 }
 
-async fn wait_to_reconnect(
-    attempt: u32,
+async fn wait_for_connection(
     commands: &mut tokio_mpsc::UnboundedReceiver<ClientCommand>,
     events: &tokio_mpsc::UnboundedSender<ClientEvent>,
-) -> bool {
+) -> Option<ConnectionSettings> {
+    loop {
+        let command = commands.recv().await?;
+        match command {
+            ClientCommand::Connect(settings) => return Some(settings),
+            ClientCommand::Shutdown => return None,
+            command => {
+                handle_unavailable_command(command, events);
+            }
+        }
+    }
+}
+
+async fn wait_to_reconnect(
+    attempt: u32,
+    active_attempt_id: u64,
+    commands: &mut tokio_mpsc::UnboundedReceiver<ClientCommand>,
+    events: &tokio_mpsc::UnboundedSender<ClientEvent>,
+) -> ReconnectWaitOutcome {
     let delay = tokio::time::sleep(reconnect_delay(attempt));
     tokio::pin!(delay);
     loop {
@@ -1186,13 +1494,25 @@ async fn wait_to_reconnect(
             biased;
             command = commands.recv() => {
                 let Some(command) = command else {
-                    return true;
+                    return ReconnectWaitOutcome::Shutdown;
                 };
-                if handle_unavailable_command(command, events) {
-                    return true;
+                match command {
+                    ClientCommand::Connect(next) => {
+                        return ReconnectWaitOutcome::Replace(next);
+                    }
+                    ClientCommand::CancelConnect { attempt_id }
+                        if attempt_id == active_attempt_id =>
+                    {
+                        return ReconnectWaitOutcome::Cancelled;
+                    }
+                    command => {
+                        if handle_unavailable_command(command, events) {
+                            return ReconnectWaitOutcome::Shutdown;
+                        }
+                    }
                 }
             }
-            _ = &mut delay => return false,
+            _ = &mut delay => return ReconnectWaitOutcome::Retry,
         }
     }
 }
@@ -1205,28 +1525,56 @@ fn reconnect_delay(attempt: u32) -> Duration {
         .min(MAX_RECONNECT_DELAY)
 }
 
-fn gateway_settings(config: &CliConfig) -> (String, GatewayAuth) {
-    let url = nonempty_env("GSV_URL").unwrap_or_else(|| config.gateway_url());
-    let username = nonempty_env("GSV_USER").or_else(|| config.gateway_username());
-    let password = nonempty_env("GSV_PASSWORD");
-    let token = nonempty_env("GSV_TOKEN")
-        .or_else(|| config.gateway_session_token())
-        .or_else(|| config.gateway_token());
-    (
-        url,
-        GatewayAuth {
-            username,
-            password,
-            token,
-        },
-    )
+fn startup_resolution() -> StartupResolution {
+    let config = CliConfig::load();
+    resolve_startup(StartupSources {
+        url: nonempty_env("GSV_URL").or_else(|| normalize_field(config.gateway.url.clone())),
+        username: nonempty_env("GSV_USER").or_else(|| config.gateway_username()),
+        explicit_token: nonempty_secret_env("GSV_TOKEN"),
+        explicit_password: nonempty_secret_env("GSV_PASSWORD"),
+        cached_token: config.gateway_session_token(),
+        configured_token: config.gateway_token(),
+    })
+}
+
+fn gateway_auth(settings: &ConnectionSettings) -> GatewayAuth {
+    let (password, token) = match &settings.credential {
+        Credential::Password(password) => (Some(password.clone()), None),
+        Credential::Token(token) => (None, Some(token.clone())),
+    };
+    GatewayAuth {
+        username: Some(settings.username.clone()),
+        password,
+        token,
+    }
+}
+
+fn login_defaults(settings: &ConnectionSettings) -> LoginDefaults {
+    LoginDefaults {
+        url: Some(settings.url.clone()),
+        username: Some(settings.username.clone()),
+    }
+}
+
+fn remember_connection_identity(settings: &ConnectionSettings) {
+    let mut config = CliConfig::load();
+    config.gateway.url = Some(settings.url.clone());
+    config.gateway.username = Some(settings.username.clone());
+    let _ = config.save();
 }
 
 fn nonempty_env(key: &str) -> Option<String> {
-    env::var(key)
-        .ok()
+    normalize_field(env::var(key).ok())
+}
+
+fn normalize_field(value: Option<String>) -> Option<String> {
+    value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn nonempty_secret_env(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|value| !value.is_empty())
 }
 
 async fn choose_process(
@@ -1396,6 +1744,7 @@ async fn run_demo(
     events: tokio_mpsc::UnboundedSender<ClientEvent>,
 ) {
     let _ = events.send(ClientEvent::Connected {
+        attempt_id: 0,
         session_id: DEMO_SESSION_ID,
         pid: "demo:native".to_string(),
     });
@@ -1403,6 +1752,7 @@ async fn run_demo(
 
     while let Some(command) = commands.recv().await {
         match command {
+            ClientCommand::Connect(_) | ClientCommand::CancelConnect { .. } => {}
             ClientCommand::Send {
                 submission_id,
                 message,
@@ -1497,6 +1847,83 @@ mod tests {
         assert_eq!(reconnect_delay(2), Duration::from_millis(500));
         assert_eq!(reconnect_delay(6), Duration::from_secs(8));
         assert_eq!(reconnect_delay(u32::MAX), Duration::from_secs(8));
+    }
+
+    #[test]
+    fn reconnect_wait_preserves_cancel_and_replacement_controls() -> Result<(), String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .map_err(|error| error.to_string())?;
+        let (events, _event_rx) = tokio_mpsc::unbounded_channel();
+
+        let (cancel_tx, mut cancel_rx) = tokio_mpsc::unbounded_channel();
+        cancel_tx
+            .send(ClientCommand::CancelConnect { attempt_id: 7 })
+            .map_err(|_| "cancel channel closed".to_string())?;
+        assert!(matches!(
+            runtime.block_on(wait_to_reconnect(1, 7, &mut cancel_rx, &events)),
+            ReconnectWaitOutcome::Cancelled
+        ));
+
+        let replacement = ConnectionSettings {
+            attempt_id: 8,
+            url: "wss://gsv.example/ws".to_string(),
+            username: "hank".to_string(),
+            credential: Credential::Password("replacement".to_string()),
+            remember_identity: true,
+        };
+        let (replace_tx, mut replace_rx) = tokio_mpsc::unbounded_channel();
+        replace_tx
+            .send(ClientCommand::Connect(replacement))
+            .map_err(|_| "replacement channel closed".to_string())?;
+        assert!(matches!(
+            runtime.block_on(wait_to_reconnect(1, 7, &mut replace_rx, &events)),
+            ReconnectWaitOutcome::Replace(ConnectionSettings { attempt_id: 8, .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn startup_handshake_failures_return_to_the_owned_surface() {
+        let unknown_user = classify_connect_failure(
+            "wss://gsv.example/ws",
+            Box::new(GatewayRpcError::new(
+                "sys.connect",
+                401,
+                "Unknown user",
+                None,
+            )),
+        );
+        assert_eq!(
+            unknown_user.kind,
+            EstablishFailureKind::Authentication(LoginStep::Username)
+        );
+
+        let rejected_password = classify_connect_failure(
+            "wss://gsv.example/ws",
+            Box::new(GatewayRpcError::new(
+                "sys.connect",
+                401,
+                "Invalid credentials",
+                None,
+            )),
+        );
+        assert_eq!(
+            rejected_password.kind,
+            EstablishFailureKind::Authentication(LoginStep::Password)
+        );
+
+        let setup = classify_connect_failure(
+            "ws://localhost:8787/ws",
+            Box::new(GatewayRpcError::new(
+                "sys.connect",
+                425,
+                "Setup required",
+                Some(json!({ "setupMode": true })),
+            )),
+        );
+        assert_eq!(setup.kind, EstablishFailureKind::SetupRequired);
     }
 
     #[test]

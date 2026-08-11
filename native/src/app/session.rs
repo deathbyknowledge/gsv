@@ -22,6 +22,21 @@ impl GsvApp {
                 self.conversation.connection = ConnectionState::Connecting;
                 self.conversation.activity = Some("CONNECTING".to_string());
             }
+            ClientEvent::LoginFailed {
+                attempt_id,
+                defaults,
+                step,
+                message,
+            } => {
+                self.show_login_failure(attempt_id, defaults, step, message, window, cx);
+            }
+            ClientEvent::SetupRequired {
+                attempt_id,
+                defaults,
+                message,
+            } => {
+                self.show_setup_required(attempt_id, defaults, message, window, cx);
+            }
             ClientEvent::Reconnecting { attempt, message } => {
                 self.client_session_id = None;
                 self.pid = None;
@@ -37,7 +52,17 @@ impl GsvApp {
                 }
                 self.conversation.activity = Some(activity);
             }
-            ClientEvent::Connected { session_id, pid } => {
+            ClientEvent::Connected {
+                attempt_id,
+                session_id,
+                pid,
+            } => {
+                if let Some(login) = &mut self.login {
+                    if !login.accept_connection(attempt_id) {
+                        return;
+                    }
+                }
+                self.finish_login(window, cx);
                 self.client_session_id = Some(session_id);
                 self.pid = Some(pid);
                 self.last_history = None;
@@ -151,6 +176,9 @@ impl GsvApp {
                 }
             }
             ClientEvent::Error(message) => {
+                if self.show_login_runtime_error(message.clone(), window, cx) {
+                    return;
+                }
                 if let Some(approval) = self.conversation.pending_approval.clone() {
                     self.conversation.show_error(message);
                     self.conversation.set_approval(approval);

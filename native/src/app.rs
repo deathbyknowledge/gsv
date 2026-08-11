@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{hash_map::DefaultHasher, HashMap};
+use std::hash::{Hash, Hasher};
 use std::time::Instant;
 
 use gpui::{
-    actions, App, AppContext, Context, Focusable, KeyBinding, ScrollHandle, Subscription, Task,
-    Window,
+    actions, App, AppContext, Context, Entity, FocusHandle, Focusable, KeyBinding, ScrollHandle,
+    Subscription, Task, Window,
 };
 use gpui_component::input::{InputEvent, InputState};
 
@@ -11,7 +12,10 @@ use crate::audio::{KeySound, TypingAudio};
 use crate::client::{ApprovalDecision, ClientCommand, ClientHandle};
 use crate::interaction::{CanvasInteraction, CanvasLayer, SubmissionFailure};
 use crate::model::{Conversation, SurfaceMode};
+use crate::startup::{LoginDefaults, LoginFlow, LoginProgress, LoginStep};
+use crate::typography::TypeLayout;
 
+mod login;
 mod session;
 mod view;
 
@@ -36,10 +40,57 @@ struct TerminalExchange {
     pending: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CachedTypeLayout {
+    content_hash: u64,
+    maximum_size: Option<u32>,
+    weight: u32,
+    layout: TypeLayout,
+}
+
+impl CachedTypeLayout {
+    fn matches(self, text: &str, maximum_size: Option<f32>, weight: gpui::FontWeight) -> bool {
+        self.content_hash == type_content_hash(text)
+            && self.maximum_size == maximum_size.map(f32::to_bits)
+            && self.weight == weight.0.to_bits()
+    }
+}
+
+fn type_content_hash(text: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn new_login_input(
+    login: &LoginFlow,
+    window: &mut Window,
+    cx: &mut Context<GsvApp>,
+) -> Option<Entity<InputState>> {
+    let (masked, placeholder) = match login.step() {
+        LoginStep::Url => (false, "ws://localhost:8787/ws"),
+        LoginStep::Username => (false, "username"),
+        LoginStep::Password => (true, "password"),
+        LoginStep::Connecting | LoginStep::SetupRequired => return None,
+    };
+    let input = cx.new(|cx| {
+        InputState::new(window, cx)
+            .masked(masked)
+            .placeholder(placeholder)
+    });
+    let value = login.input_value();
+    input.update(cx, |input, cx| input.set_value(value, window, cx));
+    Some(input)
+}
+
 pub struct GsvApp {
     conversation: Conversation,
     interaction: CanvasInteraction,
     input: gpui::Entity<InputState>,
+    login: Option<LoginFlow>,
+    login_input: Option<Entity<InputState>>,
+    login_input_len: usize,
+    login_focus: FocusHandle,
     commands: tokio::sync::mpsc::UnboundedSender<ClientCommand>,
     audio: TypingAudio,
     terminal_draft: String,
@@ -54,6 +105,7 @@ pub struct GsvApp {
     history_scroll_accumulator: f32,
     history_scroll_last_event: Option<Instant>,
     stream_type_sizes: HashMap<String, f32>,
+    type_layouts: HashMap<String, CachedTypeLayout>,
     draft_type_size: Option<f32>,
     stream_sequences: HashMap<String, u64>,
     type_viewport: Option<(u32, u32)>,
@@ -63,6 +115,7 @@ pub struct GsvApp {
     programmatic_input: Option<String>,
     approval_resume_mode: Option<SurfaceMode>,
     _input_subscription: Subscription,
+    _login_subscription: Option<Subscription>,
     _event_task: Task<()>,
 }
 
@@ -75,13 +128,36 @@ impl GsvApp {
         sound_enabled: bool,
         reduced_motion: bool,
     ) -> Self {
+        let ClientHandle {
+            commands,
+            mut events,
+            login: login_defaults,
+        } = client;
         let input = cx.new(|cx| InputState::new(window, cx).auto_grow(1, 12).soft_wrap(true));
-        input.focus_handle(cx).focus(window);
-
+        let login_focus = cx.focus_handle();
         let input_subscription = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
             this.on_input(event, window, cx);
         });
-        let mut events = client.events;
+        let login = login_defaults.map(LoginFlow::new);
+        let login_input_len = login
+            .as_ref()
+            .map(|login| login.input_value().chars().count())
+            .unwrap_or(0);
+        let login_input = login
+            .as_ref()
+            .and_then(|login| new_login_input(login, window, cx));
+        let login_subscription = login_input.as_ref().map(|login_input| {
+            cx.subscribe_in(login_input, window, |this, _, event, window, cx| {
+                this.on_login_input(event, window, cx);
+            })
+        });
+        if let Some(login_input) = &login_input {
+            login_input.focus_handle(cx).focus(window);
+        } else if login.is_some() {
+            login_focus.focus(window);
+        } else {
+            input.focus_handle(cx).focus(window);
+        }
         let event_task = cx.spawn_in(window, async move |this, cx| {
             while let Some(event) = events.recv().await {
                 if this
@@ -104,7 +180,11 @@ impl GsvApp {
             },
             interaction: CanvasInteraction::new(),
             input,
-            commands: client.commands,
+            login,
+            login_input,
+            login_input_len,
+            login_focus,
+            commands,
             audio: TypingAudio::new(sound_enabled),
             terminal_draft: String::new(),
             previous_input: String::new(),
@@ -118,6 +198,7 @@ impl GsvApp {
             history_scroll_accumulator: 0.0,
             history_scroll_last_event: None,
             stream_type_sizes: HashMap::new(),
+            type_layouts: HashMap::new(),
             draft_type_size: None,
             stream_sequences: HashMap::new(),
             type_viewport: None,
@@ -127,6 +208,7 @@ impl GsvApp {
             programmatic_input: None,
             approval_resume_mode: None,
             _input_subscription: input_subscription,
+            _login_subscription: login_subscription,
             _event_task: event_task,
         }
     }
@@ -172,7 +254,206 @@ impl GsvApp {
         }
     }
 
+    fn on_login_input(&mut self, event: &InputEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if !matches!(event, InputEvent::Change) {
+            return;
+        }
+        let Some(input) = &self.login_input else {
+            return;
+        };
+        let input_len = input.read(cx).value().chars().count();
+        if input_len != self.login_input_len {
+            self.audio.play(if input_len < self.login_input_len {
+                KeySound::Delete
+            } else {
+                KeySound::Character
+            });
+            self.login_input_len = input_len;
+        }
+        cx.notify();
+    }
+
+    fn refresh_login_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self._login_subscription = None;
+        self.login_input = None;
+        self.login_input_len = 0;
+        let Some(login) = &self.login else {
+            self.input.focus_handle(cx).focus(window);
+            return;
+        };
+        self.login_input_len = login.input_value().chars().count();
+        self.login_input = new_login_input(login, window, cx);
+        if let Some(input) = &self.login_input {
+            self._login_subscription =
+                Some(
+                    cx.subscribe_in(input, window, |this, _, event, window, cx| {
+                        this.on_login_input(event, window, cx);
+                    }),
+                );
+            input.focus_handle(cx).focus(window);
+        } else {
+            self.login_focus.focus(window);
+        }
+    }
+
+    fn submit_login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(login) = &mut self.login else {
+            return;
+        };
+        if login.step() == LoginStep::Connecting {
+            return;
+        }
+        let value = self
+            .login_input
+            .as_ref()
+            .map(|input| input.read(cx).value().to_string())
+            .unwrap_or_default();
+        match login.submit(value) {
+            Ok(LoginProgress::Next) => {
+                self.audio.play(KeySound::Commit);
+                self.begin_transition(1.0);
+                self.refresh_login_input(window, cx);
+                cx.notify();
+            }
+            Ok(LoginProgress::Connect(settings)) => {
+                let attempt_id = settings.attempt_id;
+                self.audio.play(KeySound::Commit);
+                self.begin_transition(1.0);
+                self.refresh_login_input(window, cx);
+                if let Err(error) = self.commands.send(ClientCommand::Connect(settings)) {
+                    drop(error);
+                    if let Some(login) = &mut self.login {
+                        login.fail_connection(
+                            attempt_id,
+                            LoginStep::Password,
+                            "The native client stopped before it could connect.".to_string(),
+                        );
+                    }
+                    self.refresh_login_input(window, cx);
+                }
+                cx.notify();
+            }
+            Err(message) => {
+                login.set_error(message);
+                cx.notify();
+            }
+        }
+    }
+
+    fn back_login(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(login) = &mut self.login else {
+            return false;
+        };
+        if let Some(attempt_id) = login.cancel_connection() {
+            let _ = self
+                .commands
+                .send(ClientCommand::CancelConnect { attempt_id });
+            self.begin_transition(-1.0);
+            self.refresh_login_input(window, cx);
+            cx.notify();
+            return true;
+        }
+        if !login.back() {
+            return false;
+        }
+        self.begin_transition(-1.0);
+        self.refresh_login_input(window, cx);
+        cx.notify();
+        true
+    }
+
+    fn show_login_failure(
+        &mut self,
+        attempt_id: u64,
+        defaults: LoginDefaults,
+        step: LoginStep,
+        message: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let accepted = if let Some(login) = &mut self.login {
+            login.fail_connection(attempt_id, step, message)
+        } else {
+            self.login = Some(LoginFlow::from_failure(defaults, step, message));
+            true
+        };
+        if accepted {
+            self.begin_transition(-1.0);
+            self.refresh_login_input(window, cx);
+        }
+    }
+
+    fn show_setup_required(
+        &mut self,
+        attempt_id: u64,
+        defaults: LoginDefaults,
+        message: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let accepted = if let Some(login) = &mut self.login {
+            login.require_setup(attempt_id, message)
+        } else {
+            self.login = Some(LoginFlow::from_failure(
+                defaults,
+                LoginStep::SetupRequired,
+                message,
+            ));
+            true
+        };
+        if accepted {
+            self.begin_transition(-1.0);
+            self.refresh_login_input(window, cx);
+        }
+    }
+
+    fn show_login_runtime_error(
+        &mut self,
+        message: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(login) = &mut self.login else {
+            return false;
+        };
+        if login.step() == LoginStep::Connecting {
+            let defaults = login.defaults();
+            self.login = Some(LoginFlow::from_failure(
+                defaults,
+                LoginStep::Password,
+                message,
+            ));
+            self.refresh_login_input(window, cx);
+        } else {
+            login.set_error(message);
+        }
+        true
+    }
+
+    fn finish_login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self._login_subscription = None;
+        self.login_input = None;
+        self.login_input_len = 0;
+        self.login = None;
+        self.input.focus_handle(cx).focus(window);
+        self.begin_transition(1.0);
+    }
+
+    fn focus_active_input(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(input) = &self.login_input {
+            input.focus_handle(cx).focus(window);
+        } else if self.login.is_some() {
+            self.login_focus.focus(window);
+        } else {
+            self.input.focus_handle(cx).focus(window);
+        }
+    }
+
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.login.is_some() {
+            self.submit_login(window, cx);
+            return;
+        }
         let raw = self.input.read(cx).value().to_string();
         if raw.trim().is_empty() {
             if !raw.is_empty() {
@@ -364,7 +645,11 @@ impl GsvApp {
         self.input.focus_handle(cx).focus(window);
     }
 
-    fn hide_draft(&mut self, _: &HideDraft, _: &mut Window, cx: &mut Context<Self>) {
+    fn hide_draft(&mut self, _: &HideDraft, window: &mut Window, cx: &mut Context<Self>) {
+        if self.login.is_some() {
+            self.back_login(window, cx);
+            return;
+        }
         if self.conversation.mode == SurfaceMode::Conversation && self.interaction.hide_draft() {
             self.begin_transition(0.0);
             cx.notify();
@@ -377,6 +662,10 @@ impl GsvApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let modifiers = window.modifiers();
+        if modifiers.shift || modifiers.secondary() {
+            return;
+        }
         self.submit(window, cx);
     }
 
@@ -386,11 +675,18 @@ impl GsvApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.login.is_some() {
+            cx.stop_propagation();
+            return;
+        }
         self.input
             .update(cx, |input, cx| input.insert("\n", window, cx));
     }
 
     fn abort_run(&mut self, _: &AbortRun, _: &mut Window, _: &mut Context<Self>) {
+        if self.login.is_some() {
+            return;
+        }
         if let Some(run_id) = self.conversation.request_abort() {
             if self
                 .commands
@@ -414,6 +710,9 @@ impl GsvApp {
     }
 
     fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.login.is_some() {
+            return;
+        }
         let next = match self.conversation.mode {
             SurfaceMode::Conversation => {
                 self.conversation.mode = SurfaceMode::Terminal;
@@ -443,7 +742,10 @@ impl GsvApp {
     }
 
     fn move_moment(&mut self, direction: i8, cx: &mut Context<Self>) {
-        if self.conversation.mode != SurfaceMode::Conversation || self.interaction.is_approval() {
+        if self.login.is_some()
+            || self.conversation.mode != SurfaceMode::Conversation
+            || self.interaction.is_approval()
+        {
             return;
         }
         self.interaction.hide_draft();
@@ -462,7 +764,10 @@ impl GsvApp {
     }
 
     fn select_moment(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.interaction.is_approval() || self.conversation.moments.is_empty() {
+        if self.login.is_some()
+            || self.interaction.is_approval()
+            || self.conversation.moments.is_empty()
+        {
             return;
         }
         self.interaction.hide_draft();
@@ -477,7 +782,7 @@ impl GsvApp {
     }
 
     fn show_held_draft(&mut self, cx: &mut Context<Self>) {
-        if self.interaction.is_approval() {
+        if self.login.is_some() || self.interaction.is_approval() {
             return;
         }
         self.interaction.show_conversation_draft();
@@ -503,9 +808,9 @@ impl Drop for GsvApp {
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("enter", SubmitThought, Some("Input")),
         KeyBinding::new("secondary-enter", InsertNewline, Some("Input")),
         KeyBinding::new("shift-enter", InsertNewline, Some("Input")),
+        KeyBinding::new("enter", SubmitThought, Some("Input")),
         KeyBinding::new("escape", HideDraft, None),
         KeyBinding::new("secondary-.", AbortRun, None),
         KeyBinding::new("secondary-`", ToggleTerminal, None),
@@ -641,6 +946,148 @@ mod tests {
     }
 
     #[gpui::test]
+    fn password_login_is_isolated_and_dropped_when_connecting(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login: Some(crate::startup::LoginDefaults {
+                url: Some("ws://localhost:8788/ws".to_string()),
+                username: Some("hank".to_string()),
+            }),
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, false, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), " exact password ");
+        cx.simulate_keystrokes(window.into(), "shift-enter");
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(
+                app.login.as_ref().map(LoginFlow::step),
+                Some(LoginStep::Password)
+            );
+            assert_eq!(
+                app.login_input
+                    .as_ref()
+                    .map(|input| input.read(cx).value().to_string())
+                    .as_deref(),
+                Some(" exact password ")
+            );
+            assert!(app.previous_input.is_empty());
+            assert_eq!(app.interaction.layer, CanvasLayer::Moment);
+        });
+        cx.simulate_keystrokes(window.into(), "ctrl-enter");
+        cx.update(|cx| {
+            assert_eq!(
+                app.read(cx).login.as_ref().map(LoginFlow::step),
+                Some(LoginStep::Password)
+            );
+        });
+
+        cx.simulate_keystrokes(window.into(), "enter");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(
+                app.login.as_ref().map(LoginFlow::step),
+                Some(LoginStep::Connecting)
+            );
+            assert!(app.login_input.is_none());
+        });
+        let received = command_rx
+            .try_recv()
+            .ok()
+            .and_then(|command| match command {
+                ClientCommand::Connect(settings) => match settings.credential {
+                    crate::startup::Credential::Password(password) => {
+                        Some((settings.attempt_id, password))
+                    }
+                    crate::startup::Credential::Token(_) => None,
+                },
+                _ => None,
+            });
+        assert_eq!(
+            received.as_ref().map(|(_, password)| password.as_str()),
+            Some(" exact password ")
+        );
+        let attempt_id = received.map(|(attempt_id, _)| attempt_id).unwrap_or(0);
+
+        cx.simulate_keystrokes(window.into(), "escape");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(
+                app.login.as_ref().map(LoginFlow::step),
+                Some(LoginStep::Password)
+            );
+            assert!(app.login_input.is_some());
+        });
+        assert!(matches!(
+            command_rx.try_recv(),
+            Ok(ClientCommand::CancelConnect { attempt_id: cancelled })
+                if cancelled == attempt_id
+        ));
+
+        let _ = event_tx.send(crate::client::ClientEvent::Connected {
+            attempt_id,
+            session_id: 9,
+            pid: "stale-login".to_string(),
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(
+                app.login.as_ref().map(LoginFlow::step),
+                Some(LoginStep::Password)
+            );
+            assert!(app.client_session_id.is_none());
+        });
+
+        let _ = event_tx.send(crate::client::ClientEvent::SetupRequired {
+            attempt_id: 0,
+            defaults: crate::startup::LoginDefaults {
+                url: Some("ws://localhost:8788/ws".to_string()),
+                username: Some("hank".to_string()),
+            },
+            message: "Setup is incomplete.".to_string(),
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                app.read(cx).login.as_ref().map(LoginFlow::step),
+                Some(LoginStep::SetupRequired)
+            );
+        });
+        cx.simulate_keystrokes(window.into(), "enter");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                app.read(cx).login.as_ref().map(LoginFlow::step),
+                Some(LoginStep::Url)
+            );
+        });
+    }
+
+    #[gpui::test]
     fn submit_shortcut_is_non_mutating_and_requires_a_visible_held_draft(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_component::init(cx);
@@ -654,6 +1101,7 @@ mod tests {
         let client = crate::client::ClientHandle {
             commands: command_tx,
             events: event_rx,
+            login: None,
         };
         let app = Rc::new(RefCell::new(None));
         let app_for_window = app.clone();
@@ -700,6 +1148,7 @@ mod tests {
         let client = crate::client::ClientHandle {
             commands: command_tx,
             events: event_rx,
+            login: None,
         };
         let app = Rc::new(RefCell::new(None));
         let app_for_window = app.clone();
@@ -817,6 +1266,7 @@ mod tests {
         let client = crate::client::ClientHandle {
             commands: command_tx,
             events: event_rx,
+            login: None,
         };
         let app = Rc::new(RefCell::new(None));
         let app_for_window = app.clone();
@@ -833,6 +1283,7 @@ mod tests {
         cx.simulate_keystrokes(window.into(), "ctrl-`");
         cx.simulate_input(window.into(), "status --watch");
         let _ = event_tx.send(crate::client::ClientEvent::Connected {
+            attempt_id: 0,
             session_id: 7,
             pid: "pid-1".to_string(),
         });

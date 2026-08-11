@@ -11,6 +11,7 @@ gsv = { path = "../cli" }
 rodio = { version = "0.22.2", default-features = false, features = ["playback"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+url = "2"
 
 [dev-dependencies]
 gpui = { version = "=0.2.2", features = ["test-support"] }

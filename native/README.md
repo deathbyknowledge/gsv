@@ -22,8 +22,15 @@ disable canvas entrance motion.
 
 To connect to GSV instead, omit `--demo`. The client reuses the public Rust client and protocol from
 `cli/`, reads the normal CLI config at `~/.config/gsv/config.toml`, and chooses the most recently
-active interactive process. If none exists, it starts one. These environment variables override
-the config when set:
+active interactive process. If none exists, it starts one.
+
+When connection details are missing, the app opens a full-screen sequence for the gateway URL,
+username, and password. Known values are skipped, and an unexpired CLI session token skips login
+entirely. A successful interactive connection remembers the URL and username in the CLI config;
+the password is never saved. `ws://` is accepted only for localhost development, while remote
+gateways require `wss://`.
+
+These environment variables remain optional overrides for automation and development:
 
 - `GSV_URL`
 - `GSV_USER`
@@ -52,13 +59,13 @@ cargo run --manifest-path cli/Cargo.toml -- \
 Then start the native client in a second terminal:
 
 ```bash
-GSV_URL=ws://localhost:8787/ws \
-  cargo run --manifest-path native/Cargo.toml
+cargo run --manifest-path native/Cargo.toml
 ```
 
-The app reuses the CLI’s cached login. It reconnects without replaying commands, restores history
-before applying live deltas, and preserves an unsent or ambiguously delivered thought visibly.
-Wayland is selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is needed.
+The app reuses the CLI’s cached login when one exists; otherwise enter the local URL and account in
+the native connection flow. It reconnects without replaying commands, restores history before
+applying live deltas, and preserves an unsent or ambiguously delivered thought visibly. Wayland is
+selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is needed.
 
 ## Interaction grammar
 

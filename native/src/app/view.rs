@@ -13,7 +13,7 @@ use crate::model::{ConnectionState, MomentRole, MomentState, SurfaceMode};
 use crate::theme;
 use crate::typography::{fit_type_layout, TypeLayout};
 
-use super::GsvApp;
+use super::{type_content_hash, CachedTypeLayout, GsvApp};
 
 #[derive(Clone, Copy)]
 struct CanvasGeometry {
@@ -23,9 +23,62 @@ struct CanvasGeometry {
     available_height: f32,
 }
 
+struct TypeFit<'a> {
+    key: &'a str,
+    text: &'a str,
+    available_width: f32,
+    available_height: f32,
+    maximum_size: Option<f32>,
+    weight: FontWeight,
+}
+
 const HISTORY_SCROLL_THRESHOLD: f32 = 36.0;
+const TYPE_LAYOUT_CACHE_LIMIT: usize = 64;
 
 impl GsvApp {
+    fn fit_cached_type_layout(&mut self, window: &Window, request: TypeFit<'_>) -> TypeLayout {
+        let TypeFit {
+            key,
+            text,
+            available_width,
+            available_height,
+            maximum_size,
+            weight,
+        } = request;
+        if let Some(cached) = self
+            .type_layouts
+            .get(key)
+            .copied()
+            .filter(|cached| cached.matches(text, maximum_size, weight))
+        {
+            return cached.layout;
+        }
+
+        let layout = fit_type_layout(
+            window,
+            text,
+            available_width,
+            available_height,
+            maximum_size,
+            weight,
+        );
+        if self.type_layouts.len() >= TYPE_LAYOUT_CACHE_LIMIT
+            && !self.type_layouts.contains_key(key)
+        {
+            self.type_layouts.clear();
+        }
+        self.type_layouts.insert(
+            key.to_string(),
+            CachedTypeLayout {
+                content_hash: type_content_hash(text),
+                maximum_size: maximum_size.map(f32::to_bits),
+                weight: weight.0.to_bits(),
+                layout,
+            },
+        );
+        layout
+    }
+
     fn render_timeline(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let selected = self.conversation.selected;
         let draft_visible = self.interaction.layer == CanvasLayer::Draft;
@@ -144,6 +197,7 @@ impl GsvApp {
         );
         if self.type_viewport != Some(viewport_key) {
             self.stream_type_sizes.clear();
+            self.type_layouts.clear();
             self.draft_type_size = None;
             self.type_viewport = Some(viewport_key);
         }
@@ -224,13 +278,16 @@ impl GsvApp {
             None
         };
         self.stream_type_sizes.clear();
-        let message_layout = fit_type_layout(
+        let message_layout = self.fit_cached_type_layout(
             window,
-            &message,
-            available_width,
-            available_height,
-            maximum_size,
-            message_weight,
+            TypeFit {
+                key: &moment_type_key,
+                text: &message,
+                available_width,
+                available_height,
+                maximum_size,
+                weight: message_weight,
+            },
         );
         if role == MomentRole::Intelligence
             && (state == MomentState::Streaming || maximum_size.is_some())
@@ -271,13 +328,16 @@ impl GsvApp {
             && !self.interaction.is_approval();
 
         let canvas = if let Some(draft) = draft {
-            let draft_layout = fit_type_layout(
+            let draft_layout = self.fit_cached_type_layout(
                 window,
-                &draft,
-                available_width,
-                available_height,
-                self.draft_type_size,
-                FontWeight::NORMAL,
+                TypeFit {
+                    key: "draft",
+                    text: &draft,
+                    available_width,
+                    available_height,
+                    maximum_size: self.draft_type_size,
+                    weight: FontWeight::NORMAL,
+                },
             );
             self.draft_type_size = Some(draft_layout.size);
             self.render_draft_canvas(
@@ -296,20 +356,30 @@ impl GsvApp {
             )
         };
 
+        let sink_layout = if draft_visible {
+            None
+        } else {
+            let sink_value = self.input.read(cx).value().to_string();
+            let layout = self.fit_cached_type_layout(
+                window,
+                TypeFit {
+                    key: "draft",
+                    text: &sink_value,
+                    available_width,
+                    available_height,
+                    maximum_size: self.draft_type_size,
+                    weight: FontWeight::NORMAL,
+                },
+            );
+            self.draft_type_size = Some(layout.size);
+            Some(layout)
+        };
+
         div()
             .relative()
             .size_full()
             .overflow_hidden()
-            .when(!draft_visible, |this| {
-                let sink_value = self.input.read(cx).value().to_string();
-                let sink_layout = fit_type_layout(
-                    window,
-                    &sink_value,
-                    available_width,
-                    available_height,
-                    None,
-                    FontWeight::NORMAL,
-                );
+            .when_some(sink_layout, |this, sink_layout| {
                 this.child(self.render_input_sink(sink_layout, geometry))
             })
             .child(canvas)
@@ -669,6 +739,7 @@ impl GsvApp {
 
 impl Render for GsvApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let login_visible = self.login.is_some();
         div()
             .id("gsv-native")
             .key_context("GsvNative")
@@ -686,19 +757,23 @@ impl Render for GsvApp {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
-                    this.input.focus_handle(cx).focus(window);
+                    this.focus_active_input(window, cx);
                 }),
             )
+            .when(login_visible, |this| {
+                this.child(self.render_login(window, cx))
+            })
             .when(
-                self.conversation.mode == SurfaceMode::Conversation,
+                !login_visible && self.conversation.mode == SurfaceMode::Conversation,
                 |this| {
                     this.child(self.render_conversation(window, cx))
                         .child(self.render_timeline(window, cx))
                 },
             )
-            .when(self.conversation.mode == SurfaceMode::Terminal, |this| {
-                this.child(self.render_terminal(cx))
-            })
+            .when(
+                !login_visible && self.conversation.mode == SurfaceMode::Terminal,
+                |this| this.child(self.render_terminal(cx)),
+            )
     }
 }
 
@@ -954,5 +1029,51 @@ mod tests {
         cx.run_until_parked();
         cx.cx
             .update(|cx| assert!(app.read(cx).stream_type_sizes.is_empty()));
+    }
+
+    #[gpui::test]
+    fn completed_message_layouts_survive_navigation_and_repaints(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let client = crate::client::start(true);
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+        let cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        let latest_key = "moment:demo-3";
+        cx.cx.update(|cx| {
+            assert!(app.read(cx).type_layouts.contains_key(latest_key));
+            app.update(cx, |app, cx| {
+                app.conversation.select_previous();
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+        let cached = cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert!(app.type_layouts.contains_key(latest_key));
+            assert!(app.type_layouts.contains_key("moment:demo-2"));
+            app.type_layouts.clone()
+        });
+
+        cx.cx.update(|cx| app.update(cx, |_, cx| cx.notify()));
+        cx.run_until_parked();
+        cx.cx
+            .update(|cx| assert_eq!(app.read(cx).type_layouts, cached));
     }
 }

@@ -15,6 +15,13 @@ pub struct TypeLayout {
     pub scrolls: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FittedSize {
+    size: f32,
+    content_height: f32,
+    fits: bool,
+}
+
 pub fn fit_type_layout(
     window: &Window,
     text: &str,
@@ -27,7 +34,7 @@ pub fn fit_type_layout(
     let maximum_size = maximum_size
         .unwrap_or(MAX_TYPE_SIZE)
         .clamp(MIN_TYPE_SIZE, MAX_TYPE_SIZE);
-    let mut size = quantize_size(maximum_size);
+    let maximum_size = quantize_size(maximum_size);
     let text: SharedString = if text.is_empty() {
         " ".into()
     } else {
@@ -36,9 +43,9 @@ pub fn fit_type_layout(
     let mut prose_font = font(theme::PROSE_FONT);
     prose_font.weight = weight;
 
-    loop {
+    let fitted = find_fitted_size(maximum_size, available_height, |size| {
         let line_height = line_height_for(size);
-        let content_height = measured_height(
+        measured_height(
             window,
             text.clone(),
             prose_font.clone(),
@@ -46,19 +53,100 @@ pub fn fit_type_layout(
             line_height,
             width,
         )
-        .unwrap_or_else(|| estimated_height(text.as_ref(), size, line_height, width));
-        let fits = content_height <= available_height;
-        if fits || size <= MIN_TYPE_SIZE {
-            return TypeLayout {
-                size,
-                line_height,
-                width,
-                content_height,
-                scrolls: !fits,
+        .unwrap_or_else(|| estimated_height(text.as_ref(), size, line_height, width))
+    });
+
+    TypeLayout {
+        size: fitted.size,
+        line_height: line_height_for(fitted.size),
+        width,
+        content_height: fitted.content_height,
+        scrolls: !fitted.fits,
+    }
+}
+
+// GPUI's measured height is monotonic while the line-height multiplier is fixed. Search those
+// bands independently because the multiplier drops at the policy boundaries below.
+fn find_fitted_size(
+    maximum_size: f32,
+    available_height: f32,
+    mut measure_height: impl FnMut(f32) -> f32,
+) -> FittedSize {
+    let mut band_maximum = maximum_size;
+
+    loop {
+        let band_minimum = line_height_band_minimum(band_maximum);
+        let maximum_height = if band_maximum == maximum_size {
+            let content_height = measure_height(band_maximum);
+            if content_height <= available_height {
+                return FittedSize {
+                    size: band_maximum,
+                    content_height,
+                    fits: true,
+                };
+            }
+            Some(content_height)
+        } else {
+            None
+        };
+
+        let minimum_height = if band_minimum == band_maximum {
+            maximum_height.unwrap_or_else(|| measure_height(band_minimum))
+        } else {
+            measure_height(band_minimum)
+        };
+        if minimum_height <= available_height {
+            let mut fitting_step = 0_u32;
+            let maximum_step = ((band_maximum - band_minimum) / TYPE_STEP) as u32;
+            let mut overflowing_step = maximum_step + u32::from(maximum_height.is_none());
+            let mut fitted = FittedSize {
+                size: band_minimum,
+                content_height: minimum_height,
+                fits: true,
+            };
+
+            while overflowing_step - fitting_step > 1 {
+                let candidate_step = (fitting_step + overflowing_step) / 2;
+                let candidate_size = band_minimum + candidate_step as f32 * TYPE_STEP;
+                let candidate_height = measure_height(candidate_size);
+                if candidate_height <= available_height {
+                    fitting_step = candidate_step;
+                    fitted = FittedSize {
+                        size: candidate_size,
+                        content_height: candidate_height,
+                        fits: true,
+                    };
+                } else {
+                    overflowing_step = candidate_step;
+                }
+            }
+
+            return fitted;
+        }
+
+        if band_minimum == MIN_TYPE_SIZE {
+            return FittedSize {
+                size: band_minimum,
+                content_height: minimum_height,
+                fits: false,
             };
         }
-        size = (size - TYPE_STEP).max(MIN_TYPE_SIZE);
+
+        band_maximum = band_minimum - TYPE_STEP;
     }
+}
+
+fn line_height_band_minimum(size: f32) -> f32 {
+    let line_height = line_height_for(size);
+    let mut minimum = size;
+    while minimum > MIN_TYPE_SIZE {
+        let candidate = (minimum - TYPE_STEP).max(MIN_TYPE_SIZE);
+        if line_height_for(candidate) != line_height {
+            break;
+        }
+        minimum = candidate;
+    }
+    minimum
 }
 
 fn measured_height(
@@ -133,6 +221,26 @@ fn line_height_for(size: f32) -> f32 {
 mod tests {
     use super::*;
 
+    fn linearly_fitted_size(
+        maximum_size: f32,
+        available_height: f32,
+        measure_height: impl Fn(f32) -> f32,
+    ) -> FittedSize {
+        let mut size = maximum_size;
+        loop {
+            let content_height = measure_height(size);
+            let fits = content_height <= available_height;
+            if fits || size == MIN_TYPE_SIZE {
+                return FittedSize {
+                    size,
+                    content_height,
+                    fits,
+                };
+            }
+            size -= TYPE_STEP;
+        }
+    }
+
     #[test]
     fn reading_measure_expands_smoothly_and_respects_the_viewport() {
         assert_eq!(reading_width("short", 1_200.0), 820.0);
@@ -152,5 +260,50 @@ mod tests {
     #[test]
     fn long_copy_has_more_leading() {
         assert!(line_height_for(28.0) > line_height_for(72.0));
+    }
+
+    #[test]
+    fn banded_search_preserves_linear_fit_at_leading_boundaries() {
+        for maximum_size in (28..=72).step_by(2).map(|size| size as f32) {
+            for available_height in (0..=10_000).step_by(5).map(|height| height as f32 / 10.0) {
+                let measure_height = |size: f32| {
+                    let wrapped_lines = (size * 7.0 / 120.0).ceil().max(1.0);
+                    wrapped_lines * size * line_height_for(size)
+                };
+                let expected = linearly_fitted_size(maximum_size, available_height, measure_height);
+                let actual = find_fitted_size(maximum_size, available_height, measure_height);
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn banded_search_limits_cold_measurements() {
+        let mut fitting_measurements = 0;
+        let fitted = find_fitted_size(MAX_TYPE_SIZE, f32::MAX, |_| {
+            fitting_measurements += 1;
+            1.0
+        });
+        assert_eq!(fitted.size, MAX_TYPE_SIZE);
+        assert_eq!(fitting_measurements, 1);
+
+        let mut overflowing_measurements = 0;
+        let overflowing = find_fitted_size(MAX_TYPE_SIZE, -1.0, |_| {
+            overflowing_measurements += 1;
+            1.0
+        });
+        assert_eq!(overflowing.size, MIN_TYPE_SIZE);
+        assert!(!overflowing.fits);
+        assert_eq!(overflowing_measurements, 5);
+
+        for available_height in (0..=10_000).step_by(5).map(|height| height as f32 / 10.0) {
+            let mut cold_measurements = 0;
+            find_fitted_size(MAX_TYPE_SIZE, available_height, |size| {
+                cold_measurements += 1;
+                let wrapped_lines = (size * 7.0 / 120.0).ceil().max(1.0);
+                wrapped_lines * size * line_height_for(size)
+            });
+            assert!(cold_measurements <= 7);
+        }
     }
 }

@@ -3,6 +3,7 @@ mod audio;
 mod client;
 mod interaction;
 mod model;
+mod startup;
 mod theme;
 mod typography;
 
