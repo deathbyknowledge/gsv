@@ -43,6 +43,7 @@ import {
   PROCESS_AI_CONFIG_STORE_KEY,
   normalizeProcessAiConfigSnapshot,
 } from "./ai-config";
+import { normalizeActivitySummary } from "./activity";
 
 const DEFAULT_MESSAGE_READ_LIMIT = 200;
 
@@ -140,7 +141,10 @@ function resolvedToolResultOutcome(result: unknown): "completed" | "failed" {
     result
     && typeof result === "object"
     && !Array.isArray(result)
-    && (result as { status?: unknown }).status === "failed"
+    && (
+      (result as { status?: unknown }).status === "failed"
+      || (result as { ok?: unknown }).ok === false
+    )
   ) {
     return "failed";
   }
@@ -1115,13 +1119,15 @@ export function normalizeMessageMetadata(value: unknown): MessageMetadata | null
   const provider = normalizeProviderMetadata(record.provider);
   const fallback = normalizeFallbackMetadata(record.fallback);
   const usage = normalizeUsageState(record.usage);
-  if (!provider && !fallback && !usage) {
+  const activitySummary = normalizeActivitySummary(record.activitySummary);
+  if (!provider && !fallback && !usage && !activitySummary) {
     return null;
   }
   return {
     ...(provider ? { provider } : {}),
     ...(fallback ? { fallback } : {}),
     ...(usage ? { usage } : {}),
+    ...(activitySummary ? { activitySummary } : {}),
   };
 }
 

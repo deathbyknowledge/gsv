@@ -16,6 +16,7 @@ The source of truth is:
 - `packages/gsv/src/protocol/request-cancel.ts`
 - `packages/gsv/src/protocol/adapters.ts`
 - `packages/gsv/src/protocol/adapter-media-body.ts`
+- `packages/gsv/src/protocol/syscalls/proc.ts`
 - `packages/gsv/src/protocol/syscalls/system.ts`
 - `gateway/src/kernel/connect.ts`
 - `gateway/src/kernel/dispatch.ts`
@@ -255,6 +256,12 @@ Current role defaults from `buildSignalList()`:
 - `proc.run.output`
   - Carries assembled assistant text/thinking and, when present, process-owned
     `media` references registered for the automatic final reply.
+- `proc.run.activity`
+  - Carries a sanitized live activity state with `pid`, `runId`, `category`, and
+    `timestamp`. Categories are limited to `thinking`, `searching_files`,
+    `reading_files`, `writing_files`, `editing_files`, `deleting_files`,
+    `running_commands`, and `running_code`; tool arguments and resource names
+    are never included.
 - `proc.run.tool.started`
 - `proc.run.hil.requested`
   - Native clients answer with `proc.hil` and the exact `requestId`. Adapter DM
@@ -263,6 +270,9 @@ Current role defaults from `buildSignalList()`:
 - `proc.run.finished`
   - Repeats final-reply `media` references after they have been persisted on the
     assistant history record.
+  - May include `activitySummary`, an ordered array of sanitized
+    `{ category, count, unit }` records for successfully completed operations.
+    The same summary is stored in the final assistant history message metadata.
 - `process.exit`
 - `device.status`
 - `adapter.status`

@@ -46,6 +46,24 @@ describe("gateway process controls integration", () => {
           args: expect.objectContaining({ path }),
         }),
       }));
+      const readActivity = runtime.signals.find(({ signal, payload }) => (
+        signal === "proc.run.activity"
+        && payload.runId === sent.runId
+        && payload.category === "reading_files"
+      ));
+      expect(readActivity?.payload).toEqual({
+        pid: process.pid,
+        runId: sent.runId,
+        category: "reading_files",
+        timestamp: expect.any(Number),
+      });
+      expect(runtime.signals.find(({ signal, payload }) => (
+        signal === "proc.run.finished" && payload.runId === sent.runId
+      ))?.payload).toMatchObject({
+        activitySummary: [
+          { category: "reading_files", count: 1, unit: "reads" },
+        ],
+      });
       const streamEvents = runtime.signals
         .filter(({ signal, payload }) => signal === "proc.run.stream" && payload.runId === sent.runId)
         .map(({ payload }) => asRecord(payload.event)?.type);
@@ -98,6 +116,11 @@ describe("gateway process controls integration", () => {
           role: "assistant",
           runId: sent.runId,
           content: "banana",
+          metadata: expect.objectContaining({
+            activitySummary: [
+              { category: "reading_files", count: 1, unit: "reads" },
+            ],
+          }),
         }),
       ]);
 

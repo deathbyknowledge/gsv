@@ -196,6 +196,31 @@ describe("ProcessStore", () => {
       });
     });
 
+    it("stores optional sanitized activity metadata without invalidating old messages", async () => {
+      const stub = await getProcessByPid("msg-crud-activity-metadata");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.appendMessage("assistant", "old response");
+        store.appendMessage("assistant", "worked response", {
+          metadata: {
+            activitySummary: [
+              { category: "reading_files", count: 2, unit: "reads" },
+              { category: "running_commands", count: 1, unit: "commands" },
+            ],
+          },
+        });
+
+        const messages = store.getMessages();
+        expect(messages[0].metadata).toBeNull();
+        expect(JSON.parse(messages[1].metadata)).toEqual({
+          activitySummary: [
+            { category: "reading_files", count: 2, unit: "reads" },
+            { category: "running_commands", count: 1, unit: "commands" },
+          ],
+        });
+      });
+    });
+
     it("appendMessage stores assistant message with tool calls", async () => {
       const stub = await getProcessByPid("msg-crud-2");
       await runInDurableObject(stub, (instance: Process) => {
@@ -676,6 +701,29 @@ describe("ProcessStore", () => {
         });
 
         expect(store.getResults("run_resolved_failure")).toMatchObject([{
+          status: "completed",
+          outcome: "failed",
+        }]);
+      });
+    });
+
+    it("classifies a resolved syscall ok false result as failed", async () => {
+      const stub = await getProcessByPid("tc-resolved-ok-false");
+      await runInDurableObject(stub, (instance: Process) => {
+        const store = (instance as any).store;
+        store.register(
+          "dispatch_resolved_ok_false",
+          "call_resolved_ok_false",
+          "run_resolved_ok_false",
+          "fs.read",
+          {},
+        );
+        store.resolve("dispatch_resolved_ok_false", {
+          ok: false,
+          error: "file could not be read",
+        });
+
+        expect(store.getResults("run_resolved_ok_false")).toMatchObject([{
           status: "completed",
           outcome: "failed",
         }]);

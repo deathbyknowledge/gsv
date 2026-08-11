@@ -329,6 +329,30 @@ describe("Process DO — mechanical", () => {
 
       await project({
         type: "sig",
+        signal: "proc.run.activity",
+        payload: {
+          pid,
+          runId: "run-activity",
+          category: "reading_files",
+          timestamp: 1060,
+        },
+      });
+      const activityTool = k.procs.get(pid);
+
+      await project({
+        type: "sig",
+        signal: "proc.run.activity",
+        payload: {
+          pid,
+          runId: "run-activity",
+          category: "thinking",
+          timestamp: 1065,
+        },
+      });
+      const activityThinking = k.procs.get(pid);
+
+      await project({
+        type: "sig",
         signal: "proc.run.tool.started",
         payload: {
           pid,
@@ -376,7 +400,16 @@ describe("Process DO — mechanical", () => {
       });
       const idle = k.procs.get(pid);
 
-      return { running, retrying, waitingTool, resumed, waiting, idle };
+      return {
+        running,
+        retrying,
+        activityTool,
+        activityThinking,
+        waitingTool,
+        resumed,
+        waiting,
+        idle,
+      };
     });
 
     expect(state.running).toMatchObject({
@@ -390,6 +423,16 @@ describe("Process DO — mechanical", () => {
       activeRunId: "run-activity",
       queuedCount: 1,
       lastActiveAt: 1050,
+    });
+    expect(state.activityTool).toMatchObject({
+      state: "waiting_tool",
+      activeRunId: "run-activity",
+      lastActiveAt: 1060,
+    });
+    expect(state.activityThinking).toMatchObject({
+      state: "running",
+      activeRunId: "run-activity",
+      lastActiveAt: 1065,
     });
     expect(state.waitingTool).toMatchObject({
       state: "waiting_tool",
@@ -412,6 +455,118 @@ describe("Process DO — mechanical", () => {
       activeRunId: null,
       queuedCount: 0,
       lastActiveAt: 1200,
+    });
+  });
+
+  it("emits structured activity without tool arguments", async () => {
+    const pid = "mech-run-activity-signal";
+    const stub = await initProcess(pid, ROOT_IDENTITY);
+
+    await runInDurableObject(stub, async (instance: Process) => {
+      const process = instance as any;
+      const secretPath = "/home/hank/private.txt";
+      process.currentRun = { runId: "run-activity-signal" };
+      process.sendSignal = vi.fn(async () => {});
+
+      await process.announceRun("run-activity-signal", "test");
+      await process.emitToolStarted({
+        pid,
+        runId: "run-activity-signal",
+        name: "Read",
+        syscall: "fs.read",
+        callId: "call-secret",
+        args: { path: secretPath, token: "do-not-expose" },
+      });
+
+      const activityCalls = process.sendSignal.mock.calls
+        .filter(([signal]: [string]) => signal === "proc.run.activity")
+        .map(([, payload]: [string, unknown]) => payload);
+      expect(activityCalls).toEqual([
+        {
+          pid,
+          runId: "run-activity-signal",
+          category: "thinking",
+          timestamp: expect.any(Number),
+        },
+        {
+          pid,
+          runId: "run-activity-signal",
+          category: "reading_files",
+          timestamp: expect.any(Number),
+        },
+      ]);
+      expect(JSON.stringify(activityCalls)).not.toContain(secretPath);
+      expect(JSON.stringify(activityCalls)).not.toContain("do-not-expose");
+      process.currentRun = null;
+    });
+  });
+
+  it("aggregates only successful active-run tool outcomes", async () => {
+    const stub = await initProcess("mech-run-activity-summary", ROOT_IDENTITY);
+
+    await runInDurableObject(stub, (instance: Process) => {
+      const process = instance as any;
+      const runId = "run-activity-summary";
+      process.currentRun = { runId };
+      process.store.register("dispatch-read", "call-read", runId, "fs.read", {
+        path: "/private/read.txt",
+      });
+      process.store.resolve("dispatch-read", "contents");
+      process.store.register("dispatch-write", "call-write", runId, "fs.write", {
+        path: "/private/write.txt",
+        content: "secret content",
+      });
+      process.store.fail("dispatch-write", "write failed");
+      process.store.register("dispatch-shell", "call-shell", runId, "shell.exec", {
+        input: "printenv SECRET",
+      });
+      process.store.resolve("dispatch-shell", { status: "failed", error: "command failed" });
+      process.store.register("dispatch-code", "call-code", runId, "codemode.exec", {
+        code: "return privateValue",
+      });
+      process.store.resolve("dispatch-code", { status: "completed", result: "ok" });
+      process.store.register("dispatch-delete", "call-delete", runId, "fs.delete", {
+        path: "/private/delete.txt",
+      });
+      process.store.resolve("dispatch-delete", {
+        ok: false,
+        error: "delete failed",
+      });
+
+      process.ingestToolResults(runId, process.store.getResults(runId));
+      expect(process.currentRun.activitySummary).toEqual([
+        { category: "reading_files", count: 1, unit: "reads" },
+        { category: "running_code", count: 1, unit: "runs" },
+      ]);
+
+      process.store.register("dispatch-pending", "call-pending", runId, "fs.search", {
+        query: "private needle",
+      });
+      process.ingestToolResults(runId, process.store.getResults(runId), {
+        interruptPending: "User interrupted tool execution",
+      });
+      expect(process.currentRun.activitySummary).toEqual([
+        { category: "reading_files", count: 1, unit: "reads" },
+        { category: "running_code", count: 1, unit: "runs" },
+      ]);
+
+      process.store.register("dispatch-stale", "call-stale", "stale-run", "fs.delete", {
+        path: "/private/stale.txt",
+      });
+      process.store.resolve("dispatch-stale", "deleted");
+      process.ingestToolResults("stale-run", process.store.getResults("stale-run"));
+      const summary = process.currentRun.activitySummary;
+      expect(summary).toEqual([
+        { category: "reading_files", count: 1, unit: "reads" },
+        { category: "running_code", count: 1, unit: "runs" },
+      ]);
+      expect(JSON.stringify(summary)).not.toContain("private");
+
+      expect(process.runFinishedPayload(process.currentRun, {
+        reason: "turn.complete",
+        status: "ok",
+      })).toMatchObject({ activitySummary: summary });
+      process.currentRun = null;
     });
   });
 
@@ -952,7 +1107,7 @@ describe("Process DO — mechanical", () => {
         "[Reply destination: this GSV process.]",
       );
       expect(result.contextMessages[0].content).toContain("[Process Event]:");
-      expect(result.emitted).toHaveLength(2);
+      expect(result.emitted).toHaveLength(3);
       expect(result.emitted[0]).toMatchObject({
         signal: "proc.changed",
         payload: expect.objectContaining({
@@ -969,6 +1124,13 @@ describe("Process DO — mechanical", () => {
         payload: expect.objectContaining({
           pid,
           reason: "schedule.event",
+        }),
+      });
+      expect(result.emitted[2]).toMatchObject({
+        signal: "proc.run.activity",
+        payload: expect.objectContaining({
+          pid,
+          category: "thinking",
         }),
       });
     });
@@ -1600,6 +1762,78 @@ describe("Process DO — mechanical", () => {
           { type: "thinking", thinking: "Need to preserve this reasoning." },
         ],
       });
+    });
+
+    it("persists completed activity on the final assistant and finish signal", async () => {
+      const pid = "mech-final-activity-summary";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const emitted = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate() {
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "done" }],
+              api: "test",
+              provider: "test",
+              model: "test",
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            return "done";
+          },
+        };
+        process.store.appendMessage("user", "finish the work", {
+          runId: "run-final-activity-summary",
+        });
+        process.currentRun = {
+          runId: "run-final-activity-summary",
+          activitySummary: [
+            { category: "reading_files", count: 2, unit: "reads" },
+            { category: "running_commands", count: 1, unit: "commands" },
+          ],
+          config: {
+            executor: { kind: "process", pid },
+            profile: "task",
+            provider: "workers-ai",
+            model: "@cf/nvidia/nemotron-3-120b-a12b",
+            apiKey: "",
+            reasoning: "high",
+            maxTokens: 8192,
+            contextWindowTokens: 256000,
+            contextWindowSource: "config",
+            maxContextBytes: 32768,
+          },
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+        await process.runTick("run-final-activity-summary");
+        return emitted;
+      });
+
+      const history = (await stub.recvFrame(
+        makeReq("proc.history", {}),
+      )) as ResponseOkFrame;
+      const assistant = (history.data as any).messages.find(
+        (message: any) => message.role === "assistant",
+      );
+      const expectedSummary = [
+        { category: "reading_files", count: 2, unit: "reads" },
+        { category: "running_commands", count: 1, unit: "commands" },
+      ];
+      expect(assistant.metadata.activitySummary).toEqual(expectedSummary);
+      expect((emitted as Array<{ signal: string; payload: any }>).find(
+        (entry) => entry.signal === "proc.run.finished",
+      )?.payload.activitySummary).toEqual(expectedSummary);
     });
 
     it("persists active-run reply media on the final assistant message and signals", async () => {

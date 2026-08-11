@@ -73,7 +73,10 @@ import type {
   ProcHistorySegmentsArgs,
   ProcHistorySegmentsResult,
   ProcArchiveEntry,
+  ProcActivityCategory,
+  ProcActivitySummaryEntry,
   ProcContextState,
+  ProcRunActivityPayload,
   ProcUsageCostSource,
   ProcUsageState,
   ProcToolResultOutcome,
@@ -195,6 +198,11 @@ import {
   isProcessAiConfigKey,
   redactProcessAiConfigSnapshot,
 } from "./ai-config";
+import {
+  activityCategoryForSyscall,
+  normalizeActivitySummary,
+  recordCompletedActivity,
+} from "./activity";
 import { runProcessSqlMigrations } from "./schema/migrations";
 import { hasCapability } from "../kernel/capabilities";
 import {
@@ -220,6 +228,7 @@ type RunState = {
   outputMedia?: RunOutputMedia[];
   stagedOutputMediaKeys?: string[];
   outputMediaPersisted?: boolean;
+  activitySummary?: ProcActivitySummaryEntry[];
 };
 
 type RunOutputMedia = ProcMediaInput & {
@@ -236,6 +245,12 @@ type RunFinishOptions = {
   text?: string | null;
   error?: string | null;
   usage?: unknown;
+};
+
+type ToolResultIngestion = {
+  interrupted: number;
+  appended: number;
+  activitySummary?: ProcActivitySummaryEntry[];
 };
 
 type StreamSeqCounter = {
@@ -420,6 +435,7 @@ function buildAssistantMessageMetadata(
   response: AssistantMessage,
   config: AiConfigResult,
   fallback?: MessageMetadata["fallback"],
+  activitySummary?: ProcActivitySummaryEntry[],
 ): MessageMetadata | undefined {
   const usage = assistantUsageToProcUsageState(
     response.usage,
@@ -436,6 +452,7 @@ function buildAssistantMessageMetadata(
     },
     fallback,
     usage,
+    activitySummary,
   });
   return metadata ?? undefined;
 }
@@ -1324,7 +1341,7 @@ export class Process extends Host<Env> {
         if (existing) return existing;
       }
       const activeRun = this.currentRun;
-      let interrupted: { interrupted: number; appended: number } | null = null;
+      let interrupted: ToolResultIngestion | null = null;
       if (activeRun) {
         this.cancelPendingRequests(activeRun.runId, USER_SUPERSEDED_TOOL_MESSAGE);
         this.rememberAbortedRun(activeRun.runId);
@@ -1333,6 +1350,9 @@ export class Process extends Host<Env> {
           this.store.getResults(activeRun.runId),
           { interruptPending: USER_SUPERSEDED_TOOL_MESSAGE },
         );
+        if (interrupted.activitySummary) {
+          activeRun.activitySummary = interrupted.activitySummary;
+        }
         this.store.clearPendingHil();
         this.rejectCodeModeWaiters(
           activeRun.runId,
@@ -1819,6 +1839,9 @@ export class Process extends Host<Env> {
       const interrupted = this.ingestToolResults(runId, this.store.getResults(runId), {
         interruptPending: USER_INTERRUPTED_TOOL_MESSAGE,
       });
+      if (interrupted.activitySummary) {
+        run.activitySummary = interrupted.activitySummary;
+      }
 
       if (pendingHil) {
         this.resolveCodeModeApproval(pendingHil.requestId, false);
@@ -3360,9 +3383,16 @@ export class Process extends Host<Env> {
     this.rejectCodeModeWaiters(null, "Process execution state was reset");
     if (activeRun) {
       this.rememberAbortedRun(activeRun.runId);
-      this.ingestToolResults(activeRun.runId, this.store.getResults(activeRun.runId), {
-        interruptPending: `Process execution was reset: ${reason}`,
-      });
+      const interrupted = this.ingestToolResults(
+        activeRun.runId,
+        this.store.getResults(activeRun.runId),
+        {
+          interruptPending: `Process execution was reset: ${reason}`,
+        },
+      );
+      if (interrupted.activitySummary) {
+        activeRun.activitySummary = interrupted.activitySummary;
+      }
       if (emitFinish) {
         this.emitRunFinished(activeRun, {
           status: "aborted",
@@ -3831,6 +3861,7 @@ export class Process extends Host<Env> {
       if (this.handleRunStopped(runId)) {
         return;
       }
+      run = this.currentRun!;
     }
 
     // Step 2: Load config + tools (first tick only, cached on run state)
@@ -4005,6 +4036,10 @@ export class Process extends Host<Env> {
     };
     let attempt = 1;
     while (attempt <= MAX_RETRYABLE_GENERATION_ATTEMPTS) {
+      await this.emitRunActivity(runId, "thinking");
+      if (this.handleRunStopped(runId)) {
+        return;
+      }
       try {
         response = await this.generateAssistantResponse({
           runId,
@@ -4235,7 +4270,16 @@ export class Process extends Host<Env> {
       }
     }
 
-    const assistantMetadata = buildAssistantMessageMetadata(response, run.config!, activeFallbackMetadata);
+    const activeRunForMetadata = this.currentRun;
+    const activitySummary = toolCalls.length === 0 && activeRunForMetadata?.runId === runId
+      ? activeRunForMetadata.activitySummary
+      : undefined;
+    const assistantMetadata = buildAssistantMessageMetadata(
+      response,
+      run.config!,
+      activeFallbackMetadata,
+      activitySummary,
+    );
     this.ctx.storage.transactionSync(() => {
       this.store.appendMessage("assistant", text, {
         runId,
@@ -4899,13 +4943,40 @@ export class Process extends Host<Env> {
     } catch (error) {
       console.warn(`[Process] Failed to emit start for ${runId}:`, error);
     }
+    await this.emitRunActivity(runId, "thinking");
   }
 
   private async emitToolStarted(payload: Record<string, unknown>): Promise<void> {
+    const runId = typeof payload.runId === "string" ? payload.runId : null;
+    const syscall = typeof payload.syscall === "string" ? payload.syscall : null;
+    const category = syscall ? activityCategoryForSyscall(syscall) : null;
+    if (runId && category) {
+      await this.emitRunActivity(runId, category);
+    }
     try {
       await this.sendSignal("proc.run.tool.started", payload);
     } catch (error) {
       console.warn(`[Process] Failed to emit tool start for ${this.pid}:`, error);
+    }
+  }
+
+  private async emitRunActivity(
+    runId: string,
+    category: ProcActivityCategory,
+  ): Promise<void> {
+    if (this.currentRun?.runId !== runId) {
+      return;
+    }
+    const payload: ProcRunActivityPayload = {
+      pid: this.pid,
+      runId,
+      category,
+      timestamp: Date.now(),
+    };
+    try {
+      await this.sendSignal("proc.run.activity", payload);
+    } catch (error) {
+      console.warn(`[Process] Failed to emit activity for ${this.pid}:`, error);
     }
   }
 
@@ -5025,6 +5096,12 @@ export class Process extends Host<Env> {
     options: RunFinishOptions,
     queuedCount = this.store.queueSize(),
   ) {
+    const activeRun = this.currentRun;
+    const activitySummary = normalizeActivitySummary(
+      activeRun?.runId === run.runId
+        ? activeRun.activitySummary
+        : run.activitySummary,
+    ) ?? undefined;
     return {
       pid: this.pid,
       runId: run.runId,
@@ -5036,6 +5113,7 @@ export class Process extends Host<Env> {
       ...(run.outputMediaPersisted && run.outputMedia?.length
         ? { media: run.outputMedia }
         : {}),
+      ...(activitySummary ? { activitySummary } : {}),
       ...(options.status === "aborted" ? { aborted: true } : {}),
       queuedCount,
       timestamp: Date.now(),
@@ -5634,9 +5712,14 @@ export class Process extends Host<Env> {
     runId: string,
     toolResults: ReturnType<ProcessStore["getResults"]>,
     options?: { interruptPending?: string },
-  ): { interrupted: number; appended: number } {
+  ): ToolResultIngestion {
     let interrupted = 0;
     let appended = 0;
+    const activeRun = this.currentRun;
+    let activitySummary = activeRun?.runId === runId
+      ? normalizeActivitySummary(activeRun.activitySummary) ?? undefined
+      : undefined;
+    let activityChanged = false;
 
     this.ctx.storage.transactionSync(() => {
       for (const result of toolResults) {
@@ -5672,11 +5755,28 @@ export class Process extends Host<Env> {
           runId,
           outcome,
         );
+        const nextActivitySummary = recordCompletedActivity(
+          activitySummary,
+          result.call,
+          outcome,
+        );
+        if (nextActivitySummary !== activitySummary) {
+          activitySummary = nextActivitySummary;
+          activityChanged = true;
+        }
         appended += 1;
+      }
+      if (activeRun?.runId === runId && activityChanged && activitySummary) {
+        activeRun.activitySummary = activitySummary;
+        this.currentRun = activeRun;
       }
       this.store.clearRun(runId);
     });
-    return { interrupted, appended };
+    return {
+      interrupted,
+      appended,
+      ...(activitySummary ? { activitySummary } : {}),
+    };
   }
 
   private async processToolCalls(runId: string): Promise<PendingHilRecord | null> {

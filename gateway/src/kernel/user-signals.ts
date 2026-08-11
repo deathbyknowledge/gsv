@@ -3,6 +3,7 @@ export const USER_PROCESS_SIGNALS = [
   "proc.run.started",
   "proc.run.stream",
   "proc.run.retrying",
+  "proc.run.activity",
   "proc.run.output",
   "proc.run.tool.started",
   "proc.run.hil.requested",
