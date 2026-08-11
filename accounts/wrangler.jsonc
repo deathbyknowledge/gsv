@@ -4,6 +4,8 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-07-29",
   "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
   "routes": [
     {
       "pattern": "gsv.space/admin*",
@@ -14,6 +16,12 @@
     "ENVIRONMENT": "production",
     "GSV_ACCOUNT_ORIGIN": "https://gsv.space",
     "GSV_BASE_DOMAIN": "gsv.space"
+  },
+  "secrets": {
+    "required": [
+      "GSV_ADMIN_ACCESS_TEAM_DOMAIN",
+      "GSV_ADMIN_ACCESS_AUD"
+    ]
   },
   "d1_databases": [
     {

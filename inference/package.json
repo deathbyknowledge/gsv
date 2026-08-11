@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "cf-typegen": "wrangler types --config wrangler.dev.jsonc --include-runtime false",
+    "deploy": "wrangler deploy --minify",
+    "cf-typegen": "wrangler types --include-runtime false",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
