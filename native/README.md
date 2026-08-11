@@ -1,8 +1,7 @@
 # GSV native interface prototype
 
-This crate is the client-only proof of GSV’s text-first native interface. It deliberately leaves
-the existing CLI and `gsvd` service packaging untouched: the interaction model should earn that
-integration before the daemon boundary changes.
+This crate is the client-only proof of GSV’s text-first native interface. The current work stays
+focused on making the interaction model and direct gateway client feel trustworthy.
 
 The product invariant is one conversational moment at a time. History is a spatial timeline, a
 draft temporarily occupies the same canvas as the current moment, and implementation detail stays
@@ -18,7 +17,8 @@ cargo run --manifest-path native/Cargo.toml -- --demo
 ```
 
 The demo uses deterministic local fixture responses and does not need a gateway. Add `--mute` to
-disable the procedural typing sounds.
+disable the procedural typing sounds. Add `--reduce-motion` (or set `GSV_REDUCE_MOTION=1`) to
+disable canvas entrance motion.
 
 To connect to GSV instead, omit `--demo`. The client reuses the public Rust client and protocol from
 `cli/`, reads the normal CLI config at `~/.config/gsv/config.toml`, and chooses the most recently
@@ -31,16 +31,44 @@ the config when set:
 - `GSV_TOKEN`
 - `GSV_NATIVE_PID` to pin a process
 
+### Run against the local development gateway
+
+Build the web assets once, then keep the local worker stack running in one terminal:
+
+```bash
+npm run build --workspace web
+npm run dev
+```
+
+For a clean development state, initialize it once with the CLI (or complete setup in the web UI):
+
+```bash
+cargo run --manifest-path cli/Cargo.toml -- \
+  --url ws://localhost:8787/ws auth setup
+cargo run --manifest-path cli/Cargo.toml -- \
+  --url ws://localhost:8787/ws auth login
+```
+
+Then start the native client in a second terminal:
+
+```bash
+GSV_URL=ws://localhost:8787/ws \
+  cargo run --manifest-path native/Cargo.toml
+```
+
+The app reuses the CLI’s cached login. It reconnects without replaying commands, restores history
+before applying live deltas, and preserves an unsent or ambiguously delivered thought visibly.
+Wayland is selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is needed.
+
 ## Interaction grammar
 
 - Start typing anywhere to replace the visible moment with a draft.
-- `Enter` creates a paragraph.
-- `Cmd/Ctrl+Enter` submits a conversational thought.
+- `Enter` submits the current thought or runs the current command.
+- `Cmd/Ctrl+Enter` or `Shift+Enter` creates a new line.
 - `Escape` returns to the moment without discarding the draft.
 - `Alt+Up` and `Alt+Down` move through moments; the rail markers are also clickable and scrollable.
 - `Cmd/Ctrl+.` stops the active run.
 - `Cmd/Ctrl+\`` switches between conversation and command surfaces.
-- In the command surface, `Enter` runs the current command.
 
 When GSV asks for capability approval, the only accepted responses are `allow once`, `always
 allow`, and `deny` (with a few direct synonyms). Approval text is not forwarded to the model.
@@ -51,8 +79,8 @@ allow`, and `deny` (with a few direct synonyms). Approval text is not forwarded 
 - Tool calls are represented only as quiet activity state; raw tool cards are not shown.
 - `proc.hil` approval remains a deterministic control boundary.
 - The command surface currently uses one-shot `shell.exec`; it is not a persistent PTY yet.
-- Attachments, process management, settings, daemon lifecycle, and `gsvd` extraction are out of
-  scope for this prototype.
+- Attachments, process management, settings, and daemon lifecycle are out of scope for this
+  prototype.
 
 Validate with:
 

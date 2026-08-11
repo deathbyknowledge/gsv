@@ -1,8 +1,10 @@
 mod app;
 mod audio;
 mod client;
+mod interaction;
 mod model;
 mod theme;
+mod typography;
 
 use std::borrow::Cow;
 use std::env;
@@ -20,8 +22,13 @@ fn main() {
         return;
     }
 
-    let demo = env::args().any(|argument| argument == "--demo");
-    let sound_enabled = !env::args().any(|argument| argument == "--mute");
+    let arguments = env::args().collect::<Vec<_>>();
+    let demo = arguments.iter().any(|argument| argument == "--demo");
+    let sound_enabled = !arguments.iter().any(|argument| argument == "--mute");
+    let reduced_motion = arguments
+        .iter()
+        .any(|argument| argument == "--reduce-motion")
+        || env::var("GSV_REDUCE_MOTION").is_ok_and(|value| value == "1");
     let client = client::start(demo);
 
     Application::new().run(move |cx: &mut App| {
@@ -44,7 +51,8 @@ fn main() {
                 ..Default::default()
             },
             |window, cx| {
-                let view = cx.new(|cx| GsvApp::new(window, cx, client, demo, sound_enabled));
+                let view = cx
+                    .new(|cx| GsvApp::new(window, cx, client, demo, sound_enabled, reduced_motion));
                 cx.new(|cx| Root::new(view, window, cx))
             },
         );
@@ -129,7 +137,7 @@ mod tests {
         let client = client::start(true);
         let _window = cx.update(|cx| {
             cx.open_window(WindowOptions::default(), move |window, cx| {
-                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false));
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
                 cx.new(|cx| Root::new(view, window, cx))
             })
             .expect("the headless GPUI surface should build")

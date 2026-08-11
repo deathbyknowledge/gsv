@@ -1,29 +1,42 @@
+use std::time::Duration;
+
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, relative, AnyElement, Context, Focusable, FontWeight, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, Render, StatefulInteractiveElement, Styled,
-    Window,
+    div, ease_out_quint, px, relative, Animation, AnimationExt as _, AnyElement, Context,
+    Focusable, FontWeight, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
+    Render, StatefulInteractiveElement, Styled, Window,
 };
 use gpui_component::input::Input;
 
-use crate::model::{adaptive_type_layout, ConnectionState, MomentRole, MomentState, SurfaceMode};
+use crate::interaction::CanvasLayer;
+use crate::model::{ConnectionState, MomentRole, MomentState, SurfaceMode};
 use crate::theme;
+use crate::typography::{fit_type_layout, TypeLayout};
 
 use super::GsvApp;
 
+#[derive(Clone, Copy)]
+struct CanvasGeometry {
+    left: f32,
+    right: f32,
+    vertical: f32,
+    available_height: f32,
+}
+
 impl GsvApp {
-    fn render_timeline(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_timeline(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let selected = self.conversation.selected;
-        let markers = self
+        let draft_visible = self.interaction.layer == CanvasLayer::Draft;
+        let mut markers = self
             .conversation
             .moments
             .iter()
             .enumerate()
             .map(|(index, moment)| {
-                let is_selected = index == selected && !self.draft_visible;
+                let is_selected = index == selected && !draft_visible;
                 let marker_color = match moment.state {
-                    MomentState::Streaming => theme::color(theme::LIVE),
-                    MomentState::Error => theme::color(theme::ERROR),
+                    MomentState::Sending | MomentState::Streaming => theme::color(theme::LIVE),
+                    MomentState::Error | MomentState::Uncertain => theme::color(theme::ERROR),
                     MomentState::Approval => theme::color(theme::APPROVAL),
                     MomentState::Complete if is_selected => theme::color(theme::ACCENT),
                     MomentState::Complete => theme::color(theme::TEXT_FAINT),
@@ -31,31 +44,67 @@ impl GsvApp {
                 let align_user = moment.role == MomentRole::User;
                 div()
                     .id(("moment", index))
-                    .w(px(24.0))
-                    .h(px(if is_selected { 22.0 } else { 16.0 }))
+                    .w(px(32.0))
+                    .h(px(20.0))
+                    .flex_shrink_0()
                     .flex()
                     .items_center()
                     .when(align_user, |this| this.justify_end())
                     .when(!align_user, |this| this.justify_start())
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.draft_visible = false;
-                        this.conversation.select(index);
-                        cx.notify();
+                        this.select_moment(index, cx);
                     }))
                     .child(
                         div()
-                            .w(px(if is_selected { 5.0 } else { 3.5 }))
-                            .h(px(if is_selected { 15.0 } else { 3.5 }))
+                            .w(px(if is_selected { 4.5 } else { 3.0 }))
+                            .h(px(if is_selected { 14.0 } else { 3.0 }))
                             .rounded_full()
                             .bg(marker_color)
                             .when(is_selected, |this| this.shadow_sm()),
                     )
+                    .into_any_element()
             })
             .collect::<Vec<_>>();
 
+        if !self.interaction.conversation_draft().is_empty() {
+            let held = self.interaction.held_draft();
+            markers.push(
+                div()
+                    .id("held-draft")
+                    .w(px(32.0))
+                    .h(px(20.0))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.show_held_draft(cx);
+                    }))
+                    .child(
+                        div()
+                            .w(px(if draft_visible { 4.5 } else { 3.0 }))
+                            .h(px(if draft_visible { 14.0 } else { 7.0 }))
+                            .rounded_full()
+                            .when(!held, |this| this.bg(theme::color(theme::ACCENT)))
+                            .when(held, |this| {
+                                this.border_1()
+                                    .border_color(theme::color(theme::TEXT_QUIET))
+                            }),
+                    )
+                    .into_any_element(),
+            );
+        }
+        let marker_count = markers.len() as f32;
+        let marker_height = marker_count * 20.0 + (marker_count - 1.0).max(0.0) * 5.0;
+        let center_markers = marker_height + 140.0 <= f32::from(window.viewport_size().height);
+
         div()
-            .w(px(72.0))
+            .absolute()
+            .left_0()
+            .top_0()
+            .w(px(82.0))
             .h_full()
             .flex()
             .justify_center()
@@ -64,122 +113,226 @@ impl GsvApp {
                 div()
                     .id("timeline-scroll")
                     .h_full()
-                    .py(px(74.0))
+                    .py(px(70.0))
                     .flex()
                     .flex_col()
-                    .justify_center()
-                    .gap(px(7.0))
+                    .when(center_markers, |this| this.justify_center())
+                    .gap(px(5.0))
                     .overflow_y_scroll()
+                    .track_scroll(&self.timeline_scroll)
+                    .occlude()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.input.focus_handle(cx).focus(window);
+                        }),
+                    )
                     .children(markers),
             )
             .into_any_element()
     }
 
     fn render_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let input_value = self.input.read(cx).value().to_string();
-        let draft_layout = adaptive_type_layout(&input_value, false);
-        let (message, role, state) = match self.conversation.current() {
-            Some(moment) => (moment.text.clone(), moment.role, moment.state),
+        let viewport = window.viewport_size();
+        let viewport_width = f32::from(viewport.width);
+        let viewport_height = f32::from(viewport.height);
+        let viewport_key = (
+            viewport_width.round() as u32,
+            viewport_height.round() as u32,
+        );
+        if self.type_viewport != Some(viewport_key) {
+            self.stream_type_sizes.clear();
+            self.draft_type_size = None;
+            self.type_viewport = Some(viewport_key);
+        }
+        let left_padding = (viewport_width * 0.065).clamp(108.0, 142.0);
+        let right_padding = (viewport_width * 0.065).clamp(46.0, 142.0);
+        let vertical_padding = (viewport_height * 0.105).clamp(50.0, 108.0);
+        let available_width = (viewport_width - left_padding - right_padding).max(1.0);
+        let available_height = (viewport_height - vertical_padding * 2.0 - 34.0).max(1.0);
+        let geometry = CanvasGeometry {
+            left: left_padding,
+            right: right_padding,
+            vertical: vertical_padding,
+            available_height,
+        };
+
+        let current = if self.interaction.is_approval() {
+            self.conversation
+                .moments
+                .iter()
+                .rev()
+                .find(|moment| moment.state == MomentState::Approval)
+        } else {
+            self.conversation.current().filter(|moment| {
+                moment.state != MomentState::Streaming || !moment.text.trim().is_empty()
+            })
+        };
+        let (message, moment_id, run_id, role, state) = match current {
+            Some(moment) => (
+                moment.text.clone(),
+                moment.id.clone(),
+                moment.run_id.clone(),
+                moment.role,
+                moment.state,
+            ),
             None if self.conversation.connection == ConnectionState::Connecting => (
                 "Reaching your GSV…".to_string(),
+                "system:connecting".to_string(),
+                None,
                 MomentRole::System,
                 MomentState::Complete,
             ),
             None => (
                 "Begin anywhere.".to_string(),
+                "system:begin".to_string(),
+                None,
                 MomentRole::Intelligence,
                 MomentState::Complete,
             ),
         };
-        let message_layout = adaptive_type_layout(&message, state == MomentState::Streaming);
+
+        let message_weight = if role == MomentRole::User {
+            FontWeight::MEDIUM
+        } else {
+            FontWeight::NORMAL
+        };
+        let moment_type_key = format!("moment:{moment_id}");
+        let run_type_key = run_id.map(|run_id| format!("run:{run_id}"));
+        let maximum_size = if role == MomentRole::Intelligence {
+            self.stream_type_sizes
+                .get(&moment_type_key)
+                .copied()
+                .or_else(|| {
+                    (state == MomentState::Streaming)
+                        .then(|| {
+                            run_type_key
+                                .as_ref()
+                                .and_then(|key| self.stream_type_sizes.get(key).copied())
+                        })
+                        .flatten()
+                })
+        } else {
+            None
+        };
+        self.stream_type_sizes.clear();
+        let message_layout = fit_type_layout(
+            window,
+            &message,
+            available_width,
+            available_height,
+            maximum_size,
+            message_weight,
+        );
+        if role == MomentRole::Intelligence
+            && (state == MomentState::Streaming || maximum_size.is_some())
+        {
+            self.stream_type_sizes
+                .insert(moment_type_key, message_layout.size);
+            if state == MomentState::Streaming {
+                if let Some(run_type_key) = run_type_key {
+                    self.stream_type_sizes
+                        .insert(run_type_key, message_layout.size);
+                }
+            }
+        }
+
         let message_color = match state {
             MomentState::Error => theme::color(theme::ERROR),
             MomentState::Approval => theme::color(theme::APPROVAL),
+            MomentState::Sending | MomentState::Uncertain => theme::color(theme::TEXT_QUIET),
             MomentState::Streaming => theme::color(theme::TEXT),
             MomentState::Complete if role == MomentRole::User => theme::color(theme::ACCENT),
             MomentState::Complete if role == MomentRole::System => theme::color(theme::TEXT_QUIET),
             MomentState::Complete => theme::color(theme::TEXT),
         };
+
         let mode_label = if self.conversation.mode == SurfaceMode::Conversation {
             "TERMINAL"
         } else {
             "CONVERSATION"
         };
-        let activity = self.conversation.activity.clone();
-        let window_height = f32::from(window.bounds().size.height);
-        let vertical_padding = (window_height * 0.11).clamp(54.0, 112.0);
+        let draft = self.interaction.visible_draft().map(str::to_string);
+        let draft_visible = draft.is_some();
+        let activity = self.conversation.activity.clone().or_else(|| {
+            (!draft_visible && state == MomentState::Uncertain)
+                .then(|| "DELIVERY NOT CONFIRMED · CHECKING HISTORY".to_string())
+        });
+        let show_hint = !self.interaction.has_interacted()
+            && activity.is_none()
+            && !self.interaction.is_approval();
+
+        let canvas = if let Some(draft) = draft {
+            let draft_layout = fit_type_layout(
+                window,
+                &draft,
+                available_width,
+                available_height,
+                self.draft_type_size,
+                FontWeight::NORMAL,
+            );
+            self.draft_type_size = Some(draft_layout.size);
+            self.render_draft_canvas(
+                draft_layout,
+                geometry,
+                self.interaction.layer == CanvasLayer::ApprovalDraft,
+            )
+        } else {
+            self.render_message_canvas(
+                message,
+                message_layout,
+                message_weight,
+                message_color,
+                geometry,
+                cx,
+            )
+        };
 
         div()
             .relative()
-            .flex_1()
-            .h_full()
+            .size_full()
             .overflow_hidden()
-            .child(
-                div()
-                    .id("message-scroll")
-                    .absolute()
-                    .inset_0()
-                    .px(px(68.0))
-                    .py(px(vertical_padding))
-                    .flex()
-                    .justify_center()
-                    .items_center()
-                    .overflow_y_scroll()
-                    .opacity(if self.draft_visible { 0.0 } else { 1.0 })
-                    .child(
-                        div()
-                            .w_full()
-                            .max_w(px(message_layout.width))
-                            .font_family(theme::PROSE_FONT)
-                            .font_weight(match role {
-                                MomentRole::User => FontWeight::MEDIUM,
-                                MomentRole::Intelligence => FontWeight::NORMAL,
-                                MomentRole::System => FontWeight::NORMAL,
-                            })
-                            .text_size(px(message_layout.size))
-                            .line_height(relative(message_layout.line_height))
-                            .text_color(message_color)
-                            .child(message),
-                    ),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .px(px(68.0))
-                    .py(px(vertical_padding))
-                    .flex()
-                    .justify_center()
-                    .items_center()
-                    .opacity(if self.draft_visible { 1.0 } else { 0.0 })
-                    .child(
-                        Input::new(&self.input)
-                            .appearance(false)
-                            .bordered(false)
-                            .focus_bordered(false)
-                            .w_full()
-                            .max_w(px(draft_layout.width))
-                            .p_0()
-                            .font_family(theme::PROSE_FONT)
-                            .font_weight(FontWeight::NORMAL)
-                            .text_size(px(draft_layout.size))
-                            .line_height(relative(draft_layout.line_height))
-                            .text_color(theme::color(theme::TEXT)),
-                    ),
-            )
+            .when(!draft_visible, |this| {
+                let sink_value = self.input.read(cx).value().to_string();
+                let sink_layout = fit_type_layout(
+                    window,
+                    &sink_value,
+                    available_width,
+                    available_height,
+                    None,
+                    FontWeight::NORMAL,
+                );
+                this.child(self.render_input_sink(sink_layout, geometry))
+            })
+            .child(canvas)
             .when_some(activity, |this, activity| {
                 this.child(
                     div()
                         .absolute()
-                        .bottom(px(35.0))
+                        .bottom(px(34.0))
                         .left_0()
                         .right_0()
                         .flex()
                         .justify_center()
                         .font_family(theme::MONO_FONT)
-                        .text_size(px(10.0))
+                        .text_size(px(9.0))
                         .text_color(theme::color(theme::TEXT_QUIET))
                         .child(activity),
+                )
+            })
+            .when(show_hint, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .bottom(px(34.0))
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .font_family(theme::MONO_FONT)
+                        .text_size(px(9.0))
+                        .text_color(theme::color(theme::TEXT_FAINT))
+                        .child("TYPE ANYWHERE   ·   CTRL ENTER TO SEND   ·   ALT ↑↓ HISTORY"),
                 )
             })
             .child(
@@ -199,6 +352,135 @@ impl GsvApp {
                         this.toggle_terminal(window, cx);
                     }))
                     .child(mode_label),
+            )
+            .into_any_element()
+    }
+
+    fn render_input_sink(&self, layout: TypeLayout, geometry: CanvasGeometry) -> AnyElement {
+        div()
+            .absolute()
+            .inset_0()
+            .pl(px(geometry.left))
+            .pr(px(geometry.right))
+            .py(px(geometry.vertical))
+            .flex()
+            .items_center()
+            .justify_center()
+            .overflow_hidden()
+            .opacity(0.0)
+            .child(
+                Input::new(&self.input)
+                    .appearance(false)
+                    .bordered(false)
+                    .focus_bordered(false)
+                    .w_full()
+                    .max_w(px(layout.width))
+                    .p_0()
+                    .font_family(theme::PROSE_FONT)
+                    .text_size(px(layout.size))
+                    .line_height(relative(layout.line_height)),
+            )
+            .into_any_element()
+    }
+
+    fn render_message_canvas(
+        &self,
+        message: String,
+        layout: TypeLayout,
+        weight: FontWeight,
+        color: gpui::Hsla,
+        geometry: CanvasGeometry,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let is_long = layout.scrolls;
+        let message = div()
+            .relative()
+            .w_full()
+            .max_w(px(layout.width))
+            .font_family(theme::PROSE_FONT)
+            .font_weight(weight)
+            .text_size(px(layout.size))
+            .line_height(relative(layout.line_height))
+            .text_color(color)
+            .child(message);
+        let direction = self.transition_direction;
+        let message = if self.reduced_motion {
+            message.into_any_element()
+        } else {
+            message
+                .with_animation(
+                    ("message-enter", self.transition_epoch),
+                    Animation::new(Duration::from_millis(175)).with_easing(ease_out_quint()),
+                    move |this, delta| {
+                        let offset = direction * 12.0 * (1.0 - delta);
+                        this.top(px(offset)).opacity(delta)
+                    },
+                )
+                .into_any_element()
+        };
+
+        div()
+            .id(("message-scroll", self.transition_epoch))
+            .absolute()
+            .inset_0()
+            .pl(px(geometry.left))
+            .pr(px(geometry.right))
+            .pt(px(geometry.vertical))
+            .pb(px(geometry.vertical + 24.0))
+            .flex()
+            .justify_center()
+            .when(is_long, |this| this.items_start())
+            .when(!is_long, |this| this.items_center())
+            .overflow_y_scroll()
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.input.focus_handle(cx).focus(window);
+                }),
+            )
+            .child(message)
+            .into_any_element()
+    }
+
+    fn render_draft_canvas(
+        &self,
+        layout: TypeLayout,
+        geometry: CanvasGeometry,
+        approval: bool,
+    ) -> AnyElement {
+        let is_long = layout.scrolls;
+        div()
+            .id(("draft-scroll", self.transition_epoch))
+            .absolute()
+            .inset_0()
+            .pl(px(geometry.left))
+            .pr(px(geometry.right))
+            .pt(px(geometry.vertical))
+            .pb(px(geometry.vertical + 24.0))
+            .flex()
+            .justify_center()
+            .when(is_long, |this| this.items_start())
+            .when(!is_long, |this| this.items_center())
+            .overflow_hidden()
+            .child(
+                Input::new(&self.input)
+                    .appearance(false)
+                    .bordered(false)
+                    .focus_bordered(false)
+                    .w_full()
+                    .max_w(px(layout.width))
+                    .max_h(px(geometry.available_height))
+                    .p_0()
+                    .font_family(theme::PROSE_FONT)
+                    .font_weight(FontWeight::NORMAL)
+                    .text_size(px(layout.size))
+                    .line_height(relative(layout.line_height))
+                    .text_color(if approval {
+                        theme::color(theme::APPROVAL)
+                    } else {
+                        theme::color(theme::TEXT)
+                    }),
             )
             .into_any_element()
     }
@@ -331,11 +613,13 @@ impl Render for GsvApp {
         div()
             .id("gsv-native")
             .key_context("GsvNative")
+            .relative()
             .size_full()
-            .flex()
             .bg(theme::color(theme::VOID))
             .text_color(theme::color(theme::TEXT))
             .on_action(cx.listener(Self::hide_draft))
+            .on_action(cx.listener(Self::submit_thought_action))
+            .on_action(cx.listener(Self::insert_newline_action))
             .on_action(cx.listener(Self::abort_run))
             .on_action(cx.listener(Self::toggle_terminal_action))
             .on_action(cx.listener(Self::previous_moment))
@@ -349,12 +633,143 @@ impl Render for GsvApp {
             .when(
                 self.conversation.mode == SurfaceMode::Conversation,
                 |this| {
-                    this.child(self.render_timeline(cx))
-                        .child(self.render_conversation(window, cx))
+                    this.child(self.render_conversation(window, cx))
+                        .child(self.render_timeline(window, cx))
                 },
             )
             .when(self.conversation.mode == SurfaceMode::Terminal, |this| {
                 this.child(self.render_terminal(cx))
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use gpui::{
+        point, AppContext as _, Modifiers, TestAppContext, VisualTestContext, WindowOptions,
+    };
+    use gpui_component::Root;
+
+    use super::*;
+    use crate::app::{bind_keys, HideDraft};
+
+    #[gpui::test]
+    fn hidden_draft_does_not_receive_canvas_pointer_events(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let client = crate::client::start(true);
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        cx.simulate_input("held draft words");
+        cx.dispatch_action(HideDraft);
+        cx.run_until_parked();
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        let input = cx.cx.update(|cx| app.read(cx).input.clone());
+        let cursor_before = cx.cx.update(|cx| {
+            assert_eq!(app.read(cx).interaction.layer, CanvasLayer::Moment);
+            input.read(cx).cursor()
+        });
+        assert!(cursor_before > 0);
+
+        let viewport = cx.update(|window, _| window.viewport_size());
+        let viewport_width = f32::from(viewport.width);
+        let left_padding = (viewport_width * 0.065).clamp(108.0, 142.0);
+        let right_padding = (viewport_width * 0.065).clamp(46.0, 142.0);
+        let available_width = viewport_width - left_padding - right_padding;
+        let input_width = 760.0_f32.min(available_width);
+        let input_left = left_padding + (available_width - input_width) / 2.0;
+        cx.simulate_click(
+            point(px(input_left + 4.0), px(f32::from(viewport.height) / 2.0)),
+            Modifiers::default(),
+        );
+
+        let cursor_after = cx.cx.update(|cx| input.read(cx).cursor());
+        assert_eq!(cursor_after, cursor_before);
+    }
+
+    #[gpui::test]
+    fn completed_stream_size_is_retained_until_navigation(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let client = crate::client::start(true);
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+        let cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.conversation.start_run("run-1");
+                app.conversation
+                    .stream_text(Some("run-1"), &"A measured response. ".repeat(160));
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+        let live_size = cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.stream_type_sizes.len(), 2);
+            let mut sizes = app.stream_type_sizes.values().copied();
+            let size = sizes.next().expect("live stream size should be cached");
+            assert!(sizes.all(|other| other == size));
+            size
+        });
+
+        cx.cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                assert!(app.conversation.finish_run(Some("run-1"), None));
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.stream_type_sizes.len(), 1);
+            assert_eq!(app.stream_type_sizes.values().next(), Some(&live_size));
+        });
+
+        cx.cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.conversation.select_previous();
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+        cx.cx
+            .update(|cx| assert!(app.read(cx).stream_type_sizes.is_empty()));
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use serde_json::Value;
 
@@ -14,6 +14,8 @@ pub enum MomentRole {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MomentState {
     Complete,
+    Sending,
+    Uncertain,
     Streaming,
     Error,
     Approval,
@@ -53,20 +55,12 @@ pub struct PendingApproval {
 pub enum ConnectionState {
     Connecting,
     Connected,
-    Disconnected,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SurfaceMode {
     Conversation,
     Terminal,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TypeLayout {
-    pub size: f32,
-    pub line_height: f32,
-    pub width: f32,
 }
 
 #[derive(Debug)]
@@ -79,8 +73,10 @@ pub struct Conversation {
     pub activity: Option<String>,
     pub mode: SurfaceMode,
     next_transient_id: u64,
+    user_occurrence_baselines: HashMap<String, usize>,
     retired_run_ids: VecDeque<String>,
     stopping_run_id: Option<String>,
+    follow_latest: bool,
 }
 
 impl Conversation {
@@ -94,8 +90,10 @@ impl Conversation {
             activity: Some("CONNECTING".to_string()),
             mode: SurfaceMode::Conversation,
             next_transient_id: 1,
+            user_occurrence_baselines: HashMap::new(),
             retired_run_ids: VecDeque::new(),
             stopping_run_id: None,
+            follow_latest: true,
         }
     }
 
@@ -126,8 +124,10 @@ impl Conversation {
             activity: None,
             mode: SurfaceMode::Conversation,
             next_transient_id: 1,
+            user_occurrence_baselines: HashMap::new(),
             retired_run_ids: VecDeque::new(),
             stopping_run_id: None,
+            follow_latest: true,
         }
     }
 
@@ -138,33 +138,157 @@ impl Conversation {
     pub fn select(&mut self, index: usize) {
         if !self.moments.is_empty() {
             self.selected = index.min(self.moments.len() - 1);
+            self.follow_latest = self.selected + 1 == self.moments.len();
         }
     }
 
     pub fn select_previous(&mut self) {
         self.selected = self.selected.saturating_sub(1);
+        self.follow_latest = self.selected + 1 == self.moments.len();
     }
 
     pub fn select_next(&mut self) {
         if !self.moments.is_empty() {
             self.selected = (self.selected + 1).min(self.moments.len() - 1);
+            self.follow_latest = self.selected + 1 == self.moments.len();
         }
     }
 
     pub fn select_latest(&mut self) {
         self.selected = self.moments.len().saturating_sub(1);
+        self.follow_latest = true;
     }
 
     pub fn replace_history(&mut self, moments: Vec<Moment>) {
+        let selected_id = (!self.follow_latest)
+            .then(|| self.current().map(|moment| moment.id.clone()))
+            .flatten();
+        let local_user_moments = self
+            .moments
+            .iter()
+            .filter(|moment| {
+                moment.role == MomentRole::User && moment.id.starts_with("user:transient:")
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut history_user_occurrences = HashMap::new();
+        for moment in &moments {
+            if moment.role == MomentRole::User {
+                *history_user_occurrences
+                    .entry(moment.text.clone())
+                    .or_insert(0) += 1;
+            }
+        }
         self.moments = moments;
-        self.select_latest();
+        for local in local_user_moments {
+            let represented_by_run = local.run_id.as_deref().is_some_and(|run_id| {
+                self.moments.iter().any(|moment| {
+                    moment.role == MomentRole::User && moment.run_id.as_deref() == Some(run_id)
+                })
+            });
+            let represented_by_occurrence = local.state == MomentState::Uncertain
+                && self
+                    .user_occurrence_baselines
+                    .get(&local.id)
+                    .is_some_and(|baseline| {
+                        history_user_occurrences
+                            .get(&local.text)
+                            .copied()
+                            .unwrap_or_default()
+                            > *baseline
+                    });
+            if represented_by_run || represented_by_occurrence {
+                self.user_occurrence_baselines.remove(&local.id);
+            } else {
+                self.moments.push(local);
+            }
+        }
+        let selected_index = selected_id.and_then(|selected_id| {
+            self.moments
+                .iter()
+                .position(|moment| moment.id == selected_id)
+        });
+        if let Some(index) = selected_index {
+            self.selected = index;
+            self.follow_latest = false;
+        } else {
+            self.select_latest();
+        }
     }
 
-    pub fn append_user(&mut self, text: impl Into<String>) {
+    pub fn append_user(&mut self, text: impl Into<String>) -> String {
+        let text = text.into();
+        let occurrence_baseline = self
+            .moments
+            .iter()
+            .filter(|moment| {
+                moment.role == MomentRole::User
+                    && moment.state != MomentState::Error
+                    && moment.text == text
+            })
+            .count();
         let id = self.transient_id("user");
-        self.moments
-            .push(Moment::new(id, MomentRole::User, text.into()));
+        let mut moment = Moment::new(id.clone(), MomentRole::User, text);
+        moment.state = MomentState::Sending;
+        self.moments.push(moment);
+        self.user_occurrence_baselines
+            .insert(id.clone(), occurrence_baseline);
         self.select_latest();
+        id
+    }
+
+    pub fn accept_user(&mut self, moment_id: &str, run_id: &str) {
+        if let Some(moment) = self
+            .moments
+            .iter_mut()
+            .find(|moment| moment.id == moment_id && moment.state == MomentState::Sending)
+        {
+            moment.state = MomentState::Complete;
+            moment.run_id = Some(run_id.to_string());
+            self.user_occurrence_baselines.remove(moment_id);
+        }
+    }
+
+    pub fn mark_user_uncertain(&mut self, moment_id: &str) {
+        if let Some(moment) = self
+            .moments
+            .iter_mut()
+            .find(|moment| moment.id == moment_id && moment.state == MomentState::Sending)
+        {
+            moment.state = MomentState::Uncertain;
+        }
+    }
+
+    pub fn remove_moment(&mut self, moment_id: &str) {
+        let selected_id = self.current().map(|moment| moment.id.clone());
+        self.moments.retain(|moment| moment.id != moment_id);
+        self.user_occurrence_baselines.remove(moment_id);
+        if self.moments.is_empty() {
+            self.selected = 0;
+            self.follow_latest = true;
+            return;
+        }
+        let selected_index = selected_id.and_then(|selected_id| {
+            self.moments
+                .iter()
+                .position(|moment| moment.id == selected_id)
+        });
+        if let Some(index) = selected_index {
+            self.selected = index;
+        } else {
+            self.selected = self.selected.min(self.moments.len() - 1);
+        }
+    }
+
+    pub fn fail_user(&mut self, moment_id: &str) {
+        if let Some(moment) = self
+            .moments
+            .iter_mut()
+            .find(|moment| moment.id == moment_id)
+        {
+            moment.state = MomentState::Error;
+            self.user_occurrence_baselines.remove(moment_id);
+        }
     }
 
     pub fn start_run(&mut self, run_id: impl Into<String>) {
@@ -201,6 +325,7 @@ impl Conversation {
         }
 
         let id = self.transient_id("assistant");
+        let was_following = self.follow_latest || self.moments.is_empty();
         self.moments.push(Moment {
             id,
             role: MomentRole::Intelligence,
@@ -208,7 +333,10 @@ impl Conversation {
             run_id: Some(run_id),
             state: MomentState::Streaming,
         });
-        self.select_latest();
+        if was_following {
+            self.selected = self.moments.len().saturating_sub(2);
+            self.follow_latest = true;
+        }
     }
 
     pub fn stream_text(&mut self, run_id: Option<&str>, delta: &str) {
@@ -225,6 +353,7 @@ impl Conversation {
             .map(str::to_string)
             .or_else(|| self.active_run_id.clone());
 
+        let was_following = self.follow_latest || self.moments.is_empty();
         let matching = self.moments.iter_mut().rev().find(|moment| {
             moment.state == MomentState::Streaming
                 && effective_run_id
@@ -245,15 +374,82 @@ impl Conversation {
             });
         }
         self.activity = None;
-        self.select_latest();
+        self.follow_after_append(was_following);
     }
 
-    pub fn finish_run(&mut self, run_id: Option<&str>, error: Option<&str>) {
-        let Some(active_run_id) = self.active_run_id.clone() else {
+    pub fn replace_run_text(&mut self, run_id: Option<&str>, text: &str) {
+        if !self.accepts_run(run_id) {
             return;
+        }
+        if self.active_run_id.is_none() {
+            if let Some(run_id) = run_id {
+                self.start_run(run_id);
+            }
+        }
+        let effective_run_id = run_id
+            .map(str::to_string)
+            .or_else(|| self.active_run_id.clone());
+        let was_following = self.follow_latest || self.moments.is_empty();
+        let matching = self.moments.iter_mut().rev().find(|moment| {
+            moment.state == MomentState::Streaming
+                && effective_run_id
+                    .as_deref()
+                    .is_none_or(|run_id| moment.run_id.as_deref() == Some(run_id))
+        });
+        if let Some(moment) = matching {
+            moment.text = text.to_string();
+        } else if !text.is_empty() {
+            let id = self.transient_id("assistant");
+            self.moments.push(Moment {
+                id,
+                role: MomentRole::Intelligence,
+                text: text.to_string(),
+                run_id: effective_run_id,
+                state: MomentState::Streaming,
+            });
+        }
+        self.activity = None;
+        self.follow_after_append(was_following);
+    }
+
+    pub fn reconcile_active_run(&mut self, run_id: Option<&str>, live_text: Option<&str>) {
+        let previous_run_id = self.active_run_id.clone();
+        let preserve_stopping = run_id.is_some_and(|run_id| {
+            previous_run_id.as_deref() == Some(run_id)
+                && self.stopping_run_id.as_deref() == Some(run_id)
+        });
+        if previous_run_id.as_deref() != run_id {
+            if let Some(previous_run_id) = previous_run_id {
+                self.complete_streaming_moment(&previous_run_id, true);
+                self.retire_run(previous_run_id);
+            }
+            self.active_run_id = None;
+            self.stopping_run_id = None;
+        }
+        if let Some(run_id) = run_id {
+            self.retired_run_ids.retain(|retired| retired != run_id);
+            self.stopping_run_id = None;
+            self.start_run(run_id);
+            if let Some(live_text) = live_text.filter(|text| !text.is_empty()) {
+                self.replace_run_text(Some(run_id), live_text);
+            }
+            if preserve_stopping {
+                self.stopping_run_id = Some(run_id.to_string());
+                self.activity = Some("STOPPING".to_string());
+            }
+        } else {
+            self.active_run_id = None;
+            self.stopping_run_id = None;
+            self.activity = None;
+        }
+    }
+
+    pub fn finish_run(&mut self, run_id: Option<&str>, error: Option<&str>) -> bool {
+        let Some(active_run_id) = self.active_run_id.clone() else {
+            return false;
         };
         if run_id.is_some_and(|run_id| run_id != active_run_id) {
-            return;
+            return false;
         }
 
         if let Some(moment) = self.moments.iter_mut().rev().find(|moment| {
@@ -285,12 +481,13 @@ impl Conversation {
         self.active_run_id = None;
         self.stopping_run_id = None;
         self.activity = None;
-        self.select_latest();
+        self.follow_if_requested();
+        true
     }
 
-    pub fn abort_run(&mut self, run_id: &str) {
+    pub fn abort_run(&mut self, run_id: &str) -> bool {
         if self.active_run_id.as_deref() != Some(run_id) {
-            return;
+            return false;
         }
         self.active_run_id = None;
         self.complete_streaming_moment(run_id, true);
@@ -298,7 +495,8 @@ impl Conversation {
         self.stopping_run_id = None;
         self.clear_approval();
         self.activity = None;
-        self.select_latest();
+        self.follow_if_requested();
+        true
     }
 
     pub fn accepts_run(&self, run_id: Option<&str>) -> bool {
@@ -320,14 +518,15 @@ impl Conversation {
         Some(run_id)
     }
 
-    pub fn abort_failed(&mut self, run_id: &str) {
+    pub fn abort_failed(&mut self, run_id: &str) -> bool {
         if self.stopping_run_id.as_deref() != Some(run_id) {
-            return;
+            return false;
         }
         self.stopping_run_id = None;
         if self.active_run_id.is_some() {
             self.activity = Some("THINKING".to_string());
         }
+        true
     }
 
     pub fn show_error(&mut self, message: impl Into<String>) {
@@ -343,13 +542,13 @@ impl Conversation {
         self.select_latest();
     }
 
-    pub fn set_approval(&mut self, approval: PendingApproval) {
+    pub fn set_approval(&mut self, approval: PendingApproval) -> bool {
         if !approval.run_id.is_empty() {
             if self.active_run_id.is_none() {
                 self.start_run(approval.run_id.clone());
             }
             if !self.accepts_run(Some(&approval.run_id)) {
-                return;
+                return false;
             }
         }
         let text = approval_prompt(&approval);
@@ -368,6 +567,7 @@ impl Conversation {
         self.pending_approval = Some(approval);
         self.activity = Some("APPROVAL REQUIRED".to_string());
         self.select_latest();
+        true
     }
 
     pub fn clear_approval(&mut self) {
@@ -410,6 +610,24 @@ impl Conversation {
             self.retired_run_ids.pop_front();
         }
     }
+
+    fn follow_after_append(&mut self, was_following: bool) {
+        if was_following {
+            self.selected = self.moments.len().saturating_sub(1);
+            self.follow_latest = true;
+        }
+    }
+
+    fn follow_if_requested(&mut self) {
+        if self.follow_latest {
+            self.selected = self.moments.len().saturating_sub(1);
+        } else if !self.moments.is_empty() {
+            self.selected = self.selected.min(self.moments.len() - 1);
+        } else {
+            self.selected = 0;
+            self.follow_latest = true;
+        }
+    }
 }
 
 pub fn approval_prompt(approval: &PendingApproval) -> String {
@@ -428,40 +646,6 @@ pub fn approval_prompt(approval: &PendingApproval) -> String {
     )
 }
 
-pub fn adaptive_type_layout(text: &str, streaming: bool) -> TypeLayout {
-    let characters = text.chars().count();
-    let lines = text.lines().count().max(1);
-    let effective = characters + lines.saturating_sub(1) * 42;
-    let size = if streaming {
-        42.0
-    } else {
-        match effective {
-            0..=56 => 72.0,
-            57..=150 => 58.0,
-            151..=330 => 46.0,
-            331..=720 => 36.0,
-            _ => 28.0,
-        }
-    };
-    let line_height = match size as u32 {
-        0..=32 => 1.34,
-        33..=44 => 1.26,
-        45..=60 => 1.18,
-        _ => 1.11,
-    };
-    let width = match size as u32 {
-        0..=32 => 900.0,
-        33..=44 => 860.0,
-        45..=60 => 780.0,
-        _ => 700.0,
-    };
-    TypeLayout {
-        size,
-        line_height,
-        width,
-    }
-}
-
 pub fn parse_history(payload: &Value) -> Vec<Moment> {
     payload
         .get("messages")
@@ -477,8 +661,8 @@ pub fn parse_history(payload: &Value) -> Vec<Moment> {
                 "toolResult" => return None,
                 _ => return None,
             };
-            let text = extract_text(message.get("content")?).trim().to_string();
-            if text.is_empty() {
+            let text = extract_text(message.get("content")?);
+            if text.trim().is_empty() {
                 return None;
             }
             let id = message
@@ -594,14 +778,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn type_size_steps_down_without_becoming_dashboard_copy() {
-        assert_eq!(adaptive_type_layout("Short thought", false).size, 72.0);
-        assert_eq!(adaptive_type_layout(&"a".repeat(200), false).size, 46.0);
-        assert_eq!(adaptive_type_layout(&"a".repeat(900), false).size, 28.0);
-        assert_eq!(adaptive_type_layout("streaming", true).size, 42.0);
-    }
-
-    #[test]
     fn history_keeps_human_moments_and_hides_tool_plumbing() {
         let history = json!({
             "messages": [
@@ -616,6 +792,21 @@ mod tests {
     }
 
     #[test]
+    fn history_filters_blank_content_without_normalizing_visible_whitespace() {
+        let history = json!({
+            "messages": [
+                { "id": 1, "role": "user", "content": " \n\t " },
+                { "id": 2, "role": "assistant", "content": "\n  keep this spacing  \n" }
+            ]
+        });
+
+        let moments = parse_history(&history);
+
+        assert_eq!(moments.len(), 1);
+        assert_eq!(moments[0].text, "\n  keep this spacing  \n");
+    }
+
+    #[test]
     fn streaming_is_one_mutable_moment() {
         let mut conversation = Conversation::connecting();
         conversation.start_run("run-1");
@@ -625,6 +816,213 @@ mod tests {
         assert_eq!(conversation.moments[0].text, "Hello there");
         conversation.finish_run(Some("run-1"), None);
         assert_eq!(conversation.moments[0].state, MomentState::Complete);
+    }
+
+    #[test]
+    fn thinking_keeps_the_committed_thought_until_text_arrives() {
+        let mut conversation = Conversation::connecting();
+        let user_id = conversation.append_user("hello");
+        conversation.accept_user(&user_id, "run-1");
+        conversation.start_run("run-1");
+
+        assert_eq!(
+            conversation.current().map(|moment| moment.role),
+            Some(MomentRole::User)
+        );
+        conversation.stream_text(Some("run-1"), "Hello back");
+        assert_eq!(
+            conversation.current().map(|moment| moment.role),
+            Some(MomentRole::Intelligence)
+        );
+    }
+
+    #[test]
+    fn final_output_replaces_streamed_deltas_instead_of_duplicating_them() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+        conversation.stream_text(Some("run-1"), "Hello");
+        conversation.stream_text(Some("run-1"), " there");
+        conversation.replace_run_text(Some("run-1"), "Hello there");
+
+        assert_eq!(conversation.moments.len(), 1);
+        assert_eq!(conversation.moments[0].text, "Hello there");
+    }
+
+    #[test]
+    fn streaming_does_not_steal_a_deliberate_history_selection() {
+        let mut conversation = Conversation::demo();
+        conversation.select(0);
+        conversation.start_run("run-1");
+        conversation.stream_text(Some("run-1"), "A new answer");
+
+        assert_eq!(conversation.selected, 0);
+        assert_eq!(
+            conversation.current().map(|moment| moment.id.as_str()),
+            Some("demo-1")
+        );
+    }
+
+    #[test]
+    fn a_stale_history_snapshot_cannot_erase_a_local_submission() {
+        let mut conversation = Conversation::connecting();
+        let moment_id = conversation.append_user("keep this exact thought");
+        conversation.replace_history(Vec::new());
+
+        assert_eq!(conversation.moments.len(), 1);
+        assert_eq!(conversation.moments[0].id, moment_id);
+        assert_eq!(conversation.moments[0].state, MomentState::Sending);
+    }
+
+    #[test]
+    fn authoritative_history_replaces_an_accepted_transient_by_run_id() {
+        let mut conversation = Conversation::connecting();
+        let moment_id = conversation.append_user("hello");
+        conversation.accept_user(&moment_id, "run-1");
+        conversation.replace_history(vec![Moment {
+            id: "message:9".to_string(),
+            role: MomentRole::User,
+            text: "hello".to_string(),
+            run_id: Some("run-1".to_string()),
+            state: MomentState::Complete,
+        }]);
+
+        assert_eq!(conversation.moments.len(), 1);
+        assert_eq!(conversation.moments[0].id, "message:9");
+    }
+
+    #[test]
+    fn uncertain_delivery_stays_visible_until_history_contains_the_thought() {
+        let mut conversation = Conversation::connecting();
+        let moment_id = conversation.append_user("possibly delivered");
+        conversation.mark_user_uncertain(&moment_id);
+        conversation.replace_history(Vec::new());
+        assert_eq!(conversation.moments[0].state, MomentState::Uncertain);
+
+        conversation.replace_history(vec![Moment::new(
+            "message:10",
+            MomentRole::User,
+            "possibly delivered",
+        )]);
+        assert_eq!(conversation.moments.len(), 1);
+        assert_eq!(conversation.moments[0].id, "message:10");
+    }
+
+    #[test]
+    fn an_older_identical_history_message_cannot_confirm_an_uncertain_submission() {
+        let mut conversation = Conversation::connecting();
+        conversation.replace_history(vec![Moment::new(
+            "message:old",
+            MomentRole::User,
+            "repeat this",
+        )]);
+        let moment_id = conversation.append_user("repeat this");
+        conversation.mark_user_uncertain(&moment_id);
+
+        conversation.replace_history(vec![Moment::new(
+            "message:old",
+            MomentRole::User,
+            "repeat this",
+        )]);
+
+        assert!(conversation
+            .moments
+            .iter()
+            .any(|moment| moment.id == moment_id && moment.state == MomentState::Uncertain));
+
+        conversation.replace_history(vec![
+            Moment::new("message:old", MomentRole::User, "repeat this"),
+            Moment::new("message:new", MomentRole::User, "repeat this"),
+        ]);
+
+        assert_eq!(conversation.moments.len(), 2);
+        assert!(conversation
+            .moments
+            .iter()
+            .all(|moment| !moment.id.starts_with("user:transient:")));
+    }
+
+    #[test]
+    fn repeated_uncertain_submissions_reconcile_in_occurrence_order() {
+        let mut conversation = Conversation::connecting();
+        let first_id = conversation.append_user("same thought");
+        conversation.mark_user_uncertain(&first_id);
+        let second_id = conversation.append_user("same thought");
+        conversation.mark_user_uncertain(&second_id);
+
+        conversation.replace_history(vec![Moment::new(
+            "message:1",
+            MomentRole::User,
+            "same thought",
+        )]);
+
+        assert!(!conversation
+            .moments
+            .iter()
+            .any(|moment| moment.id == first_id));
+        assert!(conversation
+            .moments
+            .iter()
+            .any(|moment| moment.id == second_id));
+
+        conversation.replace_history(vec![
+            Moment::new("message:1", MomentRole::User, "same thought"),
+            Moment::new("message:2", MomentRole::User, "same thought"),
+        ]);
+
+        assert!(conversation
+            .moments
+            .iter()
+            .all(|moment| !moment.id.starts_with("user:transient:")));
+    }
+
+    #[test]
+    fn an_accepted_local_repeat_cannot_confirm_a_later_uncertain_repeat() {
+        let mut conversation = Conversation::connecting();
+        let accepted_id = conversation.append_user("same thought");
+        conversation.accept_user(&accepted_id, "run-1");
+        let uncertain_id = conversation.append_user("same thought");
+        conversation.mark_user_uncertain(&uncertain_id);
+
+        conversation.replace_history(vec![Moment {
+            id: "message:1".to_string(),
+            role: MomentRole::User,
+            text: "same thought".to_string(),
+            run_id: Some("run-1".to_string()),
+            state: MomentState::Complete,
+        }]);
+
+        assert!(conversation
+            .moments
+            .iter()
+            .any(|moment| moment.id == uncertain_id && moment.state == MomentState::Uncertain));
+    }
+
+    #[test]
+    fn history_reconciliation_keeps_a_pending_stop_frozen() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+        conversation.stream_text(Some("run-1"), "enough");
+        assert_eq!(conversation.request_abort().as_deref(), Some("run-1"));
+
+        conversation.replace_history(Vec::new());
+        conversation.reconcile_active_run(Some("run-1"), Some("enough"));
+        conversation.stream_text(Some("run-1"), " too late");
+
+        assert_eq!(conversation.activity.as_deref(), Some("STOPPING"));
+        assert_eq!(conversation.moments[0].text, "enough");
+    }
+
+    #[test]
+    fn idle_history_retires_the_previously_active_run() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+        conversation.stream_text(Some("run-1"), "done");
+        conversation.replace_history(Vec::new());
+        conversation.reconcile_active_run(None, None);
+        conversation.replace_run_text(Some("run-1"), "stale");
+
+        assert!(conversation.moments.is_empty());
+        assert!(conversation.active_run_id.is_none());
     }
 
     #[test]
@@ -650,6 +1048,29 @@ mod tests {
         conversation.stream_text(Some("run-1"), " or this");
         assert_eq!(conversation.moments[0].text, "Keep this much");
         assert_eq!(conversation.moments[0].state, MomentState::Complete);
+    }
+
+    #[test]
+    fn a_stale_abort_failure_cannot_unfreeze_the_stopping_run() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+        assert_eq!(conversation.request_abort().as_deref(), Some("run-1"));
+
+        assert!(!conversation.abort_failed("run-2"));
+        assert_eq!(conversation.activity.as_deref(), Some("STOPPING"));
+        assert!(!conversation.accepts_run(Some("run-1")));
+    }
+
+    #[test]
+    fn a_matching_abort_failure_resumes_the_active_run() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+        assert_eq!(conversation.request_abort().as_deref(), Some("run-1"));
+
+        assert!(conversation.abort_failed("run-1"));
+        assert_eq!(conversation.activity.as_deref(), Some("THINKING"));
+        assert!(conversation.accepts_run(Some("run-1")));
+        assert!(!conversation.abort_failed("run-1"));
     }
 
     #[test]

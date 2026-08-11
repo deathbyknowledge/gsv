@@ -10,8 +10,8 @@ pub const ERROR: u32 = 0xff6f8c;
 pub const APPROVAL: u32 = 0xf0c36a;
 pub const SELECTION: u32 = 0x403b77;
 
-pub const PROSE_FONT: &str = "Space Grotesk Light";
-pub const MONO_FONT: &str = "Departure Mono";
+pub const PROSE_FONT: &str = "Berkeley Mono";
+pub const MONO_FONT: &str = "Berkeley Mono";
 
 pub fn color(value: u32) -> Hsla {
     rgb(value).into()

@@ -1,23 +1,24 @@
-use std::sync::mpsc::TryRecvError;
-use std::time::Duration;
+use std::collections::HashMap;
 
 use gpui::{
-    actions, App, AppContext, Context, Focusable, KeyBinding, Subscription, Task, Timer, Window,
+    actions, App, AppContext, Context, Focusable, KeyBinding, ScrollHandle, Subscription, Task,
+    Window,
 };
 use gpui_component::input::{InputEvent, InputState};
 
 use crate::audio::{KeySound, TypingAudio};
-use crate::client::{ApprovalDecision, ClientCommand, ClientEvent, ClientHandle};
-use crate::model::{
-    extract_text, parse_history, parse_pending_approval, ConnectionState, Conversation,
-    MomentState, SurfaceMode,
-};
+use crate::client::{ApprovalDecision, ClientCommand, ClientHandle};
+use crate::interaction::{CanvasInteraction, CanvasLayer, SubmissionFailure};
+use crate::model::{Conversation, SurfaceMode};
 
+mod session;
 mod view;
 
 actions!(
     gsv_native,
     [
+        SubmitThought,
+        InsertNewline,
         HideDraft,
         AbortRun,
         ToggleTerminal,
@@ -36,18 +37,28 @@ struct TerminalExchange {
 
 pub struct GsvApp {
     conversation: Conversation,
+    interaction: CanvasInteraction,
     input: gpui::Entity<InputState>,
     commands: tokio::sync::mpsc::UnboundedSender<ClientCommand>,
-    events: std::sync::mpsc::Receiver<ClientEvent>,
     audio: TypingAudio,
-    draft_visible: bool,
-    conversation_draft: String,
     terminal_draft: String,
     previous_input: String,
     pid: Option<String>,
+    client_session_id: Option<u64>,
+    last_history: Option<serde_json::Value>,
     terminal: Vec<TerminalExchange>,
+    timeline_scroll: ScrollHandle,
+    stream_type_sizes: HashMap<String, f32>,
+    draft_type_size: Option<f32>,
+    stream_sequences: HashMap<String, u64>,
+    type_viewport: Option<(u32, u32)>,
+    transition_epoch: u64,
+    transition_direction: f32,
+    reduced_motion: bool,
+    programmatic_input: Option<String>,
+    approval_resume_mode: Option<SurfaceMode>,
     _input_subscription: Subscription,
-    _poll_task: Task<()>,
+    _event_task: Task<()>,
 }
 
 impl GsvApp {
@@ -57,25 +68,26 @@ impl GsvApp {
         client: ClientHandle,
         demo: bool,
         sound_enabled: bool,
+        reduced_motion: bool,
     ) -> Self {
         let input = cx.new(|cx| InputState::new(window, cx).auto_grow(1, 12).soft_wrap(true));
         input.focus_handle(cx).focus(window);
 
         let input_subscription = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
-            this.on_input(event, window, cx)
+            this.on_input(event, window, cx);
         });
-        let poll_task = cx.spawn(async move |this, cx| loop {
-            Timer::after(Duration::from_millis(16)).await;
-            let Some(this) = this.upgrade() else {
-                break;
-            };
-            if this
-                .update(cx, |this, cx| {
-                    this.drain_client_events(cx);
-                })
-                .is_err()
-            {
-                break;
+        let mut events = client.events;
+        let event_task = cx.spawn_in(window, async move |this, cx| {
+            while let Some(event) = events.recv().await {
+                if this
+                    .update_in(cx, |this, window, cx| {
+                        this.handle_client_event(event, window, cx);
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
             }
         });
 
@@ -85,118 +97,301 @@ impl GsvApp {
             } else {
                 Conversation::connecting()
             },
+            interaction: CanvasInteraction::new(),
             input,
             commands: client.commands,
-            events: client.events,
             audio: TypingAudio::new(sound_enabled),
-            draft_visible: false,
-            conversation_draft: String::new(),
             terminal_draft: String::new(),
             previous_input: String::new(),
             pid: None,
+            client_session_id: None,
+            last_history: None,
             terminal: Vec::new(),
+            timeline_scroll: ScrollHandle::new(),
+            stream_type_sizes: HashMap::new(),
+            draft_type_size: None,
+            stream_sequences: HashMap::new(),
+            type_viewport: None,
+            transition_epoch: 0,
+            transition_direction: 0.0,
+            reduced_motion,
+            programmatic_input: None,
+            approval_resume_mode: None,
             _input_subscription: input_subscription,
-            _poll_task: poll_task,
+            _event_task: event_task,
         }
     }
 
-    fn on_input(&mut self, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_input(&mut self, event: &InputEvent, _window: &mut Window, cx: &mut Context<Self>) {
         match event {
             InputEvent::Change => {
                 let value = self.input.read(cx).value().to_string();
+                if self
+                    .programmatic_input
+                    .take()
+                    .is_some_and(|expected| expected == value)
+                {
+                    self.previous_input = value;
+                    return;
+                }
                 if value != self.previous_input {
-                    let sound = classify_change(&self.previous_input, &value);
-                    self.audio.play(sound);
+                    if value.len() < self.previous_input.len() {
+                        self.draft_type_size = None;
+                    }
+                    self.audio
+                        .play(classify_change(&self.previous_input, &value));
                 }
 
                 match self.conversation.mode {
-                    SurfaceMode::Conversation => self.conversation_draft = value.clone(),
+                    SurfaceMode::Conversation => {
+                        let previous_layer = self.interaction.layer;
+                        self.interaction.on_input(value.clone());
+                        if previous_layer != self.interaction.layer
+                            && self.interaction.layer == CanvasLayer::Draft
+                        {
+                            self.timeline_scroll
+                                .scroll_to_item(self.conversation.moments.len());
+                        }
+                    }
                     SurfaceMode::Terminal => self.terminal_draft = value.clone(),
-                }
-                if self.conversation.mode == SurfaceMode::Conversation && !value.is_empty() {
-                    self.draft_visible = true;
-                    self.conversation.select_latest();
                 }
                 self.previous_input = value;
                 cx.notify();
             }
-            InputEvent::PressEnter { secondary } => match self.conversation.mode {
-                SurfaceMode::Conversation if *secondary => self.submit(window, cx),
-                SurfaceMode::Terminal if !*secondary => self.submit(window, cx),
-                _ => {}
-            },
+            InputEvent::PressEnter { .. } => {}
             InputEvent::Focus | InputEvent::Blur => {}
         }
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let raw = self.input.read(cx).value().to_string();
-        let message = raw.trim().to_string();
-        if message.is_empty() {
-            self.clear_input(window, cx);
+        if raw.trim().is_empty() {
+            if !raw.is_empty() {
+                match self.conversation.mode {
+                    SurfaceMode::Conversation => self.interaction.on_input(String::new()),
+                    SurfaceMode::Terminal => self.terminal_draft.clear(),
+                }
+                self.set_input_value(String::new(), window, cx);
+            }
             return;
         }
 
         match self.conversation.mode {
-            SurfaceMode::Terminal => {
-                self.terminal.push(TerminalExchange {
-                    command: message.clone(),
-                    output: String::new(),
-                    exit_code: None,
-                    pending: true,
-                });
-                let _ = self.commands.send(ClientCommand::Shell(message));
-                self.clear_input(window, cx);
+            SurfaceMode::Terminal => self.submit_terminal(raw, window, cx),
+            SurfaceMode::Conversation if self.interaction.is_approval() => {
+                self.submit_approval(raw, window, cx);
             }
-            SurfaceMode::Conversation => {
-                if let Some(approval) = self.conversation.pending_approval.clone() {
-                    let Some(decision) = approval_decision(&message) else {
-                        self.conversation.activity =
-                            Some("TYPE ALLOW ONCE, ALWAYS ALLOW, OR DENY".to_string());
-                        cx.notify();
-                        return;
-                    };
-                    let _ = self.commands.send(ClientCommand::Decide {
-                        request_id: approval.request_id,
-                        decision,
-                    });
-                    self.clear_input(window, cx);
-                    return;
-                }
-
-                self.conversation.append_user(message.clone());
-                self.conversation.activity = Some("SENDING".to_string());
-                let _ = self.commands.send(ClientCommand::Send(message));
-                self.clear_input(window, cx);
-            }
+            SurfaceMode::Conversation => self.submit_conversation(raw, window, cx),
         }
-        cx.notify();
     }
 
-    fn clear_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.previous_input.clear();
-        self.input.update(cx, |input, cx| {
-            input.set_value("", window, cx);
-        });
-        match self.conversation.mode {
-            SurfaceMode::Conversation => self.conversation_draft.clear(),
-            SurfaceMode::Terminal => self.terminal_draft.clear(),
+    fn submit_terminal(&mut self, command: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .commands
+            .send(ClientCommand::Shell(command.clone()))
+            .is_err()
+        {
+            self.terminal.push(TerminalExchange {
+                command,
+                output: "The native client stopped before this command could run.".to_string(),
+                exit_code: None,
+                pending: false,
+            });
+            return;
         }
-        self.draft_visible = false;
+        self.audio.play(KeySound::Commit);
+        self.terminal.push(TerminalExchange {
+            command,
+            output: String::new(),
+            exit_code: None,
+            pending: true,
+        });
+        self.terminal_draft.clear();
+        self.set_input_value(String::new(), window, cx);
+    }
+
+    fn submit_approval(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.interaction.layer == CanvasLayer::ApprovalPrompt
+            && !self.interaction.approval_draft().is_empty()
+        {
+            self.interaction.on_input(message);
+            cx.notify();
+            return;
+        }
+        let Some(approval) = self.conversation.pending_approval.clone() else {
+            return;
+        };
+        if self.interaction.is_approval_submitting() {
+            self.conversation.activity = Some("APPLYING".to_string());
+            return;
+        }
+        let Some(decision) = approval_decision(&message) else {
+            self.conversation.activity = Some("TYPE ALLOW ONCE, ALWAYS ALLOW, OR DENY".to_string());
+            cx.notify();
+            return;
+        };
+
+        let request_id = approval.request_id;
+        if !self
+            .interaction
+            .begin_approval_submission(request_id.clone(), message.clone())
+        {
+            return;
+        }
+        if self
+            .commands
+            .send(ClientCommand::Decide {
+                request_id: request_id.clone(),
+                decision,
+            })
+            .is_err()
+        {
+            self.handle_approval_failure(
+                &request_id,
+                "The native client stopped before that decision could be applied.".to_string(),
+                window,
+                cx,
+            );
+            return;
+        }
+        self.audio.play(KeySound::Commit);
+        self.conversation.activity = Some("APPLYING".to_string());
+        self.set_input_value(String::new(), window, cx);
+    }
+
+    fn submit_conversation(
+        &mut self,
+        message: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.interaction.layer == CanvasLayer::Moment {
+            self.interaction.show_conversation_draft();
+            cx.notify();
+            return;
+        }
+        if self.interaction.is_submitting() {
+            self.conversation.activity = Some("SENDING PREVIOUS THOUGHT".to_string());
+            cx.notify();
+            return;
+        }
+
+        let moment_id = self.conversation.append_user(message.clone());
+        let Some(submission_id) = self
+            .interaction
+            .begin_submission(message.clone(), moment_id.clone())
+        else {
+            self.conversation.remove_moment(&moment_id);
+            return;
+        };
+
+        self.conversation.activity = Some("SENDING".to_string());
+        self.begin_transition(1.0);
+        self.timeline_scroll
+            .scroll_to_item(self.conversation.selected);
+        self.set_input_value(String::new(), window, cx);
+        if self
+            .commands
+            .send(ClientCommand::Send {
+                submission_id,
+                message,
+            })
+            .is_err()
+        {
+            self.handle_submission_failure(
+                submission_id,
+                "The native client stopped before that thought could be sent.".to_string(),
+                window,
+                cx,
+            );
+        } else {
+            self.audio.play(KeySound::Commit);
+        }
+    }
+
+    fn handle_submission_failure(
+        &mut self,
+        submission_id: u64,
+        message: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(failure) = self.interaction.submission_failed(submission_id) else {
+            return;
+        };
+        match failure {
+            SubmissionFailure::RestoreDraft { moment_id, text } => {
+                self.conversation.remove_moment(&moment_id);
+                if !self.interaction.is_approval() {
+                    self.set_input_value(text, window, cx);
+                }
+            }
+            SubmissionFailure::PreserveFailedMoment { moment_id } => {
+                self.conversation.fail_user(&moment_id);
+            }
+        }
+        self.conversation.show_error(message);
+    }
+
+    fn set_input_value(&mut self, value: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.draft_type_size = None;
+        self.previous_input = value.clone();
+        self.programmatic_input = Some(value.clone());
+        let line = value.chars().filter(|character| *character == '\n').count() as u32;
+        let column = value
+            .rsplit('\n')
+            .next()
+            .unwrap_or_default()
+            .chars()
+            .count() as u32;
+        self.input.update(cx, |input, cx| {
+            input.set_value(value, window, cx);
+            input.set_cursor_position(
+                gpui_component::input::Position::new(line, column),
+                window,
+                cx,
+            );
+        });
+        self.input.focus_handle(cx).focus(window);
     }
 
     fn hide_draft(&mut self, _: &HideDraft, _: &mut Window, cx: &mut Context<Self>) {
-        if self.conversation.mode == SurfaceMode::Conversation
-            && !self.conversation_draft.is_empty()
-        {
-            self.draft_visible = false;
+        if self.conversation.mode == SurfaceMode::Conversation && self.interaction.hide_draft() {
+            self.begin_transition(0.0);
             cx.notify();
         }
     }
 
+    fn submit_thought_action(
+        &mut self,
+        _: &SubmitThought,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.submit(window, cx);
+    }
+
+    fn insert_newline_action(
+        &mut self,
+        _: &InsertNewline,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.input
+            .update(cx, |input, cx| input.insert("\n", window, cx));
+    }
+
     fn abort_run(&mut self, _: &AbortRun, _: &mut Window, _: &mut Context<Self>) {
         if let Some(run_id) = self.conversation.request_abort() {
-            let _ = self.commands.send(ClientCommand::Abort { run_id });
+            if self
+                .commands
+                .send(ClientCommand::Abort {
+                    run_id: run_id.clone(),
+                })
+                .is_err()
+            {
+                self.conversation.abort_failed(&run_id);
+            }
         }
     }
 
@@ -210,218 +405,85 @@ impl GsvApp {
     }
 
     fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let current = self.input.read(cx).value().to_string();
         let next = match self.conversation.mode {
             SurfaceMode::Conversation => {
-                self.conversation_draft = current;
                 self.conversation.mode = SurfaceMode::Terminal;
                 self.terminal_draft.clone()
             }
             SurfaceMode::Terminal => {
-                self.terminal_draft = current;
+                self.terminal_draft = self.input.read(cx).value().to_string();
                 self.conversation.mode = SurfaceMode::Conversation;
-                self.conversation_draft.clone()
+                if self.interaction.is_approval() {
+                    self.interaction.approval_draft().to_string()
+                } else {
+                    self.interaction.conversation_draft().to_string()
+                }
             }
         };
-        self.previous_input = next.clone();
-        self.input.update(cx, |input, cx| {
-            input.set_value(next.clone(), window, cx);
-        });
-        self.draft_visible = !next.is_empty();
-        self.input.focus_handle(cx).focus(window);
+        self.begin_transition(0.0);
+        self.set_input_value(next, window, cx);
         cx.notify();
     }
 
     fn previous_moment(&mut self, _: &PreviousMoment, _: &mut Window, cx: &mut Context<Self>) {
-        if self.conversation.mode == SurfaceMode::Conversation {
-            self.draft_visible = false;
-            self.conversation.select_previous();
+        if self.conversation.mode != SurfaceMode::Conversation || self.interaction.is_approval() {
+            return;
+        }
+        self.interaction.hide_draft();
+        let previous = self.conversation.selected;
+        self.conversation.select_previous();
+        if previous != self.conversation.selected {
+            self.timeline_scroll
+                .scroll_to_item(self.conversation.selected);
+            self.begin_transition(-1.0);
             cx.notify();
         }
     }
 
     fn next_moment(&mut self, _: &NextMoment, _: &mut Window, cx: &mut Context<Self>) {
-        if self.conversation.mode == SurfaceMode::Conversation {
-            self.draft_visible = false;
-            self.conversation.select_next();
+        if self.conversation.mode != SurfaceMode::Conversation || self.interaction.is_approval() {
+            return;
+        }
+        self.interaction.hide_draft();
+        let previous = self.conversation.selected;
+        self.conversation.select_next();
+        if previous != self.conversation.selected {
+            self.timeline_scroll
+                .scroll_to_item(self.conversation.selected);
+            self.begin_transition(1.0);
             cx.notify();
         }
     }
 
-    fn drain_client_events(&mut self, cx: &mut Context<Self>) {
-        let mut changed = false;
-        loop {
-            match self.events.try_recv() {
-                Ok(event) => {
-                    self.handle_client_event(event);
-                    changed = true;
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => break,
-            }
+    fn select_moment(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.interaction.is_approval() || self.conversation.moments.is_empty() {
+            return;
         }
-        if changed {
-            cx.notify();
+        self.interaction.hide_draft();
+        let previous = self.conversation.selected;
+        self.conversation.select(index);
+        self.timeline_scroll
+            .scroll_to_item(self.conversation.selected);
+        if previous != self.conversation.selected {
+            self.begin_transition(if index < previous { -1.0 } else { 1.0 });
         }
+        cx.notify();
     }
 
-    fn handle_client_event(&mut self, event: ClientEvent) {
-        match event {
-            ClientEvent::Connecting => {
-                self.conversation.connection = ConnectionState::Connecting;
-                self.conversation.activity = Some("CONNECTING".to_string());
-            }
-            ClientEvent::Connected { pid } => {
-                self.pid = Some(pid);
-                self.conversation.connection = ConnectionState::Connected;
-                self.conversation.activity = None;
-            }
-            ClientEvent::History(history) => {
-                let live_moment = self
-                    .conversation
-                    .moments
-                    .iter()
-                    .rev()
-                    .find(|moment| moment.state == MomentState::Streaming)
-                    .cloned();
-                let moments = parse_history(&history);
-                self.conversation.replace_history(moments);
-                let active_run_id = history
-                    .get("activeRunId")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string);
-                if let Some(run_id) = active_run_id {
-                    if let Some(live_moment) = live_moment
-                        .filter(|moment| {
-                            moment.run_id.as_deref() == Some(run_id.as_str())
-                                && !moment.text.is_empty()
-                        })
-                        .filter(|_| self.conversation.accepts_run(Some(&run_id)))
-                    {
-                        self.conversation.active_run_id = Some(run_id);
-                        self.conversation.moments.push(live_moment);
-                        self.conversation.select_latest();
-                    } else {
-                        self.conversation.start_run(run_id);
-                    }
-                }
-                if let Some(approval) = history.get("pendingHil").and_then(parse_pending_approval) {
-                    self.conversation.set_approval(approval);
-                }
-            }
-            ClientEvent::Signal { name, payload } => self.handle_signal(&name, &payload),
-            ClientEvent::SendAccepted { run_id, queued } => {
-                if queued {
-                    self.conversation.activity = Some("QUEUED".to_string());
-                } else {
-                    self.conversation.start_run(run_id);
-                }
-            }
-            ClientEvent::AbortResolved { run_id } => {
-                self.conversation.abort_run(&run_id);
-            }
-            ClientEvent::AbortFailed { run_id, message } => {
-                self.conversation.abort_failed(&run_id);
-                self.conversation.show_error(message);
-            }
-            ClientEvent::ApprovalResolved => {
-                self.conversation.clear_approval();
-                let _ = self.commands.send(ClientCommand::RefreshHistory);
-            }
-            ClientEvent::ShellResult {
-                command,
-                output,
-                exit_code,
-            } => {
-                if let Some(exchange) = self
-                    .terminal
-                    .iter_mut()
-                    .find(|exchange| exchange.pending && exchange.command == command)
-                {
-                    exchange.output = output;
-                    exchange.exit_code = exit_code;
-                    exchange.pending = false;
-                } else {
-                    self.terminal.push(TerminalExchange {
-                        command,
-                        output,
-                        exit_code,
-                        pending: false,
-                    });
-                }
-            }
-            ClientEvent::Error(message) => self.conversation.show_error(message),
-            ClientEvent::Disconnected(message) => {
-                self.conversation.connection = ConnectionState::Disconnected;
-                self.conversation.show_error(message);
-            }
+    fn show_held_draft(&mut self, cx: &mut Context<Self>) {
+        if self.interaction.is_approval() {
+            return;
         }
+        self.interaction.show_conversation_draft();
+        self.timeline_scroll
+            .scroll_to_item(self.conversation.moments.len());
+        self.begin_transition(1.0);
+        cx.notify();
     }
 
-    fn handle_signal(&mut self, name: &str, payload: &serde_json::Value) {
-        if let (Some(expected), Some(actual)) = (
-            self.pid.as_deref(),
-            payload.get("pid").and_then(serde_json::Value::as_str),
-        ) {
-            if expected != actual {
-                return;
-            }
-        }
-
-        let run_id = payload.get("runId").and_then(serde_json::Value::as_str);
-        match name {
-            "proc.run.started" => {
-                if let Some(run_id) = run_id {
-                    self.conversation.start_run(run_id);
-                }
-            }
-            "proc.run.stream" => {
-                let event = payload.get("event").unwrap_or(payload);
-                if event.get("type").and_then(serde_json::Value::as_str) == Some("text_delta") {
-                    if let Some(delta) = event.get("delta").and_then(serde_json::Value::as_str) {
-                        self.conversation.stream_text(run_id, delta);
-                    }
-                }
-            }
-            "proc.run.output" => {
-                let text = payload
-                    .get("text")
-                    .or_else(|| payload.get("output"))
-                    .map(extract_text)
-                    .unwrap_or_default();
-                if !text.is_empty() {
-                    self.conversation.stream_text(run_id, &text);
-                }
-            }
-            "proc.run.tool.started" => {
-                if !self.conversation.accepts_run(run_id) {
-                    return;
-                }
-                let syscall = payload
-                    .get("syscall")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                self.conversation.activity = Some(human_activity(syscall).to_string());
-            }
-            "proc.run.hil.requested" => {
-                if let Some(approval) = parse_pending_approval(payload) {
-                    self.conversation.set_approval(approval);
-                }
-            }
-            "proc.run.finished" => {
-                let error = payload.get("error").map(extract_text);
-                self.conversation
-                    .finish_run(run_id, error.as_deref().filter(|text| !text.is_empty()));
-                let _ = self.commands.send(ClientCommand::RefreshHistory);
-            }
-            "proc.changed" => {
-                let changes = payload.get("changes").unwrap_or(payload);
-                if changes.get("activeRunId").is_some() || changes.get("queuedCount").is_some() {
-                    let _ = self.commands.send(ClientCommand::RefreshHistory);
-                }
-            }
-            _ => {}
-        }
+    fn begin_transition(&mut self, direction: f32) {
+        self.transition_epoch = self.transition_epoch.wrapping_add(1);
+        self.transition_direction = direction;
     }
 }
 
@@ -433,6 +495,9 @@ impl Drop for GsvApp {
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("enter", SubmitThought, Some("Input")),
+        KeyBinding::new("secondary-enter", InsertNewline, Some("Input")),
+        KeyBinding::new("shift-enter", InsertNewline, Some("Input")),
         KeyBinding::new("escape", HideDraft, None),
         KeyBinding::new("secondary-.", AbortRun, None),
         KeyBinding::new("secondary-`", ToggleTerminal, None),
@@ -442,10 +507,30 @@ pub fn bind_keys(cx: &mut App) {
 }
 
 fn classify_change(previous: &str, next: &str) -> KeySound {
-    if next.len() < previous.len() {
+    let prefix = previous
+        .char_indices()
+        .zip(next.char_indices())
+        .take_while(|((_, left), (_, right))| left == right)
+        .last()
+        .map_or(0, |((offset, character), _)| offset + character.len_utf8());
+    let previous_tail = &previous[prefix..];
+    let next_tail = &next[prefix..];
+    let common_suffix = previous_tail
+        .chars()
+        .rev()
+        .zip(next_tail.chars().rev())
+        .take_while(|(left, right)| left == right)
+        .map(|(character, _)| character.len_utf8())
+        .sum::<usize>()
+        .min(previous_tail.len())
+        .min(next_tail.len());
+    let inserted_end = next.len().saturating_sub(common_suffix);
+    let inserted = &next[prefix..inserted_end];
+
+    if inserted.is_empty() {
         KeySound::Delete
     } else {
-        match next.chars().last() {
+        match inserted.chars().last() {
             Some(' ' | '\t') => KeySound::Space,
             Some('\n' | '\r') => KeySound::Commit,
             _ => KeySound::Character,
@@ -481,6 +566,12 @@ fn human_activity(syscall: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use gpui::{TestAppContext, WindowOptions};
+    use gpui_component::Root;
+
     use super::*;
 
     #[test]
@@ -498,5 +589,276 @@ mod tests {
             Some(ApprovalDecision::Deny)
         ));
         assert!(approval_decision("do whatever seems right").is_none());
+    }
+
+    #[test]
+    fn edit_sounds_follow_the_changed_range() {
+        assert_eq!(classify_change("ac", "a c"), KeySound::Space);
+        assert_eq!(classify_change("a c", "ac"), KeySound::Delete);
+        assert_eq!(classify_change("tail", "t中ail"), KeySound::Character);
+        assert_eq!(classify_change("one", "one\ntwo"), KeySound::Character);
+        assert_eq!(classify_change("one", "one\n"), KeySound::Commit);
+    }
+
+    #[gpui::test]
+    fn typing_from_a_moment_enters_the_visible_draft(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let client = crate::client::start(true);
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), "hello");
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.interaction.layer, CanvasLayer::Draft);
+            assert_eq!(app.interaction.visible_draft(), Some("hello"));
+        });
+    }
+
+    #[gpui::test]
+    fn submit_shortcut_is_non_mutating_and_requires_a_visible_held_draft(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), "exact thought");
+        cx.simulate_keystrokes(window.into(), "escape enter");
+        cx.run_until_parked();
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.interaction.layer, CanvasLayer::Draft);
+            assert_eq!(app.input.read(cx).value().as_ref(), "exact thought");
+        });
+        assert!(command_rx.try_recv().is_err());
+
+        cx.simulate_keystrokes(window.into(), "enter");
+        assert!(matches!(
+            command_rx.try_recv(),
+            Ok(ClientCommand::Send { message, .. }) if message == "exact thought"
+        ));
+    }
+
+    #[gpui::test]
+    fn modified_enter_adds_newlines_and_plain_enter_submits(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), "first");
+        cx.simulate_keystrokes(window.into(), "ctrl-enter");
+        cx.simulate_input(window.into(), "second");
+        cx.simulate_keystrokes(window.into(), "shift-enter");
+        cx.simulate_input(window.into(), "third");
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.update(|cx| {
+            assert_eq!(
+                app.read(cx).input.read(cx).value().as_ref(),
+                "first\nsecond\nthird"
+            );
+        });
+        assert!(command_rx.try_recv().is_err());
+
+        cx.simulate_keystrokes(window.into(), "enter");
+        assert!(matches!(
+            command_rx.try_recv(),
+            Ok(ClientCommand::Send { message, .. }) if message == "first\nsecond\nthird"
+        ));
+    }
+
+    #[gpui::test]
+    fn mode_round_trip_keeps_a_hidden_draft_hidden(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let client = crate::client::start(true);
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), "unfinished");
+        cx.simulate_keystrokes(window.into(), "escape ctrl-` ctrl-`");
+        cx.run_until_parked();
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.interaction.layer, CanvasLayer::Moment);
+            assert_eq!(app.interaction.conversation_draft(), "unfinished");
+            assert_eq!(app.input.read(cx).value().as_ref(), "unfinished");
+        });
+    }
+
+    #[gpui::test]
+    fn mode_round_trip_restores_a_trailing_newline_caret_at_the_end(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let client = crate::client::start(true);
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), "tail");
+        cx.simulate_keystrokes(window.into(), "ctrl-enter escape ctrl-` ctrl-`");
+        cx.run_until_parked();
+        cx.simulate_input(window.into(), "next");
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.update(|cx| {
+            assert_eq!(app.read(cx).input.read(cx).value().as_ref(), "tail\nnext");
+        });
+    }
+
+    #[gpui::test]
+    fn approval_takeover_restores_the_terminal_draft(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        cx.run_until_parked();
+        cx.simulate_keystrokes(window.into(), "ctrl-`");
+        cx.simulate_input(window.into(), "status --watch");
+        let _ = event_tx.send(crate::client::ClientEvent::Connected {
+            session_id: 7,
+            pid: "pid-1".to_string(),
+        });
+        let _ = event_tx.send(crate::client::ClientEvent::Signal {
+            session_id: 7,
+            name: "proc.run.hil.requested".to_string(),
+            payload: serde_json::json!({
+                "pid": "pid-1",
+                "runId": "run-1",
+                "requestId": "request-1",
+                "toolName": "Shell",
+                "syscall": "shell.exec",
+                "args": { "input": "deploy" }
+            }),
+        });
+        cx.run_until_parked();
+
+        let app_entity = app.borrow().clone().expect("app entity should be retained");
+        cx.update(|cx| {
+            let app = app_entity.read(cx);
+            assert_eq!(app.conversation.mode, SurfaceMode::Conversation);
+            assert!(app.interaction.is_approval());
+            assert_eq!(app.terminal_draft, "status --watch");
+        });
+
+        let _ = event_tx.send(crate::client::ClientEvent::History {
+            session_id: 7,
+            history: serde_json::json!({ "messages": [] }),
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app_entity.read(cx);
+            assert_eq!(app.conversation.mode, SurfaceMode::Terminal);
+            assert_eq!(app.input.read(cx).value().as_ref(), "status --watch");
+        });
     }
 }
