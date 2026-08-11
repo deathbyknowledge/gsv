@@ -30,6 +30,7 @@ pub(super) enum MediaVisual<'a> {
 pub(super) struct MediaCache {
     entries: HashMap<String, MediaEntry>,
     requests: HashMap<u64, PendingMedia>,
+    cancelled_preparations: Vec<u64>,
     visible: HashSet<String>,
     next_request_id: u64,
     clock: u64,
@@ -56,11 +57,46 @@ struct PendingMedia {
     expected_mime_type: Option<String>,
 }
 
+pub(super) struct MediaPreparation {
+    request_id: u64,
+    bytes: Arc<[u8]>,
+    mime_type: Option<String>,
+}
+
+pub(super) struct PreparedMedia {
+    request_id: u64,
+    image: Option<PreparedImage>,
+}
+
+struct PreparedImage {
+    image: Arc<Image>,
+    resident_bytes: usize,
+}
+
+impl MediaPreparation {
+    pub fn prepare(self) -> PreparedMedia {
+        let image = image_format(self.mime_type.as_deref(), &self.bytes)
+            .and_then(|format| {
+                let resident_bytes = image_resident_bytes(format, &self.bytes)?;
+                (resident_bytes <= MEDIA_CACHE_BYTES).then_some((format, resident_bytes))
+            })
+            .map(|(format, resident_bytes)| PreparedImage {
+                image: Arc::new(Image::from_bytes(format, self.bytes.to_vec())),
+                resident_bytes,
+            });
+        PreparedMedia {
+            request_id: self.request_id,
+            image,
+        }
+    }
+}
+
 impl Default for MediaCache {
     fn default() -> Self {
         Self {
             entries: HashMap::new(),
             requests: HashMap::new(),
+            cancelled_preparations: Vec::new(),
             visible: HashSet::new(),
             next_request_id: 1,
             clock: 0,
@@ -101,8 +137,7 @@ impl MediaCache {
                 ..
             }) = self.entries.remove(&key)
             {
-                self.requests.remove(&request_id);
-                let _ = commands.send(ClientCommand::CancelMedia { request_id });
+                self.cancel_request(request_id, commands);
             }
         }
 
@@ -111,8 +146,7 @@ impl MediaCache {
             if let Some(entry) = self.entries.remove(key) {
                 match entry.state {
                     MediaState::Loading { request_id } => {
-                        self.requests.remove(&request_id);
-                        let _ = commands.send(ClientCommand::CancelMedia { request_id });
+                        self.cancel_request(request_id, commands);
                     }
                     MediaState::Loaded { image, .. } => released.push(image),
                     MediaState::Failed => {}
@@ -169,12 +203,22 @@ impl MediaCache {
         released
     }
 
-    pub fn loaded(
-        &mut self,
+    pub fn preparation_for(
+        &self,
         request_id: u64,
         bytes: Arc<[u8]>,
         mime_type: Option<String>,
-    ) -> Vec<Arc<Image>> {
+    ) -> Option<MediaPreparation> {
+        let pending = self.requests.get(&request_id)?;
+        Some(MediaPreparation {
+            request_id,
+            bytes,
+            mime_type: mime_type.or_else(|| pending.expected_mime_type.clone()),
+        })
+    }
+
+    pub fn apply_prepared(&mut self, prepared: PreparedMedia) -> Vec<Arc<Image>> {
+        let PreparedMedia { request_id, image } = prepared;
         let Some(pending) = self.requests.remove(&request_id) else {
             return Vec::new();
         };
@@ -194,28 +238,21 @@ impl MediaCache {
                 _ => None,
             })
             .sum::<usize>();
-        let format = image_format(
-            mime_type
-                .as_deref()
-                .or(pending.expected_mime_type.as_deref()),
-            &bytes,
-        );
-        let resident_bytes = format.and_then(|format| image_resident_bytes(format, &bytes));
-        let within_budget = resident_bytes.is_some_and(|resident_bytes| {
-            resident_bytes <= MEDIA_CACHE_BYTES
-                && loaded_bytes
-                    .checked_add(resident_bytes)
-                    .is_some_and(|total| total <= MEDIA_CACHE_BYTES)
-        });
         let entry = self
             .entries
             .get_mut(&pending.cache_key)
             .expect("the active media entry must still exist");
-        entry.state = match (format, resident_bytes) {
-            (Some(format), Some(resident_bytes)) if within_budget => MediaState::Loaded {
-                image: Arc::new(Image::from_bytes(format, bytes.to_vec())),
-                resident_bytes,
-            },
+        entry.state = match image {
+            Some(prepared)
+                if loaded_bytes
+                    .checked_add(prepared.resident_bytes)
+                    .is_some_and(|total| total <= MEDIA_CACHE_BYTES) =>
+            {
+                MediaState::Loaded {
+                    image: prepared.image,
+                    resident_bytes: prepared.resident_bytes,
+                }
+            }
             _ => MediaState::Failed,
         };
         self.prune()
@@ -244,7 +281,7 @@ impl MediaCache {
 
     pub fn clear(&mut self, commands: &UnboundedSender<ClientCommand>) -> Vec<Arc<Image>> {
         for request_id in self.requests.keys().copied().collect::<Vec<_>>() {
-            let _ = commands.send(ClientCommand::CancelMedia { request_id });
+            self.cancel_request(request_id, commands);
         }
         let released = self
             .entries
@@ -257,6 +294,16 @@ impl MediaCache {
         self.requests.clear();
         self.visible.clear();
         released
+    }
+
+    pub fn take_cancelled_preparations(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.cancelled_preparations)
+    }
+
+    fn cancel_request(&mut self, request_id: u64, commands: &UnboundedSender<ClientCommand>) {
+        self.requests.remove(&request_id);
+        self.cancelled_preparations.push(request_id);
+        let _ = commands.send(ClientCommand::CancelMedia { request_id });
     }
 
     fn prune(&mut self) -> Vec<Arc<Image>> {
@@ -447,6 +494,25 @@ mod tests {
         Arc::from(bytes)
     }
 
+    fn remote_png(cache_key: &str) -> MediaDescriptor {
+        MediaDescriptor {
+            cache_key: cache_key.to_string(),
+            source: MediaSource::Remote {
+                url: "https://example.com/image.png".to_string(),
+            },
+            mime_type: Some("image/png".to_string()),
+        }
+    }
+
+    fn load_request_id(receiver: &mut tokio::sync::mpsc::UnboundedReceiver<ClientCommand>) -> u64 {
+        let command = receiver.try_recv().expect("load command");
+        match command {
+            ClientCommand::LoadMedia { request_id, .. } => Some(request_id),
+            _ => None,
+        }
+        .expect("the cache should request media")
+    }
+
     #[test]
     fn detects_supported_image_formats_from_mime_or_bytes() {
         assert_eq!(
@@ -498,6 +564,8 @@ mod tests {
             receiver.try_recv(),
             Ok(ClientCommand::CancelMedia { request_id: cancelled }) if cancelled == request_id
         ));
+        assert_eq!(cache.take_cancelled_preparations(), vec![request_id]);
+        assert!(cache.take_cancelled_preparations().is_empty());
     }
 
     #[test]
@@ -518,6 +586,64 @@ mod tests {
             .filter(|command| matches!(command, ClientCommand::LoadMedia { .. }))
             .count();
         assert_eq!(loads, MEDIA_CACHE_ITEMS);
+    }
+
+    #[test]
+    fn preparation_crosses_threads_without_consuming_request_ownership() {
+        let (commands, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut cache = MediaCache::default();
+        let descriptor = remote_png("remote:https://example.com/image.png");
+        let key = descriptor.cache_key.clone();
+        drop(cache.sync([descriptor], &commands));
+        let request_id = load_request_id(&mut receiver);
+
+        let preparation = cache
+            .preparation_for(request_id, one_pixel_png(), None)
+            .expect("the active request should accept preparation");
+        let prepared = std::thread::spawn(move || preparation.prepare())
+            .join()
+            .expect("media preparation should finish");
+
+        assert!(prepared.image.is_some());
+        assert!(cache.requests.contains_key(&request_id));
+        assert!(matches!(cache.visual(&key), MediaVisual::Loading));
+
+        assert!(cache.apply_prepared(prepared).is_empty());
+        assert!(!cache.requests.contains_key(&request_id));
+        assert!(matches!(cache.visual(&key), MediaVisual::Loaded(_)));
+    }
+
+    #[test]
+    fn late_preparation_cannot_replace_a_new_request_for_the_same_key() {
+        let (commands, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut cache = MediaCache::default();
+        let descriptor = remote_png("remote:https://example.com/image.png");
+        let key = descriptor.cache_key.clone();
+        drop(cache.sync([descriptor.clone()], &commands));
+        let old_request_id = load_request_id(&mut receiver);
+        let preparation = cache
+            .preparation_for(old_request_id, one_pixel_png(), None)
+            .expect("the active request should accept preparation");
+
+        drop(cache.sync([], &commands));
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(ClientCommand::CancelMedia { request_id }) if request_id == old_request_id
+        ));
+        drop(cache.sync([descriptor], &commands));
+        let new_request_id = load_request_id(&mut receiver);
+        assert_ne!(new_request_id, old_request_id);
+
+        let prepared = std::thread::spawn(move || preparation.prepare())
+            .join()
+            .expect("media preparation should finish");
+        assert!(cache.apply_prepared(prepared).is_empty());
+
+        assert!(cache.requests.contains_key(&new_request_id));
+        assert!(matches!(
+            cache.entries.get(&key).map(|entry| &entry.state),
+            Some(MediaState::Loading { request_id }) if *request_id == new_request_id
+        ));
     }
 
     #[test]
@@ -551,11 +677,15 @@ mod tests {
         });
         assert!(request_id.is_some(), "new media should start loading");
 
-        drop(cache.loaded(
-            request_id.unwrap_or_default(),
-            one_pixel_png(),
-            Some("image/png".to_string()),
-        ));
+        let prepared = cache
+            .preparation_for(
+                request_id.unwrap_or_default(),
+                one_pixel_png(),
+                Some("image/png".to_string()),
+            )
+            .expect("active request")
+            .prepare();
+        drop(cache.apply_prepared(prepared));
 
         assert!(matches!(cache.visual(&key), MediaVisual::Failed));
     }

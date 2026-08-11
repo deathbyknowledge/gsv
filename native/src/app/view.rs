@@ -8,14 +8,15 @@ use gpui::{
 };
 use gpui_component::input::Input;
 
-use crate::content::{MediaAttachment, RichDocument};
+use crate::content::MediaAttachment;
 use crate::interaction::CanvasLayer;
 use crate::model::{ConnectionState, MomentRole, MomentState, SurfaceMode};
+use crate::prepared::PreparedContent;
 use crate::theme;
 use crate::typography::{fit_type_layout, TypeLayout};
 
 use super::media::release_assets;
-use super::rich::{document_for_moment, media_descriptors, needs_rich_renderer, render_document};
+use super::rich::{media_descriptors, render_document};
 use super::{type_content_hash, CachedTypeLayout, GsvApp};
 
 #[derive(Clone, Copy)]
@@ -37,7 +38,9 @@ struct TypeFit<'a> {
 
 struct MessageCanvas {
     message: String,
-    rich_document: Option<RichDocument>,
+    rich_content: Option<PreparedContent>,
+    append_plain_text: bool,
+    transition_costly: bool,
     layout: TypeLayout,
     weight: FontWeight,
     color: gpui::Hsla,
@@ -46,6 +49,24 @@ struct MessageCanvas {
 
 const HISTORY_SCROLL_THRESHOLD: f32 = 36.0;
 const TYPE_LAYOUT_CACHE_LIMIT: usize = 64;
+
+fn animate_message(reduced_motion: bool, transition_costly: bool) -> bool {
+    !reduced_motion && !transition_costly
+}
+
+fn stable_transition_cost(
+    remembered: &mut Option<(u64, bool)>,
+    epoch: u64,
+    candidate: bool,
+) -> bool {
+    if let Some((remembered_epoch, costly)) = *remembered {
+        if remembered_epoch == epoch {
+            return costly;
+        }
+    }
+    *remembered = Some((epoch, candidate));
+    candidate
+}
 
 fn message_measurement_text(message: &str, media: &[MediaAttachment]) -> String {
     if !message.is_empty() {
@@ -73,11 +94,12 @@ impl GsvApp {
             maximum_size,
             weight,
         } = request;
+        let content_hash = type_content_hash(text);
         if let Some(cached) = self
             .type_layouts
             .get(key)
             .copied()
-            .filter(|cached| cached.matches(text, maximum_size, weight))
+            .filter(|cached| cached.matches(content_hash, maximum_size, weight))
         {
             return cached.layout;
         }
@@ -98,7 +120,7 @@ impl GsvApp {
         self.type_layouts.insert(
             key.to_string(),
             CachedTypeLayout {
-                content_hash: type_content_hash(text),
+                content_hash,
                 maximum_size: maximum_size.map(f32::to_bits),
                 weight: weight.0.to_bits(),
                 layout,
@@ -280,15 +302,11 @@ impl GsvApp {
                 MomentState::Complete,
             ),
         };
-        let document = document_for_moment(
-            &mut self.rich_documents,
-            &moment_id,
-            role,
-            state,
-            &message,
-            &media,
-        );
-        let rich_message = needs_rich_renderer(&document);
+        let prepared_content = self
+            .prepared_content
+            .resolve_or_request(&moment_id, role, state, &message, &media);
+        let append_plain_text = self.prepared_content.appends_plain_text(&moment_id);
+        let content_pending = self.prepared_content.is_pending(&moment_id);
         if self.message_scroll_moment.as_deref() != Some(moment_id.as_str()) {
             self.message_scroll.set_offset(point(px(0.0), px(0.0)));
             self.message_scroll_moment = Some(moment_id.clone());
@@ -354,6 +372,23 @@ impl GsvApp {
             MomentState::Complete if role == MomentRole::System => theme::color(theme::TEXT_QUIET),
             MomentState::Complete => theme::color(theme::TEXT),
         };
+        let transition_costly_candidate = message_layout.scrolls
+            || !media.is_empty()
+            || content_pending
+            || prepared_content.as_ref().is_some_and(|content| {
+                !content.media().is_empty()
+                    || content.document().blocks.len() > 4
+                    || content.inline_text().len() > 6
+            })
+            || (prepared_content.is_none()
+                && role == MomentRole::Intelligence
+                && state == MomentState::Complete
+                && (!media.is_empty() || message.len() > 640));
+        let transition_costly = stable_transition_cost(
+            &mut self.message_transition_cost,
+            self.transition_epoch,
+            transition_costly_candidate,
+        );
 
         let mode_label = if self.conversation.mode == SurfaceMode::Conversation {
             "TERMINAL"
@@ -362,15 +397,19 @@ impl GsvApp {
         };
         let draft = self.interaction.visible_draft().map(str::to_string);
         let draft_visible = draft.is_some();
-        if draft_visible {
-            release_assets(self.media_cache.sync([], &self.commands), cx);
+        let released = if draft_visible {
+            self.media_cache.sync([], &self.commands)
         } else {
-            release_assets(
-                self.media_cache
-                    .sync(media_descriptors(&document), &self.commands),
-                cx,
-            );
-        }
+            self.media_cache.sync(
+                prepared_content
+                    .as_ref()
+                    .map(media_descriptors)
+                    .unwrap_or_default(),
+                &self.commands,
+            )
+        };
+        self.cancel_stale_media_preparations();
+        release_assets(released, cx);
         let activity = self.conversation.activity.clone().or_else(|| {
             (!draft_visible && state == MomentState::Uncertain)
                 .then(|| "DELIVERY NOT CONFIRMED · CHECKING HISTORY".to_string())
@@ -401,7 +440,9 @@ impl GsvApp {
             self.render_message_canvas(
                 MessageCanvas {
                     message,
-                    rich_document: rich_message.then_some(document),
+                    rich_content: prepared_content.filter(PreparedContent::is_rich),
+                    append_plain_text,
+                    transition_costly,
                     layout: message_layout,
                     weight: message_weight,
                     color: message_color,
@@ -525,23 +566,29 @@ impl GsvApp {
     ) -> AnyElement {
         let MessageCanvas {
             message,
-            rich_document,
+            rich_content,
+            append_plain_text,
+            transition_costly,
             layout,
             weight,
             color,
             geometry,
         } = request;
-        let is_rich = rich_document.is_some();
+        let is_rich = rich_content.is_some();
         let is_long = layout.scrolls || is_rich;
-        let content = if let Some(document) = rich_document {
+        let content = if let Some(content) = rich_content {
             div()
                 .w_full()
                 .min_h(px(geometry.available_height))
                 .flex()
                 .flex_col()
                 .justify_center()
+                .gap(px((layout.size * 0.52).clamp(13.0, 28.0)))
+                .when(append_plain_text && !message.is_empty(), |this| {
+                    this.child(div().w_full().child(message))
+                })
                 .child(render_document(
-                    document,
+                    content,
                     &self.media_cache,
                     self.message_scroll_moment.as_deref().unwrap_or("message"),
                     layout.size,
@@ -563,9 +610,7 @@ impl GsvApp {
             .text_color(color)
             .child(content);
         let direction = self.transition_direction;
-        let message = if self.reduced_motion {
-            message.into_any_element()
-        } else {
+        let message = if animate_message(self.reduced_motion, transition_costly) {
             message
                 .with_animation(
                     ("message-enter", self.transition_epoch),
@@ -576,6 +621,8 @@ impl GsvApp {
                     },
                 )
                 .into_any_element()
+        } else {
+            message.into_any_element()
         };
 
         div()
@@ -694,7 +741,9 @@ impl GsvApp {
     }
 
     fn render_terminal(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        release_assets(self.media_cache.sync([], &self.commands), cx);
+        let released = self.media_cache.sync([], &self.commands);
+        self.cancel_stale_media_preparations();
+        release_assets(released, cx);
         let transcript = self
             .terminal
             .iter()
@@ -869,6 +918,18 @@ mod tests {
     use gpui_component::Root;
 
     use super::*;
+
+    #[test]
+    fn expensive_message_layouts_do_not_repeat_during_a_transition() {
+        assert!(animate_message(false, false));
+        assert!(!animate_message(false, true));
+        assert!(!animate_message(true, false));
+
+        let mut remembered = None;
+        assert!(!stable_transition_cost(&mut remembered, 7, false));
+        assert!(!stable_transition_cost(&mut remembered, 7, true));
+        assert!(stable_transition_cost(&mut remembered, 8, true));
+    }
     use crate::app::{bind_keys, HideDraft};
     use crate::client::ClientCommand;
 
@@ -1226,7 +1287,7 @@ mod tests {
         );
         cx.cx.update(|cx| {
             let app = app.read(cx);
-            assert!(app.rich_documents.contains_key("demo-3"));
+            assert!(app.prepared_content.is_ready("demo-3"));
         });
 
         cx.cx.update(|cx| {

@@ -9,7 +9,7 @@ use gpui::{
 use gpui_component::input::{InputEvent, InputState};
 
 use crate::audio::{KeySound, TypingAudio};
-use crate::client::{ApprovalDecision, ClientCommand, ClientHandle};
+use crate::client::{ApprovalDecision, ClientCommand, ClientHandle, MediaTransferLease};
 use crate::interaction::{CanvasInteraction, CanvasLayer, SubmissionFailure};
 use crate::model::{Conversation, SurfaceMode};
 use crate::startup::{LoginDefaults, LoginFlow, LoginProgress, LoginStep};
@@ -17,12 +17,13 @@ use crate::typography::TypeLayout;
 
 mod login;
 mod media;
+mod preparation;
 mod rich;
 mod session;
 mod view;
 
-use media::MediaCache;
-use rich::CachedRichDocument;
+use media::{release_assets, MediaCache, MediaPreparation, PreparedMedia};
+use preparation::{run_preparation_worker, PreparedContentCache};
 
 actions!(
     gsv_native,
@@ -45,6 +46,12 @@ struct TerminalExchange {
     pending: bool,
 }
 
+struct MediaPreparationResult {
+    request_id: u64,
+    prepared: PreparedMedia,
+    _lease: MediaTransferLease,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct CachedTypeLayout {
     content_hash: u64,
@@ -54,8 +61,13 @@ struct CachedTypeLayout {
 }
 
 impl CachedTypeLayout {
-    fn matches(self, text: &str, maximum_size: Option<f32>, weight: gpui::FontWeight) -> bool {
-        self.content_hash == type_content_hash(text)
+    fn matches(
+        self,
+        content_hash: u64,
+        maximum_size: Option<f32>,
+        weight: gpui::FontWeight,
+    ) -> bool {
+        self.content_hash == content_hash
             && self.maximum_size == maximum_size.map(f32::to_bits)
             && self.weight == weight.0.to_bits()
     }
@@ -111,19 +123,25 @@ pub struct GsvApp {
     history_scroll_last_event: Option<Instant>,
     stream_type_sizes: HashMap<String, f32>,
     type_layouts: HashMap<String, CachedTypeLayout>,
-    rich_documents: HashMap<String, CachedRichDocument>,
+    prepared_content: PreparedContentCache,
     media_cache: MediaCache,
+    media_preparation_results: tokio::sync::mpsc::Sender<MediaPreparationResult>,
+    media_preparations: HashMap<u64, Task<()>>,
     draft_type_size: Option<f32>,
     stream_sequences: HashMap<String, u64>,
     type_viewport: Option<(u32, u32)>,
     transition_epoch: u64,
     transition_direction: f32,
+    message_transition_cost: Option<(u64, bool)>,
     reduced_motion: bool,
     programmatic_input: Option<String>,
     approval_resume_mode: Option<SurfaceMode>,
     _input_subscription: Subscription,
     _login_subscription: Option<Subscription>,
     _event_task: Task<()>,
+    _preparation_worker: Task<()>,
+    _preparation_task: Task<()>,
+    _media_preparation_task: Task<()>,
 }
 
 impl GsvApp {
@@ -178,6 +196,54 @@ impl GsvApp {
                 }
             }
         });
+        let (
+            prepared_content,
+            preparation_requests,
+            preparation_results,
+            mut prepared_content_events,
+        ) = PreparedContentCache::new();
+        let preparation_worker = cx.background_spawn(run_preparation_worker(
+            preparation_requests,
+            preparation_results,
+        ));
+        let preparation_task = cx.spawn(async move |this, cx| {
+            while let Some(result) = prepared_content_events.recv().await {
+                if this
+                    .update(cx, |this, cx| {
+                        let result_id = result.id.clone();
+                        let changes_presentation = result.content.is_rich();
+                        let accepted = this.prepared_content.accept(result);
+                        let visible = this.interaction.visible_draft().is_none()
+                            && this
+                                .conversation
+                                .current()
+                                .is_some_and(|moment| moment.id == result_id);
+                        if accepted && visible && changes_presentation {
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let (media_preparation_results, mut media_preparation_events) =
+            tokio::sync::mpsc::channel::<MediaPreparationResult>(2);
+        let media_preparation_task = cx.spawn(async move |this, cx| {
+            while let Some(result) = media_preparation_events.recv().await {
+                if this
+                    .update(cx, |this, cx| {
+                        this.media_preparations.remove(&result.request_id);
+                        release_assets(this.media_cache.apply_prepared(result.prepared), cx);
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
 
         Self {
             conversation: if demo {
@@ -206,19 +272,52 @@ impl GsvApp {
             history_scroll_last_event: None,
             stream_type_sizes: HashMap::new(),
             type_layouts: HashMap::new(),
-            rich_documents: HashMap::new(),
+            prepared_content,
             media_cache: MediaCache::default(),
+            media_preparation_results,
+            media_preparations: HashMap::new(),
             draft_type_size: None,
             stream_sequences: HashMap::new(),
             type_viewport: None,
             transition_epoch: 0,
             transition_direction: 0.0,
+            message_transition_cost: None,
             reduced_motion,
             programmatic_input: None,
             approval_resume_mode: None,
             _input_subscription: input_subscription,
             _login_subscription: login_subscription,
             _event_task: event_task,
+            _preparation_worker: preparation_worker,
+            _preparation_task: preparation_task,
+            _media_preparation_task: media_preparation_task,
+        }
+    }
+
+    fn begin_media_preparation(
+        &mut self,
+        request_id: u64,
+        preparation: MediaPreparation,
+        lease: MediaTransferLease,
+        cx: &mut Context<Self>,
+    ) {
+        let results = self.media_preparation_results.clone();
+        let task = cx.background_spawn(async move {
+            let prepared = preparation.prepare();
+            let _ = results
+                .send(MediaPreparationResult {
+                    request_id,
+                    prepared,
+                    _lease: lease,
+                })
+                .await;
+        });
+        drop(self.media_preparations.insert(request_id, task));
+    }
+
+    fn cancel_stale_media_preparations(&mut self) {
+        for request_id in self.media_cache.take_cancelled_preparations() {
+            self.media_preparations.remove(&request_id);
         }
     }
 
@@ -808,6 +907,7 @@ impl GsvApp {
         self.history_scroll_last_event = None;
         self.transition_epoch = self.transition_epoch.wrapping_add(1);
         self.transition_direction = direction;
+        self.message_transition_cost = None;
     }
 }
 

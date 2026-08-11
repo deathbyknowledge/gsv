@@ -5,6 +5,7 @@ use crate::theme;
 const MAX_TYPE_SIZE: f32 = 72.0;
 const MIN_TYPE_SIZE: f32 = 28.0;
 const TYPE_STEP: f32 = 2.0;
+const MINIMUM_OVERFLOW_PROBE_RATIO: f32 = 0.85;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TypeLayout {
@@ -43,9 +44,15 @@ pub fn fit_type_layout(
     let mut prose_font = font(theme::PROSE_FONT);
     prose_font.weight = weight;
 
-    let fitted = find_fitted_size(maximum_size, available_height, |size| {
+    let mut measured_minimum = None;
+    let mut measure_height = |size| {
+        if size == MIN_TYPE_SIZE {
+            if let Some(height) = measured_minimum {
+                return height;
+            }
+        }
         let line_height = line_height_for(size);
-        measured_height(
+        let height = measured_height(
             window,
             text.clone(),
             prose_font.clone(),
@@ -53,8 +60,23 @@ pub fn fit_type_layout(
             line_height,
             width,
         )
-        .unwrap_or_else(|| estimated_height(text.as_ref(), size, line_height, width))
-    });
+        .unwrap_or_else(|| estimated_height(text.as_ref(), size, line_height, width));
+        if size == MIN_TYPE_SIZE {
+            measured_minimum = Some(height);
+        }
+        height
+    };
+    let minimum_overflows = should_probe_minimum(text.as_ref(), width, available_height)
+        && measure_height(MIN_TYPE_SIZE) > available_height;
+    let fitted = if minimum_overflows {
+        FittedSize {
+            size: MIN_TYPE_SIZE,
+            content_height: measured_minimum.expect("the minimum size was measured"),
+            fits: false,
+        }
+    } else {
+        find_fitted_size(maximum_size, available_height, measure_height)
+    };
 
     TypeLayout {
         size: fitted.size,
@@ -63,6 +85,11 @@ pub fn fit_type_layout(
         content_height: fitted.content_height,
         scrolls: !fitted.fits,
     }
+}
+
+fn should_probe_minimum(text: &str, width: f32, available_height: f32) -> bool {
+    estimated_height(text, MIN_TYPE_SIZE, line_height_for(MIN_TYPE_SIZE), width)
+        >= available_height * MINIMUM_OVERFLOW_PROBE_RATIO
 }
 
 // GPUI's measured height is monotonic while the line-height multiplier is fixed. Search those
@@ -305,5 +332,15 @@ mod tests {
             });
             assert!(cold_measurements <= 7);
         }
+    }
+
+    #[test]
+    fn long_copy_probes_the_final_overflow_size_first() {
+        assert!(should_probe_minimum(
+            &"A measured response. ".repeat(160),
+            1_020.0,
+            614.0,
+        ));
+        assert!(!should_probe_minimum("A short response.", 1_020.0, 614.0,));
     }
 }

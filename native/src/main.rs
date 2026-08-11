@@ -4,6 +4,7 @@ mod client;
 mod content;
 mod interaction;
 mod model;
+mod prepared;
 mod startup;
 mod theme;
 mod typography;

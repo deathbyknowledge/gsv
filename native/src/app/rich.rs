@@ -1,6 +1,3 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::ops::Range;
 use std::sync::Arc;
 
 use gpui::prelude::FluentBuilder as _;
@@ -13,131 +10,121 @@ use gpui::{
 
 use crate::client::MediaSource;
 use crate::content::{
-    MarkdownImage, MediaAttachment, MediaKind, RichBlock, RichDocument, RichInline, RichListItem,
-    RichTable, TableAlignment,
+    MarkdownImage, MediaAttachment, MediaKind, RichBlock, RichListItem, RichTable, TableAlignment,
 };
-use crate::model::{Moment, MomentRole, MomentState};
+use crate::prepared::{PreparedContent, PreparedInlineText, PreparedMediaSource, PreparedTextSpan};
 use crate::theme;
 
 use super::media::{MediaCache, MediaDescriptor, MediaVisual};
 
-const RICH_DOCUMENT_CACHE_LIMIT: usize = 64;
-
-#[derive(Clone)]
-pub(super) struct CachedRichDocument {
-    revision: u64,
-    document: RichDocument,
-}
-
-impl CachedRichDocument {
-    pub fn new(revision: u64, document: RichDocument) -> Self {
-        Self { revision, document }
-    }
-}
-
-pub(super) fn document_for_moment(
-    cache: &mut std::collections::HashMap<String, CachedRichDocument>,
-    id: &str,
-    role: MomentRole,
-    state: MomentState,
-    text: &str,
-    media: &[MediaAttachment],
-) -> RichDocument {
-    let build_document = || {
-        Moment {
-            id: id.to_string(),
-            role,
-            text: text.to_string(),
-            media: media.to_vec(),
-            run_id: None,
-            state,
-        }
-        .content()
-    };
-    if role != MomentRole::Intelligence || state != MomentState::Complete {
-        return build_document();
-    }
-
-    let revision = document_revision(text, media);
-    if let Some(cached) = cache.get(id).filter(|cached| cached.revision == revision) {
-        return cached.document.clone();
-    }
-    if cache.len() >= RICH_DOCUMENT_CACHE_LIMIT && !cache.contains_key(id) {
-        cache.clear();
-    }
-    let document = build_document();
-    cache.insert(
-        id.to_string(),
-        CachedRichDocument::new(revision, document.clone()),
-    );
-    document
-}
-
-pub(super) fn needs_rich_renderer(document: &RichDocument) -> bool {
-    match document.blocks.as_slice() {
-        [] => false,
-        [RichBlock::Paragraph(inlines)] => !inlines
-            .iter()
-            .all(|inline| matches!(inline, RichInline::Text(_) | RichInline::Break { .. })),
-        _ => true,
-    }
-}
-
-pub(super) fn media_descriptors(document: &RichDocument) -> Vec<MediaDescriptor> {
-    let mut descriptors = Vec::new();
-    collect_media_descriptors(&document.blocks, &mut descriptors);
-    descriptors
+pub(super) fn media_descriptors(content: &PreparedContent) -> Vec<MediaDescriptor> {
+    content
+        .media()
+        .iter()
+        .map(|descriptor| MediaDescriptor {
+            cache_key: descriptor.cache_key.to_string(),
+            source: match &descriptor.source {
+                PreparedMediaSource::Process { key } => MediaSource::Process {
+                    key: key.to_string(),
+                },
+                PreparedMediaSource::Remote { url } => MediaSource::Remote {
+                    url: url.to_string(),
+                },
+            },
+            mime_type: descriptor.mime_type.as_deref().map(str::to_string),
+        })
+        .collect()
 }
 
 pub(super) fn render_document(
-    document: RichDocument,
+    content: PreparedContent,
     media: &MediaCache,
     moment_id: &str,
     base_size: f32,
     color: gpui::Hsla,
     available_height: f32,
 ) -> AnyElement {
+    let document = content.document();
     let stage_height = if document.blocks.len() == 1 {
         available_height.clamp(220.0, 620.0)
     } else {
         (available_height * 0.64).clamp(210.0, 500.0)
     };
     let gap = (base_size * 0.52).clamp(13.0, 28.0);
+    let mut cursor = PreparedBlockCursor::new(content.inline_text());
+    let blocks = document
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| {
+            render_block(
+                block,
+                &mut cursor,
+                media,
+                &format!("{moment_id}:{index}"),
+                base_size,
+                color,
+                stage_height,
+            )
+        })
+        .collect::<Vec<_>>();
     div()
         .w_full()
         .flex()
         .flex_col()
         .gap(px(gap))
-        .children(
-            document
-                .blocks
-                .into_iter()
-                .enumerate()
-                .map(|(index, block)| {
-                    render_block(
-                        block,
-                        media,
-                        &format!("{moment_id}:{index}"),
-                        base_size,
-                        color,
-                        stage_height,
-                    )
-                }),
-        )
+        .children(blocks)
         .into_any_element()
 }
 
+struct PreparedBlockCursor<'a> {
+    inlines: &'a [PreparedInlineText],
+    next_block: usize,
+    next_inline: usize,
+}
+
+impl<'a> PreparedBlockCursor<'a> {
+    fn new(inlines: &'a [PreparedInlineText]) -> Self {
+        Self {
+            inlines,
+            next_block: 0,
+            next_inline: 0,
+        }
+    }
+
+    fn begin_block(&mut self) -> usize {
+        let ordinal = self.next_block;
+        self.next_block += 1;
+        ordinal
+    }
+
+    fn inline(&mut self, ordinal: usize) -> &'a PreparedInlineText {
+        let inline = self
+            .inlines
+            .get(self.next_inline)
+            .expect("prepared inline content must match its document");
+        assert_eq!(
+            inline.block_ordinal, ordinal,
+            "prepared inline order must match its document"
+        );
+        self.next_inline += 1;
+        inline
+    }
+}
+
 fn render_block(
-    block: RichBlock,
+    block: &RichBlock,
+    cursor: &mut PreparedBlockCursor<'_>,
     media: &MediaCache,
     id: &str,
     base_size: f32,
     color: gpui::Hsla,
     stage_height: f32,
 ) -> AnyElement {
+    let ordinal = cursor.begin_block();
     match block {
-        RichBlock::Paragraph(inlines) => render_inlines(inlines, id, base_size, color),
-        RichBlock::Heading { level, content } => {
+        RichBlock::Paragraph(_) => render_inlines(cursor.inline(ordinal), id, base_size, color),
+        RichBlock::Heading { level, .. } => {
             let scale = match level {
                 1 => 1.32,
                 2 => 1.2,
@@ -145,13 +132,13 @@ fn render_block(
                 _ => 1.0,
             };
             div()
-                .font_weight(if level <= 2 {
+                .font_weight(if *level <= 2 {
                     FontWeight::SEMIBOLD
                 } else {
                     FontWeight::MEDIUM
                 })
                 .child(render_inlines(
-                    content,
+                    cursor.inline(ordinal),
                     &format!("{id}:heading"),
                     (base_size * scale).min(82.0),
                     color,
@@ -160,6 +147,7 @@ fn render_block(
         }
         RichBlock::CodeBlock { language, code } => {
             let language = language
+                .as_ref()
                 .filter(|language| !language.trim().is_empty())
                 .map(|language| language.to_ascii_uppercase());
             div()
@@ -187,7 +175,7 @@ fn render_block(
                         .text_size(px((base_size * 0.62).clamp(14.0, 28.0)))
                         .line_height(relative(1.5))
                         .text_color(theme::color(theme::TEXT_QUIET))
-                        .child(code),
+                        .child(code.clone()),
                 )
                 .into_any_element()
         }
@@ -197,40 +185,51 @@ fn render_block(
             items,
         } => render_list(
             items,
-            ordered,
+            *ordered,
             start.unwrap_or(1),
+            cursor,
             media,
             id,
             base_size,
             color,
             stage_height,
         ),
-        RichBlock::BlockQuote(blocks) => div()
-            .w_full()
-            .pl(px((base_size * 0.55).clamp(16.0, 28.0)))
-            .border_l_2()
-            .border_color(theme::color(theme::TEXT_FAINT))
-            .text_color(theme::color(theme::TEXT_QUIET))
-            .flex()
-            .flex_col()
-            .gap(px((base_size * 0.4).clamp(10.0, 20.0)))
-            .children(blocks.into_iter().enumerate().map(|(index, block)| {
-                render_block(
-                    block,
-                    media,
-                    &format!("{id}:quote:{index}"),
-                    base_size * 0.92,
-                    theme::color(theme::TEXT_QUIET),
-                    stage_height,
-                )
-            }))
-            .into_any_element(),
+        RichBlock::BlockQuote(blocks) => {
+            let blocks = blocks
+                .iter()
+                .enumerate()
+                .map(|(index, block)| {
+                    render_block(
+                        block,
+                        cursor,
+                        media,
+                        &format!("{id}:quote:{index}"),
+                        base_size * 0.92,
+                        theme::color(theme::TEXT_QUIET),
+                        stage_height,
+                    )
+                })
+                .collect::<Vec<_>>();
+            div()
+                .w_full()
+                .pl(px((base_size * 0.55).clamp(16.0, 28.0)))
+                .border_l_2()
+                .border_color(theme::color(theme::TEXT_FAINT))
+                .text_color(theme::color(theme::TEXT_QUIET))
+                .flex()
+                .flex_col()
+                .gap(px((base_size * 0.4).clamp(10.0, 20.0)))
+                .children(blocks)
+                .into_any_element()
+        }
         RichBlock::Rule => div()
             .w_full()
             .h(px(1.0))
             .bg(theme::color(theme::TEXT_FAINT))
             .into_any_element(),
-        RichBlock::Table(table) => render_table(table, media, id, base_size, color, stage_height),
+        RichBlock::Table(table) => {
+            render_table(table, cursor, media, id, base_size, color, stage_height)
+        }
         RichBlock::Image(image) => render_markdown_image(image, media, id, stage_height),
         RichBlock::Attachment(attachment) if attachment.kind == MediaKind::Image => {
             render_attachment_image(attachment, media, id, stage_height)
@@ -240,7 +239,8 @@ fn render_block(
 }
 
 fn render_table(
-    table: RichTable,
+    table: &RichTable,
+    cursor: &mut PreparedBlockCursor<'_>,
     media: &MediaCache,
     id: &str,
     base_size: f32,
@@ -250,17 +250,54 @@ fn render_table(
     let cell_size = (base_size * 0.58).clamp(13.0, 27.0);
     let cell_media_height = (stage_height * 0.42).clamp(120.0, 280.0);
     let row_count = table.rows.len();
-    let alignments = Arc::new(table.alignments);
-
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .border_1()
-        .border_color(theme::color(theme::TEXT_FAINT))
-        .children(table.rows.into_iter().enumerate().map(|(row_index, row)| {
-            let cell_count = row.cells.len();
-            let alignments = alignments.clone();
+    let mut rendered_rows = Vec::with_capacity(row_count);
+    for (row_index, row) in table.rows.iter().enumerate() {
+        let cell_count = row.cells.len();
+        let mut rendered_cells = Vec::with_capacity(cell_count);
+        for (cell_index, cell) in row.cells.iter().enumerate() {
+            let alignment = table
+                .alignments
+                .get(cell_index)
+                .copied()
+                .unwrap_or(TableAlignment::Default);
+            let blocks = cell
+                .blocks
+                .iter()
+                .enumerate()
+                .map(|(block_index, block)| {
+                    render_block(
+                        block,
+                        cursor,
+                        media,
+                        &format!("{id}:row:{row_index}:cell:{cell_index}:{block_index}"),
+                        cell_size,
+                        color,
+                        cell_media_height,
+                    )
+                })
+                .collect::<Vec<_>>();
+            rendered_cells.push(
+                div()
+                    .min_w(px(0.0))
+                    .flex_1()
+                    .px(px((cell_size * 0.72).clamp(10.0, 18.0)))
+                    .py(px((cell_size * 0.62).clamp(9.0, 16.0)))
+                    .when(cell_index + 1 < cell_count, |this| {
+                        this.border_r_1()
+                            .border_color(theme::color(theme::TEXT_FAINT))
+                    })
+                    .when(alignment == TableAlignment::Left, |this| this.text_left())
+                    .when(alignment == TableAlignment::Center, |this| {
+                        this.text_center()
+                    })
+                    .when(alignment == TableAlignment::Right, |this| this.text_right())
+                    .flex()
+                    .flex_col()
+                    .gap(px((cell_size * 0.38).clamp(6.0, 12.0)))
+                    .children(blocks),
+            );
+        }
+        rendered_rows.push(
             div()
                 .w_full()
                 .flex()
@@ -272,75 +309,57 @@ fn render_table(
                     this.bg(theme::color(theme::SELECTION).opacity(0.36))
                         .font_weight(FontWeight::SEMIBOLD)
                 })
-                .children(
-                    row.cells
-                        .into_iter()
-                        .enumerate()
-                        .map(move |(cell_index, cell)| {
-                            let alignment = alignments
-                                .get(cell_index)
-                                .copied()
-                                .unwrap_or(TableAlignment::Default);
-                            div()
-                                .min_w(px(0.0))
-                                .flex_1()
-                                .px(px((cell_size * 0.72).clamp(10.0, 18.0)))
-                                .py(px((cell_size * 0.62).clamp(9.0, 16.0)))
-                                .when(cell_index + 1 < cell_count, |this| {
-                                    this.border_r_1()
-                                        .border_color(theme::color(theme::TEXT_FAINT))
-                                })
-                                .when(alignment == TableAlignment::Left, |this| this.text_left())
-                                .when(alignment == TableAlignment::Center, |this| {
-                                    this.text_center()
-                                })
-                                .when(alignment == TableAlignment::Right, |this| this.text_right())
-                                .flex()
-                                .flex_col()
-                                .gap(px((cell_size * 0.38).clamp(6.0, 12.0)))
-                                .children(cell.blocks.into_iter().enumerate().map(
-                                    |(block_index, block)| {
-                                        render_block(
-                                            block,
-                                            media,
-                                            &format!(
-                                                "{id}:row:{row_index}:cell:{cell_index}:{block_index}"
-                                            ),
-                                            cell_size,
-                                            color,
-                                            cell_media_height,
-                                        )
-                                    },
-                                ))
-                        }),
-                )
-        }))
+                .children(rendered_cells),
+        );
+    }
+
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .border_1()
+        .border_color(theme::color(theme::TEXT_FAINT))
+        .children(rendered_rows)
         .into_any_element()
 }
 
 #[allow(clippy::too_many_arguments)]
 fn render_list(
-    items: Vec<RichListItem>,
+    items: &[RichListItem],
     ordered: bool,
     start: u32,
+    cursor: &mut PreparedBlockCursor<'_>,
     media: &MediaCache,
     id: &str,
     base_size: f32,
     color: gpui::Hsla,
     stage_height: f32,
 ) -> AnyElement {
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap(px((base_size * 0.3).clamp(8.0, 16.0)))
-        .children(items.into_iter().enumerate().map(|(index, item)| {
-            let marker = match item.checked {
-                Some(true) => "✓".to_string(),
-                Some(false) => "○".to_string(),
-                None if ordered => format!("{}.", start.saturating_add(index as u32)),
-                None => "·".to_string(),
-            };
+    let mut rendered_items = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let marker = match item.checked {
+            Some(true) => "✓".to_string(),
+            Some(false) => "○".to_string(),
+            None if ordered => format!("{}.", start.saturating_add(index as u32)),
+            None => "·".to_string(),
+        };
+        let blocks = item
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(block_index, block)| {
+                render_block(
+                    block,
+                    cursor,
+                    media,
+                    &format!("{id}:item:{index}:{block_index}"),
+                    base_size,
+                    color,
+                    stage_height,
+                )
+            })
+            .collect::<Vec<_>>();
+        rendered_items.push(
             div()
                 .w_full()
                 .flex()
@@ -361,53 +380,44 @@ fn render_list(
                         .flex()
                         .flex_col()
                         .gap(px((base_size * 0.28).clamp(7.0, 14.0)))
-                        .children(item.blocks.into_iter().enumerate().map(
-                            |(block_index, block)| {
-                                render_block(
-                                    block,
-                                    media,
-                                    &format!("{id}:item:{index}:{block_index}"),
-                                    base_size,
-                                    color,
-                                    stage_height,
-                                )
-                            },
-                        )),
-                )
-        }))
+                        .children(blocks),
+                ),
+        );
+    }
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(px((base_size * 0.3).clamp(8.0, 16.0)))
+        .children(rendered_items)
         .into_any_element()
 }
 
-#[derive(Clone, Copy, Default)]
-struct InlineStyle {
-    bold: bool,
-    italic: bool,
-    strikethrough: bool,
-    code: bool,
-}
-
-struct InlineLayout {
-    text: String,
-    highlights: Vec<(Range<usize>, HighlightStyle)>,
-    link_ranges: Vec<Range<usize>>,
-    links: Vec<String>,
-}
-
-fn render_inlines(inlines: Vec<RichInline>, id: &str, size: f32, color: gpui::Hsla) -> AnyElement {
-    let mut layout = InlineLayout {
-        text: String::new(),
-        highlights: Vec::new(),
-        link_ranges: Vec::new(),
-        links: Vec::new(),
-    };
-    flatten_inlines(&inlines, InlineStyle::default(), None, &mut layout);
-    let styled = StyledText::new(layout.text).with_highlights(layout.highlights);
-    let text = if layout.link_ranges.is_empty() {
+fn render_inlines(
+    inline: &PreparedInlineText,
+    id: &str,
+    size: f32,
+    color: gpui::Hsla,
+) -> AnyElement {
+    let mut highlights = Vec::with_capacity(inline.spans.len());
+    let mut link_ranges = Vec::new();
+    let mut links = Vec::new();
+    for span in inline.spans.iter() {
+        let highlight = highlight_for_span(span);
+        if let Some(link) = &span.link {
+            link_ranges.push(span.range.clone());
+            links.push(link.destination.to_string());
+        }
+        highlights.push((span.range.clone(), highlight));
+    }
+    let styled =
+        StyledText::new(gpui::SharedString::new(inline.text.clone())).with_highlights(highlights);
+    let text = if link_ranges.is_empty() {
         styled.into_any_element()
     } else {
-        let links = Arc::new(layout.links);
+        let links = Arc::new(links);
         InteractiveText::new(gpui::SharedString::from(id.to_string()), styled)
-            .on_click(layout.link_ranges, move |index, _, cx| {
+            .on_click(link_ranges, move |index, _, cx| {
                 if let Some(url) = links.get(index) {
                     cx.open_url(url);
                 }
@@ -423,119 +433,57 @@ fn render_inlines(inlines: Vec<RichInline>, id: &str, size: f32, color: gpui::Hs
         .into_any_element()
 }
 
-fn flatten_inlines(
-    inlines: &[RichInline],
-    style: InlineStyle,
-    link: Option<&str>,
-    output: &mut InlineLayout,
-) {
-    for inline in inlines {
-        match inline {
-            RichInline::Text(text) | RichInline::Code(text) => {
-                let mut leaf_style = style;
-                if matches!(inline, RichInline::Code(_)) {
-                    leaf_style.code = true;
-                }
-                append_inline(text, leaf_style, link, output);
-            }
-            RichInline::Break { hard } => {
-                append_inline(if *hard { "\n" } else { " " }, style, link, output);
-            }
-            RichInline::Emphasis(children) => flatten_inlines(
-                children,
-                InlineStyle {
-                    italic: true,
-                    ..style
-                },
-                link,
-                output,
-            ),
-            RichInline::Strong(children) => flatten_inlines(
-                children,
-                InlineStyle {
-                    bold: true,
-                    ..style
-                },
-                link,
-                output,
-            ),
-            RichInline::Strikethrough(children) => flatten_inlines(
-                children,
-                InlineStyle {
-                    strikethrough: true,
-                    ..style
-                },
-                link,
-                output,
-            ),
-            RichInline::Link {
-                destination,
-                content,
-                ..
-            } => flatten_inlines(content, style, Some(destination), output),
-        }
-    }
-}
-
-fn append_inline(text: &str, style: InlineStyle, link: Option<&str>, output: &mut InlineLayout) {
-    if text.is_empty() {
-        return;
-    }
-    let start = output.text.len();
-    output.text.push_str(text);
-    let range = start..output.text.len();
+fn highlight_for_span(span: &PreparedTextSpan) -> HighlightStyle {
     let mut highlight = HighlightStyle::default();
-    if style.bold {
+    if span.style.bold {
         highlight.font_weight = Some(FontWeight::SEMIBOLD);
     }
-    if style.italic {
+    if span.style.italic {
         highlight.font_style = Some(FontStyle::Italic);
     }
-    if style.strikethrough {
+    if span.style.strikethrough {
         highlight.strikethrough = Some(StrikethroughStyle {
             thickness: px(1.0),
             color: Some(theme::color(theme::TEXT_QUIET)),
         });
     }
-    if style.code {
+    if span.style.code {
         highlight.color = Some(theme::color(theme::ACCENT));
         highlight.background_color = Some(theme::color(theme::SELECTION).opacity(0.58));
     }
-    if let Some(link) = link {
+    if span.link.is_some() {
         highlight.color = Some(theme::color(theme::ACCENT));
         highlight.underline = Some(UnderlineStyle {
             thickness: px(1.0),
             color: Some(theme::color(theme::ACCENT)),
             wavy: false,
         });
-        output.link_ranges.push(range.clone());
-        output.links.push(link.to_string());
     }
-    output.highlights.push((range, highlight));
+    highlight
 }
 
 fn render_markdown_image(
-    image: MarkdownImage,
+    image: &MarkdownImage,
     media: &MediaCache,
     id: &str,
     stage_height: f32,
 ) -> AnyElement {
-    let descriptor = markdown_image_descriptor(&image);
+    let descriptor = markdown_image_descriptor(image);
     let caption = image
         .title
         .clone()
         .or_else(|| (!image.alt.trim().is_empty()).then_some(image.alt.clone()));
-    let link = image.link.map(|link| link.destination);
+    let link = image.link.as_ref().map(|link| link.destination.clone());
     render_image_stage(descriptor.as_ref(), media, id, stage_height, caption, link)
 }
 
 fn render_attachment_image(
-    attachment: MediaAttachment,
+    attachment: &MediaAttachment,
     media: &MediaCache,
     id: &str,
     stage_height: f32,
 ) -> AnyElement {
-    let descriptor = attachment_descriptor(&attachment);
+    let descriptor = attachment_descriptor(attachment);
     let caption = attachment
         .description
         .clone()
@@ -624,7 +572,7 @@ fn media_placeholder(label: &'static str, height: f32) -> AnyElement {
 }
 
 fn render_attachment_card(
-    attachment: MediaAttachment,
+    attachment: &MediaAttachment,
     base_size: f32,
     color: gpui::Hsla,
 ) -> AnyElement {
@@ -645,7 +593,10 @@ fn render_attachment_card(
     if let Some(duration) = attachment.duration {
         details.push(format_duration(duration));
     }
-    let supporting_text = attachment.transcription.or(attachment.description);
+    let supporting_text = attachment
+        .transcription
+        .clone()
+        .or_else(|| attachment.description.clone());
 
     div()
         .w_full()
@@ -698,37 +649,6 @@ fn render_attachment_card(
         .into_any_element()
 }
 
-fn collect_media_descriptors(blocks: &[RichBlock], output: &mut Vec<MediaDescriptor>) {
-    for block in blocks {
-        match block {
-            RichBlock::Image(image) => {
-                if let Some(descriptor) = markdown_image_descriptor(image) {
-                    output.push(descriptor);
-                }
-            }
-            RichBlock::Attachment(attachment) if attachment.kind == MediaKind::Image => {
-                if let Some(descriptor) = attachment_descriptor(attachment) {
-                    output.push(descriptor);
-                }
-            }
-            RichBlock::BlockQuote(children) => collect_media_descriptors(children, output),
-            RichBlock::List { items, .. } => {
-                for item in items {
-                    collect_media_descriptors(&item.blocks, output);
-                }
-            }
-            RichBlock::Table(table) => {
-                for row in &table.rows {
-                    for cell in &row.cells {
-                        collect_media_descriptors(&cell.blocks, output);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 fn markdown_image_descriptor(image: &MarkdownImage) -> Option<MediaDescriptor> {
     let url = image.url.trim();
     (!url.is_empty()).then(|| MediaDescriptor {
@@ -768,30 +688,6 @@ fn attachment_descriptor(attachment: &MediaAttachment) -> Option<MediaDescriptor
         },
         mime_type: Some(attachment.mime_type.clone()),
     })
-}
-
-fn document_revision(text: &str, media: &[MediaAttachment]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    text.hash(&mut hasher);
-    for attachment in media {
-        match attachment.kind {
-            MediaKind::Image => 0_u8,
-            MediaKind::Audio => 1,
-            MediaKind::Video => 2,
-            MediaKind::Document => 3,
-        }
-        .hash(&mut hasher);
-        attachment.mime_type.hash(&mut hasher);
-        attachment.key.hash(&mut hasher);
-        attachment.path.hash(&mut hasher);
-        attachment.url.hash(&mut hasher);
-        attachment.filename.hash(&mut hasher);
-        attachment.size.hash(&mut hasher);
-        attachment.duration.map(f64::to_bits).hash(&mut hasher);
-        attachment.transcription.hash(&mut hasher);
-        attachment.description.hash(&mut hasher);
-    }
-    hasher.finish()
 }
 
 fn image_mime_from_url(url: &str) -> Option<&'static str> {
@@ -839,21 +735,24 @@ fn format_duration(seconds: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::content::parse_markdown;
+    use crate::prepared::prepare_completed_assistant;
 
     #[test]
     fn plain_assistant_text_keeps_the_fast_renderer() {
-        let plain = parse_markdown("One clear paragraph.");
-        let rich = parse_markdown("One **clear** paragraph.");
+        let plain = prepare_completed_assistant("One clear paragraph.".to_string(), Vec::new());
+        let rich = prepare_completed_assistant("One **clear** paragraph.".to_string(), Vec::new());
 
-        assert!(!needs_rich_renderer(&plain));
-        assert!(needs_rich_renderer(&rich));
+        assert!(!plain.is_rich());
+        assert!(rich.is_rich());
     }
 
     #[test]
     fn nested_markdown_images_share_the_remote_media_pipeline() {
-        let document = parse_markdown("> ![map](https://example.com/map.png)");
-        let descriptors = media_descriptors(&document);
+        let content = prepare_completed_assistant(
+            "> ![map](https://example.com/map.png)".to_string(),
+            Vec::new(),
+        );
+        let descriptors = media_descriptors(&content);
 
         assert_eq!(descriptors.len(), 1);
         assert_eq!(
@@ -867,12 +766,13 @@ mod tests {
 
     #[test]
     fn table_images_share_the_remote_media_pipeline() {
-        let document = parse_markdown(
-            "| Result | Preview |\n| --- | --- |\n| ready | ![plot](https://example.com/plot.webp) |",
+        let content = prepare_completed_assistant(
+            "| Result | Preview |\n| --- | --- |\n| ready | ![plot](https://example.com/plot.webp) |".to_string(),
+            Vec::new(),
         );
-        let descriptors = media_descriptors(&document);
+        let descriptors = media_descriptors(&content);
 
-        assert!(needs_rich_renderer(&document));
+        assert!(content.is_rich());
         assert_eq!(descriptors.len(), 1);
         assert_eq!(
             descriptors[0].source,

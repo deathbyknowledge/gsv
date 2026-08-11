@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use serde_json::Value;
 
-use crate::content::{parse_markdown, MediaAttachment, MediaKind, RichDocument};
+use crate::content::{MediaAttachment, MediaKind};
 
 const RETIRED_RUN_LIMIT: usize = 128;
 
@@ -43,16 +43,6 @@ impl Moment {
             run_id: None,
             state: MomentState::Complete,
         }
-    }
-
-    pub fn content(&self) -> RichDocument {
-        let document =
-            if self.role == MomentRole::Intelligence && self.state == MomentState::Complete {
-                parse_markdown(&self.text)
-            } else {
-                RichDocument::literal(&self.text)
-            };
-        document.with_attachments(&self.media)
     }
 }
 
@@ -958,32 +948,6 @@ mod tests {
         assert_eq!(moments[0].media[0].kind, MediaKind::Image);
         assert_eq!(moments[0].media[0].filename.as_deref(), Some("result.png"));
         assert_eq!(moments[0].media[1].duration, Some(2.5));
-    }
-
-    #[test]
-    fn only_intelligence_moments_interpret_markdown() {
-        let assistant = Moment::new("assistant", MomentRole::Intelligence, "**clear**");
-        let user = Moment::new("user", MomentRole::User, "**literal**");
-        let mut streaming = Moment::new("streaming", MomentRole::Intelligence, "**partial");
-        streaming.state = MomentState::Streaming;
-
-        assert!(matches!(
-            assistant.content().blocks.as_slice(),
-            [crate::content::RichBlock::Paragraph(content)]
-                if matches!(content.as_slice(), [crate::content::RichInline::Strong(_)])
-        ));
-        assert_eq!(
-            user.content().blocks,
-            vec![crate::content::RichBlock::Paragraph(vec![
-                crate::content::RichInline::Text("**literal**".to_string())
-            ])]
-        );
-        assert_eq!(
-            streaming.content().blocks,
-            vec![crate::content::RichBlock::Paragraph(vec![
-                crate::content::RichInline::Text("**partial".to_string())
-            ])]
-        );
     }
 
     #[test]

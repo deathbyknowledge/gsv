@@ -39,7 +39,9 @@ impl GsvApp {
                 self.show_setup_required(attempt_id, defaults, message, window, cx);
             }
             ClientEvent::Reconnecting { attempt, message } => {
-                release_assets(self.media_cache.clear(&self.commands), cx);
+                let released = self.media_cache.clear(&self.commands);
+                self.cancel_stale_media_preparations();
+                release_assets(released, cx);
                 self.client_session_id = None;
                 self.pid = None;
                 self.last_history = None;
@@ -65,7 +67,9 @@ impl GsvApp {
                     }
                 }
                 self.finish_login(window, cx);
-                release_assets(self.media_cache.clear(&self.commands), cx);
+                let released = self.media_cache.clear(&self.commands);
+                self.cancel_stale_media_preparations();
+                release_assets(released, cx);
                 self.client_session_id = Some(session_id);
                 self.pid = Some(pid);
                 self.last_history = None;
@@ -182,9 +186,14 @@ impl GsvApp {
                 request_id,
                 bytes,
                 mime_type,
-                _lease: _,
+                _lease,
             } => {
-                release_assets(self.media_cache.loaded(request_id, bytes, mime_type), cx);
+                if let Some(preparation) = self
+                    .media_cache
+                    .preparation_for(request_id, bytes, mime_type)
+                {
+                    self.begin_media_preparation(request_id, preparation, _lease, cx);
+                }
             }
             ClientEvent::MediaFailed {
                 request_id,
@@ -243,6 +252,8 @@ impl GsvApp {
             self.conversation
                 .replace_run_media(active_run_id.as_deref(), live_media);
         }
+        self.prepared_content
+            .preload(&self.conversation.moments, self.conversation.selected);
 
         if let Some(approval) = history.get("pendingHil").and_then(parse_pending_approval) {
             self.enter_approval(approval, window, cx);
