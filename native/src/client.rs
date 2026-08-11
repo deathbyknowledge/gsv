@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::fmt::{self, Display, Formatter};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,10 +9,14 @@ use std::time::Duration;
 use gsv::config::CliConfig;
 use gsv::connection::GatewayRpcError;
 use gsv::kernel_client::{GatewayAuth, KernelClient, ProcSendResult};
-use gsv::protocol::Frame;
+use gsv::protocol::{
+    build_binary_frame, parse_binary_frame, Frame, FrameBodyDescriptor, BINARY_FRAME_CANCEL,
+    BINARY_FRAME_DATA, BINARY_FRAME_END, BINARY_FRAME_ERROR,
+};
+use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use serde_json::{json, Value};
-use tokio::sync::mpsc as tokio_mpsc;
-use tokio::task::JoinSet;
+use tokio::sync::{mpsc as tokio_mpsc, Notify, OwnedSemaphorePermit, Semaphore};
+use tokio::task::{AbortHandle, JoinSet};
 
 use crate::startup::{
     resolve_startup, ConnectionSettings, Credential, LoginDefaults, LoginStep, StartupResolution,
@@ -26,6 +30,14 @@ const CONNECTION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const HISTORY_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_millis(250);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(8);
+const MEDIA_FETCH_TIMEOUT: Duration = Duration::from_secs(45);
+const MEDIA_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_MEDIA_BYTES: usize = 48 * 1024 * 1024;
+const MAX_BUFFERED_MEDIA_BYTES: usize = 64 * 1024 * 1024;
+const MAX_BUFFERED_MEDIA_FRAMES: usize = 2048;
+const MAX_CANCELLED_MEDIA_STREAMS: usize = 256;
+const MAX_FAILED_MEDIA_STREAMS: usize = 256;
+const MAX_CONCURRENT_MEDIA_TRANSFERS: usize = 2;
 const DEMO_SESSION_ID: u64 = 0;
 
 static NEXT_LIVE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -34,6 +46,17 @@ static NEXT_LIVE_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 pub enum ApprovalDecision {
     Approve { remember: bool },
     Deny,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MediaSource {
+    Process { key: String },
+    Remote { url: String },
+}
+
+#[derive(Clone, Debug)]
+pub struct MediaTransferLease {
+    _permit: Arc<OwnedSemaphorePermit>,
 }
 
 #[derive(Clone)]
@@ -54,6 +77,13 @@ pub enum ClientCommand {
         decision: ApprovalDecision,
     },
     RefreshHistory,
+    LoadMedia {
+        request_id: u64,
+        source: MediaSource,
+    },
+    CancelMedia {
+        request_id: u64,
+    },
     Shell(String),
     Shutdown,
 }
@@ -128,6 +158,16 @@ pub enum ClientEvent {
         command: String,
         output: String,
         exit_code: Option<i64>,
+    },
+    MediaLoaded {
+        request_id: u64,
+        bytes: Arc<[u8]>,
+        mime_type: Option<String>,
+        _lease: MediaTransferLease,
+    },
+    MediaFailed {
+        request_id: u64,
+        message: String,
     },
     Error(String),
 }
@@ -358,6 +398,7 @@ async fn run_live(
 
         let LiveSession {
             client,
+            media_bodies,
             pid,
             history,
             history_request_signal_id,
@@ -382,6 +423,7 @@ async fn run_live(
         match run_connected_session(
             ActiveClientSession {
                 client,
+                media_bodies,
                 pid,
                 process_exit,
                 signal_lease,
@@ -436,6 +478,7 @@ async fn run_live(
 
 struct LiveSession {
     client: Arc<KernelClient>,
+    media_bodies: ResponseBodyInbox,
     pid: String,
     history: Value,
     history_request_signal_id: u64,
@@ -446,6 +489,7 @@ struct LiveSession {
 
 struct ActiveClientSession {
     client: Arc<KernelClient>,
+    media_bodies: ResponseBodyInbox,
     pid: String,
     process_exit: Arc<tokio::sync::Notify>,
     signal_lease: SessionSignalLease,
@@ -684,12 +728,376 @@ struct ShellResponse {
     exit_code: Option<i64>,
 }
 
+#[derive(Debug)]
+struct MediaResponse {
+    bytes: Arc<[u8]>,
+    mime_type: Option<String>,
+}
+
+#[derive(Clone)]
+struct ResponseBodyInbox {
+    state: Arc<Mutex<ResponseBodyState>>,
+    notify: Arc<Notify>,
+    send_frame: Arc<dyn Fn(Vec<u8>) + Send + Sync>,
+}
+
+#[derive(Default)]
+struct ResponseBodyState {
+    frames: HashMap<u32, VecDeque<QueuedBodyFrame>>,
+    registered: HashSet<u32>,
+    terminal: HashSet<u32>,
+    failures: HashMap<u32, String>,
+    cancelled: CancelledBodyStreams,
+    buffered_bytes: usize,
+    buffered_frames: usize,
+}
+
+#[derive(Default)]
+struct CancelledBodyStreams {
+    stream_ids: HashSet<u32>,
+    insertion_order: VecDeque<u32>,
+}
+
+impl CancelledBodyStreams {
+    fn insert(&mut self, stream_id: u32) {
+        if stream_id == 0 || !self.stream_ids.insert(stream_id) {
+            return;
+        }
+        while self.insertion_order.len() >= MAX_CANCELLED_MEDIA_STREAMS {
+            if let Some(evicted) = self.insertion_order.pop_front() {
+                self.stream_ids.remove(&evicted);
+            }
+        }
+        self.insertion_order.push_back(stream_id);
+    }
+
+    fn accept_reused(&mut self, stream_id: u32) {
+        self.stream_ids.remove(&stream_id);
+        self.insertion_order.retain(|queued| *queued != stream_id);
+    }
+
+    fn should_discard(&mut self, stream_id: u32, flags: u8) -> bool {
+        let should_discard = self.stream_ids.contains(&stream_id);
+        if should_discard && flags & BINARY_FRAME_END != 0 {
+            self.stream_ids.remove(&stream_id);
+            self.insertion_order.retain(|queued| *queued != stream_id);
+        }
+        should_discard
+    }
+}
+
+#[derive(Debug)]
+struct QueuedBodyFrame {
+    flags: u8,
+    payload: Vec<u8>,
+}
+
+enum BodyItem {
+    Frame(QueuedBodyFrame),
+    Failure(String),
+}
+
+impl ResponseBodyInbox {
+    fn new(send_frame: impl Fn(Vec<u8>) + Send + Sync + 'static) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(ResponseBodyState::default())),
+            notify: Arc::new(Notify::new()),
+            send_frame: Arc::new(send_frame),
+        }
+    }
+
+    fn push(&self, data: Vec<u8>) {
+        let Some((stream_id, flags, payload)) = parse_binary_frame(&data) else {
+            return;
+        };
+
+        let mut cancel = false;
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        if flags & BINARY_FRAME_CANCEL != 0 {
+            return;
+        }
+        if state.cancelled.should_discard(stream_id, flags) {
+            return;
+        }
+        if state.terminal.contains(&stream_id) || state.failures.contains_key(&stream_id) {
+            return;
+        }
+
+        let stream_bytes = state
+            .frames
+            .get(&stream_id)
+            .map(|frames| {
+                frames
+                    .iter()
+                    .map(|frame| frame.payload.len())
+                    .sum::<usize>()
+            })
+            .unwrap_or_default();
+        let exceeds_limit = stream_bytes.saturating_add(payload.len()) > MAX_MEDIA_BYTES
+            || state.buffered_bytes.saturating_add(payload.len()) > MAX_BUFFERED_MEDIA_BYTES
+            || state.buffered_frames >= MAX_BUFFERED_MEDIA_FRAMES;
+        if exceeds_limit {
+            remove_body_frames(&mut state, stream_id);
+            record_body_failure(
+                &mut state,
+                stream_id,
+                format!("Media exceeds the {MAX_MEDIA_BYTES}-byte transfer limit."),
+            );
+            cancel = true;
+        } else {
+            state.buffered_bytes += payload.len();
+            state.buffered_frames += 1;
+            state
+                .frames
+                .entry(stream_id)
+                .or_default()
+                .push_back(QueuedBodyFrame { flags, payload });
+            if flags & BINARY_FRAME_END != 0 {
+                state.terminal.insert(stream_id);
+            }
+        }
+        drop(state);
+
+        if cancel {
+            self.send_cancel(stream_id, "Media transfer limit exceeded");
+        }
+        self.notify.notify_waiters();
+    }
+
+    fn register(&self, body: FrameBodyDescriptor) -> Result<(), RequestFailure> {
+        if body.stream_id == 0 {
+            return Err(RequestFailure::transport(
+                "The gateway returned an invalid media body stream.",
+            ));
+        }
+        let Ok(mut state) = self.state.lock() else {
+            return Err(RequestFailure::transport(
+                "The media body receiver is unavailable.",
+            ));
+        };
+        if !state.failures.contains_key(&body.stream_id) {
+            state.cancelled.accept_reused(body.stream_id);
+        }
+        state.registered.insert(body.stream_id);
+        Ok(())
+    }
+
+    async fn read_body(&self, body: FrameBodyDescriptor) -> Result<Arc<[u8]>, RequestFailure> {
+        self.register(body)?;
+        let mut guard = IncomingBodyGuard::new(self.clone(), body.stream_id);
+        if body
+            .length
+            .is_some_and(|length| length > MAX_MEDIA_BYTES as u64)
+        {
+            return Err(RequestFailure::rejected(format!(
+                "Media exceeds the {MAX_MEDIA_BYTES}-byte transfer limit."
+            )));
+        }
+
+        let expected_length = body.length;
+        let capacity = expected_length
+            .and_then(|length| usize::try_from(length).ok())
+            .unwrap_or_default();
+        let mut bytes = Vec::with_capacity(capacity);
+        loop {
+            let frame = match self.take(body.stream_id).await? {
+                BodyItem::Frame(frame) => frame,
+                BodyItem::Failure(message) => {
+                    guard.complete();
+                    self.finish_cancelled(body.stream_id);
+                    return Err(RequestFailure::rejected(message));
+                }
+            };
+            if frame.flags & BINARY_FRAME_ERROR != 0 {
+                guard.complete();
+                self.finish(body.stream_id);
+                return Err(RequestFailure::transport(
+                    String::from_utf8(frame.payload)
+                        .unwrap_or_else(|_| "The gateway media transfer failed.".to_string()),
+                ));
+            }
+            if frame.flags & BINARY_FRAME_DATA != 0 {
+                let Some(next_length) = bytes.len().checked_add(frame.payload.len()) else {
+                    return Err(RequestFailure::rejected(
+                        "The media body is too large to open.".to_string(),
+                    ));
+                };
+                if next_length > MAX_MEDIA_BYTES {
+                    return Err(RequestFailure::rejected(format!(
+                        "Media exceeds the {MAX_MEDIA_BYTES}-byte transfer limit."
+                    )));
+                }
+                if expected_length.is_some_and(|length| next_length as u64 > length) {
+                    return Err(RequestFailure::transport(
+                        "The media body exceeded its declared length.".to_string(),
+                    ));
+                }
+                bytes.extend_from_slice(&frame.payload);
+            }
+            if frame.flags & BINARY_FRAME_END != 0 {
+                break;
+            }
+        }
+
+        if expected_length.is_some_and(|length| bytes.len() as u64 != length) {
+            guard.complete();
+            self.finish(body.stream_id);
+            return Err(RequestFailure::transport(
+                "The media body did not match its declared length.".to_string(),
+            ));
+        }
+        guard.complete();
+        self.finish(body.stream_id);
+        Ok(Arc::from(bytes))
+    }
+
+    async fn take(&self, stream_id: u32) -> Result<BodyItem, RequestFailure> {
+        let deadline = tokio::time::Instant::now() + MEDIA_BODY_IDLE_TIMEOUT;
+        loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+
+            if let Some(item) = self.pop(stream_id) {
+                return Ok(item);
+            }
+
+            tokio::time::timeout_at(deadline, notified.as_mut())
+                .await
+                .map_err(|_| {
+                    RequestFailure::transport("The media body transfer timed out.".to_string())
+                })?;
+        }
+    }
+
+    fn pop(&self, stream_id: u32) -> Option<BodyItem> {
+        let Ok(mut state) = self.state.lock() else {
+            return Some(BodyItem::Failure(
+                "The media body receiver is unavailable.".to_string(),
+            ));
+        };
+        if let Some(message) = state.failures.remove(&stream_id) {
+            return Some(BodyItem::Failure(message));
+        }
+        let queue = state.frames.get_mut(&stream_id)?;
+        let frame = queue.pop_front()?;
+        if queue.is_empty() {
+            state.frames.remove(&stream_id);
+        }
+        state.buffered_bytes = state.buffered_bytes.saturating_sub(frame.payload.len());
+        state.buffered_frames = state.buffered_frames.saturating_sub(1);
+        Some(BodyItem::Frame(frame))
+    }
+
+    fn finish(&self, stream_id: u32) {
+        if let Ok(mut state) = self.state.lock() {
+            remove_body_frames(&mut state, stream_id);
+            state.registered.remove(&stream_id);
+            state.terminal.remove(&stream_id);
+            state.failures.remove(&stream_id);
+        }
+    }
+
+    fn finish_cancelled(&self, stream_id: u32) {
+        if let Ok(mut state) = self.state.lock() {
+            remove_body_frames(&mut state, stream_id);
+            state.registered.remove(&stream_id);
+            state.terminal.remove(&stream_id);
+            state.failures.remove(&stream_id);
+            state.cancelled.insert(stream_id);
+        }
+    }
+
+    fn cancel(&self, stream_id: u32, reason: &str) {
+        let accepted = if let Ok(mut state) = self.state.lock() {
+            let had_frames = remove_body_frames(&mut state, stream_id);
+            let registered = state.registered.remove(&stream_id);
+            let terminal = state.terminal.remove(&stream_id);
+            let failed = state.failures.remove(&stream_id).is_some();
+            state.cancelled.insert(stream_id);
+            had_frames || registered || terminal || failed
+        } else {
+            false
+        };
+        if accepted {
+            self.send_cancel(stream_id, reason);
+        }
+    }
+
+    fn send_cancel(&self, stream_id: u32, reason: &str) {
+        if stream_id == 0 {
+            return;
+        }
+        (self.send_frame)(build_binary_frame(
+            stream_id,
+            BINARY_FRAME_CANCEL | BINARY_FRAME_END,
+            reason.as_bytes(),
+        ));
+    }
+}
+
+fn remove_body_frames(state: &mut ResponseBodyState, stream_id: u32) -> bool {
+    let Some(frames) = state.frames.remove(&stream_id) else {
+        return false;
+    };
+    state.buffered_bytes = state
+        .buffered_bytes
+        .saturating_sub(frames.iter().map(|frame| frame.payload.len()).sum());
+    state.buffered_frames = state.buffered_frames.saturating_sub(frames.len());
+    true
+}
+
+fn record_body_failure(state: &mut ResponseBodyState, stream_id: u32, message: String) {
+    if !state.failures.contains_key(&stream_id) && state.failures.len() >= MAX_FAILED_MEDIA_STREAMS
+    {
+        if let Some(evicted) = state.failures.keys().next().copied() {
+            state.failures.remove(&evicted);
+            state.terminal.remove(&evicted);
+        }
+    }
+    state.terminal.insert(stream_id);
+    state.cancelled.insert(stream_id);
+    state.failures.insert(stream_id, message);
+}
+
+struct IncomingBodyGuard {
+    inbox: ResponseBodyInbox,
+    stream_id: u32,
+    complete: bool,
+}
+
+impl IncomingBodyGuard {
+    fn new(inbox: ResponseBodyInbox, stream_id: u32) -> Self {
+        Self {
+            inbox,
+            stream_id,
+            complete: false,
+        }
+    }
+
+    fn complete(&mut self) {
+        self.complete = true;
+    }
+}
+
+impl Drop for IncomingBodyGuard {
+    fn drop(&mut self) {
+        if !self.complete {
+            self.inbox
+                .cancel(self.stream_id, "Media body was no longer needed");
+        }
+    }
+}
+
 enum ConnectedTaskOutcome {
     Send(Result<ProcSendResult, SendAttemptFailure>),
     Abort(Result<Value, RequestFailure>),
     Approval(Result<Value, RequestFailure>),
     History(Result<Value, RequestFailure>),
     Shell(Result<ShellResponse, RequestFailure>),
+    Media(Result<(MediaResponse, MediaTransferLease), RequestFailure>),
 }
 
 struct ConnectedTaskCompletion {
@@ -714,6 +1122,27 @@ enum PendingOperation {
     Shell {
         command: String,
     },
+    Media {
+        request_id: u64,
+    },
+}
+
+struct MediaTaskControl {
+    operation_id: u64,
+    abort_handle: AbortHandle,
+}
+
+struct ConnectedCommandContext<'a> {
+    tasks: &'a mut JoinSet<ConnectedTaskCompletion>,
+    pending: &'a mut HashMap<u64, PendingOperation>,
+    media_tasks: &'a mut HashMap<u64, MediaTaskControl>,
+    cancelled_task_ids: &'a mut HashSet<tokio::task::Id>,
+    next_operation_id: &'a mut u64,
+    client: Arc<KernelClient>,
+    media_bodies: ResponseBodyInbox,
+    http_client: reqwest::Client,
+    media_slots: Arc<Semaphore>,
+    pid: String,
 }
 
 #[derive(Default)]
@@ -803,14 +1232,19 @@ fn reserve_operation(
     operation_id
 }
 
-fn spawn_connected_command(
-    tasks: &mut JoinSet<ConnectedTaskCompletion>,
-    pending: &mut HashMap<u64, PendingOperation>,
-    next_operation_id: &mut u64,
-    client: Arc<KernelClient>,
-    pid: String,
-    command: ClientCommand,
-) {
+fn spawn_connected_command(context: ConnectedCommandContext<'_>, command: ClientCommand) {
+    let ConnectedCommandContext {
+        tasks,
+        pending,
+        media_tasks,
+        cancelled_task_ids,
+        next_operation_id,
+        client,
+        media_bodies,
+        http_client,
+        media_slots,
+        pid,
+    } = context;
     match command {
         ClientCommand::Send {
             submission_id,
@@ -902,10 +1336,73 @@ fn spawn_connected_command(
                 }
             });
         }
+        ClientCommand::LoadMedia { request_id, source } => {
+            cancel_media_task(request_id, media_tasks, pending, cancelled_task_ids);
+            let operation_id = reserve_operation(
+                next_operation_id,
+                pending,
+                PendingOperation::Media { request_id },
+            );
+            let abort_handle = tasks.spawn(async move {
+                let result = async {
+                    let permit = media_slots.acquire_owned().await.map_err(|_| {
+                        RequestFailure::transport("The media transfer queue is unavailable.")
+                    })?;
+                    let media =
+                        load_media(&client, &media_bodies, &http_client, &pid, source).await?;
+                    Ok((
+                        media,
+                        MediaTransferLease {
+                            _permit: Arc::new(permit),
+                        },
+                    ))
+                }
+                .await;
+                ConnectedTaskCompletion {
+                    operation_id,
+                    outcome: ConnectedTaskOutcome::Media(result),
+                }
+            });
+            media_tasks.insert(
+                request_id,
+                MediaTaskControl {
+                    operation_id,
+                    abort_handle,
+                },
+            );
+        }
         ClientCommand::Connect(_)
         | ClientCommand::CancelConnect { .. }
         | ClientCommand::RefreshHistory
+        | ClientCommand::CancelMedia { .. }
         | ClientCommand::Shutdown => {}
+    }
+}
+
+fn cancel_media_task(
+    request_id: u64,
+    media_tasks: &mut HashMap<u64, MediaTaskControl>,
+    pending: &mut HashMap<u64, PendingOperation>,
+    cancelled_task_ids: &mut HashSet<tokio::task::Id>,
+) -> bool {
+    let Some(control) = media_tasks.remove(&request_id) else {
+        return false;
+    };
+    pending.remove(&control.operation_id);
+    cancelled_task_ids.insert(control.abort_handle.id());
+    control.abort_handle.abort();
+    true
+}
+
+fn remove_media_task_by_id(
+    task_id: tokio::task::Id,
+    media_tasks: &mut HashMap<u64, MediaTaskControl>,
+) {
+    let request_id = media_tasks.iter().find_map(|(request_id, control)| {
+        (control.abort_handle.id() == task_id).then_some(*request_id)
+    });
+    if let Some(request_id) = request_id {
+        media_tasks.remove(&request_id);
     }
 }
 
@@ -1058,6 +1555,24 @@ fn emit_connected_completion(
                 }
             }
         }
+        (PendingOperation::Media { request_id }, ConnectedTaskOutcome::Media(result)) => {
+            match result {
+                Ok((media, lease)) => {
+                    let _ = events.send(ClientEvent::MediaLoaded {
+                        request_id,
+                        bytes: media.bytes,
+                        mime_type: media.mime_type,
+                        _lease: lease,
+                    });
+                }
+                Err(error) => {
+                    let _ = events.send(ClientEvent::MediaFailed {
+                        request_id,
+                        message: format!("That media could not be opened: {error}"),
+                    });
+                }
+            }
+        }
         _ => {
             let _ = events.send(ClientEvent::Error(
                 "The native client mismatched an operation result.".to_string(),
@@ -1117,6 +1632,12 @@ async fn reconcile_interrupted_tasks(
                     exit_code: None,
                 });
             }
+            PendingOperation::Media { request_id } => {
+                let _ = events.send(ClientEvent::MediaFailed {
+                    request_id,
+                    message: reason.to_string(),
+                });
+            }
             PendingOperation::History { .. } => {}
         }
     }
@@ -1137,6 +1658,24 @@ fn abort_response_applied(response: &Value, requested_run_id: &str) -> bool {
 
 fn approval_response_matches(response: &Value, request_id: &str) -> bool {
     response.get("requestId").and_then(Value::as_str) == Some(request_id)
+}
+
+async fn install_media_body_handler(client: &Arc<KernelClient>) -> ResponseBodyInbox {
+    let weak_client = Arc::downgrade(client);
+    let inbox = ResponseBodyInbox::new(move |frame| {
+        let Some(client) = weak_client.upgrade() else {
+            return;
+        };
+        tokio::spawn(async move {
+            let _ = client.connection().send_binary(frame).await;
+        });
+    });
+    let handler_inbox = inbox.clone();
+    client
+        .connection()
+        .set_binary_handler(move |frame| handler_inbox.push(frame))
+        .await;
+    inbox
 }
 
 async fn establish_live_session(
@@ -1175,6 +1714,7 @@ async fn establish_live_session(
             message: format!("Connecting to {url} timed out after {CONNECT_TIMEOUT:?}."),
         })?;
     let client = Arc::new(connected.map_err(|error| classify_connect_failure(url, error))?);
+    let media_bodies = install_media_body_handler(&client).await;
 
     let pid = choose_process(&client, preferred_pid)
         .await
@@ -1189,6 +1729,7 @@ async fn establish_live_session(
 
     Ok(LiveSession {
         client,
+        media_bodies,
         pid,
         history,
         history_request_signal_id,
@@ -1238,6 +1779,7 @@ async fn run_connected_session(
 ) -> ConnectedSessionOutcome {
     let ActiveClientSession {
         client,
+        media_bodies,
         pid,
         process_exit,
         signal_lease,
@@ -1250,8 +1792,16 @@ async fn run_connected_session(
     history_poll.tick().await;
     let mut tasks = JoinSet::new();
     let mut pending = HashMap::new();
+    let mut media_tasks = HashMap::new();
+    let mut cancelled_task_ids = HashSet::new();
     let mut next_operation_id = 1_u64;
     let mut history_refresh = HistoryRefresh::default();
+    let http_client = reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(MEDIA_FETCH_TIMEOUT)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    let media_slots = Arc::new(Semaphore::new(MAX_CONCURRENT_MEDIA_TRANSFERS));
     if initial_history_superseded && history_refresh.request() {
         spawn_history_task(
             &mut tasks,
@@ -1343,19 +1893,36 @@ async fn run_connected_session(
                             );
                         }
                     }
+                    ClientCommand::CancelMedia { request_id } => {
+                        cancel_media_task(
+                            request_id,
+                            &mut media_tasks,
+                            &mut pending,
+                            &mut cancelled_task_ids,
+                        );
+                    }
                     command => spawn_connected_command(
-                        &mut tasks,
-                        &mut pending,
-                        &mut next_operation_id,
-                        client.clone(),
-                        pid.clone(),
+                        ConnectedCommandContext {
+                            tasks: &mut tasks,
+                            pending: &mut pending,
+                            media_tasks: &mut media_tasks,
+                            cancelled_task_ids: &mut cancelled_task_ids,
+                            next_operation_id: &mut next_operation_id,
+                            client: client.clone(),
+                            media_bodies: media_bodies.clone(),
+                            http_client: http_client.clone(),
+                            media_slots: media_slots.clone(),
+                            pid: pid.clone(),
+                        },
                         command,
                     ),
                 }
             }
-            result = tasks.join_next(), if !tasks.is_empty() => {
+            result = tasks.join_next_with_id(), if !tasks.is_empty() => {
                 match result {
-                    Some(Ok(completion)) => {
+                    Some(Ok((task_id, completion))) => {
+                        cancelled_task_ids.remove(&task_id);
+                        remove_media_task_by_id(task_id, &mut media_tasks);
                         let rejected_history = matches!(
                             &completion.outcome,
                             ConnectedTaskOutcome::History(Err(error))
@@ -1399,9 +1966,13 @@ async fn run_connected_session(
                         }
                     }
                     Some(Err(error)) => {
-                        let _ = events.send(ClientEvent::Error(format!(
-                            "A native client operation stopped unexpectedly: {error}"
-                        )));
+                        let task_id = error.id();
+                        remove_media_task_by_id(task_id, &mut media_tasks);
+                        if !cancelled_task_ids.remove(&task_id) {
+                            let _ = events.send(ClientEvent::Error(format!(
+                                "A native client operation stopped unexpectedly: {error}"
+                            )));
+                        }
                     }
                     None => {}
                 }
@@ -1453,6 +2024,13 @@ fn handle_unavailable_command(
             });
         }
         ClientCommand::RefreshHistory => {}
+        ClientCommand::LoadMedia { request_id, .. } => {
+            let _ = events.send(ClientEvent::MediaFailed {
+                request_id,
+                message: "That media isn’t available while GSV is reconnecting.".to_string(),
+            });
+        }
+        ClientCommand::CancelMedia { .. } => {}
         ClientCommand::Shell(command) => {
             let _ = events.send(ClientEvent::ShellResult {
                 command,
@@ -1646,6 +2224,194 @@ async fn fetch_history(client: &KernelClient, pid: &str) -> Result<Value, Reques
     .await
 }
 
+async fn load_media(
+    client: &KernelClient,
+    media_bodies: &ResponseBodyInbox,
+    http_client: &reqwest::Client,
+    pid: &str,
+    source: MediaSource,
+) -> Result<MediaResponse, RequestFailure> {
+    match source {
+        MediaSource::Process { key } => fetch_process_media(client, media_bodies, pid, &key).await,
+        MediaSource::Remote { url } => {
+            tokio::time::timeout(MEDIA_FETCH_TIMEOUT, fetch_remote_media(http_client, &url))
+                .await
+                .map_err(|_| RequestFailure::transport("The remote media fetch timed out."))?
+        }
+    }
+}
+
+async fn fetch_process_media(
+    client: &KernelClient,
+    media_bodies: &ResponseBodyInbox,
+    pid: &str,
+    key: &str,
+) -> Result<MediaResponse, RequestFailure> {
+    if key.trim().is_empty() {
+        return Err(RequestFailure::rejected(
+            "The process media reference is empty.",
+        ));
+    }
+
+    let request = client.connection().request_with_timeout(
+        "proc.media.read",
+        Some(json!({ "pid": pid, "key": key })),
+        RPC_TIMEOUT,
+    );
+    let response = tokio::time::timeout(RPC_ENVELOPE_TIMEOUT, request)
+        .await
+        .map_err(|_| {
+            RequestFailure::transport(format!(
+                "proc.media.read timed out after {RPC_ENVELOPE_TIMEOUT:?}"
+            ))
+        })?
+        .map_err(|error| RequestFailure::transport(error.to_string()))?;
+
+    let body = response.body;
+    if !response.ok {
+        cancel_response_body(media_bodies, body);
+        let Some(error) = response.error else {
+            return Err(RequestFailure::transport(
+                "proc.media.read failed without error details",
+            ));
+        };
+        return Err(RequestFailure {
+            kind: classify_response_failure(error.code, error.retryable),
+            message: format!(
+                "proc.media.read failed (code {}): {}",
+                error.code, error.message
+            ),
+        });
+    }
+
+    let data = response.data.unwrap_or_else(|| json!({}));
+    if data.get("ok").and_then(Value::as_bool) == Some(false) {
+        cancel_response_body(media_bodies, body);
+        return Err(RequestFailure::rejected(
+            data.get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("The gateway rejected the media read"),
+        ));
+    }
+
+    let Some(body) = body else {
+        return Err(RequestFailure::transport(
+            "GSV returned media metadata without its body.",
+        ));
+    };
+    let Some(declared_size) = data.get("size").and_then(Value::as_u64) else {
+        media_bodies.register(body)?;
+        media_bodies.cancel(body.stream_id, "Media size metadata was invalid");
+        return Err(RequestFailure::transport(
+            "GSV returned media without a valid size.",
+        ));
+    };
+    if declared_size > MAX_MEDIA_BYTES as u64 {
+        media_bodies.register(body)?;
+        media_bodies.cancel(body.stream_id, "Media transfer limit exceeded");
+        return Err(RequestFailure::rejected(format!(
+            "Media exceeds the {MAX_MEDIA_BYTES}-byte transfer limit."
+        )));
+    }
+    if body.length.is_some_and(|length| length != declared_size) {
+        media_bodies.register(body)?;
+        media_bodies.cancel(body.stream_id, "Media size metadata did not match");
+        return Err(RequestFailure::transport(
+            "GSV returned inconsistent media size metadata.",
+        ));
+    }
+
+    let bytes = media_bodies.read_body(body).await?;
+    if bytes.len() as u64 != declared_size {
+        return Err(RequestFailure::transport(
+            "The media bytes did not match the declared size.",
+        ));
+    }
+    let mime_type = data
+        .get("mimeType")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|mime_type| !mime_type.is_empty())
+        .map(str::to_string);
+    Ok(MediaResponse { bytes, mime_type })
+}
+
+fn cancel_response_body(media_bodies: &ResponseBodyInbox, body: Option<FrameBodyDescriptor>) {
+    let Some(body) = body else {
+        return;
+    };
+    if media_bodies.register(body).is_ok() {
+        media_bodies.cancel(body.stream_id, "Media response was not accepted");
+    }
+}
+
+async fn fetch_remote_media(
+    http_client: &reqwest::Client,
+    url: &str,
+) -> Result<MediaResponse, RequestFailure> {
+    let url = url::Url::parse(url)
+        .map_err(|_| RequestFailure::rejected("The remote media URL is invalid."))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(RequestFailure::rejected(
+            "Remote media must use an HTTP or HTTPS URL.",
+        ));
+    }
+
+    let mut response =
+        http_client.get(url).send().await.map_err(|_| {
+            RequestFailure::transport("The remote media server could not be reached.")
+        })?;
+    if !response.status().is_success() {
+        return Err(RequestFailure::rejected(format!(
+            "The remote media server returned HTTP {}.",
+            response.status().as_u16()
+        )));
+    }
+
+    if response
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_some_and(|length| length > MAX_MEDIA_BYTES as u64)
+    {
+        return Err(RequestFailure::rejected(format!(
+            "Media exceeds the {MAX_MEDIA_BYTES}-byte transfer limit."
+        )));
+    }
+    let mime_type = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.split(';').next().unwrap_or(value).trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| RequestFailure::transport("The remote media transfer was interrupted."))?
+    {
+        let Some(next_length) = bytes.len().checked_add(chunk.len()) else {
+            return Err(RequestFailure::rejected(
+                "The remote media is too large to open.",
+            ));
+        };
+        if next_length > MAX_MEDIA_BYTES {
+            return Err(RequestFailure::rejected(format!(
+                "Media exceeds the {MAX_MEDIA_BYTES}-byte transfer limit."
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+
+    Ok(MediaResponse {
+        bytes: Arc::from(bytes),
+        mime_type,
+    })
+}
+
 async fn request_ok(
     client: &KernelClient,
     call: &str,
@@ -1749,9 +2515,21 @@ async fn run_demo(
         pid: "demo:native".to_string(),
     });
     let generation = Arc::new(AtomicU64::new(0));
+    let http_client = reqwest::Client::new();
+    let media_slots = Arc::new(Semaphore::new(MAX_CONCURRENT_MEDIA_TRANSFERS));
+    let mut media_tasks = JoinSet::new();
+    let mut media_controls: HashMap<u64, AbortHandle> = HashMap::new();
+    let mut cancelled_task_ids = HashSet::new();
 
-    while let Some(command) = commands.recv().await {
-        match command {
+    loop {
+        tokio::select! {
+            biased;
+            command = commands.recv() => {
+                let Some(command) = command else {
+                    media_tasks.abort_all();
+                    return;
+                };
+                match command {
             ClientCommand::Connect(_) | ClientCommand::CancelConnect { .. } => {}
             ClientCommand::Send {
                 submission_id,
@@ -1810,7 +2588,112 @@ async fn run_demo(
                 let _ = events.send(ClientEvent::ApprovalResolved { request_id });
             }
             ClientCommand::RefreshHistory => {}
-            ClientCommand::Shutdown => break,
+            ClientCommand::LoadMedia { request_id, source } => {
+                if let Some(control) = media_controls.remove(&request_id) {
+                    cancelled_task_ids.insert(control.id());
+                    control.abort();
+                }
+                let media_http_client = http_client.clone();
+                let media_slots = media_slots.clone();
+                let control = media_tasks.spawn(async move {
+                    let result = load_demo_media(&media_http_client, media_slots, source).await;
+                    (request_id, result)
+                });
+                media_controls.insert(request_id, control);
+            }
+            ClientCommand::CancelMedia { request_id } => {
+                if let Some(control) = media_controls.remove(&request_id) {
+                    cancelled_task_ids.insert(control.id());
+                    control.abort();
+                }
+            }
+            ClientCommand::Shutdown => {
+                media_tasks.abort_all();
+                return;
+            }
+                }
+            }
+            result = media_tasks.join_next_with_id(), if !media_tasks.is_empty() => {
+                match result {
+                    Some(Ok((task_id, (request_id, result)))) => {
+                        cancelled_task_ids.remove(&task_id);
+                        if media_controls
+                            .get(&request_id)
+                            .is_some_and(|control| control.id() == task_id)
+                        {
+                            media_controls.remove(&request_id);
+                            emit_media_result(request_id, result, &events);
+                        }
+                    }
+                    Some(Err(error)) => {
+                        let task_id = error.id();
+                        let request_id = media_controls.iter().find_map(|(request_id, control)| {
+                            (control.id() == task_id).then_some(*request_id)
+                        });
+                        if let Some(request_id) = request_id {
+                            media_controls.remove(&request_id);
+                        }
+                        if !cancelled_task_ids.remove(&task_id) {
+                            let _ = events.send(ClientEvent::Error(format!(
+                                "A demo media operation stopped unexpectedly: {error}"
+                            )));
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+}
+
+async fn load_demo_media(
+    http_client: &reqwest::Client,
+    media_slots: Arc<Semaphore>,
+    source: MediaSource,
+) -> Result<(MediaResponse, MediaTransferLease), RequestFailure> {
+    let permit = media_slots
+        .acquire_owned()
+        .await
+        .map_err(|_| RequestFailure::transport("The media transfer queue is unavailable."))?;
+    let media = match source {
+        MediaSource::Remote { url } => {
+            tokio::time::timeout(MEDIA_FETCH_TIMEOUT, fetch_remote_media(http_client, &url))
+                .await
+                .map_err(|_| RequestFailure::transport("The remote media fetch timed out."))??
+        }
+        MediaSource::Process { .. } => {
+            return Err(RequestFailure::rejected(
+                "Process media is not available in the demo session.",
+            ));
+        }
+    };
+    Ok((
+        media,
+        MediaTransferLease {
+            _permit: Arc::new(permit),
+        },
+    ))
+}
+
+fn emit_media_result(
+    request_id: u64,
+    result: Result<(MediaResponse, MediaTransferLease), RequestFailure>,
+    events: &tokio_mpsc::UnboundedSender<ClientEvent>,
+) {
+    match result {
+        Ok((media, lease)) => {
+            let _ = events.send(ClientEvent::MediaLoaded {
+                request_id,
+                bytes: media.bytes,
+                mime_type: media.mime_type,
+                _lease: lease,
+            });
+        }
+        Err(error) => {
+            let _ = events.send(ClientEvent::MediaFailed {
+                request_id,
+                message: format!("That media could not be opened: {error}"),
+            });
         }
     }
 }
@@ -1835,6 +2718,179 @@ fn word_fragments(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_body_consumes_frames_that_arrive_before_registration() -> Result<(), String> {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let sent_frames = sent.clone();
+        let inbox = ResponseBodyInbox::new(move |frame| {
+            if let Ok(mut sent) = sent_frames.lock() {
+                sent.push(frame);
+            }
+        });
+        inbox.push(build_binary_frame(23, BINARY_FRAME_DATA, b"image"));
+        inbox.push(build_binary_frame(23, BINARY_FRAME_END, &[]));
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .map_err(|error| error.to_string())?;
+        let bytes = runtime
+            .block_on(inbox.read_body(FrameBodyDescriptor {
+                stream_id: 23,
+                length: Some(5),
+            }))
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(bytes.as_ref(), b"image");
+        assert!(sent.lock().map(|sent| sent.is_empty()).unwrap_or(false));
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_declared_media_body_is_cancelled_without_waiting() -> Result<(), String> {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let sent_frames = sent.clone();
+        let inbox = ResponseBodyInbox::new(move |frame| {
+            if let Ok(mut sent) = sent_frames.lock() {
+                sent.push(frame);
+            }
+        });
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .map_err(|error| error.to_string())?;
+        let result = runtime.block_on(inbox.read_body(FrameBodyDescriptor {
+            stream_id: 24,
+            length: Some(MAX_MEDIA_BYTES as u64 + 1),
+        }));
+        let Err(error) = result else {
+            return Err("oversized media should be rejected".to_string());
+        };
+        assert_eq!(error.kind, RequestFailureKind::Rejected);
+
+        let frame = sent
+            .lock()
+            .map_err(|_| "sent frame mutex poisoned".to_string())?
+            .first()
+            .cloned()
+            .ok_or_else(|| "expected a cancellation frame".to_string())?;
+        let (stream_id, flags, _) = parse_binary_frame(&frame)
+            .ok_or_else(|| "cancellation frame should parse".to_string())?;
+        assert_eq!(stream_id, 24);
+        assert_eq!(flags, BINARY_FRAME_CANCEL | BINARY_FRAME_END);
+
+        inbox.push(build_binary_frame(
+            24,
+            BINARY_FRAME_CANCEL | BINARY_FRAME_END,
+            b"outgoing direction",
+        ));
+        assert!(inbox
+            .state
+            .lock()
+            .map(|state| state.cancelled.stream_ids.contains(&24))
+            .unwrap_or(false));
+        inbox.push(build_binary_frame(24, BINARY_FRAME_DATA, b"late"));
+        let late_was_discarded = inbox
+            .state
+            .lock()
+            .map(|state| {
+                !state.frames.contains_key(&24) && state.cancelled.stream_ids.contains(&24)
+            })
+            .unwrap_or(false);
+        assert!(late_was_discarded);
+
+        inbox
+            .register(FrameBodyDescriptor {
+                stream_id: 24,
+                length: Some(2),
+            })
+            .map_err(|error| error.to_string())?;
+        inbox.push(build_binary_frame(24, BINARY_FRAME_DATA, b"ok"));
+        inbox.push(build_binary_frame(24, BINARY_FRAME_END, &[]));
+        let reused = runtime
+            .block_on(inbox.read_body(FrameBodyDescriptor {
+                stream_id: 24,
+                length: Some(2),
+            }))
+            .map_err(|error| error.to_string())?;
+        assert_eq!(reused.as_ref(), b"ok");
+        Ok(())
+    }
+
+    #[test]
+    fn cancelled_media_stream_tracking_is_bounded() {
+        let mut streams = CancelledBodyStreams::default();
+        for stream_id in 1..=(MAX_CANCELLED_MEDIA_STREAMS as u32 + 1) {
+            streams.insert(stream_id);
+        }
+
+        assert_eq!(streams.stream_ids.len(), MAX_CANCELLED_MEDIA_STREAMS);
+        assert!(!streams.stream_ids.contains(&1));
+        let newest = MAX_CANCELLED_MEDIA_STREAMS as u32 + 1;
+        assert!(streams.should_discard(newest, BINARY_FRAME_END));
+        assert!(!streams.should_discard(newest, BINARY_FRAME_DATA));
+    }
+
+    #[test]
+    fn failed_pre_descriptor_media_stream_tracking_is_bounded() {
+        let mut state = ResponseBodyState::default();
+        for stream_id in 1..=(MAX_FAILED_MEDIA_STREAMS as u32 + 1) {
+            record_body_failure(&mut state, stream_id, "too large".to_string());
+        }
+
+        assert_eq!(state.failures.len(), MAX_FAILED_MEDIA_STREAMS);
+        assert_eq!(state.terminal.len(), MAX_FAILED_MEDIA_STREAMS);
+        assert!(state.cancelled.stream_ids.len() <= MAX_CANCELLED_MEDIA_STREAMS);
+    }
+
+    #[test]
+    fn loaded_media_holds_its_transfer_slot_until_the_event_is_consumed() -> Result<(), String> {
+        let slots = Arc::new(Semaphore::new(1));
+        let permit = slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|error| error.to_string())?;
+        let (events, mut received) = tokio_mpsc::unbounded_channel();
+        emit_media_result(
+            7,
+            Ok((
+                MediaResponse {
+                    bytes: Arc::from(&b"image"[..]),
+                    mime_type: Some("image/png".to_string()),
+                },
+                MediaTransferLease {
+                    _permit: Arc::new(permit),
+                },
+            )),
+            &events,
+        );
+
+        assert_eq!(slots.available_permits(), 0);
+        let event = received
+            .try_recv()
+            .map_err(|error| format!("media event was not delivered: {error}"))?;
+        drop(event);
+        assert_eq!(slots.available_permits(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn remote_media_rejects_non_http_sources_before_fetching() -> Result<(), String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| error.to_string())?;
+        let result = runtime.block_on(fetch_remote_media(
+            &reqwest::Client::new(),
+            "file:///tmp/private.png",
+        ));
+        let Err(error) = result else {
+            return Err("file media should be rejected".to_string());
+        };
+        assert_eq!(error.kind, RequestFailureKind::Rejected);
+        Ok(())
+    }
 
     #[test]
     fn demo_stream_preserves_word_spacing() {

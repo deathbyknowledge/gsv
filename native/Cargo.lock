@@ -2829,10 +2829,14 @@ dependencies = [
  "gpui",
  "gpui-component",
  "gsv",
+ "image",
+ "markdown",
+ "reqwest",
  "rodio",
  "serde_json",
  "tokio",
  "url",
+ "usvg",
 ]
 
 [[package]]

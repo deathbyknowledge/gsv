@@ -1,6 +1,7 @@
 mod app;
 mod audio;
 mod client;
+mod content;
 mod interaction;
 mod model;
 mod startup;

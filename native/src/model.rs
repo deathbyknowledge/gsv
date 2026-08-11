@@ -2,6 +2,8 @@ use std::collections::{HashMap, VecDeque};
 
 use serde_json::Value;
 
+use crate::content::{parse_markdown, MediaAttachment, MediaKind, RichDocument};
+
 const RETIRED_RUN_LIMIT: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -21,11 +23,12 @@ pub enum MomentState {
     Approval,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Moment {
     pub id: String,
     pub role: MomentRole,
     pub text: String,
+    pub media: Vec<MediaAttachment>,
     pub run_id: Option<String>,
     pub state: MomentState,
 }
@@ -36,9 +39,20 @@ impl Moment {
             id: id.into(),
             role,
             text: text.into(),
+            media: Vec::new(),
             run_id: None,
             state: MomentState::Complete,
         }
+    }
+
+    pub fn content(&self) -> RichDocument {
+        let document =
+            if self.role == MomentRole::Intelligence && self.state == MomentState::Complete {
+                parse_markdown(&self.text)
+            } else {
+                RichDocument::literal(&self.text)
+            };
+        document.with_attachments(&self.media)
     }
 }
 
@@ -330,6 +344,7 @@ impl Conversation {
             id,
             role: MomentRole::Intelligence,
             text: String::new(),
+            media: Vec::new(),
             run_id: Some(run_id),
             state: MomentState::Streaming,
         });
@@ -369,6 +384,7 @@ impl Conversation {
                 id,
                 role: MomentRole::Intelligence,
                 text: delta.to_string(),
+                media: Vec::new(),
                 run_id: effective_run_id,
                 state: MomentState::Streaming,
             });
@@ -404,6 +420,43 @@ impl Conversation {
                 id,
                 role: MomentRole::Intelligence,
                 text: text.to_string(),
+                media: Vec::new(),
+                run_id: effective_run_id,
+                state: MomentState::Streaming,
+            });
+        }
+        self.activity = None;
+        self.follow_after_append(was_following);
+    }
+
+    pub fn replace_run_media(&mut self, run_id: Option<&str>, media: Vec<MediaAttachment>) {
+        if !self.accepts_run(run_id) {
+            return;
+        }
+        if self.active_run_id.is_none() {
+            if let Some(run_id) = run_id {
+                self.start_run(run_id);
+            }
+        }
+        let effective_run_id = run_id
+            .map(str::to_string)
+            .or_else(|| self.active_run_id.clone());
+        let was_following = self.follow_latest || self.moments.is_empty();
+        let matching = self.moments.iter_mut().rev().find(|moment| {
+            moment.state == MomentState::Streaming
+                && effective_run_id
+                    .as_deref()
+                    .is_none_or(|run_id| moment.run_id.as_deref() == Some(run_id))
+        });
+        if let Some(moment) = matching {
+            moment.media = media;
+        } else if !media.is_empty() {
+            let id = self.transient_id("assistant");
+            self.moments.push(Moment {
+                id,
+                role: MomentRole::Intelligence,
+                text: String::new(),
+                media,
                 run_id: effective_run_id,
                 state: MomentState::Streaming,
             });
@@ -461,7 +514,7 @@ impl Conversation {
             } else {
                 MomentState::Complete
             };
-            if moment.text.trim().is_empty() {
+            if moment.text.trim().is_empty() && moment.media.is_empty() {
                 moment.text = error
                     .unwrap_or("The run ended without a response.")
                     .to_string();
@@ -472,6 +525,7 @@ impl Conversation {
                 id,
                 role: MomentRole::System,
                 text: error.to_string(),
+                media: Vec::new(),
                 run_id: Some(active_run_id.clone()),
                 state: MomentState::Error,
             });
@@ -535,6 +589,7 @@ impl Conversation {
             id,
             role: MomentRole::System,
             text: message.into(),
+            media: Vec::new(),
             run_id: None,
             state: MomentState::Error,
         });
@@ -560,6 +615,7 @@ impl Conversation {
                 id,
                 role: MomentRole::System,
                 text,
+                media: Vec::new(),
                 run_id: Some(approval.run_id.clone()),
                 state: MomentState::Approval,
             });
@@ -590,7 +646,10 @@ impl Conversation {
         }) else {
             return;
         };
-        if remove_empty && self.moments[index].text.trim().is_empty() {
+        if remove_empty
+            && self.moments[index].text.trim().is_empty()
+            && self.moments[index].media.is_empty()
+        {
             self.moments.remove(index);
         } else {
             self.moments[index].state = MomentState::Complete;
@@ -661,8 +720,14 @@ pub fn parse_history(payload: &Value) -> Vec<Moment> {
                 "toolResult" => return None,
                 _ => return None,
             };
-            let text = extract_text(message.get("content")?);
-            if text.trim().is_empty() {
+            let content = message.get("content").unwrap_or(&Value::Null);
+            let text = extract_text(content);
+            let media = message
+                .get("media")
+                .or_else(|| content.get("media"))
+                .map(parse_media)
+                .unwrap_or_default();
+            if text.trim().is_empty() && media.is_empty() {
                 return None;
             }
             let id = message
@@ -673,6 +738,7 @@ pub fn parse_history(payload: &Value) -> Vec<Moment> {
                 id,
                 role,
                 text,
+                media,
                 run_id: message
                     .get("runId")
                     .and_then(Value::as_str)
@@ -681,6 +747,51 @@ pub fn parse_history(payload: &Value) -> Vec<Moment> {
             })
         })
         .collect()
+}
+
+pub fn parse_media(value: &Value) -> Vec<MediaAttachment> {
+    let Some(items) = value.as_array() else {
+        return Vec::new();
+    };
+
+    items
+        .iter()
+        .filter_map(|item| {
+            let item = item.as_object()?;
+            let kind = match item.get("type").and_then(Value::as_str)? {
+                "image" => MediaKind::Image,
+                "audio" => MediaKind::Audio,
+                "video" => MediaKind::Video,
+                "document" => MediaKind::Document,
+                _ => return None,
+            };
+            let mime_type = item.get("mimeType")?.as_str()?.trim();
+            if mime_type.is_empty() {
+                return None;
+            }
+
+            Some(MediaAttachment {
+                kind,
+                mime_type: mime_type.to_string(),
+                key: optional_string(item.get("key")),
+                path: optional_string(item.get("path")),
+                url: optional_string(item.get("url")),
+                filename: optional_string(item.get("filename")),
+                size: item.get("size").and_then(Value::as_u64),
+                duration: item.get("duration").and_then(Value::as_f64),
+                transcription: optional_string(item.get("transcription")),
+                description: optional_string(item.get("description")),
+            })
+        })
+        .collect()
+}
+
+fn optional_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 pub fn parse_pending_approval(value: &Value) -> Option<PendingApproval> {
@@ -807,6 +918,75 @@ mod tests {
     }
 
     #[test]
+    fn history_retains_process_media_and_media_only_moments() {
+        let history = json!({
+            "messages": [
+                {
+                    "id": 7,
+                    "role": "assistant",
+                    "runId": "run-media",
+                    "content": {
+                        "text": "",
+                        "media": [
+                            {
+                                "type": "image",
+                                "mimeType": "image/png",
+                                "key": "home/alice/.gsv/media/archived-media:abc",
+                                "path": "/home/alice/.gsv/media/archived-media:abc",
+                                "filename": "result.png",
+                                "size": 4096,
+                                "description": "A finished diagram"
+                            },
+                            {
+                                "type": "audio",
+                                "mimeType": "audio/ogg",
+                                "url": "https://example.com/answer.ogg",
+                                "duration": 2.5,
+                                "transcription": "Done"
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        let moments = parse_history(&history);
+
+        assert_eq!(moments.len(), 1);
+        assert_eq!(moments[0].run_id.as_deref(), Some("run-media"));
+        assert_eq!(moments[0].media.len(), 2);
+        assert_eq!(moments[0].media[0].kind, MediaKind::Image);
+        assert_eq!(moments[0].media[0].filename.as_deref(), Some("result.png"));
+        assert_eq!(moments[0].media[1].duration, Some(2.5));
+    }
+
+    #[test]
+    fn only_intelligence_moments_interpret_markdown() {
+        let assistant = Moment::new("assistant", MomentRole::Intelligence, "**clear**");
+        let user = Moment::new("user", MomentRole::User, "**literal**");
+        let mut streaming = Moment::new("streaming", MomentRole::Intelligence, "**partial");
+        streaming.state = MomentState::Streaming;
+
+        assert!(matches!(
+            assistant.content().blocks.as_slice(),
+            [crate::content::RichBlock::Paragraph(content)]
+                if matches!(content.as_slice(), [crate::content::RichInline::Strong(_)])
+        ));
+        assert_eq!(
+            user.content().blocks,
+            vec![crate::content::RichBlock::Paragraph(vec![
+                crate::content::RichInline::Text("**literal**".to_string())
+            ])]
+        );
+        assert_eq!(
+            streaming.content().blocks,
+            vec![crate::content::RichBlock::Paragraph(vec![
+                crate::content::RichInline::Text("**partial".to_string())
+            ])]
+        );
+    }
+
+    #[test]
     fn streaming_is_one_mutable_moment() {
         let mut conversation = Conversation::connecting();
         conversation.start_run("run-1");
@@ -815,6 +995,26 @@ mod tests {
         assert_eq!(conversation.moments.len(), 1);
         assert_eq!(conversation.moments[0].text, "Hello there");
         conversation.finish_run(Some("run-1"), None);
+        assert_eq!(conversation.moments[0].state, MomentState::Complete);
+    }
+
+    #[test]
+    fn live_media_is_idempotent_and_keeps_a_media_only_reply() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+        let media = parse_media(&json!([{
+            "type": "image",
+            "mimeType": "image/jpeg",
+            "key": "home/alice/.gsv/media/archived-media:def"
+        }]));
+
+        conversation.replace_run_media(Some("run-1"), media.clone());
+        conversation.replace_run_media(Some("run-1"), media);
+        conversation.finish_run(Some("run-1"), None);
+
+        assert_eq!(conversation.moments.len(), 1);
+        assert_eq!(conversation.moments[0].media.len(), 1);
+        assert!(conversation.moments[0].text.is_empty());
         assert_eq!(conversation.moments[0].state, MomentState::Complete);
     }
 
@@ -882,6 +1082,7 @@ mod tests {
             id: "message:9".to_string(),
             role: MomentRole::User,
             text: "hello".to_string(),
+            media: Vec::new(),
             run_id: Some("run-1".to_string()),
             state: MomentState::Complete,
         }]);
@@ -987,6 +1188,7 @@ mod tests {
             id: "message:1".to_string(),
             role: MomentRole::User,
             text: "same thought".to_string(),
+            media: Vec::new(),
             run_id: Some("run-1".to_string()),
             state: MomentState::Complete,
         }]);

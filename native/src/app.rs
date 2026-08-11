@@ -16,8 +16,13 @@ use crate::startup::{LoginDefaults, LoginFlow, LoginProgress, LoginStep};
 use crate::typography::TypeLayout;
 
 mod login;
+mod media;
+mod rich;
 mod session;
 mod view;
+
+use media::MediaCache;
+use rich::CachedRichDocument;
 
 actions!(
     gsv_native,
@@ -106,6 +111,8 @@ pub struct GsvApp {
     history_scroll_last_event: Option<Instant>,
     stream_type_sizes: HashMap<String, f32>,
     type_layouts: HashMap<String, CachedTypeLayout>,
+    rich_documents: HashMap<String, CachedRichDocument>,
+    media_cache: MediaCache,
     draft_type_size: Option<f32>,
     stream_sequences: HashMap<String, u64>,
     type_viewport: Option<(u32, u32)>,
@@ -199,6 +206,8 @@ impl GsvApp {
             history_scroll_last_event: None,
             stream_type_sizes: HashMap::new(),
             type_layouts: HashMap::new(),
+            rich_documents: HashMap::new(),
+            media_cache: MediaCache::default(),
             draft_type_size: None,
             stream_sequences: HashMap::new(),
             type_viewport: None,

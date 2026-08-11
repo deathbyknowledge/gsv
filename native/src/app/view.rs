@@ -8,11 +8,14 @@ use gpui::{
 };
 use gpui_component::input::Input;
 
+use crate::content::{MediaAttachment, RichDocument};
 use crate::interaction::CanvasLayer;
 use crate::model::{ConnectionState, MomentRole, MomentState, SurfaceMode};
 use crate::theme;
 use crate::typography::{fit_type_layout, TypeLayout};
 
+use super::media::release_assets;
+use super::rich::{document_for_moment, media_descriptors, needs_rich_renderer, render_document};
 use super::{type_content_hash, CachedTypeLayout, GsvApp};
 
 #[derive(Clone, Copy)]
@@ -32,8 +35,33 @@ struct TypeFit<'a> {
     weight: FontWeight,
 }
 
+struct MessageCanvas {
+    message: String,
+    rich_document: Option<RichDocument>,
+    layout: TypeLayout,
+    weight: FontWeight,
+    color: gpui::Hsla,
+    geometry: CanvasGeometry,
+}
+
 const HISTORY_SCROLL_THRESHOLD: f32 = 36.0;
 const TYPE_LAYOUT_CACHE_LIMIT: usize = 64;
+
+fn message_measurement_text(message: &str, media: &[MediaAttachment]) -> String {
+    if !message.is_empty() {
+        return message.to_string();
+    }
+    media
+        .iter()
+        .find_map(|attachment| {
+            attachment
+                .description
+                .as_deref()
+                .or(attachment.filename.as_deref())
+        })
+        .unwrap_or("Media")
+        .to_string()
+}
 
 impl GsvApp {
     fn fit_cached_type_layout(&mut self, window: &Window, request: TypeFit<'_>) -> TypeLayout {
@@ -221,12 +249,15 @@ impl GsvApp {
                 .find(|moment| moment.state == MomentState::Approval)
         } else {
             self.conversation.current().filter(|moment| {
-                moment.state != MomentState::Streaming || !moment.text.trim().is_empty()
+                moment.state != MomentState::Streaming
+                    || !moment.text.trim().is_empty()
+                    || !moment.media.is_empty()
             })
         };
-        let (message, moment_id, run_id, role, state) = match current {
+        let (message, media, moment_id, run_id, role, state) = match current {
             Some(moment) => (
                 moment.text.clone(),
+                moment.media.clone(),
                 moment.id.clone(),
                 moment.run_id.clone(),
                 moment.role,
@@ -234,6 +265,7 @@ impl GsvApp {
             ),
             None if self.conversation.connection == ConnectionState::Connecting => (
                 "Reaching your GSV…".to_string(),
+                Vec::new(),
                 "system:connecting".to_string(),
                 None,
                 MomentRole::System,
@@ -241,12 +273,22 @@ impl GsvApp {
             ),
             None => (
                 "Begin anywhere.".to_string(),
+                Vec::new(),
                 "system:begin".to_string(),
                 None,
                 MomentRole::Intelligence,
                 MomentState::Complete,
             ),
         };
+        let document = document_for_moment(
+            &mut self.rich_documents,
+            &moment_id,
+            role,
+            state,
+            &message,
+            &media,
+        );
+        let rich_message = needs_rich_renderer(&document);
         if self.message_scroll_moment.as_deref() != Some(moment_id.as_str()) {
             self.message_scroll.set_offset(point(px(0.0), px(0.0)));
             self.message_scroll_moment = Some(moment_id.clone());
@@ -278,11 +320,12 @@ impl GsvApp {
             None
         };
         self.stream_type_sizes.clear();
+        let measurement_text = message_measurement_text(&message, &media);
         let message_layout = self.fit_cached_type_layout(
             window,
             TypeFit {
                 key: &moment_type_key,
-                text: &message,
+                text: &measurement_text,
                 available_width,
                 available_height,
                 maximum_size,
@@ -319,6 +362,15 @@ impl GsvApp {
         };
         let draft = self.interaction.visible_draft().map(str::to_string);
         let draft_visible = draft.is_some();
+        if draft_visible {
+            release_assets(self.media_cache.sync([], &self.commands), cx);
+        } else {
+            release_assets(
+                self.media_cache
+                    .sync(media_descriptors(&document), &self.commands),
+                cx,
+            );
+        }
         let activity = self.conversation.activity.clone().or_else(|| {
             (!draft_visible && state == MomentState::Uncertain)
                 .then(|| "DELIVERY NOT CONFIRMED · CHECKING HISTORY".to_string())
@@ -347,11 +399,14 @@ impl GsvApp {
             )
         } else {
             self.render_message_canvas(
-                message,
-                message_layout,
-                message_weight,
-                message_color,
-                geometry,
+                MessageCanvas {
+                    message,
+                    rich_document: rich_message.then_some(document),
+                    layout: message_layout,
+                    weight: message_weight,
+                    color: message_color,
+                    geometry,
+                },
                 cx,
             )
         };
@@ -464,15 +519,39 @@ impl GsvApp {
     }
 
     fn render_message_canvas(
-        &self,
-        message: String,
-        layout: TypeLayout,
-        weight: FontWeight,
-        color: gpui::Hsla,
-        geometry: CanvasGeometry,
+        &mut self,
+        request: MessageCanvas,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let is_long = layout.scrolls;
+        let MessageCanvas {
+            message,
+            rich_document,
+            layout,
+            weight,
+            color,
+            geometry,
+        } = request;
+        let is_rich = rich_document.is_some();
+        let is_long = layout.scrolls || is_rich;
+        let content = if let Some(document) = rich_document {
+            div()
+                .w_full()
+                .min_h(px(geometry.available_height))
+                .flex()
+                .flex_col()
+                .justify_center()
+                .child(render_document(
+                    document,
+                    &self.media_cache,
+                    self.message_scroll_moment.as_deref().unwrap_or("message"),
+                    layout.size,
+                    color,
+                    geometry.available_height,
+                ))
+                .into_any_element()
+        } else {
+            message.into_any_element()
+        };
         let message = div()
             .relative()
             .w_full()
@@ -482,7 +561,7 @@ impl GsvApp {
             .text_size(px(layout.size))
             .line_height(relative(layout.line_height))
             .text_color(color)
-            .child(message);
+            .child(content);
         let direction = self.transition_direction;
         let message = if self.reduced_motion {
             message.into_any_element()
@@ -615,6 +694,7 @@ impl GsvApp {
     }
 
     fn render_terminal(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        release_assets(self.media_cache.sync([], &self.commands), cx);
         let transcript = self
             .terminal
             .iter()
@@ -790,6 +870,7 @@ mod tests {
 
     use super::*;
     use crate::app::{bind_keys, HideDraft};
+    use crate::client::ClientCommand;
 
     #[gpui::test]
     fn hidden_draft_does_not_receive_canvas_pointer_events(cx: &mut TestAppContext) {
@@ -1075,5 +1156,73 @@ mod tests {
         cx.run_until_parked();
         cx.cx
             .update(|cx| assert_eq!(app.read(cx).type_layouts, cached));
+    }
+
+    #[gpui::test]
+    fn selected_remote_markdown_images_load_and_cancel_with_the_moment(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (commands, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_events, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands,
+            events: event_rx,
+            login: None,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+        let cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.conversation.moments[2].text =
+                    "# Result\n\n![map](https://example.com/map.png)".to_string();
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+
+        let command = command_rx.try_recv().expect("remote image load");
+        assert!(matches!(command, ClientCommand::LoadMedia { .. }));
+        let ClientCommand::LoadMedia { request_id, source } = command else {
+            return;
+        };
+        assert_eq!(
+            source,
+            crate::client::MediaSource::Remote {
+                url: "https://example.com/map.png".to_string()
+            }
+        );
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert!(app.rich_documents.contains_key("demo-3"));
+        });
+
+        cx.cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.conversation.select_previous();
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+        assert!(matches!(
+            command_rx.try_recv(),
+            Ok(ClientCommand::CancelMedia { request_id: cancelled }) if cancelled == request_id
+        ));
     }
 }

@@ -83,11 +83,22 @@ allow`, and `deny` (with a few direct synonyms). Approval text is not forwarded 
 ## Current boundary
 
 - Streaming `proc.run.*` signals become one mutable intelligence moment.
+- Completed intelligence replies render a conservative GFM subset: headings, emphasis, links,
+  lists, quotes, tables, rules, inline and fenced code, and Markdown images. Partial streaming
+  Markdown remains literal until the reply completes so its layout does not churn while tokens
+  arrive.
+- Process-owned image attachments use `proc.media.read`. Remote HTTP and HTTPS Markdown images are
+  fetched automatically inside the trusted conversation boundary. The selected moment owns each
+  transfer and cancels it on navigation; transfer, decoded-image, concurrency, and cache budgets
+  keep media work bounded.
+- Audio, video, and document attachments currently render as typed metadata cards, including a
+  transcription or description when one exists. Native playback and document preview are later
+  surfaces.
 - Tool calls are represented only as quiet activity state; raw tool cards are not shown.
 - `proc.hil` approval remains a deterministic control boundary.
 - The command surface currently uses one-shot `shell.exec`; it is not a persistent PTY yet.
-- Attachments, process management, settings, and daemon lifecycle are out of scope for this
-  prototype.
+- Attachment composition/upload, process management, settings, and daemon lifecycle are out of
+  scope for this prototype.
 
 Validate with:
 

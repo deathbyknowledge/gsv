@@ -4,10 +4,11 @@ use serde_json::Value;
 use crate::client::{ClientCommand, ClientEvent};
 use crate::interaction::{ApprovalSubmissionFailure, CanvasLayer};
 use crate::model::{
-    extract_text, parse_history, parse_pending_approval, ConnectionState, MomentState,
+    extract_text, parse_history, parse_media, parse_pending_approval, ConnectionState, MomentState,
     PendingApproval,
 };
 
+use super::media::release_assets;
 use super::{human_activity, GsvApp};
 
 impl GsvApp {
@@ -38,6 +39,7 @@ impl GsvApp {
                 self.show_setup_required(attempt_id, defaults, message, window, cx);
             }
             ClientEvent::Reconnecting { attempt, message } => {
+                release_assets(self.media_cache.clear(&self.commands), cx);
                 self.client_session_id = None;
                 self.pid = None;
                 self.last_history = None;
@@ -63,6 +65,7 @@ impl GsvApp {
                     }
                 }
                 self.finish_login(window, cx);
+                release_assets(self.media_cache.clear(&self.commands), cx);
                 self.client_session_id = Some(session_id);
                 self.pid = Some(pid);
                 self.last_history = None;
@@ -175,6 +178,21 @@ impl GsvApp {
                     });
                 }
             }
+            ClientEvent::MediaLoaded {
+                request_id,
+                bytes,
+                mime_type,
+                _lease: _,
+            } => {
+                release_assets(self.media_cache.loaded(request_id, bytes, mime_type), cx);
+            }
+            ClientEvent::MediaFailed {
+                request_id,
+                message,
+            } => {
+                drop(message);
+                self.media_cache.failed(request_id);
+            }
             ClientEvent::Error(message) => {
                 if self.show_login_runtime_error(message.clone(), window, cx) {
                     return;
@@ -211,10 +229,20 @@ impl GsvApp {
                 .filter(|moment| moment.run_id.as_deref() == Some(run_id))
                 .map(|moment| moment.text.as_str())
         });
+        let live_media = active_run_id.as_deref().and_then(|run_id| {
+            live_moment
+                .as_ref()
+                .filter(|moment| moment.run_id.as_deref() == Some(run_id))
+                .map(|moment| moment.media.clone())
+        });
 
         self.conversation.replace_history(parse_history(&history));
         self.conversation
             .reconcile_active_run(active_run_id.as_deref(), live_text);
+        if let Some(live_media) = live_media.filter(|media| !media.is_empty()) {
+            self.conversation
+                .replace_run_media(active_run_id.as_deref(), live_media);
+        }
 
         if let Some(approval) = history.get("pendingHil").and_then(parse_pending_approval) {
             self.enter_approval(approval, window, cx);
@@ -282,6 +310,10 @@ impl GsvApp {
                 if !text.is_empty() {
                     self.conversation.replace_run_text(run_id, &text);
                 }
+                if let Some(media) = payload.get("media") {
+                    self.conversation
+                        .replace_run_media(run_id, parse_media(media));
+                }
                 self.reveal_visible_change(before);
             }
             "proc.run.tool.started" => {
@@ -302,6 +334,10 @@ impl GsvApp {
             "proc.run.finished" => {
                 let before = self.visible_moment_key();
                 let error = payload.get("error").map(extract_text);
+                if let Some(media) = payload.get("media") {
+                    self.conversation
+                        .replace_run_media(run_id, parse_media(media));
+                }
                 let finished = self
                     .conversation
                     .finish_run(run_id, error.as_deref().filter(|text| !text.is_empty()));
@@ -418,9 +454,12 @@ impl GsvApp {
         if self.interaction.visible_draft().is_some() {
             return None;
         }
-        self.conversation
-            .current()
-            .map(|moment| (moment.id.clone(), !moment.text.trim().is_empty()))
+        self.conversation.current().map(|moment| {
+            (
+                moment.id.clone(),
+                !moment.text.trim().is_empty() || !moment.media.is_empty(),
+            )
+        })
     }
 
     fn reveal_visible_change(&mut self, before: Option<(String, bool)>) {
