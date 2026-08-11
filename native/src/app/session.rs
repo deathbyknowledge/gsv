@@ -4,12 +4,13 @@ use serde_json::Value;
 use crate::client::{ClientCommand, ClientEvent};
 use crate::interaction::{ApprovalSubmissionFailure, CanvasLayer};
 use crate::model::{
-    extract_text, parse_history, parse_media, parse_pending_approval, ConnectionState, MomentState,
+    extract_text, parse_activity_summary, parse_history, parse_history_activity_summaries,
+    parse_live_activity, parse_media, parse_pending_approval, ConnectionState, MomentState,
     PendingApproval,
 };
 
 use super::media::release_assets;
-use super::{human_activity, GsvApp};
+use super::GsvApp;
 
 impl GsvApp {
     pub(super) fn handle_client_event(
@@ -22,6 +23,7 @@ impl GsvApp {
             ClientEvent::Connecting => {
                 self.conversation.connection = ConnectionState::Connecting;
                 self.conversation.activity = Some("CONNECTING".to_string());
+                self.conversation.clear_live_activity(None);
             }
             ClientEvent::LoginFailed {
                 attempt_id,
@@ -55,6 +57,7 @@ impl GsvApp {
                     self.conversation.show_error(message);
                 }
                 self.conversation.activity = Some(activity);
+                self.conversation.clear_live_activity(None);
             }
             ClientEvent::Connected {
                 attempt_id,
@@ -75,6 +78,7 @@ impl GsvApp {
                 self.last_history = None;
                 self.conversation.connection = ConnectionState::Connected;
                 self.conversation.activity = None;
+                self.conversation.clear_live_activity(None);
             }
             ClientEvent::History {
                 session_id,
@@ -244,8 +248,11 @@ impl GsvApp {
                 .filter(|moment| moment.run_id.as_deref() == Some(run_id))
                 .map(|moment| moment.media.clone())
         });
+        let activity_summaries = parse_history_activity_summaries(&history);
 
         self.conversation.replace_history(parse_history(&history));
+        self.conversation
+            .reconcile_history_activity(activity_summaries);
         self.conversation
             .reconcile_active_run(active_run_id.as_deref(), live_text);
         if let Some(live_media) = live_media.filter(|media| !media.is_empty()) {
@@ -287,6 +294,11 @@ impl GsvApp {
                     self.conversation.start_run(run_id);
                 }
             }
+            "proc.run.activity" => {
+                if let Some(activity) = parse_live_activity(payload) {
+                    self.conversation.set_live_activity(activity);
+                }
+            }
             "proc.run.stream" => {
                 let event = payload.get("event").unwrap_or(payload);
                 if event.get("type").and_then(Value::as_str) == Some("text_delta") {
@@ -312,6 +324,9 @@ impl GsvApp {
                 }
             }
             "proc.run.output" => {
+                if self.conversation.accepts_run(run_id) {
+                    self.conversation.clear_live_activity(run_id);
+                }
                 let before = self.visible_moment_key();
                 let text = payload
                     .get("text")
@@ -327,16 +342,6 @@ impl GsvApp {
                 }
                 self.reveal_visible_change(before);
             }
-            "proc.run.tool.started" => {
-                if !self.conversation.accepts_run(run_id) {
-                    return;
-                }
-                let syscall = payload
-                    .get("syscall")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                self.conversation.activity = Some(human_activity(syscall).to_string());
-            }
             "proc.run.hil.requested" => {
                 if let Some(approval) = parse_pending_approval(payload) {
                     self.enter_approval(approval, window, cx);
@@ -349,9 +354,13 @@ impl GsvApp {
                     self.conversation
                         .replace_run_media(run_id, parse_media(media));
                 }
-                let finished = self
-                    .conversation
-                    .finish_run(run_id, error.as_deref().filter(|text| !text.is_empty()));
+                let finished = self.conversation.finish_run_with_activity(
+                    run_id,
+                    error.as_deref().filter(|text| !text.is_empty()),
+                    payload
+                        .get("activitySummary")
+                        .and_then(parse_activity_summary),
+                );
                 if finished && self.interaction.is_approval() {
                     self.leave_approval(window, cx);
                 }
@@ -367,6 +376,7 @@ impl GsvApp {
             "process.exit" => {
                 self.conversation.connection = ConnectionState::Connecting;
                 self.conversation.activity = Some("OPENING A NEW CONVERSATION".to_string());
+                self.conversation.clear_live_activity(None);
             }
             _ => {}
         }

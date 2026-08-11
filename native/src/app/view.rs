@@ -10,13 +10,16 @@ use gpui_component::input::Input;
 
 use crate::content::MediaAttachment;
 use crate::interaction::CanvasLayer;
-use crate::model::{ConnectionState, MomentRole, MomentState, SurfaceMode};
-use crate::prepared::PreparedContent;
+use crate::model::{
+    ActivityCategory, ActivitySummaryEntry, ConnectionState, MomentRole, MomentState, SurfaceMode,
+};
+use crate::prepared::{content_revision, PreparedContent};
 use crate::theme;
 use crate::typography::{fit_type_layout, TypeLayout};
 
 use super::media::release_assets;
 use super::rich::{media_descriptors, render_document};
+use super::selection::{SelectableText, SelectionSurface, TextSelection};
 use super::{type_content_hash, CachedTypeLayout, GsvApp};
 
 #[derive(Clone, Copy)]
@@ -25,6 +28,57 @@ struct CanvasGeometry {
     right: f32,
     vertical: f32,
     available_height: f32,
+}
+
+fn render_activity_summary(
+    entries: &[ActivitySummaryEntry],
+    selection: &TextSelection,
+) -> AnyElement {
+    let records = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            div()
+                .w_full()
+                .text_size(px(13.0))
+                .line_height(relative(1.35))
+                .text_color(theme::color(theme::ACCENT))
+                .child(
+                    SelectableText::new(
+                        format!("activity-record-{index}"),
+                        selection.clone(),
+                        ACTIVITY_SELECTION_ORDER + 1 + index as u32,
+                        activity_summary_line(entry),
+                    )
+                    .separator_before("\n"),
+                )
+        })
+        .collect::<Vec<_>>();
+
+    div()
+        .w_full()
+        .pt(px(8.0))
+        .flex()
+        .flex_col()
+        .gap(px(5.0))
+        .font_family(theme::MONO_FONT)
+        .child(
+            div()
+                .mb(px(3.0))
+                .text_size(px(9.0))
+                .text_color(theme::color(theme::TEXT_FAINT))
+                .child(
+                    SelectableText::new(
+                        "activity-record-label",
+                        selection.clone(),
+                        ACTIVITY_SELECTION_ORDER,
+                        "WORK COMPLETED",
+                    )
+                    .separator_before("\n\n"),
+                ),
+        )
+        .children(records)
+        .into_any_element()
 }
 
 struct TypeFit<'a> {
@@ -40,6 +94,7 @@ struct MessageCanvas {
     message: String,
     rich_content: Option<PreparedContent>,
     append_plain_text: bool,
+    activity_summary: Vec<ActivitySummaryEntry>,
     transition_costly: bool,
     layout: TypeLayout,
     weight: FontWeight,
@@ -49,6 +104,12 @@ struct MessageCanvas {
 
 const HISTORY_SCROLL_THRESHOLD: f32 = 36.0;
 const TYPE_LAYOUT_CACHE_LIMIT: usize = 64;
+const ACTIVITY_SELECTION_ORDER: u32 = 1_000_000;
+
+#[cfg(target_os = "macos")]
+const STOP_HINT: &str = "⌘ . TO STOP";
+#[cfg(not(target_os = "macos"))]
+const STOP_HINT: &str = "CTRL + . TO STOP";
 
 fn animate_message(reduced_motion: bool, transition_costly: bool) -> bool {
     !reduced_motion && !transition_costly
@@ -82,6 +143,74 @@ fn message_measurement_text(message: &str, media: &[MediaAttachment]) -> String 
         })
         .unwrap_or("Media")
         .to_string()
+}
+
+fn live_activity_label(category: ActivityCategory) -> &'static str {
+    match category {
+        ActivityCategory::Thinking => "Thinking…",
+        ActivityCategory::SearchingFiles => "Searching files…",
+        ActivityCategory::ReadingFiles => "Reading files…",
+        ActivityCategory::WritingFiles => "Writing files…",
+        ActivityCategory::EditingFiles => "Editing files…",
+        ActivityCategory::DeletingFiles => "Deleting files…",
+        ActivityCategory::RunningCommands => "Running commands…",
+        ActivityCategory::RunningCode => "Running code…",
+    }
+}
+
+fn legacy_activity_label(activity: &str) -> String {
+    if let Some(attempt) = activity.strip_prefix("RECONNECTING · ") {
+        return format!("Reconnecting… attempt {attempt}");
+    }
+    match activity {
+        "CONNECTING" => "Connecting…",
+        "RECONNECTING" => "Reconnecting…",
+        "THINKING" => "Thinking…",
+        "QUEUED" => "Waiting to begin…",
+        "STOPPING" => "Stopping…",
+        "APPLYING" => "Applying…",
+        "SENDING" => "Sending…",
+        "SENDING PREVIOUS THOUGHT" => "Sending your previous thought…",
+        "VERIFYING DELIVERY" => "Checking delivery…",
+        "TRYING ANOTHER PATH" => "Trying another approach…",
+        "TRYING AGAIN" => "Trying again…",
+        "OPENING A NEW CONVERSATION" => "Opening a new conversation…",
+        "NOT APPLIED · TRY AGAIN" => "Not applied. Try again.",
+        "TYPE ALLOW ONCE, ALWAYS ALLOW, OR DENY" => "Type allow once, always allow, or deny",
+        _ => activity,
+    }
+    .to_string()
+}
+
+fn activity_summary_line(entry: &ActivitySummaryEntry) -> String {
+    let action = match entry.category {
+        ActivityCategory::Thinking => "Thought",
+        ActivityCategory::SearchingFiles => "Searched files",
+        ActivityCategory::ReadingFiles => "Read files",
+        ActivityCategory::WritingFiles => "Wrote files",
+        ActivityCategory::EditingFiles => "Edited files",
+        ActivityCategory::DeletingFiles => "Deleted files",
+        ActivityCategory::RunningCommands => {
+            return match entry.count {
+                1 => "Ran 1 command".to_string(),
+                count => format!("Ran {count} commands"),
+            };
+        }
+        ActivityCategory::RunningCode => "Ran code",
+    };
+    match entry.count {
+        1 => format!("{action} once"),
+        count => format!("{action} {count} times"),
+    }
+}
+
+fn activity_summary_revision(entries: &[ActivitySummaryEntry]) -> u64 {
+    let summary = entries
+        .iter()
+        .map(activity_summary_line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    type_content_hash(&summary)
 }
 
 impl GsvApp {
@@ -157,8 +286,8 @@ impl GsvApp {
                     .when(align_user, |this| this.justify_end())
                     .when(!align_user, |this| this.justify_start())
                     .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.select_moment(index, cx);
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select_moment(index, window, cx);
                     }))
                     .child(
                         div()
@@ -255,7 +384,7 @@ impl GsvApp {
         let right_padding = (viewport_width * 0.065).clamp(46.0, 142.0);
         let vertical_padding = (viewport_height * 0.105).clamp(50.0, 108.0);
         let available_width = (viewport_width - left_padding - right_padding).max(1.0);
-        let available_height = (viewport_height - vertical_padding * 2.0 - 34.0).max(1.0);
+        let available_height = (viewport_height - vertical_padding * 2.0 - 72.0).max(1.0);
         let geometry = CanvasGeometry {
             left: left_padding,
             right: right_padding,
@@ -276,6 +405,9 @@ impl GsvApp {
                     || !moment.media.is_empty()
             })
         };
+        let activity_summary = current
+            .map(|moment| self.conversation.activity_summary_for(moment).to_vec())
+            .unwrap_or_default();
         let (message, media, moment_id, run_id, role, state) = match current {
             Some(moment) => (
                 moment.text.clone(),
@@ -397,6 +529,15 @@ impl GsvApp {
         };
         let draft = self.interaction.visible_draft().map(str::to_string);
         let draft_visible = draft.is_some();
+        if draft_visible {
+            self.text_selection.clear();
+        } else {
+            self.text_selection.prepare(format!(
+                "conversation:{moment_id}:{}:{}",
+                content_revision(&message, &media).get(),
+                activity_summary_revision(&activity_summary)
+            ));
+        }
         let released = if draft_visible {
             self.media_cache.sync([], &self.commands)
         } else {
@@ -410,10 +551,22 @@ impl GsvApp {
         };
         self.cancel_stale_media_preparations();
         release_assets(released, cx);
-        let activity = self.conversation.activity.clone().or_else(|| {
-            (!draft_visible && state == MomentState::Uncertain)
-                .then(|| "DELIVERY NOT CONFIRMED · CHECKING HISTORY".to_string())
-        });
+        let activity = self
+            .conversation
+            .live_activity
+            .as_ref()
+            .map(|activity| live_activity_label(activity.category).to_string())
+            .or_else(|| {
+                self.conversation
+                    .activity
+                    .as_deref()
+                    .map(legacy_activity_label)
+            })
+            .or_else(|| {
+                (!draft_visible && state == MomentState::Uncertain)
+                    .then(|| "Delivery not confirmed… checking history".to_string())
+            });
+        let show_stop_hint = self.conversation.active_run_id.is_some() && activity.is_some();
         let show_hint = !self.interaction.has_interacted()
             && activity.is_none()
             && !self.interaction.is_approval();
@@ -442,6 +595,7 @@ impl GsvApp {
                     message,
                     rich_content: prepared_content.filter(PreparedContent::is_rich),
                     append_plain_text,
+                    activity_summary,
                     transition_costly,
                     layout: message_layout,
                     weight: message_weight,
@@ -483,15 +637,29 @@ impl GsvApp {
                 this.child(
                     div()
                         .absolute()
-                        .bottom(px(34.0))
-                        .left_0()
-                        .right_0()
+                        .bottom(px(27.0))
+                        .left(px(82.0))
+                        .right(px(82.0))
                         .flex()
+                        .flex_col()
+                        .items_center()
                         .justify_center()
+                        .gap(px(7.0))
                         .font_family(theme::MONO_FONT)
-                        .text_size(px(9.0))
-                        .text_color(theme::color(theme::TEXT_QUIET))
-                        .child(activity),
+                        .child(
+                            div()
+                                .text_size(px(16.0))
+                                .text_color(theme::color(theme::LIVE))
+                                .child(activity),
+                        )
+                        .when(show_stop_hint, |this| {
+                            this.child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .text_color(theme::color(theme::TEXT_FAINT))
+                                    .child(STOP_HINT),
+                            )
+                        }),
                 )
             })
             .when(show_hint, |this| {
@@ -568,6 +736,7 @@ impl GsvApp {
             message,
             rich_content,
             append_plain_text,
+            activity_summary,
             transition_costly,
             layout,
             weight,
@@ -575,7 +744,7 @@ impl GsvApp {
             geometry,
         } = request;
         let is_rich = rich_content.is_some();
-        let is_long = layout.scrolls || is_rich;
+        let is_long = layout.scrolls || is_rich || !activity_summary.is_empty();
         let content = if let Some(content) = rich_content {
             div()
                 .w_full()
@@ -585,19 +754,51 @@ impl GsvApp {
                 .justify_center()
                 .gap(px((layout.size * 0.52).clamp(13.0, 28.0)))
                 .when(append_plain_text && !message.is_empty(), |this| {
-                    this.child(div().w_full().child(message))
+                    this.child(div().w_full().child(SelectableText::new(
+                        "message-plain-prefix",
+                        self.text_selection.clone(),
+                        0,
+                        message,
+                    )))
                 })
                 .child(render_document(
                     content,
                     &self.media_cache,
+                    &self.text_selection,
                     self.message_scroll_moment.as_deref().unwrap_or("message"),
                     layout.size,
                     color,
                     geometry.available_height,
                 ))
+                .when(!activity_summary.is_empty(), |this| {
+                    this.child(render_activity_summary(
+                        &activity_summary,
+                        &self.text_selection,
+                    ))
+                })
+                .into_any_element()
+        } else if !activity_summary.is_empty() {
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px((layout.size * 0.52).clamp(18.0, 32.0)))
+                .when(!message.is_empty(), |this| {
+                    this.child(SelectableText::new(
+                        "message-plain",
+                        self.text_selection.clone(),
+                        0,
+                        message,
+                    ))
+                })
+                .child(render_activity_summary(
+                    &activity_summary,
+                    &self.text_selection,
+                ))
                 .into_any_element()
         } else {
-            message.into_any_element()
+            SelectableText::new("message-plain", self.text_selection.clone(), 0, message)
+                .into_any_element()
         };
         let message = div()
             .relative()
@@ -625,14 +826,14 @@ impl GsvApp {
             message.into_any_element()
         };
 
-        div()
+        let surface = div()
             .id(("message-scroll", self.transition_epoch))
             .absolute()
             .inset_0()
             .pl(px(geometry.left))
             .pr(px(geometry.right))
             .pt(px(geometry.vertical))
-            .pb(px(geometry.vertical + 24.0))
+            .pb(px(geometry.vertical + 58.0))
             .flex()
             .justify_center()
             .when(is_long, |this| this.items_start())
@@ -647,17 +848,28 @@ impl GsvApp {
                     this.input.focus_handle(cx).focus(window);
                 }),
             )
-            .child(message)
-            .into_any_element()
+            .child(message);
+        SelectionSurface::new(
+            ("message-selection", self.transition_epoch),
+            self.text_selection.clone(),
+            surface,
+        )
+        .into_any_element()
     }
 
-    fn scroll_moments(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn scroll_moments(
+        &mut self,
+        event: &ScrollWheelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let delta = event.delta.pixel_delta(px(16.0));
         let vertical = f32::from(delta.y);
         let horizontal = f32::from(delta.x);
         if vertical.abs() <= horizontal.abs() || vertical == 0.0 {
             return;
         }
+        let selection_cleared = self.text_selection.clear();
         let now = std::time::Instant::now();
         if self
             .history_scroll_last_event
@@ -687,6 +899,9 @@ impl GsvApp {
         self.history_scroll_accumulator += vertical;
 
         if self.history_scroll_accumulator.abs() < HISTORY_SCROLL_THRESHOLD {
+            if selection_cleared {
+                cx.notify();
+            }
             return;
         }
         let direction = if self.history_scroll_accumulator > 0.0 {
@@ -695,7 +910,21 @@ impl GsvApp {
             1
         };
         self.history_scroll_accumulator = 0.0;
-        self.move_moment(direction, cx);
+        self.move_moment(direction, window, cx);
+        if selection_cleared {
+            cx.notify();
+        }
+    }
+
+    fn clear_selection_on_scroll(
+        &mut self,
+        _: &ScrollWheelEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.text_selection.clear() {
+            cx.notify();
+        }
     }
 
     fn render_draft_canvas(
@@ -744,15 +973,32 @@ impl GsvApp {
         let released = self.media_cache.sync([], &self.commands);
         self.cancel_stale_media_preparations();
         release_assets(released, cx);
+        let terminal_revision = self
+            .terminal
+            .iter()
+            .map(|exchange| {
+                format!(
+                    "{}\0{}\0{:?}\0{}\n",
+                    exchange.command, exchange.output, exchange.exit_code, exchange.pending
+                )
+            })
+            .collect::<String>();
+        self.text_selection.prepare(format!(
+            "terminal:{}",
+            type_content_hash(&terminal_revision)
+        ));
+        let visible_exchange_count = self.terminal.len().min(24);
         let transcript = self
             .terminal
             .iter()
             .rev()
             .take(24)
-            .map(|exchange| {
+            .enumerate()
+            .map(|(index, exchange)| {
                 let command = exchange.command.clone();
                 let output = exchange.output.clone();
                 let pending = exchange.pending;
+                let order = ((visible_exchange_count - index) * 4) as u32;
                 let exit_color = if exchange.exit_code.is_some_and(|code| code != 0) {
                     theme::color(theme::ERROR)
                 } else {
@@ -762,24 +1008,38 @@ impl GsvApp {
                     .flex()
                     .flex_col()
                     .gap(px(9.0))
-                    .child(
-                        div()
-                            .text_color(theme::color(theme::ACCENT))
-                            .child(format!("› {command}")),
-                    )
+                    .child(div().text_color(theme::color(theme::ACCENT)).child(
+                        SelectableText::new(
+                            format!("terminal-command-{index}"),
+                            self.text_selection.clone(),
+                            order,
+                            format!("› {command}"),
+                        ),
+                    ))
                     .when(!output.is_empty(), |this| {
                         this.child(
-                            div()
-                                .text_color(theme::color(theme::TEXT_QUIET))
-                                .child(output),
+                            div().text_color(theme::color(theme::TEXT_QUIET)).child(
+                                SelectableText::new(
+                                    format!("terminal-output-{index}"),
+                                    self.text_selection.clone(),
+                                    order + 1,
+                                    output,
+                                )
+                                .separator_before("\n"),
+                            ),
                         )
                     })
                     .when_some(exchange.exit_code, |this, code| {
                         this.child(
-                            div()
-                                .text_size(px(9.0))
-                                .text_color(exit_color)
-                                .child(format!("EXIT {code}")),
+                            div().text_size(px(9.0)).text_color(exit_color).child(
+                                SelectableText::new(
+                                    format!("terminal-exit-{index}"),
+                                    self.text_selection.clone(),
+                                    order + 2,
+                                    format!("EXIT {code}"),
+                                )
+                                .separator_before("\n"),
+                            ),
                         )
                     })
                     .when(pending, |this| {
@@ -787,13 +1047,21 @@ impl GsvApp {
                             div()
                                 .text_size(px(9.0))
                                 .text_color(theme::color(theme::LIVE))
-                                .child("RUNNING"),
+                                .child(
+                                    SelectableText::new(
+                                        format!("terminal-running-{index}"),
+                                        self.text_selection.clone(),
+                                        order + 3,
+                                        "RUNNING",
+                                    )
+                                    .separator_before("\n"),
+                                ),
                         )
                     })
             })
             .collect::<Vec<_>>();
 
-        div()
+        let surface = div()
             .relative()
             .size_full()
             .px(px(84.0))
@@ -818,6 +1086,7 @@ impl GsvApp {
                             .flex_col_reverse()
                             .gap(px(29.0))
                             .overflow_y_scroll()
+                            .on_scroll_wheel(cx.listener(Self::clear_selection_on_scroll))
                             .children(transcript),
                     )
                     .child(
@@ -861,7 +1130,8 @@ impl GsvApp {
                         this.toggle_terminal(window, cx);
                     }))
                     .child("CONVERSATION"),
-            )
+            );
+        SelectionSurface::new("terminal-selection", self.text_selection.clone(), surface)
             .into_any_element()
     }
 }
@@ -883,6 +1153,7 @@ impl Render for GsvApp {
             .on_action(cx.listener(Self::toggle_terminal_action))
             .on_action(cx.listener(Self::previous_moment))
             .on_action(cx.listener(Self::next_moment))
+            .capture_action(cx.listener(Self::copy_selection))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
@@ -929,6 +1200,44 @@ mod tests {
         assert!(!stable_transition_cost(&mut remembered, 7, false));
         assert!(!stable_transition_cost(&mut remembered, 7, true));
         assert!(stable_transition_cost(&mut remembered, 8, true));
+    }
+
+    #[test]
+    fn activity_language_is_sanitized_and_human_readable() {
+        use crate::model::ActivityUnit;
+
+        assert_eq!(
+            live_activity_label(ActivityCategory::RunningCommands),
+            "Running commands…"
+        );
+        assert_eq!(
+            legacy_activity_label("RECONNECTING · 3"),
+            "Reconnecting… attempt 3"
+        );
+        assert_eq!(
+            activity_summary_line(&ActivitySummaryEntry {
+                category: ActivityCategory::ReadingFiles,
+                count: 13,
+                unit: ActivityUnit::Reads,
+            }),
+            "Read files 13 times"
+        );
+        assert_eq!(
+            activity_summary_line(&ActivitySummaryEntry {
+                category: ActivityCategory::RunningCode,
+                count: 1,
+                unit: ActivityUnit::Runs,
+            }),
+            "Ran code once"
+        );
+        assert_eq!(
+            activity_summary_line(&ActivitySummaryEntry {
+                category: ActivityCategory::RunningCommands,
+                count: 17,
+                unit: ActivityUnit::Commands,
+            }),
+            "Ran 17 commands"
+        );
     }
     use crate::app::{bind_keys, HideDraft};
     use crate::client::ClientCommand;

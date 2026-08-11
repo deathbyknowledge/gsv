@@ -1,11 +1,8 @@
-use std::sync::Arc;
-
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, img, px, relative, AnyElement, FontStyle, FontWeight, HighlightStyle,
-    InteractiveElement as _, InteractiveText, IntoElement, ObjectFit, ParentElement as _,
-    StatefulInteractiveElement, StrikethroughStyle, Styled, StyledImage as _, StyledText,
-    UnderlineStyle,
+    InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _,
+    StatefulInteractiveElement, StrikethroughStyle, Styled, StyledImage as _, UnderlineStyle,
 };
 
 use crate::client::MediaSource;
@@ -16,6 +13,7 @@ use crate::prepared::{PreparedContent, PreparedInlineText, PreparedMediaSource, 
 use crate::theme;
 
 use super::media::{MediaCache, MediaDescriptor, MediaVisual};
+use super::selection::{SelectableText, TextSelection};
 
 pub(super) fn media_descriptors(content: &PreparedContent) -> Vec<MediaDescriptor> {
     content
@@ -39,6 +37,7 @@ pub(super) fn media_descriptors(content: &PreparedContent) -> Vec<MediaDescripto
 pub(super) fn render_document(
     content: PreparedContent,
     media: &MediaCache,
+    selection: &TextSelection,
     moment_id: &str,
     base_size: f32,
     color: gpui::Hsla,
@@ -51,7 +50,7 @@ pub(super) fn render_document(
         (available_height * 0.64).clamp(210.0, 500.0)
     };
     let gap = (base_size * 0.52).clamp(13.0, 28.0);
-    let mut cursor = PreparedBlockCursor::new(content.inline_text());
+    let mut cursor = PreparedBlockCursor::new(content.inline_text(), selection);
     let blocks = document
         .blocks
         .iter()
@@ -79,16 +78,20 @@ pub(super) fn render_document(
 
 struct PreparedBlockCursor<'a> {
     inlines: &'a [PreparedInlineText],
+    selection: &'a TextSelection,
     next_block: usize,
     next_inline: usize,
+    next_selection: u32,
 }
 
 impl<'a> PreparedBlockCursor<'a> {
-    fn new(inlines: &'a [PreparedInlineText]) -> Self {
+    fn new(inlines: &'a [PreparedInlineText], selection: &'a TextSelection) -> Self {
         Self {
             inlines,
+            selection,
             next_block: 0,
             next_inline: 0,
+            next_selection: 1,
         }
     }
 
@@ -110,6 +113,16 @@ impl<'a> PreparedBlockCursor<'a> {
         self.next_inline += 1;
         inline
     }
+
+    fn selectable(
+        &mut self,
+        id: impl Into<gpui::SharedString>,
+        text: impl Into<gpui::SharedString>,
+    ) -> SelectableText {
+        let order = self.next_selection;
+        self.next_selection = self.next_selection.saturating_add(1);
+        SelectableText::new(id, self.selection.clone(), order, text)
+    }
 }
 
 fn render_block(
@@ -123,7 +136,10 @@ fn render_block(
 ) -> AnyElement {
     let ordinal = cursor.begin_block();
     match block {
-        RichBlock::Paragraph(_) => render_inlines(cursor.inline(ordinal), id, base_size, color),
+        RichBlock::Paragraph(_) => {
+            let inline = cursor.inline(ordinal).clone();
+            render_inlines(&inline, cursor, id, base_size, color)
+        }
         RichBlock::Heading { level, .. } => {
             let scale = match level {
                 1 => 1.32,
@@ -131,6 +147,7 @@ fn render_block(
                 3 => 1.1,
                 _ => 1.0,
             };
+            let inline = cursor.inline(ordinal).clone();
             div()
                 .font_weight(if *level <= 2 {
                     FontWeight::SEMIBOLD
@@ -138,7 +155,8 @@ fn render_block(
                     FontWeight::MEDIUM
                 })
                 .child(render_inlines(
-                    cursor.inline(ordinal),
+                    &inline,
+                    cursor,
                     &format!("{id}:heading"),
                     (base_size * scale).min(82.0),
                     color,
@@ -150,6 +168,11 @@ fn render_block(
                 .as_ref()
                 .filter(|language| !language.trim().is_empty())
                 .map(|language| language.to_ascii_uppercase());
+            let language =
+                language.map(|language| cursor.selectable(format!("{id}:language"), language));
+            let code = cursor
+                .selectable(format!("{id}:code"), code.clone())
+                .separator_before("\n");
             div()
                 .w_full()
                 .flex()
@@ -175,7 +198,7 @@ fn render_block(
                         .text_size(px((base_size * 0.62).clamp(14.0, 28.0)))
                         .line_height(relative(1.5))
                         .text_color(theme::color(theme::TEXT_QUIET))
-                        .child(code.clone()),
+                        .child(code),
                 )
                 .into_any_element()
         }
@@ -230,11 +253,13 @@ fn render_block(
         RichBlock::Table(table) => {
             render_table(table, cursor, media, id, base_size, color, stage_height)
         }
-        RichBlock::Image(image) => render_markdown_image(image, media, id, stage_height),
+        RichBlock::Image(image) => render_markdown_image(image, cursor, media, id, stage_height),
         RichBlock::Attachment(attachment) if attachment.kind == MediaKind::Image => {
-            render_attachment_image(attachment, media, id, stage_height)
+            render_attachment_image(attachment, cursor, media, id, stage_height)
         }
-        RichBlock::Attachment(attachment) => render_attachment_card(attachment, base_size, color),
+        RichBlock::Attachment(attachment) => {
+            render_attachment_card(attachment, cursor, id, base_size, color)
+        }
     }
 }
 
@@ -395,6 +420,7 @@ fn render_list(
 
 fn render_inlines(
     inline: &PreparedInlineText,
+    cursor: &mut PreparedBlockCursor<'_>,
     id: &str,
     size: f32,
     color: gpui::Hsla,
@@ -410,20 +436,10 @@ fn render_inlines(
         }
         highlights.push((span.range.clone(), highlight));
     }
-    let styled =
-        StyledText::new(gpui::SharedString::new(inline.text.clone())).with_highlights(highlights);
-    let text = if link_ranges.is_empty() {
-        styled.into_any_element()
-    } else {
-        let links = Arc::new(links);
-        InteractiveText::new(gpui::SharedString::from(id.to_string()), styled)
-            .on_click(link_ranges, move |index, _, cx| {
-                if let Some(url) = links.get(index) {
-                    cx.open_url(url);
-                }
-            })
-            .into_any_element()
-    };
+    let text = cursor
+        .selectable(id.to_string(), inline.text.clone())
+        .highlights(highlights)
+        .links(link_ranges.into_iter().zip(links).collect::<Vec<_>>());
     div()
         .w_full()
         .text_size(px(size))
@@ -464,6 +480,7 @@ fn highlight_for_span(span: &PreparedTextSpan) -> HighlightStyle {
 
 fn render_markdown_image(
     image: &MarkdownImage,
+    cursor: &mut PreparedBlockCursor<'_>,
     media: &MediaCache,
     id: &str,
     stage_height: f32,
@@ -474,11 +491,20 @@ fn render_markdown_image(
         .clone()
         .or_else(|| (!image.alt.trim().is_empty()).then_some(image.alt.clone()));
     let link = image.link.as_ref().map(|link| link.destination.clone());
-    render_image_stage(descriptor.as_ref(), media, id, stage_height, caption, link)
+    render_image_stage(
+        descriptor.as_ref(),
+        cursor,
+        media,
+        id,
+        stage_height,
+        caption,
+        link,
+    )
 }
 
 fn render_attachment_image(
     attachment: &MediaAttachment,
+    cursor: &mut PreparedBlockCursor<'_>,
     media: &MediaCache,
     id: &str,
     stage_height: f32,
@@ -488,17 +514,31 @@ fn render_attachment_image(
         .description
         .clone()
         .or_else(|| attachment.filename.clone());
-    render_image_stage(descriptor.as_ref(), media, id, stage_height, caption, None)
+    render_image_stage(
+        descriptor.as_ref(),
+        cursor,
+        media,
+        id,
+        stage_height,
+        caption,
+        None,
+    )
 }
 
 fn render_image_stage(
     descriptor: Option<&MediaDescriptor>,
+    cursor: &mut PreparedBlockCursor<'_>,
     media: &MediaCache,
     id: &str,
     stage_height: f32,
     caption: Option<String>,
     link: Option<String>,
 ) -> AnyElement {
+    let caption = caption.map(|caption| {
+        cursor
+            .selectable(format!("{id}:caption"), caption)
+            .separator_before("\n")
+    });
     let visual = descriptor
         .map(|descriptor| media.visual(&descriptor.cache_key))
         .unwrap_or(MediaVisual::Failed);
@@ -573,6 +613,8 @@ fn media_placeholder(label: &'static str, height: f32) -> AnyElement {
 
 fn render_attachment_card(
     attachment: &MediaAttachment,
+    cursor: &mut PreparedBlockCursor<'_>,
+    id: &str,
     base_size: f32,
     color: gpui::Hsla,
 ) -> AnyElement {
@@ -597,6 +639,18 @@ fn render_attachment_card(
         .transcription
         .clone()
         .or_else(|| attachment.description.clone());
+    let title = cursor.selectable(format!("{id}:title"), title);
+    let kind = cursor
+        .selectable(format!("{id}:kind"), kind)
+        .separator_before("  ");
+    let details = cursor
+        .selectable(format!("{id}:details"), details.join("  ·  "))
+        .separator_before("\n");
+    let supporting_text = supporting_text.map(|supporting_text| {
+        cursor
+            .selectable(format!("{id}:supporting"), supporting_text)
+            .separator_before("\n\n")
+    });
 
     div()
         .w_full()
@@ -634,7 +688,7 @@ fn render_attachment_card(
                 .font_family(theme::MONO_FONT)
                 .text_size(px(9.0))
                 .text_color(theme::color(theme::TEXT_FAINT))
-                .child(details.join("  ·  ")),
+                .child(details),
         )
         .when_some(supporting_text, |this, supporting_text| {
             this.child(

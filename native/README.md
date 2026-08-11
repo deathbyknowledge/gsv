@@ -74,6 +74,7 @@ selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is ne
 - `Cmd/Ctrl+Enter` or `Shift+Enter` creates a new line.
 - `Escape` returns to the moment without discarding the draft.
 - The mouse wheel, `Alt+Up`, and `Alt+Down` move through moments; rail markers are also clickable.
+- Drag across reply or terminal text to select it; `Cmd/Ctrl+C` copies the exact visible text.
 - `Cmd/Ctrl+.` stops the active run.
 - `Cmd/Ctrl+\`` switches between conversation and command surfaces.
 
@@ -94,7 +95,9 @@ allow`, and `deny` (with a few direct synonyms). Approval text is not forwarded 
 - Audio, video, and document attachments currently render as typed metadata cards, including a
   transcription or description when one exists. Native playback and document preview are later
   surfaces.
-- Tool calls are represented only as quiet activity state; raw tool cards are not shown.
+- Sanitized `proc.run.activity` categories become a prominent live footer. Successful operations
+  are retained as quiet, line-by-line work records on the final response; raw tool names,
+  arguments, paths, and tool cards are not shown.
 - `proc.hil` approval remains a deterministic control boundary.
 - The command surface currently uses one-shot `shell.exec`; it is not a persistent PTY yet.
 - Attachment composition/upload, process management, settings, and daemon lifecycle are out of

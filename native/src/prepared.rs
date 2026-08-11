@@ -46,7 +46,6 @@ impl PreparedContent {
 pub(crate) struct ContentRevision(u64);
 
 impl ContentRevision {
-    #[cfg(test)]
     pub(crate) fn get(self) -> u64 {
         self.0
     }

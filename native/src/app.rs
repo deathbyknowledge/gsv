@@ -3,10 +3,10 @@ use std::hash::{Hash, Hasher};
 use std::time::Instant;
 
 use gpui::{
-    actions, App, AppContext, Context, Entity, FocusHandle, Focusable, KeyBinding, ScrollHandle,
-    Subscription, Task, Window,
+    actions, App, AppContext, ClipboardItem, Context, Entity, FocusHandle, Focusable, KeyBinding,
+    ScrollHandle, Subscription, Task, Window,
 };
-use gpui_component::input::{InputEvent, InputState};
+use gpui_component::input::{Copy, InputEvent, InputState};
 
 use crate::audio::{KeySound, TypingAudio};
 use crate::client::{ApprovalDecision, ClientCommand, ClientHandle, MediaTransferLease};
@@ -19,11 +19,13 @@ mod login;
 mod media;
 mod preparation;
 mod rich;
+mod selection;
 mod session;
 mod view;
 
 use media::{release_assets, MediaCache, MediaPreparation, PreparedMedia};
 use preparation::{run_preparation_worker, PreparedContentCache};
+use selection::TextSelection;
 
 actions!(
     gsv_native,
@@ -133,6 +135,7 @@ pub struct GsvApp {
     transition_epoch: u64,
     transition_direction: f32,
     message_transition_cost: Option<(u64, bool)>,
+    text_selection: TextSelection,
     reduced_motion: bool,
     programmatic_input: Option<String>,
     approval_resume_mode: Option<SurfaceMode>,
@@ -282,6 +285,7 @@ impl GsvApp {
             transition_epoch: 0,
             transition_direction: 0.0,
             message_transition_cost: None,
+            text_selection: TextSelection::default(),
             reduced_motion,
             programmatic_input: None,
             approval_resume_mode: None,
@@ -334,6 +338,7 @@ impl GsvApp {
                     return;
                 }
                 if value != self.previous_input {
+                    self.text_selection.clear();
                     if value.len() < self.previous_input.len() {
                         self.draft_type_size = None;
                     }
@@ -759,6 +764,8 @@ impl GsvApp {
             return;
         }
         if self.conversation.mode == SurfaceMode::Conversation && self.interaction.hide_draft() {
+            self.input
+                .update(cx, |input, cx| input.unselect(window, cx));
             self.begin_transition(0.0);
             cx.notify();
         }
@@ -808,6 +815,15 @@ impl GsvApp {
         }
     }
 
+    fn copy_selection(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(selected) = self.text_selection.selected_text() else {
+            cx.propagate();
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(selected));
+        cx.stop_propagation();
+    }
+
     fn toggle_terminal_action(
         &mut self,
         _: &ToggleTerminal,
@@ -841,15 +857,15 @@ impl GsvApp {
         cx.notify();
     }
 
-    fn previous_moment(&mut self, _: &PreviousMoment, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_moment(-1, cx);
+    fn previous_moment(&mut self, _: &PreviousMoment, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_moment(-1, window, cx);
     }
 
-    fn next_moment(&mut self, _: &NextMoment, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_moment(1, cx);
+    fn next_moment(&mut self, _: &NextMoment, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_moment(1, window, cx);
     }
 
-    fn move_moment(&mut self, direction: i8, cx: &mut Context<Self>) {
+    fn move_moment(&mut self, direction: i8, window: &mut Window, cx: &mut Context<Self>) {
         if self.login.is_some()
             || self.conversation.mode != SurfaceMode::Conversation
             || self.interaction.is_approval()
@@ -857,6 +873,8 @@ impl GsvApp {
             return;
         }
         self.interaction.hide_draft();
+        self.input
+            .update(cx, |input, cx| input.unselect(window, cx));
         let previous = self.conversation.selected;
         if direction < 0 {
             self.conversation.select_previous();
@@ -872,7 +890,7 @@ impl GsvApp {
         }
     }
 
-    fn select_moment(&mut self, index: usize, cx: &mut Context<Self>) {
+    fn select_moment(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.login.is_some()
             || self.interaction.is_approval()
             || self.conversation.moments.is_empty()
@@ -880,6 +898,8 @@ impl GsvApp {
             return;
         }
         self.interaction.hide_draft();
+        self.input
+            .update(cx, |input, cx| input.unselect(window, cx));
         let previous = self.conversation.selected;
         self.conversation.select(index);
         self.timeline_scroll
@@ -903,6 +923,7 @@ impl GsvApp {
     }
 
     fn begin_transition(&mut self, direction: f32) {
+        self.text_selection.clear();
         self.history_scroll_accumulator = 0.0;
         self.history_scroll_last_event = None;
         self.transition_epoch = self.transition_epoch.wrapping_add(1);
@@ -973,18 +994,6 @@ fn approval_decision(input: &str) -> Option<ApprovalDecision> {
         }
         "deny" | "no" | "reject" => Some(ApprovalDecision::Deny),
         _ => None,
-    }
-}
-
-fn human_activity(syscall: &str) -> &'static str {
-    if syscall.starts_with("fs.") {
-        "READING"
-    } else if syscall.starts_with("net.") || syscall.starts_with("browser.") {
-        "LOOKING"
-    } else if syscall.starts_with("shell.") {
-        "WORKING"
-    } else {
-        "THINKING"
     }
 }
 

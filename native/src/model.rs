@@ -1,10 +1,115 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::Value;
 
 use crate::content::{MediaAttachment, MediaKind};
 
 const RETIRED_RUN_LIMIT: usize = 128;
+const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ActivityCategory {
+    Thinking,
+    SearchingFiles,
+    ReadingFiles,
+    WritingFiles,
+    EditingFiles,
+    DeletingFiles,
+    RunningCommands,
+    RunningCode,
+}
+
+impl ActivityCategory {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "thinking" => Some(Self::Thinking),
+            "searching_files" => Some(Self::SearchingFiles),
+            "reading_files" => Some(Self::ReadingFiles),
+            "writing_files" => Some(Self::WritingFiles),
+            "editing_files" => Some(Self::EditingFiles),
+            "deleting_files" => Some(Self::DeletingFiles),
+            "running_commands" => Some(Self::RunningCommands),
+            "running_code" => Some(Self::RunningCode),
+            _ => None,
+        }
+    }
+
+    fn summary_index(self) -> Option<usize> {
+        match self {
+            Self::Thinking => None,
+            Self::SearchingFiles => Some(0),
+            Self::ReadingFiles => Some(1),
+            Self::WritingFiles => Some(2),
+            Self::EditingFiles => Some(3),
+            Self::DeletingFiles => Some(4),
+            Self::RunningCommands => Some(5),
+            Self::RunningCode => Some(6),
+        }
+    }
+
+    fn expected_unit(self) -> Option<ActivityUnit> {
+        match self {
+            Self::Thinking => None,
+            Self::ReadingFiles => Some(ActivityUnit::Reads),
+            Self::RunningCommands => Some(ActivityUnit::Commands),
+            Self::RunningCode => Some(ActivityUnit::Runs),
+            Self::SearchingFiles
+            | Self::WritingFiles
+            | Self::EditingFiles
+            | Self::DeletingFiles => Some(ActivityUnit::Operations),
+        }
+    }
+}
+
+const SUMMARY_ACTIVITY_CATEGORIES: [ActivityCategory; 7] = [
+    ActivityCategory::SearchingFiles,
+    ActivityCategory::ReadingFiles,
+    ActivityCategory::WritingFiles,
+    ActivityCategory::EditingFiles,
+    ActivityCategory::DeletingFiles,
+    ActivityCategory::RunningCommands,
+    ActivityCategory::RunningCode,
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActivityUnit {
+    Operations,
+    Reads,
+    Commands,
+    Runs,
+}
+
+impl ActivityUnit {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "operations" => Some(Self::Operations),
+            "reads" => Some(Self::Reads),
+            "commands" => Some(Self::Commands),
+            "runs" => Some(Self::Runs),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActivitySummaryEntry {
+    pub category: ActivityCategory,
+    pub count: u64,
+    pub unit: ActivityUnit,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveActivity {
+    pub category: ActivityCategory,
+    pub timestamp: u64,
+    run_id: String,
+}
+
+#[derive(Debug)]
+pub struct HistoryActivitySummary {
+    moment_id: String,
+    entries: Vec<ActivitySummaryEntry>,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MomentRole {
@@ -75,10 +180,12 @@ pub struct Conversation {
     pub pending_approval: Option<PendingApproval>,
     pub connection: ConnectionState,
     pub activity: Option<String>,
+    pub live_activity: Option<LiveActivity>,
     pub mode: SurfaceMode,
     next_transient_id: u64,
     user_occurrence_baselines: HashMap<String, usize>,
     retired_run_ids: VecDeque<String>,
+    response_activity: HashMap<String, Vec<ActivitySummaryEntry>>,
     stopping_run_id: Option<String>,
     follow_latest: bool,
 }
@@ -92,10 +199,12 @@ impl Conversation {
             pending_approval: None,
             connection: ConnectionState::Connecting,
             activity: Some("CONNECTING".to_string()),
+            live_activity: None,
             mode: SurfaceMode::Conversation,
             next_transient_id: 1,
             user_occurrence_baselines: HashMap::new(),
             retired_run_ids: VecDeque::new(),
+            response_activity: HashMap::new(),
             stopping_run_id: None,
             follow_latest: true,
         }
@@ -126,10 +235,12 @@ impl Conversation {
             pending_approval: None,
             connection: ConnectionState::Connected,
             activity: None,
+            live_activity: None,
             mode: SurfaceMode::Conversation,
             next_transient_id: 1,
             user_occurrence_baselines: HashMap::new(),
             retired_run_ids: VecDeque::new(),
+            response_activity: HashMap::new(),
             stopping_run_id: None,
             follow_latest: true,
         }
@@ -137,6 +248,62 @@ impl Conversation {
 
     pub fn current(&self) -> Option<&Moment> {
         self.moments.get(self.selected)
+    }
+
+    pub fn activity_summary_for(&self, moment: &Moment) -> &[ActivitySummaryEntry] {
+        if moment.role != MomentRole::Intelligence {
+            return &[];
+        }
+        self.response_activity
+            .get(&moment.id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub fn set_live_activity(&mut self, activity: LiveActivity) -> bool {
+        if self.active_run_id.as_deref() != Some(activity.run_id.as_str())
+            || !self.accepts_run(Some(&activity.run_id))
+        {
+            return false;
+        }
+        if self.live_activity.as_ref().is_some_and(|current| {
+            current.run_id == activity.run_id && current.timestamp > activity.timestamp
+        }) {
+            return false;
+        }
+        self.live_activity = Some(activity);
+        true
+    }
+
+    pub fn clear_live_activity(&mut self, run_id: Option<&str>) {
+        if run_id.is_none_or(|run_id| {
+            self.live_activity
+                .as_ref()
+                .is_some_and(|activity| activity.run_id == run_id)
+        }) {
+            self.live_activity = None;
+        }
+    }
+
+    pub fn reconcile_history_activity(&mut self, summaries: Vec<HistoryActivitySummary>) {
+        let moment_ids = self
+            .moments
+            .iter()
+            .filter(|moment| moment.role == MomentRole::Intelligence)
+            .map(|moment| moment.id.as_str())
+            .collect::<HashSet<_>>();
+        for summary in summaries {
+            if !moment_ids.contains(summary.moment_id.as_str()) {
+                continue;
+            }
+            if summary.entries.is_empty() {
+                self.response_activity.remove(&summary.moment_id);
+            } else {
+                self.response_activity
+                    .insert(summary.moment_id, summary.entries);
+            }
+        }
+        self.prune_response_activity();
     }
 
     pub fn select(&mut self, index: usize) {
@@ -164,6 +331,16 @@ impl Conversation {
     }
 
     pub fn replace_history(&mut self, moments: Vec<Moment>) {
+        let prior_response_activity = self
+            .moments
+            .iter()
+            .filter_map(|moment| {
+                self.response_activity
+                    .get(&moment.id)
+                    .cloned()
+                    .map(|summary| (moment.id.clone(), moment.run_id.clone(), summary))
+            })
+            .collect::<Vec<_>>();
         let selected_id = (!self.follow_latest)
             .then(|| self.current().map(|moment| moment.id.clone()))
             .flatten();
@@ -218,6 +395,26 @@ impl Conversation {
         } else {
             self.select_latest();
         }
+        self.response_activity.clear();
+        for (moment_id, run_id, summary) in prior_response_activity {
+            let owner_id = self
+                .moments
+                .iter()
+                .find(|moment| moment.role == MomentRole::Intelligence && moment.id == moment_id)
+                .or_else(|| {
+                    run_id.as_deref().and_then(|run_id| {
+                        self.moments.iter().rev().find(|moment| {
+                            moment.role == MomentRole::Intelligence
+                                && moment.run_id.as_deref() == Some(run_id)
+                        })
+                    })
+                })
+                .map(|moment| moment.id.clone());
+            if let Some(owner_id) = owner_id {
+                self.response_activity.insert(owner_id, summary);
+            }
+        }
+        self.prune_response_activity();
     }
 
     pub fn append_user(&mut self, text: impl Into<String>) -> String {
@@ -270,6 +467,7 @@ impl Conversation {
         if self.moments.is_empty() {
             self.selected = 0;
             self.follow_latest = true;
+            self.response_activity.clear();
             return;
         }
         let selected_index = selected_id.and_then(|selected_id| {
@@ -282,6 +480,7 @@ impl Conversation {
         } else {
             self.selected = self.selected.min(self.moments.len() - 1);
         }
+        self.prune_response_activity();
     }
 
     pub fn fail_user(&mut self, moment_id: &str) {
@@ -318,6 +517,7 @@ impl Conversation {
             self.stopping_run_id = None;
         }
 
+        self.live_activity = None;
         self.active_run_id = Some(run_id.clone());
         self.activity = Some("THINKING".to_string());
 
@@ -375,11 +575,12 @@ impl Conversation {
                 role: MomentRole::Intelligence,
                 text: delta.to_string(),
                 media: Vec::new(),
-                run_id: effective_run_id,
+                run_id: effective_run_id.clone(),
                 state: MomentState::Streaming,
             });
         }
         self.activity = None;
+        self.clear_live_activity(effective_run_id.as_deref());
         self.follow_after_append(was_following);
     }
 
@@ -411,11 +612,12 @@ impl Conversation {
                 role: MomentRole::Intelligence,
                 text: text.to_string(),
                 media: Vec::new(),
-                run_id: effective_run_id,
+                run_id: effective_run_id.clone(),
                 state: MomentState::Streaming,
             });
         }
         self.activity = None;
+        self.clear_live_activity(effective_run_id.as_deref());
         self.follow_after_append(was_following);
     }
 
@@ -447,11 +649,12 @@ impl Conversation {
                 role: MomentRole::Intelligence,
                 text: String::new(),
                 media,
-                run_id: effective_run_id,
+                run_id: effective_run_id.clone(),
                 state: MomentState::Streaming,
             });
         }
         self.activity = None;
+        self.clear_live_activity(effective_run_id.as_deref());
         self.follow_after_append(was_following);
     }
 
@@ -468,6 +671,7 @@ impl Conversation {
             }
             self.active_run_id = None;
             self.stopping_run_id = None;
+            self.live_activity = None;
         }
         if let Some(run_id) = run_id {
             self.retired_run_ids.retain(|retired| retired != run_id);
@@ -484,10 +688,21 @@ impl Conversation {
             self.active_run_id = None;
             self.stopping_run_id = None;
             self.activity = None;
+            self.live_activity = None;
         }
     }
 
+    #[cfg(test)]
     pub fn finish_run(&mut self, run_id: Option<&str>, error: Option<&str>) -> bool {
+        self.finish_run_with_activity(run_id, error, None)
+    }
+
+    pub fn finish_run_with_activity(
+        &mut self,
+        run_id: Option<&str>,
+        error: Option<&str>,
+        activity_summary: Option<Vec<ActivitySummaryEntry>>,
+    ) -> bool {
         let Some(active_run_id) = self.active_run_id.clone() else {
             return false;
         };
@@ -495,10 +710,21 @@ impl Conversation {
             return false;
         }
 
-        if let Some(moment) = self.moments.iter_mut().rev().find(|moment| {
+        let matching_moment = self.moments.iter().rposition(|moment| {
             moment.state == MomentState::Streaming
                 && moment.run_id.as_deref() == Some(active_run_id.as_str())
-        }) {
+        });
+        if let Some(index) = matching_moment {
+            if let Some(activity_summary) = activity_summary {
+                let owner = self.moments[index].id.clone();
+                let activity_summary = normalize_activity_summary(activity_summary);
+                if activity_summary.is_empty() {
+                    self.response_activity.remove(&owner);
+                } else {
+                    self.response_activity.insert(owner, activity_summary);
+                }
+            }
+            let moment = &mut self.moments[index];
             moment.state = if error.is_some() {
                 MomentState::Error
             } else {
@@ -525,6 +751,7 @@ impl Conversation {
         self.active_run_id = None;
         self.stopping_run_id = None;
         self.activity = None;
+        self.live_activity = None;
         self.follow_if_requested();
         true
     }
@@ -539,6 +766,7 @@ impl Conversation {
         self.stopping_run_id = None;
         self.clear_approval();
         self.activity = None;
+        self.live_activity = None;
         self.follow_if_requested();
         true
     }
@@ -559,6 +787,7 @@ impl Conversation {
         let run_id = self.active_run_id.clone()?;
         self.stopping_run_id = Some(run_id.clone());
         self.activity = Some("STOPPING".to_string());
+        self.live_activity = None;
         Some(run_id)
     }
 
@@ -612,6 +841,7 @@ impl Conversation {
         }
         self.pending_approval = Some(approval);
         self.activity = Some("APPROVAL REQUIRED".to_string());
+        self.live_activity = None;
         self.select_latest();
         true
     }
@@ -621,6 +851,7 @@ impl Conversation {
         self.moments
             .retain(|moment| moment.state != MomentState::Approval);
         self.activity = self.active_run_id.as_ref().map(|_| "THINKING".to_string());
+        self.live_activity = None;
         self.select_latest();
     }
 
@@ -641,6 +872,7 @@ impl Conversation {
             && self.moments[index].media.is_empty()
         {
             self.moments.remove(index);
+            self.prune_response_activity();
         } else {
             self.moments[index].state = MomentState::Complete;
         }
@@ -660,6 +892,17 @@ impl Conversation {
         }
     }
 
+    fn prune_response_activity(&mut self) {
+        let owners = self
+            .moments
+            .iter()
+            .filter(|moment| moment.role == MomentRole::Intelligence)
+            .map(|moment| moment.id.as_str())
+            .collect::<HashSet<_>>();
+        self.response_activity
+            .retain(|owner, _| owners.contains(owner.as_str()));
+    }
+
     fn follow_after_append(&mut self, was_following: bool) {
         if was_following {
             self.selected = self.moments.len().saturating_sub(1);
@@ -677,6 +920,93 @@ impl Conversation {
             self.follow_latest = true;
         }
     }
+}
+
+fn normalize_activity_summary(
+    entries: impl IntoIterator<Item = ActivitySummaryEntry>,
+) -> Vec<ActivitySummaryEntry> {
+    let mut counts = [0_u64; SUMMARY_ACTIVITY_CATEGORIES.len()];
+    for entry in entries {
+        let Some(index) = entry.category.summary_index() else {
+            continue;
+        };
+        if entry.count == 0
+            || entry.count > MAX_SAFE_JSON_INTEGER
+            || entry.category.expected_unit() != Some(entry.unit)
+        {
+            continue;
+        }
+        counts[index] = counts[index]
+            .saturating_add(entry.count)
+            .min(MAX_SAFE_JSON_INTEGER);
+    }
+
+    SUMMARY_ACTIVITY_CATEGORIES
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, category)| {
+            let count = counts[index];
+            let unit = category.expected_unit()?;
+            (count > 0).then_some(ActivitySummaryEntry {
+                category,
+                count,
+                unit,
+            })
+        })
+        .collect()
+}
+
+pub fn parse_live_activity(value: &Value) -> Option<LiveActivity> {
+    let pid = value.get("pid")?.as_str()?.trim();
+    let run_id = value.get("runId")?.as_str()?.trim();
+    let category = ActivityCategory::parse(value.get("category")?.as_str()?)?;
+    let timestamp = value.get("timestamp")?.as_u64()?;
+    if pid.is_empty() || run_id.is_empty() || timestamp > MAX_SAFE_JSON_INTEGER {
+        return None;
+    }
+    Some(LiveActivity {
+        category,
+        timestamp,
+        run_id: run_id.to_string(),
+    })
+}
+
+pub fn parse_activity_summary(value: &Value) -> Option<Vec<ActivitySummaryEntry>> {
+    let entries = value.as_array()?.iter().filter_map(|entry| {
+        let category = ActivityCategory::parse(entry.get("category")?.as_str()?)?;
+        let unit = ActivityUnit::parse(entry.get("unit")?.as_str()?)?;
+        let count = entry.get("count")?.as_u64()?;
+        Some(ActivitySummaryEntry {
+            category,
+            count,
+            unit,
+        })
+    });
+    let entries = normalize_activity_summary(entries);
+    (!entries.is_empty()).then_some(entries)
+}
+
+pub fn parse_history_activity_summaries(payload: &Value) -> Vec<HistoryActivitySummary> {
+    payload
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, message)| {
+            if message.get("role").and_then(Value::as_str) != Some("assistant") {
+                return None;
+            }
+            let entries = message
+                .get("metadata")?
+                .get("activitySummary")
+                .and_then(parse_activity_summary)?;
+            Some(HistoryActivitySummary {
+                moment_id: history_moment_id(message, index),
+                entries,
+            })
+        })
+        .collect()
 }
 
 pub fn approval_prompt(approval: &PendingApproval) -> String {
@@ -717,13 +1047,16 @@ pub fn parse_history(payload: &Value) -> Vec<Moment> {
                 .or_else(|| content.get("media"))
                 .map(parse_media)
                 .unwrap_or_default();
-            if text.trim().is_empty() && media.is_empty() {
+            let has_activity_summary = role == MomentRole::Intelligence
+                && message
+                    .get("metadata")
+                    .and_then(|metadata| metadata.get("activitySummary"))
+                    .and_then(parse_activity_summary)
+                    .is_some();
+            if text.trim().is_empty() && media.is_empty() && !has_activity_summary {
                 return None;
             }
-            let id = message
-                .get("id")
-                .map(value_key)
-                .unwrap_or_else(|| format!("history:{index}"));
+            let id = history_moment_id(message, index);
             Some(Moment {
                 id,
                 role,
@@ -873,6 +1206,13 @@ fn value_key(value: &Value) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
+fn history_moment_id(message: &Value, index: usize) -> String {
+    message
+        .get("id")
+        .map(value_key)
+        .unwrap_or_else(|| format!("history:{index}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1010,6 +1350,273 @@ mod tests {
 
         assert_eq!(conversation.moments.len(), 1);
         assert_eq!(conversation.moments[0].text, "Hello there");
+    }
+
+    #[test]
+    fn live_activity_is_typed_ordered_and_scoped_to_the_active_run() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+
+        assert!(conversation.set_live_activity(
+            parse_live_activity(&json!({
+                "pid": "alice/main",
+                "runId": "run-1",
+                "category": "reading_files",
+                "timestamp": 20,
+                "args": { "path": "/private/notes.txt" }
+            }))
+            .expect("valid activity")
+        ));
+        assert_eq!(
+            conversation
+                .live_activity
+                .as_ref()
+                .map(|activity| activity.category),
+            Some(ActivityCategory::ReadingFiles)
+        );
+
+        assert!(!conversation.set_live_activity(
+            parse_live_activity(&json!({
+                "pid": "alice/main",
+                "runId": "run-1",
+                "category": "searching_files",
+                "timestamp": 19
+            }))
+            .expect("valid older activity")
+        ));
+        assert!(!conversation.set_live_activity(
+            parse_live_activity(&json!({
+                "pid": "alice/main",
+                "runId": "run-2",
+                "category": "running_commands",
+                "timestamp": 21
+            }))
+            .expect("valid foreign activity")
+        ));
+        assert_eq!(
+            conversation
+                .live_activity
+                .as_ref()
+                .map(|activity| activity.category),
+            Some(ActivityCategory::ReadingFiles)
+        );
+
+        conversation.start_run("run-2");
+        assert!(conversation.live_activity.is_none());
+    }
+
+    #[test]
+    fn visible_response_output_clears_live_activity() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+        let activity = parse_live_activity(&json!({
+            "pid": "alice/main",
+            "runId": "run-1",
+            "category": "thinking",
+            "timestamp": 1
+        }))
+        .expect("valid activity");
+        assert!(conversation.set_live_activity(activity.clone()));
+
+        conversation.stream_text(Some("run-1"), "The answer");
+        assert!(conversation.live_activity.is_none());
+
+        assert!(conversation.set_live_activity(activity));
+        conversation.replace_run_media(Some("run-1"), Vec::new());
+        assert!(conversation.live_activity.is_none());
+    }
+
+    #[test]
+    fn activity_summaries_are_nonzero_typed_and_in_fixed_order() {
+        let summary = parse_activity_summary(&json!([
+            { "category": "running_commands", "count": 2, "unit": "commands", "input": "secret" },
+            { "category": "reading_files", "count": 0, "unit": "reads" },
+            { "category": "thinking", "count": 7, "unit": "operations" },
+            { "category": "reading_files", "count": 3, "unit": "reads" },
+            { "category": "searching_files", "count": 4, "unit": "reads" },
+            { "category": "searching_files", "count": 2, "unit": "operations" },
+            { "category": "searching_files", "count": 3, "unit": "operations" },
+            { "category": "running_code", "count": 1, "unit": "runs" },
+            { "category": "browsing", "count": 12, "unit": "operations" }
+        ]))
+        .expect("at least one valid entry");
+
+        assert_eq!(
+            summary,
+            vec![
+                ActivitySummaryEntry {
+                    category: ActivityCategory::SearchingFiles,
+                    count: 5,
+                    unit: ActivityUnit::Operations,
+                },
+                ActivitySummaryEntry {
+                    category: ActivityCategory::ReadingFiles,
+                    count: 3,
+                    unit: ActivityUnit::Reads,
+                },
+                ActivitySummaryEntry {
+                    category: ActivityCategory::RunningCommands,
+                    count: 2,
+                    unit: ActivityUnit::Commands,
+                },
+                ActivitySummaryEntry {
+                    category: ActivityCategory::RunningCode,
+                    count: 1,
+                    unit: ActivityUnit::Runs,
+                },
+            ]
+        );
+        assert!(parse_activity_summary(&json!([
+            { "category": "thinking", "count": 1, "unit": "operations" },
+            { "category": "reading_files", "count": -1, "unit": "reads" }
+        ]))
+        .is_none());
+    }
+
+    #[test]
+    fn stale_finish_cannot_attach_a_summary_or_clear_current_activity() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+        conversation.stream_text(Some("run-1"), "First response");
+        conversation.start_run("run-2");
+        assert!(conversation.set_live_activity(
+            parse_live_activity(&json!({
+                "pid": "alice/main",
+                "runId": "run-2",
+                "category": "running_code",
+                "timestamp": 30
+            }))
+            .expect("valid activity")
+        ));
+        let summary = parse_activity_summary(&json!([
+            { "category": "reading_files", "count": 1, "unit": "reads" }
+        ]));
+
+        assert!(!conversation.finish_run_with_activity(Some("run-1"), None, summary));
+        assert_eq!(conversation.active_run_id.as_deref(), Some("run-2"));
+        assert_eq!(
+            conversation
+                .live_activity
+                .as_ref()
+                .map(|activity| activity.category),
+            Some(ActivityCategory::RunningCode)
+        );
+        assert!(conversation
+            .activity_summary_for(&conversation.moments[0])
+            .is_empty());
+    }
+
+    #[test]
+    fn final_summary_stays_with_its_response_across_history_reconciliation() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+        conversation.stream_text(Some("run-1"), "Finished");
+        let summary = parse_activity_summary(&json!([
+            { "category": "reading_files", "count": 2, "unit": "reads" }
+        ]));
+        assert!(conversation.finish_run_with_activity(Some("run-1"), None, summary));
+        assert_eq!(
+            conversation.activity_summary_for(&conversation.moments[0]),
+            &[ActivitySummaryEntry {
+                category: ActivityCategory::ReadingFiles,
+                count: 2,
+                unit: ActivityUnit::Reads,
+            }]
+        );
+
+        let history = json!({
+            "messages": [{
+                "id": 42,
+                "runId": "run-1",
+                "role": "assistant",
+                "content": "Finished",
+                "metadata": {
+                    "activitySummary": [
+                        { "category": "reading_files", "count": 2, "unit": "reads" }
+                    ]
+                }
+            }]
+        });
+        let history_summaries = parse_history_activity_summaries(&history);
+        conversation.replace_history(parse_history(&history));
+        conversation.reconcile_history_activity(history_summaries);
+
+        assert_eq!(conversation.moments[0].id, "42");
+        assert_eq!(
+            conversation.activity_summary_for(&conversation.moments[0]),
+            &[ActivitySummaryEntry {
+                category: ActivityCategory::ReadingFiles,
+                count: 2,
+                unit: ActivityUnit::Reads,
+            }]
+        );
+
+        let reconnect_history = json!({
+            "messages": [{
+                "id": 42,
+                "runId": "run-1",
+                "role": "assistant",
+                "content": "Finished"
+            }]
+        });
+        conversation.replace_history(parse_history(&reconnect_history));
+        conversation
+            .reconcile_history_activity(parse_history_activity_summaries(&reconnect_history));
+        assert_eq!(
+            conversation.activity_summary_for(&conversation.moments[0]),
+            &[ActivitySummaryEntry {
+                category: ActivityCategory::ReadingFiles,
+                count: 2,
+                unit: ActivityUnit::Reads,
+            }]
+        );
+    }
+
+    #[test]
+    fn history_reads_activity_only_from_assistant_metadata() {
+        let history = json!({
+            "messages": [
+                {
+                    "id": 1,
+                    "runId": "run-user",
+                    "role": "user",
+                    "content": "Ignore my metadata",
+                    "metadata": {
+                        "activitySummary": [
+                            { "category": "deleting_files", "count": 99, "unit": "operations" }
+                        ]
+                    }
+                },
+                {
+                    "id": 2,
+                    "runId": "run-2",
+                    "role": "assistant",
+                    "content": "",
+                    "metadata": {
+                        "activitySummary": [
+                            { "category": "writing_files", "count": 1, "unit": "operations", "path": "/private/file" }
+                        ]
+                    }
+                }
+            ]
+        });
+        let summaries = parse_history_activity_summaries(&history);
+        let mut conversation = Conversation::connecting();
+        conversation.replace_history(parse_history(&history));
+        conversation.reconcile_history_activity(summaries);
+
+        assert_eq!(conversation.moments.len(), 2);
+        assert!(conversation
+            .activity_summary_for(&conversation.moments[0])
+            .is_empty());
+        assert_eq!(
+            conversation.activity_summary_for(&conversation.moments[1]),
+            &[ActivitySummaryEntry {
+                category: ActivityCategory::WritingFiles,
+                count: 1,
+                unit: ActivityUnit::Operations,
+            }]
+        );
     }
 
     #[test]
