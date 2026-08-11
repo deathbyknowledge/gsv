@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use gpui::{
     actions, App, AppContext, Context, Focusable, KeyBinding, ScrollHandle, Subscription, Task,
@@ -48,6 +49,10 @@ pub struct GsvApp {
     last_history: Option<serde_json::Value>,
     terminal: Vec<TerminalExchange>,
     timeline_scroll: ScrollHandle,
+    message_scroll: ScrollHandle,
+    message_scroll_moment: Option<String>,
+    history_scroll_accumulator: f32,
+    history_scroll_last_event: Option<Instant>,
     stream_type_sizes: HashMap<String, f32>,
     draft_type_size: Option<f32>,
     stream_sequences: HashMap<String, u64>,
@@ -108,6 +113,10 @@ impl GsvApp {
             last_history: None,
             terminal: Vec::new(),
             timeline_scroll: ScrollHandle::new(),
+            message_scroll: ScrollHandle::new(),
+            message_scroll_moment: None,
+            history_scroll_accumulator: 0.0,
+            history_scroll_last_event: None,
             stream_type_sizes: HashMap::new(),
             draft_type_size: None,
             stream_sequences: HashMap::new(),
@@ -426,31 +435,28 @@ impl GsvApp {
     }
 
     fn previous_moment(&mut self, _: &PreviousMoment, _: &mut Window, cx: &mut Context<Self>) {
-        if self.conversation.mode != SurfaceMode::Conversation || self.interaction.is_approval() {
-            return;
-        }
-        self.interaction.hide_draft();
-        let previous = self.conversation.selected;
-        self.conversation.select_previous();
-        if previous != self.conversation.selected {
-            self.timeline_scroll
-                .scroll_to_item(self.conversation.selected);
-            self.begin_transition(-1.0);
-            cx.notify();
-        }
+        self.move_moment(-1, cx);
     }
 
     fn next_moment(&mut self, _: &NextMoment, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_moment(1, cx);
+    }
+
+    fn move_moment(&mut self, direction: i8, cx: &mut Context<Self>) {
         if self.conversation.mode != SurfaceMode::Conversation || self.interaction.is_approval() {
             return;
         }
         self.interaction.hide_draft();
         let previous = self.conversation.selected;
-        self.conversation.select_next();
+        if direction < 0 {
+            self.conversation.select_previous();
+        } else {
+            self.conversation.select_next();
+        }
         if previous != self.conversation.selected {
             self.timeline_scroll
                 .scroll_to_item(self.conversation.selected);
-            self.begin_transition(1.0);
+            self.begin_transition(if direction < 0 { -1.0 } else { 1.0 });
             cx.notify();
         }
     }
@@ -482,6 +488,8 @@ impl GsvApp {
     }
 
     fn begin_transition(&mut self, direction: f32) {
+        self.history_scroll_accumulator = 0.0;
+        self.history_scroll_last_event = None;
         self.transition_epoch = self.transition_epoch.wrapping_add(1);
         self.transition_direction = direction;
     }

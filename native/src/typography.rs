@@ -109,7 +109,7 @@ fn reading_width(text: &str, available_width: f32) -> f32 {
     let characters = text.chars().count() as f32;
     let medium = ((characters - 96.0) / 224.0).clamp(0.0, 1.0);
     let long = ((characters - 320.0) / 320.0).clamp(0.0, 1.0);
-    let preferred = 760.0 + medium * 90.0 + long * 90.0;
+    let preferred = 820.0 + medium * 100.0 + long * 100.0;
     preferred.min(available_width.max(1.0))
 }
 
@@ -135,11 +135,11 @@ mod tests {
 
     #[test]
     fn reading_measure_expands_smoothly_and_respects_the_viewport() {
-        assert_eq!(reading_width("short", 1_200.0), 760.0);
-        assert!(reading_width(&"a".repeat(200), 1_200.0) > 760.0);
-        assert!(reading_width(&"a".repeat(200), 1_200.0) < 850.0);
-        assert_eq!(reading_width(&"a".repeat(320), 1_200.0), 850.0);
-        assert_eq!(reading_width(&"a".repeat(640), 1_200.0), 940.0);
+        assert_eq!(reading_width("short", 1_200.0), 820.0);
+        assert!(reading_width(&"a".repeat(200), 1_200.0) > 820.0);
+        assert!(reading_width(&"a".repeat(200), 1_200.0) < 920.0);
+        assert_eq!(reading_width(&"a".repeat(320), 1_200.0), 920.0);
+        assert_eq!(reading_width(&"a".repeat(640), 1_200.0), 1_020.0);
         assert_eq!(reading_width(&"a".repeat(640), 640.0), 640.0);
     }
 

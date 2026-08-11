@@ -66,7 +66,7 @@ Wayland is selected automatically when `WAYLAND_DISPLAY` is present; no Cargo fe
 - `Enter` submits the current thought or runs the current command.
 - `Cmd/Ctrl+Enter` or `Shift+Enter` creates a new line.
 - `Escape` returns to the moment without discarding the draft.
-- `Alt+Up` and `Alt+Down` move through moments; the rail markers are also clickable and scrollable.
+- The mouse wheel, `Alt+Up`, and `Alt+Down` move through moments; rail markers are also clickable.
 - `Cmd/Ctrl+.` stops the active run.
 - `Cmd/Ctrl+\`` switches between conversation and command surfaces.
 

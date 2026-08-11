@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, ease_out_quint, px, relative, Animation, AnimationExt as _, AnyElement, Context,
+    div, ease_out_quint, point, px, relative, Animation, AnimationExt as _, AnyElement, Context,
     Focusable, FontWeight, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
-    Render, StatefulInteractiveElement, Styled, Window,
+    Render, ScrollWheelEvent, StatefulInteractiveElement, Styled, Window,
 };
 use gpui_component::input::Input;
 
@@ -22,6 +22,8 @@ struct CanvasGeometry {
     vertical: f32,
     available_height: f32,
 }
+
+const HISTORY_SCROLL_THRESHOLD: f32 = 36.0;
 
 impl GsvApp {
     fn render_timeline(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -191,6 +193,12 @@ impl GsvApp {
                 MomentState::Complete,
             ),
         };
+        if self.message_scroll_moment.as_deref() != Some(moment_id.as_str()) {
+            self.message_scroll.set_offset(point(px(0.0), px(0.0)));
+            self.message_scroll_moment = Some(moment_id.clone());
+            self.history_scroll_accumulator = 0.0;
+            self.history_scroll_last_event = None;
+        }
 
         let message_weight = if role == MomentRole::User {
             FontWeight::MEDIUM
@@ -332,7 +340,9 @@ impl GsvApp {
                         .font_family(theme::MONO_FONT)
                         .text_size(px(9.0))
                         .text_color(theme::color(theme::TEXT_FAINT))
-                        .child("TYPE ANYWHERE   ·   CTRL ENTER TO SEND   ·   ALT ↑↓ HISTORY"),
+                        .child(
+                            "TYPE ANYWHERE   ·   ENTER SENDS   ·   SHIFT ENTER NEW LINE   ·   SCROLL HISTORY",
+                        ),
                 )
             })
             .child(
@@ -431,8 +441,10 @@ impl GsvApp {
             .justify_center()
             .when(is_long, |this| this.items_start())
             .when(!is_long, |this| this.items_center())
-            .overflow_y_scroll()
+            .overflow_hidden()
+            .track_scroll(&self.message_scroll)
             .occlude()
+            .on_scroll_wheel(cx.listener(Self::scroll_moments))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
@@ -441,6 +453,53 @@ impl GsvApp {
             )
             .child(message)
             .into_any_element()
+    }
+
+    fn scroll_moments(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let delta = event.delta.pixel_delta(px(16.0));
+        let vertical = f32::from(delta.y);
+        let horizontal = f32::from(delta.x);
+        if vertical.abs() <= horizontal.abs() || vertical == 0.0 {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self
+            .history_scroll_last_event
+            .is_none_or(|previous| now.duration_since(previous) > Duration::from_millis(180))
+        {
+            self.history_scroll_accumulator = 0.0;
+        }
+        self.history_scroll_last_event = Some(now);
+
+        let maximum = f32::from(self.message_scroll.max_offset().height);
+        let offset = f32::from(self.message_scroll.offset().y).clamp(-maximum, 0.0);
+        let target = (offset + vertical).clamp(-maximum, 0.0);
+        cx.stop_propagation();
+
+        if (target - offset).abs() > 0.5 {
+            self.message_scroll.set_offset(point(px(0.0), px(target)));
+            self.history_scroll_accumulator = 0.0;
+            cx.notify();
+            return;
+        }
+
+        if self.history_scroll_accumulator != 0.0
+            && self.history_scroll_accumulator.signum() != vertical.signum()
+        {
+            self.history_scroll_accumulator = 0.0;
+        }
+        self.history_scroll_accumulator += vertical;
+
+        if self.history_scroll_accumulator.abs() < HISTORY_SCROLL_THRESHOLD {
+            return;
+        }
+        let direction = if self.history_scroll_accumulator > 0.0 {
+            -1
+        } else {
+            1
+        };
+        self.history_scroll_accumulator = 0.0;
+        self.move_moment(direction, cx);
     }
 
     fn render_draft_canvas(
@@ -649,7 +708,8 @@ mod tests {
     use std::rc::Rc;
 
     use gpui::{
-        point, AppContext as _, Modifiers, TestAppContext, VisualTestContext, WindowOptions,
+        point, AppContext as _, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext,
+        VisualTestContext, WindowOptions,
     };
     use gpui_component::Root;
 
@@ -696,7 +756,7 @@ mod tests {
         let left_padding = (viewport_width * 0.065).clamp(108.0, 142.0);
         let right_padding = (viewport_width * 0.065).clamp(46.0, 142.0);
         let available_width = viewport_width - left_padding - right_padding;
-        let input_width = 760.0_f32.min(available_width);
+        let input_width = 820.0_f32.min(available_width);
         let input_left = left_padding + (available_width - input_width) / 2.0;
         cx.simulate_click(
             point(px(input_left + 4.0), px(f32::from(viewport.height) / 2.0)),
@@ -705,6 +765,129 @@ mod tests {
 
         let cursor_after = cx.cx.update(|cx| input.read(cx).cursor());
         assert_eq!(cursor_after, cursor_before);
+    }
+
+    #[gpui::test]
+    fn mouse_wheel_moves_between_conversation_moments(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let client = crate::client::start(true);
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.cx
+            .update(|cx| assert_eq!(app.read(cx).conversation.selected, 2));
+        let viewport = cx.update(|window, _| window.viewport_size());
+        let position = point(
+            px(f32::from(viewport.width) / 2.0),
+            px(f32::from(viewport.height) / 2.0),
+        );
+
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Lines(point(0.0, 3.0)),
+            ..Default::default()
+        });
+        cx.cx
+            .update(|cx| assert_eq!(app.read(cx).conversation.selected, 1));
+
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Lines(point(0.0, -3.0)),
+            ..Default::default()
+        });
+        cx.cx
+            .update(|cx| assert_eq!(app.read(cx).conversation.selected, 2));
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(40.0), px(f32::from(viewport.height) / 2.0)),
+            delta: ScrollDelta::Lines(point(0.0, 3.0)),
+            ..Default::default()
+        });
+        cx.cx
+            .update(|cx| assert_eq!(app.read(cx).conversation.selected, 2));
+    }
+
+    #[gpui::test]
+    fn long_message_scroll_reaches_the_edge_before_moving_to_the_next_moment(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let client = crate::client::start(true);
+        let window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.conversation.moments[1].text = "A long message. ".repeat(2_000);
+                app.conversation.select(1);
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+        let maximum = cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.conversation.selected, 1);
+            app.message_scroll.max_offset().height
+        });
+        assert!(maximum > px(0.0));
+
+        let viewport = cx.update(|window, _| window.viewport_size());
+        let position = point(
+            px(f32::from(viewport.width) / 2.0),
+            px(f32::from(viewport.height) / 2.0),
+        );
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Pixels(point(px(0.0), -maximum - px(100.0))),
+            ..Default::default()
+        });
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.conversation.selected, 1);
+            assert_eq!(app.message_scroll.offset().y, -maximum);
+        });
+
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Lines(point(0.0, -3.0)),
+            ..Default::default()
+        });
+        cx.cx
+            .update(|cx| assert_eq!(app.read(cx).conversation.selected, 2));
     }
 
     #[gpui::test]
