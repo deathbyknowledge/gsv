@@ -947,8 +947,11 @@ mod tests {
         cx.run_until_parked();
 
         let app = app.borrow().clone().expect("app entity should be retained");
-        cx.cx
-            .update(|cx| assert_eq!(app.read(cx).conversation.selected, 2));
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.conversation.selected, 2);
+            assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 0);
+        });
         let viewport = cx.update(|window, _| window.viewport_size());
         let position = point(
             px(f32::from(viewport.width) / 2.0),
@@ -960,24 +963,33 @@ mod tests {
             delta: ScrollDelta::Lines(point(0.0, 3.0)),
             ..Default::default()
         });
-        cx.cx
-            .update(|cx| assert_eq!(app.read(cx).conversation.selected, 1));
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.conversation.selected, 1);
+            assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 1);
+        });
 
         cx.simulate_event(ScrollWheelEvent {
             position,
             delta: ScrollDelta::Lines(point(0.0, -3.0)),
             ..Default::default()
         });
-        cx.cx
-            .update(|cx| assert_eq!(app.read(cx).conversation.selected, 2));
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.conversation.selected, 2);
+            assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 2);
+        });
 
         cx.simulate_event(ScrollWheelEvent {
             position: point(px(40.0), px(f32::from(viewport.height) / 2.0)),
             delta: ScrollDelta::Lines(point(0.0, 3.0)),
             ..Default::default()
         });
-        cx.cx
-            .update(|cx| assert_eq!(app.read(cx).conversation.selected, 2));
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.conversation.selected, 2);
+            assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 2);
+        });
     }
 
     #[gpui::test]
@@ -1035,6 +1047,7 @@ mod tests {
             let app = app.read(cx);
             assert_eq!(app.conversation.selected, 1);
             assert_eq!(app.message_scroll.offset().y, -maximum);
+            assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 0);
         });
 
         cx.simulate_event(ScrollWheelEvent {
@@ -1042,8 +1055,11 @@ mod tests {
             delta: ScrollDelta::Lines(point(0.0, -3.0)),
             ..Default::default()
         });
-        cx.cx
-            .update(|cx| assert_eq!(app.read(cx).conversation.selected, 2));
+        cx.cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(app.conversation.selected, 2);
+            assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 1);
+        });
     }
 
     #[gpui::test]

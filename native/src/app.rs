@@ -765,6 +765,7 @@ impl GsvApp {
             self.conversation.select_next();
         }
         if previous != self.conversation.selected {
+            self.audio.play(KeySound::Navigate);
             self.timeline_scroll
                 .scroll_to_item(self.conversation.selected);
             self.begin_transition(if direction < 0 { -1.0 } else { 1.0 });
@@ -785,6 +786,7 @@ impl GsvApp {
         self.timeline_scroll
             .scroll_to_item(self.conversation.selected);
         if previous != self.conversation.selected {
+            self.audio.play(KeySound::Navigate);
             self.begin_transition(if index < previous { -1.0 } else { 1.0 });
         }
         cx.notify();

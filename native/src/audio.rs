@@ -10,12 +10,15 @@ pub enum KeySound {
     Space,
     Delete,
     Commit,
+    Navigate,
 }
 
 pub struct TypingAudio {
     sink: Option<MixerDeviceSink>,
     playback_gate: PlaybackGate,
     sequence: u64,
+    #[cfg(test)]
+    requested_sounds: Vec<KeySound>,
 }
 
 impl TypingAudio {
@@ -26,10 +29,14 @@ impl TypingAudio {
                 .and_then(Result::ok),
             playback_gate: PlaybackGate::default(),
             sequence: 0,
+            #[cfg(test)]
+            requested_sounds: Vec::new(),
         }
     }
 
     pub fn play(&mut self, sound: KeySound) {
+        #[cfg(test)]
+        self.requested_sounds.push(sound);
         if self.sink.is_none() || !self.playback_gate.allows(sound, Instant::now()) {
             return;
         }
@@ -45,18 +52,36 @@ impl TypingAudio {
             sink.mixer().add(source);
         }
     }
+
+    #[cfg(test)]
+    pub fn request_count(&self, sound: KeySound) -> usize {
+        self.requested_sounds
+            .iter()
+            .filter(|requested| **requested == sound)
+            .count()
+    }
 }
 
 const SAMPLE_RATE: u32 = 48_000;
+const EFFECTS_GAIN: f32 = 1.28;
 const MIN_PLAYBACK_INTERVAL: Duration = Duration::from_millis(18);
+const MIN_NAVIGATION_INTERVAL: Duration = Duration::from_millis(82);
 
 #[derive(Default)]
 struct PlaybackGate {
     last_playback: Option<Instant>,
+    last_navigation: Option<Instant>,
 }
 
 impl PlaybackGate {
     fn allows(&mut self, sound: KeySound, now: Instant) -> bool {
+        if sound == KeySound::Navigate
+            && self
+                .last_navigation
+                .is_some_and(|last| now.saturating_duration_since(last) < MIN_NAVIGATION_INTERVAL)
+        {
+            return false;
+        }
         if sound != KeySound::Commit
             && self
                 .last_playback
@@ -66,6 +91,9 @@ impl PlaybackGate {
         }
 
         self.last_playback = Some(now);
+        if sound == KeySound::Navigate {
+            self.last_navigation = Some(now);
+        }
         true
     }
 }
@@ -110,6 +138,13 @@ impl SoundProfile {
                 body_response: 0.027,
                 grain: 0.04,
             },
+            KeySound::Navigate => Self {
+                duration_ms: 94,
+                gain: 0.036,
+                surface_response: 0.065,
+                body_response: 0.016,
+                grain: 0.012,
+            },
         }
     }
 }
@@ -122,6 +157,7 @@ fn synthesize_sound(sound: KeySound, sequence: u64) -> Vec<f32> {
     let surface_response = (profile.surface_response + timbre_variation).clamp(0.04, 0.42);
     let mut surface = 0.0;
     let mut body = 0.0;
+    let mut thud_phase = 0.0;
     let mut samples = Vec::with_capacity(sample_count);
 
     for index in 0..sample_count {
@@ -131,9 +167,16 @@ fn synthesize_sound(sound: KeySound, sequence: u64) -> Vec<f32> {
 
         let position = index as f32 / sample_count.saturating_sub(1).max(1) as f32;
         let envelope = sound_envelope(sound, position);
-        let texture = body * 0.54 + surface * 0.42 + white * profile.grain;
+        let thud = if sound == KeySound::Navigate {
+            let frequency = 110.0 - position * 32.0;
+            thud_phase += std::f32::consts::TAU * frequency / SAMPLE_RATE as f32;
+            thud_phase.sin() * 0.34
+        } else {
+            0.0
+        };
+        let texture = body * 0.54 + surface * 0.42 + white * profile.grain + thud;
         let fade_out = ((sample_count.saturating_sub(1 + index)) as f32 / 48.0).min(1.0);
-        samples.push(texture * envelope * fade_out * profile.gain);
+        samples.push(texture * envelope * fade_out * profile.gain * EFFECTS_GAIN);
     }
 
     samples
@@ -157,6 +200,7 @@ fn sound_envelope(sound: KeySound, position: f32) -> f32 {
                 + pulse(position, 0.21, 0.46, 2.5) * 0.55
                 + pulse(position, 0.46, 0.54, 1.8) * 0.2
         }
+        KeySound::Navigate => pulse(position, 0.0, 0.96, 2.4) * 0.82,
     }
 }
 
@@ -177,6 +221,7 @@ fn seed_for(sound: KeySound, sequence: u64) -> u64 {
         KeySound::Space => 0x1319_8a2e_0370_7344,
         KeySound::Delete => 0xa409_3822_299f_31d0,
         KeySound::Commit => 0x082e_fa98_ec4e_6c89,
+        KeySound::Navigate => 0x4528_21e6_38d0_1377,
     };
     let mut value = sequence ^ voice;
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -228,10 +273,12 @@ mod tests {
         let space = synthesize_sound(KeySound::Space, 1);
         let delete = synthesize_sound(KeySound::Delete, 1);
         let commit = synthesize_sound(KeySound::Commit, 1);
+        let navigate = synthesize_sound(KeySound::Navigate, 1);
 
         assert!(character.len() < space.len());
         assert!(space.len() < delete.len());
         assert!(delete.len() < commit.len());
+        assert!(commit.len() < navigate.len());
     }
 
     #[test]
@@ -241,6 +288,7 @@ mod tests {
             KeySound::Space,
             KeySound::Delete,
             KeySound::Commit,
+            KeySound::Navigate,
         ] {
             let samples = synthesize_sound(sound, 11);
             let peak = samples.iter().copied().map(f32::abs).fold(0.0, f32::max);
@@ -269,5 +317,27 @@ mod tests {
             KeySound::Character,
             start + MIN_PLAYBACK_INTERVAL + Duration::from_millis(5)
         ));
+    }
+
+    #[test]
+    fn navigation_thuds_are_rate_limited() {
+        let start = Instant::now();
+        let mut gate = PlaybackGate::default();
+
+        assert!(gate.allows(KeySound::Navigate, start));
+        assert!(!gate.allows(
+            KeySound::Navigate,
+            start + MIN_NAVIGATION_INTERVAL - Duration::from_millis(1)
+        ));
+        assert!(gate.allows(KeySound::Navigate, start + MIN_NAVIGATION_INTERVAL));
+    }
+
+    #[test]
+    fn navigation_thud_stays_gentle_but_audible() {
+        let samples = synthesize_sound(KeySound::Navigate, 11);
+        let peak = samples.iter().copied().map(f32::abs).fold(0.0, f32::max);
+
+        assert!(peak > 0.008);
+        assert!(peak < 0.025);
     }
 }
