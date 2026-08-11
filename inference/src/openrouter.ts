@@ -12,6 +12,11 @@ import {
   type ManagedInferenceRequest,
   type ManagedInferenceResult,
 } from "@humansandmachines/gsv/protocol";
+import {
+  MANAGED_INFERENCE_CONTEXT_WINDOW,
+  MANAGED_INFERENCE_MAX_OUTPUT_TOKENS,
+  MANAGED_INFERENCE_MODEL_COST,
+} from "./pricing";
 
 const GSV_INFERENCE_API = "gsv-inference";
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -34,14 +39,9 @@ const OPENROUTER_MODEL: Model<"openai-completions"> = {
     max: "max",
   },
   input: ["text"],
-  cost: {
-    input: 0.08,
-    output: 0.18,
-    cacheRead: 0.016,
-    cacheWrite: 0,
-  },
-  contextWindow: 1_048_576,
-  maxTokens: 384_000,
+  cost: MANAGED_INFERENCE_MODEL_COST,
+  contextWindow: MANAGED_INFERENCE_CONTEXT_WINDOW,
+  maxTokens: MANAGED_INFERENCE_MAX_OUTPUT_TOKENS,
   compat: {
     supportsDeveloperRole: false,
     thinkingFormat: "openrouter",

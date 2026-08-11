@@ -1,5 +1,6 @@
 import type {
   AiAssistantMessage,
+  AiStopReason,
   AiTextMessage,
   AiTextTool,
 } from "./syscalls/ai";
@@ -43,6 +44,40 @@ export type ManagedInferenceGeneration = {
 
 export interface ManagedInferenceService {
   generate(input: ManagedInferenceRequest): Promise<ManagedInferenceGeneration>;
+}
+
+export type ManagedInferenceUsageOutcome =
+  | "completed"
+  | "failed"
+  | "aborted"
+  | "abandoned";
+
+export type ManagedInferenceUsageEvent = {
+  version: 1;
+  installationId: string;
+  logicalRequestId: string;
+  actor: ManagedInferenceActor;
+  period: string;
+  model: typeof GSV_INFERENCE_PRODUCT_MODEL;
+  responseModel?: string;
+  providerResponseId?: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  reservedNanoUsd: number;
+  costNanoUsd: number;
+  outcome: ManagedInferenceUsageOutcome;
+  stopReason?: AiStopReason;
+  startedAt: number;
+  completedAt: number;
+};
+
+export interface ManagedInferenceUsageService {
+  recordManagedInferenceUsage(
+    events: ManagedInferenceUsageEvent[],
+  ): Promise<void>;
 }
 
 export type ManagedInstallationState =

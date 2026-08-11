@@ -9,6 +9,8 @@ import {
 
 const GATEWAY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEPENDENCY_WORKER = "gsv-test-dependencies";
+const ACCOUNTS_WORKER = "gsv-accounts-test";
+const INFERENCE_WORKER = "gsv-inference-test";
 const DEPENDENCY_CONFIG_PATH = resolve(
   GATEWAY_ROOT,
   "test-integration/fixtures/wrangler.jsonc",
@@ -17,6 +19,10 @@ const DEPENDENCY_CONFIG_PATH = resolve(
 function integrationGatewayConfig(options: {
   name?: string;
   managed?: boolean;
+  managedServices?: {
+    accounts: string;
+    inference: string;
+  };
 } = {}): Unstable_RawConfig {
   const config = unstable_readConfig(
     { config: resolve(GATEWAY_ROOT, "wrangler.jsonc") },
@@ -47,11 +53,16 @@ function integrationGatewayConfig(options: {
       { binding: "RIPGIT", service: DEPENDENCY_WORKER },
       ...(options.managed
         ? [
-            { binding: "INSTALLATION_DIRECTORY", service: DEPENDENCY_WORKER },
+            {
+              binding: "INSTALLATION_DIRECTORY",
+              service: options.managedServices?.accounts ?? DEPENDENCY_WORKER,
+            },
             {
               binding: "MANAGED_INFERENCE",
-              service: DEPENDENCY_WORKER,
-              entrypoint: "ManagedInferenceFixture",
+              service: options.managedServices?.inference ?? DEPENDENCY_WORKER,
+              entrypoint: options.managedServices
+                ? "InferenceService"
+                : "ManagedInferenceFixture",
             },
           ]
         : []),
@@ -133,6 +144,40 @@ export function createManagedGatewayTestHarness(): TestHarness {
       },
       {
         config: managedInferenceProbeConfig(),
+      },
+    ],
+  });
+}
+
+export function createManagedInferenceStackTestHarness(): TestHarness {
+  const gatewayService = "gsv-managed-inference-stack";
+  return createTestHarness({
+    root: GATEWAY_ROOT,
+    workers: [
+      {
+        config: integrationGatewayConfig({
+          name: gatewayService,
+          managed: true,
+          managedServices: {
+            accounts: ACCOUNTS_WORKER,
+            inference: INFERENCE_WORKER,
+          },
+        }),
+      },
+      {
+        config: integrationDependencyConfig(gatewayService),
+      },
+      {
+        configPath: resolve(GATEWAY_ROOT, "../accounts/wrangler.test.jsonc"),
+        vars: {
+          ENVIRONMENT: "development",
+          GSV_ACCOUNT_ORIGIN: "http://localhost",
+          GSV_BASE_DOMAIN: "gsv.space",
+        },
+      },
+      {
+        configPath: resolve(GATEWAY_ROOT, "../inference/wrangler.test.jsonc"),
+        bindingOverrides: { ACCOUNTS: ACCOUNTS_WORKER },
       },
     ],
   });

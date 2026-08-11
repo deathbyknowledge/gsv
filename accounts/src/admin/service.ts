@@ -16,6 +16,15 @@ export type AdminInstallation = {
   onboardingExpiresAt: number | null;
   createdAt: number;
   activatedAt: number | null;
+  inference: {
+    period: string;
+    requests: number;
+    tokens: number;
+    costNanoUsd: number;
+    failed: number;
+    aborted: number;
+    abandoned: number;
+  };
 };
 
 export type IssuedAdminInstallation = {
@@ -32,6 +41,12 @@ type AdminInstallationRow = {
   onboarding_expires_at: number | null;
   created_at: number;
   activated_at: number | null;
+  inference_requests?: number;
+  inference_tokens?: number;
+  inference_cost_nano_usd?: number;
+  inference_failed?: number;
+  inference_aborted?: number;
+  inference_abandoned?: number;
 };
 
 export class InstallationAdminService {
@@ -42,20 +57,40 @@ export class InstallationAdminService {
   ) {}
 
   async list(): Promise<AdminInstallation[]> {
+    const period = currentInferencePeriod();
     const rows = await this.db.prepare(
       `SELECT
          i.id, i.handle, i.canonical_origin, i.state,
          p.state AS operation_state,
          c.expires_at AS onboarding_expires_at,
-         i.created_at, i.activated_at
+         i.created_at, i.activated_at,
+         COALESCE(u.requests, 0) AS inference_requests,
+         COALESCE(u.tokens, 0) AS inference_tokens,
+         COALESCE(u.cost_nano_usd, 0) AS inference_cost_nano_usd,
+         COALESCE(u.failed, 0) AS inference_failed,
+         COALESCE(u.aborted, 0) AS inference_aborted,
+         COALESCE(u.abandoned, 0) AS inference_abandoned
        FROM installations i
        JOIN provisioning_operations p
          ON p.installation_id = i.id AND p.kind = 'create'
        LEFT JOIN installation_onboarding_claims c ON c.installation_id = i.id
+       LEFT JOIN (
+         SELECT
+           installation_id,
+           COUNT(*) AS requests,
+           SUM(total_tokens) AS tokens,
+           SUM(cost_nano_usd) AS cost_nano_usd,
+           SUM(CASE WHEN outcome = 'failed' THEN 1 ELSE 0 END) AS failed,
+           SUM(CASE WHEN outcome = 'aborted' THEN 1 ELSE 0 END) AS aborted,
+           SUM(CASE WHEN outcome = 'abandoned' THEN 1 ELSE 0 END) AS abandoned
+         FROM managed_inference_usage_events
+         WHERE period = ?
+         GROUP BY installation_id
+       ) u ON u.installation_id = i.id
        WHERE i.state != 'deleted'
        ORDER BY i.created_at DESC`,
-    ).all<AdminInstallationRow>();
-    return rows.results.map(adminInstallationFromRow);
+    ).bind(period).all<AdminInstallationRow>();
+    return rows.results.map((row) => adminInstallationFromRow(row, period));
   }
 
   async create(input: {
@@ -103,7 +138,7 @@ export class InstallationAdminService {
        LIMIT 1`,
     ).bind(installationId).first<AdminInstallationRow>();
     if (!row) throw new Error("installation is unavailable");
-    return adminInstallationFromRow(row);
+    return adminInstallationFromRow(row, currentInferencePeriod());
   }
 
   private async ensureRegistryPrincipal(): Promise<void> {
@@ -133,7 +168,10 @@ export class InstallationAdminService {
   }
 }
 
-function adminInstallationFromRow(row: AdminInstallationRow): AdminInstallation {
+function adminInstallationFromRow(
+  row: AdminInstallationRow,
+  inferencePeriod: string,
+): AdminInstallation {
   return {
     installationId: row.id,
     handle: row.handle,
@@ -143,5 +181,18 @@ function adminInstallationFromRow(row: AdminInstallationRow): AdminInstallation 
     onboardingExpiresAt: row.onboarding_expires_at,
     createdAt: row.created_at,
     activatedAt: row.activated_at,
+    inference: {
+      period: inferencePeriod,
+      requests: row.inference_requests ?? 0,
+      tokens: row.inference_tokens ?? 0,
+      costNanoUsd: row.inference_cost_nano_usd ?? 0,
+      failed: row.inference_failed ?? 0,
+      aborted: row.inference_aborted ?? 0,
+      abandoned: row.inference_abandoned ?? 0,
+    },
   };
+}
+
+function currentInferencePeriod(): string {
+  return new Date().toISOString().slice(0, 7);
 }

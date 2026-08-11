@@ -14,6 +14,15 @@ function installation(): AdminInstallation {
     onboardingExpiresAt: 1_800_000,
     createdAt: 1_000_000,
     activatedAt: null,
+    inference: {
+      period: "2026-08",
+      requests: 2,
+      tokens: 3,
+      costNanoUsd: 340,
+      failed: 0,
+      aborted: 0,
+      abandoned: 0,
+    },
   };
 }
 
@@ -62,6 +71,7 @@ describe("accounts admin HTTP", () => {
     expect(response?.headers.get("referrer-policy")).toBe("same-origin");
     expect(body).toContain("Create installation");
     expect(body).toContain("reviewer");
+    expect(body).toContain("3 tokens");
     expect(body).not.toContain("onboard_secret");
   });
 

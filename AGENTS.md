@@ -59,7 +59,7 @@ Processes have identities, histories, permissions, queues, pending work, and lif
 ## System ownership
 
 - `accounts/`: installation reservations, hostname directory, private operator administration, one-time onboarding claims, managed principals, and account-to-installation membership.
-- `inference/`: private managed inference entrypoint and platform-owned provider transport.
+- `inference/`: private managed inference entrypoint, platform-owned provider transport, per-installation budgets, and usage settlement.
 - `gateway/src/kernel/`: authentication, capabilities, syscall dispatch, configuration, process registry, routing, schedules, adapters, and user connections.
 - `gateway/src/process/`: agent loop, history, queued input, pending tools, approvals, cancellation, context assembly, and process-scoped media.
 - `gateway/src/syscalls/` and `gateway/src/protocol/`: public runtime contracts and frame transport.
@@ -107,6 +107,7 @@ Keep platform-specific identity and delivery behavior in its adapter. Keep visua
 Durable Object SQLite and managed D1 schemas use versioned migrations in:
 
 - `accounts/migrations/`
+- `inference/src/schema/`
 - `gateway/src/kernel/schema/`
 - `gateway/src/process/schema/`
 - `gateway/src/schema/runner.ts`
@@ -173,7 +174,7 @@ npm run dev
 Validate only the surfaces affected by the change:
 
 - Managed accounts: `cd accounts && npm run typecheck && npm test`
-- Managed inference: `cd inference && npm run typecheck`
+- Managed inference: `cd inference && npm run typecheck && npm test`
 - Gateway: `cd gateway && npx tsc --noEmit && npm run test:run`
 - Web: `cd web && npm run check && npm run test:run && npm run build`
 - Public SDK: `npm run gsv:check && npm test --workspace packages/gsv`

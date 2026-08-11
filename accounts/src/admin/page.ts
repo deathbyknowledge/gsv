@@ -73,7 +73,7 @@ function installationTable(installations: AdminInstallation[]): string {
   if (installations.length === 0) {
     return `<div class="empty">No installations registered.</div>`;
   }
-  return `<div class="table-wrap"><table><thead><tr><th>Installation</th><th>State</th><th>Created</th><th></th></tr></thead>
+  return `<div class="table-wrap"><table><thead><tr><th>Installation</th><th>State</th><th>Inference</th><th>Created</th><th></th></tr></thead>
     <tbody>${installations.map(installationRow).join("")}</tbody></table></div>`;
 }
 
@@ -83,9 +83,26 @@ function installationRow(installation: AdminInstallation): string {
   return `<tr>
     <td><a href="${escapeHtml(installation.canonicalOrigin)}">${escapeHtml(installation.handle)}</a><small>${escapeHtml(installation.installationId)}</small></td>
     <td><span class="state">${escapeHtml(installation.state)}</span><small>operation: ${escapeHtml(installation.operationState)}</small></td>
+    <td>${formatNanoUsd(installation.inference.costNanoUsd)}<small>${installation.inference.requests.toLocaleString("en-US")} requests · ${installation.inference.tokens.toLocaleString("en-US")} tokens${inferenceFailures(installation)}</small></td>
     <td>${formatDate(installation.createdAt)}</td>
     <td>${canReissue ? `<form method="post" action="/admin/installations/${encodeURIComponent(installation.installationId)}/onboarding"><button class="secondary" type="submit">Reissue link</button></form>` : ""}</td>
   </tr>`;
+}
+
+function inferenceFailures(installation: AdminInstallation): string {
+  const failures = installation.inference.failed
+    + installation.inference.aborted
+    + installation.inference.abandoned;
+  return failures > 0 ? ` · ${failures.toLocaleString("en-US")} incomplete` : "";
+}
+
+function formatNanoUsd(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 9,
+  }).format(value / 1_000_000_000);
 }
 
 function formatDate(timestamp: number): string {

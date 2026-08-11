@@ -7,10 +7,13 @@ import type {
   InstallationDirectoryService,
   InstallationOnboardingAuthorization,
   InstallationOnboardingService,
+  ManagedInferenceUsageEvent,
+  ManagedInferenceUsageService,
 } from "@humansandmachines/gsv/protocol";
 import { EnvironmentAccountsAdminAccess } from "./admin/access";
 import { AccountsAdminHttp } from "./admin/http";
 import { InstallationAdminService } from "./admin/service";
+import { ManagedInferenceUsageStore } from "./inference-usage";
 import { InstallationOnboardingStore } from "./onboarding";
 import { AccountStore } from "./store";
 
@@ -29,7 +32,10 @@ type AccountServiceEnv = Omit<
 
 export default class AccountService
   extends WorkerEntrypoint<AccountServiceEnv>
-  implements InstallationDirectoryService, InstallationOnboardingService
+  implements
+    InstallationDirectoryService,
+    InstallationOnboardingService,
+    ManagedInferenceUsageService
 {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -55,6 +61,12 @@ export default class AccountService
     input: CompleteInstallationOnboardingInput,
   ): Promise<CompleteInstallationOnboardingResult> {
     return await this.onboardingStore().complete(input);
+  }
+
+  async recordManagedInferenceUsage(
+    events: ManagedInferenceUsageEvent[],
+  ): Promise<void> {
+    await new ManagedInferenceUsageStore(this.env.ACCOUNT_DB).record(events);
   }
 
   private store(): AccountStore {

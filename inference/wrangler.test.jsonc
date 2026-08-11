@@ -1,14 +1,13 @@
 {
-  "name": "gsv-inference-dev",
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gsv-inference-test",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-29",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "MANAGED_INFERENCE_ENABLED": true,
-    "MANAGED_INFERENCE_MONTHLY_LIMIT_NANO_USD": 0
-  },
-  "secrets": {
-    "required": ["OPENROUTER_API_KEY"]
+    "MANAGED_INFERENCE_MONTHLY_LIMIT_NANO_USD": 1500000,
+    "OPENROUTER_API_KEY": "test-key"
   },
   "migrations": [
     {
@@ -24,12 +23,6 @@
       }
     ]
   },
-  "services": [
-    {
-      "binding": "ACCOUNTS",
-      "service": "gsv-accounts-dev"
-    }
-  ],
   "workers_dev": false,
   "preview_urls": false
 }
