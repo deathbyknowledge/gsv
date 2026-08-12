@@ -80,6 +80,19 @@ export interface ManagedInferenceUsageService {
   ): Promise<void>;
 }
 
+export type ManagedInferencePolicy = {
+  version: 1;
+  installationId: string;
+  enabled: boolean;
+  monthlyLimitNanoUsd: number;
+};
+
+export interface ManagedInferencePolicyService {
+  getManagedInferencePolicy(
+    installationId: string,
+  ): Promise<ManagedInferencePolicy>;
+}
+
 export type ManagedInstallationState =
   | "reserved"
   | "provisioning"

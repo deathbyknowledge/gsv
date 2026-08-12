@@ -7,12 +7,15 @@ import type {
   InstallationDirectoryService,
   InstallationOnboardingAuthorization,
   InstallationOnboardingService,
+  ManagedInferencePolicy,
+  ManagedInferencePolicyService,
   ManagedInferenceUsageEvent,
   ManagedInferenceUsageService,
 } from "@humansandmachines/gsv/protocol";
 import { EnvironmentAccountsAdminAccess } from "./admin/access";
 import { AccountsAdminHttp } from "./admin/http";
 import { InstallationAdminService } from "./admin/service";
+import { ManagedInferencePolicyStore } from "./inference-policy";
 import { ManagedInferenceUsageStore } from "./inference-usage";
 import { InstallationOnboardingStore } from "./onboarding";
 import { AccountStore } from "./store";
@@ -35,6 +38,7 @@ export default class AccountService
   implements
     InstallationDirectoryService,
     InstallationOnboardingService,
+    ManagedInferencePolicyService,
     ManagedInferenceUsageService
 {
   async fetch(request: Request): Promise<Response> {
@@ -69,6 +73,12 @@ export default class AccountService
     await new ManagedInferenceUsageStore(this.env.ACCOUNT_DB).record(events);
   }
 
+  async getManagedInferencePolicy(
+    installationId: string,
+  ): Promise<ManagedInferencePolicy> {
+    return await this.inferencePolicies().resolve(installationId);
+  }
+
   private store(): AccountStore {
     return new AccountStore(
       this.env.ACCOUNT_DB,
@@ -81,6 +91,10 @@ export default class AccountService
     return new InstallationOnboardingStore(this.env.ACCOUNT_DB, this.store());
   }
 
+  private inferencePolicies(): ManagedInferencePolicyStore {
+    return new ManagedInferencePolicyStore(this.env.ACCOUNT_DB);
+  }
+
   private adminHttp(): AccountsAdminHttp {
     const accounts = this.store();
     const onboarding = new InstallationOnboardingStore(
@@ -88,7 +102,12 @@ export default class AccountService
       accounts,
     );
     return new AccountsAdminHttp(
-      new InstallationAdminService(this.env.ACCOUNT_DB, accounts, onboarding),
+      new InstallationAdminService(
+        this.env.ACCOUNT_DB,
+        accounts,
+        onboarding,
+        this.inferencePolicies(),
+      ),
       new EnvironmentAccountsAdminAccess(this.env),
       parseAccountOrigin(this.env.GSV_ACCOUNT_ORIGIN),
     );

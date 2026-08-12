@@ -1,5 +1,6 @@
 import type { ManagedInstallationState } from "@humansandmachines/gsv/protocol";
 import { parseOpaqueId } from "../domain";
+import type { ManagedInferencePolicyStore } from "../inference-policy";
 import type { IssuedInstallationOnboarding } from "../onboarding";
 import { InstallationOnboardingStore } from "../onboarding";
 import { AccountStore } from "../store";
@@ -17,6 +18,8 @@ export type AdminInstallation = {
   createdAt: number;
   activatedAt: number | null;
   inference: {
+    enabled: boolean;
+    monthlyLimitNanoUsd: number;
     period: string;
     requests: number;
     tokens: number;
@@ -25,6 +28,13 @@ export type AdminInstallation = {
     aborted: number;
     abandoned: number;
   };
+};
+
+export type AdminOverview = {
+  inference: {
+    enabled: boolean;
+  };
+  installations: AdminInstallation[];
 };
 
 export type IssuedAdminInstallation = {
@@ -47,6 +57,8 @@ type AdminInstallationRow = {
   inference_failed?: number;
   inference_aborted?: number;
   inference_abandoned?: number;
+  inference_enabled?: number;
+  inference_monthly_limit_nano_usd?: number;
 };
 
 export class InstallationAdminService {
@@ -54,9 +66,32 @@ export class InstallationAdminService {
     private readonly db: D1Database,
     private readonly accounts: AccountStore,
     private readonly onboarding: InstallationOnboardingStore,
+    private readonly inferencePolicies: ManagedInferencePolicyStore,
   ) {}
 
-  async list(): Promise<AdminInstallation[]> {
+  async overview(): Promise<AdminOverview> {
+    const [installations, control] = await Promise.all([
+      this.listInstallations(),
+      this.inferencePolicies.control(),
+    ]);
+    return {
+      inference: { enabled: control.enabled },
+      installations,
+    };
+  }
+
+  async setInferenceControl(enabled: boolean): Promise<void> {
+    await this.inferencePolicies.setControl(enabled);
+  }
+
+  async setInstallationInferencePolicy(
+    installationId: string,
+    input: { enabled: boolean; monthlyLimitNanoUsd: number },
+  ): Promise<void> {
+    await this.inferencePolicies.setInstallationPolicy(installationId, input);
+  }
+
+  private async listInstallations(): Promise<AdminInstallation[]> {
     const period = currentInferencePeriod();
     const rows = await this.db.prepare(
       `SELECT
@@ -69,11 +104,15 @@ export class InstallationAdminService {
          COALESCE(u.cost_nano_usd, 0) AS inference_cost_nano_usd,
          COALESCE(u.failed, 0) AS inference_failed,
          COALESCE(u.aborted, 0) AS inference_aborted,
-         COALESCE(u.abandoned, 0) AS inference_abandoned
+         COALESCE(u.abandoned, 0) AS inference_abandoned,
+         COALESCE(ip.enabled, 0) AS inference_enabled,
+         COALESCE(ip.monthly_limit_nano_usd, 0)
+           AS inference_monthly_limit_nano_usd
        FROM installations i
        JOIN provisioning_operations p
          ON p.installation_id = i.id AND p.kind = 'create'
        LEFT JOIN installation_onboarding_claims c ON c.installation_id = i.id
+       LEFT JOIN managed_inference_policies ip ON ip.installation_id = i.id
        LEFT JOIN (
          SELECT
            installation_id,
@@ -182,6 +221,8 @@ function adminInstallationFromRow(
     createdAt: row.created_at,
     activatedAt: row.activated_at,
     inference: {
+      enabled: row.inference_enabled === 1,
+      monthlyLimitNanoUsd: row.inference_monthly_limit_nano_usd ?? 0,
       period: inferencePeriod,
       requests: row.inference_requests ?? 0,
       tokens: row.inference_tokens ?? 0,

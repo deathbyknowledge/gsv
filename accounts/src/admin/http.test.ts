@@ -15,6 +15,8 @@ function installation(): AdminInstallation {
     createdAt: 1_000_000,
     activatedAt: null,
     inference: {
+      enabled: false,
+      monthlyLimitNanoUsd: 0,
       period: "2026-08",
       requests: 2,
       tokens: 3,
@@ -39,9 +41,14 @@ function issued(): IssuedAdminInstallation {
 
 function service() {
   return {
-    list: vi.fn(async () => [installation()]),
+    overview: vi.fn(async () => ({
+      inference: { enabled: false },
+      installations: [installation()],
+    })),
     create: vi.fn(async () => issued()),
     reissueOnboarding: vi.fn(async () => issued()),
+    setInferenceControl: vi.fn(async () => {}),
+    setInstallationInferencePolicy: vi.fn(async () => {}),
   };
 }
 
@@ -56,7 +63,7 @@ describe("accounts admin HTTP", () => {
 
     const response = await http.handle(new Request(`${ACCOUNT_ORIGIN}/admin`));
     expect(response?.status).toBe(403);
-    expect(adminService.list).not.toHaveBeenCalled();
+    expect(adminService.overview).not.toHaveBeenCalled();
   });
 
   it("renders the registry without exposing claim material from its list", async () => {
@@ -126,5 +133,74 @@ describe("accounts admin HTTP", () => {
 
     expect(response?.status).toBe(403);
     expect(adminService.create).not.toHaveBeenCalled();
+  });
+
+  it("updates global and installation inference policy through the API", async () => {
+    const adminService = service();
+    const http = new AccountsAdminHttp(
+      adminService,
+      { allows: vi.fn(async () => true) },
+      ACCOUNT_ORIGIN,
+    );
+
+    const controlResponse = await http.handle(new Request(
+      `${ACCOUNT_ORIGIN}/admin/api/inference`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: ACCOUNT_ORIGIN,
+        },
+        body: JSON.stringify({ enabled: true }),
+      },
+    ));
+    expect(controlResponse?.status).toBe(200);
+    expect(adminService.setInferenceControl).toHaveBeenCalledWith(true);
+
+    const policyResponse = await http.handle(new Request(
+      `${ACCOUNT_ORIGIN}/admin/api/installations/inst_admin_http/inference`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: ACCOUNT_ORIGIN,
+        },
+        body: JSON.stringify({
+          enabled: true,
+          monthlyLimitNanoUsd: 5_000_000_000,
+        }),
+      },
+    ));
+    expect(policyResponse?.status).toBe(200);
+    expect(adminService.setInstallationInferencePolicy).toHaveBeenCalledWith(
+      "inst_admin_http",
+      { enabled: true, monthlyLimitNanoUsd: 5_000_000_000 },
+    );
+  });
+
+  it("converts the operator form allowance to exact nano-dollars", async () => {
+    const adminService = service();
+    const http = new AccountsAdminHttp(
+      adminService,
+      { allows: vi.fn(async () => true) },
+      ACCOUNT_ORIGIN,
+    );
+    const response = await http.handle(new Request(
+      `${ACCOUNT_ORIGIN}/admin/installations/inst_admin_http/inference`,
+      {
+        method: "POST",
+        headers: { origin: ACCOUNT_ORIGIN },
+        body: new URLSearchParams({
+          enabled: "true",
+          monthlyLimitUsd: "12.345678901",
+        }),
+      },
+    ));
+
+    expect(response?.status).toBe(200);
+    expect(adminService.setInstallationInferencePolicy).toHaveBeenCalledWith(
+      "inst_admin_http",
+      { enabled: true, monthlyLimitNanoUsd: 12_345_678_901 },
+    );
   });
 });

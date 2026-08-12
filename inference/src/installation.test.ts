@@ -211,6 +211,54 @@ describe("installation managed inference", () => {
     expect(state.result).toMatchObject({ responseId: "gen_allowance" });
   });
 
+  it("rejects a disabled installation before contacting the provider", async () => {
+    const installationId = "installation_policy_disabled";
+    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const fetchMock = vi.fn<typeof fetch>(async () => completion("unexpected"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rejection = await runInDurableObject(stub, async (instance) => {
+      try {
+        await (instance as InferenceInstallation).generate(request(
+          installationId,
+          "request_policy_disabled",
+        ));
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+      return "";
+    });
+    expect(rejection).toContain("disabled for this installation");
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(stub.usage()).resolves.toMatchObject({
+      startedRequests: 0,
+      spentNanoUsd: 0,
+      reservedNanoUsd: 0,
+    });
+  });
+
+  it("enforces the installation policy below the deployment ceiling", async () => {
+    const installationId = "installation_policy_limited";
+    const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
+    const fetchMock = vi.fn<typeof fetch>(async () => completion("unexpected"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const rejection = await runInDurableObject(stub, async (instance) => {
+      try {
+        await (instance as InferenceInstallation).generate(request(
+          installationId,
+          "request_policy_limited",
+          32,
+        ));
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+      return "";
+    });
+    expect(rejection).toContain("monthly allowance is exhausted");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("exports completed rows from an alarm and marks them delivered", async () => {
     const installationId = "installation_export";
     const stub = env.INFERENCE_INSTALLATIONS.getByName(installationId);
@@ -279,6 +327,12 @@ describe("installation managed inference", () => {
     const state = await runInDurableObject(stub, async (instance, durableState) => {
       const object = instance as unknown as { env: InferenceEnv };
       object.env.ACCOUNTS = {
+        getManagedInferencePolicy: async (installationId) => ({
+          version: 1,
+          installationId,
+          enabled: true,
+          monthlyLimitNanoUsd: Number.MAX_SAFE_INTEGER,
+        }),
         recordManagedInferenceUsage: async () => {
           throw new Error("synthetic Accounts outage");
         },

@@ -77,9 +77,11 @@ then deploys Inference, ripgit, and the wildcard Gateway. Durable Object class
 migrations are applied with their owning Worker deployments.
 
 Managed inference is source-controlled off in `inference/wrangler.jsonc`, with
-a zero allowance. Do not enable it by changing only the boolean: choose and
-review a nonzero monthly limit in the same change, deploy Inference, and run a
-real installation smoke before advertising the provider.
+a zero deployment ceiling. Do not enable it by changing only the boolean:
+choose and review a nonzero deployment ceiling in the same change, deploy
+Inference, then use the Accounts admin to enable the operational switch and a
+positive allowance for each installation. The effective allowance is the lower
+of the deployment ceiling and the installation allowance.
 
 ## Smoke and rollback
 
@@ -92,7 +94,8 @@ After deployment:
 - verify its R2, Process, repository, and inference addresses use its immutable
   installation ID; and
 - while inference is disabled, verify generation fails without contacting the
-  provider.
+  provider; then enable the operational and installation controls and verify a
+  generation settles into the Accounts usage view.
 
 Record each prior Worker version before updating. Worker rollback does not roll
 back D1, R2, or Durable Object storage. Schema changes therefore remain

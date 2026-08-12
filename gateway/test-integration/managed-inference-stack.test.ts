@@ -57,6 +57,8 @@ describe("managed inference stack integration", () => {
     };
     const installationId = created.installation.installationId;
     const onboardingToken = new URL(created.onboarding.onboardingUrl).hash.slice(1);
+    await setInferenceControl(accounts, true);
+    await setInstallationInferencePolicy(accounts, installationId, 1_500_000);
 
     const socketResponse = await harness.getWorker(GATEWAY_WORKER).fetch(
       `https://${HANDLE}.gsv.space/ws`,
@@ -119,6 +121,31 @@ describe("managed inference stack integration", () => {
         provider: "gsv",
         model: "gsv/default",
         text: "managed stack pong",
+      });
+      expect(providerFetch).toHaveBeenCalledTimes(1);
+
+      await setInferenceControl(accounts, false);
+      const blocked = await expectRpcOk(
+        socket,
+        "generate-disabled",
+        "ai.text.generate",
+        {
+          messages: [{ role: "user", content: "ping again" }],
+          config: {
+            overrides: {
+              "config/ai/provider": "gsv",
+              "config/ai/model": "default",
+              "config/ai/api_key": "",
+            },
+          },
+          options: { maxTokens: 128, reasoning: "low", timeoutMs: 5_000 },
+        },
+      );
+      expect(blocked.data).toMatchObject({
+        message: {
+          stopReason: "error",
+          errorMessage: "GSV inference is unavailable",
+        },
       });
       expect(providerFetch).toHaveBeenCalledTimes(1);
     } finally {
@@ -187,6 +214,16 @@ type RpcResponse = {
 type HarnessWorker = ReturnType<TestHarness["getWorker"]>;
 type HarnessResponse = Awaited<ReturnType<HarnessWorker["fetch"]>>;
 type HarnessWebSocket = NonNullable<HarnessResponse["webSocket"]>;
+type AdminWorker = {
+  fetch(
+    input: string,
+    init: {
+      method: "POST";
+      headers: Record<string, string>;
+      body: string;
+    },
+  ): Promise<{ status: number }>;
+};
 
 async function expectRpcOk(
   socket: HarnessWebSocket,
@@ -251,6 +288,40 @@ async function waitForAccountsUsage(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("Timed out waiting for managed inference usage export");
+}
+
+async function setInferenceControl(
+  accounts: AdminWorker,
+  enabled: boolean,
+): Promise<void> {
+  const response = await accounts.fetch("http://localhost/admin/api/inference", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: "http://localhost",
+    },
+    body: JSON.stringify({ enabled }),
+  });
+  expect(response.status).toBe(200);
+}
+
+async function setInstallationInferencePolicy(
+  accounts: AdminWorker,
+  installationId: string,
+  monthlyLimitNanoUsd: number,
+): Promise<void> {
+  const response = await accounts.fetch(
+    `http://localhost/admin/api/installations/${installationId}/inference`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost",
+      },
+      body: JSON.stringify({ enabled: true, monthlyLimitNanoUsd }),
+    },
+  );
+  expect(response.status).toBe(200);
 }
 
 function openRouterCompletion(): Response {

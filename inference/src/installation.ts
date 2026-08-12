@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   GSV_INFERENCE_PRODUCT_MODEL,
+  type ManagedInferencePolicy,
   type ManagedInferenceRequest,
   type ManagedInferenceResult,
   type ManagedInferenceUsageEvent,
@@ -88,12 +89,12 @@ type PeriodRow = {
 export class InferenceInstallation extends DurableObject<InferenceEnv> {
   private readonly installationId: string;
   private readonly activeGenerations = new Map<string, ActiveGeneration>();
-  private readonly monthlyLimitNanoUsd: number;
+  private readonly deploymentMonthlyLimitNanoUsd: number;
 
   constructor(ctx: DurableObjectState, env: InferenceEnv) {
     super(ctx, env);
     this.installationId = validateOpaqueId(ctx.id.name ?? "", "installationId");
-    this.monthlyLimitNanoUsd = parseMonthlyLimit(
+    this.deploymentMonthlyLimitNanoUsd = parseMonthlyLimit(
       env.MANAGED_INFERENCE_MONTHLY_LIMIT_NANO_USD,
     );
     runInferenceSqlMigrations(ctx.storage);
@@ -171,9 +172,22 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     input: ManagedInferenceRequest,
     generation: ReturnType<typeof createOpenRouterGeneration>,
   ): Promise<ManagedInferenceResult> {
+    const policy = await this.env.ACCOUNTS.getManagedInferencePolicy(
+      this.installationId,
+    );
+    const monthlyLimitNanoUsd = effectiveMonthlyLimit(
+      policy,
+      this.installationId,
+      this.deploymentMonthlyLimitNanoUsd,
+    );
     const startedAt = Date.now();
     const reservedNanoUsd = reservationNanoUsd(input);
-    this.reserve(input, startedAt, reservedNanoUsd);
+    this.reserve(
+      input,
+      startedAt,
+      reservedNanoUsd,
+      monthlyLimitNanoUsd,
+    );
     await this.scheduleNextAlarm();
 
     try {
@@ -192,6 +206,7 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
     input: ManagedInferenceRequest,
     startedAt: number,
     reservedNanoUsd: number,
+    monthlyLimitNanoUsd: number,
   ): void {
     const period = inferencePeriod(startedAt);
     const reservationExpiresAt = startedAt
@@ -223,10 +238,9 @@ export class InferenceInstallation extends DurableObject<InferenceEnv> {
         period,
       ).one();
       if (
-        this.monthlyLimitNanoUsd > 0
-        && usage.spent_nano_usd
+        usage.spent_nano_usd
           + usage.reserved_nano_usd
-          + reservedNanoUsd > this.monthlyLimitNanoUsd
+          + reservedNanoUsd > monthlyLimitNanoUsd
       ) {
         throw new Error("Managed inference monthly allowance is exhausted");
       }
@@ -553,6 +567,31 @@ function parseMonthlyLimit(value: number): number {
     throw new Error("Managed inference monthly limit is invalid");
   }
   return value;
+}
+
+function effectiveMonthlyLimit(
+  policy: ManagedInferencePolicy,
+  installationId: string,
+  deploymentLimitNanoUsd: number,
+): number {
+  if (
+    policy.version !== 1
+    || policy.installationId !== installationId
+    || typeof policy.enabled !== "boolean"
+    || !Number.isSafeInteger(policy.monthlyLimitNanoUsd)
+    || policy.monthlyLimitNanoUsd < 0
+  ) {
+    throw new Error("Managed inference policy is invalid");
+  }
+  if (!policy.enabled) {
+    throw new Error("Managed inference is disabled for this installation");
+  }
+  if (policy.monthlyLimitNanoUsd === 0) {
+    throw new Error("Managed inference policy is invalid");
+  }
+  return deploymentLimitNanoUsd === 0
+    ? policy.monthlyLimitNanoUsd
+    : Math.min(policy.monthlyLimitNanoUsd, deploymentLimitNanoUsd);
 }
 
 function inferencePeriod(timestamp: number): string {

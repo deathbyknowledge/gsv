@@ -1,11 +1,12 @@
 import { noStoreHeaders } from "../http";
 import type {
   AdminInstallation,
+  AdminOverview,
   IssuedAdminInstallation,
 } from "./service";
 
 export function adminPage(
-  installations: AdminInstallation[],
+  overview: AdminOverview,
   issued?: IssuedAdminInstallation,
   error?: string,
   head = false,
@@ -24,10 +25,11 @@ export function adminPage(
     <main>
       <section class="heading">
         <div><p class="eyebrow">MANAGED CONTROL PLANE</p><h1>Installations</h1></div>
-        <span>${installations.length} registered</span>
+        <span>${overview.installations.length} registered</span>
       </section>
       ${error ? errorNotice(error) : ""}
       ${issued ? onboardingNotice(issued) : ""}
+      ${inferenceControl(overview.inference.enabled)}
       <section class="workspace">
         <form class="create" method="post" action="/admin/installations">
           <div><p class="eyebrow">NEW INSTALLATION</p><h2>Reserve a GSV</h2>
@@ -37,7 +39,7 @@ export function adminPage(
           <button type="submit">Create installation</button>
         </form>
         <section class="registry"><p class="eyebrow">REGISTRY</p><h2>Current installations</h2>
-          ${installationTable(installations)}
+          ${installationTable(overview.installations)}
         </section>
       </section>
     </main>
@@ -47,6 +49,14 @@ export function adminPage(
     status,
     headers: adminHeaders("text/html; charset=utf-8"),
   });
+}
+
+function inferenceControl(enabled: boolean): string {
+  return `<section class="inference-control">
+    <div><p class="eyebrow">MANAGED INFERENCE</p><h2>${enabled ? "Requests enabled" : "Requests paused"}</h2>
+    <p>The platform switch applies before every new installation request.</p></div>
+    <form method="post" action="/admin/inference"><button class="${enabled ? "danger" : "secondary"}" type="submit" name="enabled" value="${enabled ? "false" : "true"}">${enabled ? "Pause all inference" : "Enable inference"}</button></form>
+  </section>`;
 }
 
 export function adminStylesheet(head: boolean): Response {
@@ -83,10 +93,24 @@ function installationRow(installation: AdminInstallation): string {
   return `<tr>
     <td><a href="${escapeHtml(installation.canonicalOrigin)}">${escapeHtml(installation.handle)}</a><small>${escapeHtml(installation.installationId)}</small></td>
     <td><span class="state">${escapeHtml(installation.state)}</span><small>operation: ${escapeHtml(installation.operationState)}</small></td>
-    <td>${formatNanoUsd(installation.inference.costNanoUsd)}<small>${installation.inference.requests.toLocaleString("en-US")} requests · ${installation.inference.tokens.toLocaleString("en-US")} tokens${inferenceFailures(installation)}</small></td>
+    <td><span class="state">${installation.inference.enabled ? "enabled" : "disabled"}</span> ${formatNanoUsd(installation.inference.costNanoUsd)} / ${formatNanoUsd(installation.inference.monthlyLimitNanoUsd)}<small>${installation.inference.requests.toLocaleString("en-US")} requests · ${installation.inference.tokens.toLocaleString("en-US")} tokens${inferenceFailures(installation)}</small>
+      <form class="inference-policy" method="post" action="/admin/installations/${encodeURIComponent(installation.installationId)}/inference">
+        <label><span>Monthly USD</span><input name="monthlyLimitUsd" required inputmode="decimal" value="${formatNanoUsdInput(installation.inference.monthlyLimitNanoUsd)}"></label>
+        <button class="secondary" type="submit" name="enabled" value="true">Save & enable</button>
+        <button class="secondary" type="submit" name="enabled" value="false" formnovalidate>Disable</button>
+      </form>
+    </td>
     <td>${formatDate(installation.createdAt)}</td>
     <td>${canReissue ? `<form method="post" action="/admin/installations/${encodeURIComponent(installation.installationId)}/onboarding"><button class="secondary" type="submit">Reissue link</button></form>` : ""}</td>
   </tr>`;
+}
+
+function formatNanoUsdInput(value: number): string {
+  const whole = Math.floor(value / 1_000_000_000);
+  const fraction = String(value % 1_000_000_000)
+    .padStart(9, "0")
+    .replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : String(whole);
 }
 
 function inferenceFailures(installation: AdminInstallation): string {
@@ -148,13 +172,14 @@ h1 { margin: 7px 0 0; font: 500 34px system-ui, sans-serif; } h2 { margin: 7px 0
 .eyebrow { margin: 0; color: #8f8aff; font-size: 11px; letter-spacing: .08em; }
 .workspace { display: grid; grid-template-columns: 320px minmax(0, 1fr); border: 1px solid #292932; }
 .create, .registry { padding: 26px; } .create { display: flex; flex-direction: column; gap: 26px; border-right: 1px solid #292932; background: #0e0e15; }
-.create p, .notice p { color: #a7a7b2; font: 13px/1.55 system-ui, sans-serif; }
+.create p, .notice p, .inference-control p { color: #a7a7b2; font: 13px/1.55 system-ui, sans-serif; }
 label { display: grid; gap: 8px; font-size: 12px; } input { border: 1px solid #3a3a46; padding: 12px; color: #fff; background: #08080c; font: inherit; }
 button, .notice a { border: 1px solid #716bea; padding: 10px 14px; color: #fff; background: #34306f; font: inherit; text-decoration: none; cursor: pointer; }
+.inference-control { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; border: 1px solid #292932; padding: 18px 22px; background: #0e0e15; } .inference-control h2, .inference-control p { margin-bottom: 0; }
 .notice { display: grid; grid-template-columns: 1fr auto; gap: 12px 24px; margin-bottom: 24px; border: 1px solid #315f4b; padding: 22px; background: #0d1713; }
 .notice code, .notice small { grid-column: 1 / -1; } .notice code { overflow: auto; padding: 12px; background: #09110e; } .notice.error { display: block; border-color: #6c3439; background: #1a0e10; }
 .table-wrap { overflow-x: auto; } table { width: 100%; border-collapse: collapse; text-align: left; } th, td { padding: 14px; border-bottom: 1px solid #292932; font-size: 12px; vertical-align: middle; }
-td a { color: #ecebff; } td small { display: block; margin-top: 6px; color: #858593; } .state { color: #dfc86b; text-transform: uppercase; } button.secondary { padding: 7px 9px; border-color: #3d3d49; background: #17171e; white-space: nowrap; }
+td a { color: #ecebff; } td small { display: block; margin-top: 6px; color: #858593; } .state { color: #dfc86b; text-transform: uppercase; } button.secondary { padding: 7px 9px; border-color: #3d3d49; background: #17171e; white-space: nowrap; } button.danger { border-color: #743b42; background: #481f25; } .inference-policy { display: flex; align-items: end; gap: 6px; margin-top: 10px; } .inference-policy label { width: 112px; } .inference-policy input { width: 100%; padding: 7px; }
 .empty { padding: 50px 0; color: #858593; text-align: center; }
-@media (max-width: 760px) { header small { display: none; } main { padding: 32px 16px; } .workspace { grid-template-columns: 1fr; } .create { border-right: 0; border-bottom: 1px solid #292932; } .notice { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { header small { display: none; } main { padding: 32px 16px; } .workspace { grid-template-columns: 1fr; } .create { border-right: 0; border-bottom: 1px solid #292932; } .notice { grid-template-columns: 1fr; } .inference-control, .inference-policy { align-items: stretch; flex-direction: column; } }
 `;

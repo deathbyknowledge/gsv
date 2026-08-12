@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { InstallationOnboardingStore } from "../onboarding";
+import { ManagedInferencePolicyStore } from "../inference-policy";
 import { ManagedInferenceUsageStore } from "../inference-usage";
 import { AccountStore } from "../store";
 import { InstallationAdminService } from "./service";
@@ -11,6 +12,7 @@ function adminService(): InstallationAdminService {
     env.ACCOUNT_DB,
     accounts,
     new InstallationOnboardingStore(env.ACCOUNT_DB, accounts),
+    new ManagedInferencePolicyStore(env.ACCOUNT_DB),
   );
 }
 
@@ -32,7 +34,9 @@ describe("installation admin service", () => {
     expect(created.onboarding.onboardingUrl).toMatch(
       new RegExp(`^https://admin-${suffix}\\.gsv\\.space/onboarding#onboard_`),
     );
-    await expect(service.list()).resolves.toContainEqual(created.installation);
+    await expect(service.overview()).resolves.toMatchObject({
+      installations: expect.arrayContaining([created.installation]),
+    });
   });
 
   it("reissues a claim without creating another installation", async () => {
@@ -82,13 +86,41 @@ describe("installation admin service", () => {
       completedAt: startedAt + 10,
     }]);
 
-    await expect(service.list()).resolves.toContainEqual(expect.objectContaining({
-      installationId: created.installation.installationId,
-      inference: expect.objectContaining({
-        requests: 1,
-        tokens: 3,
-        costNanoUsd: 340,
-      }),
-    }));
+    await expect(service.overview()).resolves.toMatchObject({
+      installations: expect.arrayContaining([expect.objectContaining({
+        installationId: created.installation.installationId,
+        inference: expect.objectContaining({
+          requests: 1,
+          tokens: 3,
+          costNanoUsd: 340,
+        }),
+      })]),
+    });
+  });
+
+  it("updates global and installation inference controls", async () => {
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const service = adminService();
+    const created = await service.create({
+      operationId: `operation_control_${suffix}`,
+      handle: `control-${suffix}`,
+    });
+
+    await service.setInferenceControl(true);
+    await service.setInstallationInferencePolicy(
+      created.installation.installationId,
+      { enabled: true, monthlyLimitNanoUsd: 10_000_000_000 },
+    );
+
+    await expect(service.overview()).resolves.toMatchObject({
+      inference: { enabled: true },
+      installations: expect.arrayContaining([expect.objectContaining({
+        installationId: created.installation.installationId,
+        inference: expect.objectContaining({
+          enabled: true,
+          monthlyLimitNanoUsd: 10_000_000_000,
+        }),
+      })]),
+    });
   });
 });

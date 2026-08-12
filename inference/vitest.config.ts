@@ -35,6 +35,17 @@ export default defineConfig({
           script: `
             import { WorkerEntrypoint } from "cloudflare:workers";
             export default class AccountsUsageSink extends WorkerEntrypoint {
+              async getManagedInferencePolicy(installationId) {
+                return {
+                  version: 1,
+                  installationId,
+                  enabled: !installationId.endsWith("_policy_disabled"),
+                  monthlyLimitNanoUsd: installationId.endsWith("_policy_limited")
+                    ? 1_000
+                    : Number.MAX_SAFE_INTEGER,
+                };
+              }
+
               async recordManagedInferenceUsage(events) {
                 if (!Array.isArray(events) || events.length === 0) {
                   throw new Error("missing usage events");
