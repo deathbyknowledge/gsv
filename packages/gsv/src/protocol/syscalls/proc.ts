@@ -267,38 +267,10 @@ export type ProcMessageFallbackMetadata = {
   reason?: string;
 };
 
-export type ProcActivityCategory =
-  | "thinking"
-  | "searching_files"
-  | "reading_files"
-  | "writing_files"
-  | "editing_files"
-  | "deleting_files"
-  | "running_commands"
-  | "running_code";
-
-export type ProcActivitySummaryCategory = Exclude<ProcActivityCategory, "thinking">;
-
-export type ProcActivityUnit = "operations" | "reads" | "commands" | "runs";
-
-export type ProcActivitySummaryEntry = {
-  category: ProcActivitySummaryCategory;
-  count: number;
-  unit: ProcActivityUnit;
-};
-
-export type ProcRunActivityPayload = {
-  pid: string;
-  runId: string;
-  category: ProcActivityCategory;
-  timestamp: number;
-};
-
 export type ProcMessageMetadata = {
   provider?: ProcMessageProviderMetadata;
   fallback?: ProcMessageFallbackMetadata;
   usage?: ProcUsageState;
-  activitySummary?: ProcActivitySummaryEntry[];
 };
 
 export type ProcContextState = {

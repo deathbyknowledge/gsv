@@ -1015,9 +1015,6 @@ export class Kernel extends Host<Env> {
       case "proc.run.output":
         patchForActive("running");
         return true;
-      case "proc.run.activity":
-        patchForActive(payload.category === "thinking" ? "running" : "waiting_tool");
-        return true;
       case "proc.run.tool.started":
         patchForActive("waiting_tool");
         return true;
