@@ -17,9 +17,18 @@ pub(super) struct TextSelection {
     inner: Rc<RefCell<TextSelectionState>>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SelectionTopology {
+    PlainMessage,
+    RichDocument,
+    PlainPrefixWithRichDocument,
+    TerminalTranscript,
+}
+
 #[derive(Default)]
 struct TextSelectionState {
     content_key: String,
+    topology: Option<SelectionTopology>,
     anchor: Option<DocumentPosition>,
     head: Option<DocumentPosition>,
     drag_origin: Option<Point<Pixels>>,
@@ -41,11 +50,12 @@ struct RegisteredFragment {
 }
 
 impl TextSelection {
-    pub(super) fn prepare(&self, content_key: impl Into<String>) {
+    pub(super) fn prepare(&self, content_key: impl Into<String>, topology: SelectionTopology) {
         let content_key = content_key.into();
         let mut state = self.inner.borrow_mut();
-        if state.content_key != content_key {
+        if state.content_key != content_key || state.topology != Some(topology) {
             state.content_key = content_key;
+            state.topology = Some(topology);
             state.anchor = None;
             state.head = None;
             state.drag_origin = None;
@@ -714,6 +724,32 @@ mod tests {
         assert!(!selection.clear());
     }
 
+    #[test]
+    fn incompatible_fragment_topology_invalidates_an_existing_selection() {
+        let selection = TextSelection::default();
+        selection.prepare("same-reply", SelectionTopology::PlainMessage);
+        {
+            let mut state = selection.inner.borrow_mut();
+            state.fragments.insert(0, fragment("same text", ""));
+            state.anchor = Some(DocumentPosition {
+                order: 0,
+                offset: 0,
+            });
+            state.head = Some(DocumentPosition {
+                order: 0,
+                offset: 4,
+            });
+        }
+        assert_eq!(selection.selected_text().as_deref(), Some("same"));
+
+        selection.prepare("same-reply", SelectionTopology::RichDocument);
+
+        assert_eq!(selection.selected_text(), None);
+        let state = selection.inner.borrow();
+        assert!(state.anchor.is_none());
+        assert!(state.head.is_none());
+    }
+
     struct SelectionHarness {
         selection: TextSelection,
         focus_handle: FocusHandle,
@@ -738,7 +774,8 @@ mod tests {
 
     impl Render for SelectionHarness {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            self.selection.prepare("selection-harness");
+            self.selection
+                .prepare("selection-harness", SelectionTopology::RichDocument);
             div()
                 .size_full()
                 .track_focus(&self.focus_handle)

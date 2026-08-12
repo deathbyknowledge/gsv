@@ -20,7 +20,7 @@ use crate::typography::{fit_type_layout, TypeLayout};
 
 use super::media::release_assets;
 use super::rich::{media_descriptors, render_document};
-use super::selection::{SelectableText, SelectionSurface, TextSelection};
+use super::selection::{SelectableText, SelectionSurface, SelectionTopology, TextSelection};
 use super::{type_content_hash, CachedTypeLayout, GsvApp};
 
 #[derive(Clone, Copy)]
@@ -222,6 +222,14 @@ fn activity_summary_revision(entries: &[ActivitySummaryEntry]) -> u64 {
         .collect::<Vec<_>>()
         .join("\n");
     type_content_hash(&summary)
+}
+
+fn message_selection_topology(rich_content: bool, append_plain_text: bool) -> SelectionTopology {
+    match (rich_content, append_plain_text) {
+        (false, _) => SelectionTopology::PlainMessage,
+        (true, false) => SelectionTopology::RichDocument,
+        (true, true) => SelectionTopology::PlainPrefixWithRichDocument,
+    }
 }
 
 impl GsvApp {
@@ -457,6 +465,12 @@ impl GsvApp {
             .prepared_content
             .resolve_or_request(&moment_id, role, state, &message, &media);
         let append_plain_text = self.prepared_content.appends_plain_text(&moment_id);
+        let selection_topology = message_selection_topology(
+            prepared_content
+                .as_ref()
+                .is_some_and(PreparedContent::is_rich),
+            append_plain_text,
+        );
         let content_pending = self.prepared_content.is_pending(&moment_id);
         if self.message_scroll_moment.as_deref() != Some(moment_id.as_str()) {
             self.message_scroll.set_offset(point(px(0.0), px(0.0)));
@@ -551,11 +565,14 @@ impl GsvApp {
         if draft_visible {
             self.text_selection.clear();
         } else {
-            self.text_selection.prepare(format!(
-                "conversation:{moment_id}:{}:{}",
-                content_revision(&message, &media).get(),
-                activity_summary_revision(&activity_summary)
-            ));
+            self.text_selection.prepare(
+                format!(
+                    "conversation:{moment_id}:{}:{}",
+                    content_revision(&message, &media).get(),
+                    activity_summary_revision(&activity_summary)
+                ),
+                selection_topology,
+            );
         }
         let released = if draft_visible {
             self.media_cache.sync([], &self.commands)
@@ -1009,10 +1026,10 @@ impl GsvApp {
                 )
             })
             .collect::<String>();
-        self.text_selection.prepare(format!(
-            "terminal:{}",
-            type_content_hash(&terminal_revision)
-        ));
+        self.text_selection.prepare(
+            format!("terminal:{}", type_content_hash(&terminal_revision)),
+            SelectionTopology::TerminalTranscript,
+        );
         let visible_exchange_count = self.terminal.len().min(24);
         let transcript = self
             .terminal
@@ -1226,6 +1243,22 @@ mod tests {
         assert!(!stable_transition_cost(&mut remembered, 7, false));
         assert!(!stable_transition_cost(&mut remembered, 7, true));
         assert!(stable_transition_cost(&mut remembered, 8, true));
+    }
+
+    #[test]
+    fn message_selection_topology_tracks_async_renderer_upgrades() {
+        assert_eq!(
+            message_selection_topology(false, false),
+            SelectionTopology::PlainMessage
+        );
+        assert_eq!(
+            message_selection_topology(true, false),
+            SelectionTopology::RichDocument
+        );
+        assert_eq!(
+            message_selection_topology(true, true),
+            SelectionTopology::PlainPrefixWithRichDocument
+        );
     }
 
     #[test]
