@@ -197,27 +197,47 @@ describe("managed inference stack integration", () => {
     )).resolves.toEqual([{ exported: 1 }]);
 
     const adminResponse = await accounts.fetch(
-      "http://localhost/admin/api/installations",
+      `http://localhost/admin/api/installations/${installationId}`,
     );
     expect(adminResponse.status).toBe(200);
     const admin = await adminResponse.json() as {
-      installations: Array<{
-        installationId: string;
-        inference: {
-          requests: number;
-          tokens: number;
-          costNanoUsd: number;
-        };
-      }>;
+      installationId: string;
+      inference: {
+        requests: number;
+        tokens: number;
+        costNanoUsd: number;
+      };
     };
-    expect(admin.installations).toContainEqual(expect.objectContaining({
+    expect(admin).toMatchObject({
       installationId,
-      inference: expect.objectContaining({
+      inference: {
         requests: 1,
         tokens: 3,
         costNanoUsd: 340,
-      }),
-    }));
+      },
+    });
+
+    const registryResponse = await accounts.fetch(
+      `http://localhost/admin/installations?q=${HANDLE}`,
+    );
+    expect(registryResponse.status).toBe(200);
+    expect(await registryResponse.text()).toContain(
+      `/admin/installations/${installationId}`,
+    );
+
+    const detailResponse = await accounts.fetch(
+      `http://localhost/admin/installations/${installationId}`,
+    );
+    expect(detailResponse.status).toBe(200);
+    const detail = await detailResponse.text();
+    expect(detail).toContain(HANDLE);
+    expect(detail).toContain("$0.00000034");
+
+    const inferenceResponse = await accounts.fetch(
+      "http://localhost/admin/inference",
+    );
+    expect(inferenceResponse.status).toBe(200);
+    expect(await inferenceResponse.text()).toContain("$0.00000034");
   });
 });
 

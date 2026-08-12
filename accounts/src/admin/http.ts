@@ -6,14 +6,33 @@ import {
   requireString,
 } from "../http";
 import type { AccountsAdminAccess } from "./access";
-import { adminPage, adminStylesheet } from "./page";
-import type { InstallationAdminService } from "./service";
+import { adminInferencePage } from "./inference-page";
+import {
+  adminInstallationPage,
+  adminInstallationsPage,
+  adminNewInstallationPage,
+} from "./installations-page";
+import { adminErrorPage, adminStylesheet } from "./page";
+import {
+  ADMIN_VISIBLE_INSTALLATION_STATES,
+  type AdminInstallation,
+  type AdminInstallationListQuery,
+  type InstallationAdminService,
+} from "./service";
 
 const MAX_FORM_BODY_BYTES = 4 * 1024;
+const MAX_ADMIN_PAGE = 1_000_000;
+
+type AdminCreateFormInput = {
+  operationId: string;
+  handle: string;
+};
 
 type AdminService = Pick<
   InstallationAdminService,
-  | "overview"
+  | "listInstallations"
+  | "getInstallation"
+  | "inferenceOverview"
   | "create"
   | "reissueOnboarding"
   | "setInferenceControl"
@@ -33,33 +52,92 @@ export class AccountsAdminHttp {
     if (!isAdminPath(url.pathname)) return null;
     if (!await this.access.allows(request)) return text("Forbidden", 403);
 
+    let createFormInput: AdminCreateFormInput | undefined;
     try {
+      const head = request.method === "HEAD";
       if (
         url.pathname === "/admin/styles.css"
-        && (request.method === "GET" || request.method === "HEAD")
+        && (request.method === "GET" || head)
       ) {
-        return adminStylesheet(request.method === "HEAD");
+        return adminStylesheet(head);
       }
+
       if (
-        (url.pathname === "/admin" || url.pathname === "/admin/")
-        && (request.method === "GET" || request.method === "HEAD")
+        isInstallationRegistryPath(url.pathname)
+        && (request.method === "GET" || head)
       ) {
-        return adminPage(
-          await this.service.overview(),
+        return adminInstallationsPage(
+          await this.service.listInstallations(readInstallationListQuery(url)),
           undefined,
-          undefined,
-          request.method === "HEAD",
+          head,
         );
       }
-      if (url.pathname === "/admin/api/installations" && request.method === "GET") {
-        return json(await this.service.overview());
+      if (
+        url.pathname === "/admin/installations/new"
+        && (request.method === "GET" || head)
+      ) {
+        return adminNewInstallationPage(undefined, head);
       }
+      if (
+        url.pathname === "/admin/inference"
+        && (request.method === "GET" || head)
+      ) {
+        return adminInferencePage(
+          await this.service.inferenceOverview(),
+          undefined,
+          head,
+        );
+      }
+      if (
+        url.pathname === "/admin/api/installations"
+        && request.method === "GET"
+      ) {
+        return json(
+          await this.service.listInstallations(readInstallationListQuery(url)),
+        );
+      }
+      if (
+        url.pathname === "/admin/api/inference"
+        && request.method === "GET"
+      ) {
+        return json(await this.service.inferenceOverview());
+      }
+
+      const installationRoute = parseInstallationRoute(url.pathname);
+      if (
+        installationRoute
+        && installationRoute.action === null
+        && (request.method === "GET" || (!installationRoute.api && head))
+      ) {
+        const installation = await this.requireInstallation(
+          installationRoute.installationId,
+        );
+        return installationRoute.api
+          ? json(installation)
+          : adminInstallationPage(
+              installation,
+              undefined,
+              undefined,
+              head,
+            );
+      }
+
       if (url.pathname === "/admin/installations" && request.method === "POST") {
         this.requireMutationOrigin(request);
-        const result = await this.service.create(await readFormCreate(request));
-        return adminPage(await this.service.overview(), result, undefined, false, 201);
+        createFormInput = await readFormCreate(request);
+        const result = await this.service.create(createFormInput);
+        return adminInstallationPage(
+          result.installation,
+          result,
+          undefined,
+          false,
+          201,
+        );
       }
-      if (url.pathname === "/admin/api/installations" && request.method === "POST") {
+      if (
+        url.pathname === "/admin/api/installations"
+        && request.method === "POST"
+      ) {
         this.requireMutationOrigin(request);
         const body = await readJsonObject(request);
         const result = await this.service.create({
@@ -82,71 +160,82 @@ export class AccountsAdminHttp {
         await this.service.setInferenceControl(enabled);
         return api
           ? json({ inference: { enabled } })
-          : adminPage(await this.service.overview());
+          : redirect("/admin/inference");
       }
 
-      const inference = inferenceInstallationId(url.pathname);
-      if (inference && request.method === "POST") {
+      if (installationRoute && request.method === "POST") {
         this.requireMutationOrigin(request);
-        const input = inference.api
-          ? await readJsonInferencePolicy(request)
-          : readFormInferencePolicy(await readForm(request));
-        await this.service.setInstallationInferencePolicy(
-          decodeURIComponent(inference.installationId),
-          input,
+        const installationId = decodeInstallationId(
+          installationRoute.installationId,
         );
-        return inference.api
-          ? json({ inference: input })
-          : adminPage(await this.service.overview());
+        if (installationRoute.action === "inference") {
+          const input = installationRoute.api
+            ? await readJsonInferencePolicy(request)
+            : readFormInferencePolicy(await readForm(request));
+          await this.service.setInstallationInferencePolicy(
+            installationId,
+            input,
+          );
+          return installationRoute.api
+            ? json({ inference: input })
+            : redirectToInstallation(installationId);
+        }
+        if (installationRoute.action === "lifecycle") {
+          const state = installationRoute.api
+            ? requireOperationalState((await readJsonObject(request)).state)
+            : requireOperationalState((await readForm(request)).get("state"));
+          await this.service.setInstallationState(installationId, state);
+          return installationRoute.api
+            ? json({ installationId, state })
+            : redirectToInstallation(installationId);
+        }
+        if (installationRoute.action === "onboarding") {
+          const result = await this.service.reissueOnboarding(installationId);
+          return installationRoute.api
+            ? json(result)
+            : adminInstallationPage(result.installation, result);
+        }
       }
 
-      const lifecycle = lifecycleInstallationId(url.pathname);
-      if (lifecycle && request.method === "POST") {
-        this.requireMutationOrigin(request);
-        const state = lifecycle.api
-          ? requireOperationalState((await readJsonObject(request)).state)
-          : requireOperationalState((await readForm(request)).get("state"));
-        const installationId = decodeURIComponent(lifecycle.installationId);
-        await this.service.setInstallationState(installationId, state);
-        return lifecycle.api
-          ? json({ installationId, state })
-          : adminPage(await this.service.overview());
-      }
-
-      const onboarding = onboardingInstallationId(url.pathname);
-      if (onboarding && request.method === "POST") {
-        this.requireMutationOrigin(request);
-        const result = await this.service.reissueOnboarding(
-          decodeURIComponent(onboarding.installationId),
-        );
-        return onboarding.api
-          ? json(result)
-          : adminPage(await this.service.overview(), result);
-      }
       return isAdminApiPath(url.pathname)
         ? json({ error: "Not Found" }, 404)
-        : text("Not Found", 404);
+        : adminErrorPage("The operator page does not exist.", 404, head);
     } catch (error) {
       if (error instanceof AdminForbiddenError) {
         return isAdminApiPath(url.pathname)
           ? json({ error: "Forbidden" }, 403)
           : text("Forbidden", 403);
       }
+      if (error instanceof AdminNotFoundError) {
+        return isAdminApiPath(url.pathname)
+          ? json({ error: "Not Found" }, 404)
+          : adminErrorPage(
+              "The installation does not exist.",
+              404,
+              request.method === "HEAD",
+            );
+      }
       const failure = publicAdminFailure(error);
       if (isAdminApiPath(url.pathname)) {
         return json({ error: failure.message }, failure.status);
       }
-      return adminPage(
-        await this.service.overview().catch(() => ({
-          inference: { enabled: false },
-          installations: [],
-        })),
-        undefined,
-        failure.message,
-        false,
-        failure.status,
+      return await this.renderHtmlFailure(
+        request,
+        url,
+        failure,
+        createFormInput,
       );
     }
+  }
+
+  private async requireInstallation(
+    installationIdValue: string,
+  ): Promise<AdminInstallation> {
+    const installation = await this.service.getInstallation(
+      decodeInstallationId(installationIdValue),
+    );
+    if (!installation) throw new AdminNotFoundError();
+    return installation;
   }
 
   private requireMutationOrigin(request: Request): void {
@@ -154,9 +243,65 @@ export class AccountsAdminHttp {
       throw new AdminForbiddenError();
     }
   }
+
+  private async renderHtmlFailure(
+    request: Request,
+    url: URL,
+    failure: { message: string; status: number },
+    createFormInput?: AdminCreateFormInput,
+  ): Promise<Response> {
+    if (
+      request.method === "POST"
+      && url.pathname === "/admin/installations"
+    ) {
+      return adminNewInstallationPage(
+        failure.message,
+        false,
+        failure.status,
+        createFormInput,
+      );
+    }
+    if (request.method === "POST" && url.pathname === "/admin/inference") {
+      const inference = await this.service.inferenceOverview().catch(() => null);
+      if (inference) {
+        return adminInferencePage(
+          inference,
+          failure.message,
+          false,
+          failure.status,
+        );
+      }
+    }
+    const route = parseInstallationRoute(url.pathname);
+    if (request.method === "POST" && route && route.action !== null) {
+      let installation: AdminInstallation | null = null;
+      try {
+        installation = await this.service.getInstallation(
+          decodeInstallationId(route.installationId),
+        );
+      } catch {
+        installation = null;
+      }
+      if (installation) {
+        return adminInstallationPage(
+          installation,
+          undefined,
+          failure.message,
+          false,
+          failure.status,
+        );
+      }
+    }
+    return adminErrorPage(
+      failure.message,
+      failure.status,
+      request.method === "HEAD",
+    );
+  }
 }
 
 class AdminForbiddenError extends Error {}
+class AdminNotFoundError extends Error {}
 
 function isAdminPath(pathname: string): boolean {
   return pathname === "/admin"
@@ -168,46 +313,58 @@ function isAdminApiPath(pathname: string): boolean {
     || pathname.startsWith("/admin/api/");
 }
 
-function onboardingInstallationId(pathname: string): {
+function isInstallationRegistryPath(pathname: string): boolean {
+  return pathname === "/admin"
+    || pathname === "/admin/"
+    || pathname === "/admin/installations"
+    || pathname === "/admin/installations/";
+}
+
+type InstallationAdminAction = "onboarding" | "inference" | "lifecycle";
+
+function parseInstallationRoute(pathname: string): {
   api: boolean;
   installationId: string;
+  action: InstallationAdminAction | null;
 } | null {
-  const match = /^\/admin\/(api\/)?installations\/([^/]+)\/onboarding$/.exec(
+  const match = /^\/admin\/(api\/)?installations\/([^/]+)(?:\/(onboarding|inference|lifecycle))?$/.exec(
     pathname,
   );
   return match
-    ? { api: Boolean(match[1]), installationId: match[2] ?? "" }
+    ? {
+        api: Boolean(match[1]),
+        installationId: match[2] ?? "",
+        action: (match[3] as InstallationAdminAction | undefined) ?? null,
+      }
     : null;
 }
 
-function inferenceInstallationId(pathname: string): {
-  api: boolean;
-  installationId: string;
-} | null {
-  const match = /^\/admin\/(api\/)?installations\/([^/]+)\/inference$/.exec(
-    pathname,
-  );
-  return match
-    ? { api: Boolean(match[1]), installationId: match[2] ?? "" }
-    : null;
+function readInstallationListQuery(url: URL): AdminInstallationListQuery {
+  const query = (url.searchParams.get("q") ?? "").trim();
+  if (query.length > 100) throw new Error("query is too long");
+
+  const stateValue = url.searchParams.get("state")?.trim() ?? "";
+  const state = stateValue
+    ? ADMIN_VISIBLE_INSTALLATION_STATES.find((value) => value === stateValue)
+    : undefined;
+  if (stateValue && !state) throw new Error("state is invalid");
+
+  const pageValue = url.searchParams.get("page")?.trim() ?? "";
+  if (pageValue && !/^[1-9]\d*$/.test(pageValue)) {
+    throw new Error("page is invalid");
+  }
+  const page = pageValue ? Number(pageValue) : 1;
+  if (!Number.isSafeInteger(page) || page < 1 || page > MAX_ADMIN_PAGE) {
+    throw new Error("page is invalid");
+  }
+  return {
+    query,
+    state: state ?? null,
+    page,
+  };
 }
 
-function lifecycleInstallationId(pathname: string): {
-  api: boolean;
-  installationId: string;
-} | null {
-  const match = /^\/admin\/(api\/)?installations\/([^/]+)\/lifecycle$/.exec(
-    pathname,
-  );
-  return match
-    ? { api: Boolean(match[1]), installationId: match[2] ?? "" }
-    : null;
-}
-
-async function readFormCreate(request: Request): Promise<{
-  operationId: string;
-  handle: string;
-}> {
+async function readFormCreate(request: Request): Promise<AdminCreateFormInput> {
   const form = await readForm(request);
   return {
     operationId: requireString(form.get("operationId"), "operationId"),
@@ -294,17 +451,41 @@ function parseUsdToNanoUsd(value: string): number {
   return Number(nanoUsd);
 }
 
+function decodeInstallationId(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new Error("installationId is invalid");
+  }
+}
+
+function redirectToInstallation(installationId: string): Response {
+  return redirect(
+    `/admin/installations/${encodeURIComponent(installationId)}`,
+  );
+}
+
+function redirect(location: string): Response {
+  return new Response(null, {
+    status: 303,
+    headers: noStoreHeaders({ location }),
+  });
+}
+
 function publicAdminFailure(error: unknown): { message: string; status: number } {
   const message = error instanceof Error ? error.message : "";
   if (
     message.startsWith("handle ")
-    || message.startsWith("installation ")
+    || message.startsWith("installation")
     || message.startsWith("operationId ")
     || message.startsWith("request ")
     || message.startsWith("form ")
     || message.startsWith("enabled ")
     || message.startsWith("monthlyLimit")
     || message.startsWith("managed inference ")
+    || message.startsWith("query ")
+    || message.startsWith("state ")
+    || message.startsWith("page ")
   ) {
     return { message, status: 400 };
   }

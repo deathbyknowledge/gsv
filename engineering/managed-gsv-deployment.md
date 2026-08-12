@@ -22,6 +22,20 @@ The production Gateway uses `gateway/src/index.ts`. The
 `gateway/src/managed-development.ts` wrapper exists only to put the local
 Accounts admin and wildcard installations behind one development port.
 
+The Accounts operator surface is server-rendered and split by responsibility:
+
+- `/admin/installations` lists bounded, searchable installation summaries;
+- `/admin/installations/new` owns reservation and creation;
+- `/admin/installations/<installationId>` owns one installation's lifecycle,
+  provisioning, inference policy, and current-period usage;
+- `/admin/inference` owns the platform-wide inference switch and aggregate
+  usage.
+
+HTML mutations return to their owning page. Creation and onboarding-link
+reissue render their one-time capability directly because it must not be
+persisted or placed in a redirect URL. The private `/admin/api/*` routes mirror
+the same list, detail, and policy boundaries.
+
 Standalone `gateway/wrangler.jsonc`, `ripgit/wrangler.toml`, `gsv infra
 deploy`, and `scripts/build-cloudflare-bundles.sh` remain independent. They do
 not create these Workers, bind their services, or require platform credentials.
