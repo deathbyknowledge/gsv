@@ -112,6 +112,36 @@ function testUsage(input = 0, output = 0) {
   };
 }
 
+const KIMI_WORKERS_CONTEXT_OVERFLOW_ERROR =
+  '8007: {"object":"error","message":"The input (301552 tokens) is longer than the model\'s context length (262144 tokens).","type":"BadRequestError","param":null,"code":400}';
+
+function kimiWorkersConfigWithFallback(pid: string, contextWindowTokens = 1_000_000) {
+  return {
+    executor: { kind: "process" as const, pid },
+    profile: "task" as const,
+    provider: "workers-ai",
+    model: "@cf/moonshotai/kimi-k2.6",
+    apiKey: "",
+    reasoning: "off",
+    maxTokens: 100,
+    contextWindowTokens,
+    contextWindowSource: "config" as const,
+    maxContextBytes: 32768,
+    fallbacks: [{
+      profileId: "overflow-backup",
+      profileName: "Overflow Backup",
+      provider: "openrouter",
+      model: "fallback-model",
+      apiKey: "fallback-key",
+      maxTokens: 100,
+      contextWindowTokens,
+      contextWindowSource: "config" as const,
+      generationTimeoutMs: 180000,
+      generationStreaming: "auto" as const,
+    }],
+  };
+}
+
 async function stubGeneration(
   stub: DurableObjectStub<Process>,
   generate: (request: any) => string | Promise<string>,
@@ -2663,6 +2693,515 @@ describe("Process DO — mechanical", () => {
       ]);
     });
 
+    it("auto-compacts and retries the same Kimi model after a thrown provider overflow", async () => {
+      const pid = "mech-chat-kimi-overflow-throw-compact";
+      const runId = "run-chat-kimi-overflow-throw-compact";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const calls: Array<{ provider: string; model: string; context: string }> = [];
+        const timeline: string[] = [];
+        let summaryCalls = 0;
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+          if (signal === "proc.run.retrying") {
+            timeline.push("retrying");
+          }
+          if (signal === "proc.changed" && (payload as any).event) {
+            timeline.push((payload as any).event);
+          }
+        };
+        process.generation = {
+          async generate(request: any) {
+            calls.push({
+              provider: request.config.provider,
+              model: request.config.model,
+              context: JSON.stringify(request.context),
+            });
+            timeline.push(`generate:${calls.length}`);
+            if (calls.length === 1) {
+              throw new Error(KIMI_WORKERS_CONTEXT_OVERFLOW_ERROR);
+            }
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "same model after compaction" }],
+              api: "test",
+              provider: request.config.provider,
+              model: request.config.model,
+              usage: testUsage(20, 3),
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText(request: any) {
+            summaryCalls += 1;
+            expect(request.config).toMatchObject({
+              provider: "workers-ai",
+              model: "@cf/moonshotai/kimi-k2.6",
+            });
+            expect(JSON.stringify(request.context)).toContain("old Kimi context A");
+            return "Kimi overflow compact summary.";
+          },
+        };
+
+        process.store.appendMessage("user", "old Kimi context A");
+        process.store.appendMessage("assistant", "old Kimi context B");
+        process.store.appendMessage("user", "Kimi context that must stay live.");
+        process.store.setValue("historyPolicy", JSON.stringify({
+          overflow: "auto-compact",
+          compactAtPressure: 0.9,
+          keepLast: 1,
+          updatedAt: Date.now(),
+        }));
+        process.currentRun = {
+          runId,
+          config: kimiWorkersConfigWithFallback(pid),
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+        return {
+          calls,
+          emitted,
+          messages: process.store.getMessages(),
+          segments: process.store.listHistorySegments(),
+          summaryCalls,
+          timeline,
+        };
+      });
+
+      expect(result.calls).toHaveLength(2);
+      expect(result.calls.map(({ provider, model }) => ({ provider, model }))).toEqual([
+        { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" },
+        { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" },
+      ]);
+      expect(result.calls[0].context).toContain("old Kimi context A");
+      expect(result.calls[1].context).toContain("Kimi overflow compact summary.");
+      expect(result.calls[1].context).toContain("Kimi context that must stay live.");
+      expect(result.calls[1].context).not.toContain("old Kimi context A");
+      expect(result.summaryCalls).toBe(1);
+      expect(result.segments).toHaveLength(1);
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["system", expect.stringContaining("Kimi overflow compact summary.")],
+        ["user", "Kimi context that must stay live."],
+        ["assistant", "same model after compaction"],
+      ]);
+      const retrying = result.emitted.filter((entry) => entry.signal === "proc.run.retrying");
+      expect(retrying).toHaveLength(1);
+      expect(retrying[0]?.payload).toMatchObject({
+        pid,
+        runId,
+        attempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 2,
+        reason: KIMI_WORKERS_CONTEXT_OVERFLOW_ERROR,
+      });
+      expect(retrying[0]?.payload).not.toHaveProperty("fallback");
+      expect(result.timeline).toEqual([
+        "generate:1",
+        "history.compacted",
+        "history.auto_compacted",
+        "retrying",
+        "generate:2",
+      ]);
+    });
+
+    it("auto-compacts a returned provider overflow, retries Kimi, and records usage once", async () => {
+      const pid = "mech-chat-kimi-overflow-response-compact";
+      const runId = "run-chat-kimi-overflow-response-compact";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const calls: Array<{ provider: string; model: string; context: string }> = [];
+        let summaryCalls = 0;
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate(request: any) {
+            calls.push({
+              provider: request.config.provider,
+              model: request.config.model,
+              context: JSON.stringify(request.context),
+            });
+            if (calls.length === 1) {
+              return {
+                role: "assistant",
+                content: [],
+                api: "test",
+                provider: request.config.provider,
+                model: request.config.model,
+                usage: {
+                  ...testUsage(301_552, 0),
+                  cost: {
+                    input: 0.12,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    total: 0.12,
+                  },
+                },
+                stopReason: "error",
+                errorMessage: KIMI_WORKERS_CONTEXT_OVERFLOW_ERROR,
+                timestamp: Date.now(),
+              };
+            }
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "returned overflow recovered" }],
+              api: "test",
+              provider: request.config.provider,
+              model: request.config.model,
+              usage: testUsage(20, 3),
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            summaryCalls += 1;
+            return "Returned overflow compact summary.";
+          },
+        };
+
+        process.store.appendMessage("user", "old returned overflow context A");
+        process.store.appendMessage("assistant", "old returned overflow context B");
+        process.store.appendMessage("user", "Returned overflow context that must stay live.");
+        process.store.setValue("historyPolicy", JSON.stringify({
+          overflow: "auto-compact",
+          compactAtPressure: 0.9,
+          keepLast: 1,
+          updatedAt: Date.now(),
+        }));
+        process.currentRun = {
+          runId,
+          config: kimiWorkersConfigWithFallback(pid),
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+        return {
+          calls,
+          emitted,
+          historyUsage: process.store.getHistoryUsage(),
+          messages: process.store.getMessages(),
+          segments: process.store.listHistorySegments(),
+          summaryCalls,
+        };
+      });
+
+      expect(result.calls).toHaveLength(2);
+      expect(result.calls.map(({ provider, model }) => ({ provider, model }))).toEqual([
+        { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" },
+        { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" },
+      ]);
+      expect(result.calls[1].context).toContain("Returned overflow compact summary.");
+      expect(result.calls[1].context).toContain("Returned overflow context that must stay live.");
+      expect(result.calls[1].context).not.toContain("old returned overflow context A");
+      expect(result.summaryCalls).toBe(1);
+      expect(result.segments).toHaveLength(1);
+      expect(result.historyUsage).toMatchObject({
+        inputTokens: 301_572,
+        outputTokens: 3,
+        totalTokens: 301_575,
+        cost: { total: 0.12, source: "model-pricing" },
+        generations: 2,
+      });
+      expect(result.messages.map((message: any) => [message.role, message.content])).toEqual([
+        ["system", expect.stringContaining("Returned overflow compact summary.")],
+        ["user", "Returned overflow context that must stay live."],
+        ["assistant", "returned overflow recovered"],
+      ]);
+      const retrying = result.emitted.filter((entry) => entry.signal === "proc.run.retrying");
+      expect(retrying).toHaveLength(1);
+      expect(retrying[0]?.payload).toMatchObject({
+        pid,
+        runId,
+        attempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 2,
+        reason: KIMI_WORKERS_CONTEXT_OVERFLOW_ERROR,
+      });
+      expect(retrying[0]?.payload).not.toHaveProperty("fallback");
+    });
+
+    it("applies fail policy to provider overflow without compacting or using fallback", async () => {
+      const pid = "mech-chat-kimi-overflow-policy-fail";
+      const runId = "run-chat-kimi-overflow-policy-fail";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const calls: Array<{ provider: string; model: string }> = [];
+        let summaryCalls = 0;
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate(request: any) {
+            calls.push({
+              provider: request.config.provider,
+              model: request.config.model,
+            });
+            if (calls.length === 1) {
+              throw new Error(KIMI_WORKERS_CONTEXT_OVERFLOW_ERROR);
+            }
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "fallback must not run" }],
+              api: "test",
+              provider: request.config.provider,
+              model: request.config.model,
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            summaryCalls += 1;
+            return "summary must not run";
+          },
+        };
+
+        process.store.appendMessage("user", "old fail-policy context A");
+        process.store.appendMessage("assistant", "old fail-policy context B");
+        process.store.appendMessage("user", "Fail-policy context that must stay live.");
+        process.store.setValue("historyPolicy", JSON.stringify({
+          overflow: "fail",
+          compactAtPressure: 0.9,
+          keepLast: 1,
+          updatedAt: Date.now(),
+        }));
+        process.currentRun = {
+          runId,
+          config: kimiWorkersConfigWithFallback(pid),
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+        return {
+          calls,
+          currentRun: process.currentRun,
+          emitted,
+          messages: process.store.getMessages(),
+          segments: process.store.listHistorySegments(),
+          summaryCalls,
+        };
+      });
+
+      expect(result.calls).toEqual([
+        { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" },
+      ]);
+      expect(result.summaryCalls).toBe(0);
+      expect(result.segments).toHaveLength(0);
+      expect(result.currentRun).toBeNull();
+      expect(result.messages.slice(0, 3).map((message: any) => message.content)).toEqual([
+        "old fail-policy context A",
+        "old fail-policy context B",
+        "Fail-policy context that must stay live.",
+      ]);
+      expect(result.messages.at(-1)?.content).toContain("Context limit policy stopped this run.");
+      expect(result.emitted.some((entry) => entry.signal === "proc.run.retrying")).toBe(false);
+      expect(result.emitted).toEqual(expect.arrayContaining([
+        {
+          signal: "proc.run.finished",
+          payload: expect.objectContaining({
+            runId,
+            status: "error",
+            reason: "context.policy.fail",
+          }),
+        },
+      ]));
+    });
+
+    it("terminates repeated provider overflow after one compaction without using fallback", async () => {
+      const pid = "mech-chat-kimi-overflow-repeated";
+      const runId = "run-chat-kimi-overflow-repeated";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const calls: Array<{ provider: string; model: string }> = [];
+        let summaryCalls = 0;
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate(request: any) {
+            calls.push({
+              provider: request.config.provider,
+              model: request.config.model,
+            });
+            throw new Error(KIMI_WORKERS_CONTEXT_OVERFLOW_ERROR);
+          },
+          async generateText() {
+            summaryCalls += 1;
+            return "Repeated overflow compact summary.";
+          },
+        };
+
+        process.store.appendMessage("user", "old repeated-overflow context A");
+        process.store.appendMessage("assistant", "old repeated-overflow context B");
+        process.store.appendMessage("user", "Repeated-overflow context that must stay live.");
+        process.store.setValue("historyPolicy", JSON.stringify({
+          overflow: "auto-compact",
+          compactAtPressure: 0.9,
+          keepLast: 1,
+          updatedAt: Date.now(),
+        }));
+        process.currentRun = {
+          runId,
+          config: kimiWorkersConfigWithFallback(pid),
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+        return {
+          calls,
+          currentRun: process.currentRun,
+          emitted,
+          messages: process.store.getMessages(),
+          segments: process.store.listHistorySegments(),
+          summaryCalls,
+        };
+      });
+
+      expect(result.calls).toEqual([
+        { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" },
+        { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" },
+      ]);
+      expect(result.summaryCalls).toBe(1);
+      expect(result.segments).toHaveLength(1);
+      expect(result.currentRun).toBeNull();
+      expect(result.messages.at(-1)?.content).toContain(
+        "Context limit reached for workers-ai/@cf/moonshotai/kimi-k2.6.",
+      );
+      const retrying = result.emitted.filter((entry) => entry.signal === "proc.run.retrying");
+      expect(retrying).toHaveLength(1);
+      expect(retrying[0]?.payload).toMatchObject({
+        pid,
+        runId,
+        attempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 2,
+        reason: KIMI_WORKERS_CONTEXT_OVERFLOW_ERROR,
+      });
+      expect(retrying[0]?.payload).not.toHaveProperty("fallback");
+      expect(result.emitted).toEqual(expect.arrayContaining([
+        {
+          signal: "proc.run.finished",
+          payload: expect.objectContaining({
+            runId,
+            status: "error",
+            reason: "context.provider_overflow",
+          }),
+        },
+      ]));
+    });
+
+    it("terminates provider overflow when no history prefix can be compacted", async () => {
+      const pid = "mech-chat-kimi-overflow-empty-prefix";
+      const runId = "run-chat-kimi-overflow-empty-prefix";
+      const stub = await initProcess(pid, ROOT_IDENTITY);
+
+      const result = await runInDurableObject(stub, async (instance: Process) => {
+        const process = instance as any;
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        const calls: Array<{ provider: string; model: string }> = [];
+        let summaryCalls = 0;
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
+        process.generation = {
+          async generate(request: any) {
+            calls.push({
+              provider: request.config.provider,
+              model: request.config.model,
+            });
+            if (calls.length === 1) {
+              throw new Error(KIMI_WORKERS_CONTEXT_OVERFLOW_ERROR);
+            }
+            return {
+              role: "assistant",
+              content: [{ type: "text", text: "fallback must not run" }],
+              api: "test",
+              provider: request.config.provider,
+              model: request.config.model,
+              stopReason: "stop",
+              timestamp: Date.now(),
+            };
+          },
+          async generateText() {
+            summaryCalls += 1;
+            return "summary must not run";
+          },
+        };
+
+        process.store.appendMessage("user", "Only live message.");
+        process.store.setValue("historyPolicy", JSON.stringify({
+          overflow: "auto-compact",
+          compactAtPressure: 0.9,
+          keepLast: 1,
+          updatedAt: Date.now(),
+        }));
+        process.currentRun = {
+          runId,
+          config: kimiWorkersConfigWithFallback(pid),
+          tools: [],
+          devices: [],
+          systemPrompt: "Test system prompt.",
+          approvalPolicy: { default: "auto", rules: [] },
+        };
+
+        await process.runTick(runId);
+        return {
+          calls,
+          currentRun: process.currentRun,
+          emitted,
+          messages: process.store.getMessages(),
+          segments: process.store.listHistorySegments(),
+          summaryCalls,
+        };
+      });
+
+      expect(result.calls).toEqual([
+        { provider: "workers-ai", model: "@cf/moonshotai/kimi-k2.6" },
+      ]);
+      expect(result.summaryCalls).toBe(0);
+      expect(result.segments).toHaveLength(0);
+      expect(result.currentRun).toBeNull();
+      expect(result.messages.at(-1)?.content).toContain(
+        "Context limit reached, but auto-compaction could not archive any older messages.",
+      );
+      expect(result.emitted.some((entry) => entry.signal === "proc.run.retrying")).toBe(false);
+      expect(result.emitted).toEqual(expect.arrayContaining([
+        {
+          signal: "proc.run.finished",
+          payload: expect.objectContaining({
+            runId,
+            status: "error",
+            reason: "context.auto_compact.empty",
+          }),
+        },
+      ]));
+    });
+
     it("surfaces thrown provider context overflow separately from generation errors", async () => {
       const pid = "mech-chat-provider-context-overflow-throw";
       const stub = await initProcess(pid, ROOT_IDENTITY);
@@ -2712,15 +3251,16 @@ describe("Process DO — mechanical", () => {
 
       expect(result.currentRun).toBeNull();
       const systemMessage = result.messages.find((message: any) => message.role === "system");
-      expect(systemMessage?.content).toContain("Context limit reached for openai/gpt-test.");
-      expect(systemMessage?.content).toContain("Provider message: Your input exceeds the context window of this model");
+      expect(systemMessage?.content).toContain(
+        "Context limit reached, but auto-compaction could not archive any older messages.",
+      );
       expect(systemMessage?.content).not.toContain("Generation failed:");
       expect(result.emitted).toEqual(expect.arrayContaining([
         {
           signal: "proc.run.finished",
           payload: expect.objectContaining({
             status: "error",
-            reason: "context.provider_overflow",
+            reason: "context.auto_compact.empty",
             runId: "run-chat-provider-context-overflow-throw",
           }),
         },
@@ -2733,7 +3273,10 @@ describe("Process DO — mechanical", () => {
 
       const result = await runInDurableObject(stub, async (instance: Process) => {
         const process = instance as any;
-        process.sendSignal = async () => {};
+        const emitted: Array<{ signal: string; payload: unknown }> = [];
+        process.sendSignal = async (signal: string, payload: unknown) => {
+          emitted.push({ signal, payload });
+        };
         process.generation = {
           async generate() {
             throw new Error("request failed", {
@@ -2772,15 +3315,27 @@ describe("Process DO — mechanical", () => {
         await process.runTick("run-chat-provider-context-overflow-nested");
         return {
           currentRun: process.currentRun,
+          emitted,
           messages: process.store.getMessages(),
         };
       });
 
       expect(result.currentRun).toBeNull();
       const systemMessage = result.messages.find((message: any) => message.role === "system");
-      expect(systemMessage?.content).toContain("Context limit reached for openai/gpt-test.");
-      expect(systemMessage?.content).toContain("Provider message: Your input exceeds the context window of this model");
+      expect(systemMessage?.content).toContain(
+        "Context limit reached, but auto-compaction could not archive any older messages.",
+      );
       expect(systemMessage?.content).not.toContain("Generation failed:");
+      expect(result.emitted).toEqual(expect.arrayContaining([
+        {
+          signal: "proc.run.finished",
+          payload: expect.objectContaining({
+            status: "error",
+            reason: "context.auto_compact.empty",
+            runId: "run-chat-provider-context-overflow-nested",
+          }),
+        },
+      ]));
     });
 
     it("surfaces returned provider context overflow and records provider usage", async () => {
@@ -2851,8 +3406,9 @@ describe("Process DO — mechanical", () => {
       });
 
       const systemMessage = result.messages.find((message: any) => message.role === "system");
-      expect(systemMessage?.content).toContain("Context limit reached for google/gemini-test.");
-      expect(systemMessage?.content).toContain("Provider message: The input token count");
+      expect(systemMessage?.content).toContain(
+        "Context limit reached, but auto-compaction could not archive any older messages.",
+      );
       expect(systemMessage?.content).not.toContain("Generation failed:");
       expect(result.contextState).toMatchObject({
         inputTokens: 1196265,
@@ -2874,7 +3430,7 @@ describe("Process DO — mechanical", () => {
           signal: "proc.run.finished",
           payload: expect.objectContaining({
             status: "error",
-            reason: "context.provider_overflow",
+            reason: "context.auto_compact.empty",
             runId: "run-chat-provider-context-overflow-response",
           }),
         },

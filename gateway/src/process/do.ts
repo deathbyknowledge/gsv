@@ -3911,22 +3911,21 @@ export class Process extends Host<Env> {
       tools: tools.length > 0 ? tools : undefined,
     };
     let autoCompactionPressure: number | null = null;
-    const prepareGenerationContext = async (
+    let contextState!: ProcContextState;
+    const applyGenerationContextPolicy = async (
       config: AiConfigResult,
-    ): Promise<"ready" | "stopped"> => {
-      context = await buildGenerationContext();
-      const contextState = await this.updateContextState(runId, config, context);
-      if (this.handleRunStopped(runId)) {
-        return "stopped";
-      }
-
+      trigger: "preflight" | "provider-overflow",
+    ): Promise<"ready" | "compacted" | "stopped"> => {
       const policy = this.getHistoryContextPolicy();
       if (autoCompactionPressure !== null) {
+        if (trigger === "provider-overflow") {
+          return "ready";
+        }
         if (contextState.pressure !== null && contextState.pressure >= 1) {
           await this.finishInsufficientCompactionRun(
             runId,
             policy,
-            autoCompactionPressure ?? policy.compactAtPressure,
+            autoCompactionPressure,
             contextState.pressure,
           );
           return "stopped";
@@ -3934,38 +3933,46 @@ export class Process extends Host<Env> {
         return "ready";
       }
 
-      const contextPreflight = await this.applyHistoryContextPolicy(
+      const policyResult = await this.applyHistoryContextPolicy(
         runId,
         config,
         contextState,
+        trigger,
       );
-      if (contextPreflight === "stopped") {
+      if (policyResult !== "compacted") {
+        return policyResult;
+      }
+
+      autoCompactionPressure = contextState.pressure ?? policy.compactAtPressure;
+      if (this.handleRunStopped(runId)) {
         return "stopped";
       }
-      if (contextPreflight === "compacted") {
-        autoCompactionPressure = contextState.pressure ?? policy.compactAtPressure;
-        if (this.handleRunStopped(runId)) {
-          return "stopped";
-        }
-        context = await buildGenerationContext();
-        const compactedState = await this.updateContextState(runId, config, context);
-        if (this.handleRunStopped(runId)) {
-          return "stopped";
-        }
-        if (
-          compactedState.pressure !== null &&
-          compactedState.pressure >= 1
-        ) {
-          await this.finishInsufficientCompactionRun(
-            runId,
-            policy,
-            autoCompactionPressure,
-            compactedState.pressure,
-          );
-          return "stopped";
-        }
+      context = await buildGenerationContext();
+      contextState = await this.updateContextState(runId, config, context);
+      if (this.handleRunStopped(runId)) {
+        return "stopped";
       }
-      return "ready";
+      if (contextState.pressure !== null && contextState.pressure >= 1) {
+        await this.finishInsufficientCompactionRun(
+          runId,
+          policy,
+          autoCompactionPressure,
+          contextState.pressure,
+        );
+        return "stopped";
+      }
+      return "compacted";
+    };
+    const prepareGenerationContext = async (
+      config: AiConfigResult,
+    ): Promise<"ready" | "stopped"> => {
+      context = await buildGenerationContext();
+      contextState = await this.updateContextState(runId, config, context);
+      if (this.handleRunStopped(runId)) {
+        return "stopped";
+      }
+      const result = await applyGenerationContextPolicy(config, "preflight");
+      return result === "stopped" ? "stopped" : "ready";
     };
 
     const contextPreflight = await prepareGenerationContext(run.config!);
@@ -4017,6 +4024,60 @@ export class Process extends Host<Env> {
       }
       return this.handleRunStopped(runId) ? "stopped" : "switched";
     };
+    const recoverProviderContextOverflow = async (
+      errorMsg: string,
+      failedResponse?: AssistantMessage,
+    ): Promise<"retry" | "stopped"> => {
+      if (failedResponse) {
+        const overflowUsage = this.recordUnpersistedAssistantUsage(
+          failedResponse,
+          run.config!,
+        );
+        contextState = await this.updateContextState(
+          runId,
+          run.config!,
+          context,
+          failedResponse.usage,
+          overflowUsage,
+        );
+        if (this.handleRunStopped(runId)) {
+          return "stopped";
+        }
+      }
+
+      if (autoCompactionPressure !== null) {
+        await this.finishProviderContextOverflowRun(
+          runId,
+          run.config!,
+          errorMsg,
+        );
+        return "stopped";
+      }
+
+      const policyResult = await applyGenerationContextPolicy(
+        run.config!,
+        "provider-overflow",
+      );
+      if (policyResult !== "compacted") {
+        if (policyResult === "ready" && !this.handleRunStopped(runId)) {
+          await this.finishProviderContextOverflowRun(
+            runId,
+            run.config!,
+            errorMsg,
+          );
+        }
+        return "stopped";
+      }
+
+      const retryState = await this.beginGenerationRetry({
+        runId,
+        attempt: 1,
+        maxAttempts: 2,
+        reason: errorMsg,
+        cause: "provider context overflow",
+      });
+      return retryState === "stopped" ? "stopped" : "retry";
+    };
     let attempt = 1;
     while (attempt <= MAX_RETRYABLE_GENERATION_ATTEMPTS) {
       try {
@@ -4041,21 +4102,11 @@ export class Process extends Host<Env> {
           model: run.config!.model,
           contextWindowTokens: run.config!.contextWindowTokens,
         })) {
-          const fallbackState = await switchToFallback(errorMsg);
-          if (fallbackState === "stopped") {
-            return;
-          }
-          if (fallbackState === "switched") {
-            attempt = 1;
+          const recovery = await recoverProviderContextOverflow(errorMsg);
+          if (recovery === "retry") {
             response = null;
             continue;
           }
-          console.error(`[Process] LLM context overflow:`, e);
-          await this.finishProviderContextOverflowRun(
-            runId,
-            run.config!,
-            errorMsg,
-          );
           return;
         }
         if (
@@ -4113,16 +4164,12 @@ export class Process extends Host<Env> {
 
       if (isProviderContextOverflow(response, run.config!.contextWindowTokens)) {
         const errorMsg = response.errorMessage ?? describeAssistantResponseFailure(response) ?? "Provider context overflow";
-        const fallbackState = await switchToFallback(errorMsg, response);
-        if (fallbackState === "stopped") {
-          return;
-        }
-        if (fallbackState === "switched") {
-          attempt = 1;
-          response = null;
+        const recovery = await recoverProviderContextOverflow(errorMsg, response);
+        response = null;
+        if (recovery === "retry") {
           continue;
         }
-        break;
+        return;
       }
 
       const responseFailure = describeAssistantResponseFailure(response);
@@ -4167,21 +4214,6 @@ export class Process extends Host<Env> {
     }
 
     if (!response) {
-      return;
-    }
-
-    if (isProviderContextOverflow(response, run.config!.contextWindowTokens)) {
-      const overflowUsage = this.recordUnpersistedAssistantUsage(response, run.config!);
-      await this.updateContextState(runId, run.config!, context, response.usage, overflowUsage);
-      if (this.handleRunStopped(runId)) {
-        return;
-      }
-      const errorMsg = response.errorMessage ?? describeAssistantResponseFailure(response) ?? undefined;
-      await this.finishProviderContextOverflowRun(
-        runId,
-        run.config!,
-        errorMsg,
-      );
       return;
     }
 
@@ -4597,22 +4629,28 @@ export class Process extends Host<Env> {
     runId: string,
     config: AiConfigResult,
     state: ProcContextState,
+    trigger: "preflight" | "provider-overflow" = "preflight",
   ): Promise<"ready" | "compacted" | "stopped"> {
     const pressure = state.pressure;
-    if (pressure === null || !Number.isFinite(pressure)) {
-      return "ready";
-    }
-
     const policy = this.getHistoryContextPolicy();
-    if (pressure < policy.compactAtPressure) {
-      return "ready";
+    if (trigger === "preflight") {
+      if (pressure === null || !Number.isFinite(pressure)) {
+        return "ready";
+      }
+      if (pressure < policy.compactAtPressure) {
+        return "ready";
+      }
     }
 
     if (policy.overflow === "fail") {
       const message = [
         "Context limit policy stopped this run.",
-        `Policy: fail at ${Math.round(policy.compactAtPressure * 100)}% context pressure.`,
-        `Current estimate: ${Math.round(pressure * 100)}%.`,
+        trigger === "provider-overflow"
+          ? "The AI provider reported that the request exceeds its context window."
+          : `Policy: fail at ${Math.round(policy.compactAtPressure * 100)}% context pressure.`,
+        ...(pressure !== null && Number.isFinite(pressure)
+          ? [`Current estimate: ${Math.round(pressure * 100)}%.`]
+          : []),
         "Compact the history or reset the process before sending more work.",
       ].join("\n");
       this.store.appendMessage("system", message, { runId });
@@ -4634,7 +4672,7 @@ export class Process extends Host<Env> {
       keepLast: policy.keepLast,
     });
     if (selected.length === 0) {
-      if (pressure < 1) {
+      if (trigger === "preflight" && pressure !== null && pressure < 1) {
         return "ready";
       }
       const message = [
@@ -4672,7 +4710,9 @@ export class Process extends Host<Env> {
       return "stopped";
     }
     if (!result.ok) {
-      const message = `Auto-compaction failed before model call: ${result.error}`;
+      const message = trigger === "provider-overflow"
+        ? `Auto-compaction failed after provider context overflow: ${result.error}`
+        : `Auto-compaction failed before model call: ${result.error}`;
       this.store.appendMessage("system", message, { runId });
       await this.emitProcChanged(["messages"], {
         runId,
@@ -4696,7 +4736,8 @@ export class Process extends Host<Env> {
       pid: this.pid,
       provider: config.provider,
       model: config.model,
-      pressure,
+      ...(pressure !== null && Number.isFinite(pressure) ? { pressure } : {}),
+      trigger,
       policy,
       segment: result.segment,
       archivedMessages: result.archivedMessages,
