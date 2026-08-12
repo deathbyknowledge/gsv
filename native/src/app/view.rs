@@ -11,7 +11,8 @@ use gpui_component::input::Input;
 use crate::content::MediaAttachment;
 use crate::interaction::CanvasLayer;
 use crate::model::{
-    ActivityCategory, ActivitySummaryEntry, ConnectionState, MomentRole, MomentState, SurfaceMode,
+    ActivityCategory, ActivitySummaryEntry, ConnectionState, LiveActivityEntry, MomentRole,
+    MomentState, SurfaceMode,
 };
 use crate::prepared::{content_revision, PreparedContent};
 use crate::theme;
@@ -28,6 +29,7 @@ struct CanvasGeometry {
     right: f32,
     vertical: f32,
     available_height: f32,
+    footer_extra: f32,
 }
 
 fn render_activity_summary(
@@ -145,16 +147,26 @@ fn message_measurement_text(message: &str, media: &[MediaAttachment]) -> String 
         .to_string()
 }
 
-fn live_activity_label(category: ActivityCategory) -> &'static str {
-    match category {
-        ActivityCategory::Thinking => "Thinking…",
-        ActivityCategory::SearchingFiles => "Searching files…",
-        ActivityCategory::ReadingFiles => "Reading files…",
-        ActivityCategory::WritingFiles => "Writing files…",
-        ActivityCategory::EditingFiles => "Editing files…",
-        ActivityCategory::DeletingFiles => "Deleting files…",
-        ActivityCategory::RunningCommands => "Running commands…",
-        ActivityCategory::RunningCode => "Running code…",
+fn live_activity_label(entry: LiveActivityEntry) -> String {
+    match (entry.category, entry.count) {
+        (ActivityCategory::SearchingFiles, 1) => "Running a file search…".to_string(),
+        (ActivityCategory::SearchingFiles, count) => {
+            format!("Running {count} file searches…")
+        }
+        (ActivityCategory::ReadingFiles, 1) => "Reading a file…".to_string(),
+        (ActivityCategory::ReadingFiles, count) => format!("Running {count} read operations…"),
+        (ActivityCategory::WritingFiles, 1) => "Writing a file…".to_string(),
+        (ActivityCategory::WritingFiles, count) => format!("Running {count} write operations…"),
+        (ActivityCategory::EditingFiles, 1) => "Editing a file…".to_string(),
+        (ActivityCategory::EditingFiles, count) => format!("Running {count} edit operations…"),
+        (ActivityCategory::DeletingFiles, 1) => "Deleting a file…".to_string(),
+        (ActivityCategory::DeletingFiles, count) => {
+            format!("Running {count} delete operations…")
+        }
+        (ActivityCategory::RunningCommands, 1) => "Running a command…".to_string(),
+        (ActivityCategory::RunningCommands, count) => format!("Running {count} commands…"),
+        (ActivityCategory::RunningCode, 1) => "Running a code task…".to_string(),
+        (ActivityCategory::RunningCode, count) => format!("Running {count} code tasks…"),
     }
 }
 
@@ -184,7 +196,6 @@ fn legacy_activity_label(activity: &str) -> String {
 
 fn activity_summary_line(entry: &ActivitySummaryEntry) -> String {
     let action = match entry.category {
-        ActivityCategory::Thinking => "Thought",
         ActivityCategory::SearchingFiles => "Searched files",
         ActivityCategory::ReadingFiles => "Read files",
         ActivityCategory::WritingFiles => "Wrote files",
@@ -380,16 +391,24 @@ impl GsvApp {
             self.draft_type_size = None;
             self.type_viewport = Some(viewport_key);
         }
+        let live_activity_entries = if self.interaction.is_approval() {
+            Vec::new()
+        } else {
+            self.conversation.live_activity_entries()
+        };
+        let footer_extra = live_activity_entries.len().saturating_sub(1) as f32 * 22.0;
         let left_padding = (viewport_width * 0.065).clamp(108.0, 142.0);
         let right_padding = (viewport_width * 0.065).clamp(46.0, 142.0);
         let vertical_padding = (viewport_height * 0.105).clamp(50.0, 108.0);
         let available_width = (viewport_width - left_padding - right_padding).max(1.0);
-        let available_height = (viewport_height - vertical_padding * 2.0 - 72.0).max(1.0);
+        let available_height =
+            (viewport_height - vertical_padding * 2.0 - 72.0 - footer_extra).max(1.0);
         let geometry = CanvasGeometry {
             left: left_padding,
             right: right_padding,
             vertical: vertical_padding,
             available_height,
+            footer_extra,
         };
 
         let current = if self.interaction.is_approval() {
@@ -551,24 +570,26 @@ impl GsvApp {
         };
         self.cancel_stale_media_preparations();
         release_assets(released, cx);
-        let activity = self
-            .conversation
-            .live_activity
-            .as_ref()
-            .map(|activity| live_activity_label(activity.category).to_string())
-            .or_else(|| {
-                self.conversation
-                    .activity
-                    .as_deref()
-                    .map(legacy_activity_label)
-            })
-            .or_else(|| {
-                (!draft_visible && state == MomentState::Uncertain)
-                    .then(|| "Delivery not confirmed… checking history".to_string())
-            });
-        let show_stop_hint = self.conversation.active_run_id.is_some() && activity.is_some();
+        let activity = if live_activity_entries.is_empty() {
+            self.conversation
+                .activity
+                .as_deref()
+                .map(legacy_activity_label)
+                .or_else(|| {
+                    (!draft_visible && state == MomentState::Uncertain)
+                        .then(|| "Delivery not confirmed… checking history".to_string())
+                })
+                .into_iter()
+                .collect::<Vec<_>>()
+        } else {
+            live_activity_entries
+                .into_iter()
+                .map(live_activity_label)
+                .collect::<Vec<_>>()
+        };
+        let show_stop_hint = self.conversation.active_run_id.is_some() && !activity.is_empty();
         let show_hint = !self.interaction.has_interacted()
-            && activity.is_none()
+            && activity.is_empty()
             && !self.interaction.is_approval();
 
         let canvas = if let Some(draft) = draft {
@@ -633,7 +654,7 @@ impl GsvApp {
                 this.child(self.render_input_sink(sink_layout, geometry))
             })
             .child(canvas)
-            .when_some(activity, |this, activity| {
+            .when(!activity.is_empty(), |this| {
                 this.child(
                     div()
                         .absolute()
@@ -648,9 +669,14 @@ impl GsvApp {
                         .font_family(theme::MONO_FONT)
                         .child(
                             div()
-                                .text_size(px(16.0))
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .gap(px(4.0))
+                                .text_size(px(17.0))
+                                .line_height(relative(1.25))
                                 .text_color(theme::color(theme::LIVE))
-                                .child(activity),
+                                .children(activity),
                         )
                         .when(show_stop_hint, |this| {
                             this.child(
@@ -833,7 +859,7 @@ impl GsvApp {
             .pl(px(geometry.left))
             .pr(px(geometry.right))
             .pt(px(geometry.vertical))
-            .pb(px(geometry.vertical + 58.0))
+            .pb(px(geometry.vertical + 58.0 + geometry.footer_extra))
             .flex()
             .justify_center()
             .when(is_long, |this| this.items_start())
@@ -941,7 +967,7 @@ impl GsvApp {
             .pl(px(geometry.left))
             .pr(px(geometry.right))
             .pt(px(geometry.vertical))
-            .pb(px(geometry.vertical + 24.0))
+            .pb(px(geometry.vertical + 24.0 + geometry.footer_extra))
             .flex()
             .justify_center()
             .when(is_long, |this| this.items_start())
@@ -1207,8 +1233,25 @@ mod tests {
         use crate::model::ActivityUnit;
 
         assert_eq!(
-            live_activity_label(ActivityCategory::RunningCommands),
-            "Running commands…"
+            live_activity_label(LiveActivityEntry {
+                category: ActivityCategory::RunningCommands,
+                count: 1,
+            }),
+            "Running a command…"
+        );
+        assert_eq!(
+            live_activity_label(LiveActivityEntry {
+                category: ActivityCategory::RunningCommands,
+                count: 3,
+            }),
+            "Running 3 commands…"
+        );
+        assert_eq!(
+            live_activity_label(LiveActivityEntry {
+                category: ActivityCategory::ReadingFiles,
+                count: 3,
+            }),
+            "Running 3 read operations…"
         );
         assert_eq!(
             legacy_activity_label("RECONNECTING · 3"),

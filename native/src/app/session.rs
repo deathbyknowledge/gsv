@@ -5,7 +5,8 @@ use crate::client::{ClientCommand, ClientEvent};
 use crate::interaction::{ApprovalSubmissionFailure, CanvasLayer};
 use crate::model::{
     extract_text, parse_history_with_activity, parse_media, parse_pending_approval,
-    parse_tool_started_activity, ConnectionState, MomentState, PendingApproval,
+    parse_tool_finished_activity, parse_tool_started_activity, ConnectionState, MomentState,
+    PendingApproval,
 };
 
 use super::media::release_assets;
@@ -296,6 +297,11 @@ impl GsvApp {
             "proc.run.tool.started" => {
                 if let Some(activity) = parse_tool_started_activity(payload) {
                     self.conversation.set_live_activity(activity);
+                }
+            }
+            "proc.run.tool.finished" => {
+                if let Some(activity) = parse_tool_finished_activity(payload) {
+                    self.conversation.finish_live_activity(&activity);
                 }
             }
             "proc.run.stream" => {
@@ -614,12 +620,11 @@ mod tests {
         let app = app.borrow().clone().expect("app entity should be retained");
         cx.update(|cx| {
             assert_eq!(
-                app.read(cx)
-                    .conversation
-                    .live_activity
-                    .as_ref()
-                    .map(|activity| activity.category),
-                Some(ActivityCategory::RunningCommands)
+                app.read(cx).conversation.live_activity_entries(),
+                vec![crate::model::LiveActivityEntry {
+                    category: ActivityCategory::RunningCommands,
+                    count: 1,
+                }]
             );
         });
 
@@ -634,14 +639,9 @@ mod tests {
         );
         cx.run_until_parked();
         cx.update(|cx| {
-            assert_eq!(
-                app.read(cx)
-                    .conversation
-                    .live_activity
-                    .as_ref()
-                    .map(|activity| activity.category),
-                Some(ActivityCategory::Thinking)
-            );
+            let app = app.read(cx);
+            assert!(app.conversation.live_activity_entries().is_empty());
+            assert_eq!(app.conversation.activity.as_deref(), Some("THINKING"));
         });
 
         send_signal(
@@ -667,13 +667,140 @@ mod tests {
         cx.update(|cx| {
             let app = app.read(cx);
             assert_eq!(
-                app.conversation
-                    .live_activity
-                    .as_ref()
-                    .map(|activity| activity.category),
-                Some(ActivityCategory::ReadingFiles)
+                app.conversation.live_activity_entries(),
+                vec![crate::model::LiveActivityEntry {
+                    category: ActivityCategory::ReadingFiles,
+                    count: 1,
+                }]
             );
             assert_eq!(app.stream_sequences.get("run-1"), Some(&4));
+        });
+
+        send_signal(
+            "proc.run.stream",
+            json!({
+                "pid": "pid-1",
+                "runId": "run-1",
+                "seq": 5,
+                "event": { "type": "thinking_delta", "delta": "new thought" }
+            }),
+        );
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert!(app.conversation.live_activity_entries().is_empty());
+            assert_eq!(app.conversation.activity.as_deref(), Some("THINKING"));
+        });
+
+        for (call_id, execution_id) in
+            [("parallel-a", "execution-a"), ("parallel-b", "execution-b")]
+        {
+            send_signal(
+                "proc.run.tool.started",
+                json!({
+                    "pid": "pid-1",
+                    "runId": "run-1",
+                    "callId": call_id,
+                    "executionId": execution_id,
+                    "syscall": "fs.read"
+                }),
+            );
+        }
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                app.read(cx).conversation.live_activity_entries(),
+                vec![crate::model::LiveActivityEntry {
+                    category: ActivityCategory::ReadingFiles,
+                    count: 2,
+                }]
+            );
+        });
+
+        send_signal(
+            "proc.run.tool.finished",
+            json!({
+                "pid": "pid-1",
+                "runId": "run-1",
+                "callId": "parallel-b",
+                "executionId": "execution-b",
+                "outcome": "completed",
+                "timestamp": 12
+            }),
+        );
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                app.read(cx).conversation.live_activity_entries(),
+                vec![crate::model::LiveActivityEntry {
+                    category: ActivityCategory::ReadingFiles,
+                    count: 1,
+                }]
+            );
+        });
+
+        send_signal(
+            "proc.run.tool.finished",
+            json!({
+                "pid": "pid-1",
+                "runId": "run-1",
+                "callId": "parallel-a",
+                "executionId": "execution-a",
+                "outcome": "cancelled",
+                "timestamp": 13
+            }),
+        );
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert!(app.conversation.live_activity_entries().is_empty());
+            assert_eq!(app.conversation.activity.as_deref(), Some("THINKING"));
+        });
+
+        send_signal(
+            "proc.run.tool.started",
+            json!({
+                "pid": "pid-1",
+                "runId": "run-1",
+                "callId": "retry-tool",
+                "executionId": "execution-retry",
+                "syscall": "fs.write"
+            }),
+        );
+        send_signal(
+            "proc.run.retrying",
+            json!({ "pid": "pid-1", "runId": "run-1" }),
+        );
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert!(app.conversation.live_activity_entries().is_empty());
+            assert_eq!(app.conversation.activity.as_deref(), Some("TRYING AGAIN"));
+        });
+
+        send_signal(
+            "proc.run.tool.started",
+            json!({
+                "pid": "pid-1",
+                "runId": "run-1",
+                "callId": "output-tool",
+                "executionId": "execution-output",
+                "syscall": "codemode.exec"
+            }),
+        );
+        send_signal(
+            "proc.run.output",
+            json!({
+                "pid": "pid-1",
+                "runId": "run-1",
+                "text": "Visible response"
+            }),
+        );
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert!(app.conversation.live_activity_entries().is_empty());
+            assert!(app.conversation.activity.is_none());
         });
     }
 }
