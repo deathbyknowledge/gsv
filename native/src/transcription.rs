@@ -12,9 +12,17 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VoiceCommand {
-    Start { request_id: u64, locale: String },
-    Stop { request_id: u64 },
-    Cancel { request_id: u64 },
+    Start {
+        request_id: u64,
+        locale: String,
+        device: Option<String>,
+    },
+    Stop {
+        request_id: u64,
+    },
+    Cancel {
+        request_id: u64,
+    },
     Shutdown,
 }
 
@@ -32,6 +40,8 @@ pub enum VoiceErrorCode {
     NotInstalled,
     HelperUnavailable,
     MicrophoneUnavailable,
+    MicrophoneSilent,
+    AudioOverflow,
     DownloadFailed,
     ModelInvalid,
     EngineFailed,
@@ -484,8 +494,16 @@ fn event_request_id(event: &VoiceEvent) -> Option<u64> {
 
 fn command_json(command: &VoiceCommand) -> Value {
     match command {
-        VoiceCommand::Start { request_id, locale } => {
-            json!({ "type": "start", "request_id": request_id, "locale": locale })
+        VoiceCommand::Start {
+            request_id,
+            locale,
+            device,
+        } => {
+            let mut value = json!({ "type": "start", "request_id": request_id, "locale": locale });
+            if let Some(device) = device {
+                value["device"] = Value::String(device.clone());
+            }
+            value
         }
         VoiceCommand::Stop { request_id } => {
             json!({ "type": "stop", "request_id": request_id })
@@ -547,6 +565,8 @@ fn parse_error_code(value: &str) -> Option<VoiceErrorCode> {
         "not_installed" => Some(VoiceErrorCode::NotInstalled),
         "helper_unavailable" => Some(VoiceErrorCode::HelperUnavailable),
         "microphone_unavailable" => Some(VoiceErrorCode::MicrophoneUnavailable),
+        "microphone_silent" => Some(VoiceErrorCode::MicrophoneSilent),
+        "audio_overflow" => Some(VoiceErrorCode::AudioOverflow),
         "download_failed" => Some(VoiceErrorCode::DownloadFailed),
         "model_invalid" => Some(VoiceErrorCode::ModelInvalid),
         "engine_failed" => Some(VoiceErrorCode::EngineFailed),
@@ -583,9 +603,14 @@ mod tests {
         let value = command_json(&VoiceCommand::Start {
             request_id: 2,
             locale: "auto".to_string(),
+            device: Some("Studio microphone".to_string()),
         });
         assert!(value.get("model").is_none());
         assert!(value.get("backend").is_none());
+        assert_eq!(
+            value.get("device").and_then(Value::as_str),
+            Some("Studio microphone")
+        );
     }
 
     #[test]
@@ -603,6 +628,7 @@ mod tests {
         assert!(command_starts_helper(&VoiceCommand::Start {
             request_id: 8,
             locale: "auto".to_string(),
+            device: None,
         }));
     }
 
@@ -780,6 +806,13 @@ mod tests {
             })
         );
         assert!(parse_event(r#"{"type":"error","code":"private_native_error"}"#).is_none());
+        assert_eq!(
+            parse_event(r#"{"type":"error","request_id":4,"code":"microphone_silent"}"#),
+            Some(VoiceEvent::Error {
+                request_id: Some(4),
+                code: VoiceErrorCode::MicrophoneSilent,
+            })
+        );
     }
 
     #[test]
@@ -790,6 +823,7 @@ mod tests {
             &VoiceCommand::Start {
                 request_id: 1,
                 locale: "auto".to_string(),
+                device: None,
             },
             now,
         );
@@ -798,6 +832,7 @@ mod tests {
             &VoiceCommand::Start {
                 request_id: 2,
                 locale: "auto".to_string(),
+                device: None,
             },
             now,
         );

@@ -1049,6 +1049,7 @@ impl GsvApp {
             .send(VoiceCommand::Start {
                 request_id,
                 locale: "auto".to_string(),
+                device: configured_voice_device(),
             })
             .is_err()
         {
@@ -1128,19 +1129,21 @@ impl GsvApp {
                 self.reveal_voice_draft_if_needed(&composition.value, window, cx);
                 self.interaction.on_input(composition.value.clone());
                 self.set_input_value_at(composition.value, composition.cursor, window, cx);
-                self.voice_notice = Some(
-                    if stopping {
-                        "FINISHING VOICE INPUT"
-                    } else {
-                        "LISTENING"
-                    }
-                    .to_string(),
-                );
+                self.voice_notice = Some(if stopping {
+                    "FINISHING VOICE INPUT".to_string()
+                } else {
+                    voice_phase_notice(VoicePhase::Listening, None)
+                });
             }
             VoiceEvent::Final { request_id, text } if self.voice_request_is(request_id) => {
                 let Some(voice) = self.voice_draft.take() else {
                     return;
                 };
+                if text.trim().is_empty() {
+                    self.voice_notice =
+                        (voice.revision < 0).then(|| "NO SPEECH HEARD · CHECK INPUT".to_string());
+                    return;
+                }
                 let composition = compose_voice_text(&voice.before, &text, &voice.after);
                 self.reveal_voice_draft_if_needed(&composition.value, window, cx);
                 self.interaction.on_input(composition.value.clone());
@@ -1523,7 +1526,7 @@ fn voice_phase_notice(phase: VoicePhase, progress: Option<f32>) -> String {
         ),
         VoicePhase::Verifying => "VERIFYING VOICE INPUT".to_string(),
         VoicePhase::Loading => "PREPARING VOICE INPUT".to_string(),
-        VoicePhase::Listening => "LISTENING".to_string(),
+        VoicePhase::Listening => "LISTENING · SPEAK NOW · PRESS AGAIN TO FINISH".to_string(),
         VoicePhase::Finishing => "FINISHING VOICE INPUT".to_string(),
     }
 }
@@ -1531,6 +1534,8 @@ fn voice_phase_notice(phase: VoicePhase, progress: Option<f32>) -> String {
 fn voice_error_notice(code: VoiceErrorCode) -> &'static str {
     match code {
         VoiceErrorCode::MicrophoneUnavailable => "MICROPHONE UNAVAILABLE · CHECK ACCESS",
+        VoiceErrorCode::MicrophoneSilent => "NO MICROPHONE AUDIO · CHECK INPUT",
+        VoiceErrorCode::AudioOverflow => "VOICE INPUT COULDN'T KEEP UP · TRY AGAIN",
         VoiceErrorCode::NotInstalled => "VOICE INPUT ISN'T INSTALLED · KEEP TYPING",
         VoiceErrorCode::HelperUnavailable => "VOICE INPUT COULDN'T START · KEEP TYPING",
         VoiceErrorCode::DownloadFailed | VoiceErrorCode::ModelInvalid => {
@@ -1543,6 +1548,13 @@ fn voice_error_notice(code: VoiceErrorCode) -> &'static str {
             "VOICE INPUT STOPPED · KEEP TYPING"
         }
     }
+}
+
+fn configured_voice_device() -> Option<String> {
+    std::env::var("GSV_VOICE_DEVICE")
+        .ok()
+        .map(|device| device.trim().to_string())
+        .filter(|device| !device.is_empty())
 }
 
 #[cfg(test)]
@@ -1631,6 +1643,14 @@ mod tests {
             voice_error_notice(VoiceErrorCode::EngineFailed),
             "VOICE INPUT STOPPED · KEEP TYPING"
         );
+        assert_eq!(
+            voice_error_notice(VoiceErrorCode::MicrophoneSilent),
+            "NO MICROPHONE AUDIO · CHECK INPUT"
+        );
+        assert_eq!(
+            voice_error_notice(VoiceErrorCode::AudioOverflow),
+            "VOICE INPUT COULDN'T KEEP UP · TRY AGAIN"
+        );
     }
 
     #[test]
@@ -1643,7 +1663,10 @@ mod tests {
             voice_phase_notice(VoicePhase::Verifying, None),
             "VERIFYING VOICE INPUT"
         );
-        assert_eq!(voice_phase_notice(VoicePhase::Listening, None), "LISTENING");
+        assert_eq!(
+            voice_phase_notice(VoicePhase::Listening, None),
+            "LISTENING · SPEAK NOW · PRESS AGAIN TO FINISH"
+        );
     }
 
     #[gpui::test]

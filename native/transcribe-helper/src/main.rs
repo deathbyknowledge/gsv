@@ -7,14 +7,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use audio::{AudioCapture, AudioPacket, Resampler};
+use audio::{AudioCapture, AudioError, AudioPacket, Resampler};
 use crossbeam_channel::{Receiver, TryRecvError};
 use model::{Engine, LoadError};
 use protocol::{emit, Command, ErrorCode, Event, Phase};
 use transcribe_cpp::{ParakeetStreamOptions, RunOptions, Stream, StreamExtension, StreamOptions};
 
 const FEED_SAMPLES: usize = 1_280;
-const MIN_UI_UPDATE: Duration = Duration::from_millis(67);
 const MAX_SESSION_DURATION: Duration = Duration::from_secs(10 * 60);
 const MAX_TRANSCRIPT_BYTES: usize = 64 * 1024;
 const ENGINE_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -35,6 +34,7 @@ enum StreamOutcome {
 struct StartRequest {
     request_id: u64,
     locale: String,
+    device: Option<String>,
 }
 
 enum PreparationMessage {
@@ -122,8 +122,16 @@ fn main() {
         };
 
         match command {
-            Command::Start { request_id, locale } => {
-                let request = StartRequest { request_id, locale };
+            Command::Start {
+                request_id,
+                locale,
+                device,
+            } => {
+                let request = StartRequest {
+                    request_id,
+                    locale,
+                    device,
+                };
                 if let Some(active) = preparation.as_mut() {
                     if active.request.is_some() {
                         emit(&Event::Error {
@@ -268,7 +276,13 @@ fn run_and_report(
     commands: &Receiver<Command>,
 ) -> bool {
     engine.cancel.reset();
-    match run_stream(request.request_id, &request.locale, engine, commands) {
+    match run_stream(
+        request.request_id,
+        &request.locale,
+        request.device.as_deref(),
+        engine,
+        commands,
+    ) {
         Ok(StreamOutcome::Continue) => false,
         Ok(StreamOutcome::Shutdown) => true,
         Err(code) => {
@@ -284,10 +298,11 @@ fn run_and_report(
 fn run_stream(
     request_id: u64,
     locale: &str,
+    device: Option<&str>,
     engine: &mut Engine,
     commands: &Receiver<Command>,
 ) -> Result<StreamOutcome, ErrorCode> {
-    let capture = AudioCapture::open().map_err(|_| ErrorCode::MicrophoneUnavailable)?;
+    let capture = AudioCapture::open(device).map_err(|_| ErrorCode::MicrophoneUnavailable)?;
     let mut resampler =
         Resampler::new(capture.sample_rate).map_err(|_| ErrorCode::MicrophoneUnavailable)?;
     let run_options = RunOptions {
@@ -312,7 +327,6 @@ fn run_stream(
 
     let mut pending = VecDeque::<f32>::with_capacity(FEED_SAMPLES * 2);
     let mut converted = Vec::with_capacity(FEED_SAMPLES * 2);
-    let mut last_ui_update = Instant::now() - MIN_UI_UPDATE;
     let session_started = Instant::now();
     loop {
         crossbeam_channel::select! {
@@ -353,7 +367,7 @@ fn run_stream(
                 match packet {
                     Ok(AudioPacket::Samples(samples)) => {
                         converted.clear();
-                        resampler.push(&samples, &mut converted);
+                        resampler.push(samples.as_slice(), &mut converted);
                         pending.extend(converted.iter().copied());
                         while pending.len() >= FEED_SAMPLES {
                             let frame = pending.drain(..FEED_SAMPLES).collect::<Vec<_>>();
@@ -370,7 +384,7 @@ fn run_stream(
                                     return Ok(StreamOutcome::Continue);
                                 }
                             }
-                            if changed && last_ui_update.elapsed() >= MIN_UI_UPDATE {
+                            if changed {
                                 let text = stream.text();
                                 emit(&Event::Partial {
                                     request_id,
@@ -378,13 +392,20 @@ fn run_stream(
                                     committed: &text.committed,
                                     tentative: &text.tentative,
                                 });
-                                last_ui_update = Instant::now();
                             }
                         }
                     }
-                    Ok(AudioPacket::Error) | Err(_) => {
+                    Ok(AudioPacket::Error(AudioError::Unavailable)) | Err(_) => {
                         stream.reset();
                         return Err(ErrorCode::MicrophoneUnavailable);
+                    }
+                    Ok(AudioPacket::Error(AudioError::Silent)) => {
+                        stream.reset();
+                        return Err(ErrorCode::MicrophoneSilent);
+                    }
+                    Ok(AudioPacket::Error(AudioError::Overflow)) => {
+                        stream.reset();
+                        return Err(ErrorCode::AudioOverflow);
                     }
                 }
             }
@@ -457,6 +478,7 @@ mod tests {
             request: Some(StartRequest {
                 request_id: 17,
                 locale: "auto".to_string(),
+                device: None,
             }),
             last_state: Some((Phase::Downloading, Some(0.2))),
         });
@@ -468,11 +490,6 @@ mod tests {
         assert!(preparation
             .as_ref()
             .is_some_and(|active| active.request.is_none()));
-    }
-
-    #[test]
-    fn output_is_throttled_below_frame_rate() {
-        assert!(MIN_UI_UPDATE >= Duration::from_millis(60));
     }
 
     #[test]

@@ -9,6 +9,8 @@ pub enum Command {
         request_id: u64,
         #[serde(default = "default_locale")]
         locale: String,
+        #[serde(default)]
+        device: Option<String>,
     },
     Stop {
         request_id: u64,
@@ -33,6 +35,8 @@ pub enum Phase {
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     MicrophoneUnavailable,
+    MicrophoneSilent,
+    AudioOverflow,
     DownloadFailed,
     ModelInvalid,
     EngineFailed,
@@ -124,6 +128,7 @@ mod tests {
             Command::Start {
                 request_id: 7,
                 locale: "nl-NL".to_string(),
+                device: None,
             }
         );
 
@@ -152,5 +157,28 @@ mod tests {
         .expect("serializable event");
         assert_eq!(state["phase"], "downloading");
         assert_eq!(state["progress"], 0.25);
+    }
+
+    #[test]
+    fn start_accepts_an_optional_microphone_without_exposing_it_in_events() {
+        let command: Command =
+            serde_json::from_str(r#"{"type":"start","request_id":8,"device":"Shure MV6"}"#)
+                .expect("valid command");
+        assert_eq!(
+            command,
+            Command::Start {
+                request_id: 8,
+                locale: "auto".to_string(),
+                device: Some("Shure MV6".to_string()),
+            }
+        );
+
+        let event = serde_json::to_value(Event::Error {
+            request_id: Some(8),
+            code: ErrorCode::MicrophoneSilent,
+        })
+        .expect("serializable event");
+        assert_eq!(event["code"], "microphone_silent");
+        assert!(event.get("device").is_none());
     }
 }

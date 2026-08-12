@@ -77,9 +77,12 @@ selected automatically when `WAYLAND_DISPLAY` is present; no Cargo feature is ne
 - On a long moment, the wheel scrolls its contents first; at an edge, three continued wheel detents
   move to the adjacent moment. A wheel gesture over the left rail moves one moment directly.
 - Drag across reply or terminal text to select it; `Cmd/Ctrl+C` copies the exact visible text.
-- `Cmd/Ctrl+Shift+Space` starts local streaming dictation and presses again to finish it. Build the
-  isolated helper first with `cargo build --release --manifest-path native/transcribe-helper/Cargo.toml`.
-  For a distributable build, place that helper and its `THIRD_PARTY.md` beside the app binary.
+- `Cmd/Ctrl+Shift+Space` starts local streaming dictation. Speak after `LISTENING`; words appear in
+  the draft as they are recognized. Press the same shortcut again (or press `Enter`) to finish it.
+  Voice input uses the operating-system default microphone. Until the native microphone picker is
+  available, an exact device can be selected with `GSV_VOICE_DEVICE="Shure MV6"`. Build the isolated
+  helper first with `cargo build --release --manifest-path native/transcribe-helper/Cargo.toml`. For a
+  distributable build, place that helper and its `THIRD_PARTY.md` beside the app binary.
 - `Cmd/Ctrl+.` stops the active run.
 - `Cmd/Ctrl+\`` switches between conversation and command surfaces.
 
