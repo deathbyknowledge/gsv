@@ -5,7 +5,6 @@ use serde_json::Value;
 use crate::content::{MediaAttachment, MediaKind};
 
 const RETIRED_RUN_LIMIT: usize = 128;
-const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ActivityCategory {
@@ -20,16 +19,28 @@ pub enum ActivityCategory {
 }
 
 impl ActivityCategory {
-    fn parse(value: &str) -> Option<Self> {
+    fn from_syscall(value: &str) -> Option<Self> {
         match value {
-            "thinking" => Some(Self::Thinking),
-            "searching_files" => Some(Self::SearchingFiles),
-            "reading_files" => Some(Self::ReadingFiles),
-            "writing_files" => Some(Self::WritingFiles),
-            "editing_files" => Some(Self::EditingFiles),
-            "deleting_files" => Some(Self::DeletingFiles),
-            "running_commands" => Some(Self::RunningCommands),
-            "running_code" => Some(Self::RunningCode),
+            "fs.search" => Some(Self::SearchingFiles),
+            "fs.read" => Some(Self::ReadingFiles),
+            "fs.write" => Some(Self::WritingFiles),
+            "fs.edit" => Some(Self::EditingFiles),
+            "fs.delete" => Some(Self::DeletingFiles),
+            "shell.exec" => Some(Self::RunningCommands),
+            "codemode.exec" => Some(Self::RunningCode),
+            _ => None,
+        }
+    }
+
+    fn from_tool_name(value: &str) -> Option<Self> {
+        match value {
+            "Search" => Some(Self::SearchingFiles),
+            "Read" => Some(Self::ReadingFiles),
+            "Write" => Some(Self::WritingFiles),
+            "Edit" => Some(Self::EditingFiles),
+            "Delete" => Some(Self::DeletingFiles),
+            "Shell" => Some(Self::RunningCommands),
+            "CodeMode" => Some(Self::RunningCode),
             _ => None,
         }
     }
@@ -79,18 +90,6 @@ pub enum ActivityUnit {
     Runs,
 }
 
-impl ActivityUnit {
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "operations" => Some(Self::Operations),
-            "reads" => Some(Self::Reads),
-            "commands" => Some(Self::Commands),
-            "runs" => Some(Self::Runs),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActivitySummaryEntry {
     pub category: ActivityCategory,
@@ -101,14 +100,28 @@ pub struct ActivitySummaryEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LiveActivity {
     pub category: ActivityCategory,
-    pub timestamp: u64,
     run_id: String,
+    call_id: Option<String>,
+    terminal_baseline: Option<String>,
 }
 
 #[derive(Debug)]
 pub struct HistoryActivitySummary {
     moment_id: String,
     entries: Vec<ActivitySummaryEntry>,
+}
+
+#[derive(Debug)]
+pub struct HistoryActivity {
+    summaries: Vec<HistoryActivitySummary>,
+    latest_call_states: HashMap<(String, String), HistoryCallState>,
+    authoritative: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum HistoryCallState {
+    Pending,
+    Terminal { message_id: String },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -186,6 +199,7 @@ pub struct Conversation {
     user_occurrence_baselines: HashMap<String, usize>,
     retired_run_ids: VecDeque<String>,
     response_activity: HashMap<String, Vec<ActivitySummaryEntry>>,
+    history_call_states: HashMap<(String, String), HistoryCallState>,
     stopping_run_id: Option<String>,
     follow_latest: bool,
 }
@@ -205,6 +219,7 @@ impl Conversation {
             user_occurrence_baselines: HashMap::new(),
             retired_run_ids: VecDeque::new(),
             response_activity: HashMap::new(),
+            history_call_states: HashMap::new(),
             stopping_run_id: None,
             follow_latest: true,
         }
@@ -241,6 +256,7 @@ impl Conversation {
             user_occurrence_baselines: HashMap::new(),
             retired_run_ids: VecDeque::new(),
             response_activity: HashMap::new(),
+            history_call_states: HashMap::new(),
             stopping_run_id: None,
             follow_latest: true,
         }
@@ -260,22 +276,48 @@ impl Conversation {
             .unwrap_or(&[])
     }
 
-    pub fn set_live_activity(&mut self, activity: LiveActivity) -> bool {
+    pub fn set_live_activity(&mut self, mut activity: LiveActivity) -> bool {
         if self.active_run_id.as_deref() != Some(activity.run_id.as_str())
             || !self.accepts_run(Some(&activity.run_id))
         {
             return false;
         }
-        if self.live_activity.as_ref().is_some_and(|current| {
-            current.run_id == activity.run_id && current.timestamp > activity.timestamp
-        }) {
+        let Some(call_id) = activity.call_id.as_ref() else {
             return false;
-        }
+        };
+        let key = (activity.run_id.clone(), call_id.clone());
+        activity.terminal_baseline =
+            self.history_call_states
+                .get(&key)
+                .and_then(|state| match state {
+                    HistoryCallState::Pending => None,
+                    HistoryCallState::Terminal { message_id } => Some(message_id.clone()),
+                });
         self.live_activity = Some(activity);
         true
     }
 
+    pub fn resume_thinking(&mut self, run_id: Option<&str>) -> bool {
+        let Some(run_id) = run_id else {
+            return false;
+        };
+        if self.active_run_id.as_deref() != Some(run_id) || !self.accepts_run(Some(run_id)) {
+            return false;
+        }
+        self.live_activity = Some(LiveActivity {
+            category: ActivityCategory::Thinking,
+            run_id: run_id.to_string(),
+            call_id: None,
+            terminal_baseline: None,
+        });
+        self.activity = Some("THINKING".to_string());
+        true
+    }
+
     pub fn clear_live_activity(&mut self, run_id: Option<&str>) {
+        if run_id.is_none() {
+            self.reset_activity_correlation();
+        }
         if run_id.is_none_or(|run_id| {
             self.live_activity
                 .as_ref()
@@ -285,13 +327,42 @@ impl Conversation {
         }
     }
 
-    pub fn reconcile_history_activity(&mut self, summaries: Vec<HistoryActivitySummary>) {
+    pub fn reconcile_history_activity(&mut self, history: HistoryActivity) {
+        let HistoryActivity {
+            summaries,
+            latest_call_states,
+            authoritative,
+        } = history;
+        let completed_live_call = self.live_activity.as_ref().and_then(|activity| {
+            let call_id = activity.call_id.as_ref()?;
+            let HistoryCallState::Terminal { message_id } =
+                latest_call_states.get(&(activity.run_id.clone(), call_id.clone()))?
+            else {
+                return None;
+            };
+            (activity.terminal_baseline.as_deref() != Some(message_id.as_str()))
+                .then(|| activity.run_id.clone())
+        });
+        if let Some(run_id) = completed_live_call {
+            if self.pending_approval.is_none() {
+                self.resume_thinking(Some(&run_id));
+            } else {
+                self.clear_live_activity(Some(&run_id));
+            }
+        }
+
         let moment_ids = self
             .moments
             .iter()
             .filter(|moment| moment.role == MomentRole::Intelligence)
             .map(|moment| moment.id.as_str())
             .collect::<HashSet<_>>();
+        if authoritative {
+            self.history_call_states.clear();
+            self.response_activity
+                .retain(|moment_id, _| !moment_ids.contains(moment_id.as_str()));
+        }
+        self.history_call_states.extend(latest_call_states);
         for summary in summaries {
             if !moment_ids.contains(summary.moment_id.as_str()) {
                 continue;
@@ -503,12 +574,23 @@ impl Conversation {
             return;
         }
 
-        if self.active_run_id.as_deref() == Some(run_id.as_str()) {
-            self.activity = Some("THINKING".to_string());
-            if self.moments.iter().any(|moment| {
+        let same_run = self.active_run_id.as_deref() == Some(run_id.as_str());
+        if same_run {
+            if let Some(moment) = self.moments.iter().find(|moment| {
                 moment.state == MomentState::Streaming
                     && moment.run_id.as_deref() == Some(run_id.as_str())
             }) {
+                if moment.text.trim().is_empty() && moment.media.is_empty() {
+                    self.activity = Some("THINKING".to_string());
+                    if self.live_activity.is_none() {
+                        self.live_activity = Some(LiveActivity {
+                            category: ActivityCategory::Thinking,
+                            run_id: run_id.clone(),
+                            call_id: None,
+                            terminal_baseline: None,
+                        });
+                    }
+                }
                 return;
             }
         } else if let Some(previous_run_id) = self.active_run_id.take() {
@@ -517,8 +599,25 @@ impl Conversation {
             self.stopping_run_id = None;
         }
 
-        self.live_activity = None;
-        self.active_run_id = Some(run_id.clone());
+        if same_run {
+            if self.live_activity.is_none() {
+                self.live_activity = Some(LiveActivity {
+                    category: ActivityCategory::Thinking,
+                    run_id: run_id.clone(),
+                    call_id: None,
+                    terminal_baseline: None,
+                });
+            }
+        } else {
+            self.reset_activity_correlation();
+            self.live_activity = Some(LiveActivity {
+                category: ActivityCategory::Thinking,
+                run_id: run_id.clone(),
+                call_id: None,
+                terminal_baseline: None,
+            });
+            self.active_run_id = Some(run_id.clone());
+        }
         self.activity = Some("THINKING".to_string());
 
         if self.moments.iter().any(|moment| {
@@ -672,6 +771,7 @@ impl Conversation {
             self.active_run_id = None;
             self.stopping_run_id = None;
             self.live_activity = None;
+            self.reset_activity_correlation();
         }
         if let Some(run_id) = run_id {
             self.retired_run_ids.retain(|retired| retired != run_id);
@@ -689,20 +789,11 @@ impl Conversation {
             self.stopping_run_id = None;
             self.activity = None;
             self.live_activity = None;
+            self.reset_activity_correlation();
         }
     }
 
-    #[cfg(test)]
     pub fn finish_run(&mut self, run_id: Option<&str>, error: Option<&str>) -> bool {
-        self.finish_run_with_activity(run_id, error, None)
-    }
-
-    pub fn finish_run_with_activity(
-        &mut self,
-        run_id: Option<&str>,
-        error: Option<&str>,
-        activity_summary: Option<Vec<ActivitySummaryEntry>>,
-    ) -> bool {
         let Some(active_run_id) = self.active_run_id.clone() else {
             return false;
         };
@@ -715,15 +806,6 @@ impl Conversation {
                 && moment.run_id.as_deref() == Some(active_run_id.as_str())
         });
         if let Some(index) = matching_moment {
-            if let Some(activity_summary) = activity_summary {
-                let owner = self.moments[index].id.clone();
-                let activity_summary = normalize_activity_summary(activity_summary);
-                if activity_summary.is_empty() {
-                    self.response_activity.remove(&owner);
-                } else {
-                    self.response_activity.insert(owner, activity_summary);
-                }
-            }
             let moment = &mut self.moments[index];
             moment.state = if error.is_some() {
                 MomentState::Error
@@ -752,6 +834,7 @@ impl Conversation {
         self.stopping_run_id = None;
         self.activity = None;
         self.live_activity = None;
+        self.reset_activity_correlation();
         self.follow_if_requested();
         true
     }
@@ -767,6 +850,7 @@ impl Conversation {
         self.clear_approval();
         self.activity = None;
         self.live_activity = None;
+        self.reset_activity_correlation();
         self.follow_if_requested();
         true
     }
@@ -847,11 +931,23 @@ impl Conversation {
     }
 
     pub fn clear_approval(&mut self) {
+        let preserve_live_activity = self
+            .pending_approval
+            .as_ref()
+            .zip(self.live_activity.as_ref())
+            .is_some_and(|(approval, activity)| {
+                activity.call_id.is_some()
+                    && !approval.run_id.is_empty()
+                    && approval.run_id == activity.run_id
+                    && self.active_run_id.as_deref() == Some(activity.run_id.as_str())
+            });
         self.pending_approval = None;
         self.moments
             .retain(|moment| moment.state != MomentState::Approval);
         self.activity = self.active_run_id.as_ref().map(|_| "THINKING".to_string());
-        self.live_activity = None;
+        if !preserve_live_activity {
+            self.live_activity = None;
+        }
         self.select_latest();
     }
 
@@ -903,6 +999,10 @@ impl Conversation {
             .retain(|owner, _| owners.contains(owner.as_str()));
     }
 
+    fn reset_activity_correlation(&mut self) {
+        self.history_call_states.clear();
+    }
+
     fn follow_after_append(&mut self, was_following: bool) {
         if was_following {
             self.selected = self.moments.len().saturating_sub(1);
@@ -922,25 +1022,211 @@ impl Conversation {
     }
 }
 
-fn normalize_activity_summary(
-    entries: impl IntoIterator<Item = ActivitySummaryEntry>,
-) -> Vec<ActivitySummaryEntry> {
-    let mut counts = [0_u64; SUMMARY_ACTIVITY_CATEGORIES.len()];
-    for entry in entries {
-        let Some(index) = entry.category.summary_index() else {
+pub fn parse_tool_started_activity(value: &Value) -> Option<LiveActivity> {
+    let run_id = value.get("runId")?.as_str()?.trim();
+    let call_id = value.get("callId")?.as_str()?.trim();
+    let category = value
+        .get("syscall")
+        .and_then(Value::as_str)
+        .and_then(ActivityCategory::from_syscall)?;
+    if run_id.is_empty() || call_id.is_empty() {
+        return None;
+    }
+    Some(LiveActivity {
+        category,
+        run_id: run_id.to_string(),
+        call_id: Some(call_id.to_string()),
+        terminal_baseline: None,
+    })
+}
+
+fn derive_history_activity(payload: &Value) -> HistoryActivity {
+    let Some(messages) = payload.get("messages").and_then(Value::as_array) else {
+        return HistoryActivity {
+            summaries: Vec::new(),
+            latest_call_states: HashMap::new(),
+            authoritative: false,
+        };
+    };
+    let has_compaction_marker = messages.iter().any(history_is_compaction_marker);
+    let authoritative = history_is_authoritative(payload, messages.len()) && !has_compaction_marker;
+    let mut calls = HashMap::<(String, String), VecDeque<Option<ActivityCategory>>>::new();
+    let mut latest_call_states = HashMap::<(String, String), HistoryCallState>::new();
+    let mut run_boundaries = HashSet::<String>::new();
+    let mut runs_with_call_context = HashSet::<String>::new();
+    let mut incomplete_runs = HashSet::<String>::new();
+    let mut pending_counts = HashMap::<String, [u64; SUMMARY_ACTIVITY_CATEGORIES.len()]>::new();
+    let mut summaries = Vec::new();
+
+    for (index, message) in messages.iter().enumerate() {
+        let Some(run_id) = history_run_id(message) else {
             continue;
         };
-        if entry.count == 0
-            || entry.count > MAX_SAFE_JSON_INTEGER
-            || entry.category.expected_unit() != Some(entry.unit)
-        {
-            continue;
+        match message.get("role").and_then(Value::as_str) {
+            Some("user") => {
+                run_boundaries.insert(run_id.to_string());
+            }
+            Some("assistant") => {
+                let tool_calls = history_tool_calls(message);
+                if !tool_calls.is_empty() {
+                    runs_with_call_context.insert(run_id.to_string());
+                    for call in tool_calls {
+                        let Some(call_id) = call
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|call_id| !call_id.is_empty())
+                        else {
+                            continue;
+                        };
+                        let category = call
+                            .get("syscall")
+                            .and_then(Value::as_str)
+                            .and_then(ActivityCategory::from_syscall)
+                            .or_else(|| {
+                                call.get("name")
+                                    .and_then(Value::as_str)
+                                    .and_then(ActivityCategory::from_tool_name)
+                            });
+                        let key = (run_id.to_string(), call_id.to_string());
+                        calls.entry(key.clone()).or_default().push_back(category);
+                        latest_call_states.insert(key, HistoryCallState::Pending);
+                    }
+                    continue;
+                }
+
+                if incomplete_runs.contains(run_id) {
+                    pending_counts.remove(run_id);
+                    continue;
+                }
+                let entries = pending_counts
+                    .remove(run_id)
+                    .map(summary_entries)
+                    .unwrap_or_default();
+                if authoritative || !entries.is_empty() {
+                    summaries.push(HistoryActivitySummary {
+                        moment_id: history_moment_id(message, index),
+                        entries,
+                    });
+                }
+            }
+            Some("toolResult") => {
+                let Some(content) = message.get("content") else {
+                    continue;
+                };
+                let call_id = content
+                    .get("toolCallId")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|call_id| !call_id.is_empty());
+                let key = call_id.map(|call_id| (run_id.to_string(), call_id.to_string()));
+                let correlated = key.as_ref().and_then(|key| {
+                    calls
+                        .get_mut(key)
+                        .and_then(VecDeque::pop_front)
+                        .map(|category| (key.clone(), category))
+                });
+                if let Some((key, _)) = &correlated {
+                    if calls.get(key).is_none_or(VecDeque::is_empty) {
+                        latest_call_states.insert(
+                            key.clone(),
+                            HistoryCallState::Terminal {
+                                message_id: history_moment_id(message, index),
+                            },
+                        );
+                    }
+                }
+                if !authoritative && !run_boundaries.contains(run_id) {
+                    incomplete_runs.insert(run_id.to_string());
+                    pending_counts.remove(run_id);
+                    continue;
+                }
+                if content.get("outcome").and_then(Value::as_str) != Some("completed") {
+                    continue;
+                }
+                let category = correlated.and_then(|(_, category)| category).or_else(|| {
+                    (!runs_with_call_context.contains(run_id))
+                        .then(|| {
+                            content
+                                .get("toolName")
+                                .and_then(Value::as_str)
+                                .and_then(ActivityCategory::from_tool_name)
+                        })
+                        .flatten()
+                });
+                let Some(index) = category.and_then(ActivityCategory::summary_index) else {
+                    continue;
+                };
+                let counts = pending_counts.entry(run_id.to_string()).or_default();
+                counts[index] = counts[index].saturating_add(1);
+            }
+            _ => {}
         }
-        counts[index] = counts[index]
-            .saturating_add(entry.count)
-            .min(MAX_SAFE_JSON_INTEGER);
     }
 
+    HistoryActivity {
+        summaries,
+        latest_call_states,
+        authoritative,
+    }
+}
+
+fn history_is_authoritative(payload: &Value, visible_message_count: usize) -> bool {
+    if payload.get("truncated").and_then(Value::as_bool) == Some(true) {
+        return false;
+    }
+
+    let has_more_before = payload.get("hasMoreBefore").and_then(Value::as_bool);
+    let has_more_after = payload.get("hasMoreAfter").and_then(Value::as_bool);
+    if has_more_before == Some(true) || has_more_after == Some(true) {
+        return false;
+    }
+    if has_more_before.is_some() || has_more_after.is_some() {
+        return has_more_before == Some(false) && has_more_after == Some(false);
+    }
+
+    if payload.get("truncated").and_then(Value::as_bool) == Some(false) {
+        return true;
+    }
+    payload
+        .get("messageCount")
+        .and_then(Value::as_u64)
+        .is_some_and(|count| count == visible_message_count as u64)
+}
+
+fn history_is_compaction_marker(message: &Value) -> bool {
+    message.get("role").and_then(Value::as_str) == Some("system")
+        && message
+            .get("content")
+            .and_then(Value::as_str)
+            .is_some_and(|content| content.starts_with("Process history compacted."))
+}
+
+fn history_run_id(message: &Value) -> Option<&str> {
+    message
+        .get("runId")?
+        .as_str()
+        .map(str::trim)
+        .filter(|run_id| !run_id.is_empty())
+}
+
+fn history_tool_calls(message: &Value) -> Vec<&Value> {
+    let content = message.get("content").unwrap_or(&Value::Null);
+    if let Some(tool_calls) = content.get("toolCalls").and_then(Value::as_array) {
+        return tool_calls.iter().collect();
+    }
+    if let Some(tool_calls) = message.get("toolCalls").and_then(Value::as_array) {
+        return tool_calls.iter().collect();
+    }
+    content
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("toolCall"))
+        .collect()
+}
+
+fn summary_entries(counts: [u64; SUMMARY_ACTIVITY_CATEGORIES.len()]) -> Vec<ActivitySummaryEntry> {
     SUMMARY_ACTIVITY_CATEGORIES
         .into_iter()
         .enumerate()
@@ -956,57 +1242,17 @@ fn normalize_activity_summary(
         .collect()
 }
 
-pub fn parse_live_activity(value: &Value) -> Option<LiveActivity> {
-    let pid = value.get("pid")?.as_str()?.trim();
-    let run_id = value.get("runId")?.as_str()?.trim();
-    let category = ActivityCategory::parse(value.get("category")?.as_str()?)?;
-    let timestamp = value.get("timestamp")?.as_u64()?;
-    if pid.is_empty() || run_id.is_empty() || timestamp > MAX_SAFE_JSON_INTEGER {
-        return None;
-    }
-    Some(LiveActivity {
-        category,
-        timestamp,
-        run_id: run_id.to_string(),
-    })
-}
-
-pub fn parse_activity_summary(value: &Value) -> Option<Vec<ActivitySummaryEntry>> {
-    let entries = value.as_array()?.iter().filter_map(|entry| {
-        let category = ActivityCategory::parse(entry.get("category")?.as_str()?)?;
-        let unit = ActivityUnit::parse(entry.get("unit")?.as_str()?)?;
-        let count = entry.get("count")?.as_u64()?;
-        Some(ActivitySummaryEntry {
-            category,
-            count,
-            unit,
-        })
-    });
-    let entries = normalize_activity_summary(entries);
-    (!entries.is_empty()).then_some(entries)
-}
-
-pub fn parse_history_activity_summaries(payload: &Value) -> Vec<HistoryActivitySummary> {
-    payload
-        .get("messages")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .enumerate()
-        .filter_map(|(index, message)| {
-            if message.get("role").and_then(Value::as_str) != Some("assistant") {
-                return None;
-            }
-            let entries = message
-                .get("metadata")?
-                .get("activitySummary")
-                .and_then(parse_activity_summary)?;
-            Some(HistoryActivitySummary {
-                moment_id: history_moment_id(message, index),
-                entries,
-            })
-        })
-        .collect()
+pub fn parse_history_with_activity(payload: &Value) -> (Vec<Moment>, HistoryActivity) {
+    let activity = derive_history_activity(payload);
+    let summary_owners = activity
+        .summaries
+        .iter()
+        .filter(|summary| !summary.entries.is_empty())
+        .map(|summary| summary.moment_id.as_str())
+        .collect::<HashSet<_>>();
+    let moments = parse_history_moments(payload, &summary_owners);
+    drop(summary_owners);
+    (moments, activity)
 }
 
 pub fn approval_prompt(approval: &PendingApproval) -> String {
@@ -1025,7 +1271,12 @@ pub fn approval_prompt(approval: &PendingApproval) -> String {
     )
 }
 
+#[cfg(test)]
 pub fn parse_history(payload: &Value) -> Vec<Moment> {
+    parse_history_with_activity(payload).0
+}
+
+fn parse_history_moments(payload: &Value, summary_owners: &HashSet<&str>) -> Vec<Moment> {
     payload
         .get("messages")
         .and_then(Value::as_array)
@@ -1047,16 +1298,12 @@ pub fn parse_history(payload: &Value) -> Vec<Moment> {
                 .or_else(|| content.get("media"))
                 .map(parse_media)
                 .unwrap_or_default();
-            let has_activity_summary = role == MomentRole::Intelligence
-                && message
-                    .get("metadata")
-                    .and_then(|metadata| metadata.get("activitySummary"))
-                    .and_then(parse_activity_summary)
-                    .is_some();
+            let id = history_moment_id(message, index);
+            let has_activity_summary =
+                role == MomentRole::Intelligence && summary_owners.contains(id.as_str());
             if text.trim().is_empty() && media.is_empty() && !has_activity_summary {
                 return None;
             }
-            let id = history_moment_id(message, index);
             Some(Moment {
                 id,
                 role,
@@ -1221,6 +1468,7 @@ mod tests {
     #[test]
     fn history_keeps_human_moments_and_hides_tool_plumbing() {
         let history = json!({
+            "truncated": false,
             "messages": [
                 { "id": 1, "role": "user", "content": "Plan my day" },
                 { "id": 2, "role": "toolResult", "content": { "output": "private details" } },
@@ -1235,6 +1483,7 @@ mod tests {
     #[test]
     fn history_filters_blank_content_without_normalizing_visible_whitespace() {
         let history = json!({
+            "truncated": false,
             "messages": [
                 { "id": 1, "role": "user", "content": " \n\t " },
                 { "id": 2, "role": "assistant", "content": "\n  keep this spacing  \n" }
@@ -1250,6 +1499,7 @@ mod tests {
     #[test]
     fn history_retains_process_media_and_media_only_moments() {
         let history = json!({
+            "truncated": false,
             "messages": [
                 {
                     "id": 7,
@@ -1353,20 +1603,21 @@ mod tests {
     }
 
     #[test]
-    fn live_activity_is_typed_ordered_and_scoped_to_the_active_run() {
+    fn tool_started_activity_is_typed_scoped_and_sanitized() {
         let mut conversation = Conversation::connecting();
         conversation.start_run("run-1");
-
-        assert!(conversation.set_live_activity(
-            parse_live_activity(&json!({
-                "pid": "alice/main",
-                "runId": "run-1",
-                "category": "reading_files",
-                "timestamp": 20,
-                "args": { "path": "/private/notes.txt" }
-            }))
-            .expect("valid activity")
-        ));
+        let activity = parse_tool_started_activity(&json!({
+            "pid": "alice/main",
+            "runId": "run-1",
+            "callId": "call-read",
+            "name": "Read",
+            "syscall": "fs.read",
+            "args": { "path": "/private/notes.txt", "content": "do-not-retain" }
+        }))
+        .expect("valid tool start");
+        assert!(!format!("{activity:?}").contains("private"));
+        assert!(!format!("{activity:?}").contains("do-not-retain"));
+        assert!(conversation.set_live_activity(activity.clone()));
         assert_eq!(
             conversation
                 .live_activity
@@ -1375,89 +1626,133 @@ mod tests {
             Some(ActivityCategory::ReadingFiles)
         );
 
+        assert!(conversation.resume_thinking(Some("run-1")));
+        assert!(conversation.set_live_activity(activity));
+        assert_eq!(
+            conversation
+                .live_activity
+                .as_ref()
+                .map(|activity| activity.category),
+            Some(ActivityCategory::ReadingFiles)
+        );
         assert!(!conversation.set_live_activity(
-            parse_live_activity(&json!({
-                "pid": "alice/main",
-                "runId": "run-1",
-                "category": "searching_files",
-                "timestamp": 19
-            }))
-            .expect("valid older activity")
-        ));
-        assert!(!conversation.set_live_activity(
-            parse_live_activity(&json!({
-                "pid": "alice/main",
+            parse_tool_started_activity(&json!({
                 "runId": "run-2",
-                "category": "running_commands",
-                "timestamp": 21
+                "callId": "call-shell",
+                "name": "Shell",
+                "syscall": "shell.exec"
             }))
             .expect("valid foreign activity")
         ));
+
+        conversation.start_run("run-2");
         assert_eq!(
             conversation
                 .live_activity
                 .as_ref()
                 .map(|activity| activity.category),
-            Some(ActivityCategory::ReadingFiles)
+            Some(ActivityCategory::Thinking)
         );
+        assert!(parse_tool_started_activity(&json!({
+            "runId": "run-1",
+            "callId": "name-only",
+            "name": "Read"
+        }))
+        .is_none());
+    }
 
-        conversation.start_run("run-2");
-        assert!(conversation.live_activity.is_none());
+    #[test]
+    fn a_repeated_call_id_is_a_new_live_occurrence() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+        let activity = parse_tool_started_activity(&json!({
+            "runId": "run-1",
+            "callId": "call-replayed",
+            "syscall": "fs.read"
+        }))
+        .expect("valid activity");
+
+        assert!(conversation.set_live_activity(activity.clone()));
+        conversation.clear_live_activity(Some("run-1"));
+        assert!(conversation.set_live_activity(activity));
     }
 
     #[test]
     fn visible_response_output_clears_live_activity() {
         let mut conversation = Conversation::connecting();
         conversation.start_run("run-1");
-        let activity = parse_live_activity(&json!({
-            "pid": "alice/main",
+        let activity = parse_tool_started_activity(&json!({
             "runId": "run-1",
-            "category": "thinking",
-            "timestamp": 1
+            "callId": "call-1",
+            "name": "Search",
+            "syscall": "fs.search"
         }))
         .expect("valid activity");
-        assert!(conversation.set_live_activity(activity.clone()));
+        assert!(conversation.set_live_activity(activity));
 
         conversation.stream_text(Some("run-1"), "The answer");
         assert!(conversation.live_activity.is_none());
 
-        assert!(conversation.set_live_activity(activity));
+        assert!(conversation.set_live_activity(
+            parse_tool_started_activity(&json!({
+                "runId": "run-1",
+                "callId": "call-2",
+                "name": "CodeMode",
+                "syscall": "codemode.exec"
+            }))
+            .expect("valid second activity")
+        ));
         conversation.replace_run_media(Some("run-1"), Vec::new());
         assert!(conversation.live_activity.is_none());
     }
 
     #[test]
-    fn activity_summaries_are_nonzero_typed_and_in_fixed_order() {
-        let summary = parse_activity_summary(&json!([
-            { "category": "running_commands", "count": 2, "unit": "commands", "input": "secret" },
-            { "category": "reading_files", "count": 0, "unit": "reads" },
-            { "category": "thinking", "count": 7, "unit": "operations" },
-            { "category": "reading_files", "count": 3, "unit": "reads" },
-            { "category": "searching_files", "count": 4, "unit": "reads" },
-            { "category": "searching_files", "count": 2, "unit": "operations" },
-            { "category": "searching_files", "count": 3, "unit": "operations" },
-            { "category": "running_code", "count": 1, "unit": "runs" },
-            { "category": "browsing", "count": 12, "unit": "operations" }
-        ]))
-        .expect("at least one valid entry");
-
+    fn history_counts_only_completed_correlated_results_in_fixed_order() {
+        let history = json!({
+            "truncated": false,
+            "messages": [
+                {
+                    "id": 1,
+                    "runId": "run-1",
+                    "role": "assistant",
+                    "content": {
+                        "text": "",
+                        "toolCalls": [
+                            { "id": "read-ok", "name": "Read", "arguments": { "path": "/private/read" } },
+                            { "id": "write-failed", "name": "Write", "arguments": { "content": "secret" } },
+                            { "id": "delete-denied", "name": "Delete", "arguments": { "path": "/private/delete" } },
+                            { "id": "shell-cancelled", "name": "Shell", "arguments": { "input": "private" } },
+                            { "id": "code-ok", "name": "CodeMode", "arguments": { "code": "private" } }
+                        ]
+                    }
+                },
+                { "id": 2, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "read-ok", "outcome": "completed", "output": "private contents" } },
+                { "id": 3, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Write", "toolCallId": "write-failed", "outcome": "failed", "output": "private error" } },
+                { "id": 4, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Delete", "toolCallId": "delete-denied", "outcome": "denied", "output": "private denial" } },
+                { "id": 5, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Shell", "toolCallId": "shell-cancelled", "outcome": "cancelled", "output": "private cancellation" } },
+                { "id": 6, "runId": "run-1", "role": "toolResult", "content": { "toolName": "CodeMode", "toolCallId": "code-ok", "outcome": "completed", "output": "private result" } },
+                { "id": 7, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Search", "toolCallId": "unknown", "outcome": "completed", "output": "must not count" } },
+                { "id": 8, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "read-ok", "outcome": "completed", "output": "duplicate" } },
+                {
+                    "id": 9,
+                    "runId": "run-1",
+                    "role": "assistant",
+                    "content": "Done.",
+                    "metadata": { "activitySummary": [{ "category": "deleting_files", "count": 99, "unit": "operations" }] }
+                }
+            ]
+        });
+        let activity = derive_history_activity(&history);
+        let summaries = &activity.summaries;
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].moment_id, "9");
         assert_eq!(
-            summary,
+            summaries[0].entries,
             vec![
                 ActivitySummaryEntry {
-                    category: ActivityCategory::SearchingFiles,
-                    count: 5,
-                    unit: ActivityUnit::Operations,
-                },
-                ActivitySummaryEntry {
                     category: ActivityCategory::ReadingFiles,
-                    count: 3,
+                    count: 1,
                     unit: ActivityUnit::Reads,
-                },
-                ActivitySummaryEntry {
-                    category: ActivityCategory::RunningCommands,
-                    count: 2,
-                    unit: ActivityUnit::Commands,
                 },
                 ActivitySummaryEntry {
                     category: ActivityCategory::RunningCode,
@@ -1466,33 +1761,350 @@ mod tests {
                 },
             ]
         );
-        assert!(parse_activity_summary(&json!([
-            { "category": "thinking", "count": 1, "unit": "operations" },
-            { "category": "reading_files", "count": -1, "unit": "reads" }
-        ]))
-        .is_none());
+        assert!(!format!("{summaries:?}").contains("private"));
     }
 
     #[test]
-    fn stale_finish_cannot_attach_a_summary_or_clear_current_activity() {
+    fn history_correlates_repeated_call_ids_in_sequential_tool_rounds() {
+        let history = json!({
+            "truncated": false,
+            "messages": [
+                { "id": 1, "runId": "run-repeat", "role": "user", "content": "Do both" },
+                { "id": 2, "runId": "run-repeat", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Read" }] } },
+                { "id": 3, "runId": "run-repeat", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "reused", "outcome": "completed", "output": "private" } },
+                { "id": 4, "runId": "run-repeat", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Shell" }] } },
+                { "id": 5, "runId": "run-repeat", "role": "toolResult", "content": { "toolName": "Shell", "toolCallId": "reused", "outcome": "completed", "output": "private" } },
+                { "id": 6, "runId": "run-repeat", "role": "assistant", "content": "Done" }
+            ]
+        });
+        let activity = derive_history_activity(&history);
+
+        assert_eq!(
+            activity
+                .latest_call_states
+                .get(&("run-repeat".to_string(), "reused".to_string())),
+            Some(&HistoryCallState::Terminal {
+                message_id: "5".to_string()
+            })
+        );
+        assert_eq!(activity.summaries.len(), 1);
+        assert_eq!(
+            activity.summaries[0].entries,
+            vec![
+                ActivitySummaryEntry {
+                    category: ActivityCategory::ReadingFiles,
+                    count: 1,
+                    unit: ActivityUnit::Reads,
+                },
+                ActivitySummaryEntry {
+                    category: ActivityCategory::RunningCommands,
+                    count: 1,
+                    unit: ActivityUnit::Commands,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_repeated_call_occurrence_does_not_shift_later_success_category() {
+        let history = json!({
+            "truncated": false,
+            "messages": [
+                { "id": 1, "runId": "run-repeat", "role": "user", "content": "Try it" },
+                { "id": 2, "runId": "run-repeat", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Read" }] } },
+                { "id": 3, "runId": "run-repeat", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "reused", "outcome": "failed", "output": "private" } },
+                { "id": 4, "runId": "run-repeat", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Shell" }] } },
+                { "id": 5, "runId": "run-repeat", "role": "toolResult", "content": { "toolName": "Shell", "toolCallId": "reused", "outcome": "completed", "output": "private" } },
+                { "id": 6, "runId": "run-repeat", "role": "assistant", "content": "Done" }
+            ]
+        });
+        let activity = derive_history_activity(&history);
+
+        assert_eq!(
+            activity.summaries[0].entries,
+            vec![ActivitySummaryEntry {
+                category: ActivityCategory::RunningCommands,
+                count: 1,
+                unit: ActivityUnit::Commands,
+            }]
+        );
+    }
+
+    #[test]
+    fn complete_legacy_history_uses_fixed_tool_name_without_call_context() {
+        let history = json!({
+            "truncated": false,
+            "messages": [
+                { "id": 20, "runId": "run-tail", "role": "toolResult", "content": { "toolName": "Search", "toolCallId": "call-before-window", "outcome": "completed", "output": "private" } },
+                { "id": 21, "runId": "run-tail", "role": "assistant", "content": "Found it." }
+            ]
+        });
+        let activity = derive_history_activity(&history);
+        let summaries = &activity.summaries;
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(
+            summaries[0].entries,
+            vec![ActivitySummaryEntry {
+                category: ActivityCategory::SearchingFiles,
+                count: 1,
+                unit: ActivityUnit::Operations,
+            }]
+        );
+    }
+
+    #[test]
+    fn truncated_mid_sequence_history_never_creates_a_partial_summary() {
+        let history = json!({
+            "hasMoreBefore": true,
+            "messages": [
+                { "id": 20, "runId": "run-tail", "role": "toolResult", "content": { "toolName": "Search", "toolCallId": "call-before-window", "outcome": "completed", "output": "private" } },
+                { "id": 21, "runId": "run-tail", "role": "assistant", "content": "Found it." }
+            ]
+        });
+        let activity = derive_history_activity(&history);
+
+        assert!(activity.summaries.is_empty());
+        assert!(activity.latest_call_states.is_empty());
+        assert!(!activity.authoritative);
+    }
+
+    #[test]
+    fn truncated_history_starting_at_a_later_tool_round_is_incomplete() {
+        let history = json!({
+            "hasMoreBefore": true,
+            "messages": [
+                {
+                    "id": 30,
+                    "runId": "run-multi-round",
+                    "role": "assistant",
+                    "content": {
+                        "text": "",
+                        "toolCalls": [{ "id": "later-read", "name": "Read", "arguments": { "path": "/private" } }]
+                    }
+                },
+                { "id": 31, "runId": "run-multi-round", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "later-read", "outcome": "completed", "output": "private" } },
+                { "id": 32, "runId": "run-multi-round", "role": "assistant", "content": "Done" }
+            ]
+        });
+        let activity = derive_history_activity(&history);
+
+        assert!(activity.summaries.is_empty());
+        assert_eq!(
+            activity
+                .latest_call_states
+                .get(&("run-multi-round".to_string(), "later-read".to_string())),
+            Some(&HistoryCallState::Terminal {
+                message_id: "31".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn truncated_history_still_derives_a_later_run_with_an_in_page_boundary() {
+        let history = json!({
+            "hasMoreBefore": true,
+            "messages": [
+                { "id": 20, "runId": "run-partial", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "before-window", "outcome": "completed", "output": "private" } },
+                { "id": 21, "runId": "run-partial", "role": "assistant", "content": "Earlier answer" },
+                { "id": 22, "runId": "run-complete", "role": "user", "content": "New request" },
+                { "id": 23, "runId": "run-complete", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "write-1", "name": "Write", "arguments": { "path": "/private" } }] } },
+                { "id": 24, "runId": "run-complete", "role": "toolResult", "content": { "toolName": "Write", "toolCallId": "write-1", "outcome": "completed", "output": "private" } },
+                { "id": 25, "runId": "run-complete", "role": "assistant", "content": "New answer" }
+            ]
+        });
+        let activity = derive_history_activity(&history);
+
+        assert_eq!(activity.summaries.len(), 1);
+        assert_eq!(activity.summaries[0].moment_id, "25");
+        assert_eq!(
+            activity.summaries[0].entries,
+            vec![ActivitySummaryEntry {
+                category: ActivityCategory::WritingFiles,
+                count: 1,
+                unit: ActivityUnit::Operations,
+            }]
+        );
+    }
+
+    #[test]
+    fn history_completeness_accepts_only_proven_full_legacy_payloads() {
+        assert!(!history_is_authoritative(
+            &json!({ "messages": [], "truncated": true, "messageCount": 0 }),
+            0
+        ));
+        assert!(history_is_authoritative(
+            &json!({ "messages": [], "truncated": false }),
+            0
+        ));
+        assert!(history_is_authoritative(
+            &json!({ "messages": [{ "id": 1 }], "messageCount": 1 }),
+            1
+        ));
+        assert!(!history_is_authoritative(
+            &json!({ "messages": [{ "id": 1 }], "messageCount": 2 }),
+            1
+        ));
+        assert!(history_is_authoritative(
+            &json!({ "messages": [], "hasMoreBefore": false, "hasMoreAfter": false }),
+            0
+        ));
+        assert!(!history_is_authoritative(
+            &json!({ "messages": [], "hasMoreBefore": false }),
+            0
+        ));
+        assert!(!history_is_authoritative(&json!({ "messages": [] }), 0));
+    }
+
+    #[test]
+    fn compacted_history_never_derives_a_partial_suffix_summary() {
+        let history = json!({
+            "hasMoreBefore": false,
+            "hasMoreAfter": false,
+            "truncated": false,
+            "messages": [
+                { "id": 1, "role": "system", "content": "Process history compacted.\n\nSummary:\nprivate earlier work" },
+                { "id": 2, "runId": "run-compacted", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "later", "name": "Read" }] } },
+                { "id": 3, "runId": "run-compacted", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "later", "outcome": "completed", "output": "private" } },
+                { "id": 4, "runId": "run-compacted", "role": "assistant", "content": "Done" }
+            ]
+        });
+        let activity = derive_history_activity(&history);
+
+        assert!(!activity.authoritative);
+        assert!(activity.summaries.is_empty());
+        assert!(!format!("{activity:?}").contains("private"));
+    }
+
+    #[test]
+    fn only_the_matching_observed_result_ends_live_tool_activity() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-live");
+        assert!(conversation.set_live_activity(
+            parse_tool_started_activity(&json!({
+                "runId": "run-live",
+                "callId": "call-active",
+                "name": "Shell",
+                "syscall": "shell.exec",
+                "args": { "input": "private" }
+            }))
+            .expect("valid tool start")
+        ));
+
+        conversation.reconcile_history_activity(derive_history_activity(&json!({
+            "messages": [{
+                "id": 1,
+                "runId": "run-live",
+                "role": "toolResult",
+                "content": {
+                    "toolName": "Read",
+                    "toolCallId": "call-other",
+                    "outcome": "completed",
+                    "output": "private"
+                }
+            }]
+        })));
+        assert_eq!(
+            conversation
+                .live_activity
+                .as_ref()
+                .map(|activity| activity.category),
+            Some(ActivityCategory::RunningCommands)
+        );
+
+        conversation.reconcile_history_activity(derive_history_activity(&json!({
+            "messages": [
+                {
+                    "id": 2,
+                    "runId": "run-live",
+                    "role": "assistant",
+                    "content": { "text": "", "toolCalls": [{ "id": "call-active", "name": "Shell" }] }
+                },
+                {
+                    "id": 3,
+                    "runId": "run-live",
+                    "role": "toolResult",
+                    "content": {
+                        "toolName": "Shell",
+                        "toolCallId": "call-active",
+                        "outcome": "failed",
+                        "output": "private"
+                    }
+                }
+            ]
+        })));
+        assert_eq!(
+            conversation
+                .live_activity
+                .as_ref()
+                .map(|activity| activity.category),
+            Some(ActivityCategory::Thinking)
+        );
+    }
+
+    #[test]
+    fn joining_mid_run_keeps_a_new_reused_call_pending_past_its_old_result() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-live");
+        assert!(conversation.set_live_activity(
+            parse_tool_started_activity(&json!({
+                "runId": "run-live",
+                "callId": "reused",
+                "syscall": "shell.exec"
+            }))
+            .expect("valid tool start")
+        ));
+        conversation.reconcile_history_activity(derive_history_activity(&json!({
+            "truncated": false,
+            "messages": [
+                { "id": 10, "runId": "run-live", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Read" }] } },
+                { "id": 11, "runId": "run-live", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "reused", "outcome": "completed", "output": "private" } },
+                { "id": 12, "runId": "run-live", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Shell" }] } }
+            ]
+        })));
+        assert_eq!(
+            conversation
+                .live_activity
+                .as_ref()
+                .map(|activity| activity.category),
+            Some(ActivityCategory::RunningCommands)
+        );
+
+        conversation.reconcile_history_activity(derive_history_activity(&json!({
+            "truncated": false,
+            "messages": [
+                { "id": 10, "runId": "run-live", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Read" }] } },
+                { "id": 11, "runId": "run-live", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "reused", "outcome": "completed", "output": "private" } },
+                { "id": 12, "runId": "run-live", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "reused", "name": "Shell" }] } },
+                { "id": 13, "runId": "run-live", "role": "toolResult", "content": { "toolName": "Shell", "toolCallId": "reused", "outcome": "failed", "output": "private" } }
+            ]
+        })));
+        assert_eq!(
+            conversation
+                .live_activity
+                .as_ref()
+                .map(|activity| activity.category),
+            Some(ActivityCategory::Thinking)
+        );
+    }
+
+    #[test]
+    fn stale_finish_cannot_clear_current_activity() {
         let mut conversation = Conversation::connecting();
         conversation.start_run("run-1");
         conversation.stream_text(Some("run-1"), "First response");
         conversation.start_run("run-2");
         assert!(conversation.set_live_activity(
-            parse_live_activity(&json!({
-                "pid": "alice/main",
+            parse_tool_started_activity(&json!({
                 "runId": "run-2",
-                "category": "running_code",
-                "timestamp": 30
+                "callId": "call-code",
+                "name": "CodeMode",
+                "syscall": "codemode.exec"
             }))
             .expect("valid activity")
         ));
-        let summary = parse_activity_summary(&json!([
-            { "category": "reading_files", "count": 1, "unit": "reads" }
-        ]));
 
-        assert!(!conversation.finish_run_with_activity(Some("run-1"), None, summary));
+        assert!(!conversation.finish_run(Some("run-1"), None));
         assert_eq!(conversation.active_run_id.as_deref(), Some("run-2"));
         assert_eq!(
             conversation
@@ -1501,122 +2113,88 @@ mod tests {
                 .map(|activity| activity.category),
             Some(ActivityCategory::RunningCode)
         );
-        assert!(conversation
-            .activity_summary_for(&conversation.moments[0])
-            .is_empty());
     }
 
     #[test]
-    fn final_summary_stays_with_its_response_across_history_reconciliation() {
-        let mut conversation = Conversation::connecting();
-        conversation.start_run("run-1");
-        conversation.stream_text(Some("run-1"), "Finished");
-        let summary = parse_activity_summary(&json!([
-            { "category": "reading_files", "count": 2, "unit": "reads" }
-        ]));
-        assert!(conversation.finish_run_with_activity(Some("run-1"), None, summary));
-        assert_eq!(
-            conversation.activity_summary_for(&conversation.moments[0]),
-            &[ActivitySummaryEntry {
-                category: ActivityCategory::ReadingFiles,
-                count: 2,
-                unit: ActivityUnit::Reads,
-            }]
-        );
-
+    fn derived_summary_reconstructs_on_reconnect_and_survives_a_truncated_refresh() {
         let history = json!({
-            "messages": [{
-                "id": 42,
-                "runId": "run-1",
-                "role": "assistant",
-                "content": "Finished",
-                "metadata": {
-                    "activitySummary": [
-                        { "category": "reading_files", "count": 2, "unit": "reads" }
-                    ]
-                }
-            }]
-        });
-        let history_summaries = parse_history_activity_summaries(&history);
-        conversation.replace_history(parse_history(&history));
-        conversation.reconcile_history_activity(history_summaries);
-
-        assert_eq!(conversation.moments[0].id, "42");
-        assert_eq!(
-            conversation.activity_summary_for(&conversation.moments[0]),
-            &[ActivitySummaryEntry {
-                category: ActivityCategory::ReadingFiles,
-                count: 2,
-                unit: ActivityUnit::Reads,
-            }]
-        );
-
-        let reconnect_history = json!({
-            "messages": [{
-                "id": 42,
-                "runId": "run-1",
-                "role": "assistant",
-                "content": "Finished"
-            }]
-        });
-        conversation.replace_history(parse_history(&reconnect_history));
-        conversation
-            .reconcile_history_activity(parse_history_activity_summaries(&reconnect_history));
-        assert_eq!(
-            conversation.activity_summary_for(&conversation.moments[0]),
-            &[ActivitySummaryEntry {
-                category: ActivityCategory::ReadingFiles,
-                count: 2,
-                unit: ActivityUnit::Reads,
-            }]
-        );
-    }
-
-    #[test]
-    fn history_reads_activity_only_from_assistant_metadata() {
-        let history = json!({
+            "truncated": false,
             "messages": [
-                {
-                    "id": 1,
-                    "runId": "run-user",
-                    "role": "user",
-                    "content": "Ignore my metadata",
-                    "metadata": {
-                        "activitySummary": [
-                            { "category": "deleting_files", "count": 99, "unit": "operations" }
-                        ]
-                    }
-                },
-                {
-                    "id": 2,
-                    "runId": "run-2",
-                    "role": "assistant",
-                    "content": "",
-                    "metadata": {
-                        "activitySummary": [
-                            { "category": "writing_files", "count": 1, "unit": "operations", "path": "/private/file" }
-                        ]
-                    }
-                }
+                { "id": 40, "runId": "run-1", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "read-1", "name": "Read", "arguments": { "path": "/private/a" } }, { "id": "read-2", "name": "Read", "arguments": { "path": "/private/b" } }] } },
+                { "id": 41, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "read-1", "outcome": "completed", "output": "private a" } },
+                { "id": 42, "runId": "run-1", "role": "toolResult", "content": { "toolName": "Read", "toolCallId": "read-2", "outcome": "completed", "output": "private b" } },
+                { "id": 43, "runId": "run-1", "role": "assistant", "content": "Finished" }
             ]
         });
-        let summaries = parse_history_activity_summaries(&history);
-        let mut conversation = Conversation::connecting();
-        conversation.replace_history(parse_history(&history));
-        conversation.reconcile_history_activity(summaries);
+        let expected = [ActivitySummaryEntry {
+            category: ActivityCategory::ReadingFiles,
+            count: 2,
+            unit: ActivityUnit::Reads,
+        }];
 
-        assert_eq!(conversation.moments.len(), 2);
+        let mut conversation = Conversation::connecting();
+        let (moments, activity) = parse_history_with_activity(&history);
+        conversation.replace_history(moments);
+        conversation.reconcile_history_activity(activity);
+        assert_eq!(
+            conversation.activity_summary_for(&conversation.moments[0]),
+            &expected
+        );
+
+        let mut reconnected = Conversation::connecting();
+        let (moments, activity) = parse_history_with_activity(&history);
+        reconnected.replace_history(moments);
+        reconnected.reconcile_history_activity(activity);
+        assert_eq!(
+            reconnected.activity_summary_for(&reconnected.moments[0]),
+            &expected
+        );
+
+        let truncated = json!({
+            "hasMoreBefore": true,
+            "messages": [
+                { "id": 43, "runId": "run-1", "role": "assistant", "content": "Finished" }
+            ]
+        });
+        let (moments, activity) = parse_history_with_activity(&truncated);
+        conversation.replace_history(moments);
+        conversation.reconcile_history_activity(activity);
+        assert_eq!(
+            conversation.activity_summary_for(&conversation.moments[0]),
+            &expected
+        );
+
+        let authoritative_without_tools = json!({
+            "hasMoreBefore": false,
+            "hasMoreAfter": false,
+            "messages": [
+                { "id": 43, "runId": "run-1", "role": "assistant", "content": "Finished" }
+            ]
+        });
+        let (moments, activity) = parse_history_with_activity(&authoritative_without_tools);
+        conversation.replace_history(moments);
+        conversation.reconcile_history_activity(activity);
         assert!(conversation
             .activity_summary_for(&conversation.moments[0])
             .is_empty());
-        assert_eq!(
-            conversation.activity_summary_for(&conversation.moments[1]),
-            &[ActivitySummaryEntry {
-                category: ActivityCategory::WritingFiles,
-                count: 1,
-                unit: ActivityUnit::Operations,
-            }]
-        );
+    }
+
+    #[test]
+    fn a_blank_final_response_is_kept_when_completed_work_belongs_to_it() {
+        let history = json!({
+            "truncated": false,
+            "messages": [
+                { "id": 50, "runId": "run-blank", "role": "assistant", "content": { "text": "", "toolCalls": [{ "id": "edit-1", "name": "Edit", "arguments": { "path": "/private" } }] } },
+                { "id": 51, "runId": "run-blank", "role": "toolResult", "content": { "toolName": "Edit", "toolCallId": "edit-1", "outcome": "completed", "output": "private" } },
+                { "id": 52, "runId": "run-blank", "role": "assistant", "content": "" }
+            ]
+        });
+        let (moments, activity) = parse_history_with_activity(&history);
+
+        assert_eq!(moments.len(), 1);
+        assert_eq!(moments[0].id, "52");
+        assert_eq!(activity.summaries.len(), 1);
+        assert_eq!(activity.summaries[0].moment_id, "52");
     }
 
     #[test]
@@ -1875,5 +2453,42 @@ mod tests {
             Some("Command: deploy --production")
         );
         assert!(approval_prompt(&approval).contains("deploy --production"));
+    }
+
+    #[test]
+    fn approved_tool_start_survives_approval_dismissal() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-1");
+        let approval = parse_pending_approval(&json!({
+            "requestId": "request-1",
+            "runId": "run-1",
+            "toolName": "Shell",
+            "syscall": "shell.exec",
+            "args": { "input": "private" }
+        }))
+        .expect("valid approval");
+
+        assert!(conversation.set_approval(approval));
+        assert!(conversation.live_activity.is_none());
+        assert!(conversation.set_live_activity(
+            parse_tool_started_activity(&json!({
+                "runId": "run-1",
+                "callId": "approved-call",
+                "syscall": "shell.exec",
+                "args": { "input": "private" }
+            }))
+            .expect("valid tool start")
+        ));
+
+        conversation.clear_approval();
+
+        assert!(conversation.pending_approval.is_none());
+        assert_eq!(
+            conversation
+                .live_activity
+                .as_ref()
+                .map(|activity| activity.category),
+            Some(ActivityCategory::RunningCommands)
+        );
     }
 }

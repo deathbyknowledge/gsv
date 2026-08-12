@@ -4,9 +4,8 @@ use serde_json::Value;
 use crate::client::{ClientCommand, ClientEvent};
 use crate::interaction::{ApprovalSubmissionFailure, CanvasLayer};
 use crate::model::{
-    extract_text, parse_activity_summary, parse_history, parse_history_activity_summaries,
-    parse_live_activity, parse_media, parse_pending_approval, ConnectionState, MomentState,
-    PendingApproval,
+    extract_text, parse_history_with_activity, parse_media, parse_pending_approval,
+    parse_tool_started_activity, ConnectionState, MomentState, PendingApproval,
 };
 
 use super::media::release_assets;
@@ -248,11 +247,11 @@ impl GsvApp {
                 .filter(|moment| moment.run_id.as_deref() == Some(run_id))
                 .map(|moment| moment.media.clone())
         });
-        let activity_summaries = parse_history_activity_summaries(&history);
+        let (moments, history_activity) = parse_history_with_activity(&history);
 
-        self.conversation.replace_history(parse_history(&history));
+        self.conversation.replace_history(moments);
         self.conversation
-            .reconcile_history_activity(activity_summaries);
+            .reconcile_history_activity(history_activity);
         self.conversation
             .reconcile_active_run(active_run_id.as_deref(), live_text);
         if let Some(live_media) = live_media.filter(|media| !media.is_empty()) {
@@ -294,17 +293,17 @@ impl GsvApp {
                     self.conversation.start_run(run_id);
                 }
             }
-            "proc.run.activity" => {
-                if let Some(activity) = parse_live_activity(payload) {
+            "proc.run.tool.started" => {
+                if let Some(activity) = parse_tool_started_activity(payload) {
                     self.conversation.set_live_activity(activity);
                 }
             }
             "proc.run.stream" => {
+                if !self.accept_stream_sequence(run_id, payload) {
+                    return;
+                }
                 let event = payload.get("event").unwrap_or(payload);
                 if event.get("type").and_then(Value::as_str) == Some("text_delta") {
-                    if !self.accept_stream_sequence(run_id, payload) {
-                        return;
-                    }
                     let before = self.visible_moment_key();
                     if let Some(partial) = stream_partial_text(event) {
                         self.conversation.replace_run_text(run_id, &partial);
@@ -312,10 +311,13 @@ impl GsvApp {
                         self.conversation.stream_text(run_id, delta);
                     }
                     self.reveal_visible_change(before);
+                } else {
+                    self.conversation.resume_thinking(run_id);
                 }
             }
             "proc.run.retrying" => {
                 if self.conversation.accepts_run(run_id) {
+                    self.conversation.clear_live_activity(run_id);
                     self.conversation.activity = Some(if payload.get("fallback").is_some() {
                         "TRYING ANOTHER PATH".to_string()
                     } else {
@@ -354,13 +356,9 @@ impl GsvApp {
                     self.conversation
                         .replace_run_media(run_id, parse_media(media));
                 }
-                let finished = self.conversation.finish_run_with_activity(
-                    run_id,
-                    error.as_deref().filter(|text| !text.is_empty()),
-                    payload
-                        .get("activitySummary")
-                        .and_then(parse_activity_summary),
-                );
+                let finished = self
+                    .conversation
+                    .finish_run(run_id, error.as_deref().filter(|text| !text.is_empty()));
                 if finished && self.interaction.is_approval() {
                     self.leave_approval(window, cx);
                 }
@@ -519,7 +517,15 @@ fn history_was_superseded(request_signal_id: u64, response_signal_id: u64) -> bo
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use gpui::{AppContext as _, TestAppContext, WindowOptions};
+    use gpui_component::Root;
     use serde_json::json;
+
+    use crate::app::bind_keys;
+    use crate::model::ActivityCategory;
 
     use super::*;
 
@@ -542,5 +548,132 @@ mod tests {
         assert!(history_was_superseded(7, 8));
         assert!(!history_was_superseded(8, 8));
         assert!(!history_was_superseded(9, 8));
+    }
+
+    #[gpui::test]
+    fn accepted_non_text_stream_resumes_thinking_while_stale_stream_is_ignored(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            bind_keys(cx);
+            crate::register_fonts(cx);
+            crate::configure_theme(cx);
+        });
+
+        let (command_tx, _command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::client::ClientHandle {
+            commands: command_tx,
+            events: event_rx,
+            login: None,
+        };
+        let app = Rc::new(RefCell::new(None));
+        let app_for_window = app.clone();
+        let _window = cx.update(|cx| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|cx| GsvApp::new(window, cx, client, true, false, true));
+                *app_for_window.borrow_mut() = Some(view.clone());
+                cx.new(|cx| Root::new(view, window, cx))
+            })
+            .expect("the GPUI surface should open")
+        });
+
+        let send_signal = |name: &str, payload| {
+            event_tx
+                .send(ClientEvent::Signal {
+                    session_id: 7,
+                    name: name.to_string(),
+                    payload,
+                })
+                .expect("the app should still receive client events");
+        };
+        event_tx
+            .send(ClientEvent::Connected {
+                attempt_id: 0,
+                session_id: 7,
+                pid: "pid-1".to_string(),
+            })
+            .expect("the app should connect");
+        send_signal(
+            "proc.run.started",
+            json!({ "pid": "pid-1", "runId": "run-1" }),
+        );
+        send_signal(
+            "proc.run.tool.started",
+            json!({
+                "pid": "pid-1",
+                "runId": "run-1",
+                "callId": "call-1",
+                "name": "Shell",
+                "syscall": "shell.exec"
+            }),
+        );
+        cx.run_until_parked();
+
+        let app = app.borrow().clone().expect("app entity should be retained");
+        cx.update(|cx| {
+            assert_eq!(
+                app.read(cx)
+                    .conversation
+                    .live_activity
+                    .as_ref()
+                    .map(|activity| activity.category),
+                Some(ActivityCategory::RunningCommands)
+            );
+        });
+
+        send_signal(
+            "proc.run.stream",
+            json!({
+                "pid": "pid-1",
+                "runId": "run-1",
+                "seq": 4,
+                "event": { "type": "thinking_delta", "delta": "private thought" }
+            }),
+        );
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                app.read(cx)
+                    .conversation
+                    .live_activity
+                    .as_ref()
+                    .map(|activity| activity.category),
+                Some(ActivityCategory::Thinking)
+            );
+        });
+
+        send_signal(
+            "proc.run.tool.started",
+            json!({
+                "pid": "pid-1",
+                "runId": "run-1",
+                "callId": "call-2",
+                "name": "Read",
+                "syscall": "fs.read"
+            }),
+        );
+        send_signal(
+            "proc.run.stream",
+            json!({
+                "pid": "pid-1",
+                "runId": "run-1",
+                "seq": 3,
+                "event": { "type": "thinking_delta", "delta": "stale private thought" }
+            }),
+        );
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let app = app.read(cx);
+            assert_eq!(
+                app.conversation
+                    .live_activity
+                    .as_ref()
+                    .map(|activity| activity.category),
+                Some(ActivityCategory::ReadingFiles)
+            );
+            assert_eq!(app.stream_sequences.get("run-1"), Some(&4));
+        });
     }
 }

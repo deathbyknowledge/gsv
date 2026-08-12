@@ -95,9 +95,9 @@ allow`, and `deny` (with a few direct synonyms). Approval text is not forwarded 
 - Audio, video, and document attachments currently render as typed metadata cards, including a
   transcription or description when one exists. Native playback and document preview are later
   surfaces.
-- Sanitized `proc.run.activity` categories become a prominent live footer. Successful operations
-  are retained as quiet, line-by-line work records on the final response; raw tool names,
-  arguments, paths, and tool cards are not shown.
+- Existing run and tool signals become a prominent, client-derived live footer. Completed tool
+  results from process history are retained as quiet, line-by-line work records on the final
+  response; raw tool names, arguments, paths, outputs, and tool cards are not shown.
 - `proc.hil` approval remains a deterministic control boundary.
 - The command surface currently uses one-shot `shell.exec`; it is not a persistent PTY yet.
 - Attachment composition/upload, process management, settings, and daemon lifecycle are out of
