@@ -205,6 +205,37 @@ export class AccountStore {
     };
   }
 
+  async resolveInstallation(
+    installationIdValue: string,
+  ): Promise<InstallationDirectoryResult> {
+    let installationId: string;
+    try {
+      installationId = parseOpaqueId(installationIdValue, "installationId");
+    } catch {
+      return { found: false };
+    }
+
+    const row = await this.db.prepare(
+      `SELECT id, handle, canonical_origin, state
+       FROM installations
+       WHERE id = ?
+       LIMIT 1`,
+    ).bind(installationId).first<{
+      id: string;
+      handle: string;
+      canonical_origin: string;
+      state: ManagedInstallationState;
+    }>();
+    if (!row) return { found: false };
+    return {
+      found: true,
+      installationId: row.id,
+      handle: row.handle,
+      canonicalOrigin: row.canonical_origin,
+      state: row.state,
+    };
+  }
+
   async getPrincipal(principalIdValue: string): Promise<PrincipalRecord | null> {
     const principalId = parseOpaqueId(principalIdValue, "principalId");
     const row = await this.db.prepare(

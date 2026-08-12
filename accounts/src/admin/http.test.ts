@@ -4,12 +4,14 @@ import type { AdminInstallation, IssuedAdminInstallation } from "./service";
 
 const ACCOUNT_ORIGIN = "https://gsv.space";
 
-function installation(): AdminInstallation {
+function installation(
+  state: AdminInstallation["state"] = "provisioning",
+): AdminInstallation {
   return {
     installationId: "inst_admin_http",
     handle: "reviewer",
     canonicalOrigin: "https://reviewer.gsv.space",
-    state: "provisioning",
+    state,
     operationState: "provisioning",
     onboardingExpiresAt: 1_800_000,
     createdAt: 1_000_000,
@@ -39,16 +41,17 @@ function issued(): IssuedAdminInstallation {
   };
 }
 
-function service() {
+function service(current = installation()) {
   return {
     overview: vi.fn(async () => ({
       inference: { enabled: false },
-      installations: [installation()],
+      installations: [current],
     })),
     create: vi.fn(async () => issued()),
     reissueOnboarding: vi.fn(async () => issued()),
     setInferenceControl: vi.fn(async () => {}),
     setInstallationInferencePolicy: vi.fn(async () => {}),
+    setInstallationState: vi.fn(async () => {}),
   };
 }
 
@@ -80,6 +83,20 @@ describe("accounts admin HTTP", () => {
     expect(body).toContain("reviewer");
     expect(body).toContain("3 tokens");
     expect(body).not.toContain("onboard_secret");
+  });
+
+  it.each([
+    ["active", "Suspend"],
+    ["restricted", "Reactivate"],
+  ] as const)("renders the %s installation action", async (state, action) => {
+    const http = new AccountsAdminHttp(
+      service(installation(state)),
+      { allows: vi.fn(async () => true) },
+      ACCOUNT_ORIGIN,
+    );
+
+    const response = await http.handle(new Request(`${ACCOUNT_ORIGIN}/admin`));
+    expect(await response?.text()).toContain(`>${action}</button>`);
   });
 
   it("creates through the canonical form and shows the capability once", async () => {
@@ -201,6 +218,50 @@ describe("accounts admin HTTP", () => {
     expect(adminService.setInstallationInferencePolicy).toHaveBeenCalledWith(
       "inst_admin_http",
       { enabled: true, monthlyLimitNanoUsd: 12_345_678_901 },
+    );
+  });
+
+  it("suspends and reactivates an installation through one lifecycle route", async () => {
+    const adminService = service();
+    const http = new AccountsAdminHttp(
+      adminService,
+      { allows: vi.fn(async () => true) },
+      ACCOUNT_ORIGIN,
+    );
+
+    const suspended = await http.handle(new Request(
+      `${ACCOUNT_ORIGIN}/admin/installations/inst_admin_http/lifecycle`,
+      {
+        method: "POST",
+        headers: { origin: ACCOUNT_ORIGIN },
+        body: new URLSearchParams({ state: "restricted" }),
+      },
+    ));
+    expect(suspended?.status).toBe(200);
+    expect(adminService.setInstallationState).toHaveBeenCalledWith(
+      "inst_admin_http",
+      "restricted",
+    );
+
+    const reactivated = await http.handle(new Request(
+      `${ACCOUNT_ORIGIN}/admin/api/installations/inst_admin_http/lifecycle`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: ACCOUNT_ORIGIN,
+        },
+        body: JSON.stringify({ state: "active" }),
+      },
+    ));
+    expect(reactivated?.status).toBe(200);
+    await expect(reactivated?.json()).resolves.toEqual({
+      installationId: "inst_admin_http",
+      state: "active",
+    });
+    expect(adminService.setInstallationState).toHaveBeenCalledWith(
+      "inst_admin_http",
+      "active",
     );
   });
 });

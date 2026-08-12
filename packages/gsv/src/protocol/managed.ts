@@ -117,6 +117,9 @@ export type InstallationDirectoryResult =
 
 export interface InstallationDirectoryService {
   resolveHostname(hostname: string): Promise<InstallationDirectoryResult>;
+  resolveInstallation(
+    installationId: string,
+  ): Promise<InstallationDirectoryResult>;
 }
 
 export type AuthorizeInstallationOnboardingInput = {

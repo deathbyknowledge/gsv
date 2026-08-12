@@ -215,6 +215,11 @@ import {
 import { parseProcessDurableObjectName } from "../installation/routing";
 import { createInstallationStorage } from "../installation/storage";
 import { createInstallationRipgit } from "../installation/ripgit";
+import {
+  MANAGED_LIFECYCLE_RECHECK_MS,
+  managedInstallationWorkGate,
+  type ManagedInstallationLifecycleBindings,
+} from "../installation/lifecycle";
 
 type RunState = {
   runId: string;
@@ -3450,16 +3455,33 @@ export class Process extends Host<Env> {
    * Schedule the next agent loop tick using the DO scheduler.
    * Each tick resets the subrequest counter.
    */
-  private async scheduleTick(runId: string): Promise<void> {
+  private async scheduleTick(
+    runId: string,
+    delayMs = 10,
+  ): Promise<void> {
     const run = this.currentRun;
     if (!run || run.runId !== runId) {
       return;
     }
-    const next = new Date(Date.now() + 10);
+    const next = new Date(Date.now() + delayMs);
     await this.schedule(next, "tick", {
       runId,
       generation: run.tickGeneration ?? 0,
     }, { idempotent: true });
+  }
+
+  private async pauseManagedRun(runId: string): Promise<boolean> {
+    const gate = await this.managedWorkGate();
+    if (gate.allowed || this.currentRun?.runId !== runId) return false;
+    await this.scheduleTick(runId, MANAGED_LIFECYCLE_RECHECK_MS);
+    return true;
+  }
+
+  private async managedWorkGate() {
+    return await managedInstallationWorkGate(
+      this.env as Env & ManagedInstallationLifecycleBindings,
+      this.installationId,
+    );
   }
 
   async onMediaPreparationTimeout(runId: string): Promise<void> {
@@ -3768,6 +3790,10 @@ export class Process extends Host<Env> {
       return;
     }
 
+    if (await this.pauseManagedRun(runId)) {
+      return;
+    }
+
     run.tickGeneration = generation + 1;
     this.currentRun = run;
     if (this.activeTickRunIds.has(runId)) {
@@ -3966,6 +3992,10 @@ export class Process extends Host<Env> {
 
     const contextPreflight = await prepareGenerationContext(run.config!);
     if (contextPreflight === "stopped") {
+      return;
+    }
+
+    if (await this.pauseManagedRun(runId)) {
       return;
     }
 

@@ -150,6 +150,33 @@ describe("account directory", () => {
     });
   });
 
+  it("resolves lifecycle state by immutable installation id", async () => {
+    const principalId = await createVerifiedPrincipal("lifecycle_id");
+    const reservation = await store().reserveInstallation({
+      principalId,
+      operationId: "op_lifecycle_id",
+      handle: "lifecycle-id",
+    });
+    await env.ACCOUNT_DB.prepare(
+      "UPDATE installations SET state = 'restricted' WHERE id = ?",
+    ).bind(reservation.installationId).run();
+
+    await expect(
+      store().resolveInstallation(reservation.installationId),
+    ).resolves.toMatchObject({
+      found: true,
+      installationId: reservation.installationId,
+      handle: "lifecycle-id",
+      state: "restricted",
+    });
+    await expect(store().resolveInstallation("invalid id")).resolves.toEqual({
+      found: false,
+    });
+    await expect(store().resolveInstallation("inst_unknown")).resolves.toEqual({
+      found: false,
+    });
+  });
+
   it("rejects malformed hostname lookups without querying a different name", async () => {
     await expect(store().resolveHostname("")).resolves.toEqual({ found: false });
     await expect(store().resolveHostname("https://hank.gsv.space")).resolves.toEqual({

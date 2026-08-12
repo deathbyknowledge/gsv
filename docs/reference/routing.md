@@ -20,6 +20,14 @@ also persist the validated installation ID for callbacks reached through
 `idFromString()`. Legacy standalone webhook paths keep their existing account
 identifier.
 
+Managed lifecycle routing uses two directory lookups with different trust
+inputs. Public HTTP resolves an accepted hostname, while durable adapter,
+Kernel, Process, and scheduler paths resolve their already-owned immutable
+`installationId`. Only `active` installations admit ordinary work.
+`restricted` keeps the directory reservation and stored state but blocks new
+admissions; paused Process ticks and due schedules periodically recheck for
+reactivation.
+
 ## Routing Surfaces
 
 | Surface | Entry Point | Routed By | Destination |
@@ -180,6 +188,7 @@ Device routing does not rename syscalls. Agents and clients always see the same 
 | Device route timeout | `504 Syscall timed out` |
 | Unknown or foreign process | `Process not found` or `Permission denied` |
 | Adapter installation mismatch | Adapter RPC fails before account state or provider access |
+| Managed installation suspended | New HTTP routes return `404`; existing RPC/WebSocket admissions return `423` |
 
 ## Related Stores
 

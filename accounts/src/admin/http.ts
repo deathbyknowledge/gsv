@@ -18,6 +18,7 @@ type AdminService = Pick<
   | "reissueOnboarding"
   | "setInferenceControl"
   | "setInstallationInferencePolicy"
+  | "setInstallationState"
 >;
 
 export class AccountsAdminHttp {
@@ -96,6 +97,19 @@ export class AccountsAdminHttp {
         );
         return inference.api
           ? json({ inference: input })
+          : adminPage(await this.service.overview());
+      }
+
+      const lifecycle = lifecycleInstallationId(url.pathname);
+      if (lifecycle && request.method === "POST") {
+        this.requireMutationOrigin(request);
+        const state = lifecycle.api
+          ? requireOperationalState((await readJsonObject(request)).state)
+          : requireOperationalState((await readForm(request)).get("state"));
+        const installationId = decodeURIComponent(lifecycle.installationId);
+        await this.service.setInstallationState(installationId, state);
+        return lifecycle.api
+          ? json({ installationId, state })
           : adminPage(await this.service.overview());
       }
 
@@ -178,6 +192,18 @@ function inferenceInstallationId(pathname: string): {
     : null;
 }
 
+function lifecycleInstallationId(pathname: string): {
+  api: boolean;
+  installationId: string;
+} | null {
+  const match = /^\/admin\/(api\/)?installations\/([^/]+)\/lifecycle$/.exec(
+    pathname,
+  );
+  return match
+    ? { api: Boolean(match[1]), installationId: match[2] ?? "" }
+    : null;
+}
+
 async function readFormCreate(request: Request): Promise<{
   operationId: string;
   handle: string;
@@ -233,6 +259,13 @@ function readFormInferencePolicy(form: URLSearchParams): {
 
 function requireBoolean(value: unknown, field: string): boolean {
   if (typeof value !== "boolean") throw new Error(`${field} is invalid`);
+  return value;
+}
+
+function requireOperationalState(value: unknown): "active" | "restricted" {
+  if (value !== "active" && value !== "restricted") {
+    throw new Error("installation state is invalid");
+  }
   return value;
 }
 

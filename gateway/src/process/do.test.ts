@@ -27,6 +27,7 @@ import { PROCESS_V004_PENDING_TOOL_DISPATCH_ID } from "./schema/v004_pending_too
 import { PROCESS_V005_TOOL_RESULT_OUTCOME } from "./schema/v005_tool_result_outcome";
 import { PROCESS_V006_PENDING_HIL_OWNER } from "./schema/v006_pending_hil_owner";
 import { processDurableObjectName } from "../installation/routing";
+import { MANAGED_LIFECYCLE_RECHECK_MS } from "../installation/lifecycle";
 
 const ROOT_IDENTITY: ProcessIdentity = {
   uid: 0,
@@ -280,6 +281,51 @@ describe("Process DO — mechanical", () => {
     expect(result.first.logicalRequestId).toMatch(/^inference:[a-f0-9]{64}$/);
     expect(result.repeated.logicalRequestId).toBe(result.first.logicalRequestId);
     expect(result.next.logicalRequestId).not.toBe(result.first.logicalRequestId);
+  });
+
+  it("pauses a managed run without advancing it while the installation is suspended", async () => {
+    const runId = "run-managed-suspended";
+    const name = processDurableObjectName(
+      "inst_managed_suspended",
+      "mech-managed-suspended",
+    );
+    const stub = env.PROCESS.get(env.PROCESS.idFromName(name));
+
+    await runInDurableObject(stub, async (instance: Process) => {
+      const scheduleTick = vi.fn(async () => {});
+      const runTick = vi.fn(async () => {});
+      const process = instance as unknown as {
+        managedWorkGate(): Promise<{
+          allowed: false;
+          code: 423;
+          message: string;
+        }>;
+        scheduleTick: typeof scheduleTick;
+        runTick: typeof runTick;
+        store: {
+          getValue(key: string): string | null;
+          setValue(key: string, value: string): void;
+        };
+      };
+      process.managedWorkGate = async () => ({
+        allowed: false,
+        code: 423,
+        message: "Managed installation is suspended",
+      });
+      process.scheduleTick = scheduleTick;
+      process.runTick = runTick;
+      process.store.setValue("currentRun", JSON.stringify({ runId }));
+
+      await instance.tick({ runId, generation: 0 });
+
+      expect(JSON.parse(process.store.getValue("currentRun") ?? "null"))
+        .toEqual({ runId });
+      expect(runTick).not.toHaveBeenCalled();
+      expect(scheduleTick).toHaveBeenCalledWith(
+        runId,
+        MANAGED_LIFECYCLE_RECHECK_MS,
+      );
+    });
   });
 
   it("records terminal adapter delivery outcomes in process history", async () => {

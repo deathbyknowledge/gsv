@@ -55,6 +55,12 @@ export default class AccountService
     return await this.store().resolveHostname(hostname);
   }
 
+  async resolveInstallation(
+    installationId: string,
+  ): Promise<InstallationDirectoryResult> {
+    return await this.store().resolveInstallation(installationId);
+  }
+
   async authorizeInstallationOnboarding(
     input: AuthorizeInstallationOnboardingInput,
   ): Promise<InstallationOnboardingAuthorization> {

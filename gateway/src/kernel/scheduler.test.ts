@@ -1474,6 +1474,66 @@ describe("scheduler", () => {
     expect(schedule?.state.runCount).toBe(1);
   });
 
+  it("preserves due work while a managed installation is suspended", async () => {
+    const kernel = await getAgentByName<Env, Kernel>(
+      env.KERNEL,
+      `scheduler-suspended-test-${crypto.randomUUID()}`,
+    );
+
+    const state = await runInDurableObject(kernel, async (instance: Kernel) => {
+      const k = instance as unknown as {
+        ctx: DurableObjectState;
+        managedWorkGate(): Promise<{
+          allowed: false;
+          code: 423;
+          message: string;
+        }>;
+        schedules: ScheduleStore;
+      };
+      k.managedWorkGate = async () => ({
+        allowed: false,
+        code: 423,
+        message: "Managed installation is suspended",
+      });
+      const now = Date.now();
+      const schedule = k.schedules.create({
+        ownerUid: USER_IDENTITY.uid,
+        creator: schedulePrincipal(),
+        runAs: schedulePrincipal(),
+        name: "suspended work",
+        enabled: true,
+        expression: { kind: "after", afterMs: 1_000 },
+        target: {
+          kind: "command.exec",
+          command: "printf 'must not run'",
+        },
+        now,
+      });
+      k.ctx.storage.sql.exec(
+        "UPDATE schedules SET next_run_at = ? WHERE schedule_id = ?",
+        now - 1,
+        schedule.id,
+      );
+
+      await instance.onScheduleDue(schedule.id);
+      return {
+        schedule: k.schedules.getStored(schedule.id),
+        wakes: k.ctx.storage.sql.exec<{ id: string; time: number }>(
+          "SELECT id, time FROM cf_agents_schedules WHERE callback = 'onScheduleDue'",
+        ).toArray(),
+      };
+    });
+
+    expect(state.schedule?.enabled).toBe(true);
+    expect(state.schedule?.state.runCount).toBe(0);
+    expect(state.schedule?.state.lastStatus).toBeNull();
+    expect(state.schedule?.wakeScheduleId).toBeTruthy();
+    expect(state.wakes).toEqual([
+      expect.objectContaining({ id: state.schedule?.wakeScheduleId }),
+    ]);
+    expect(state.wakes[0].time * 1_000).toBeGreaterThan(Date.now() + 50_000);
+  });
+
   it("rounds Kernel wake rows up to avoid firing before millisecond-precision due times", async () => {
     const kernel = await getAgentByName<Env, Kernel>(
       env.KERNEL,

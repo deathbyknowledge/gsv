@@ -50,6 +50,16 @@ belong to the accounts directory. They are created and authenticated only by
 that installation's Kernel. Successful setup consumes the claim and activates
 the hostname.
 
+Accounts remains the source of truth for the managed installation lifecycle.
+Suspending an active installation changes it to `restricted` without releasing
+its hostname or deleting its state. New hostname requests disappear behind the
+same not-found boundary used for other inactive installations, and existing
+WebSocket sessions receive a `423` error when they attempt another call.
+Adapter ingress, managed inference, Process ticks, and due schedules also check
+the installation state. An operation already admitted may finish its current
+step; durable Process and schedule work remains pending and rechecks after
+reactivation.
+
 The accounts directory and onboarding methods are available only through a
 service binding. Cloudflare Access protects its public operator page at
 `https://gsv.space/admin`; it is not a customer login system. The registry

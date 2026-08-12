@@ -21,6 +21,7 @@ import {
   parseManagedInstallationId,
   SINGLETON_INSTALLATION_ID,
 } from "./installation/identity";
+import { managedInstallationWorkGate } from "./installation/lifecycle";
 import { createInstallationStorage } from "./installation/storage";
 import { createInstallationRipgit } from "./installation/ripgit";
 import { buildGitProxyRequest, getBasicAuth, matchGitPath } from "./git";
@@ -138,6 +139,20 @@ export class GatewayEntrypoint
       let installationId: string;
       if (this.env.INSTALLATION_DIRECTORY) {
         installationId = parseManagedInstallationId(installation?.installationId);
+        const gate = await managedInstallationWorkGate(this.env, installationId);
+        if (!gate.allowed) {
+          if (body && !body.stream.locked) {
+            await body.stream.cancel(gate.message).catch(() => {});
+          }
+          return frame.type === "req"
+            ? {
+                type: "res",
+                id: frame.id,
+                ok: false,
+                error: { code: gate.code, message: gate.message },
+              }
+            : null;
+        }
       } else {
         installationId = parseInstallationId(installation?.installationId);
         if (installationId !== SINGLETON_INSTALLATION_ID) {

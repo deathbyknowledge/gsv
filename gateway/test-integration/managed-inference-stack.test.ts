@@ -148,6 +148,24 @@ describe("managed inference stack integration", () => {
         },
       });
       expect(providerFetch).toHaveBeenCalledTimes(1);
+
+      await setInstallationState(accounts, installationId, "restricted");
+      await expect(
+        rpc(socket, "suspended", "proc.list", {}),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: {
+          code: 423,
+          message: "Managed installation is suspended",
+        },
+      });
+      const suspendedHostname = await harness.getWorker(GATEWAY_WORKER).fetch(
+        `https://${HANDLE}.gsv.space/.well-known/oauth-client/gsv.json`,
+      );
+      expect(suspendedHostname.status).toBe(404);
+
+      await setInstallationState(accounts, installationId, "active");
+      await expectRpcOk(socket, "reactivated", "proc.list", {});
     } finally {
       socket.close(1000, "test complete");
     }
@@ -208,7 +226,7 @@ type RpcResponse = {
   id: string;
   ok: boolean;
   data?: unknown;
-  error?: { message: string };
+  error?: { code?: number; message: string };
 };
 
 type HarnessWorker = ReturnType<TestHarness["getWorker"]>;
@@ -319,6 +337,25 @@ async function setInstallationInferencePolicy(
         origin: "http://localhost",
       },
       body: JSON.stringify({ enabled: true, monthlyLimitNanoUsd }),
+    },
+  );
+  expect(response.status).toBe(200);
+}
+
+async function setInstallationState(
+  accounts: AdminWorker,
+  installationId: string,
+  state: "active" | "restricted",
+): Promise<void> {
+  const response = await accounts.fetch(
+    `http://localhost/admin/api/installations/${installationId}/lifecycle`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost",
+      },
+      body: JSON.stringify({ state }),
     },
   );
   expect(response.status).toBe(200);

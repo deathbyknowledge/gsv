@@ -300,6 +300,72 @@ describe("managed installation routing integration", () => {
     });
   });
 
+  it("enforces suspension across hostname, existing socket, and adapter ingress", async () => {
+    await beginProvisioning(harness, "first");
+    const socket = await openManagedSocket(harness, "first");
+    await expectManagedRpcOk(socket, "setup-lifecycle", "sys.setup", {
+      username: "lifecycle-owner",
+      password: "lifecycle-owner-password",
+      onboardingToken: "integration-onboarding-first",
+    });
+    await expectManagedRpcOk(socket, "connect-lifecycle", "sys.connect", {
+      protocol: 2,
+      client: {
+        id: "managed-lifecycle-test",
+        version: "1.0.0",
+        platform: "test",
+        role: "user",
+      },
+      auth: {
+        username: "lifecycle-owner",
+        password: "lifecycle-owner-password",
+      },
+    });
+
+    await setInstallationState(harness, "first", "restricted");
+
+    const hostname = await harness.getWorker("gsv-managed").fetch(
+      "https://first.gsv.space/.well-known/oauth-client/gsv.json",
+    );
+    expect(hostname.status).toBe(404);
+    await expect(
+      managedRpc(socket, "restricted-existing-socket", "proc.list", {}),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 423,
+        message: "Managed installation is suspended",
+      },
+    });
+    await expect(sendAdapterServiceFrame(
+      harness,
+      "inst_integration_first",
+      {
+        type: "req",
+        id: "restricted-adapter",
+        call: "adapter.inbound",
+        args: {},
+      },
+    )).resolves.toMatchObject({
+      type: "res",
+      id: "restricted-adapter",
+      ok: false,
+      error: {
+        code: 423,
+        message: "Managed installation is suspended",
+      },
+    });
+
+    await setInstallationState(harness, "first", "active");
+    await expectManagedRpcOk(
+      socket,
+      "reactivated-existing-socket",
+      "proc.list",
+      {},
+    );
+    socket.close(1000, "test complete");
+  });
+
   it("rejects the standalone compatibility identity on the managed entrypoint", async () => {
     const response = await sendAdapterServiceFrame(harness, "singleton", {
       type: "req",
@@ -477,6 +543,18 @@ async function beginProvisioning(
 ): Promise<void> {
   const response = await harness.getWorker("gsv-test-dependencies").fetch(
     `http://gsv-test-dependencies/__test/provisioning?handle=${handle}`,
+    { method: "POST" },
+  );
+  expect(response.status).toBe(204);
+}
+
+async function setInstallationState(
+  harness: TestHarness,
+  handle: "first" | "second",
+  state: "active" | "restricted",
+): Promise<void> {
+  const response = await harness.getWorker("gsv-test-dependencies").fetch(
+    `http://gsv-test-dependencies/__test/installation-state?handle=${handle}&state=${state}`,
     { method: "POST" },
   );
   expect(response.status).toBe(204);

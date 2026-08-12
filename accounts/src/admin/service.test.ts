@@ -123,4 +123,60 @@ describe("installation admin service", () => {
       })]),
     });
   });
+
+  it("suspends and reactivates only active installations", async () => {
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const service = adminService();
+    const created = await service.create({
+      operationId: `operation_lifecycle_${suffix}`,
+      handle: `lifecycle-${suffix}`,
+    });
+
+    await expect(
+      service.setInstallationState(
+        created.installation.installationId,
+        "restricted",
+      ),
+    ).rejects.toThrow("cannot transition from provisioning");
+    await env.ACCOUNT_DB.prepare(
+      "UPDATE installations SET state = 'active' WHERE id = ?",
+    ).bind(created.installation.installationId).run();
+    await service.setInferenceControl(true);
+    await service.setInstallationInferencePolicy(
+      created.installation.installationId,
+      { enabled: true, monthlyLimitNanoUsd: 1_000_000_000 },
+    );
+
+    await service.setInstallationState(
+      created.installation.installationId,
+      "restricted",
+    );
+    await service.setInstallationState(
+      created.installation.installationId,
+      "restricted",
+    );
+    await expect(service.overview()).resolves.toMatchObject({
+      installations: expect.arrayContaining([expect.objectContaining({
+        installationId: created.installation.installationId,
+        state: "restricted",
+      })]),
+    });
+    await expect(new ManagedInferencePolicyStore(env.ACCOUNT_DB).resolve(
+      created.installation.installationId,
+    )).resolves.toMatchObject({ enabled: false });
+
+    await service.setInstallationState(
+      created.installation.installationId,
+      "active",
+    );
+    await expect(service.overview()).resolves.toMatchObject({
+      installations: expect.arrayContaining([expect.objectContaining({
+        installationId: created.installation.installationId,
+        state: "active",
+      })]),
+    });
+    await expect(new ManagedInferencePolicyStore(env.ACCOUNT_DB).resolve(
+      created.installation.installationId,
+    )).resolves.toMatchObject({ enabled: true });
+  });
 });

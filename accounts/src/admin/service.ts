@@ -91,6 +91,35 @@ export class InstallationAdminService {
     await this.inferencePolicies.setInstallationPolicy(installationId, input);
   }
 
+  async setInstallationState(
+    installationIdValue: string,
+    state: "active" | "restricted",
+  ): Promise<void> {
+    const installationId = parseOpaqueId(
+      installationIdValue,
+      "installationId",
+    );
+    const expectedState = state === "active" ? "restricted" : "active";
+    const result = await this.db.prepare(
+      `UPDATE installations
+       SET state = ?
+       WHERE id = ? AND state = ?`,
+    ).bind(state, installationId, expectedState).run();
+    if ((result.meta.changes ?? 0) === 1) return;
+
+    const current = await this.db.prepare(
+      `SELECT state
+       FROM installations
+       WHERE id = ? AND state != 'deleted'
+       LIMIT 1`,
+    ).bind(installationId).first<{ state: ManagedInstallationState }>();
+    if (!current) throw new Error("installation is unavailable");
+    if (current.state === state) return;
+    throw new Error(
+      `installation cannot transition from ${current.state} to ${state}`,
+    );
+  }
+
   private async listInstallations(): Promise<AdminInstallation[]> {
     const period = currentInferencePeriod();
     const rows = await this.db.prepare(

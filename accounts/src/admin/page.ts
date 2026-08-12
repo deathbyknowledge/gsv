@@ -90,6 +90,11 @@ function installationTable(installations: AdminInstallation[]): string {
 function installationRow(installation: AdminInstallation): string {
   const canReissue = installation.state === "reserved"
     || installation.state === "provisioning";
+  const lifecycleAction = installation.state === "active"
+    ? `<form method="post" action="/admin/installations/${encodeURIComponent(installation.installationId)}/lifecycle"><button class="danger" type="submit" name="state" value="restricted">Suspend</button></form>`
+    : installation.state === "restricted"
+      ? `<form method="post" action="/admin/installations/${encodeURIComponent(installation.installationId)}/lifecycle"><button class="secondary" type="submit" name="state" value="active">Reactivate</button></form>`
+      : "";
   return `<tr>
     <td><a href="${escapeHtml(installation.canonicalOrigin)}">${escapeHtml(installation.handle)}</a><small>${escapeHtml(installation.installationId)}</small></td>
     <td><span class="state">${escapeHtml(installation.state)}</span><small>operation: ${escapeHtml(installation.operationState)}</small></td>
@@ -101,7 +106,7 @@ function installationRow(installation: AdminInstallation): string {
       </form>
     </td>
     <td>${formatDate(installation.createdAt)}</td>
-    <td>${canReissue ? `<form method="post" action="/admin/installations/${encodeURIComponent(installation.installationId)}/onboarding"><button class="secondary" type="submit">Reissue link</button></form>` : ""}</td>
+    <td><div class="installation-actions">${canReissue ? `<form method="post" action="/admin/installations/${encodeURIComponent(installation.installationId)}/onboarding"><button class="secondary" type="submit">Reissue link</button></form>` : ""}${lifecycleAction}</div></td>
   </tr>`;
 }
 
@@ -179,7 +184,7 @@ button, .notice a { border: 1px solid #716bea; padding: 10px 14px; color: #fff; 
 .notice { display: grid; grid-template-columns: 1fr auto; gap: 12px 24px; margin-bottom: 24px; border: 1px solid #315f4b; padding: 22px; background: #0d1713; }
 .notice code, .notice small { grid-column: 1 / -1; } .notice code { overflow: auto; padding: 12px; background: #09110e; } .notice.error { display: block; border-color: #6c3439; background: #1a0e10; }
 .table-wrap { overflow-x: auto; } table { width: 100%; border-collapse: collapse; text-align: left; } th, td { padding: 14px; border-bottom: 1px solid #292932; font-size: 12px; vertical-align: middle; }
-td a { color: #ecebff; } td small { display: block; margin-top: 6px; color: #858593; } .state { color: #dfc86b; text-transform: uppercase; } button.secondary { padding: 7px 9px; border-color: #3d3d49; background: #17171e; white-space: nowrap; } button.danger { border-color: #743b42; background: #481f25; } .inference-policy { display: flex; align-items: end; gap: 6px; margin-top: 10px; } .inference-policy label { width: 112px; } .inference-policy input { width: 100%; padding: 7px; }
+td a { color: #ecebff; } td small { display: block; margin-top: 6px; color: #858593; } .state { color: #dfc86b; text-transform: uppercase; } button.secondary { padding: 7px 9px; border-color: #3d3d49; background: #17171e; white-space: nowrap; } button.danger { border-color: #743b42; background: #481f25; } .inference-policy { display: flex; align-items: end; gap: 6px; margin-top: 10px; } .inference-policy label { width: 112px; } .inference-policy input { width: 100%; padding: 7px; } .installation-actions { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
 .empty { padding: 50px 0; color: #858593; text-align: center; }
 @media (max-width: 760px) { header small { display: none; } main { padding: 32px 16px; } .workspace { grid-template-columns: 1fr; } .create { border-right: 0; border-bottom: 1px solid #292932; } .notice { grid-template-columns: 1fr; } .inference-control, .inference-policy { align-items: stretch; flex-direction: column; } }
 `;

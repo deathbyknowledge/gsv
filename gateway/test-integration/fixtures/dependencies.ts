@@ -18,6 +18,7 @@ import type {
   CompleteInstallationOnboardingResult,
   InstallationDirectoryResult,
   InstallationOnboardingAuthorization,
+  ManagedInstallationState,
   ManagedInferenceGeneration,
   ManagedInferenceRequest,
   ManagedInferenceResult,
@@ -63,13 +64,13 @@ export class IntegrationState extends DurableObject<Env> {
 
   async setInstallationState(
     handle: string,
-    state: "provisioning" | "active",
+    state: ManagedInstallationState,
   ): Promise<void> {
     await this.ctx.storage.put(`installation:${handle}:state`, state);
   }
 
-  async getInstallationState(handle: string): Promise<"provisioning" | "active"> {
-    return await this.ctx.storage.get<"provisioning" | "active">(
+  async getInstallationState(handle: string): Promise<ManagedInstallationState> {
+    return await this.ctx.storage.get<ManagedInstallationState>(
       `installation:${handle}:state`,
     ) ?? "active";
   }
@@ -184,6 +185,15 @@ export default class TestDependencies
     };
   }
 
+  async resolveInstallation(
+    installationId: string,
+  ): Promise<InstallationDirectoryResult> {
+    const handle = installationHandle(installationId);
+    return handle
+      ? await this.resolveHostname(`${handle}.gsv.space`)
+      : { found: false };
+  }
+
   async authorizeInstallationOnboarding(
     input: AuthorizeInstallationOnboardingInput,
   ): Promise<InstallationOnboardingAuthorization> {
@@ -254,6 +264,19 @@ export default class TestDependencies
         return new Response("invalid handle", { status: 400 });
       }
       await this.integrationState().setInstallationState(handle, "provisioning");
+      return new Response(null, { status: 204 });
+    }
+
+    if (url.pathname === "/__test/installation-state" && request.method === "POST") {
+      const handle = url.searchParams.get("handle") ?? "";
+      const state = url.searchParams.get("state") ?? "";
+      if (
+        (handle !== "first" && handle !== "second")
+        || (state !== "active" && state !== "restricted")
+      ) {
+        return new Response("invalid installation state", { status: 400 });
+      }
+      await this.integrationState().setInstallationState(handle, state);
       return new Response(null, { status: 204 });
     }
 

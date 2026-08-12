@@ -124,6 +124,11 @@ import { parseInstallationId } from "../installation/identity";
 import type { InstallationIdentity } from "../installation/identity";
 import { createInstallationStorage } from "../installation/storage";
 import { createInstallationRipgit } from "../installation/ripgit";
+import {
+  MANAGED_LIFECYCLE_RECHECK_MS,
+  managedInstallationWorkGate,
+  type ManagedInstallationLifecycleBindings,
+} from "../installation/lifecycle";
 
 const PROCESS_REQUEST_CANCEL_TTL_MS = 60_000;
 const MAX_PROCESS_REQUEST_CANCELLATIONS = 1024;
@@ -705,6 +710,10 @@ export class Kernel extends Host<Env> {
     try {
       if (frame.type !== "req") {
         return null;
+      }
+      const gate = await this.managedWorkGate();
+      if (!gate.allowed) {
+        return errFrame(frame.id, gate.code, gate.message);
       }
       return await this.handleServiceReq(frame);
     } finally {
@@ -2208,6 +2217,17 @@ export class Kernel extends Host<Env> {
     try {
       const state = connection.state as ConnectionState | undefined;
 
+      if (
+        frame.call !== "sys.setup"
+        && frame.call !== "sys.setup.assist"
+      ) {
+        const gate = await this.managedWorkGate();
+        if (!gate.allowed) {
+          this.sendError(connection, frame.id, gate.code, gate.message);
+          return;
+        }
+      }
+
       if (frame.call === "sys.connect") {
         if (state && state.step !== "pending") {
           this.sendError(
@@ -2706,6 +2726,13 @@ export class Kernel extends Host<Env> {
     }).INSTALLATION_DIRECTORY ?? null;
   }
 
+  private async managedWorkGate() {
+    return await managedInstallationWorkGate(
+      this.env as Env & ManagedInstallationLifecycleBindings,
+      this.installationId,
+    );
+  }
+
   private handleRes(connection: Connection<ConnectionState>, wireFrame: ResponseFrame): void {
     const route = this.routes.get(wireFrame.id);
     if (!route) {
@@ -2865,6 +2892,18 @@ export class Kernel extends Host<Env> {
       return;
     }
 
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) {
+      if (record?.enabled && record.state.nextRunAtMs !== null) {
+        const nextWakeId = await this.scheduleScheduleWake(
+          record.id,
+          Date.now() + MANAGED_LIFECYCLE_RECHECK_MS,
+        );
+        this.schedules.setWakeScheduleId(record.id, nextWakeId);
+      }
+      return;
+    }
+
     const result = await this.runSchedules({ id: scheduleId, mode: "due" });
     if (result.ran !== 0) {
       return;
@@ -2891,6 +2930,16 @@ export class Kernel extends Host<Env> {
     const records = args.id
       ? [this.schedules.get(args.id)].filter((record): record is ScheduleRecord => record !== null)
       : this.schedules.listDue(now, callerOwnerUid !== undefined && callerOwnerUid !== 0 ? callerOwnerUid : undefined);
+
+    const gate = await this.managedWorkGate();
+    if (!gate.allowed) {
+      return {
+        ran: 0,
+        results: records.map((record) =>
+          skippedScheduleResult(record.id, gate.message)
+        ),
+      };
+    }
 
     const results: ScheduleRunResult[] = [];
     for (const record of records) {

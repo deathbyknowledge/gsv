@@ -143,6 +143,8 @@ describe("Kernel frame bodies", () => {
   it("cancels announced bodies on requests rejected before dispatch", async () => {
     const sends: Array<string | ArrayBuffer> = [];
     const kernel = Object.create(Kernel.prototype) as any;
+    kernel.env = {};
+    kernel.installationId = TEST_INSTALLATION_ID;
     kernel.frameBodyChannels = new Map();
     kernel.auth = { isSetupMode: () => false };
     const connection = {

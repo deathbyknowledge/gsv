@@ -24,6 +24,7 @@ This document is the root engineering contract for the repository. It explains h
 - Managed HTTP requests resolve an accepted hostname through the trusted installation directory before addressing a Kernel. A random wildcard hostname must not allocate Durable Object state.
 - The Kernel Durable Object name is the immutable `installationId`; handles and canonical origins are routing metadata, not security identities.
 - Public callers never choose an `installationId`. Gateways derive it from host routing, adapters derive it from durable links, and background work retains it in owned state.
+- Accounts owns managed installation state. Only `active` installations admit ordinary work; `restricted` installations retain their identity and data while HTTP, WebSocket, adapter, inference, Process-tick, and scheduler admissions fail closed. Work already admitted may reach its terminal boundary, and paused durable work rechecks for reactivation.
 - Process, R2, ripgit, and adapter physical addresses must include installation scope before managed multi-installation hosting is enabled.
 - `ctx.id.name` is available only on name-preserving Durable Object paths. An `idFromString()` callback must recover a previously validated identity from owned state or a trusted routing record.
 - Preserve the explicit `singleton` projection for supported standalone upgrades until a deliberate standalone migration replaces it end to end.
