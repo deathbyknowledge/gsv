@@ -336,7 +336,7 @@ fn quantize_size(size: f32) -> f32 {
     (size / TYPE_STEP).floor() * TYPE_STEP
 }
 
-fn line_height_for(size: f32) -> f32 {
+pub(crate) fn line_height_for(size: f32) -> f32 {
     if size <= 32.0 {
         1.34
     } else if size <= 44.0 {

@@ -50,6 +50,15 @@ struct RegisteredFragment {
 }
 
 impl TextSelection {
+    pub(super) fn adopt_moment_id(&self, transient_id: &str, durable_id: &str) {
+        let mut state = self.inner.borrow_mut();
+        let prefix = format!("conversation:{transient_id}:");
+        let Some(suffix) = state.content_key.strip_prefix(&prefix) else {
+            return;
+        };
+        state.content_key = format!("conversation:{durable_id}:{suffix}");
+    }
+
     pub(super) fn prepare(&self, content_key: impl Into<String>, topology: SelectionTopology) {
         let content_key = content_key.into();
         let mut state = self.inner.borrow_mut();
@@ -616,6 +625,21 @@ mod tests {
             separator_before: separator_before.to_owned().into(),
             layout: TextLayout::default(),
         }
+    }
+
+    #[test]
+    fn durable_identity_adoption_preserves_the_selection_key_suffix() {
+        let selection = TextSelection::default();
+        selection.prepare(
+            "conversation:transient:42:7",
+            SelectionTopology::PlainMessage,
+        );
+        selection.adopt_moment_id("transient", "durable");
+
+        assert_eq!(
+            selection.inner.borrow().content_key,
+            "conversation:durable:42:7"
+        );
     }
 
     #[test]

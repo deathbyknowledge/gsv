@@ -19,15 +19,37 @@ pub enum Command {
     Shutdown,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    Downloading,
+    Verifying,
+    Loading,
+    Listening,
+    Finishing,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    MicrophoneUnavailable,
+    DownloadFailed,
+    ModelInvalid,
+    EngineFailed,
+    Busy,
+    NotActive,
+    Interrupted,
+    InvalidCommand,
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event<'a> {
-    Preparing {
+    State {
         request_id: u64,
+        phase: Phase,
+        #[serde(skip_serializing_if = "Option::is_none")]
         progress: Option<f32>,
-    },
-    Listening {
-        request_id: u64,
     },
     Partial {
         request_id: u64,
@@ -44,7 +66,7 @@ pub enum Event<'a> {
     },
     Error {
         request_id: Option<u64>,
-        message: &'a str,
+        code: ErrorCode,
     },
 }
 
@@ -62,10 +84,10 @@ pub fn read_commands() -> crossbeam_channel::Receiver<Command> {
             };
             let command = match serde_json::from_str::<Command>(&line) {
                 Ok(command) => command,
-                Err(error) => {
+                Err(_) => {
                     emit(&Event::Error {
                         request_id: None,
-                        message: &format!("invalid transcription command: {error}"),
+                        code: ErrorCode::InvalidCommand,
                     });
                     continue;
                 }
@@ -93,7 +115,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_does_not_expose_model_or_backend_choices() {
+    fn protocol_does_not_expose_model_backend_paths_or_messages() {
         let command: Command =
             serde_json::from_str(r#"{"type":"start","request_id":7,"locale":"nl-NL"}"#)
                 .expect("valid command");
@@ -105,14 +127,30 @@ mod tests {
             }
         );
 
-        let event = serde_json::to_value(Event::Partial {
-            request_id: 7,
-            revision: 2,
-            committed: "hello ",
-            tentative: "world",
+        let event = serde_json::to_value(Event::Error {
+            request_id: Some(7),
+            code: ErrorCode::ModelInvalid,
         })
         .expect("serializable event");
+        assert_eq!(
+            event.get("code").and_then(serde_json::Value::as_str),
+            Some("model_invalid")
+        );
+        assert!(event.get("message").is_none());
         assert!(event.get("model").is_none());
         assert!(event.get("backend").is_none());
+        assert!(event.get("path").is_none());
+    }
+
+    #[test]
+    fn preparation_states_are_bounded_and_explicit() {
+        let state = serde_json::to_value(Event::State {
+            request_id: 3,
+            phase: Phase::Downloading,
+            progress: Some(0.25),
+        })
+        .expect("serializable event");
+        assert_eq!(state["phase"], "downloading");
+        assert_eq!(state["progress"], 0.25);
     }
 }

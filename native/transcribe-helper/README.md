@@ -21,9 +21,12 @@ development. Debug app builds also discover either a release or debug helper in 
 `target` directory. Ship `THIRD_PARTY.md` beside the helper in distributable packages.
 `Cmd/Ctrl+Shift+Space` starts or finishes dictation. The first use downloads and SHA-256 verifies
 the pinned 534 MiB Q5 model. Concurrent app instances serialize preparation with a cache lock and
-clean up an interrupted stable partial download before retrying. The model and compute backend are
-deliberately not product settings; `GSV_TRANSCRIBE_MODEL` and `GSV_TRANSCRIBE_ACCELERATION=1` are
-development overrides only.
+resume a stable partial download only after the pinned server response confirms the exact remaining
+byte range; the completed file is always SHA-256 verified before installation. Download, verification,
+and loading happen on a preparation worker so Stop, Cancel, and Shutdown remain responsive. Protocol
+events expose only bounded phases and error codes, never native diagnostics, paths, or model choices.
+The model and compute backend are deliberately not product settings; `GSV_TRANSCRIBE_MODEL` and
+`GSV_TRANSCRIBE_ACCELERATION=1` are development overrides only.
 
 The helper defaults to CPU, limits a transcription session to ten minutes and 64 KiB of text, uses
 at most four worker threads, lowers its Unix scheduling priority, bounds microphone and IPC queues,

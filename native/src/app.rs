@@ -12,14 +12,16 @@ use crate::audio::{KeySound, TypingAudio};
 use crate::client::{ApprovalDecision, ClientCommand, ClientHandle, MediaTransferLease};
 use crate::history::{HistoryPreparationCandidate, HistoryRevision};
 use crate::interaction::{CanvasInteraction, CanvasLayer, SubmissionFailure};
-use crate::model::{Conversation, SurfaceMode};
+use crate::model::{Conversation, MomentIdentityAdoption, SurfaceMode};
+use crate::prepared::PreparedContent;
 use crate::startup::{LoginDefaults, LoginFlow, LoginProgress, LoginStep};
-use crate::transcription::{coalesce_for_ui, VoiceCommand, VoiceEvent};
+use crate::transcription::{coalesce_for_ui, VoiceCommand, VoiceErrorCode, VoiceEvent, VoicePhase};
 use crate::typography::TypeLayout;
 
 mod login;
 mod media;
 mod preparation;
+mod presence;
 mod rich;
 mod selection;
 mod session;
@@ -27,6 +29,7 @@ mod view;
 
 use media::{release_assets, MediaCache, MediaPreparation, PreparedMedia};
 use preparation::{run_preparation_worker, PreparedContentCache};
+use presence::PresenceLane;
 use selection::TextSelection;
 
 actions!(
@@ -71,6 +74,42 @@ struct VoiceDraft {
 struct VoiceComposition {
     value: String,
     cursor: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct HistoryEdgeIntent {
+    direction: i8,
+    progress: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MessageScrollAnchor {
+    Top,
+    Bottom,
+    Ratio(f32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum RichPresentationPhase {
+    Steady,
+    FadingPlain,
+    AwaitingRichLayout { anchor: MessageScrollAnchor },
+    FadingRich,
+}
+
+#[derive(Clone, Debug)]
+struct RichPresentation {
+    moment_id: String,
+    revision: u64,
+    epoch: u64,
+    phase: RichPresentationPhase,
+    outgoing_content: Option<PreparedContent>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingRichFallback {
+    moment_id: String,
+    content: PreparedContent,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -145,6 +184,14 @@ pub struct GsvApp {
     message_scroll_moment: Option<String>,
     history_scroll_accumulator: f32,
     history_scroll_last_event: Option<Instant>,
+    history_edge_intent: Option<HistoryEdgeIntent>,
+    history_edge_feedback_epoch: u64,
+    presence_lane: Entity<PresenceLane>,
+    rich_presentation: Option<RichPresentation>,
+    pending_rich_fallback: Option<PendingRichFallback>,
+    next_rich_presentation_epoch: u64,
+    rich_layout_wait_scheduled: Option<u64>,
+    rich_steady_wait_scheduled: Option<u64>,
     timeline_scroll_accumulator: f32,
     timeline_scroll_last_event: Option<Instant>,
     stream_type_sizes: HashMap<String, f32>,
@@ -164,7 +211,7 @@ pub struct GsvApp {
     reduced_motion: bool,
     programmatic_input: Option<String>,
     approval_resume_mode: Option<SurfaceMode>,
-    voice_commands: std::sync::mpsc::SyncSender<VoiceCommand>,
+    voice_commands: crate::transcription::VoiceCommandSender,
     voice_draft: Option<VoiceDraft>,
     voice_notice: Option<String>,
     next_voice_request_id: u64,
@@ -178,6 +225,41 @@ pub struct GsvApp {
 }
 
 impl GsvApp {
+    fn adopt_moment_presentations(&mut self, adoptions: &[MomentIdentityAdoption]) {
+        for adoption in adoptions {
+            let transient_key = format!("moment:{}", adoption.transient_id);
+            let durable_key = format!("moment:{}", adoption.durable_id);
+            if let Some(size) = self.stream_type_sizes.remove(&transient_key) {
+                self.stream_type_sizes.insert(durable_key.clone(), size);
+                self.stream_type_sizes
+                    .entry(format!("run:{}", adoption.run_id))
+                    .or_insert(size);
+            }
+            if let Some(layout) = self.type_layouts.remove(&transient_key) {
+                self.type_layouts.entry(durable_key).or_insert(layout);
+            }
+            if self.message_scroll_moment.as_deref() == Some(adoption.transient_id.as_str()) {
+                self.message_scroll_moment = Some(adoption.durable_id.clone());
+            }
+            self.text_selection
+                .adopt_moment_id(&adoption.transient_id, &adoption.durable_id);
+            if let Some(presentation) = self
+                .rich_presentation
+                .as_mut()
+                .filter(|presentation| presentation.moment_id == adoption.transient_id)
+            {
+                presentation.moment_id.clone_from(&adoption.durable_id);
+            }
+            if let Some(fallback) = self
+                .pending_rich_fallback
+                .as_mut()
+                .filter(|fallback| fallback.moment_id == adoption.transient_id)
+            {
+                fallback.moment_id.clone_from(&adoption.durable_id);
+            }
+        }
+    }
+
     pub fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -197,6 +279,7 @@ impl GsvApp {
         } = crate::transcription::start();
         let input = cx.new(|cx| InputState::new(window, cx).auto_grow(1, 12).soft_wrap(true));
         let login_focus = cx.focus_handle();
+        let presence_lane = cx.new(|_| PresenceLane::new(Vec::new(), false, reduced_motion));
         let input_subscription = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
             this.on_input(event, window, cx);
         });
@@ -257,15 +340,24 @@ impl GsvApp {
             while let Some(result) = prepared_content_events.recv().await {
                 if this
                     .update(cx, |this, cx| {
-                        let result_id = result.id.clone();
                         let changes_presentation = result.content.is_rich();
-                        let accepted = this.prepared_content.accept(result);
-                        let visible = this.interaction.visible_draft().is_none()
-                            && this
-                                .conversation
-                                .current()
-                                .is_some_and(|moment| moment.id == result_id);
-                        if accepted && visible && changes_presentation {
+                        let acceptance = this.prepared_content.accept(result);
+                        let visible = acceptance.as_deref().is_some_and(|accepted_id| {
+                            this.interaction.visible_draft().is_none()
+                                && this
+                                    .conversation
+                                    .current()
+                                    .is_some_and(|moment| moment.id == accepted_id)
+                        });
+                        if visible && changes_presentation {
+                            this.pending_rich_fallback = acceptance.and_then(|acceptance| {
+                                acceptance.replaced_fallback.and_then(|content| {
+                                    content.is_rich().then_some(PendingRichFallback {
+                                        moment_id: acceptance.target_id,
+                                        content,
+                                    })
+                                })
+                            });
                             cx.notify();
                         }
                     })
@@ -343,6 +435,14 @@ impl GsvApp {
             message_scroll_moment: None,
             history_scroll_accumulator: 0.0,
             history_scroll_last_event: None,
+            history_edge_intent: None,
+            history_edge_feedback_epoch: 0,
+            presence_lane,
+            rich_presentation: None,
+            pending_rich_fallback: None,
+            next_rich_presentation_epoch: 1,
+            rich_layout_wait_scheduled: None,
+            rich_steady_wait_scheduled: None,
             timeline_scroll_accumulator: 0.0,
             timeline_scroll_last_event: None,
             stream_type_sizes: HashMap::new(),
@@ -891,6 +991,22 @@ impl GsvApp {
         self.input.focus_handle(cx).focus(window);
     }
 
+    fn reveal_voice_draft_if_needed(
+        &mut self,
+        value: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if value.is_empty() || self.interaction.layer != CanvasLayer::Moment {
+            return;
+        }
+        self.interaction.on_input(value.to_string());
+        self.timeline_scroll
+            .scroll_to_item(self.conversation.moments.len());
+        self.begin_transition(1.0);
+        self.input.focus_handle(cx).focus(window);
+    }
+
     fn toggle_dictation_action(
         &mut self,
         _: &ToggleDictation,
@@ -924,12 +1040,13 @@ impl GsvApp {
         });
         self.voice_notice = Some("PREPARING VOICE INPUT".to_string());
         if !value.is_empty() {
+            self.reveal_voice_draft_if_needed(&value, window, cx);
             self.interaction.on_input(value);
             self.input.focus_handle(cx).focus(window);
         }
         if self
             .voice_commands
-            .try_send(VoiceCommand::Start {
+            .send(VoiceCommand::Start {
                 request_id,
                 locale: "auto".to_string(),
             })
@@ -951,10 +1068,7 @@ impl GsvApp {
             return;
         }
         let request_id = voice.request_id;
-        match self
-            .voice_commands
-            .try_send(VoiceCommand::Stop { request_id })
-        {
+        match self.voice_commands.send(VoiceCommand::Stop { request_id }) {
             Ok(()) => {
                 if let Some(voice) = self.voice_draft.as_mut() {
                     voice.stopping = true;
@@ -979,8 +1093,9 @@ impl GsvApp {
         cx: &mut Context<Self>,
     ) {
         match event {
-            VoiceEvent::Preparing {
+            VoiceEvent::State {
                 request_id,
+                phase,
                 progress,
             } if self.voice_request_is(request_id) => {
                 if self
@@ -990,25 +1105,8 @@ impl GsvApp {
                 {
                     self.voice_notice = Some("FINISHING VOICE INPUT".to_string());
                 } else {
-                    self.voice_notice = Some(progress.map_or_else(
-                        || "PREPARING VOICE INPUT".to_string(),
-                        |progress| format!("PREPARING VOICE INPUT · {:.0}%", progress * 100.0),
-                    ));
+                    self.voice_notice = Some(voice_phase_notice(phase, progress));
                 }
-            }
-            VoiceEvent::Listening { request_id } if self.voice_request_is(request_id) => {
-                self.voice_notice = Some(
-                    if self
-                        .voice_draft
-                        .as_ref()
-                        .is_some_and(|voice| voice.stopping)
-                    {
-                        "FINISHING VOICE INPUT"
-                    } else {
-                        "LISTENING"
-                    }
-                    .to_string(),
-                );
             }
             VoiceEvent::Partial {
                 request_id,
@@ -1027,6 +1125,7 @@ impl GsvApp {
                 let composition = compose_voice_text(&voice.before, &transcript, &voice.after);
                 let stopping = voice.stopping;
                 voice.rendered.clone_from(&composition.value);
+                self.reveal_voice_draft_if_needed(&composition.value, window, cx);
                 self.interaction.on_input(composition.value.clone());
                 self.set_input_value_at(composition.value, composition.cursor, window, cx);
                 self.voice_notice = Some(
@@ -1043,6 +1142,7 @@ impl GsvApp {
                     return;
                 };
                 let composition = compose_voice_text(&voice.before, &text, &voice.after);
+                self.reveal_voice_draft_if_needed(&composition.value, window, cx);
                 self.interaction.on_input(composition.value.clone());
                 self.set_input_value_at(composition.value, composition.cursor, window, cx);
                 self.voice_notice = None;
@@ -1051,12 +1151,11 @@ impl GsvApp {
                 self.voice_draft = None;
                 self.voice_notice = None;
             }
-            VoiceEvent::Error {
-                request_id,
-                message,
-            } if request_id.is_none_or(|request_id| self.voice_request_is(request_id)) => {
+            VoiceEvent::Error { request_id, code }
+                if request_id.is_none_or(|request_id| self.voice_request_is(request_id)) =>
+            {
                 self.voice_draft = None;
-                self.voice_notice = Some(voice_error_notice(&message).to_string());
+                self.voice_notice = Some(voice_error_notice(code).to_string());
             }
             _ => {}
         }
@@ -1079,7 +1178,7 @@ impl GsvApp {
         };
         let command_failed = self
             .voice_commands
-            .try_send(VoiceCommand::Cancel {
+            .send(VoiceCommand::Cancel {
                 request_id: voice.request_id,
             })
             .is_err();
@@ -1267,6 +1366,8 @@ impl GsvApp {
         self.text_selection.clear();
         self.history_scroll_accumulator = 0.0;
         self.history_scroll_last_event = None;
+        self.history_edge_intent = None;
+        self.history_edge_feedback_epoch = self.history_edge_feedback_epoch.wrapping_add(1);
         self.transition_epoch = self.transition_epoch.wrapping_add(1);
         self.transition_direction = direction;
         self.message_transition_cost = None;
@@ -1276,7 +1377,7 @@ impl GsvApp {
 impl Drop for GsvApp {
     fn drop(&mut self) {
         let _ = self.commands.send(ClientCommand::Shutdown);
-        let _ = self.voice_commands.try_send(VoiceCommand::Shutdown);
+        let _ = self.voice_commands.send(VoiceCommand::Shutdown);
     }
 }
 
@@ -1414,30 +1515,33 @@ fn is_unspaced_script(character: char) -> bool {
     )
 }
 
-fn voice_error_notice(message: &str) -> &'static str {
-    let message = message.to_ascii_lowercase();
-    if message.contains("microphone")
-        || message.contains("audio input")
-        || message.contains("input device")
-    {
-        "MICROPHONE UNAVAILABLE · CHECK ACCESS"
-    } else if message.contains("not installed") {
-        "VOICE INPUT ISN'T INSTALLED · KEEP TYPING"
-    } else if message.contains("helper could not start")
-        || message.contains("has no command channel")
-        || message.contains("has no event channel")
-        || message.contains("event reader could not start")
-    {
-        "VOICE INPUT COULDN'T START · KEEP TYPING"
-    } else if message.contains("download")
-        || message.contains("cache")
-        || message.contains("prepared")
-        || message.contains("preparation")
-        || message.contains("integrity")
-    {
-        "VOICE INPUT COULDN'T PREPARE · CHECK CONNECTION"
-    } else {
-        "VOICE INPUT STOPPED · KEEP TYPING"
+fn voice_phase_notice(phase: VoicePhase, progress: Option<f32>) -> String {
+    match phase {
+        VoicePhase::Downloading => progress.map_or_else(
+            || "DOWNLOADING VOICE INPUT".to_string(),
+            |progress| format!("DOWNLOADING VOICE INPUT · {:.0}%", progress * 100.0),
+        ),
+        VoicePhase::Verifying => "VERIFYING VOICE INPUT".to_string(),
+        VoicePhase::Loading => "PREPARING VOICE INPUT".to_string(),
+        VoicePhase::Listening => "LISTENING".to_string(),
+        VoicePhase::Finishing => "FINISHING VOICE INPUT".to_string(),
+    }
+}
+
+fn voice_error_notice(code: VoiceErrorCode) -> &'static str {
+    match code {
+        VoiceErrorCode::MicrophoneUnavailable => "MICROPHONE UNAVAILABLE · CHECK ACCESS",
+        VoiceErrorCode::NotInstalled => "VOICE INPUT ISN'T INSTALLED · KEEP TYPING",
+        VoiceErrorCode::HelperUnavailable => "VOICE INPUT COULDN'T START · KEEP TYPING",
+        VoiceErrorCode::DownloadFailed | VoiceErrorCode::ModelInvalid => {
+            "VOICE INPUT COULDN'T PREPARE · CHECK CONNECTION"
+        }
+        VoiceErrorCode::Busy => "VOICE INPUT IS BUSY · TRY AGAIN",
+        VoiceErrorCode::NotActive => "VOICE INPUT ALREADY STOPPED · KEEP TYPING",
+        VoiceErrorCode::Interrupted => "VOICE INPUT WAS INTERRUPTED · KEEP TYPING",
+        VoiceErrorCode::EngineFailed | VoiceErrorCode::InvalidCommand => {
+            "VOICE INPUT STOPPED · KEEP TYPING"
+        }
     }
 }
 
@@ -1508,25 +1612,38 @@ mod tests {
     #[test]
     fn voice_errors_are_actionable_without_exposing_internal_details() {
         assert_eq!(
-            voice_error_notice("microphone permission denied at /dev/snd/controlC0"),
+            voice_error_notice(VoiceErrorCode::MicrophoneUnavailable),
             "MICROPHONE UNAVAILABLE · CHECK ACCESS"
         );
         assert_eq!(
-            voice_error_notice("voice input is not installed; build /tmp/private/helper"),
+            voice_error_notice(VoiceErrorCode::NotInstalled),
             "VOICE INPUT ISN'T INSTALLED · KEEP TYPING"
         );
         assert_eq!(
-            voice_error_notice("voice input helper could not start: permission denied"),
+            voice_error_notice(VoiceErrorCode::HelperUnavailable),
             "VOICE INPUT COULDN'T START · KEEP TYPING"
         );
         assert_eq!(
-            voice_error_notice("download failed for https://signed.example/private"),
+            voice_error_notice(VoiceErrorCode::DownloadFailed),
             "VOICE INPUT COULDN'T PREPARE · CHECK CONNECTION"
         );
         assert_eq!(
-            voice_error_notice("native backend failed at /Users/name/model.gguf"),
+            voice_error_notice(VoiceErrorCode::EngineFailed),
             "VOICE INPUT STOPPED · KEEP TYPING"
         );
+    }
+
+    #[test]
+    fn voice_phases_expose_progress_without_model_details() {
+        assert_eq!(
+            voice_phase_notice(VoicePhase::Downloading, Some(0.42)),
+            "DOWNLOADING VOICE INPUT · 42%"
+        );
+        assert_eq!(
+            voice_phase_notice(VoicePhase::Verifying, None),
+            "VERIFYING VOICE INPUT"
+        );
+        assert_eq!(voice_phase_notice(VoicePhase::Listening, None), "LISTENING");
     }
 
     #[gpui::test]

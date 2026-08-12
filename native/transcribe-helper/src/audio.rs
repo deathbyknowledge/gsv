@@ -4,7 +4,7 @@ use crossbeam_channel::{Receiver, Sender};
 
 pub enum AudioPacket {
     Samples(Vec<f32>),
-    Error(String),
+    Error,
 }
 
 pub struct AudioCapture {
@@ -27,8 +27,8 @@ impl AudioCapture {
         let config = supported.config();
         let (tx, packets) = crossbeam_channel::bounded::<AudioPacket>(8);
         let errors = tx.clone();
-        let error_callback = move |error: cpal::Error| {
-            let _ = errors.try_send(AudioPacket::Error(format!("microphone failed: {error}")));
+        let error_callback = move |_: cpal::Error| {
+            let _ = errors.try_send(AudioPacket::Error);
         };
 
         let stream = match supported.sample_format() {

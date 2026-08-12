@@ -1,14 +1,14 @@
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::mpsc::{self, Receiver, SendError, Sender};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-const COMMAND_CAPACITY: usize = 8;
 const EVENT_CAPACITY: usize = 16;
-const STOP_TIMEOUT: Duration = Duration::from_secs(3);
+const STOP_TIMEOUT: Duration = Duration::from_secs(30);
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VoiceCommand {
@@ -18,14 +18,35 @@ pub enum VoiceCommand {
     Shutdown,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoicePhase {
+    Downloading,
+    Verifying,
+    Loading,
+    Listening,
+    Finishing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoiceErrorCode {
+    NotInstalled,
+    HelperUnavailable,
+    MicrophoneUnavailable,
+    DownloadFailed,
+    ModelInvalid,
+    EngineFailed,
+    Busy,
+    NotActive,
+    Interrupted,
+    InvalidCommand,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum VoiceEvent {
-    Preparing {
+    State {
         request_id: u64,
+        phase: VoicePhase,
         progress: Option<f32>,
-    },
-    Listening {
-        request_id: u64,
     },
     Partial {
         request_id: u64,
@@ -42,13 +63,22 @@ pub enum VoiceEvent {
     },
     Error {
         request_id: Option<u64>,
-        message: String,
+        code: VoiceErrorCode,
     },
 }
 
 pub struct VoiceHandle {
-    pub commands: SyncSender<VoiceCommand>,
+    pub commands: VoiceCommandSender,
     pub events: tokio::sync::mpsc::Receiver<VoiceEvent>,
+}
+
+#[derive(Clone)]
+pub struct VoiceCommandSender(Sender<VoiceCommand>);
+
+impl VoiceCommandSender {
+    pub fn send(&self, command: VoiceCommand) -> Result<(), SendError<VoiceCommand>> {
+        self.0.send(command)
+    }
 }
 
 pub(crate) fn coalesce_for_ui(events: impl IntoIterator<Item = VoiceEvent>) -> Vec<VoiceEvent> {
@@ -70,8 +100,48 @@ pub(crate) fn coalesce_for_ui(events: impl IntoIterator<Item = VoiceEvent>) -> V
     coalesced
 }
 
+#[derive(Default)]
+struct VoiceSupervisorState {
+    active_request: Option<u64>,
+    terminal_deadline: Option<(u64, Instant)>,
+}
+
+impl VoiceSupervisorState {
+    fn command_sent(&mut self, command: &VoiceCommand, now: Instant) {
+        match command {
+            VoiceCommand::Start { request_id, .. } => {
+                if self.active_request.is_none()
+                    || self
+                        .terminal_deadline
+                        .is_some_and(|(terminal_id, _)| self.active_request == Some(terminal_id))
+                {
+                    self.active_request = Some(*request_id);
+                }
+            }
+            VoiceCommand::Stop { request_id } | VoiceCommand::Cancel { request_id }
+                if self.active_request == Some(*request_id) =>
+            {
+                self.terminal_deadline = Some((*request_id, now + STOP_TIMEOUT));
+            }
+            VoiceCommand::Stop { .. } | VoiceCommand::Cancel { .. } | VoiceCommand::Shutdown => {}
+        }
+    }
+
+    fn terminal_observed(&mut self, request_id: Option<u64>) {
+        if request_id.is_some_and(|request_id| {
+            self.terminal_deadline
+                .is_some_and(|(terminal_id, _)| terminal_id == request_id)
+        }) {
+            self.terminal_deadline = None;
+        }
+        if request_id.is_none_or(|request_id| self.active_request == Some(request_id)) {
+            self.active_request = None;
+        }
+    }
+}
+
 pub fn start() -> VoiceHandle {
-    let (commands, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
+    let (commands, command_rx) = mpsc::channel();
     let (events, event_rx) = tokio::sync::mpsc::channel(EVENT_CAPACITY);
     // Voice input is optional. If the supervisor cannot be created, dropping
     // its captured channel endpoints leaves the returned command sender
@@ -80,19 +150,18 @@ pub fn start() -> VoiceHandle {
         .name("gsv-voice-supervisor".to_string())
         .spawn(move || supervise(command_rx, events));
     VoiceHandle {
-        commands,
+        commands: VoiceCommandSender(commands),
         events: event_rx,
     }
 }
 
 fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender<VoiceEvent>) {
     let mut process: Option<HelperProcess> = None;
-    let mut active_request = None;
-    let mut terminal_deadline = None;
-    let mut pending_partial = None;
+    let mut state = VoiceSupervisorState::default();
+    let mut pending_update = None;
 
     loop {
-        flush_pending_partial(&events, &mut pending_partial);
+        flush_pending_update(&events, &mut pending_update);
         if let Some(helper) = process.as_mut() {
             while let Ok(event) = helper.events.try_recv() {
                 let terminal = matches!(
@@ -101,44 +170,62 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
                         | VoiceEvent::Cancelled { .. }
                         | VoiceEvent::Error { .. }
                 );
-                let belongs_to_active = event_request_id(&event)
-                    .is_none_or(|request_id| active_request == Some(request_id));
-                if terminal && belongs_to_active {
-                    active_request = None;
-                    terminal_deadline = None;
+                if terminal {
+                    state.terminal_observed(event_request_id(&event));
                 }
-                publish(&events, &mut pending_partial, event);
+                publish(&events, &mut pending_update, event);
             }
             if helper.child.try_wait().ok().flatten().is_some() {
-                if active_request.is_some() {
+                if state.active_request.is_some() {
                     publish(
                         &events,
-                        &mut pending_partial,
+                        &mut pending_update,
                         VoiceEvent::Error {
-                            request_id: active_request.take(),
-                            message: "voice input stopped unexpectedly".to_string(),
+                            request_id: state.active_request.take(),
+                            code: VoiceErrorCode::Interrupted,
                         },
                     );
                 }
                 process = None;
-                terminal_deadline = None;
+                state.terminal_deadline = None;
             }
         }
 
-        if terminal_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        if state
+            .terminal_deadline
+            .is_some_and(|(_, deadline)| Instant::now() >= deadline)
+        {
+            let request_id = state.terminal_deadline.map(|(request_id, _)| request_id);
+            let interrupted_active = state
+                .active_request
+                .filter(|active| Some(*active) != request_id);
             if let Some(mut helper) = process.take() {
                 let _ = helper.child.kill();
                 let _ = helper.child.wait();
             }
             publish(
                 &events,
-                &mut pending_partial,
+                &mut pending_update,
                 VoiceEvent::Error {
-                    request_id: active_request.take(),
-                    message: "voice input did not stop and was restarted".to_string(),
+                    request_id,
+                    code: VoiceErrorCode::Interrupted,
                 },
             );
-            terminal_deadline = None;
+            if state.active_request == request_id {
+                state.active_request = None;
+            }
+            if let Some(active_request_id) = interrupted_active {
+                publish(
+                    &events,
+                    &mut pending_update,
+                    VoiceEvent::Error {
+                        request_id: Some(active_request_id),
+                        code: VoiceErrorCode::Interrupted,
+                    },
+                );
+                state.active_request = None;
+            }
+            state.terminal_deadline = None;
         }
 
         let command = match commands.recv_timeout(Duration::from_millis(20)) {
@@ -149,8 +236,14 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
         if command == VoiceCommand::Shutdown {
             if let Some(mut helper) = process.take() {
                 let _ = helper.send(&command);
-                let _ = helper.child.kill();
-                let _ = helper.child.wait();
+                let deadline = Instant::now() + SHUTDOWN_GRACE;
+                while Instant::now() < deadline {
+                    if helper.child.try_wait().ok().flatten().is_some() {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                terminate_child(&mut helper.child);
             }
             return;
         }
@@ -160,17 +253,17 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
                 VoiceCommand::Cancel { request_id } => {
                     publish(
                         &events,
-                        &mut pending_partial,
+                        &mut pending_update,
                         VoiceEvent::Cancelled { request_id },
                     );
                 }
                 VoiceCommand::Stop { request_id } => {
                     publish(
                         &events,
-                        &mut pending_partial,
+                        &mut pending_update,
                         VoiceEvent::Error {
                             request_id: Some(request_id),
-                            message: "voice input is not active".to_string(),
+                            code: VoiceErrorCode::NotActive,
                         },
                     );
                 }
@@ -182,13 +275,13 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
         if process.is_none() {
             match HelperProcess::spawn() {
                 Ok(helper) => process = Some(helper),
-                Err(message) => {
+                Err(code) => {
                     publish(
                         &events,
-                        &mut pending_partial,
+                        &mut pending_update,
                         VoiceEvent::Error {
                             request_id: command_request_id(&command),
-                            message,
+                            code,
                         },
                     );
                     continue;
@@ -198,66 +291,65 @@ fn supervise(commands: Receiver<VoiceCommand>, events: tokio::sync::mpsc::Sender
         let Some(helper) = process.as_mut() else {
             continue;
         };
-        if let Err(message) = helper.send(&command) {
+        if let Err(code) = helper.send(&command) {
             publish(
                 &events,
-                &mut pending_partial,
+                &mut pending_update,
                 VoiceEvent::Error {
                     request_id: command_request_id(&command),
-                    message,
+                    code,
                 },
             );
             process = None;
-            active_request = None;
-            terminal_deadline = None;
+            state.active_request = None;
+            state.terminal_deadline = None;
             continue;
         }
-        match command {
-            VoiceCommand::Start { request_id, .. } => active_request = Some(request_id),
-            VoiceCommand::Stop { request_id } | VoiceCommand::Cancel { request_id }
-                if active_request == Some(request_id) =>
-            {
-                terminal_deadline = Some(Instant::now() + STOP_TIMEOUT);
-            }
-            VoiceCommand::Stop { .. } | VoiceCommand::Cancel { .. } => {}
-            VoiceCommand::Shutdown => unreachable!(),
-        }
+        state.command_sent(&command, Instant::now());
     }
 }
 
 fn publish(
     events: &tokio::sync::mpsc::Sender<VoiceEvent>,
-    pending_partial: &mut Option<VoiceEvent>,
+    pending_update: &mut Option<VoiceEvent>,
     event: VoiceEvent,
 ) {
-    if matches!(event, VoiceEvent::Partial { .. }) {
+    if matches!(event, VoiceEvent::State { .. } | VoiceEvent::Partial { .. }) {
         match events.try_send(event) {
             Ok(()) => {}
             Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
-                // Partial events are complete snapshots. Keep only the newest
-                // one while the UI is busy rather than growing work or
-                // allowing the latest transcript to be lost.
-                *pending_partial = Some(event);
+                // State and partial events are complete snapshots. Keep only the newest while
+                // the UI is busy, so progress can never block the supervisor from forwarding a
+                // terminal command to the helper.
+                *pending_update = Some(event);
             }
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {}
         }
     } else {
-        if let Some(partial) = pending_partial.take() {
-            let _ = events.blocking_send(partial);
+        // Terminal delivery owns session cleanup but must not make the command supervisor wait on
+        // a stalled GPUI receiver. The bounded queue normally has room because snapshots coalesce;
+        // on saturation, replace the pending update with this terminal and retry next loop.
+        match events.try_send(event) {
+            Ok(()) => {
+                *pending_update = None;
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
+                *pending_update = Some(event);
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {}
         }
-        let _ = events.blocking_send(event);
     }
 }
 
-fn flush_pending_partial(
+fn flush_pending_update(
     events: &tokio::sync::mpsc::Sender<VoiceEvent>,
-    pending_partial: &mut Option<VoiceEvent>,
+    pending_update: &mut Option<VoiceEvent>,
 ) {
-    let Some(partial) = pending_partial.take() else {
+    let Some(update) = pending_update.take() else {
         return;
     };
-    if let Err(tokio::sync::mpsc::error::TrySendError::Full(partial)) = events.try_send(partial) {
-        *pending_partial = Some(partial);
+    if let Err(tokio::sync::mpsc::error::TrySendError::Full(update)) = events.try_send(update) {
+        *pending_update = Some(update);
     }
 }
 
@@ -268,7 +360,7 @@ struct HelperProcess {
 }
 
 impl HelperProcess {
-    fn spawn() -> Result<Self, String> {
+    fn spawn() -> Result<Self, VoiceErrorCode> {
         let executable = helper_executable()?;
         let mut child = Command::new(&executable)
             .env("OPENBLAS_NUM_THREADS", "1")
@@ -277,17 +369,17 @@ impl HelperProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|error| format!("voice input helper could not start: {error}"))?;
+            .map_err(|_| VoiceErrorCode::HelperUnavailable)?;
         let Some(stdin) = child.stdin.take() else {
             terminate_child(&mut child);
-            return Err("voice input helper has no command channel".to_string());
+            return Err(VoiceErrorCode::HelperUnavailable);
         };
         let Some(stdout) = child.stdout.take() else {
             terminate_child(&mut child);
-            return Err("voice input helper has no event channel".to_string());
+            return Err(VoiceErrorCode::HelperUnavailable);
         };
         let (event_tx, events) = mpsc::sync_channel(32);
-        if let Err(error) = std::thread::Builder::new()
+        if std::thread::Builder::new()
             .name("gsv-voice-events".to_string())
             .spawn(move || {
                 for line in BufReader::new(stdout).lines() {
@@ -301,9 +393,10 @@ impl HelperProcess {
                     }
                 }
             })
+            .is_err()
         {
             terminate_child(&mut child);
-            return Err(format!("voice input event reader could not start: {error}"));
+            return Err(VoiceErrorCode::HelperUnavailable);
         }
         Ok(Self {
             child,
@@ -312,13 +405,13 @@ impl HelperProcess {
         })
     }
 
-    fn send(&mut self, command: &VoiceCommand) -> Result<(), String> {
+    fn send(&mut self, command: &VoiceCommand) -> Result<(), VoiceErrorCode> {
         serde_json::to_writer(&mut self.stdin, &command_json(command))
-            .map_err(|error| format!("voice input command could not be written: {error}"))?;
+            .map_err(|_| VoiceErrorCode::HelperUnavailable)?;
         self.stdin
             .write_all(b"\n")
             .and_then(|_| self.stdin.flush())
-            .map_err(|error| format!("voice input helper disconnected: {error}"))
+            .map_err(|_| VoiceErrorCode::HelperUnavailable)
     }
 }
 
@@ -333,7 +426,7 @@ impl Drop for HelperProcess {
     }
 }
 
-fn helper_executable() -> Result<PathBuf, String> {
+fn helper_executable() -> Result<PathBuf, VoiceErrorCode> {
     if let Some(path) = std::env::var_os("GSV_TRANSCRIBE_HELPER") {
         let path = PathBuf::from(path);
         if path.is_file() {
@@ -350,7 +443,12 @@ fn helper_executable() -> Result<PathBuf, String> {
     let development_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("transcribe-helper")
         .join("target");
-    ["release", "debug"]
+    let profiles = if cfg!(debug_assertions) {
+        ["debug", "release"]
+    } else {
+        ["release", "debug"]
+    };
+    profiles
         .into_iter()
         .map(|profile| {
             development_root
@@ -358,7 +456,7 @@ fn helper_executable() -> Result<PathBuf, String> {
                 .join(format!("gsv-transcribe{}", std::env::consts::EXE_SUFFIX))
         })
         .find(|candidate| candidate.is_file())
-        .ok_or_else(|| "voice input is not installed; build the gsv-transcribe helper".to_string())
+        .ok_or(VoiceErrorCode::NotInstalled)
 }
 
 fn command_request_id(command: &VoiceCommand) -> Option<u64> {
@@ -376,8 +474,7 @@ fn command_starts_helper(command: &VoiceCommand) -> bool {
 
 fn event_request_id(event: &VoiceEvent) -> Option<u64> {
     match event {
-        VoiceEvent::Preparing { request_id, .. }
-        | VoiceEvent::Listening { request_id }
+        VoiceEvent::State { request_id, .. }
         | VoiceEvent::Partial { request_id, .. }
         | VoiceEvent::Final { request_id, .. }
         | VoiceEvent::Cancelled { request_id } => Some(*request_id),
@@ -404,15 +501,14 @@ fn parse_event(line: &str) -> Option<VoiceEvent> {
     let value = serde_json::from_str::<Value>(line).ok()?;
     let request_id = || value.get("request_id").and_then(Value::as_u64);
     match value.get("type").and_then(Value::as_str)? {
-        "preparing" => Some(VoiceEvent::Preparing {
+        "state" => Some(VoiceEvent::State {
             request_id: request_id()?,
+            phase: parse_phase(value.get("phase")?.as_str()?)?,
             progress: value
                 .get("progress")
                 .and_then(Value::as_f64)
-                .map(|v| v as f32),
-        }),
-        "listening" => Some(VoiceEvent::Listening {
-            request_id: request_id()?,
+                .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
+                .map(|value| value as f32),
         }),
         "partial" => Some(VoiceEvent::Partial {
             request_id: request_id()?,
@@ -429,8 +525,35 @@ fn parse_event(line: &str) -> Option<VoiceEvent> {
         }),
         "error" => Some(VoiceEvent::Error {
             request_id: request_id(),
-            message: value.get("message")?.as_str()?.to_string(),
+            code: parse_error_code(value.get("code")?.as_str()?)?,
         }),
+        _ => None,
+    }
+}
+
+fn parse_phase(value: &str) -> Option<VoicePhase> {
+    match value {
+        "downloading" => Some(VoicePhase::Downloading),
+        "verifying" => Some(VoicePhase::Verifying),
+        "loading" => Some(VoicePhase::Loading),
+        "listening" => Some(VoicePhase::Listening),
+        "finishing" => Some(VoicePhase::Finishing),
+        _ => None,
+    }
+}
+
+fn parse_error_code(value: &str) -> Option<VoiceErrorCode> {
+    match value {
+        "not_installed" => Some(VoiceErrorCode::NotInstalled),
+        "helper_unavailable" => Some(VoiceErrorCode::HelperUnavailable),
+        "microphone_unavailable" => Some(VoiceErrorCode::MicrophoneUnavailable),
+        "download_failed" => Some(VoiceErrorCode::DownloadFailed),
+        "model_invalid" => Some(VoiceErrorCode::ModelInvalid),
+        "engine_failed" => Some(VoiceErrorCode::EngineFailed),
+        "busy" => Some(VoiceErrorCode::Busy),
+        "not_active" => Some(VoiceErrorCode::NotActive),
+        "interrupted" => Some(VoiceErrorCode::Interrupted),
+        "invalid_command" => Some(VoiceErrorCode::InvalidCommand),
         _ => None,
     }
 }
@@ -487,7 +610,11 @@ mod tests {
     fn partial_backpressure_keeps_the_latest_complete_snapshot() {
         let (events, mut received) = tokio::sync::mpsc::channel(1);
         events
-            .try_send(VoiceEvent::Listening { request_id: 1 })
+            .try_send(VoiceEvent::State {
+                request_id: 1,
+                phase: VoicePhase::Listening,
+                progress: None,
+            })
             .expect("the test channel should accept its first event");
         let mut pending = None;
         publish(
@@ -517,13 +644,67 @@ mod tests {
 
         assert!(matches!(
             received.try_recv(),
-            Ok(VoiceEvent::Listening { request_id: 1 })
+            Ok(VoiceEvent::State {
+                request_id: 1,
+                phase: VoicePhase::Listening,
+                ..
+            })
         ));
-        flush_pending_partial(&events, &mut pending);
+        flush_pending_update(&events, &mut pending);
         assert!(pending.is_none());
         assert!(matches!(
             received.try_recv(),
             Ok(VoiceEvent::Partial { revision: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn state_backpressure_never_blocks_and_keeps_the_latest_phase() {
+        let (events, mut received) = tokio::sync::mpsc::channel(1);
+        events
+            .try_send(VoiceEvent::State {
+                request_id: 4,
+                phase: VoicePhase::Downloading,
+                progress: Some(0.1),
+            })
+            .expect("the test channel should accept its first event");
+        let mut pending = None;
+        publish(
+            &events,
+            &mut pending,
+            VoiceEvent::State {
+                request_id: 4,
+                phase: VoicePhase::Downloading,
+                progress: Some(0.6),
+            },
+        );
+        publish(
+            &events,
+            &mut pending,
+            VoiceEvent::State {
+                request_id: 4,
+                phase: VoicePhase::Verifying,
+                progress: None,
+            },
+        );
+        assert!(matches!(
+            pending,
+            Some(VoiceEvent::State {
+                phase: VoicePhase::Verifying,
+                ..
+            })
+        ));
+
+        let _ = received.try_recv().expect("queued state");
+        flush_pending_update(&events, &mut pending);
+        assert!(pending.is_none());
+        assert!(matches!(
+            received.try_recv(),
+            Ok(VoiceEvent::State {
+                request_id: 4,
+                phase: VoicePhase::Verifying,
+                ..
+            })
         ));
     }
 
@@ -536,7 +717,11 @@ mod tests {
             tentative: String::new(),
         };
         let events = coalesce_for_ui([
-            VoiceEvent::Listening { request_id: 1 },
+            VoiceEvent::State {
+                request_id: 1,
+                phase: VoicePhase::Listening,
+                progress: None,
+            },
             partial(1, 1, "old"),
             partial(1, 2, "latest"),
             VoiceEvent::Final {
@@ -559,5 +744,66 @@ mod tests {
             &events[3],
             VoiceEvent::Partial { request_id: 2, .. }
         ));
+    }
+
+    #[test]
+    fn structured_states_and_errors_are_parsed_without_diagnostics() {
+        assert_eq!(
+            parse_event(r#"{"type":"state","request_id":4,"phase":"downloading","progress":0.42}"#),
+            Some(VoiceEvent::State {
+                request_id: 4,
+                phase: VoicePhase::Downloading,
+                progress: Some(0.42),
+            })
+        );
+        assert_eq!(
+            parse_event(r#"{"type":"error","request_id":4,"code":"model_invalid"}"#),
+            Some(VoiceEvent::Error {
+                request_id: Some(4),
+                code: VoiceErrorCode::ModelInvalid,
+            })
+        );
+        assert!(parse_event(
+            r#"{"type":"error","request_id":4,"code":"model_invalid","message":"/private/model"}"#
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn invalid_progress_and_unknown_codes_do_not_cross_the_boundary() {
+        assert_eq!(
+            parse_event(r#"{"type":"state","request_id":4,"phase":"downloading","progress":9.0}"#),
+            Some(VoiceEvent::State {
+                request_id: 4,
+                phase: VoicePhase::Downloading,
+                progress: None,
+            })
+        );
+        assert!(parse_event(r#"{"type":"error","code":"private_native_error"}"#).is_none());
+    }
+
+    #[test]
+    fn replacement_request_owns_lifecycle_while_the_cancelled_request_finishes() {
+        let now = Instant::now();
+        let mut state = VoiceSupervisorState::default();
+        state.command_sent(
+            &VoiceCommand::Start {
+                request_id: 1,
+                locale: "auto".to_string(),
+            },
+            now,
+        );
+        state.command_sent(&VoiceCommand::Cancel { request_id: 1 }, now);
+        state.command_sent(
+            &VoiceCommand::Start {
+                request_id: 2,
+                locale: "auto".to_string(),
+            },
+            now,
+        );
+        state.terminal_observed(Some(1));
+
+        assert_eq!(state.active_request, Some(2));
+        assert!(state.terminal_deadline.is_none());
     }
 }

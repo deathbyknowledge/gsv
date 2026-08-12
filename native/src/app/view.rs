@@ -3,10 +3,10 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    bounce, div, ease_in_out, ease_out_quint, point, pulsating_between, px, relative, Animation,
-    AnimationExt as _, AnyElement, Context, Focusable, FontWeight, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, Render, ScrollDelta, ScrollWheelEvent,
-    SharedString, StatefulInteractiveElement, Styled, TouchPhase, Window,
+    div, ease_out_quint, point, px, relative, Animation, AnimationExt as _, AnyElement, Context,
+    Focusable, FontWeight, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
+    Render, ScrollDelta, ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled,
+    TouchPhase, Window,
 };
 use gpui_component::input::Input;
 
@@ -22,9 +22,13 @@ use crate::theme;
 use crate::typography::{fit_type_layout, measure_type_layout_at_size, TypeLayout};
 
 use super::media::release_assets;
+use super::presence::{
+    PresenceLine, PresenceMotion, MAX_VISIBLE_ACTIVITY_LINES, PRESENCE_LANE_HEIGHT,
+    PRESENCE_LANE_TOP,
+};
 use super::rich::{media_descriptors, render_document};
 use super::selection::{SelectableText, SelectionSurface, SelectionTopology, TextSelection};
-use super::{type_content_hash, CachedTypeLayout, GsvApp};
+use super::{type_content_hash, CachedTypeLayout, GsvApp, RichPresentationPhase};
 
 #[derive(Clone, Copy)]
 struct CanvasGeometry {
@@ -33,22 +37,6 @@ struct CanvasGeometry {
     top: f32,
     bottom: f32,
     available_height: f32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PresenceMotion {
-    None,
-    Breathe,
-    Search,
-    Read,
-    Mutate,
-    Execute,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PresenceLine {
-    label: String,
-    motion: PresenceMotion,
 }
 
 fn render_activity_summary(
@@ -102,6 +90,52 @@ fn render_activity_summary(
         .into_any_element()
 }
 
+fn render_history_edge_feedback(
+    intent: super::HistoryEdgeIntent,
+    geometry: CanvasGeometry,
+) -> AnyElement {
+    let progress = intent.progress.clamp(0.0, 1.0);
+    let label = if intent.direction < 0 {
+        "↑  KEEP SCROLLING FOR PREVIOUS"
+    } else {
+        "KEEP SCROLLING FOR NEXT  ↓"
+    };
+    let feedback = div()
+        .absolute()
+        .left(px(geometry.left))
+        .right(px(geometry.right))
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(5.0))
+        .font_family(theme::MONO_FONT)
+        .text_size(px(10.0))
+        .text_color(theme::color(theme::LIVE))
+        .opacity(0.42 + progress * 0.58)
+        .child(label)
+        .child(
+            div()
+                .w(px(54.0))
+                .h(px(2.0))
+                .rounded_full()
+                .bg(theme::color(theme::TEXT_FAINT))
+                .child(
+                    div()
+                        .w(px(54.0 * progress))
+                        .h_full()
+                        .rounded_full()
+                        .bg(theme::color(theme::LIVE)),
+                ),
+        );
+    if intent.direction < 0 {
+        feedback
+            .top(px(PRESENCE_LANE_TOP + PRESENCE_LANE_HEIGHT + 7.0))
+            .into_any_element()
+    } else {
+        feedback.bottom(px(42.0)).into_any_element()
+    }
+}
+
 struct TypeFit<'a> {
     key: &'a str,
     text: SharedString,
@@ -120,10 +154,19 @@ struct MessageCanvas {
     append_plain_text: bool,
     activity_summary: Vec<ActivitySummaryEntry>,
     transition_costly: bool,
+    rich_presentation: RichPresentationEffect,
     layout: TypeLayout,
     weight: FontWeight,
     color: gpui::Hsla,
     geometry: CanvasGeometry,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RichPresentationEffect {
+    None,
+    FadePlain(u64),
+    HoldRich,
+    FadeRich(u64),
 }
 
 const HISTORY_SCROLL_THRESHOLD: f32 = 144.0;
@@ -131,17 +174,9 @@ const HISTORY_SCROLL_LINE_HEIGHT: f32 = 16.0;
 const HISTORY_SCROLL_IDLE: Duration = Duration::from_millis(180);
 const TIMELINE_MARKER_WIDTH: f32 = 4.0;
 const TIMELINE_MARKER_HEIGHT: f32 = 8.0;
-const PRESENCE_LANE_HEIGHT: f32 = 84.0;
-const PRESENCE_LANE_TOP: f32 = 12.0;
-const MAX_VISIBLE_ACTIVITY_LINES: usize = 3;
 const TYPE_LAYOUT_CACHE_LIMIT: usize = crate::history::MAX_FETCHED_HISTORY_MESSAGES + 8;
 const TYPE_LAYOUT_POLICY_REVISION: u8 = 2;
 const ACTIVITY_SELECTION_ORDER: u32 = 1_000_000;
-
-#[cfg(target_os = "macos")]
-const STOP_HINT: &str = "⌘ . TO STOP";
-#[cfg(not(target_os = "macos"))]
-const STOP_HINT: &str = "CTRL + . TO STOP";
 
 fn animate_message(reduced_motion: bool, transition_costly: bool) -> bool {
     !reduced_motion && !transition_costly
@@ -211,7 +246,8 @@ fn prepare_history_scroll_gesture(
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum CanvasWheelAction {
     ScrollTo(f32),
-    Resist,
+    Resist { direction: i8, progress: f32 },
+    Blocked,
     Navigate(i8),
 }
 
@@ -220,6 +256,7 @@ fn canvas_wheel_action(
     offset: f32,
     maximum: f32,
     vertical: f32,
+    can_navigate: bool,
 ) -> CanvasWheelAction {
     let target = (offset + vertical).clamp(-maximum, 0.0);
     let can_scroll = (vertical > 0.0 && offset < 0.0) || (vertical < 0.0 && offset > -maximum);
@@ -228,16 +265,28 @@ fn canvas_wheel_action(
         return CanvasWheelAction::ScrollTo(target);
     }
 
+    if !can_navigate {
+        *accumulator = 0.0;
+        return CanvasWheelAction::Blocked;
+    }
+
+    let direction = if vertical > 0.0 { -1 } else { 1 };
+    if maximum <= 0.5 {
+        *accumulator = 0.0;
+        return CanvasWheelAction::Navigate(direction);
+    }
+
     if *accumulator != 0.0 && accumulator.signum() != vertical.signum() {
         *accumulator = 0.0;
     }
     *accumulator += vertical;
     if accumulator.abs() < HISTORY_SCROLL_THRESHOLD {
-        CanvasWheelAction::Resist
-    } else if *accumulator > 0.0 {
-        CanvasWheelAction::Navigate(-1)
+        CanvasWheelAction::Resist {
+            direction,
+            progress: (accumulator.abs() / HISTORY_SCROLL_THRESHOLD).clamp(0.0, 1.0),
+        }
     } else {
-        CanvasWheelAction::Navigate(1)
+        CanvasWheelAction::Navigate(direction)
     }
 }
 
@@ -352,10 +401,6 @@ fn legacy_presence_line(activity: &str) -> PresenceLine {
     }
 }
 
-fn animate_presence(reduced_motion: bool, approval: bool, motion: PresenceMotion) -> bool {
-    !reduced_motion && !approval && motion != PresenceMotion::None
-}
-
 fn presence_lines(
     live_activity: &[LiveActivityEntry],
     legacy_activity: Option<&str>,
@@ -391,15 +436,23 @@ fn presence_lines(
             .collect()
     };
     if let Some(notice) = voice_notice {
+        let motion = if notice.contains("LISTENING") {
+            PresenceMotion::Breathe
+        } else if notice.contains("DOWNLOADING")
+            || notice.contains("VERIFYING")
+            || notice.contains("PREPARING")
+        {
+            PresenceMotion::Search
+        } else if notice.contains("FINISHING") {
+            PresenceMotion::Mutate
+        } else {
+            PresenceMotion::None
+        };
         lines.insert(
             0,
             PresenceLine {
                 label: notice.to_string(),
-                motion: if notice.contains("UNAVAILABLE") {
-                    PresenceMotion::None
-                } else {
-                    PresenceMotion::Breathe
-                },
+                motion,
             },
         );
     }
@@ -445,6 +498,167 @@ fn message_selection_topology(rich_content: bool, append_plain_text: bool) -> Se
 }
 
 impl GsvApp {
+    fn capture_message_scroll_anchor(&self) -> super::MessageScrollAnchor {
+        let maximum = f32::from(self.message_scroll.max_offset().height).max(0.0);
+        let offset = f32::from(self.message_scroll.offset().y).clamp(-maximum, 0.0);
+        if maximum <= 0.5 || offset >= -0.5 {
+            super::MessageScrollAnchor::Top
+        } else if offset <= -maximum + 0.5 {
+            super::MessageScrollAnchor::Bottom
+        } else {
+            super::MessageScrollAnchor::Ratio((-offset / maximum).clamp(0.0, 1.0))
+        }
+    }
+
+    fn apply_message_scroll_anchor(&mut self, anchor: super::MessageScrollAnchor) {
+        let maximum = f32::from(self.message_scroll.max_offset().height).max(0.0);
+        let offset = match anchor {
+            super::MessageScrollAnchor::Top => 0.0,
+            super::MessageScrollAnchor::Bottom => -maximum,
+            super::MessageScrollAnchor::Ratio(ratio) => -maximum * ratio.clamp(0.0, 1.0),
+        };
+        self.message_scroll.set_offset(point(px(0.0), px(offset)));
+    }
+
+    fn resolve_rich_presentation(
+        &mut self,
+        moment_id: &str,
+        revision: u64,
+        rich_ready: bool,
+        already_visible: bool,
+        cx: &mut Context<Self>,
+    ) -> RichPresentationEffect {
+        if !rich_ready {
+            if self.rich_presentation.as_ref().is_some_and(|presentation| {
+                presentation.moment_id != moment_id || presentation.revision != revision
+            }) {
+                self.rich_presentation = None;
+            }
+            return RichPresentationEffect::None;
+        }
+
+        let matches = self.rich_presentation.as_ref().is_some_and(|presentation| {
+            presentation.moment_id == moment_id && presentation.revision == revision
+        });
+        if !matches {
+            let epoch = self.next_rich_presentation_epoch;
+            self.next_rich_presentation_epoch =
+                self.next_rich_presentation_epoch.wrapping_add(2).max(2);
+            let phase = if already_visible && !self.reduced_motion {
+                RichPresentationPhase::FadingPlain
+            } else {
+                RichPresentationPhase::Steady
+            };
+            let outgoing_content = self
+                .pending_rich_fallback
+                .take()
+                .filter(|fallback| {
+                    phase == RichPresentationPhase::FadingPlain && fallback.moment_id == moment_id
+                })
+                .map(|fallback| fallback.content);
+            self.rich_presentation = Some(super::RichPresentation {
+                moment_id: moment_id.to_string(),
+                revision,
+                epoch,
+                phase,
+                outgoing_content,
+            });
+            if phase == RichPresentationPhase::FadingPlain {
+                let timer = cx.background_executor().timer(Duration::from_millis(70));
+                cx.spawn(async move |this, cx| {
+                    timer.await;
+                    let _ = this.update(cx, |this, cx| {
+                        let should_advance =
+                            this.rich_presentation.as_ref().is_some_and(|presentation| {
+                                presentation.epoch == epoch
+                                    && presentation.revision == revision
+                                    && presentation.phase == RichPresentationPhase::FadingPlain
+                            });
+                        if should_advance {
+                            // Capture at the renderer handoff, after any wheel input that
+                            // arrived during the outgoing dissolve.
+                            let anchor = this.capture_message_scroll_anchor();
+                            let presentation = this
+                                .rich_presentation
+                                .as_mut()
+                                .expect("matching rich presentation still exists");
+                            presentation.phase =
+                                RichPresentationPhase::AwaitingRichLayout { anchor };
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
+            }
+        }
+
+        let (epoch, phase) = self
+            .rich_presentation
+            .as_ref()
+            .map(|presentation| (presentation.epoch, presentation.phase))
+            .expect("rich presentation exists for ready content");
+        match phase {
+            RichPresentationPhase::Steady => RichPresentationEffect::None,
+            RichPresentationPhase::FadingPlain => RichPresentationEffect::FadePlain(epoch),
+            RichPresentationPhase::AwaitingRichLayout { anchor } => {
+                if self.rich_layout_wait_scheduled != Some(epoch) {
+                    self.rich_layout_wait_scheduled = Some(epoch);
+                    let timer = cx.background_executor().timer(Duration::from_millis(16));
+                    cx.spawn(async move |this, cx| {
+                        timer.await;
+                        let _ = this.update(cx, |this, cx| {
+                            if this.rich_layout_wait_scheduled == Some(epoch) {
+                                this.rich_layout_wait_scheduled = None;
+                            }
+                            let should_apply =
+                                this.rich_presentation.as_ref().is_some_and(|presentation| {
+                                    presentation.epoch == epoch
+                                        && presentation.revision == revision
+                                        && presentation.phase
+                                            == RichPresentationPhase::AwaitingRichLayout { anchor }
+                                });
+                            if should_apply {
+                                this.apply_message_scroll_anchor(anchor);
+                                if let Some(presentation) = this.rich_presentation.as_mut() {
+                                    presentation.phase = RichPresentationPhase::FadingRich;
+                                }
+                                cx.notify();
+                            }
+                        });
+                    })
+                    .detach();
+                }
+                RichPresentationEffect::HoldRich
+            }
+            RichPresentationPhase::FadingRich => {
+                if self.rich_steady_wait_scheduled != Some(epoch) {
+                    self.rich_steady_wait_scheduled = Some(epoch);
+                    let timer = cx.background_executor().timer(Duration::from_millis(110));
+                    cx.spawn(async move |this, cx| {
+                        timer.await;
+                        let _ = this.update(cx, |this, _| {
+                            if this.rich_steady_wait_scheduled == Some(epoch) {
+                                this.rich_steady_wait_scheduled = None;
+                            }
+                            if let Some(presentation) =
+                                this.rich_presentation.as_mut().filter(|presentation| {
+                                    presentation.epoch == epoch
+                                        && presentation.revision == revision
+                                        && presentation.phase == RichPresentationPhase::FadingRich
+                                })
+                            {
+                                presentation.phase = RichPresentationPhase::Steady;
+                                presentation.outgoing_content = None;
+                            }
+                        });
+                    })
+                    .detach();
+                }
+                RichPresentationEffect::FadeRich(epoch.wrapping_add(1))
+            }
+        }
+    }
+
     fn fit_cached_type_layout(&mut self, window: &Window, request: TypeFit<'_>) -> TypeLayout {
         let TypeFit {
             key,
@@ -509,122 +723,6 @@ impl GsvApp {
             },
         );
         layout
-    }
-
-    fn render_presence_line(&self, index: usize, line: PresenceLine) -> AnyElement {
-        let motion = line.motion;
-        let indicator = div()
-            .relative()
-            .mt(px(5.0))
-            .size(px(4.0))
-            .flex_shrink_0()
-            .rounded_full()
-            .bg(theme::color(theme::LIVE));
-        let indicator = if animate_presence(self.reduced_motion, false, motion) {
-            match motion {
-                PresenceMotion::Search => indicator
-                    .with_animation(
-                        ("presence-search", index),
-                        Animation::new(Duration::from_millis(1_800))
-                            .repeat()
-                            .with_easing(bounce(ease_in_out)),
-                        |this, delta| this.left(px((delta - 0.5) * 3.0)),
-                    )
-                    .into_any_element(),
-                PresenceMotion::Read => indicator
-                    .with_animation(
-                        ("presence-read", index),
-                        Animation::new(Duration::from_millis(2_200))
-                            .repeat()
-                            .with_easing(pulsating_between(0.45, 1.0)),
-                        |this, delta| this.opacity(delta),
-                    )
-                    .into_any_element(),
-                PresenceMotion::Mutate => indicator
-                    .with_animation(
-                        ("presence-mutate", index),
-                        Animation::new(Duration::from_millis(1_650))
-                            .repeat()
-                            .with_easing(bounce(ease_in_out)),
-                        |this, delta| this.top(px((0.5 - delta) * 2.0)),
-                    )
-                    .into_any_element(),
-                PresenceMotion::Execute => indicator
-                    .with_animation(
-                        ("presence-execute", index),
-                        Animation::new(Duration::from_millis(1_350))
-                            .repeat()
-                            .with_easing(pulsating_between(0.5, 1.0)),
-                        |this, delta| this.opacity(delta),
-                    )
-                    .into_any_element(),
-                PresenceMotion::Breathe | PresenceMotion::None => indicator.into_any_element(),
-            }
-        } else {
-            indicator.into_any_element()
-        };
-        let row = div()
-            .flex()
-            .items_start()
-            .gap(px(8.0))
-            .text_size(px(15.0))
-            .line_height(relative(1.3))
-            .text_color(theme::color(theme::LIVE))
-            .child(indicator)
-            .child(line.label);
-
-        if animate_presence(self.reduced_motion, false, motion) && motion == PresenceMotion::Breathe
-        {
-            row.with_animation(
-                ("presence-breathe", index),
-                Animation::new(Duration::from_millis(2_600))
-                    .repeat()
-                    .with_easing(pulsating_between(0.62, 1.0)),
-                |this, delta| this.opacity(delta),
-            )
-            .into_any_element()
-        } else {
-            row.into_any_element()
-        }
-    }
-
-    fn render_presence_lane(&self, lines: Vec<PresenceLine>, show_stop_hint: bool) -> AnyElement {
-        let activity = lines
-            .into_iter()
-            .enumerate()
-            .map(|(index, line)| self.render_presence_line(index, line))
-            .collect::<Vec<_>>();
-
-        div()
-            .id("presence-lane")
-            .absolute()
-            .top(px(PRESENCE_LANE_TOP))
-            .left(px(82.0))
-            .right(px(82.0))
-            .h(px(PRESENCE_LANE_HEIGHT))
-            .flex()
-            .justify_center()
-            .font_family(theme::MONO_FONT)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .gap(px(2.0))
-                    .children(activity),
-            )
-            .when(show_stop_hint, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .right_0()
-                        .top(px(4.0))
-                        .text_size(px(8.0))
-                        .text_color(theme::color(theme::TEXT_FAINT))
-                        .child(STOP_HINT),
-                )
-            })
-            .into_any_element()
     }
 
     fn render_timeline(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -765,7 +863,7 @@ impl GsvApp {
         let left_padding = (viewport_width * 0.065).clamp(108.0, 142.0);
         let right_padding = (viewport_width * 0.065).clamp(46.0, 142.0);
         let vertical_padding = (viewport_height * 0.105).clamp(50.0, 108.0);
-        let top_padding = vertical_padding.max(PRESENCE_LANE_TOP + PRESENCE_LANE_HEIGHT + 8.0);
+        let top_padding = vertical_padding.max(PRESENCE_LANE_TOP + PRESENCE_LANE_HEIGHT + 24.0);
         let available_width = (viewport_width - left_padding - right_padding).max(1.0);
         let available_height = (viewport_height - top_padding - vertical_padding - 72.0).max(1.0);
         let geometry = CanvasGeometry {
@@ -843,13 +941,53 @@ impl GsvApp {
             )
         };
         let append_plain_text = self.prepared_content.appends_plain_text(&moment_id);
-        let selection_topology = message_selection_topology(
+        let content_pending = self.prepared_content.is_pending(&moment_id);
+        let already_visible = self.message_scroll_moment.as_deref() == Some(moment_id.as_str());
+        let prepared_is_rich = prepared_content
+            .as_ref()
+            .is_some_and(PreparedContent::is_rich);
+        let fallback_is_rich = content_pending && prepared_is_rich;
+        let rich_ready = !content_pending && prepared_is_rich;
+        let streaming_media_is_rich = append_plain_text && prepared_is_rich;
+        // While text streams beside already-prepared media, only the literal prefix changes.
+        // Keep the renderer identity pinned to the media document so every delta cannot restart
+        // the rich handoff or temporarily hide its attachment.
+        let presentation_revision = if streaming_media_is_rich {
             prepared_content
                 .as_ref()
-                .is_some_and(PreparedContent::is_rich),
-            append_plain_text,
+                .map_or(message_revision, |content| content.revision().get())
+        } else {
+            message_revision
+        };
+        let rich_presentation = self.resolve_rich_presentation(
+            &moment_id,
+            presentation_revision,
+            rich_ready,
+            already_visible,
+            cx,
         );
-        let content_pending = self.prepared_content.is_pending(&moment_id);
+        let outgoing_content = matches!(rich_presentation, RichPresentationEffect::FadePlain(_))
+            .then(|| {
+                self.rich_presentation
+                    .as_ref()
+                    .and_then(|presentation| presentation.outgoing_content.clone())
+            })
+            .flatten();
+        let showing_outgoing_fallback = outgoing_content.is_some();
+        let show_rich = fallback_is_rich
+            || showing_outgoing_fallback
+            || (rich_ready && !matches!(rich_presentation, RichPresentationEffect::FadePlain(_)));
+        let rendered_content = if showing_outgoing_fallback {
+            outgoing_content
+        } else {
+            show_rich.then_some(prepared_content.clone()).flatten()
+        };
+        let rendered_append_plain_text = if showing_outgoing_fallback {
+            true
+        } else {
+            append_plain_text
+        };
+        let selection_topology = message_selection_topology(show_rich, rendered_append_plain_text);
         if self.message_scroll_moment.as_deref() != Some(moment_id.as_str()) {
             self.message_scroll.set_offset(point(px(0.0), px(0.0)));
             self.message_scroll_moment = Some(moment_id.clone());
@@ -960,7 +1098,7 @@ impl GsvApp {
             self.media_cache.sync([], &self.commands)
         } else {
             self.media_cache.sync(
-                prepared_content
+                rendered_content
                     .as_ref()
                     .map(media_descriptors)
                     .unwrap_or_default(),
@@ -977,6 +1115,20 @@ impl GsvApp {
             self.voice_notice.as_deref(),
         );
         let show_stop_hint = self.conversation.active_run_id.is_some() && !activity.is_empty();
+        // GPUI animation frames dirty ancestor views. Keep the distinctive indicator shape but
+        // suppress its motion when the selected canvas is expensive to rebuild; this prevents a
+        // status flourish from repeatedly walking a large rich document on the foreground thread.
+        let suppress_presence_motion = self.reduced_motion
+            || transition_costly_candidate
+            || rich_presentation != RichPresentationEffect::None;
+        self.presence_lane.update(cx, |lane, lane_cx| {
+            lane.set_state(
+                activity.clone(),
+                show_stop_hint,
+                suppress_presence_motion,
+                lane_cx,
+            );
+        });
         let show_hint = !self.interaction.has_interacted()
             && activity.is_empty()
             && !self.interaction.is_approval();
@@ -1006,10 +1158,11 @@ impl GsvApp {
                 MessageCanvas {
                     message: display_message,
                     approval: self.conversation.pending_approval.clone(),
-                    rich_content: prepared_content.filter(PreparedContent::is_rich),
-                    append_plain_text,
+                    rich_content: rendered_content,
+                    append_plain_text: rendered_append_plain_text,
                     activity_summary,
                     transition_costly,
+                    rich_presentation,
                     layout: message_layout,
                     weight: message_weight,
                     color: message_color,
@@ -1048,7 +1201,10 @@ impl GsvApp {
                 this.child(self.render_input_sink(sink_layout, geometry))
             })
             .child(canvas)
-            .child(self.render_presence_lane(activity, show_stop_hint))
+            .child(self.presence_lane.clone())
+            .when_some(self.history_edge_intent, |this, intent| {
+                this.child(render_history_edge_feedback(intent, geometry))
+            })
             .when(show_hint, |this| {
                 this.child(
                     div()
@@ -1209,20 +1365,17 @@ impl GsvApp {
             append_plain_text,
             activity_summary,
             transition_costly,
+            rich_presentation,
             layout,
             weight,
             color,
             geometry,
         } = request;
-        let is_rich = rich_content.is_some();
-        let is_long = layout.scrolls || is_rich || !activity_summary.is_empty();
         let content = if let Some(content) = rich_content {
             div()
                 .w_full()
-                .min_h(px(geometry.available_height))
                 .flex()
                 .flex_col()
-                .justify_center()
                 .gap(px((layout.size * 0.52).clamp(13.0, 28.0)))
                 .when(append_plain_text && !message.is_empty(), |this| {
                     this.child(div().w_full().child(SelectableText::new(
@@ -1274,7 +1427,12 @@ impl GsvApp {
         let message = div()
             .relative()
             .w_full()
+            .min_h(px(geometry.available_height))
             .max_w(px(layout.width))
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .justify_center()
             .font_family(theme::PROSE_FONT)
             .font_weight(weight)
             .text_size(px(layout.size))
@@ -1299,6 +1457,41 @@ impl GsvApp {
         } else {
             message.into_any_element()
         };
+        let rich_epoch = match rich_presentation {
+            RichPresentationEffect::None => None,
+            RichPresentationEffect::HoldRich => None,
+            RichPresentationEffect::FadePlain(epoch) | RichPresentationEffect::FadeRich(epoch) => {
+                Some(epoch)
+            }
+        };
+        let message = if rich_presentation == RichPresentationEffect::HoldRich {
+            div()
+                .w_full()
+                .flex()
+                .justify_center()
+                .opacity(0.7)
+                .child(message)
+                .into_any_element()
+        } else if let Some(epoch) = rich_epoch.filter(|_| !self.reduced_motion) {
+            let (start, span) = match rich_presentation {
+                RichPresentationEffect::FadePlain(_) => (1.0, -0.3),
+                RichPresentationEffect::FadeRich(_) => (0.7, 0.3),
+                RichPresentationEffect::None | RichPresentationEffect::HoldRich => unreachable!(),
+            };
+            div()
+                .w_full()
+                .flex()
+                .justify_center()
+                .child(message)
+                .with_animation(
+                    ("rich-ready", epoch),
+                    Animation::new(Duration::from_millis(110)).with_easing(ease_out_quint()),
+                    move |this, delta| this.opacity(start + delta * span),
+                )
+                .into_any_element()
+        } else {
+            message
+        };
 
         let surface = div()
             .id(("message-scroll", self.transition_epoch))
@@ -1310,10 +1503,15 @@ impl GsvApp {
             .pb(px(geometry.bottom + 58.0))
             .flex()
             .justify_center()
-            .when(is_long, |this| this.items_start())
-            .when(!is_long, |this| this.items_center())
+            .items_start()
             .overflow_hidden()
             .track_scroll(&self.message_scroll)
+            .child(
+                div()
+                    .absolute()
+                    .size(px(1.0))
+                    .top(px(geometry.available_height.max(layout.content_height))),
+            )
             .occlude()
             .on_scroll_wheel(cx.listener(Self::scroll_moments))
             .on_mouse_down(
@@ -1331,6 +1529,35 @@ impl GsvApp {
         .into_any_element()
     }
 
+    fn clear_history_edge_feedback(&mut self) -> bool {
+        let changed = self.history_edge_intent.take().is_some();
+        self.history_edge_feedback_epoch = self.history_edge_feedback_epoch.wrapping_add(1);
+        changed
+    }
+
+    fn show_history_edge_feedback(&mut self, direction: i8, progress: f32, cx: &mut Context<Self>) {
+        self.history_edge_intent = Some(super::HistoryEdgeIntent {
+            direction,
+            progress,
+        });
+        self.history_edge_feedback_epoch = self.history_edge_feedback_epoch.wrapping_add(1);
+        let epoch = self.history_edge_feedback_epoch;
+        let timer = cx.background_executor().timer(HISTORY_SCROLL_IDLE);
+        cx.spawn(async move |this, cx| {
+            timer.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.history_edge_feedback_epoch == epoch {
+                    this.history_edge_intent = None;
+                    this.history_scroll_accumulator = 0.0;
+                    this.history_scroll_last_event = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn scroll_moments(
         &mut self,
         event: &ScrollWheelEvent,
@@ -1340,7 +1567,11 @@ impl GsvApp {
         if matches!(event.touch_phase, TouchPhase::Ended) {
             self.history_scroll_accumulator = 0.0;
             self.history_scroll_last_event = None;
+            let feedback_cleared = self.clear_history_edge_feedback();
             cx.stop_propagation();
+            if feedback_cleared {
+                cx.notify();
+            }
             return;
         }
         let Some(vertical) = normalized_vertical_delta(event.delta) else {
@@ -1362,22 +1593,38 @@ impl GsvApp {
 
         let maximum = f32::from(self.message_scroll.max_offset().height);
         let offset = f32::from(self.message_scroll.offset().y).clamp(-maximum, 0.0);
+        let direction = if vertical > 0.0 { -1 } else { 1 };
+        let can_navigate = if direction < 0 {
+            self.conversation.selected > 0
+        } else {
+            self.conversation.selected + 1 < self.conversation.moments.len()
+        };
         match canvas_wheel_action(
             &mut self.history_scroll_accumulator,
             offset,
             maximum,
             vertical,
+            can_navigate,
         ) {
             CanvasWheelAction::ScrollTo(target) => {
+                self.clear_history_edge_feedback();
                 self.message_scroll.set_offset(point(px(0.0), px(target)));
                 cx.notify();
             }
-            CanvasWheelAction::Resist => {
-                if selection_cleared {
+            CanvasWheelAction::Resist {
+                direction,
+                progress,
+            } => {
+                self.show_history_edge_feedback(direction, progress, cx);
+            }
+            CanvasWheelAction::Blocked => {
+                let feedback_cleared = self.clear_history_edge_feedback();
+                if selection_cleared || feedback_cleared {
                     cx.notify();
                 }
             }
             CanvasWheelAction::Navigate(direction) => {
+                self.clear_history_edge_feedback();
                 self.move_moment(direction, window, cx);
                 latch_history_scroll(&mut self.history_scroll_accumulator, vertical);
                 self.history_scroll_last_event = Some(now);
@@ -1808,35 +2055,40 @@ mod tests {
     fn canvas_requires_fresh_overscroll_after_reaching_the_boundary() {
         let mut accumulator = 0.0;
         assert_eq!(
-            canvas_wheel_action(&mut accumulator, -40.0, 100.0, -120.0),
+            canvas_wheel_action(&mut accumulator, -40.0, 100.0, -120.0, true),
             CanvasWheelAction::ScrollTo(-100.0)
         );
         assert_eq!(accumulator, 0.0);
 
         assert_eq!(
-            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0),
-            CanvasWheelAction::Resist
+            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0, true),
+            CanvasWheelAction::Resist {
+                direction: 1,
+                progress: 1.0 / 3.0,
+            }
         );
         assert_eq!(
-            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0),
-            CanvasWheelAction::Resist
+            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0, true),
+            CanvasWheelAction::Resist {
+                direction: 1,
+                progress: 2.0 / 3.0,
+            }
         );
         assert_eq!(
-            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0),
+            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0, true),
             CanvasWheelAction::Navigate(1)
         );
     }
 
     #[test]
-    fn history_gesture_latches_until_idle_while_pre_latch_resistance_reverses() {
+    fn short_canvas_navigates_immediately_and_latches_until_idle() {
         let start = Instant::now();
-        let mut accumulator = 80.0;
+        let mut accumulator = 0.0;
         let mut last_event = Some(start);
         assert_eq!(
-            canvas_wheel_action(&mut accumulator, 0.0, 0.0, -30.0),
-            CanvasWheelAction::Resist
+            canvas_wheel_action(&mut accumulator, 0.0, 0.0, -30.0, true),
+            CanvasWheelAction::Navigate(1)
         );
-        assert_eq!(accumulator, -30.0);
 
         latch_history_scroll(&mut accumulator, -48.0);
 
@@ -1856,6 +2108,24 @@ mod tests {
             &mut last_event,
             start + HISTORY_SCROLL_IDLE + Duration::from_millis(50),
         ));
+        assert_eq!(accumulator, 0.0);
+    }
+
+    #[test]
+    fn boundary_resistance_reverses_and_missing_neighbor_is_blocked() {
+        let mut accumulator = 80.0;
+        assert_eq!(
+            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -30.0, true),
+            CanvasWheelAction::Resist {
+                direction: 1,
+                progress: 30.0 / HISTORY_SCROLL_THRESHOLD,
+            }
+        );
+        assert_eq!(accumulator, -30.0);
+        assert_eq!(
+            canvas_wheel_action(&mut accumulator, -100.0, 100.0, -48.0, false),
+            CanvasWheelAction::Blocked
+        );
         assert_eq!(accumulator, 0.0);
     }
 
@@ -1904,14 +2174,6 @@ mod tests {
     }
 
     #[test]
-    fn presence_animation_respects_reduced_motion_and_approval() {
-        assert!(animate_presence(false, false, PresenceMotion::Breathe));
-        assert!(!animate_presence(true, false, PresenceMotion::Breathe));
-        assert!(!animate_presence(false, true, PresenceMotion::Breathe));
-        assert!(!animate_presence(false, false, PresenceMotion::None));
-    }
-
-    #[test]
     fn approval_replaces_live_presence() {
         let live = [LiveActivityEntry {
             category: ActivityCategory::RunningCommands,
@@ -1943,6 +2205,17 @@ mod tests {
         assert_eq!(lines[0].label, "LISTENING");
         assert_eq!(lines[0].motion, PresenceMotion::Breathe);
         assert_eq!(lines[1].label, "Running a code task…");
+
+        let downloading = presence_lines(
+            &[],
+            None,
+            false,
+            false,
+            Some("DOWNLOADING VOICE INPUT · 42%"),
+        );
+        assert_eq!(downloading[0].motion, PresenceMotion::Search);
+        let finishing = presence_lines(&[], None, false, false, Some("FINISHING VOICE INPUT"));
+        assert_eq!(finishing[0].motion, PresenceMotion::Mutate);
     }
 
     #[test]
@@ -2010,7 +2283,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn canvas_wheel_requires_three_detents_and_latches_the_gesture(cx: &mut TestAppContext) {
+    fn short_canvas_wheel_moves_immediately_and_latches_the_gesture(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_component::init(cx);
             bind_keys(cx);
@@ -2044,38 +2317,18 @@ mod tests {
             px(f32::from(viewport.height) / 2.0),
         );
 
-        for detent in 0..2 {
-            cx.cx.update(|cx| {
-                app.update(cx, |app, _| {
-                    app.history_scroll_last_event = Some(Instant::now());
-                });
-            });
-            cx.simulate_event(ScrollWheelEvent {
-                position,
-                delta: ScrollDelta::Lines(point(0.0, 3.0)),
-                ..Default::default()
-            });
-            cx.cx.update(|cx| {
-                let app = app.read(cx);
-                assert_eq!(app.conversation.selected, 2);
-                assert_eq!(
-                    app.audio.request_count(crate::audio::KeySound::Navigate),
-                    0,
-                    "detent {detent} must only build boundary resistance"
-                );
-            });
-        }
-        cx.cx.update(|cx| {
-            app.update(cx, |app, _| {
-                app.history_scroll_last_event = Some(Instant::now());
-            });
-        });
         cx.simulate_event(ScrollWheelEvent {
             position,
             delta: ScrollDelta::Lines(point(0.0, 3.0)),
             ..Default::default()
         });
         cx.cx.update(|cx| {
+            app.update(cx, |app, _| {
+                // VisualTestContext may spend wall-clock time painting this first transition.
+                // Pin the synthetic gesture clock after the event so the rest of this test is
+                // independent of parallel-suite scheduling.
+                app.history_scroll_last_event = Some(Instant::now());
+            });
             let app = app.read(cx);
             assert_eq!(app.conversation.selected, 1);
             assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 1);
@@ -2084,6 +2337,7 @@ mod tests {
         for _ in 0..5 {
             cx.cx.update(|cx| {
                 app.update(cx, |app, _| {
+                    app.history_scroll_accumulator = f32::INFINITY;
                     app.history_scroll_last_event = Some(Instant::now());
                 });
             });
@@ -2101,6 +2355,7 @@ mod tests {
 
         cx.cx.update(|cx| {
             app.update(cx, |app, _| {
+                app.history_scroll_accumulator = f32::INFINITY;
                 app.history_scroll_last_event = Some(Instant::now());
             });
         });
@@ -2120,18 +2375,11 @@ mod tests {
             touch_phase: TouchPhase::Ended,
             ..Default::default()
         });
-        for _ in 0..3 {
-            cx.cx.update(|cx| {
-                app.update(cx, |app, _| {
-                    app.history_scroll_last_event = Some(Instant::now());
-                });
-            });
-            cx.simulate_event(ScrollWheelEvent {
-                position,
-                delta: ScrollDelta::Lines(point(0.0, -3.0)),
-                ..Default::default()
-            });
-        }
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Lines(point(0.0, -3.0)),
+            ..Default::default()
+        });
         cx.cx.update(|cx| {
             let app = app.read(cx);
             assert_eq!(app.conversation.selected, 2);
@@ -2252,6 +2500,14 @@ mod tests {
             let app = app.read(cx);
             assert_eq!(app.conversation.selected, 1);
             assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 0);
+            assert_eq!(
+                app.history_edge_intent.map(|intent| intent.direction),
+                Some(1)
+            );
+            assert_eq!(
+                app.history_edge_intent.map(|intent| intent.progress),
+                Some(1.0 / 3.0)
+            );
         });
         cx.simulate_event(ScrollWheelEvent {
             position,
@@ -2267,6 +2523,7 @@ mod tests {
             let app = app.read(cx);
             assert_eq!(app.conversation.selected, 2);
             assert_eq!(app.audio.request_count(crate::audio::KeySound::Navigate), 1);
+            assert!(app.history_edge_intent.is_none());
         });
     }
 

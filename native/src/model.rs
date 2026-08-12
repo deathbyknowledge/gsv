@@ -194,6 +194,19 @@ pub struct Moment {
     media_revision: ContentRevision,
 }
 
+/// An exact identity handoff from a locally streamed assistant moment to the authoritative
+/// history message that persists it. Callers may migrate presentation state using this mapping
+/// before replacing the conversation, while content caches use the revisions to reject stale
+/// work.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MomentIdentityAdoption {
+    pub(crate) transient_id: String,
+    pub(crate) durable_id: String,
+    pub(crate) run_id: String,
+    pub(crate) revision: ContentRevision,
+    pub(crate) media_revision: ContentRevision,
+}
+
 impl Moment {
     pub fn new(id: impl Into<String>, role: MomentRole, text: impl Into<String>) -> Self {
         let text = text.into();
@@ -240,6 +253,7 @@ impl Moment {
         render_text: Arc<str>,
         media: Arc<Vec<MediaAttachment>>,
         run_id: Option<String>,
+        preparation: Option<&HistoryPreparationCandidate>,
     ) -> Self {
         Self {
             id,
@@ -247,12 +261,15 @@ impl Moment {
             text_fingerprint: text_fingerprint(render_text.as_ref()),
             text: render_text,
             content_revision: next_moment_revision(),
-            media_revision: content_revision("", media.as_slice()),
+            media_revision: preparation.map_or_else(
+                || content_revision("", media.as_slice()),
+                |candidate| candidate.media_revision,
+            ),
             media,
             run_id,
             state: MomentState::Complete,
-            preparation_revision: None,
-            preparation_text: None,
+            preparation_revision: preparation.map(|candidate| candidate.revision),
+            preparation_text: preparation.map(|candidate| candidate.text.clone()),
         }
     }
 
@@ -313,6 +330,41 @@ impl Moment {
                 media: self.media.clone(),
             })
     }
+}
+
+fn is_adoptable_transient(moment: &Moment) -> bool {
+    moment.id.starts_with("assistant:transient:")
+        && moment.role == MomentRole::Intelligence
+        && moment.state == MomentState::Complete
+        && moment
+            .run_id
+            .as_deref()
+            .is_some_and(|run_id| !run_id.is_empty())
+}
+
+fn exact_moment_identity_matches(
+    transient: &Moment,
+    transient_revision: ContentRevision,
+    run_id: &str,
+    durable: &Moment,
+) -> bool {
+    let transient_text = transient
+        .preparation_text
+        .as_deref()
+        .unwrap_or(transient.text.as_ref());
+    let durable_text = durable
+        .preparation_text
+        .as_deref()
+        .unwrap_or(durable.text.as_ref());
+    durable.id != transient.id
+        && durable.role == MomentRole::Intelligence
+        && durable.state == MomentState::Complete
+        && durable.run_id.as_deref() == Some(run_id)
+        && durable.preparation_revision == Some(transient_revision)
+        && durable.media_revision == transient.media_revision
+        && durable_text == transient_text
+        && durable.text == transient.text
+        && durable.media == transient.media
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -433,6 +485,63 @@ impl Conversation {
 
     pub fn current(&self) -> Option<&Moment> {
         self.moments.get(self.selected)
+    }
+
+    /// Find authoritative history messages that are exact persisted identities of local streamed
+    /// responses. A run can contain several assistant messages, so the run id is only the first
+    /// discriminator: text, media, and both semantic revisions must also match exactly, and the
+    /// match must be one-to-one.
+    pub(crate) fn history_identity_adoptions(
+        &self,
+        history_moments: &[Moment],
+    ) -> Vec<MomentIdentityAdoption> {
+        self.moments
+            .iter()
+            .filter(|moment| is_adoptable_transient(moment))
+            .filter_map(|transient| {
+                let run_id = transient.run_id.as_deref()?;
+                let revision = transient.preparation_revision.unwrap_or_else(|| {
+                    content_revision(transient.text.as_ref(), transient.media.as_slice())
+                });
+                let mut durable_matches = history_moments.iter().filter(|durable| {
+                    exact_moment_identity_matches(transient, revision, run_id, durable)
+                });
+                let durable = durable_matches.next()?;
+                if durable_matches.next().is_some()
+                    || self
+                        .moments
+                        .iter()
+                        .filter(|candidate| is_adoptable_transient(candidate))
+                        .filter(|candidate| {
+                            let candidate_revision =
+                                candidate.preparation_revision.unwrap_or_else(|| {
+                                    content_revision(
+                                        candidate.text.as_ref(),
+                                        candidate.media.as_slice(),
+                                    )
+                                });
+                            exact_moment_identity_matches(
+                                candidate,
+                                candidate_revision,
+                                run_id,
+                                durable,
+                            )
+                        })
+                        .take(2)
+                        .count()
+                        != 1
+                {
+                    return None;
+                }
+                Some(MomentIdentityAdoption {
+                    transient_id: transient.id.clone(),
+                    durable_id: durable.id.clone(),
+                    run_id: run_id.to_string(),
+                    revision,
+                    media_revision: transient.media_revision,
+                })
+            })
+            .collect()
     }
 
     pub fn activity_summary_for(&self, moment: &Moment) -> &[ActivitySummaryEntry] {
@@ -1307,6 +1416,11 @@ fn history_is_authoritative(payload: &Value, _visible_message_count: usize) -> b
 /// remain shared, so applying a fetched history page on the GPUI thread performs no content copy or
 /// Markdown parsing.
 pub fn moments_from_history(snapshot: &HistorySnapshot) -> Vec<Moment> {
+    let preparations = snapshot
+        .preparation_candidates
+        .iter()
+        .map(|candidate| (candidate.id.as_ref(), candidate))
+        .collect::<HashMap<_, _>>();
     snapshot
         .moments
         .iter()
@@ -1322,6 +1436,7 @@ pub fn moments_from_history(snapshot: &HistorySnapshot) -> Vec<Moment> {
                 moment.render_text.clone(),
                 moment.media.clone(),
                 moment.run_id.as_deref().map(str::to_string),
+                preparations.get(moment.id.as_ref()).copied(),
             )
         })
         .collect()
@@ -1737,6 +1852,134 @@ mod tests {
             .expect("completed intelligence is prepared by revision");
         assert_eq!(candidate.render_text.as_ref(), "Hello there");
         assert_eq!(candidate.text.as_ref(), "Hello there");
+    }
+
+    #[test]
+    fn completed_stream_identity_maps_exactly_to_a_different_durable_id() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-adopt");
+        conversation.stream_text(Some("run-adopt"), "A **stable** answer");
+        assert!(conversation.finish_run(Some("run-adopt"), None));
+        let transient_id = conversation.moments[0].id.clone();
+        let snapshot = crate::history::normalize_history(&json!({
+            "messages": [
+                {
+                    "id": 91,
+                    "runId": "run-adopt",
+                    "role": "assistant",
+                    "content": "A **stable** answer"
+                }
+            ]
+        }));
+        let history = moments_from_history(&snapshot);
+
+        let adoptions = conversation.history_identity_adoptions(&history);
+
+        assert_eq!(
+            adoptions,
+            vec![MomentIdentityAdoption {
+                transient_id,
+                durable_id: "91".to_string(),
+                run_id: "run-adopt".to_string(),
+                revision: content_revision("A **stable** answer", &[]),
+                media_revision: content_revision("", &[]),
+            }]
+        );
+    }
+
+    #[test]
+    fn stream_identity_rejects_stale_content_and_run_mismatches() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-current");
+        conversation.stream_text(Some("run-current"), "Current answer");
+        assert!(conversation.finish_run(Some("run-current"), None));
+
+        for (run_id, text) in [
+            ("run-stale", "Current answer"),
+            ("run-current", "Current answer plus a stale tail"),
+        ] {
+            let snapshot = crate::history::normalize_history(&json!({
+                "messages": [
+                    {
+                        "id": 92,
+                        "runId": run_id,
+                        "role": "assistant",
+                        "content": text
+                    }
+                ]
+            }));
+            assert!(conversation
+                .history_identity_adoptions(&moments_from_history(&snapshot))
+                .is_empty());
+        }
+
+        let media_mismatch = crate::history::normalize_history(&json!({
+            "messages": [
+                {
+                    "id": 92,
+                    "runId": "run-current",
+                    "role": "assistant",
+                    "content": "Current answer",
+                    "media": [
+                        {
+                            "type": "image",
+                            "mimeType": "image/png",
+                            "key": "home/alice/.gsv/media/different"
+                        }
+                    ]
+                }
+            ]
+        }));
+        assert!(conversation
+            .history_identity_adoptions(&moments_from_history(&media_mismatch))
+            .is_empty());
+    }
+
+    #[test]
+    fn streaming_partial_never_adopts_an_earlier_identical_occurrence() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-repeat-live");
+        conversation.stream_text(Some("run-repeat-live"), "Done.");
+        let snapshot = crate::history::normalize_history(&json!({
+            "messages": [{
+                "id": 90,
+                "runId": "run-repeat-live",
+                "role": "assistant",
+                "content": "Done."
+            }]
+        }));
+
+        assert!(conversation
+            .history_identity_adoptions(&moments_from_history(&snapshot))
+            .is_empty());
+    }
+
+    #[test]
+    fn stream_identity_requires_an_unambiguous_durable_message() {
+        let mut conversation = Conversation::connecting();
+        conversation.start_run("run-repeat");
+        conversation.stream_text(Some("run-repeat"), "Repeated answer");
+        assert!(conversation.finish_run(Some("run-repeat"), None));
+        let snapshot = crate::history::normalize_history(&json!({
+            "messages": [
+                {
+                    "id": 93,
+                    "runId": "run-repeat",
+                    "role": "assistant",
+                    "content": "Repeated answer"
+                },
+                {
+                    "id": 94,
+                    "runId": "run-repeat",
+                    "role": "assistant",
+                    "content": "Repeated answer"
+                }
+            ]
+        }));
+
+        assert!(conversation
+            .history_identity_adoptions(&moments_from_history(&snapshot))
+            .is_empty());
     }
 
     #[test]

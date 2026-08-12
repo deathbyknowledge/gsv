@@ -264,7 +264,10 @@ impl GsvApp {
         });
         let moments = moments_from_history(&snapshot);
         let history_activity = activity_from_history(&snapshot.activity);
+        let adoptions = self.conversation.history_identity_adoptions(&moments);
 
+        self.prepared_content.adopt_identities(&adoptions);
+        self.adopt_moment_presentations(&adoptions);
         self.conversation.replace_history(moments);
         self.conversation
             .reconcile_history_activity(history_activity);

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 use std::sync::Arc;
 
 use tokio::sync::{
@@ -8,7 +9,7 @@ use tokio::sync::{
 
 use crate::content::MediaAttachment;
 use crate::history::HistoryPreparationCandidate;
-use crate::model::{MomentRole, MomentState};
+use crate::model::{MomentIdentityAdoption, MomentRole, MomentState};
 use crate::prepared::{
     content_revision, prepare_completed_assistant_with_revision,
     prepare_literal_content_with_revision, ContentRevision, PreparedContent,
@@ -40,7 +41,25 @@ pub(super) struct ContentPreparationResult {
     pub content: PreparedContent,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// A preparation result that became authoritative in the cache. `target_id` is the current
+/// presentation owner, which may differ from the worker's request id after history adoption.
+/// `replaced_fallback` is moved out of the pending entry so the presentation layer can transition
+/// from precisely the content it had been displaying without retaining another cache copy.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ContentPreparationAcceptance {
+    pub target_id: String,
+    pub replaced_fallback: Option<PreparedContent>,
+}
+
+impl Deref for ContentPreparationAcceptance {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.target_id
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum PreparationMode {
     Literal,
     Markdown,
@@ -69,6 +88,14 @@ struct PreparedEntry {
     state: PreparedEntryState,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct PreparationResultIdentity {
+    id: String,
+    revision: ContentRevision,
+    generation: u64,
+    mode: PreparationMode,
+}
+
 struct PreparationCandidate {
     id: String,
     revision: ContentRevision,
@@ -80,10 +107,12 @@ struct PreparationCandidate {
 
 pub(super) struct PreparedContentCache {
     entries: HashMap<String, PreparedEntry>,
+    result_adoptions: HashMap<PreparationResultIdentity, String>,
     requests: watch::Sender<Option<ContentPreparationBatch>>,
     clock: u64,
     generation: u64,
     selected_request_id: Option<String>,
+    deferred_selected_request_id: Option<String>,
 }
 
 impl PreparedContentCache {
@@ -98,10 +127,12 @@ impl PreparedContentCache {
         (
             Self {
                 entries: HashMap::new(),
+                result_adoptions: HashMap::new(),
                 requests,
                 clock: 0,
                 generation: 0,
                 selected_request_id: None,
+                deferred_selected_request_id: None,
             },
             request_receiver,
             results,
@@ -222,23 +253,108 @@ impl PreparedContentCache {
         self.publish_candidates(candidates, selected_id);
     }
 
-    pub fn accept(&mut self, result: ContentPreparationResult) -> bool {
-        if result.content.revision() != result.revision {
+    /// Transfer preparation ownership across the verified transient-to-history identity handoff.
+    /// Pending work keeps its generation and is not republished; an exact result alias lets the
+    /// already-running old-id request finish directly into the durable entry.
+    pub(super) fn adopt_identities(&mut self, adoptions: &[MomentIdentityAdoption]) -> usize {
+        adoptions
+            .iter()
+            .filter(|adoption| self.adopt_identity(adoption))
+            .count()
+    }
+
+    fn adopt_identity(&mut self, adoption: &MomentIdentityAdoption) -> bool {
+        if adoption.transient_id == adoption.durable_id {
             return false;
         }
-        let Some(entry) = self.entries.get_mut(&result.id).filter(|entry| {
-            entry.revision == result.revision
-                && entry.mode == result.mode
-                && matches!(
-                    entry.state,
-                    PreparedEntryState::Pending { generation, .. }
-                        if generation == result.generation
-                )
-        }) else {
+        let Some(mut source) = self.entries.remove(&adoption.transient_id) else {
             return false;
         };
-        entry.state = PreparedEntryState::Ready(result.content);
+        if !entry_matches_adoption(&source, adoption) {
+            self.entries.insert(adoption.transient_id.clone(), source);
+            return false;
+        }
+
+        self.clock = self.clock.wrapping_add(1);
+        source.last_used = self.clock;
+        let keep_existing = self
+            .entries
+            .get(&adoption.durable_id)
+            .filter(|existing| existing.revision == source.revision && existing.mode == source.mode)
+            .is_some_and(|existing| {
+                matches!(&existing.state, PreparedEntryState::Ready(_))
+                    || matches!(&source.state, PreparedEntryState::Pending { .. })
+            });
+
+        self.drop_result_adoptions_for(&adoption.transient_id);
+        if !keep_existing {
+            self.drop_result_adoptions_for(&adoption.durable_id);
+            let pending_identity = match &source.state {
+                PreparedEntryState::Pending { generation, .. } => Some(PreparationResultIdentity {
+                    id: adoption.transient_id.clone(),
+                    revision: source.revision,
+                    generation: *generation,
+                    mode: source.mode,
+                }),
+                PreparedEntryState::Ready(_) => None,
+            };
+            self.entries.insert(adoption.durable_id.clone(), source);
+            if let Some(identity) = pending_identity {
+                self.result_adoptions
+                    .insert(identity, adoption.durable_id.clone());
+            }
+        }
+        if self.selected_request_id.as_deref() == Some(adoption.transient_id.as_str()) {
+            self.selected_request_id = Some(adoption.durable_id.clone());
+        }
+        if self.deferred_selected_request_id.as_deref() == Some(adoption.transient_id.as_str()) {
+            self.deferred_selected_request_id = Some(adoption.durable_id.clone());
+        }
         true
+    }
+
+    /// Publish a correlated result and return the current presentation id that owns it. An
+    /// in-flight transient request may have been adopted by an authoritative history id.
+    pub fn accept(
+        &mut self,
+        result: ContentPreparationResult,
+    ) -> Option<ContentPreparationAcceptance> {
+        if result.content.revision() != result.revision {
+            return None;
+        }
+        let direct_match = self.entries.get(&result.id).is_some_and(|entry| {
+            entry_accepts_result(entry, result.revision, result.generation, result.mode)
+        });
+        let result_identity = PreparationResultIdentity {
+            id: result.id.clone(),
+            revision: result.revision,
+            generation: result.generation,
+            mode: result.mode,
+        };
+        let target_id = if direct_match {
+            result.id.clone()
+        } else if let Some(adopted_id) = self.result_adoptions.remove(&result_identity) {
+            adopted_id
+        } else {
+            return None;
+        };
+        let entry = self.entries.get_mut(&target_id).filter(|entry| {
+            entry_accepts_result(entry, result.revision, result.generation, result.mode)
+        })?;
+        let replaced_fallback =
+            match std::mem::replace(&mut entry.state, PreparedEntryState::Ready(result.content)) {
+                PreparedEntryState::Pending { fallback, .. } => fallback,
+                PreparedEntryState::Ready(_) => {
+                    unreachable!("result correlation requires a pending preparation")
+                }
+            };
+        self.result_adoptions
+            .retain(|_, adopted_id| adopted_id != &target_id);
+        self.publish_deferred_if_unblocked();
+        Some(ContentPreparationAcceptance {
+            target_id,
+            replaced_fallback,
+        })
     }
 
     pub fn appends_plain_text(&self, id: &str) -> bool {
@@ -294,6 +410,7 @@ impl PreparedContentCache {
                     } if content.revision() == candidate.media_revision => Some(content.clone()),
                     _ => None,
                 });
+            self.drop_result_adoptions_for(&candidate.id);
             self.entries.insert(
                 candidate.id.clone(),
                 PreparedEntry {
@@ -318,6 +435,11 @@ impl PreparedContentCache {
     }
 
     fn publish_pending(&mut self, selected_id: &str) {
+        if !self.result_adoptions.is_empty() {
+            self.deferred_selected_request_id = Some(selected_id.to_string());
+            return;
+        }
+        self.deferred_selected_request_id = None;
         self.generation = self.generation.wrapping_add(1).max(1);
         let generation = self.generation;
         let mut requests = self
@@ -376,6 +498,9 @@ impl PreparedContentCache {
                     } if pending == generation
                 )
             });
+            let entries = &self.entries;
+            self.result_adoptions
+                .retain(|_, adopted_id| entries.contains_key(adopted_id));
             self.selected_request_id = None;
         }
     }
@@ -392,9 +517,48 @@ impl PreparedContentCache {
             .min_by_key(|(_, entry)| entry.last_used)
             .map(|(id, _)| id.clone())
         {
+            self.drop_result_adoptions_for(&oldest);
             self.entries.remove(&oldest);
         }
     }
+
+    fn drop_result_adoptions_for(&mut self, id: &str) {
+        self.result_adoptions
+            .retain(|identity, adopted_id| identity.id != id && adopted_id != id);
+    }
+
+    fn publish_deferred_if_unblocked(&mut self) {
+        if self.result_adoptions.is_empty() {
+            if let Some(selected_id) = self.deferred_selected_request_id.take() {
+                self.publish_pending(&selected_id);
+            }
+        }
+    }
+}
+
+fn entry_matches_adoption(entry: &PreparedEntry, adoption: &MomentIdentityAdoption) -> bool {
+    match entry.mode {
+        PreparationMode::Markdown => entry.revision == adoption.revision,
+        PreparationMode::StreamingMedia => entry.revision == adoption.media_revision,
+        PreparationMode::Literal => false,
+    }
+}
+
+fn entry_accepts_result(
+    entry: &PreparedEntry,
+    revision: ContentRevision,
+    generation: u64,
+    mode: PreparationMode,
+) -> bool {
+    entry.revision == revision
+        && entry.mode == mode
+        && matches!(
+            &entry.state,
+            PreparedEntryState::Pending {
+                generation: pending,
+                ..
+            } if *pending == generation
+        )
 }
 
 fn preparation_identity(
@@ -551,6 +715,247 @@ mod tests {
         }
     }
 
+    fn adoption(
+        transient_id: &str,
+        durable_id: &str,
+        text: &str,
+        media: &[MediaAttachment],
+    ) -> MomentIdentityAdoption {
+        MomentIdentityAdoption {
+            transient_id: transient_id.to_string(),
+            durable_id: durable_id.to_string(),
+            run_id: "run-adopt".to_string(),
+            revision: content_revision(text, media),
+            media_revision: content_revision("", media),
+        }
+    }
+
+    #[test]
+    fn pending_transient_preparation_finishes_under_the_durable_id_without_requeue() {
+        let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
+        let transient_id = "assistant:transient:1";
+        let durable_id = "message:91";
+        let text = "One **prepared** answer";
+        assert!(cache
+            .resolve_or_request(
+                transient_id,
+                MomentRole::Intelligence,
+                MomentState::Complete,
+                text,
+                &[],
+            )
+            .is_none());
+        let request = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("transient preparation request");
+
+        assert_eq!(
+            cache.adopt_identities(&[adoption(transient_id, durable_id, text, &[])]),
+            1
+        );
+        let durable = history_candidate(durable_id, text);
+        cache.preload_history(std::slice::from_ref(&durable), Some(durable_id));
+        assert!(!requests
+            .has_changed()
+            .expect("preparation request channel remains open"));
+
+        let result = result_for(request);
+        let prepared_document = result.content.document().clone();
+        assert!(cache.accept(result).is_some());
+        let resolved = cache
+            .resolve_history(&durable)
+            .expect("old-id work should activate for the durable identity");
+        assert!(Arc::ptr_eq(resolved.document(), &prepared_document));
+        assert!(!requests
+            .has_changed()
+            .expect("preparation request channel remains open"));
+    }
+
+    #[test]
+    fn adopted_acceptance_reports_the_durable_target_and_exact_replaced_fallback() {
+        let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
+        let transient_id = "assistant:transient:fallback";
+        let durable_id = "message:fallback";
+        let media = image_media("answer.png");
+        assert!(cache
+            .resolve_or_request(
+                transient_id,
+                MomentRole::Intelligence,
+                MomentState::Streaming,
+                "partial",
+                &media,
+            )
+            .is_none());
+        let streaming_request = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("streaming media request");
+        let streaming_acceptance = cache
+            .accept(result_for(streaming_request))
+            .expect("streaming media result");
+        assert_eq!(streaming_acceptance.target_id, transient_id);
+        assert!(streaming_acceptance.replaced_fallback.is_none());
+
+        let fallback = cache
+            .resolve_or_request(
+                transient_id,
+                MomentRole::Intelligence,
+                MomentState::Complete,
+                "**finished**",
+                &media,
+            )
+            .expect("streaming media remains visible during Markdown preparation");
+        let markdown_request = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("Markdown request");
+        assert_eq!(markdown_request.id, transient_id);
+        assert_eq!(
+            cache.adopt_identities(&[adoption(transient_id, durable_id, "**finished**", &media,)]),
+            1
+        );
+
+        let acceptance = cache
+            .accept(result_for(markdown_request))
+            .expect("adopted Markdown result");
+
+        assert_eq!(acceptance.target_id, durable_id);
+        let replaced_fallback = acceptance
+            .replaced_fallback
+            .expect("the displayed streaming fallback is returned");
+        assert_eq!(replaced_fallback.revision(), fallback.revision());
+        assert!(Arc::ptr_eq(
+            replaced_fallback.document(),
+            fallback.document()
+        ));
+    }
+
+    #[test]
+    fn new_history_work_waits_for_adopted_work_instead_of_requeueing_it() {
+        let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
+        let transient_id = "assistant:transient:pending";
+        let durable_id = "message:pending";
+        let text = "Already parsing";
+        assert!(cache
+            .resolve_or_request(
+                transient_id,
+                MomentRole::Intelligence,
+                MomentState::Complete,
+                text,
+                &[],
+            )
+            .is_none());
+        let adopted_request = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("transient preparation request");
+        assert_eq!(
+            cache.adopt_identities(&[adoption(transient_id, durable_id, text, &[])]),
+            1
+        );
+
+        let durable = history_candidate(durable_id, text);
+        let later = history_candidate("message:later", "New history work");
+        cache.preload_history(&[durable, later], Some(durable_id));
+        assert!(!requests
+            .has_changed()
+            .expect("adopted request remains the active batch"));
+
+        assert!(cache.accept(result_for(adopted_request)).is_some());
+        assert!(requests
+            .has_changed()
+            .expect("deferred work publishes after adoption completes"));
+        let next = requests
+            .borrow_and_update()
+            .clone()
+            .expect("deferred history batch");
+        assert_eq!(next.requests.len(), 1);
+        assert_eq!(next.requests[0].id, "message:later");
+    }
+
+    #[test]
+    fn adoption_rejects_a_mismatched_revision_without_moving_the_entry() {
+        let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
+        let transient_id = "assistant:transient:2";
+        assert!(cache
+            .resolve_or_request(
+                transient_id,
+                MomentRole::Intelligence,
+                MomentState::Complete,
+                "old answer",
+                &[],
+            )
+            .is_none());
+        let request = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("transient preparation request");
+
+        assert_eq!(
+            cache.adopt_identities(&[adoption(
+                transient_id,
+                "message:92",
+                "different answer",
+                &[],
+            )]),
+            0
+        );
+        assert!(cache.accept(result_for(request)).is_some());
+        assert!(cache.is_ready(transient_id));
+        assert!(!cache.is_ready("message:92"));
+    }
+
+    #[test]
+    fn adopted_old_result_cannot_activate_after_the_durable_revision_changes() {
+        let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
+        let transient_id = "assistant:transient:3";
+        let durable_id = "message:93";
+        assert!(cache
+            .resolve_or_request(
+                transient_id,
+                MomentRole::Intelligence,
+                MomentState::Complete,
+                "old answer",
+                &[],
+            )
+            .is_none());
+        let old = requests
+            .borrow_and_update()
+            .as_ref()
+            .and_then(|batch| batch.requests.first())
+            .cloned()
+            .expect("old request");
+        assert_eq!(
+            cache.adopt_identities(&[adoption(transient_id, durable_id, "old answer", &[],)]),
+            1
+        );
+
+        assert!(cache
+            .resolve_or_request(
+                durable_id,
+                MomentRole::Intelligence,
+                MomentState::Complete,
+                "new answer",
+                &[],
+            )
+            .is_none());
+
+        assert!(cache.accept(result_for(old)).is_none());
+        assert!(cache.is_pending(durable_id));
+        assert!(!cache.is_ready(durable_id));
+    }
+
     #[test]
     fn stale_preparation_cannot_replace_a_new_revision() {
         let (mut cache, mut requests, _results, _result_receiver) = PreparedContentCache::new();
@@ -579,7 +984,7 @@ mod tests {
             )
             .is_none());
 
-        assert!(!cache.accept(result_for(old)));
+        assert!(cache.accept(result_for(old)).is_none());
         assert!(cache
             .resolve_or_request(
                 "assistant",
@@ -676,13 +1081,13 @@ mod tests {
             .into_iter()
             .find(|request| request.id == "first")
             .expect("old first request");
-        assert!(!cache.accept(result_for(old_first)));
+        assert!(cache.accept(result_for(old_first)).is_none());
         let latest_first = latest
             .requests
             .into_iter()
             .find(|request| request.id == "first")
             .expect("latest first request");
-        assert!(cache.accept(result_for(latest_first)));
+        assert!(cache.accept(result_for(latest_first)).is_some());
     }
 
     #[test]
@@ -726,7 +1131,7 @@ mod tests {
             .expect("streaming media batch");
         assert_eq!(streaming.mode, PreparationMode::StreamingMedia);
         assert_eq!(streaming.text.as_ref(), "");
-        assert!(cache.accept(result_for(streaming)));
+        assert!(cache.accept(result_for(streaming)).is_some());
         let prepared = cache
             .resolve_or_request(
                 "assistant",
@@ -764,7 +1169,9 @@ mod tests {
             .clone()
             .expect("completion batch");
         assert_eq!(batch.requests[0].mode, PreparationMode::Markdown);
-        assert!(cache.accept(result_for(batch.requests[0].clone())));
+        assert!(cache
+            .accept(result_for(batch.requests[0].clone()))
+            .is_some());
         assert!(!cache.appends_plain_text("assistant"));
     }
 
@@ -787,7 +1194,7 @@ mod tests {
             .and_then(|batch| batch.requests.first())
             .cloned()
             .expect("streaming media batch");
-        assert!(cache.accept(result_for(streaming)));
+        assert!(cache.accept(result_for(streaming)).is_some());
 
         let completed_media = image_media("final.png");
         assert!(cache
@@ -843,10 +1250,10 @@ mod tests {
                         .expect("worker result");
                 if result.revision == expected {
                     observed_latest = true;
-                    assert!(cache.accept(result));
+                    assert!(cache.accept(result).is_some());
                     break;
                 }
-                assert!(!cache.accept(result));
+                assert!(cache.accept(result).is_none());
             }
             assert!(observed_latest);
             assert!(result_receiver.try_recv().is_err());

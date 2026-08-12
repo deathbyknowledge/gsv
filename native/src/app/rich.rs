@@ -443,7 +443,7 @@ fn render_inlines(
     div()
         .w_full()
         .text_size(px(size))
-        .line_height(relative(if size <= 34.0 { 1.42 } else { 1.31 }))
+        .line_height(relative(crate::typography::line_height_for(size)))
         .text_color(color)
         .child(text)
         .into_any_element()
